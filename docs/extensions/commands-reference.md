@@ -251,10 +251,18 @@ If the UI fails to load models, see **Troubleshooting**.
 - Our custom Java files must include the Apache header.
 
 **CORS errors from UI**
-- In `resources/configuration/consumer-configuration.properties`, set:
+- In both config files, set:
+  - `resources/configuration/consumer-configuration.properties`
+  - `resources/configuration/provider-configuration.properties`
   - `edc.web.rest.cors.enabled=true`
   - `edc.web.rest.cors.origins=http://localhost:4200`
-- Restart consumer.
+  - `edc.web.rest.cors.methods=GET,POST,PUT,DELETE,OPTIONS`
+  - `edc.web.rest.cors.headers=origin, content-type, accept, authorization, x-api-key`
+- Restart both connectors.
+
+Why `x-api-key` is needed:
+- The dashboard connector client sends an `X-Api-Key` header in browser requests.
+- If `x-api-key` is not included in `edc.web.rest.cors.headers`, browser preflight fails and UI calls return network/CORS errors.
 
 Important:
 - Do not list multiple origins in a single header value. Browsers reject it.
@@ -270,3 +278,18 @@ Important:
 - Ensure contract negotiation finished.
 - Ensure mock inference server is running.
 - Asset must be an endpoint asset with `contenttype: application/json` and `daimo:inference_path`.
+
+**Contract negotiation terminates with policy mismatch**
+- Error example:
+  - `Policy in the contract agreement is not equal to the one in the contract offer`
+- Cause:
+  - Negotiation request policy was modified instead of sending the offer policy as-is.
+  - Injected fields such as `assigner`, `target`, or `profiles` can trigger provider-side validation failure.
+- Fix:
+  - Build negotiation request from the selected offer policy directly.
+  - Refresh catalog before negotiating to ensure you use current offers.
+
+**Dashboard error `Cannot read properties of null (reading 'length')`**
+- This can happen during UI startup if `appConfig.menuItems` is not resolved yet.
+- Use null-safe checks in template bindings, e.g.:
+  - `((appConfig | async)?.menuItems?.length ?? 0)`
