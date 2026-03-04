@@ -1,0 +1,11 @@
+{
+  "assetId": "model-mock-infer-v1",
+  "method": "POST",
+  "path": "/infer",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "payload": {
+    "inputs": "Hello from Pionera"
+  }
+}

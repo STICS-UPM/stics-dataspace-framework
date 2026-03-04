@@ -1,0 +1,210 @@
+.ml-asset-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.2s, box-shadow 0.2s;
+
+  &:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+  }
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+
+  .asset-title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+
+  .asset-version {
+    font-size: 12px;
+    padding: 2px 8px;
+    background: #e3f2fd;
+    color: #1976d2;
+    border-radius: 12px;
+    white-space: nowrap;
+  }
+}
+
+.asset-badges {
+  margin-top: 4px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+
+    .badge-icon {
+      font-size: 14px;
+      width: 14px;
+      height: 14px;
+    }
+
+    &.badge-local {
+      background: #e8f5e9;
+      color: #2e7d32;
+      border: 1px solid #c8e6c9;
+    }
+
+    &.badge-external {
+      background: #fff3e0;
+      color: #e65100;
+      border: 1px solid #ffe0b2;
+    }
+    
+    &.badge-owner {
+      background: #e3f2fd;
+      color: #1976d2;
+      border: 1px solid #bbdefb;
+      text-transform: none;
+      font-size: 10px;
+      letter-spacing: 0;
+    }
+  }
+}
+
+mat-card-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.asset-description {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(0, 0, 0, 0.7);
+}
+
+.metadata-tags {
+  .tag-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: rgba(0, 0, 0, 0.6);
+    margin-bottom: 4px;
+    display: block;
+  }
+
+  .keyword-chips {
+    margin: 4px 0;
+  }
+
+  .metadata-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: 0;
+    background: transparent;
+    color: rgba(0, 0, 0, 0.75);
+    cursor: pointer;
+    padding: 0;
+    font-size: 12px;
+    font-weight: 600;
+
+    mat-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+    }
+  }
+}
+
+.asset-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+
+  .info-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+
+    .info-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      color: rgba(0, 0, 0, 0.54);
+    }
+
+    .info-value {
+      color: rgba(0, 0, 0, 0.7);
+    }
+  }
+}
+
+.storage-info {
+  padding: 8px;
+  background: #f5f5f5;
+  border-radius: 4px;
+  font-size: 12px;
+
+  .storage-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 4px;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+
+    .storage-label {
+      font-weight: 500;
+      color: rgba(0, 0, 0, 0.6);
+    }
+
+    .storage-value {
+      color: rgba(0, 0, 0, 0.87);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+}
+
+mat-card-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+
+  .action-btn {
+    flex: 1;
+    font-size: 13px;
+
+    mat-icon {
+      margin-right: 4px;
+    }
+
+    &.btn-view {
+      color: #1976d2;
+    }
+
+    &.btn-contract {
+      color: #2e7d32;
+    }
+
+    &.btn-negotiate {
+      color: #e65100;
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "managementApiUrl": "http://localhost:19193/management",
+  "catalogUrl": "http://localhost:19193/management/federatedcatalog",
+  "participantId": "connector-demo",
+  "oauth2": {
+    "enabled": false,
+    "issuer": "",
+    "clientId": "",
+    "scope": "openid profile email"
+  }
+}

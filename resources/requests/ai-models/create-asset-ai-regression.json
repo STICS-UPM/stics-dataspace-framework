@@ -1,0 +1,27 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "daimo": "https://pionera.ai/edc/daimo#"
+  },
+  "@id": "model-house-price-regression-v2",
+  "properties": {
+    "name": "House Price Regression v2",
+    "contenttype": "application/octet-stream",
+    "daimo:pipeline_tag": "tabular-regression",
+    "daimo:license": "MIT",
+    "daimo:tags": ["tabular", "regression", "housing"],
+    "daimo:library_name": "xgboost",
+    "daimo:datasets": ["housing"],
+    "daimo:language": ["en"],
+    "daimo:base_model": "pionera/base-regressor",
+    "daimo:metrics": {
+      "rmse": 0.42,
+      "mae": 0.31
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "baseUrl": "https://jsonplaceholder.typicode.com/users",
+    "proxyPath": "true"
+  }
+}

@@ -1,0 +1,120 @@
+.navigation-container {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidenav-container {
+  flex: 1;
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+// Override Material default styles
+::ng-deep .mat-drawer-container {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+::ng-deep .mat-drawer-content {
+  width: 100% !important;
+  overflow-x: hidden !important;
+}
+
+.sidenav {
+  width: 250px;
+  
+  mat-toolbar {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    font-weight: 600;
+    font-size: 1.1rem;
+    padding: 16px;
+  }
+}
+
+.sidenav .mat-mdc-list-item {
+  &.active {
+    background-color: rgba(103, 126, 234, 0.1);
+    
+    .mat-icon {
+      color: #667eea;
+    }
+  }
+
+  &:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+  }
+}
+
+mat-sidenav-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.user-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 12px;
+  padding: 6px 12px;
+  background-color: rgba(255, 255, 255, 0.15);
+  border-radius: 20px;
+  
+  .connector-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+  }
+  
+  .connector-name {
+    font-size: 0.85rem;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+  }
+}
+
+.user-info {
+  padding: 8px 16px !important;
+  cursor: default !important;
+
+  .user-name {
+    font-weight: 500;
+    color: #333;
+  }
+
+  .user-email {
+    font-size: 0.85rem;
+    color: #666;
+    margin-top: 4px;
+  }
+  
+  .user-connector {
+    font-size: 0.8rem;
+    color: #667eea;
+    margin-top: 4px;
+    font-weight: 500;
+  }
+}
+
+.scrollable-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background-color: #f5f5f5;
+  height: 100%;
+  width: 100%;
+  max-width: 100%;
+  position: relative;
+}

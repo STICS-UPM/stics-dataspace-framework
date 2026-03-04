@@ -1,0 +1,26 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "daimo": "https://pionera.ai/edc/daimo#"
+  },
+  "@id": "model-your-id",
+  "properties": {
+    "name": "Model Display Name",
+    "contenttype": "application/octet-stream",
+    "daimo:pipeline_tag": "text-classification",
+    "daimo:license": "Apache-2.0",
+    "daimo:tags": ["demo"],
+    "daimo:library_name": "pytorch",
+    "daimo:datasets": ["dataset-name"],
+    "daimo:language": ["en"],
+    "daimo:base_model": "org/base-model",
+    "daimo:metrics": {
+      "accuracy": 0.9
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "baseUrl": "https://example.com/model.bin",
+    "proxyPath": "true"
+  }
+}
