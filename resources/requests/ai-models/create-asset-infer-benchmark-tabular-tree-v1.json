@@ -1,0 +1,91 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "daimo": "https://pionera.ai/edc/daimo#"
+  },
+  "@id": "provider~benchmark-tabular-tree-v1",
+  "properties": {
+    "name": "Benchmark Tabular Tree v1",
+    "description": "HTTP inference benchmark service using a tree-based tabular regressor.",
+    "version": "1.0.0",
+    "contenttype": "application/json",
+    "daimo:pipeline_tag": "tabular-regression",
+    "daimo:task": ["tabular-regression"],
+    "daimo:subtask": ["risk-scoring"],
+    "daimo:algorithm": ["Decision Tree", "CART"],
+    "daimo:license": "Apache-2.0",
+    "daimo:tags": ["inference", "benchmark", "tabular", "regression"],
+    "daimo:library_name": "custom-python",
+    "daimo:library": ["custom-python", "scikit-learn"],
+    "daimo:framework": ["FastAPI"],
+    "daimo:software": ["Python 3.11"],
+    "daimo:format": "json-api",
+    "daimo:datasets": ["benchmark-synthetic"],
+    "daimo:base_model": "decision-tree-demo",
+    "daimo:model_version": "1.0.0",
+    "daimo:inference_path": "/infer",
+    "daimo:input_schema_draft": "https://json-schema.org/draft/2020-12/schema",
+    "daimo:input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:pionera:schema:tabular-regression:v1",
+      "title": "Tabular Regression Input",
+      "type": "object",
+      "properties": {
+        "age": {
+          "type": "integer",
+          "minimum": 18,
+          "maximum": 100,
+          "description": "Age in years."
+        },
+        "income": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Annual income in USD."
+        },
+        "tenure_months": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Customer tenure in months."
+        }
+      },
+      "required": ["age", "income", "tenure_months"],
+      "additionalProperties": false
+    },
+    "daimo:input_features": [
+      {
+        "path": "age",
+        "name": "age",
+        "type": "integer",
+        "required": true,
+        "description": "Age in years.",
+        "example": 29
+      },
+      {
+        "path": "income",
+        "name": "income",
+        "type": "number",
+        "required": true,
+        "description": "Annual income in USD.",
+        "example": 55000
+      },
+      {
+        "path": "tenure_months",
+        "name": "tenure_months",
+        "type": "integer",
+        "required": true,
+        "description": "Customer tenure in months.",
+        "example": 6
+      }
+    ],
+    "daimo:input_example": {
+      "age": 29,
+      "income": 55000,
+      "tenure_months": 6
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "baseUrl": "http://localhost:9302",
+    "proxyPath": "true"
+  }
+}

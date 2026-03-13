@@ -45,6 +45,7 @@ temp/
 *.tmp
 *.swp
 *~
+tools/.benchmark-model-pids/
 
 # Python cache
 __pycache__/

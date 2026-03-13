@@ -1,0 +1,160 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "daimo": "https://pionera.ai/edc/daimo#"
+  },
+  "@id": "provider~benchmark-dataset-tabular-a-v1",
+  "properties": {
+    "name": "Benchmark Dataset Tabular Segment A v1",
+    "description": "Benchmark tabular-regression dataset segment A (first 15 rows).",
+    "contenttype": "application/json",
+    "daimo:pipeline_tag": "tabular-regression",
+    "daimo:license": "Apache-2.0",
+    "daimo:tags": [
+      "dataset",
+      "benchmark",
+      "tabular",
+      "regression",
+      "segment-a"
+    ],
+    "daimo:library_name": "synthetic",
+    "daimo:datasets": [
+      "tabular-benchmark-v1"
+    ],
+    "daimo:benchmark_dataset_format": "json",
+    "daimo:benchmark_dataset_source": "resources/benchmark-datasets/tabular-benchmark-v1.json",
+    "daimo:benchmark_dataset_mapping": {
+      "inputPath": "input",
+      "predictionPath": "result.value"
+    },
+    "daimo:benchmark_dataset": {
+      "rows": [
+        {
+          "id": "tab-001",
+          "input": {
+            "age": 22,
+            "income": 32000,
+            "tenure_months": 2
+          }
+        },
+        {
+          "id": "tab-002",
+          "input": {
+            "age": 25,
+            "income": 41000,
+            "tenure_months": 5
+          }
+        },
+        {
+          "id": "tab-003",
+          "input": {
+            "age": 28,
+            "income": 52000,
+            "tenure_months": 9
+          }
+        },
+        {
+          "id": "tab-004",
+          "input": {
+            "age": 31,
+            "income": 58000,
+            "tenure_months": 12
+          }
+        },
+        {
+          "id": "tab-005",
+          "input": {
+            "age": 34,
+            "income": 62000,
+            "tenure_months": 15
+          }
+        },
+        {
+          "id": "tab-006",
+          "input": {
+            "age": 37,
+            "income": 68000,
+            "tenure_months": 18
+          }
+        },
+        {
+          "id": "tab-007",
+          "input": {
+            "age": 40,
+            "income": 73000,
+            "tenure_months": 22
+          }
+        },
+        {
+          "id": "tab-008",
+          "input": {
+            "age": 43,
+            "income": 79000,
+            "tenure_months": 26
+          }
+        },
+        {
+          "id": "tab-009",
+          "input": {
+            "age": 46,
+            "income": 85000,
+            "tenure_months": 30
+          }
+        },
+        {
+          "id": "tab-010",
+          "input": {
+            "age": 49,
+            "income": 91000,
+            "tenure_months": 34
+          }
+        },
+        {
+          "id": "tab-011",
+          "input": {
+            "age": 52,
+            "income": 98000,
+            "tenure_months": 40
+          }
+        },
+        {
+          "id": "tab-012",
+          "input": {
+            "age": 55,
+            "income": 105000,
+            "tenure_months": 46
+          }
+        },
+        {
+          "id": "tab-013",
+          "input": {
+            "age": 58,
+            "income": 112000,
+            "tenure_months": 52
+          }
+        },
+        {
+          "id": "tab-014",
+          "input": {
+            "age": 61,
+            "income": 118000,
+            "tenure_months": 60
+          }
+        },
+        {
+          "id": "tab-015",
+          "input": {
+            "age": 64,
+            "income": 125000,
+            "tenure_months": 72
+          }
+        }
+      ]
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "baseUrl": "http://localhost:19193/datasets/benchmark/tabular-a-v1.json",
+    "proxyPath": "true"
+  }
+}
