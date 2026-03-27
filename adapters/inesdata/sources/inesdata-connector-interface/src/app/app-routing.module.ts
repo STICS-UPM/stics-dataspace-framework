@@ -58,6 +58,12 @@ export const routes: Routes = [
     loadChildren: () => import('./pages/ontologies/ontologies.module').then(m => m.OntologiesModule)
   },
   {
+    path: 'ai-model-browser',
+    data: {title: 'AI Model Browser', icon: 'smart_toy'},
+    canActivate: [AuthUserGuard],
+    loadChildren: () => import('./pages/ai-model-browser/ai-model-browser.module').then(m => m.AiModelBrowserModule)
+  },
+  {
     path: '', redirectTo: 'catalog', pathMatch: 'full'
   }
 ];
