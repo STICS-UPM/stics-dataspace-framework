@@ -64,6 +64,18 @@ export const routes: Routes = [
     loadChildren: () => import('./pages/ai-model-browser/ai-model-browser.module').then(m => m.AiModelBrowserModule)
   },
   {
+    path: 'ai-model-execution',
+    data: {title: 'AI Model Execution', icon: 'play_circle'},
+    canActivate: [AuthUserGuard],
+    loadChildren: () => import('./pages/ai-model-execution/ai-model-execution.module').then(m => m.AiModelExecutionModule)
+  },
+  {
+    path: 'ai-model-benchmarking',
+    data: {title: 'AI Model Benchmarking', icon: 'leaderboard'},
+    canActivate: [AuthUserGuard],
+    loadChildren: () => import('./pages/ai-model-benchmarking/ai-model-benchmarking.module').then(m => m.AiModelBenchmarkingModule)
+  },
+  {
     path: '', redirectTo: 'catalog', pathMatch: 'full'
   }
 ];

@@ -102,7 +102,9 @@ export class AiModelBrowserService {
     const shortDescription = this.firstText(this.readLocalProperty(asset, ['shortDescription'])) || '';
     const description = this.firstText(this.readLocalProperty(asset, ['dcterms:description', 'description', 'http://purl.org/dc/terms/description'])) || shortDescription;
     const assetData = this.normalizeAssetData(this.readLocalAssetData(asset));
+    const properties = this.asRecord((asset as any)?.properties);
     const dataAddress = this.readLocalDataAddress(asset);
+    const metadataNode = [assetData, properties, asset as unknown as Record<string, unknown>];
 
     return {
       id,
@@ -116,12 +118,12 @@ export class AiModelBrowserService {
       format: this.firstText(this.readLocalProperty(asset, ['dcterms:format', 'format', 'http://purl.org/dc/terms/format'])) || 'Unknown',
       storageType: this.normalizeStorageType(this.firstText(dataAddress['type'], dataAddress['@type']) || ''),
       fileName: this.firstText(dataAddress['keyName'], dataAddress['s3Key'], dataAddress['fileName'], dataAddress['filename']) || 'Unknown',
-      tasks: this.collectMetadataValues(assetData, ['daimo:task', 'https://w3id.org/daimo/ns#task', 'task']),
-      subtasks: this.collectMetadataValues(assetData, ['daimo:subtask', 'https://w3id.org/daimo/ns#subtask', 'subtask']),
-      algorithms: this.collectMetadataValues(assetData, ['daimo:algorithm', 'https://w3id.org/daimo/ns#algorithm', 'algorithm']),
-      libraries: this.collectMetadataValues(assetData, ['daimo:library', 'https://w3id.org/daimo/ns#library', 'library']),
-      frameworks: this.collectMetadataValues(assetData, ['daimo:framework', 'https://w3id.org/daimo/ns#framework', 'framework']),
-      software: this.collectMetadataValues(assetData, ['daimo:software', 'https://w3id.org/daimo/ns#software', 'software']),
+      tasks: this.collectMetadataValues(metadataNode, ['daimo:task', 'https://w3id.org/daimo/ns#task', 'https://pionera.ai/edc/daimo#task', 'task']),
+      subtasks: this.collectMetadataValues(metadataNode, ['daimo:subtask', 'https://w3id.org/daimo/ns#subtask', 'https://pionera.ai/edc/daimo#subtask', 'subtask']),
+      algorithms: this.collectMetadataValues(metadataNode, ['daimo:algorithm', 'https://w3id.org/daimo/ns#algorithm', 'https://pionera.ai/edc/daimo#algorithm', 'algorithm']),
+      libraries: this.collectMetadataValues(metadataNode, ['daimo:library', 'https://w3id.org/daimo/ns#library', 'https://pionera.ai/edc/daimo#library', 'library']),
+      frameworks: this.collectMetadataValues(metadataNode, ['daimo:framework', 'https://w3id.org/daimo/ns#framework', 'https://pionera.ai/edc/daimo#framework', 'framework']),
+      software: this.collectMetadataValues(metadataNode, ['daimo:software', 'https://w3id.org/daimo/ns#software', 'https://pionera.ai/edc/daimo#software', 'software']),
       provider: environment.runtime.participantId || 'this-connector',
       source: 'own',
       hasContract: hasGlobalSelector || ownContractAssetIds.has(id),
@@ -130,8 +132,9 @@ export class AiModelBrowserService {
   }
 
   private mapFederatedOffer(offer: DataOffer): AiModelBrowserItem {
-    const properties = offer.properties || {};
+    const properties = this.asRecord(offer.properties);
     const assetData = this.normalizeAssetData(properties.assetData);
+    const metadataNode = [assetData, properties, offer as unknown as Record<string, unknown>];
 
     return {
       id: `${offer.assetId}`,
@@ -145,12 +148,12 @@ export class AiModelBrowserService {
       format: this.firstText(properties.format) || 'Unknown',
       storageType: this.normalizeStorageType(this.firstText(properties.storageType) || ''),
       fileName: this.firstText(properties.fileName) || 'Unknown',
-      tasks: this.collectMetadataValues(assetData, ['daimo:task', 'https://w3id.org/daimo/ns#task', 'task']),
-      subtasks: this.collectMetadataValues(assetData, ['daimo:subtask', 'https://w3id.org/daimo/ns#subtask', 'subtask']),
-      algorithms: this.collectMetadataValues(assetData, ['daimo:algorithm', 'https://w3id.org/daimo/ns#algorithm', 'algorithm']),
-      libraries: this.collectMetadataValues(assetData, ['daimo:library', 'https://w3id.org/daimo/ns#library', 'library']),
-      frameworks: this.collectMetadataValues(assetData, ['daimo:framework', 'https://w3id.org/daimo/ns#framework', 'framework']),
-      software: this.collectMetadataValues(assetData, ['daimo:software', 'https://w3id.org/daimo/ns#software', 'software']),
+      tasks: this.collectMetadataValues(metadataNode, ['daimo:task', 'https://w3id.org/daimo/ns#task', 'https://pionera.ai/edc/daimo#task', 'task']),
+      subtasks: this.collectMetadataValues(metadataNode, ['daimo:subtask', 'https://w3id.org/daimo/ns#subtask', 'https://pionera.ai/edc/daimo#subtask', 'subtask']),
+      algorithms: this.collectMetadataValues(metadataNode, ['daimo:algorithm', 'https://w3id.org/daimo/ns#algorithm', 'https://pionera.ai/edc/daimo#algorithm', 'algorithm']),
+      libraries: this.collectMetadataValues(metadataNode, ['daimo:library', 'https://w3id.org/daimo/ns#library', 'https://pionera.ai/edc/daimo#library', 'library']),
+      frameworks: this.collectMetadataValues(metadataNode, ['daimo:framework', 'https://w3id.org/daimo/ns#framework', 'https://pionera.ai/edc/daimo#framework', 'framework']),
+      software: this.collectMetadataValues(metadataNode, ['daimo:software', 'https://w3id.org/daimo/ns#software', 'https://pionera.ai/edc/daimo#software', 'software']),
       provider: this.firstText(properties.participantId, offer.originator) || 'federated-provider',
       source: 'federated',
       hasContract: this.hasAccessibleFederatedContract(offer),
@@ -187,16 +190,23 @@ export class AiModelBrowserService {
       return {};
     }
 
+    const namespacedValue = properties['assetData']
+      || properties['edc:assetData']
+      || properties['https://w3id.org/edc/v0.0.1/ns/assetData'];
+
     if (typeof properties.optionalValue === 'function') {
-      return properties.optionalValue('edc', 'assetData') || properties.assetData || {};
+      return properties.optionalValue('edc', 'assetData') || namespacedValue || {};
     }
 
-    return properties.assetData || {};
+    return namespacedValue || {};
   }
 
   private readLocalDataAddress(asset: Asset): Record<string, unknown> {
     const assetRecord = asset as any;
-    const dataAddress = assetRecord?.['edc:dataAddress'] || assetRecord?.dataAddress || assetRecord?.['dataAddress'];
+    const dataAddress = assetRecord?.['edc:dataAddress']
+      || assetRecord?.['https://w3id.org/edc/v0.0.1/ns/dataAddress']
+      || assetRecord?.dataAddress
+      || assetRecord?.['dataAddress'];
     return this.asRecord(dataAddress);
   }
 

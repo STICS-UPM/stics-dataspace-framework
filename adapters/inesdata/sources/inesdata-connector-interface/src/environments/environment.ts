@@ -76,6 +76,10 @@ export const environment = {
       federatedCatalog: {
         count: '/pagination/count?type=federatedCatalog',
         paginationRequest: '/request'
+      },
+      modelExecution: {
+        baseUrl: '/v3/modelexecutions',
+        execute: '/execute'
       }
     },
     oauth2: {

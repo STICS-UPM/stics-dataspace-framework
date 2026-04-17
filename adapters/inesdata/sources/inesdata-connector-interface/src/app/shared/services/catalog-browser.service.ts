@@ -145,16 +145,18 @@ export class CatalogBrowserService {
 				name: this.firstDatasetValue(dataset, ['name', 'dcterms:title', 'http://purl.org/dc/terms/title']),
 				version: this.firstDatasetValue(dataset, ['version']),
 				assetType: this.firstDatasetValue(dataset, ['assetType', 'edc:assetType', 'https://w3id.org/edc/v0.0.1/ns/assetType']),
-				contenttype: this.firstDatasetValue(dataset, ['contenttype', 'dcat:mediaType', 'http://www.w3.org/ns/dcat#mediaType']),
-				assetData: dataset["assetData"],
-				description: this.firstDatasetValue(dataset, ['http://purl.org/dc/terms/description', 'description']),
-				shortDescription: this.firstDatasetValue(dataset, ['shortDescription']),
+				contenttype: this.firstDatasetValue(dataset, ['contenttype', 'edc:contenttype', 'https://w3id.org/edc/v0.0.1/ns/contenttype', 'dcat:mediaType', 'http://www.w3.org/ns/dcat#mediaType']),
+				assetData: this.firstDatasetValue(dataset, ['assetData', 'edc:assetData', 'https://w3id.org/edc/v0.0.1/ns/assetData']),
+				description: this.firstDatasetValue(dataset, ['description', 'dcterms:description', 'http://purl.org/dc/terms/description']),
+				shortDescription: this.firstDatasetValue(dataset, ['shortDescription', 'edc:shortDescription', 'https://w3id.org/edc/v0.0.1/ns/shortDescription']),
 				byteSize: this.firstDatasetValue(dataset, ['http://www.w3.org/ns/dcat#byteSize', 'byteSize']),
-				format: this.firstDatasetValue(dataset, ['http://purl.org/dc/terms/format', 'format']),
-				keywords: dataset["http://www.w3.org/ns/dcat#keyword"] || dataset["keywords"],
-        participantId: this.firstDatasetValue(dataset, ['participantId', 'originator']),
+				format: this.firstDatasetValue(dataset, ['format', 'dcterms:format', 'http://purl.org/dc/terms/format']),
+				keywords: this.firstDatasetValue(dataset, ['keywords', 'dcat:keyword', 'http://www.w3.org/ns/dcat#keyword']),
+        participantId: this.firstDatasetValue(dataset, ['participantId', 'originator', 'dspace:participantId']),
         storageType: this.findStorageType(dataset),
-        fileName: this.findFileName(dataset)
+        fileName: this.findFileName(dataset),
+        path: this.findHttpPath(dataset),
+        method: this.firstDatasetValue(dataset, ['method', 'edc:method', 'https://w3id.org/edc/v0.0.1/ns/method'])
 			}
       const assetId = dataset["@id"];
 
@@ -208,6 +210,16 @@ export class CatalogBrowserService {
       || this.resolveTextValue(firstDistribution.keyName)
       || this.resolveTextValue(firstDistribution.s3Key)
       || this.resolveTextValue(dataset?.fileName)
+      || '';
+  }
+
+  private findHttpPath(dataset: any): string {
+    return this.resolveTextValue(dataset?.path)
+      || this.resolveTextValue(dataset?.['edc:path'])
+      || this.resolveTextValue(dataset?.['https://w3id.org/edc/v0.0.1/ns/path'])
+      || this.resolveTextValue(dataset?.proxyPath)
+      || this.resolveTextValue(dataset?.['edc:proxyPath'])
+      || this.resolveTextValue(dataset?.['https://w3id.org/edc/v0.0.1/ns/proxyPath'])
       || '';
   }
 

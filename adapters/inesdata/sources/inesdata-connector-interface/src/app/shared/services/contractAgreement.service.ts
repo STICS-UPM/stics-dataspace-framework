@@ -45,7 +45,7 @@ export class ContractAgreementService {
     }
 
     return from(lastValueFrom(this.http.post<Array<ContractAgreement>>(
-      `${this.BASE_URL}${environment.runtime.service.asset.getAll}`, body
+      `${this.BASE_URL}${environment.runtime.service.contractAgreement.getAll}`, body
     )).then(results => {
       return expandArray(results, () => new ContractAgreement());
     }));

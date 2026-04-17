@@ -261,11 +261,11 @@ export class AiModelBrowserComponent implements OnInit {
   }
 
   getDisplayKeywords(model: AiModelBrowserItem): string[] {
-    return model.keywords.slice(0, 3);
+    return model.keywords.slice(0, 2);
   }
 
   getHiddenKeywordsCount(model: AiModelBrowserItem): number {
-    return Math.max(model.keywords.length - 3, 0);
+    return Math.max(model.keywords.length - 2, 0);
   }
 
   getVersionLabel(model: AiModelBrowserItem): string {
@@ -294,7 +294,7 @@ export class AiModelBrowserComponent implements OnInit {
       { label: 'Software', value: this.getPrimaryValue(model.software, '') }
     ];
 
-    return metadata.filter(item => item.value.trim().length > 0).slice(0, 4);
+    return metadata.filter(item => item.value.trim().length > 0).slice(0, 3);
   }
 
   getContractBadgeLabel(model: AiModelBrowserItem): string {
