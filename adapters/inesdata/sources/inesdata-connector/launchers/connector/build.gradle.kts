@@ -86,6 +86,7 @@ dependencies {
 
     // Transfer
     implementation(project(":extensions:inesdata-transfer-process-api"))
+    implementation(project(":extensions:model-execution-api"))
 
     // Persistence base
     implementation(libs.edc.spi.core)

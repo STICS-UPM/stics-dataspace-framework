@@ -40,6 +40,7 @@ include(":extensions:vocabulary-shared-retrieval")
 include(":extensions:inesdata-transfer-process-api")
 include(":extensions:asset-validator")
 include(":extensions:ontology-validator")
+include(":extensions:model-execution-api")
 
 // Connector
 include(":launchers:connector")
