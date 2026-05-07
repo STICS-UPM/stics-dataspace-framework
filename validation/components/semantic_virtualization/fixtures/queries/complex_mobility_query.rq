@@ -1,0 +1,13 @@
+PREFIX mob: <https://w3id.org/pionera/validation/mobility#>
+
+SELECT ?routeName ?stopName ?lat
+WHERE {
+  ?route a mob:Route ;
+    mob:routeShortName ?routeName ;
+    mob:servesStop ?stop .
+  ?stop a mob:Stop ;
+    mob:hasStopName ?stopName ;
+    mob:hasLatitude ?lat .
+  FILTER(STRSTARTS(STR(?routeName), "C") || CONTAINS(LCASE(STR(?stopName)), "parla"))
+}
+ORDER BY ?routeName

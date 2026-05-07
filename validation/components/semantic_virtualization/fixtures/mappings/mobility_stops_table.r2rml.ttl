@@ -1,0 +1,23 @@
+@prefix ex: <https://w3id.org/pionera/validation/resource/> .
+@prefix mob: <https://w3id.org/pionera/validation/mobility#> .
+@prefix rr: <http://www.w3.org/ns/r2rml#> .
+
+<#StopTableTriplesMap>
+    a rr:TriplesMap ;
+    rr:logicalTable [ rr:tableName "stops" ] ;
+    rr:subjectMap [
+        rr:template "https://w3id.org/pionera/validation/resource/sql-stop/{stop_id}" ;
+        rr:class mob:Stop
+    ] ;
+    rr:predicateObjectMap [
+        rr:predicate mob:hasStopName ;
+        rr:objectMap [ rr:column "stop_name" ]
+    ] ;
+    rr:predicateObjectMap [
+        rr:predicate mob:hasLatitude ;
+        rr:objectMap [ rr:column "stop_lat" ]
+    ] ;
+    rr:predicateObjectMap [
+        rr:predicate mob:hasLongitude ;
+        rr:objectMap [ rr:column "stop_lon" ]
+    ] .

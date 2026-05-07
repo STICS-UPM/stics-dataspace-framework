@@ -189,6 +189,66 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             },
         )
 
+    def test_semantic_virtualization_override_payload_derives_public_url(self):
+        adapter = self._make_adapter()
+
+        payload = adapter._component_values_override_payload(
+            "semantic-virtualization",
+            {"DS_DOMAIN_BASE": "custom.ds.example.org"},
+        )
+
+        self.assertEqual(
+            payload,
+            {
+                "ingress": {
+                    "enabled": True,
+                    "host": "semantic-virtualization-demo.custom.ds.example.org",
+                },
+                "env": {
+                    "SEMANTIC_VIRTUALIZATION_PUBLIC_URL": "http://semantic-virtualization-demo.custom.ds.example.org",
+                },
+            },
+        )
+
+    def test_semantic_virtualization_mapping_editor_override_is_opt_in(self):
+        adapter = self._make_adapter()
+
+        payload = adapter._component_values_override_payload(
+            "semantic-virtualization",
+            {
+                "DS_DOMAIN_BASE": "custom.ds.example.org",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED": "true",
+            },
+        )
+
+        self.assertEqual(
+            payload["mappingEditor"],
+            {
+                "enabled": True,
+                "ingress": {
+                    "enabled": True,
+                    "host": "semantic-virtualization-editor-demo.custom.ds.example.org",
+                },
+            },
+        )
+
+    def test_semantic_virtualization_mapping_editor_override_prefers_explicit_host(self):
+        adapter = self._make_adapter()
+
+        payload = adapter._component_values_override_payload(
+            "semantic-virtualization",
+            {
+                "DS_DOMAIN_BASE": "custom.ds.example.org",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED": "true",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST": "http://editor.example.test",
+            },
+        )
+
+        self.assertEqual(
+            payload["mappingEditor"]["ingress"]["host"],
+            "editor.example.test",
+        )
+
     def test_shared_components_adapter_plans_override_values_payload(self):
         adapter = self._make_shared_adapter()
 
@@ -390,6 +450,138 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Ontology-Hub source directory is not usable"):
                 adapter._resolve_ontology_hub_source_dir({})
 
+    def test_resolve_rdflib_virt_source_dir_clones_when_sources_dir_exists_but_is_empty(self):
+        adapter = self._make_adapter()
+        sources_dir = os.path.join(
+            os.path.dirname(os.path.abspath(components_module.__file__)),
+            "sources",
+        )
+        rdflib_virt_dir = os.path.join(sources_dir, "rdflib-virt")
+        pyproject_path = os.path.join(rdflib_virt_dir, "pyproject.toml")
+        package_path = os.path.join(rdflib_virt_dir, "src", "pycottas", "__init__.py")
+
+        clone_calls = []
+
+        def fake_isfile(path):
+            return path in {pyproject_path, package_path} and len(clone_calls) > 0
+
+        def fake_run(args, check):
+            clone_calls.append((tuple(args), check))
+            return None
+
+        with (
+            mock.patch("adapters.inesdata.components.os.path.isdir", side_effect=lambda path: path == rdflib_virt_dir),
+            mock.patch("adapters.inesdata.components.os.listdir", return_value=[]),
+            mock.patch("adapters.inesdata.components.os.makedirs"),
+            mock.patch("adapters.inesdata.components.os.rmdir"),
+            mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=fake_isfile),
+            mock.patch("subprocess.run", side_effect=fake_run),
+        ):
+            resolved = adapter._resolve_rdflib_virt_source_dir({})
+
+        self.assertEqual(resolved, rdflib_virt_dir)
+        self.assertEqual(
+            clone_calls,
+            [
+                (
+                    (
+                        "git",
+                        "clone",
+                        "https://github.com/ProyectoPIONERA/rdflib-virt.git",
+                        rdflib_virt_dir,
+                    ),
+                    True,
+                )
+            ],
+        )
+
+    def test_resolve_mapping_editor_source_dir_clones_when_sources_dir_exists_but_is_empty(self):
+        adapter = self._make_adapter()
+        sources_dir = os.path.join(
+            os.path.dirname(os.path.abspath(components_module.__file__)),
+            "sources",
+        )
+        mapping_editor_dir = os.path.join(sources_dir, "mapping-editor")
+        app_path = os.path.join(mapping_editor_dir, "Mapping_Editor.py")
+        requirements_path = os.path.join(mapping_editor_dir, "requirements.txt")
+
+        clone_calls = []
+
+        def fake_isfile(path):
+            return path in {app_path, requirements_path} and len(clone_calls) > 0
+
+        def fake_run(args, check):
+            clone_calls.append((tuple(args), check))
+            return None
+
+        with (
+            mock.patch("adapters.inesdata.components.os.path.isdir", side_effect=lambda path: path == mapping_editor_dir),
+            mock.patch("adapters.inesdata.components.os.listdir", return_value=[]),
+            mock.patch("adapters.inesdata.components.os.makedirs"),
+            mock.patch("adapters.inesdata.components.os.rmdir"),
+            mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=fake_isfile),
+            mock.patch("subprocess.run", side_effect=fake_run),
+        ):
+            resolved = adapter._resolve_mapping_editor_source_dir({})
+
+        self.assertEqual(resolved, mapping_editor_dir)
+        self.assertEqual(
+            clone_calls,
+            [
+                (
+                    (
+                        "git",
+                        "clone",
+                        "https://github.com/ProyectoPIONERA/mapping-editor.git",
+                        mapping_editor_dir,
+                    ),
+                    True,
+                )
+            ],
+        )
+
+    def test_build_semantic_virtualization_image_uses_framework_api_dockerfile(self):
+        adapter = self._make_adapter()
+
+        with (
+            mock.patch.object(adapter, "_resolve_rdflib_virt_source_dir", return_value="/tmp/rdflib-virt"),
+            mock.patch.object(adapter, "_resolve_mapping_editor_source_dir", return_value="/tmp/mapping-editor") as mapping_mock,
+            mock.patch.object(
+                adapter,
+                "_semantic_virtualization_api_dockerfile",
+                return_value="/tmp/semantic-api/Dockerfile",
+            ),
+            mock.patch("adapters.inesdata.components.os.path.isfile", return_value=True),
+        ):
+            adapter._build_semantic_virtualization_image_on_host("rdflib-virt:local", {})
+
+        adapter.run.assert_called_once_with(
+            "docker build -t rdflib-virt:local -f /tmp/semantic-api/Dockerfile .",
+            check=False,
+            cwd="/tmp/rdflib-virt",
+        )
+        mapping_mock.assert_called_once_with({})
+
+    def test_build_mapping_editor_image_uses_framework_dockerfile(self):
+        adapter = self._make_adapter()
+
+        with (
+            mock.patch.object(adapter, "_resolve_mapping_editor_source_dir", return_value="/tmp/mapping-editor"),
+            mock.patch.object(
+                adapter,
+                "_mapping_editor_dockerfile",
+                return_value="/tmp/mapping-editor-wrapper/Dockerfile",
+            ),
+            mock.patch("adapters.inesdata.components.os.path.isfile", return_value=True),
+        ):
+            adapter._build_mapping_editor_image_on_host("mapping-editor:local", {})
+
+        adapter.run.assert_called_once_with(
+            "docker build -t mapping-editor:local -f /tmp/mapping-editor-wrapper/Dockerfile .",
+            check=False,
+            cwd="/tmp/mapping-editor",
+        )
+
     def test_prepare_level6_local_image_builds_on_host_and_loads_into_minikube(self):
         adapter = self._make_adapter()
         deployer_config = {"LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "false"}
@@ -496,6 +688,72 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         has_image_mock.assert_not_called()
         build_mock.assert_called_once_with("eclipse-edc/data-dashboard:local", deployer_config)
         load_mock.assert_called_once_with("minikube", "eclipse-edc/data-dashboard:local")
+
+    def test_prepare_level6_local_image_rebuilds_semantic_virtualization_even_when_cached_in_minikube(self):
+        adapter = self._make_adapter()
+        deployer_config = {"LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true"}
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_safe_load_yaml_file",
+                return_value={"image": {"repository": "rdflib-virt", "tag": "local"}},
+            ),
+            mock.patch.object(adapter, "_minikube_is_available", return_value=True),
+            mock.patch.object(adapter, "_minikube_has_image", return_value=True) as has_image_mock,
+            mock.patch.object(adapter, "_build_semantic_virtualization_image_on_host") as build_mock,
+            mock.patch.object(adapter, "_load_image_into_minikube") as load_mock,
+        ):
+            result = adapter._maybe_prepare_level6_local_image(
+                "semantic-virtualization",
+                "/tmp/semantic-virtualization-values.yaml",
+                deployer_config,
+            )
+
+        self.assertTrue(result)
+        has_image_mock.assert_not_called()
+        build_mock.assert_called_once_with("rdflib-virt:local", deployer_config)
+        load_mock.assert_called_once_with("minikube", "rdflib-virt:local")
+
+    def test_prepare_level6_local_image_builds_mapping_editor_when_opted_in(self):
+        adapter = self._make_adapter()
+        deployer_config = {
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true",
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED": "true",
+        }
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_safe_load_yaml_file",
+                return_value={
+                    "image": {"repository": "rdflib-virt", "tag": "local"},
+                    "mappingEditor": {
+                        "image": {"repository": "mapping-editor", "tag": "local"},
+                    },
+                },
+            ),
+            mock.patch.object(adapter, "_minikube_is_available", return_value=True),
+            mock.patch.object(adapter, "_build_semantic_virtualization_image_on_host") as build_api_mock,
+            mock.patch.object(adapter, "_build_mapping_editor_image_on_host") as build_editor_mock,
+            mock.patch.object(adapter, "_load_image_into_minikube") as load_mock,
+        ):
+            result = adapter._maybe_prepare_level6_local_image(
+                "semantic-virtualization",
+                "/tmp/semantic-virtualization-values.yaml",
+                deployer_config,
+            )
+
+        self.assertTrue(result)
+        build_api_mock.assert_called_once_with("rdflib-virt:local", deployer_config)
+        build_editor_mock.assert_called_once_with("mapping-editor:local", deployer_config)
+        self.assertEqual(
+            load_mock.mock_calls,
+            [
+                mock.call("minikube", "rdflib-virt:local"),
+                mock.call("minikube", "mapping-editor:local"),
+            ],
+        )
 
     def test_prepare_level6_local_image_fails_when_ontology_hub_chart_does_not_use_local_tag(self):
         adapter = self._make_adapter()

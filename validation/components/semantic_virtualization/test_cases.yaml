@@ -1,0 +1,333 @@
+source_documents:
+  - context/deliverables/logs.txt
+  - context/deliverables/validation/PIONERA E5.1 - final.docx
+  - context/deliverables/semantic-virtualization/PIONERA-E3.1 - final.docx
+  - context/42_a52_test_automation_completion_plan.md
+
+support_checks:
+  - id: SV-BOOTSTRAP-01
+    scope: semantic_virtualization
+    case_group: support
+    description: Semantic Virtualization service root is reachable
+    type: api
+    validation_type: support
+    dataspace_dimension: support
+    execution_mode: api_support
+    coverage_status: automated
+    mapping_status: supporting
+    expected_result: The service root responds successfully
+    automation:
+      status: automated
+      mode: api_support
+      runner: validation/components/semantic_virtualization/runner.py
+
+test_cases:
+  - id: PT5-VS-01
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Configure RML/R2RML mappings over different data sources
+    type: functional
+    validation_type: functional
+    dataspace_dimension: mapping
+    execution_mode: offline_fixture
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: A mapping can be configured against representative input sources
+    automation:
+      status: automated
+      mode: offline_fixture
+      runner: validation/components/semantic_virtualization/mapping_validation.py
+      evidence_case: PT5-VS-01
+
+  - id: PT5-VS-02
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Execute SPARQL queries over virtualized data
+    type: functional
+    validation_type: functional
+    dataspace_dimension: semantic_query
+    execution_mode: api
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: The SPARQL endpoint returns a successful query response
+    automation:
+      status: automated
+      mode: api
+      runner: validation/components/semantic_virtualization/runner.py
+      evidence_case: SV-API-03
+
+  - id: PT5-VS-03
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Execute a SPARQL query combining multiple sources
+    type: functional
+    validation_type: functional
+    dataspace_dimension: multisource_query
+    execution_mode: offline_fixture
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: A multisource query returns a coherent combined result
+    automation:
+      status: automated
+      mode: offline_fixture
+      runner: validation/components/semantic_virtualization/mapping_validation.py
+      evidence_case: PT5-VS-03
+
+  - id: PT5-VS-04
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Execute complex SPARQL queries over virtualized data
+    type: functional
+    validation_type: functional
+    dataspace_dimension: complex_query
+    execution_mode: offline_fixture
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: A representative complex query completes and returns the expected shape
+    automation:
+      status: automated
+      mode: offline_fixture
+      runner: validation/components/semantic_virtualization/mapping_validation.py
+      evidence_case: PT5-VS-04
+
+  - id: PT5-VS-05
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Validate mappings before execution
+    type: functional
+    validation_type: functional
+    dataspace_dimension: mapping_validation
+    execution_mode: offline_fixture
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: Invalid mappings are rejected with actionable diagnostics
+    automation:
+      status: automated
+      mode: offline_fixture
+      runner: validation/components/semantic_virtualization/mapping_validation.py
+      evidence_case: PT5-VS-05
+
+  - id: PT5-VS-06
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Define mappings using loaded sources and ontologies
+    type: functional
+    validation_type: functional
+    dataspace_dimension: semantic_mapping
+    execution_mode: offline_fixture
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: A mapping can reference both source data and ontology terms
+    automation:
+      status: automated
+      mode: offline_fixture
+      runner: validation/components/semantic_virtualization/mapping_validation.py
+      evidence_case: PT5-VS-06
+
+  - id: PT5-VS-07
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Generate a graphical representation of the mapping
+    type: functional
+    validation_type: functional
+    dataspace_dimension: mapping_editor
+    execution_mode: ui_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    expected_result: The editor exposes a visual mapping representation
+    automation:
+      status: automated_opt_in
+      mode: ui_opt_in
+      ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
+      evidence_case: PT5-VS-07
+      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
+      latest_evidence: experiments/semantic-virtualization-ui-marked-20260506/components/semantic-virtualization/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+
+  - id: PT5-VS-08
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Execute mappings from the editor
+    type: functional
+    validation_type: functional
+    dataspace_dimension: mapping_editor
+    execution_mode: ui_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    expected_result: The editor can launch a mapping execution flow
+    automation:
+      status: automated_opt_in
+      mode: ui_opt_in
+      ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
+      evidence_case: PT5-VS-08
+      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
+      latest_evidence: experiments/semantic-virtualization-ui-marked-20260506/components/semantic-virtualization/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+
+  - id: PT5-VS-09
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Export mappings in standard formats
+    type: functional
+    validation_type: functional
+    dataspace_dimension: mapping_export
+    execution_mode: offline_fixture
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: A mapping can be exported as a standard RML/R2RML artifact
+    automation:
+      status: automated
+      mode: offline_fixture
+      runner: validation/components/semantic_virtualization/mapping_validation.py
+      evidence_case: PT5-VS-09
+
+  - id: PT5-VS-10
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Evaluate mapping generation methods
+    type: functional
+    validation_type: functional
+    dataspace_dimension: mapping_evaluation
+    execution_mode: offline_fixture
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: Mapping generation methods are compared using reproducible fixtures
+    automation:
+      status: automated
+      mode: offline_fixture
+      runner: validation/components/semantic_virtualization/mapping_validation.py
+      evidence_case: PT5-VS-10
+
+  - id: PT5-VS-11
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Deploy the engine and access it through the connector
+    type: integration
+    validation_type: integration
+    dataspace_dimension: connector_access
+    execution_mode: api_ui_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    expected_result: The virtualized output is exposed as HttpData and negotiable from INESData
+    automation:
+      status: automated_opt_in
+      mode: api_ui_opt_in
+      runner: validation/components/semantic_virtualization/dataspace_integration.py
+      ui_spec: validation/ui/core/07-semantic-virtualization-httpdata.spec.ts
+      evidence_cases:
+        - INT-VS-DS-01
+        - DS-UI-SV-01
+      latest_ui_evidence: experiments/semantic-virtualization-inesdata-ui-marked-20260506/components/semantic-virtualization/inesdata-ui/results.json
+      latest_dashboard: experiments/semantic-virtualization-inesdata-ui-marked-20260506/framework-report/index.html
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+
+  - id: PT5-VS-12
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Trigger controlled errors in queries or mappings
+    type: functional
+    validation_type: functional
+    dataspace_dimension: error_handling
+    execution_mode: api
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: Invalid SPARQL input returns a controlled HTTP 4xx diagnostic response
+    automation:
+      status: automated
+      mode: api
+      runner: validation/components/semantic_virtualization/runner.py
+      evidence_case: SV-API-04
+
+integration_cases:
+  - id: INT-VS-DS-01
+    description: Publish Semantic Virtualization output as HttpData in INESData
+    status: automated_opt_in
+    runner: validation/components/semantic_virtualization/dataspace_integration.py
+    latest_ui_evidence: experiments/semantic-virtualization-inesdata-ui-marked-20260506/components/semantic-virtualization/inesdata-ui/results.json
+
+  - id: INT-VS-DS-02
+    description: Consume authorized virtualized resource from the dataspace
+    status: automated_opt_in
+    runner: validation/components/semantic_virtualization/dataspace_integration.py
+    latest_ui_evidence: experiments/semantic-virtualization-inesdata-ui-marked-20260506/components/semantic-virtualization/inesdata-ui/results.json
+
+  - id: INT-VS-AMH-01
+    description: Trace Semantic Virtualization output as input context for AI Model Hub
+    status: automated
+    runner: validation/components/ai_model_hub/virtualization_traceability.py
+
+  - id: INT-VS-OH-01
+    description: Reuse ontologies published by Ontology Hub as mapping support
+    status: pending
+    planned_runner: validation/components/semantic_virtualization/mapping_validation.py
+
+ui_demo_cases:
+  - id: SV-UI-04
+    scope: semantic_virtualization
+    case_group: ui_demo
+    description: Expose ontology import and exploration panels in the mapping editor
+    type: functional_ui_demo
+    validation_type: functional
+    dataspace_dimension: mapping_editor_ontology_flow
+    execution_mode: ui_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    linked_pt5_cases:
+      - PT5-VS-06
+      - PT5-VS-07
+    expected_result: The editor shows ontology import, exploration, viewing and custom-term panels
+    automation:
+      status: automated_opt_in
+      mode: ui_opt_in
+      ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
+      evidence_case: SV-UI-04
+      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
+      latest_evidence: experiments/semantic-virtualization-ui-marked-20260506/components/semantic-virtualization/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+
+  - id: SV-UI-05
+    scope: semantic_virtualization
+    case_group: ui_demo
+    description: Create an ephemeral mapping and open the TriplesMap authoring entrypoint
+    type: functional_ui_demo
+    validation_type: functional
+    dataspace_dimension: mapping_editor_authoring_flow
+    execution_mode: ui_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    linked_pt5_cases:
+      - PT5-VS-01
+      - PT5-VS-05
+      - PT5-VS-06
+    expected_result: The editor creates a browser-session mapping and reaches the Build Mapping flow safely
+    automation:
+      status: automated_opt_in
+      mode: ui_opt_in
+      ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
+      evidence_case: SV-UI-05
+      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
+      latest_evidence: experiments/semantic-virtualization-ui-marked-20260506/components/semantic-virtualization/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+
+  - id: SV-UI-06
+    scope: semantic_virtualization
+    case_group: ui_demo
+    description: Expose mapping export and graph materialisation checkpoints
+    type: functional_ui_demo
+    validation_type: functional
+    dataspace_dimension: mapping_editor_export_materialisation_flow
+    execution_mode: ui_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    linked_pt5_cases:
+      - PT5-VS-08
+      - PT5-VS-09
+    expected_result: The editor shows mapping export controls and materialisation preconditions
+    automation:
+      status: automated_opt_in
+      mode: ui_opt_in
+      ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
+      evidence_case: SV-UI-06
+      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
+      latest_evidence: experiments/semantic-virtualization-ui-marked-20260506/components/semantic-virtualization/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1

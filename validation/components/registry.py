@@ -16,6 +16,9 @@ from validation.components.ai_model_hub.component_runner import (
 from validation.components.ontology_hub.functional.component_runner import (
     run_ontology_hub_component_validation as run_ontology_hub_functional_component_validation,
 )
+from validation.components.semantic_virtualization.component_runner import (
+    run_semantic_virtualization_component_validation,
+)
 
 
 ComponentRunner = Callable[[str, str | None], dict]
@@ -54,6 +57,10 @@ COMPONENT_REGISTRY: dict[str, ComponentValidationRegistration] = {
     "ai-model-hub": _validation_registration(
         COMPONENT_CONTRACTS["ai-model-hub"],
         runner=run_ai_model_hub_component_validation,
+    ),
+    "semantic-virtualization": _validation_registration(
+        COMPONENT_CONTRACTS["semantic-virtualization"],
+        runner=run_semantic_virtualization_component_validation,
     ),
 }
 

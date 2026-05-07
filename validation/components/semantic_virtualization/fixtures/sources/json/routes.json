@@ -1,0 +1,12 @@
+[
+  {
+    "route_id": "c4",
+    "route_short_name": "C4",
+    "main_stop_id": "atocha"
+  },
+  {
+    "route_id": "ml4",
+    "route_short_name": "ML4",
+    "main_stop_id": "parla_centro"
+  }
+]

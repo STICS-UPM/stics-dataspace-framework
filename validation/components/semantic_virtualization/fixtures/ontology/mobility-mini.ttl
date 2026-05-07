@@ -1,0 +1,32 @@
+@prefix mob: <https://w3id.org/pionera/validation/mobility#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+mob:MobilityOntology a owl:Ontology ;
+    rdfs:label "PIONERA mobility validation ontology" .
+
+mob:Stop a owl:Class ;
+    rdfs:label "Public transport stop" .
+
+mob:Route a owl:Class ;
+    rdfs:label "Public transport route" .
+
+mob:hasStopName a owl:DatatypeProperty ;
+    rdfs:domain mob:Stop ;
+    rdfs:range rdfs:Literal .
+
+mob:hasLatitude a owl:DatatypeProperty ;
+    rdfs:domain mob:Stop ;
+    rdfs:range rdfs:Literal .
+
+mob:hasLongitude a owl:DatatypeProperty ;
+    rdfs:domain mob:Stop ;
+    rdfs:range rdfs:Literal .
+
+mob:routeShortName a owl:DatatypeProperty ;
+    rdfs:domain mob:Route ;
+    rdfs:range rdfs:Literal .
+
+mob:servesStop a owl:ObjectProperty ;
+    rdfs:domain mob:Route ;
+    rdfs:range mob:Stop .

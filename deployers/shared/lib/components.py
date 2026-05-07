@@ -40,7 +40,7 @@ COMPONENT_CONTRACTS: dict[str, ComponentContract] = {
     "semantic-virtualization": ComponentContract(
         component="semantic-virtualization",
         supported_adapters=("inesdata", "edc"),
-        deployable_adapters=(),
+        deployable_adapters=("inesdata",),
         deployment_strategy="shared-chart-active-adapter",
         validation_groups=("semantic-virtualization",),
     ),
@@ -99,7 +99,7 @@ def configured_component_host(
     if explicit_host:
         return explicit_host
 
-    if normalized in {"ontology-hub", "ai-model-hub"}:
+    if normalized in {"ontology-hub", "ai-model-hub", "semantic-virtualization"}:
         ds_domain = str(config.get("DS_DOMAIN_BASE") or "").strip()
         ds_name = str(dataspace_name or "").strip()
         if ds_domain and ds_name:

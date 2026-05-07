@@ -1,0 +1,24 @@
+@prefix ex: <https://w3id.org/pionera/validation/resource/> .
+@prefix mob: <https://w3id.org/pionera/validation/mobility#> .
+
+<https://w3id.org/pionera/validation/resource/stop/parla_centro>
+    a mob:Stop ;
+    mob:hasStopName "Parla Centro" ;
+    mob:hasLatitude "40.2370" ;
+    mob:hasLongitude "-3.7679" .
+
+<https://w3id.org/pionera/validation/resource/stop/atocha>
+    a mob:Stop ;
+    mob:hasStopName "Atocha" ;
+    mob:hasLatitude "40.4066" ;
+    mob:hasLongitude "-3.6906" .
+
+<https://w3id.org/pionera/validation/resource/route/c4>
+    a mob:Route ;
+    mob:routeShortName "C4" ;
+    mob:servesStop <https://w3id.org/pionera/validation/resource/stop/atocha> .
+
+<https://w3id.org/pionera/validation/resource/route/ml4>
+    a mob:Route ;
+    mob:routeShortName "ML4" ;
+    mob:servesStop <https://w3id.org/pionera/validation/resource/stop/parla_centro> .

@@ -40,6 +40,9 @@ class SharedComponentsContractTests(unittest.TestCase):
         self.assertEqual(ontology.deployable_adapters, ("inesdata",))
         self.assertEqual(ai_model_hub.supported_adapters, ("inesdata", "edc"))
         self.assertEqual(ai_model_hub.deployable_adapters, ("inesdata",))
+        semantic_virtualization = get_component_contract("semantic_virtualization")
+        self.assertEqual(semantic_virtualization.supported_adapters, ("inesdata", "edc"))
+        self.assertEqual(semantic_virtualization.deployable_adapters, ("inesdata",))
         self.assertIn("semantic-virtualization", COMPONENT_CONTRACTS)
 
     def test_components_for_adapter_filters_by_current_deployable_runtime(self):
@@ -49,7 +52,7 @@ class SharedComponentsContractTests(unittest.TestCase):
 
         self.assertEqual(
             components_for_adapter(config, "inesdata", deployable_only=True),
-            ["ontology-hub", "ai-model-hub"],
+            ["ontology-hub", "ai-model-hub", "semantic-virtualization"],
         )
         self.assertEqual(
             components_for_adapter(config, "edc", deployable_only=True),
@@ -61,9 +64,11 @@ class SharedComponentsContractTests(unittest.TestCase):
         )
 
     def test_component_validation_groups_follow_registered_contract(self):
-        groups = component_validation_groups(["ontology-hub", "ai-model-hub", "ontology-hub"])
+        groups = component_validation_groups(
+            ["ontology-hub", "ai-model-hub", "semantic-virtualization", "ontology-hub"]
+        )
 
-        self.assertEqual(groups, ["ontology-hub", "ai-model-hub"])
+        self.assertEqual(groups, ["ontology-hub", "ai-model-hub", "semantic-virtualization"])
 
     def test_summarize_components_for_adapter_separates_pending_support(self):
         summary = summarize_components_for_adapter(
@@ -106,6 +111,15 @@ class SharedComponentsContractTests(unittest.TestCase):
         )
 
         self.assertEqual(host, "ai-model-hub-demo.custom.ds.example.org")
+
+    def test_configured_component_host_derives_semantic_virtualization_host_from_dataspace_domain(self):
+        host = configured_component_host(
+            "semantic-virtualization",
+            {"DS_DOMAIN_BASE": "custom.ds.example.org"},
+            dataspace_name="demo",
+        )
+
+        self.assertEqual(host, "semantic-virtualization-demo.custom.ds.example.org")
 
     def test_infer_component_hostname_prefers_configured_host_over_chart_values(self):
         host = infer_component_hostname(

@@ -34,6 +34,10 @@ class INESDataComponentsAdapter:
     _ONTOLOGY_HUB_REPO_DIRNAME = "Ontology-Hub"
     _AI_MODEL_HUB_REPO_URL = "https://github.com/ProyectoPIONERA/AIModelHub.git"
     _AI_MODEL_HUB_REPO_DIRNAME = "AIModelHub"
+    _RDFLIB_VIRT_REPO_URL = "https://github.com/ProyectoPIONERA/rdflib-virt.git"
+    _RDFLIB_VIRT_REPO_DIRNAME = "rdflib-virt"
+    _MAPPING_EDITOR_REPO_URL = "https://github.com/ProyectoPIONERA/mapping-editor.git"
+    _MAPPING_EDITOR_REPO_DIRNAME = "mapping-editor"
 
     def __init__(
         self,
@@ -430,6 +434,17 @@ class INESDataComponentsAdapter:
             return None
         return f"{repository}:{tag}"
 
+    @staticmethod
+    def _extract_mapping_editor_image_ref(values: dict):
+        mapping_editor = (values or {}).get("mappingEditor") or {}
+        image = mapping_editor.get("image") or {}
+        repository = (image.get("repository") or "").strip()
+        tag_raw = image.get("tag")
+        tag = str(tag_raw).strip() if tag_raw is not None else ""
+        if not repository or not tag:
+            return None
+        return f"{repository}:{tag}"
+
     def _minikube_is_available(self, profile: str) -> bool:
         profile_q = shlex.quote(profile)
         return self.run_silent(f"minikube -p {profile_q} status") is not None
@@ -552,6 +567,112 @@ class INESDataComponentsAdapter:
             ),
         )
 
+    def _resolve_rdflib_virt_source_dir(self, deployer_config: dict) -> str:
+        sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")
+        rdflib_virt_dir = os.path.join(sources_dir, self._RDFLIB_VIRT_REPO_DIRNAME)
+        pyproject_path = os.path.join(rdflib_virt_dir, "pyproject.toml")
+        package_path = os.path.join(rdflib_virt_dir, "src", "pycottas", "__init__.py")
+        if os.path.isfile(pyproject_path) and os.path.isfile(package_path):
+            return rdflib_virt_dir
+
+        should_clone = not os.path.isdir(rdflib_virt_dir)
+        if not should_clone:
+            try:
+                remaining_entries = os.listdir(rdflib_virt_dir)
+            except OSError:
+                remaining_entries = []
+            should_clone = len(remaining_entries) == 0
+
+        if should_clone:
+            os.makedirs(sources_dir, exist_ok=True)
+            if os.path.isdir(rdflib_virt_dir):
+                try:
+                    os.rmdir(rdflib_virt_dir)
+                except OSError:
+                    pass
+            print(f"Cloning rdflib-virt into {rdflib_virt_dir} ...")
+            import subprocess
+            try:
+                subprocess.run(["git", "clone", self._RDFLIB_VIRT_REPO_URL, rdflib_virt_dir], check=True)
+            except Exception as exc:
+                self._fail(
+                    "Could not clone rdflib-virt repository",
+                    root_cause=str(exc),
+                )
+
+        if os.path.isfile(pyproject_path) and os.path.isfile(package_path):
+            return rdflib_virt_dir
+
+        self._fail(
+            "rdflib-virt source directory is not usable",
+            root_cause=(
+                f"Expected pyproject.toml at: {pyproject_path} and package at: {package_path}. "
+                "Level 5 expects the canonical checkout at "
+                "adapters/inesdata/sources/rdflib-virt."
+            ),
+        )
+
+    def _resolve_mapping_editor_source_dir(self, deployer_config: dict) -> str:
+        sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")
+        mapping_editor_dir = os.path.join(sources_dir, self._MAPPING_EDITOR_REPO_DIRNAME)
+        app_path = os.path.join(mapping_editor_dir, "Mapping_Editor.py")
+        requirements_path = os.path.join(mapping_editor_dir, "requirements.txt")
+        if os.path.isfile(app_path) and os.path.isfile(requirements_path):
+            return mapping_editor_dir
+
+        should_clone = not os.path.isdir(mapping_editor_dir)
+        if not should_clone:
+            try:
+                remaining_entries = os.listdir(mapping_editor_dir)
+            except OSError:
+                remaining_entries = []
+            should_clone = len(remaining_entries) == 0
+
+        if should_clone:
+            os.makedirs(sources_dir, exist_ok=True)
+            if os.path.isdir(mapping_editor_dir):
+                try:
+                    os.rmdir(mapping_editor_dir)
+                except OSError:
+                    pass
+            print(f"Cloning mapping-editor into {mapping_editor_dir} ...")
+            import subprocess
+            try:
+                subprocess.run(["git", "clone", self._MAPPING_EDITOR_REPO_URL, mapping_editor_dir], check=True)
+            except Exception as exc:
+                self._fail(
+                    "Could not clone mapping-editor repository",
+                    root_cause=str(exc),
+                )
+
+        if os.path.isfile(app_path) and os.path.isfile(requirements_path):
+            return mapping_editor_dir
+
+        self._fail(
+            "mapping-editor source directory is not usable",
+            root_cause=(
+                f"Expected Mapping_Editor.py at: {app_path} and requirements.txt at: {requirements_path}. "
+                "Level 5 expects the canonical checkout at "
+                "adapters/inesdata/sources/mapping-editor."
+            ),
+        )
+
+    def _semantic_virtualization_api_dockerfile(self) -> str:
+        return os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "containers",
+            "semantic-virtualization-api",
+            "Dockerfile",
+        )
+
+    def _mapping_editor_dockerfile(self) -> str:
+        return os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "containers",
+            "mapping-editor",
+            "Dockerfile",
+        )
+
     def _ontology_hub_build_args(self, ontology_hub_dir: str) -> dict:
         compose_path = os.path.join(ontology_hub_dir, "docker-compose.yml")
         if os.path.isfile(compose_path):
@@ -657,6 +778,47 @@ class INESDataComponentsAdapter:
         if self.run(cmd, check=False, cwd=dashboard_dir) is None:
             self._fail("Failed to build AI Model Hub image on host", root_cause=image_ref)
 
+    def _build_semantic_virtualization_image_on_host(self, image_ref: str, deployer_config: dict):
+        rdflib_virt_dir = self._resolve_rdflib_virt_source_dir(deployer_config)
+        # Keep the UI/editor source available as part of the component bundle,
+        # while the A5.2 API image is built from rdflib-virt.
+        self._resolve_mapping_editor_source_dir(deployer_config)
+        dockerfile_path = self._semantic_virtualization_api_dockerfile()
+        if not os.path.isfile(dockerfile_path):
+            self._fail(
+                "Semantic Virtualization API Dockerfile not found",
+                root_cause=(
+                    f"Expected Dockerfile at: {dockerfile_path}. "
+                    "The framework wraps rdflib-virt as a local SPARQL API for A5.2 validation."
+                ),
+            )
+
+        image_q = shlex.quote(image_ref)
+        dockerfile_q = shlex.quote(dockerfile_path)
+        print(f"\nBuilding local image on host: {image_ref}")
+        cmd = f"docker build -t {image_q} -f {dockerfile_q} ."
+        if self.run(cmd, check=False, cwd=rdflib_virt_dir) is None:
+            self._fail("Failed to build Semantic Virtualization image on host", root_cause=image_ref)
+
+    def _build_mapping_editor_image_on_host(self, image_ref: str, deployer_config: dict):
+        mapping_editor_dir = self._resolve_mapping_editor_source_dir(deployer_config)
+        dockerfile_path = self._mapping_editor_dockerfile()
+        if not os.path.isfile(dockerfile_path):
+            self._fail(
+                "mapping-editor Dockerfile not found",
+                root_cause=(
+                    f"Expected Dockerfile at: {dockerfile_path}. "
+                    "The framework deploys mapping-editor as an opt-in Streamlit UI for A5.2 validation."
+                ),
+            )
+
+        image_q = shlex.quote(image_ref)
+        dockerfile_q = shlex.quote(dockerfile_path)
+        print(f"\nBuilding local image on host: {image_ref}")
+        cmd = f"docker build -t {image_q} -f {dockerfile_q} ."
+        if self.run(cmd, check=False, cwd=mapping_editor_dir) is None:
+            self._fail("Failed to build mapping-editor image on host", root_cause=image_ref)
+
     def _effective_component_values(self, normalized_component: str, values_file: str, deployer_config: dict) -> dict:
         values = dict(self._safe_load_yaml_file(values_file) or {})
         overrides = self._component_values_override_payload(normalized_component, deployer_config)
@@ -728,6 +890,21 @@ class INESDataComponentsAdapter:
         if normalized_component == "ai-model-hub":
             self._build_ai_model_hub_image_on_host(image_ref, deployer_config)
             self._load_image_into_cluster_runtime(cluster_type, profile, image_ref)
+            return True
+
+        if normalized_component == "semantic-virtualization":
+            self._build_semantic_virtualization_image_on_host(image_ref, deployer_config)
+            self._load_image_into_cluster_runtime(cluster_type, profile, image_ref)
+            if self._semantic_virtualization_mapping_editor_enabled(deployer_config):
+                editor_image_ref = self._extract_mapping_editor_image_ref(values)
+                if not editor_image_ref:
+                    self._fail(
+                        "mapping-editor chart image is not declared",
+                        root_cause=f"Values file: {values_file}",
+                    )
+                if editor_image_ref.lower().endswith(":local"):
+                    self._build_mapping_editor_image_on_host(editor_image_ref, deployer_config)
+                    self._load_image_into_cluster_runtime(cluster_type, profile, editor_image_ref)
             return True
 
         if cluster_type == "minikube" and self._minikube_has_image(profile, image_ref):
@@ -877,7 +1054,50 @@ class INESDataComponentsAdapter:
             if connector_config:
                 overrides.setdefault("config", {})["edcConnectorConfig"] = connector_config
 
+        if normalized == "semantic-virtualization":
+            host = self._configured_component_host(normalized, deployer_config)
+            if host:
+                overrides["ingress"] = {
+                    "enabled": True,
+                    "host": host,
+                }
+                overrides.setdefault("env", {})["SEMANTIC_VIRTUALIZATION_PUBLIC_URL"] = self._to_http_url(host)
+
+            if self._semantic_virtualization_mapping_editor_enabled(deployer_config):
+                editor_host = self._semantic_virtualization_mapping_editor_host(deployer_config)
+                mapping_editor = {"enabled": True}
+                if editor_host:
+                    mapping_editor["ingress"] = {
+                        "enabled": True,
+                        "host": editor_host,
+                    }
+                overrides["mappingEditor"] = mapping_editor
+
         return overrides
+
+    def _semantic_virtualization_mapping_editor_enabled(self, deployer_config: dict) -> bool:
+        config = dict(deployer_config or {})
+        enabled = config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED")
+        if enabled is None:
+            enabled = config.get("MAPPING_EDITOR_ENABLED")
+        return self._parse_bool(enabled, default=False)
+
+    def _semantic_virtualization_mapping_editor_host(self, deployer_config: dict) -> str:
+        config = dict(deployer_config or {})
+        explicit = (
+            config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST")
+            or config.get("MAPPING_EDITOR_HOST")
+            or config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL")
+        )
+        explicit_host = self._strip_url_scheme(explicit or "")
+        if explicit_host:
+            return explicit_host
+
+        ds_domain = str(config.get("DS_DOMAIN_BASE") or "").strip()
+        ds_name = self._dataspace_name()
+        if ds_domain and ds_name:
+            return f"semantic-virtualization-editor-{ds_name}.{ds_domain}"
+        return ""
 
     def _resolve_ontology_hub_self_host_alias_ip(self, deployer_config: dict) -> str:
         explicit_ip = (deployer_config.get("ONTOLOGY_HUB_SELF_HOST_ALIAS_IP") or "").strip()

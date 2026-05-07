@@ -1,0 +1,25 @@
+{{- $mappingEditor := .Values.mappingEditor | default (dict) }}
+{{- $service := $mappingEditor.service | default (dict) }}
+{{- $enabled := $mappingEditor.enabled | default false }}
+{{- if $enabled }}
+{{- $serviceType := $service.type | default "ClusterIP" }}
+{{- $servicePort := $service.port | default 8501 }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "semantic-virtualization.editorFullname" . }}
+  labels:
+    {{- include "semantic-virtualization.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mapping-editor
+spec:
+  type: {{ $serviceType }}
+  ports:
+    - port: {{ $servicePort }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: {{ include "semantic-virtualization.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: mapping-editor
+{{- end }}
