@@ -144,6 +144,9 @@ test_cases:
       status: automated
       mode: api_ui
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_03_catalog_publication.spec.js
+      latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
+      latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
       notes: The first automation slice bootstraps a provider-side published asset via management API and verifies external visibility from the consumer catalog UI.
 
   - id: PT5-MH-04
@@ -284,6 +287,9 @@ test_cases:
       status: automated
       mode: api_ui
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_08_contract_negotiation.spec.js
+      latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
+      latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
       notes: The first automation slice publishes a provider asset, negotiates it from the consumer catalog UI and confirms the resulting agreement through the consumer management API.
 
   - id: PT5-MH-09
@@ -293,9 +299,9 @@ test_cases:
     type: api
     validation_type: integration
     dataspace_dimension: execution
-    execution_mode: api_ui
-    coverage_status: not_currently_executable
-    mapping_status: partial
+    execution_mode: api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
     preconditions:
       - A valid agreement exists for the remote model
       - The transfer mechanism is configured
@@ -305,6 +311,16 @@ test_cases:
     expected_result: Authorized transfer
     traceability:
       - MH-33
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/connector_governance_api.py
+      evidence_case: PT5-MH-09
+      enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
+      latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
+      latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner publishes a temporary HttpData model endpoint, negotiates access and starts an authorized model access transfer from the consumer connector.
 
   - id: PT5-MH-10
     component: ai_model_hub
@@ -313,30 +329,41 @@ test_cases:
     type: api
     validation_type: integration
     dataspace_dimension: execution
-    execution_mode: api_ui
-    coverage_status: not_currently_executable
+    execution_mode: api_opt_in
+    coverage_status: api_smoke_opt_in
     mapping_status: partial
     preconditions:
-      - An executable model with an accessible endpoint exists
-      - The corresponding contractual agreement is active
+      - A controlled executable model endpoint exists as HttpData
+      - For remote models, the corresponding contractual agreement is active
     steps:
-      - Execute inference through the endpoint
+      - Create a temporary HttpData asset for the executable endpoint
+      - Execute inference through /management/v3/modelexecutions/execute
       - Validate the model response
+      - Delete the temporary asset
     expected_result: Response conforms to the model contract
     traceability:
       - MH-34
       - MH-35
+    notes: A connector-side API smoke is available for controlled HttpData model endpoints; the full FLARES functional inference path remains pending.
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/model_execution_api.py
+      latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
+      latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner creates a temporary HttpData asset, calls /management/v3/modelexecutions/execute and deletes the asset after execution.
 
   - id: PT5-MH-11
     component: ai_model_hub
     case_group: pt5
     description: Contracting and execution
-    type: ui
+    type: api
     validation_type: integration
     dataspace_dimension: execution
-    execution_mode: ui
-    coverage_status: not_currently_executable
-    mapping_status: partial
+    execution_mode: api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
     preconditions:
       - Active agreements exist for consumable models
     steps:
@@ -345,6 +372,13 @@ test_cases:
     expected_result: Only active agreements are available
     traceability:
       - MH-36
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/connector_governance_api.py
+      evidence_case: PT5-MH-11
+      enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
+      notes: The runner lists contract agreements after negotiation and selects the agreement linked to the temporary model asset.
 
   - id: PT5-MH-12
     component: ai_model_hub
@@ -353,9 +387,9 @@ test_cases:
     type: ui
     validation_type: functional
     dataspace_dimension: comparison
-    execution_mode: ui
-    coverage_status: not_currently_executable
-    mapping_status: partial
+    execution_mode: api_fixture_ui_ready
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
     preconditions:
       - Multiple comparable models exist
       - The comparison module is accessible
@@ -365,6 +399,17 @@ test_cases:
     expected_result: Models are selected correctly
     traceability:
       - MH-37
+    automation:
+      status: automated_opt_in
+      mode: api_fixture
+      runner: validation/components/ai_model_hub/model_benchmarking_api.py
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      evidence_case: PT5-MH-12
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1
+      ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
+      latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner selects two controlled FLARES-mini compatible model assets and records the benchmark-ready dataset mapping. The Playwright UI demo reuses the same fixture and controlled infer route without touching AIModelHub sources.
 
   - id: PT5-MH-13
     component: ai_model_hub
@@ -373,9 +418,9 @@ test_cases:
     type: api
     validation_type: functional
     dataspace_dimension: comparison
-    execution_mode: api_ui
-    coverage_status: not_currently_executable
-    mapping_status: partial
+    execution_mode: api_fixture
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
     preconditions:
       - Multiple comparable and executable models exist
       - The same input can be sent to all of them
@@ -385,6 +430,17 @@ test_cases:
     expected_result: Executions are comparable
     traceability:
       - MH-38
+    automation:
+      status: automated_opt_in
+      mode: api_fixture
+      runner: validation/components/ai_model_hub/model_benchmarking_api.py
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      evidence_case: PT5-MH-13
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1
+      ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
+      latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner executes both controlled models over the same FLARES-mini input fingerprints and stores per-model execution evidence. The Playwright demo clicks Run Benchmark and shows those executions in the UI.
 
   - id: PT5-MH-14
     component: ai_model_hub
@@ -393,9 +449,9 @@ test_cases:
     type: api
     validation_type: functional
     dataspace_dimension: comparison
-    execution_mode: api_ui
-    coverage_status: not_currently_executable
-    mapping_status: partial
+    execution_mode: api_fixture
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
     preconditions:
       - The comparison module produces aggregated metrics
     steps:
@@ -404,6 +460,17 @@ test_cases:
     expected_result: Metrics are coherent with the task
     traceability:
       - MH-39
+    automation:
+      status: automated_opt_in
+      mode: api_fixture
+      runner: validation/components/ai_model_hub/model_benchmarking_api.py
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      evidence_case: PT5-MH-14
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1
+      ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
+      latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner calculates accuracy, success rate, latency, throughput and score, then validates ranking coherence. The Playwright demo asserts that the UI renders the metrics columns.
 
   - id: PT5-MH-15
     component: ai_model_hub
@@ -412,9 +479,9 @@ test_cases:
     type: ui
     validation_type: functional
     dataspace_dimension: comparison
-    execution_mode: ui
-    coverage_status: not_currently_executable
-    mapping_status: partial
+    execution_mode: api_fixture_ui_ready
+    coverage_status: automated_partial_ui
+    mapping_status: phase_3
     preconditions:
       - Comparison metrics have already been calculated
     steps:
@@ -425,6 +492,17 @@ test_cases:
       - MH-40
       - MH-41
       - MH-42
+    automation:
+      status: automated_opt_in
+      mode: api_fixture_ui_ready
+      runner: validation/components/ai_model_hub/model_benchmarking_api.py
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      evidence_case: PT5-MH-15
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1
+      ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
+      latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner produces renderable table rows and chart series for the comparison dashboard. The Playwright demo now validates the visible table and best-model summary for auditors.
 
   - id: PT5-MH-16
     component: ai_model_hub
@@ -433,9 +511,9 @@ test_cases:
     type: api
     validation_type: integration
     dataspace_dimension: identity
-    execution_mode: api
-    coverage_status: not_currently_executable
-    mapping_status: partial
+    execution_mode: api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
     preconditions:
       - A working OIDC/OAuth2 integration exists in the final environment
     steps:
@@ -444,7 +522,13 @@ test_cases:
     expected_result: Access is authenticated correctly
     traceability:
       - MH-45
-    notes: This case should not be automated in the framework until the identity contract of the final deployment is fixed.
+    notes: Automated through the connector OIDC flow used by the current INESData deployment; tokens and Bearer headers are intentionally excluded from evidence.
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/connector_governance_api.py
+      evidence_case: PT5-MH-16
+      enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
 
   - id: PT5-MH-17
     component: ai_model_hub
@@ -453,9 +537,9 @@ test_cases:
     type: api
     validation_type: non_functional
     dataspace_dimension: governance
-    execution_mode: checklist
-    coverage_status: not_currently_executable
-    mapping_status: partial
+    execution_mode: api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
     preconditions:
       - The system exposes verifiable operational traceability
     steps:
@@ -464,6 +548,13 @@ test_cases:
     expected_result: Operations are recorded
     traceability:
       - MH-46
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/connector_governance_api.py
+      evidence_case: PT5-MH-17
+      enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
+      notes: The runner writes a non-secret traceability record with operation names, HTTP statuses and created entity identifiers.
 
   - id: PT5-MH-18
     component: ai_model_hub
@@ -472,9 +563,9 @@ test_cases:
     type: api
     validation_type: integration
     dataspace_dimension: integration
-    execution_mode: api_ui
-    coverage_status: not_currently_executable
-    mapping_status: partial
+    execution_mode: api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
     preconditions:
       - The component is integrated with EDC APIs and the PT5 environment connectors
     steps:
@@ -483,6 +574,16 @@ test_cases:
     expected_result: Functional integration
     traceability:
       - MH-47
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/connector_governance_api.py
+      evidence_case: PT5-MH-18
+      enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
+      latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
+      latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner consumes provider and consumer connector APIs for asset publication, policy, contract definition, catalog, negotiation, agreements and model access.
 
 functional_use_cases:
   - id: MH-LING-01
@@ -504,14 +605,52 @@ functional_use_cases:
       - Negotiate the corresponding contract agreement from the consumer side
       - Bootstrap benchmark-ready linguistic models in the consumer
       - Load the FLARES benchmark dataset inside Model Benchmarking
-      - Capture the current inference capability as part of the suite evidence
-      - Evolve the suite towards expected linguistic validation outputs once /api/infer is available
-    expected_result: FLARES-mini can populate the dataspace on demand, reach a negotiated agreement and prepare the linguistic benchmarking flow without requiring global seeding
+      - Execute a FLARES-mini record through the connector-side model execution API
+      - Link the execution evidence to expected_outputs.json for the future reliability-label assertion
+    expected_result: FLARES-mini can populate the dataspace on demand, reach a negotiated agreement, prepare the linguistic benchmarking flow and execute a FLARES payload through the connector API without requiring global seeding
     traceability:
       - MH-LING-01
-    notes: Opt-in scaffold for Phase 3. The current automated slice covers provider publication, consumer negotiation, benchmark-ready dataset/model linkage and records that the local infer endpoint still returns 404.
+    notes: Opt-in scaffold for Phase 3. The current automated slice covers provider publication, consumer negotiation and benchmark-ready dataset/model linkage; connector-side model execution is validated through the PT5-MH-10 runner with --flares-mini. The semantic FLARES reliability-label comparison remains pending until a FLARES-compatible model endpoint is available.
     automation:
       status: automated
       mode: api_ui_opt_in
       ui_spec: validation/components/ai_model_hub/functional/specs/mh_ling_01_flares_reliability.spec.js
-      notes: Suite-specific bootstrap publishes FLARES-mini only when the linguistic functional suite is explicitly enabled, then validates catalog discovery, contract negotiation, benchmark readiness and the current infer-endpoint blocker.
+      api_runner: validation/components/ai_model_hub/model_execution_api.py --flares-mini
+      notes: Suite-specific bootstrap publishes FLARES-mini only when the linguistic functional suite is explicitly enabled, while the API runner validates connector-side execution with a FLARES-mini payload and records the remaining model-specific semantic comparison gap.
+
+  - id: MH-MOB-01
+    component: ai_model_hub
+    case_group: functional
+    description: Mobility domain use case with GTFS-Madrid-Bench-mini
+    type: fixture_api
+    validation_type: functional
+    dataspace_dimension: mobility
+    execution_mode: api_fixture_opt_in
+    coverage_status: automated_fixture
+    mapping_status: phase_3
+    preconditions:
+      - GTFS-Madrid-Bench-mini fixture is available in the framework
+      - At least two controlled mobility benchmark models are selected by the suite
+    steps:
+      - Load GTFS-Madrid-Bench-mini metadata, schema, sample and expected outputs
+      - Validate GTFS-like join keys for stops, routes, trips and stop times
+      - Build deterministic mobility benchmark rows from transfer_benchmark_cases
+      - Execute controlled mobility route-estimation models against the benchmark rows
+      - Compare route sequence and travel-time outputs against expected_outputs.json
+      - Generate UI-ready ranking, table and chart data for a future Model Benchmarking demo
+    expected_result: GTFS-Madrid-Bench-mini produces a reproducible mobility benchmark evidence package with validated GTFS-like joins, expected route/duration outputs and ranked model metrics
+    traceability:
+      - MH-MOB-01
+      - GTFS-Madrid-Bench
+    notes: Safe Phase 3 slice for A5.2. The suite does not call a live mobility inference endpoint or mutate INESData; it validates the functional mobility benchmark contract with deterministic fixture evidence until the stable UI/API route is selected.
+    automation:
+      status: automated_opt_in
+      mode: api_fixture
+      runner: validation/components/ai_model_hub/mobility_benchmarking_api.py
+      enable_with: AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING=1
+      fixture: validation/components/ai_model_hub/fixtures/datasets/mobility/gtfs-madrid-bench-mini
+      unit_test: tests/test_ai_model_hub_gtfs_fixture.py
+      suite_test: tests/test_ai_model_hub_mobility_benchmarking_api.py
+      integration_runner: validation/components/ai_model_hub/virtualization_traceability.py
+      integration_case: INT-VS-AMH-01
+      notes: Runner is opt-in and writes JSON evidence under experiments without changing component sources or cluster state.

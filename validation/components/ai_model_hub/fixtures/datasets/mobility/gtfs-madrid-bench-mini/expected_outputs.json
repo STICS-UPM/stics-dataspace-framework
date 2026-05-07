@@ -1,0 +1,66 @@
+{
+  "benchmark_sample": {
+    "recordCounts": {
+      "stops": 5,
+      "routes": 2,
+      "trips": 2,
+      "stop_times": 6,
+      "transfer_benchmark_cases": 3
+    },
+    "routeStopSequences": [
+      {
+        "route_id": "mad-route-c1",
+        "trip_id": "mad-trip-c1-am",
+        "stop_ids": [
+          "mad-stop-atocha",
+          "mad-stop-sol",
+          "mad-stop-moncloa"
+        ]
+      },
+      {
+        "route_id": "mad-route-c2",
+        "trip_id": "mad-trip-c2-am",
+        "stop_ids": [
+          "mad-stop-nuevos-ministerios",
+          "mad-stop-sol",
+          "mad-stop-legazpi"
+        ]
+      }
+    ],
+    "transferCases": [
+      {
+        "case_id": "mob-case-001",
+        "expected_route_id": "mad-route-c1",
+        "expected_trip_id": "mad-trip-c1-am",
+        "expected_duration_minutes": 18
+      },
+      {
+        "case_id": "mob-case-002",
+        "expected_route_id": "mad-route-c2",
+        "expected_trip_id": "mad-trip-c2-am",
+        "expected_duration_minutes": 18
+      },
+      {
+        "case_id": "mob-case-003",
+        "expected_route_id": "mad-route-c1",
+        "expected_trip_id": "mad-trip-c1-am",
+        "expected_duration_minutes": 8
+      }
+    ]
+  },
+  "integrationExpectations": {
+    "joinKeys": [
+      "route_id",
+      "trip_id",
+      "stop_id"
+    ],
+    "minimumQueryableEntities": [
+      "stops",
+      "routes",
+      "trips",
+      "stop_times"
+    ],
+    "semanticVirtualizationReady": true,
+    "mobilityModelReady": false
+  }
+}

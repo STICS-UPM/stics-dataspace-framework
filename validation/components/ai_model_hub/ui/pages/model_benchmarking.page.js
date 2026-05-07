@@ -19,6 +19,16 @@ class ModelBenchmarkingPage {
     this.datasetParseMessage = page.locator("div.text-success").filter({
       hasText: /Loaded \d+ rows from dataspace asset/i,
     });
+    this.resultsSection = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Benchmark Results" }) })
+      .first();
+    this.bestModelSummary = this.resultsSection.locator("div").filter({
+      hasText: /Best Model:/i,
+    }).first();
+    this.resultsTable = this.resultsSection.locator("table").first();
+    this.resultsRows = this.resultsTable.locator("tbody tr");
+    this.errorAlert = page.locator(".alert-error");
   }
 
   async goto() {
@@ -68,6 +78,22 @@ class ModelBenchmarkingPage {
     await expect(this.loadSelectedDatasetButton).toBeEnabled();
     await clickMarked(this.loadSelectedDatasetButton);
     await expect(this.datasetParseMessage).toBeVisible({ timeout: 30000 });
+  }
+
+  async runBenchmark() {
+    await expect(this.runBenchmarkButton).toBeEnabled({ timeout: 20000 });
+    await clickMarked(this.runBenchmarkButton);
+    await expect(this.statusMessage).toContainText(/Benchmark completed/i, { timeout: 60000 });
+  }
+
+  async waitForBenchmarkResults(expectedRows = 2) {
+    await expect(this.bestModelSummary).toBeVisible({ timeout: 30000 });
+    await expect(this.resultsTable).toBeVisible({ timeout: 30000 });
+    await expect(this.resultsRows).toHaveCount(expectedRows, { timeout: 30000 });
+  }
+
+  async resultRowsText() {
+    return this.resultsRows.allInnerTexts();
   }
 }
 

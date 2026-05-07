@@ -22,7 +22,7 @@ module.exports = defineConfig({
   outputDir,
   retries: 0,
   use: {
-    trace: "on",
+    trace: process.env.PLAYWRIGHT_TRACE || "off",
     screenshot: "only-on-failure",
     video: "on",
     ignoreHTTPSErrors: true,

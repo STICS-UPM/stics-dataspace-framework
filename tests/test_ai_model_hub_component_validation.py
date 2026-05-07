@@ -209,6 +209,287 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertEqual(result["pt5_case_results"][0]["traceability"], ["MH-01"])
             self.assertTrue(result["artifacts"]["ui_report_json"].endswith("ui.json"))
 
+    def test_run_ai_model_hub_component_validation_can_include_connector_governance_opt_in(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_result = {
+                "component": "ai-model-hub",
+                "suite": "bootstrap",
+                "status": "passed",
+                "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+                "executed_cases": [
+                    {
+                        "test_case_id": "MH-BOOTSTRAP-01",
+                        "type": "api",
+                        "case_group": "support",
+                        "validation_type": "support",
+                        "dataspace_dimension": "support",
+                        "mapping_status": "supporting",
+                        "coverage_status": "automated",
+                        "execution_mode": "api_support",
+                        "evaluation": {"status": "passed", "assertions": []},
+                    }
+                ],
+                "evidence_index": [],
+                "artifacts": {"report_json": os.path.join(tmpdir, "bootstrap.json")},
+            }
+            ui_result = {
+                "component": "ai-model-hub",
+                "suite": "ui",
+                "status": "skipped",
+                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
+                "executed_cases": [],
+                "evidence_index": [],
+                "artifacts": {"report_json": os.path.join(tmpdir, "ui.json")},
+            }
+            governance_result = {
+                "component": "ai-model-hub",
+                "suite": "connector-governance-api",
+                "status": "passed",
+                "summary": {"total": 5, "passed": 5, "failed": 0, "skipped": 0},
+                "executed_cases": [
+                    {
+                        "test_case_id": "PT5-MH-16",
+                        "type": "api",
+                        "case_group": "pt5",
+                        "validation_type": "integration",
+                        "dataspace_dimension": "identity",
+                        "mapping_status": "phase_3",
+                        "coverage_status": "automated_opt_in",
+                        "execution_mode": "api_opt_in",
+                        "evaluation": {"status": "passed", "assertions": []},
+                    }
+                ],
+                "evidence_index": [
+                    {
+                        "scope": "suite",
+                        "suite": "connector-governance-api",
+                        "artifact_name": "report_json",
+                        "path": os.path.join(tmpdir, "governance.json"),
+                    }
+                ],
+                "artifacts": {"report_json": os.path.join(tmpdir, "governance.json")},
+            }
+
+            with (
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_validation",
+                    return_value=bootstrap_result,
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_ui_validation",
+                    return_value=ui_result,
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_connector_governance_validation",
+                    return_value=governance_result,
+                ),
+                mock.patch.dict(os.environ, {"AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "1"}),
+            ):
+                result = run_ai_model_hub_component_validation(
+                    "http://ai-model-hub.example.local",
+                    experiment_dir=tmpdir,
+                )
+
+            self.assertEqual(result["summary"]["total"], 6)
+            self.assertEqual(result["summary"]["passed"], 6)
+            self.assertIn("connector_governance", result["suites"])
+            self.assertEqual(result["catalog_alignment"]["summary"]["executed_pt5_cases"], 1)
+            self.assertEqual(result["pt5_case_results"][0]["traceability"], ["MH-45"])
+
+    def test_run_ai_model_hub_component_validation_can_include_model_benchmarking_opt_in(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_result = {
+                "component": "ai-model-hub",
+                "suite": "bootstrap",
+                "status": "passed",
+                "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+                "executed_cases": [
+                    {
+                        "test_case_id": "MH-BOOTSTRAP-01",
+                        "type": "api",
+                        "case_group": "support",
+                        "validation_type": "support",
+                        "dataspace_dimension": "support",
+                        "mapping_status": "supporting",
+                        "coverage_status": "automated",
+                        "execution_mode": "api_support",
+                        "evaluation": {"status": "passed", "assertions": []},
+                    }
+                ],
+                "evidence_index": [],
+                "artifacts": {"report_json": os.path.join(tmpdir, "bootstrap.json")},
+            }
+            ui_result = {
+                "component": "ai-model-hub",
+                "suite": "ui",
+                "status": "skipped",
+                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
+                "executed_cases": [],
+                "evidence_index": [],
+                "artifacts": {"report_json": os.path.join(tmpdir, "ui.json")},
+            }
+            benchmarking_result = {
+                "component": "ai-model-hub",
+                "suite": "model-benchmarking-api",
+                "status": "passed",
+                "summary": {"total": 4, "passed": 4, "failed": 0, "skipped": 0},
+                "executed_cases": [
+                    {
+                        "test_case_id": "PT5-MH-12",
+                        "type": "api",
+                        "case_group": "pt5",
+                        "validation_type": "functional",
+                        "dataspace_dimension": "comparison",
+                        "mapping_status": "phase_3",
+                        "coverage_status": "automated",
+                        "execution_mode": "api_fixture",
+                        "evaluation": {"status": "passed", "assertions": []},
+                    }
+                ],
+                "evidence_index": [
+                    {
+                        "scope": "suite",
+                        "suite": "model-benchmarking-api",
+                        "artifact_name": "report_json",
+                        "path": os.path.join(tmpdir, "benchmarking.json"),
+                    }
+                ],
+                "artifacts": {"report_json": os.path.join(tmpdir, "benchmarking.json")},
+            }
+
+            with (
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_validation",
+                    return_value=bootstrap_result,
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_ui_validation",
+                    return_value=ui_result,
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_model_benchmarking_validation",
+                    return_value=benchmarking_result,
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "",
+                        "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING": "1",
+                    },
+                ),
+            ):
+                result = run_ai_model_hub_component_validation(
+                    "http://ai-model-hub.example.local",
+                    experiment_dir=tmpdir,
+                )
+
+            self.assertEqual(result["summary"]["total"], 5)
+            self.assertEqual(result["summary"]["passed"], 5)
+            self.assertIn("model_benchmarking", result["suites"])
+            self.assertEqual(result["catalog_alignment"]["summary"]["executed_pt5_cases"], 1)
+            self.assertEqual(result["pt5_case_results"][0]["traceability"], ["MH-37"])
+
+    def test_run_ai_model_hub_component_validation_can_include_mobility_benchmarking_opt_in(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_result = {
+                "component": "ai-model-hub",
+                "suite": "bootstrap",
+                "status": "passed",
+                "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+                "executed_cases": [
+                    {
+                        "test_case_id": "MH-BOOTSTRAP-01",
+                        "type": "api",
+                        "case_group": "support",
+                        "validation_type": "support",
+                        "dataspace_dimension": "support",
+                        "mapping_status": "supporting",
+                        "coverage_status": "automated",
+                        "execution_mode": "api_support",
+                        "evaluation": {"status": "passed", "assertions": []},
+                    }
+                ],
+                "evidence_index": [],
+                "artifacts": {"report_json": os.path.join(tmpdir, "bootstrap.json")},
+            }
+            ui_result = {
+                "component": "ai-model-hub",
+                "suite": "ui",
+                "status": "skipped",
+                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
+                "executed_cases": [],
+                "evidence_index": [],
+                "artifacts": {"report_json": os.path.join(tmpdir, "ui.json")},
+            }
+            mobility_result = {
+                "component": "ai-model-hub",
+                "suite": "mobility-benchmarking-api",
+                "status": "passed",
+                "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+                "executed_cases": [
+                    {
+                        "test_case_id": "MH-MOB-01",
+                        "type": "api",
+                        "case_group": "functional_use_case",
+                        "validation_type": "functional",
+                        "dataspace_dimension": "mobility",
+                        "mapping_status": "phase_3",
+                        "coverage_status": "automated_fixture",
+                        "execution_mode": "api_fixture_opt_in",
+                        "evaluation": {"status": "passed", "assertions": []},
+                    }
+                ],
+                "evidence_index": [
+                    {
+                        "scope": "suite",
+                        "suite": "mobility-benchmarking-api",
+                        "artifact_name": "report_json",
+                        "path": os.path.join(tmpdir, "mobility.json"),
+                    }
+                ],
+                "artifacts": {"report_json": os.path.join(tmpdir, "mobility.json")},
+            }
+
+            with (
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_validation",
+                    return_value=bootstrap_result,
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_ui_validation",
+                    return_value=ui_result,
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_mobility_benchmarking_validation",
+                    return_value=mobility_result,
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "",
+                        "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING": "",
+                        "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING": "1",
+                    },
+                ),
+            ):
+                result = run_ai_model_hub_component_validation(
+                    "http://ai-model-hub.example.local",
+                    experiment_dir=tmpdir,
+                )
+
+            self.assertEqual(result["summary"]["total"], 2)
+            self.assertEqual(result["summary"]["passed"], 2)
+            self.assertIn("mobility_benchmarking", result["suites"])
+            self.assertEqual(result["functional_use_case_summary"]["total"], 1)
+            self.assertEqual(result["functional_use_case_summary"]["passed"], 1)
+            self.assertEqual(result["catalog_alignment"]["summary"]["executed_functional_use_cases"], 1)
+            self.assertEqual(result["catalog_alignment"]["summary"]["uncovered_functional_use_cases"], 1)
+            self.assertEqual(
+                result["functional_use_case_results"][0]["traceability"],
+                ["MH-MOB-01", "GTFS-Madrid-Bench"],
+            )
+            self.assertTrue(os.path.exists(result["artifacts"]["functional_use_case_results_json"]))
+
 
 if __name__ == "__main__":
     unittest.main()

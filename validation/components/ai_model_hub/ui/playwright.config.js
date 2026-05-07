@@ -9,6 +9,17 @@ const jsonReportFile =
   process.env.PLAYWRIGHT_JSON_REPORT_FILE || path.join(outputDir, "results.json");
 const headedGpuFix = process.env.PLAYWRIGHT_HEADED_GPU_FIX === "1";
 
+function resolveTraceMode() {
+  const value = (process.env.PLAYWRIGHT_TRACE || "").trim().toLowerCase();
+  if (["on", "off", "retain-on-failure", "on-first-retry", "on-all-retries"].includes(value)) {
+    return value;
+  }
+  if (["1", "true", "yes"].includes(value)) {
+    return "on";
+  }
+  return "off";
+}
+
 module.exports = defineConfig({
   testDir: "./specs",
   timeout: 2 * 60 * 1000,
@@ -25,7 +36,7 @@ module.exports = defineConfig({
   outputDir,
   retries: 0,
   use: {
-    trace: "on",
+    trace: resolveTraceMode(),
     screenshot: "only-on-failure",
     video: "on",
     ignoreHTTPSErrors: true,

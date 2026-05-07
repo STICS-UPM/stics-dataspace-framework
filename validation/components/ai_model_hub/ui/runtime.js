@@ -29,12 +29,22 @@ function resolveAIModelHubRuntime() {
   const deployerConfig = parseKeyValueFile(
     path.join(projectRoot(), "deployers", "inesdata", "deployer.config"),
   );
+  const infrastructureConfig = parseKeyValueFile(
+    path.join(projectRoot(), "deployers", "infrastructure", "deployer.config"),
+  );
   const dataspace = (process.env.UI_DATASPACE || deployerConfig.DS_1_NAME || "demo").trim();
-  const dsDomain = (process.env.UI_DS_DOMAIN || deployerConfig.DS_DOMAIN_BASE || "dev.ds.dataspaceunit.upm").trim();
+  const dsDomain = (
+    process.env.UI_DS_DOMAIN ||
+    deployerConfig.DS_DOMAIN_BASE ||
+    infrastructureConfig.DS_DOMAIN_BASE ||
+    "dev.ds.dataspaceunit.upm"
+  ).trim();
   const keycloakBaseUrl = (
     process.env.AI_MODEL_HUB_KEYCLOAK_URL ||
     deployerConfig.KC_INTERNAL_URL ||
+    infrastructureConfig.KC_INTERNAL_URL ||
     deployerConfig.KC_URL ||
+    infrastructureConfig.KC_URL ||
     "http://keycloak.dev.ed.dataspaceunit.upm"
   )
     .trim()

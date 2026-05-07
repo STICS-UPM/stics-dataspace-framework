@@ -18,6 +18,10 @@ def _build_playwright_results_payload():
         "PT5-MH-06: model discovery filter shell is available in the ML assets view",
         "PT5-MH-07: model details view exposes functional and technical metadata",
         "PT5-MH-08: contract negotiation from catalog registers an agreement in the consumer connector",
+        "PT5-MH-12: benchmarking UI selects multiple FLARES-mini models",
+        "PT5-MH-13: benchmarking UI executes selected models with the same input",
+        "PT5-MH-14: benchmarking UI renders calculated comparison metrics",
+        "PT5-MH-15: benchmarking UI shows comparative table and best model summary",
     ]
     return {
         "stats": {
@@ -101,12 +105,12 @@ class AIModelHubComponentUIValidationTests(unittest.TestCase):
             self.assertEqual(result["component"], "ai-model-hub")
             self.assertEqual(result["suite"], "ui")
             self.assertEqual(result["status"], "passed")
-            self.assertEqual(result["summary"]["total"], 8)
-            self.assertEqual(result["summary"]["passed"], 8)
-            self.assertEqual(result["pt5_summary"]["total"], 8)
+            self.assertEqual(result["summary"]["total"], 12)
+            self.assertEqual(result["summary"]["passed"], 12)
+            self.assertEqual(result["pt5_summary"]["total"], 12)
             self.assertEqual(result["support_summary"]["total"], 0)
-            self.assertEqual(len(result["executed_cases"]), 8)
-            self.assertGreaterEqual(len(result["evidence_index"]), 8)
+            self.assertEqual(len(result["executed_cases"]), 12)
+            self.assertGreaterEqual(len(result["evidence_index"]), 12)
             self.assertTrue(os.path.exists(result["artifacts"]["report_json"]))
             self.assertTrue(os.path.exists(result["artifacts"]["json_report_file"]))
 
@@ -134,7 +138,7 @@ class AIModelHubComponentUIValidationTests(unittest.TestCase):
                 )
 
             self.assertEqual(result["status"], "passed")
-            self.assertEqual(result["summary"]["total"], 8)
-            self.assertEqual(result["summary"]["passed"], 8)
+            self.assertEqual(result["summary"]["total"], 12)
+            self.assertEqual(result["summary"]["passed"], 12)
             self.assertEqual(result["summary"]["failed"], 0)
             self.assertTrue(os.path.isabs(result["artifacts"]["json_report_file"]))

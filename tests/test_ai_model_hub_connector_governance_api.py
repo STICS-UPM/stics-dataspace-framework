@@ -1,0 +1,176 @@
+import json
+import os
+import tempfile
+import unittest
+
+from validation.components.ai_model_hub.connector_governance_api import (
+    AIModelHubConnectorGovernanceApiSuite,
+    CASE_IDS,
+    COMPONENT_KEY,
+    SUITE_NAME,
+)
+
+
+class FakeResponse:
+    def __init__(self, status_code=200, payload=None, text=None, headers=None):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = text if text is not None else json.dumps(payload or {})
+        self.headers = headers or {"Content-Type": "application/json"}
+
+    def json(self):
+        if self._payload is None:
+            return json.loads(self.text)
+        return self._payload
+
+
+class FakeSession:
+    def __init__(self):
+        self.posts = []
+        self.gets = []
+        self.deletes = []
+
+    def post(self, url, timeout=30, headers=None, json=None, data=None):
+        self.posts.append({"url": url, "headers": headers or {}, "json": json, "data": data})
+        if "/protocol/openid-connect/token" in url:
+            return FakeResponse(200, {"access_token": f"token-{data['username']}"})
+        if url.endswith("/management/v3/assets"):
+            return FakeResponse(200, {"@id": json["@id"]})
+        if url.endswith("/management/v3/policydefinitions"):
+            return FakeResponse(200, {"@id": json["@id"]})
+        if url.endswith("/management/v3/contractdefinitions"):
+            return FakeResponse(200, {"@id": json["@id"]})
+        if url.endswith("/management/v3/catalog/request"):
+            return FakeResponse(
+                200,
+                {
+                    "dspace:participantId": "conn-provider",
+                    "dcat:dataset": [
+                        {
+                            "@id": "a52-amh-access-fixed-uuid",
+                            "odrl:hasPolicy": {"@id": "offer-1"},
+                        }
+                    ],
+                },
+            )
+        if url.endswith("/management/v3/contractnegotiations"):
+            return FakeResponse(200, {"@id": "neg-1"})
+        if url.endswith("/management/v3/contractagreements/request"):
+            return FakeResponse(
+                200,
+                [
+                    {
+                        "@id": "agreement-1",
+                        "assetId": "a52-amh-access-fixed-uuid",
+                        "state": "FINALIZED",
+                    }
+                ],
+            )
+        if url.endswith("/management/v3/transferprocesses"):
+            return FakeResponse(200, {"@id": "transfer-1"})
+        return FakeResponse(404, {"error": "not found"})
+
+    def get(self, url, timeout=30, headers=None):
+        self.gets.append({"url": url, "headers": headers or {}})
+        if url.endswith("/management/v3/contractnegotiations/neg-1"):
+            return FakeResponse(200, {"@id": "neg-1", "state": "FINALIZED", "contractAgreementId": "agreement-1"})
+        if url.endswith("/management/v3/transferprocesses/transfer-1"):
+            return FakeResponse(200, {"@id": "transfer-1", "state": "STARTED"})
+        if url.endswith("/management/v3/edrs/transfer-1/dataaddress"):
+            return FakeResponse(
+                200,
+                {
+                    "endpoint": "http://provider-proxy.example.local/public",
+                    "authorization": "edr-secret",
+                    "authKey": "Authorization",
+                },
+            )
+        return FakeResponse(404, {"error": "not found"})
+
+    def delete(self, url, timeout=30, headers=None):
+        self.deletes.append({"url": url, "headers": headers or {}})
+        return FakeResponse(204, None, text="")
+
+
+class AIModelHubConnectorGovernanceApiTests(unittest.TestCase):
+    def _suite(self, session):
+        credentials = {
+            "conn-provider": {"connector_user": {"user": "provider-user", "passwd": "provider-pass"}},
+            "conn-consumer": {"connector_user": {"user": "consumer-user", "passwd": "consumer-pass"}},
+        }
+        return AIModelHubConnectorGovernanceApiSuite(
+            load_connector_credentials=lambda connector: credentials[connector],
+            load_deployer_config=lambda: {
+                "KC_URL": "auth.example.local",
+                "PIONERA_ADAPTER": "inesdata",
+                "AI_MODEL_HUB_NEGOTIATION_TIMEOUT_SECONDS": "1",
+                "AI_MODEL_HUB_TRANSFER_TIMEOUT_SECONDS": "1",
+                "AI_MODEL_HUB_POLL_INTERVAL_SECONDS": "1",
+            },
+            ds_domain_resolver=lambda: "example.local",
+            ds_name_loader=lambda: "demo",
+            protocol_address_resolver=lambda connector: f"http://{connector}:19194/protocol",
+            session=session,
+            uuid_factory=lambda: "fixed-uuid",
+        )
+
+    def test_run_covers_connector_governance_cases_without_persisting_secrets(self):
+        session = FakeSession()
+        suite = self._suite(session)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = suite.run(
+                provider="conn-provider",
+                consumer="conn-consumer",
+                model_url="http://model-server.demo.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
+                model_path="/api/v1/nlp/ecommerce-sentiment",
+                experiment_dir=tmpdir,
+            )
+            report_path = result["artifacts"]["report_json"]
+            self.assertTrue(os.path.exists(report_path))
+            with open(report_path, encoding="utf-8") as handle:
+                report_text = handle.read()
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["component"], COMPONENT_KEY)
+        self.assertEqual(result["suite"], SUITE_NAME)
+        self.assertEqual(result["summary"]["total"], len(CASE_IDS))
+        self.assertEqual(result["summary"]["passed"], len(CASE_IDS))
+        self.assertEqual([case["test_case_id"] for case in result["executed_cases"]], CASE_IDS)
+        self.assertEqual(result["created_entities"]["asset_id"], "a52-amh-access-fixed-uuid")
+        self.assertEqual(result["created_entities"]["agreement_id"], "agreement-1")
+        self.assertEqual(result["created_entities"]["transfer_id"], "transfer-1")
+        self.assertTrue(result["created_entities"]["edr_summary"]["authorization_present"])
+
+        self.assertNotIn("token-provider-user", report_text)
+        self.assertNotIn("token-consumer-user", report_text)
+        self.assertNotIn("provider-pass", report_text)
+        self.assertNotIn("consumer-pass", report_text)
+        self.assertNotIn("edr-secret", report_text)
+
+        self.assertTrue(any(entry["url"].endswith("/management/v3/assets") for entry in session.posts))
+        self.assertTrue(any(entry["url"].endswith("/management/v3/contractagreements/request") for entry in session.posts))
+        self.assertTrue(any(entry["url"].endswith("/management/v3/transferprocesses") for entry in session.posts))
+        self.assertEqual(len(session.deletes), 2)
+        cleanup_asset_steps = [step for step in result["steps"] if step["name"] == "cleanup_asset"]
+        self.assertEqual(cleanup_asset_steps[0]["status"], "skipped")
+
+    def test_run_marks_dependent_cases_failed_when_oidc_login_fails(self):
+        class FailingLoginSession(FakeSession):
+            def post(self, url, timeout=30, headers=None, json=None, data=None):
+                if "/protocol/openid-connect/token" in url:
+                    return FakeResponse(401, {"error": "invalid_grant"})
+                return super().post(url, timeout=timeout, headers=headers, json=json, data=data)
+
+        result = self._suite(FailingLoginSession()).run(
+            provider="conn-provider",
+            consumer="conn-consumer",
+            model_url="http://model-server.demo.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["summary"]["failed"], len(CASE_IDS))
+        self.assertIn("provider OIDC login failed", result["error"]["message"])
+
+
+if __name__ == "__main__":
+    unittest.main()
