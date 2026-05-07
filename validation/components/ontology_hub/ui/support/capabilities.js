@@ -284,12 +284,13 @@ async function probeTermSearchApi(request, runtime, options = {}) {
     return capabilityCache.get(cacheKey);
   }
 
-  // When refresh requested (e.g. after vocab creation), ES indexing may lag — retry up to 60s
   const retryDeadline = options.refresh ? Date.now() + 60000 : Date.now();
   let lastResult;
   do {
     lastResult = await _probeTermSearchApiOnce(request, runtime);
-    if (lastResult.available) break;
+    if (lastResult.available) {
+      break;
+    }
     if (Date.now() < retryDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 5000));
     }

@@ -9,6 +9,12 @@ from validation.components.artifact_cleanup import cleanup_empty_experiment_arti
 from validation.components.ontology_hub.functional.runtime_preparation import (
     prepare_ontology_hub_for_functional,
 )
+from validation.components.ontology_hub.functional.pt5_traceability import (
+    build_functional_catalog_alignment,
+    build_oh_app_traceability,
+    build_pt5_case_results_from_oh_app,
+    summarize_pt5_case_results,
+)
 from validation.components.ontology_hub.runtime_config import resolve_ontology_hub_runtime
 
 COMPONENT_KEY = "ontology-hub"
@@ -104,7 +110,7 @@ def _build_case_result(*, case_id: str, title: str, status: str, base_url: str, 
         "test_case_id": case_id,
         "description": description,
         "type": "ui",
-        "case_group": "pt5",
+        "case_group": "oh_app",
         "validation_type": "functional",
         "dataspace_dimension": "functional",
         "mapping_status": "mapped",
@@ -147,15 +153,6 @@ def _extract_executed_cases(report_payload: Dict[str, Any], base_url: str) -> Li
             )
         )
     return executed_cases
-
-
-def _summarize_case_list(executed_cases: List[Dict[str, Any]]) -> Dict[str, int]:
-    summary = {"total": len(executed_cases), "passed": 0, "failed": 0, "skipped": 0}
-    for case in executed_cases:
-        status = ((case.get("evaluation") or {}).get("status") or "").lower()
-        if status in summary:
-            summary[status] += 1
-    return summary
 
 
 def _build_evidence_index(executed_cases: List[Dict[str, Any]], artifact_paths: Dict[str, str]) -> List[Dict[str, Any]]:
@@ -214,10 +211,16 @@ def run_ontology_hub_functional_validation(base_url: str, experiment_dir: str | 
             "runtime": runtime,
             "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
             "executed_cases": [],
+            "oh_app_traceability": [],
+            "pt5_case_results": [],
             "pt5_cases": [],
             "support_checks": [],
             "pt5_summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
             "support_summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
+            "catalog_alignment": build_functional_catalog_alignment(
+                executed_cases=[],
+                pt5_case_results=[],
+            ),
             "evidence_index": _build_evidence_index([], artifact_paths),
             "playwright_config": PLAYWRIGHT_CONFIG_RELATIVE,
             "playwright_command": _build_playwright_command(1),
@@ -290,6 +293,13 @@ def run_ontology_hub_functional_validation(base_url: str, experiment_dir: str | 
             reason = "no_playwright_results_generated"
 
     evidence_index = _build_evidence_index(executed_cases, artifact_paths)
+    pt5_case_results = build_pt5_case_results_from_oh_app(executed_cases) if executed_cases else []
+    pt5_summary = summarize_pt5_case_results(pt5_case_results)
+    oh_app_traceability = build_oh_app_traceability(executed_cases)
+    catalog_alignment = build_functional_catalog_alignment(
+        executed_cases=executed_cases,
+        pt5_case_results=pt5_case_results,
+    )
     suite_result: Dict[str, Any] = {
         "component": COMPONENT_KEY,
         "suite": "functional",
@@ -299,10 +309,13 @@ def run_ontology_hub_functional_validation(base_url: str, experiment_dir: str | 
         "runtime": runtime,
         "summary": summary,
         "executed_cases": executed_cases,
-        "pt5_cases": executed_cases,
+        "oh_app_traceability": oh_app_traceability,
+        "pt5_case_results": pt5_case_results,
+        "pt5_cases": pt5_case_results,
         "support_checks": [],
-        "pt5_summary": _summarize_case_list(executed_cases),
+        "pt5_summary": pt5_summary,
         "support_summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
+        "catalog_alignment": catalog_alignment,
         "evidence_index": evidence_index,
         "playwright_config": PLAYWRIGHT_CONFIG_RELATIVE,
         "playwright_command": _build_playwright_command(1),

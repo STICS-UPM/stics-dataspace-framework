@@ -105,6 +105,27 @@ class OntologyHubChartSampleDataTests(unittest.TestCase):
         self.assertIn('mountPath: "/app/versions"', rendered)
         self.assertIn("emptyDir: {}", rendered)
         self.assertNotIn("kind: PersistentVolumeClaim", rendered)
+        self.assertIn("startupProbe:\n            tcpSocket:\n              port: http", rendered)
+        self.assertIn("readinessProbe:\n            tcpSocket:\n              port: http", rendered)
+        self.assertIn("timeoutSeconds: 2", rendered)
+
+    def test_health_probe_can_be_rendered_as_http_when_explicitly_requested(self):
+        rendered = self._render_chart_with_values(
+            textwrap.dedent(
+                """
+                health:
+                  probeType: http
+                  path: /dataset
+                  timeoutSeconds: 3
+                  startupProbe:
+                    timeoutSeconds: 3
+                """
+            )
+        )
+
+        self.assertIn("startupProbe:\n            httpGet:\n              path: \"/dataset\"", rendered)
+        self.assertIn("readinessProbe:\n            httpGet:\n              path: \"/dataset\"", rendered)
+        self.assertIn("timeoutSeconds: 3", rendered)
 
     def test_versions_persistence_renders_pvc_when_enabled(self):
         rendered = self._render_chart_with_values(

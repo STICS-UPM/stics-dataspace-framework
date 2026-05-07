@@ -27,12 +27,22 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
             ("core", "05-consumer-negotiation.spec.ts"),
             ("core", "05-e2e-transfer-flow.spec.ts"),
             ("core", "06-consumer-transfer.spec.ts"),
+            ("core", "07-semantic-virtualization-httpdata.spec.ts"),
+            ("core", "09-ai-model-hub-httpdata.spec.ts"),
         ]
 
         for parts in expected_specs:
             source = _read_ui_file(*parts)
             self.assertIn("probeConsumerCatalogDatasetReadiness", source, "/".join(parts))
             self.assertNotIn("await waitForConsumerCatalogDatasetReadiness(", source, "/".join(parts))
+
+    def test_dataspace_runtime_uses_shared_infrastructure_config_as_fallback(self):
+        source = _read_ui_file("shared", "utils", "dataspace-runtime.ts")
+
+        self.assertIn('"deployers", "infrastructure", "deployer.config"', source)
+        self.assertIn("infrastructureConfig.KC_INTERNAL_URL", source)
+        self.assertIn("infrastructureConfig.KC_URL", source)
+        self.assertIn("infrastructureConfig.DS_DOMAIN_BASE", source)
 
 
 if __name__ == "__main__":

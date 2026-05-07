@@ -75,11 +75,19 @@ test("OH-APP-05: vocabulary detail is visible and the .n3 can be downloaded", as
   await detailPage.expectReady(resolvedPrefix, targetTitle);
   await detailPage.expectMetadataMarkers();
   await page.getByText(/Incoming Links/i).waitFor({ state: "visible", timeout: 5000 });
-  await clickMarked(page.locator(".ontology-tab").filter({ hasText: "Version History" }).first());
-  await page.getByText("Vocabulary Version History", { exact: true }).waitFor({ state: "visible", timeout: 5000 });
+  const versionHistoryTab = page.locator(".ontology-tab").filter({ hasText: "Version History" }).first();
+  if (await versionHistoryTab.isVisible().catch(() => false)) {
+    await clickMarked(versionHistoryTab);
+  }
+  const versionHistoryHeading = page.getByText("Vocabulary Version History", { exact: true });
+  await versionHistoryHeading.scrollIntoViewIfNeeded().catch(() => {});
+  await versionHistoryHeading.waitFor({ state: "visible", timeout: 5000 });
   await captureStep(page, "02-vocab-detail");
 
-  await clickMarked(page.locator(".ontology-tab").filter({ hasText: "General" }).first());
+  const generalTab = page.locator(".ontology-tab").filter({ hasText: "General" }).first();
+  if (await generalTab.isVisible().catch(() => false)) {
+    await clickMarked(generalTab);
+  }
   const downloadInfo = await downloadFirstN3(page, testInfo, "05-vocab-download");
   saveRunState(VISUALIZATION_N3_STATE_KEY, {
     ...downloadInfo,

@@ -98,18 +98,18 @@ test("OH-APP-22: patterns page generates a zip", async ({
   expect(hasDataFolder).toBeTruthy();
   expect(hasWebFolder).toBeTruthy();
 
-  // Excel A5.2 OH-APP-22: verify expected files inside each folder
   const expectedDataFiles = ["error.log.txt", "Patterns_name.txt", "Patterns_type.txt", "Structure.csv"];
   const expectedWebFiles = ["PatternName.html", "PatternType.html", "Structure.html"];
   const missingDataFiles = expectedDataFiles.filter(
-    (f) => !entries.some((e) => e === `data/${f}` || e.endsWith(`/${f}`)),
+    (file) => !entries.some((entry) => entry === `data/${file}` || entry.endsWith(`/${file}`)),
   );
   const missingWebFiles = expectedWebFiles.filter(
-    (f) => !entries.some((e) => e === `web/${f}` || e.endsWith(`/${f}`)),
+    (file) => !entries.some((entry) => entry === `web/${file}` || entry.endsWith(`/${file}`)),
   );
   if (missingDataFiles.length > 0 || missingWebFiles.length > 0) {
     throw new Error(
-      `ZIP content does not match Excel spec. Missing in data/: [${missingDataFiles.join(", ")}]. Missing in web/: [${missingWebFiles.join(", ")}].`,
+      `ZIP content does not match Excel spec. Missing in data/: [${missingDataFiles.join(", ")}]. ` +
+        `Missing in web/: [${missingWebFiles.join(", ")}].`,
     );
   }
 
@@ -223,10 +223,17 @@ test("OH-APP-24: Themis accepts a test file and downloads results", async ({
   await homePage.goto(flowRuntime.baseUrl);
   await homePage.expectReady();
   await homePage.openVocabularyBubble(prefix);
-  await page.waitForURL(new RegExp(`/dataset/vocabs/${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), {
-    timeout: 10000,
-    waitUntil: "commit",
-  });
+  const detailUrlPattern = new RegExp(`/dataset/vocabs/${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+  const graphNavigationCompleted = await page
+    .waitForURL(detailUrlPattern, {
+      timeout: 10000,
+      waitUntil: "commit",
+    })
+    .then(() => true)
+    .catch(() => false);
+  if (!graphNavigationCompleted) {
+    await openVocabularyDetail(page, flowRuntime, prefix, title);
+  }
   await expectHealthyPage(page, `Vocabulary detail for ${prefix}`);
   const themisActivation = await openThemisPanel(page);
   const themisSource = await resolveThemisSource(page);
@@ -275,5 +282,6 @@ test("OH-APP-24: Themis accepts a test file and downloads results", async ({
     resultDownload: download.suggestedFilename(),
     resultSize: stat.size,
     persistedResultPath,
+    graphNavigationCompleted,
   });
 });

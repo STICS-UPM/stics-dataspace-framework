@@ -262,7 +262,12 @@ async function signInToEdition(page, runtime, credentials = {}) {
   const password = normalizeText(credentials.password || runtime.adminPassword);
   let lastError = null;
   let attempt = 0;
-  const deadline = Date.now() + Math.max(readyTimeoutMs * 3, 90000);
+  const recoveryTimeoutMs = Number.parseInt(credentials.recoveryTimeoutMs || "0", 10);
+  const deadline = Date.now() + Math.max(
+    readyTimeoutMs * 3,
+    90000,
+    Number.isFinite(recoveryTimeoutMs) ? recoveryTimeoutMs : 0,
+  );
 
   while (Date.now() < deadline) {
     attempt += 1;
@@ -292,7 +297,11 @@ async function signInToEdition(page, runtime, credentials = {}) {
       return page.url();
     } catch (error) {
       lastError = error;
-      if (!(await pageShowsTransientAvailabilityFailure(page)) || Date.now() >= deadline) {
+      const errorLooksTransient = /temporarily unavailable|service temporarily unavailable|bad gateway|\b50[23]\b/i.test(
+        String(error?.message || ""),
+      );
+      const pageLooksTransient = await pageShowsTransientAvailabilityFailure(page);
+      if ((!pageLooksTransient && !errorLooksTransient) || Date.now() >= deadline) {
         throw error;
       }
       await page.waitForTimeout(5000);
@@ -341,7 +350,6 @@ async function ensureTagSelected(page, tagLabel) {
     await tagOption.waitFor({ state: "visible", timeout: readyTimeoutMs });
   }
 
-  // btnCreateTag AJAX success handler calls addTag() immediately — skip picker click when tag already added
   const alreadyInForm = await page.evaluate(
     (expectedTag) =>
       Array.from(document.querySelectorAll('#tagsUl input[name="tags[]"]')).some(
@@ -353,11 +361,9 @@ async function ensureTagSelected(page, tagLabel) {
     await clickMarked(tagOption);
   }
 
-  // Close picker before verifying — Escape dismisses the jQuery UI dialog
   await page.keyboard.press("Escape").catch(() => {});
   await page.locator("#listOfTags").waitFor({ state: "hidden", timeout: 5000 }).catch(() => {});
 
-  // Final safety net: call window.addTag() directly if UI interaction didn't persist the tag
   const inFormAfterClose = await page.evaluate(
     (expectedTag) =>
       Array.from(document.querySelectorAll('#tagsUl input[name="tags[]"]')).some(
@@ -384,6 +390,7 @@ async function ensureTagSelected(page, tagLabel) {
     normalized,
     { timeout: readyTimeoutMs },
   );
+
 }
 
 async function ensureMultilingualTextareas(page, fieldKind, primaryLanguage, secondaryLanguage) {
@@ -494,14 +501,14 @@ async function saveVocabulary(page, runtime = {}, expectedPrefix = "", expectedT
   return outcome;
 }
 
-async function confirmVisibleDialog(page, labels = [/^confirm$/i]) {
+async function confirmVisibleDialog(page, labels = [/^confirm$/i], options = {}) {
   for (const label of labels) {
     const button = page
       .locator(".ui-dialog-buttonpane button, .ui-dialog-buttonset button, button")
       .filter({ hasText: label })
       .last();
     if (await button.isVisible().catch(() => false)) {
-      await clickMarked(button);
+      await clickMarked(button, options);
       return true;
     }
   }
@@ -513,9 +520,13 @@ async function runIndexAllFromEdition(page, runtime) {
     await gotoEdition(page, runtime);
     const indexAllForm = page.locator("form[action='/edition/indexAll']").first();
     const formVisible = await indexAllForm.isVisible({ timeout: 5000 }).catch(() => false);
-    if (!formVisible) return;
+    if (!formVisible) {
+      return;
+    }
 
-    await clickMarked(indexAllForm.locator("button.featureLink, button[type='submit']").first());
+    await clickMarked(indexAllForm.locator("button.featureLink, button[type='submit']").first(), {
+      timeout: 5000,
+    });
 
     const confirmed = await page
       .waitForFunction(() => {
@@ -528,12 +539,18 @@ async function runIndexAllFromEdition(page, runtime) {
       .catch(() => false);
 
     if (confirmed) {
-      await confirmVisibleDialog(page);
+      await confirmVisibleDialog(page, [/^confirm$/i], {
+        noWaitAfter: true,
+        timeout: 5000,
+      });
     }
 
-    await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+    await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+    await page.goto(`${runtime.baseUrl}/edition`, {
+      waitUntil: "domcontentloaded",
+      timeout: 5000,
+    }).catch(() => {});
   } catch (error) {
-    // IndexAll is best-effort — ES re-index not required for downstream tests to pass
     console.warn(`[runIndexAllFromEdition] Non-blocking error: ${error.message}`);
   }
 }
@@ -630,6 +647,16 @@ async function createVocabularyFromRepository(page, runtime) {
       .textContent()
       .catch(() => ""),
   );
+  if (/already exists/i.test(visibleError)) {
+    await waitForPublicVocabularyDetail(page, runtime, runtime.creationPrefix, runtime.creationTitle);
+    return {
+      prefix: runtime.creationPrefix,
+      title: runtime.creationTitle,
+      url: page.url(),
+      method: "repository",
+      reusedExistingImport: true,
+    };
+  }
   if (visibleError && !/create a new vocabulary/i.test((await page.content()).toLowerCase())) {
     throw new Error(`Ontology Hub rejected the repository registration: ${visibleError}`);
   }
@@ -747,7 +774,7 @@ async function promoteUserToAdmin(page, runtime, user) {
     .filter({ hasText: user.email })
     .first();
   await row.waitFor({ state: "visible", timeout: 5000 });
-  // Use attribute selector — input[value='admin'] has no textContent so hasText won't match
+  // The admin control is an input value, not visible text.
   const promoteButton = row
     .locator("input.statusSubmit[value='admin'], input[type='submit'][value='admin']")
     .first();
@@ -1102,8 +1129,10 @@ async function deleteVersion(page, versionName) {
   }
 }
 
-async function deleteVocabulary(page, runtime, prefix) {
-  await signInToEdition(page, runtime);
+async function deleteVocabulary(page, runtime, prefix, options = {}) {
+  await signInToEdition(page, runtime, {
+    recoveryTimeoutMs: options.recoveryTimeoutMs,
+  });
   await page.goto(`${runtime.baseUrl}/dataset/vocabs/${encodeURIComponent(prefix)}`, {
     waitUntil: "domcontentloaded",
   });
@@ -1111,7 +1140,6 @@ async function deleteVocabulary(page, runtime, prefix) {
   await clickMarked(page.locator("#vocabDelete"));
   await clickMarked(page.getByRole("button", { name: "Confirm Deletion", exact: true }));
   await page.waitForLoadState("domcontentloaded");
-  // ES de-indexing is async — retry catalog search for up to 60s
   const deadline = Date.now() + 60000;
   while (true) {
     await page.goto(`${runtime.baseUrl}/dataset/vocabs?q=${encodeURIComponent(prefix)}`, {
@@ -1119,7 +1147,9 @@ async function deleteVocabulary(page, runtime, prefix) {
     });
     const remaining = page.locator("#SearchGrid").getByText(prefix, { exact: false });
     const stillVisible = (await remaining.count()) > 0 && (await remaining.first().isVisible().catch(() => false));
-    if (!stillVisible) break;
+    if (!stillVisible) {
+      break;
+    }
     if (Date.now() >= deadline) {
       throw new Error(`Vocabulary '${prefix}' is still visible in the catalog after deletion.`);
     }

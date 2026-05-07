@@ -13,14 +13,19 @@ service:
   port: 3333
 
 health:
+  # Ontology Hub routes use session/CSRF/database middleware. A TCP probe is a
+  # safer Kubernetes readiness gate for local clusters; the framework still
+  # verifies /dataset and /edition after rollout.
+  probeType: tcp
   path: /
   initialDelaySeconds: 60
   periodSeconds: 10
+  timeoutSeconds: 2
   startupProbe:
     enabled: true
     initialDelaySeconds: 0
     periodSeconds: 10
-    timeoutSeconds: 1
+    timeoutSeconds: 2
     failureThreshold: 180
 
 ingress:

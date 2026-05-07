@@ -1,3 +1,4 @@
+{{- $healthProbeType := default "tcp" .Values.health.probeType }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -103,26 +104,43 @@ spec:
             {{- end }}
           {{- if .Values.health.startupProbe.enabled }}
           startupProbe:
+            {{- if eq $healthProbeType "tcp" }}
+            tcpSocket:
+              port: http
+            {{- else }}
             httpGet:
               path: {{ .Values.health.path | quote }}
               port: http
+            {{- end }}
             initialDelaySeconds: {{ .Values.health.startupProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.health.startupProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.health.startupProbe.timeoutSeconds }}
             failureThreshold: {{ .Values.health.startupProbe.failureThreshold }}
           {{- end }}
           livenessProbe:
+            {{- if eq $healthProbeType "tcp" }}
+            tcpSocket:
+              port: http
+            {{- else }}
             httpGet:
               path: {{ .Values.health.path | quote }}
               port: http
+            {{- end }}
             initialDelaySeconds: {{ .Values.health.initialDelaySeconds }}
             periodSeconds: {{ .Values.health.periodSeconds }}
+            timeoutSeconds: {{ .Values.health.timeoutSeconds }}
           readinessProbe:
+            {{- if eq $healthProbeType "tcp" }}
+            tcpSocket:
+              port: http
+            {{- else }}
             httpGet:
               path: {{ .Values.health.path | quote }}
               port: http
+            {{- end }}
             initialDelaySeconds: {{ .Values.health.initialDelaySeconds }}
             periodSeconds: {{ .Values.health.periodSeconds }}
+            timeoutSeconds: {{ .Values.health.timeoutSeconds }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

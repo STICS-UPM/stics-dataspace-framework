@@ -477,19 +477,29 @@ test_cases:
     component: ontology_hub
     case_group: pt5
     description: Connector integration
-    type: api
+    type: ui
     validation_type: integration
     dataspace_dimension: integration
-    execution_mode: not_currently_executable
-    coverage_status: not_currently_executable
-    mapping_status: partial
+    execution_mode: ui_readonly_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
     preconditions:
       - Ontology Hub is deployed in the PT5 environment
       - Dataspace connectors are available
+      - INESData connector UI exposes the Vocabularies and Ontologies routes
+      - Ontology Hub public vocabulary list API is reachable
     steps:
-      - Validate the connection between the component and the connector
-      - Review the operational integration behavior
+      - Open INESData as an authenticated connector user
+      - Open the Vocabularies route and validate the shared connector vocabulary API response
+      - Open the Ontologies route and validate the Ontology Hub vocabulary list response
+      - Store screenshots and JSON evidence without mutating connector resources
     expected_result: Operational integration with the dataspace
     traceability:
       - OntHub-56
-    notes: Connector integration requires a more stable contractual and operational surface before it can be automated reliably in the framework.
+    automation:
+      status: automated_opt_in
+      mode: ui_readonly_opt_in
+      ui_spec: validation/ui/core/08-ontology-hub-inesdata-readonly.spec.ts
+      evidence_case: DS-UI-OH-01
+      enable_with: UI_ONTOLOGY_HUB_INESDATA_DEMO=1
+    notes: This is a conservative read-only integration check. It validates the connector UI and shared vocabulary/Ontology Hub APIs without creating assets, contracts, vocabularies or policies.
