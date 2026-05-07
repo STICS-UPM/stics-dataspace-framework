@@ -127,6 +127,47 @@ class ReportViewerTests(unittest.TestCase):
         self.assertIn("Components", experiment["reports"])
         self.assertIn("Stability", experiment["reports"])
 
+    def test_discovers_marked_opt_in_demo_evidence_without_debug_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            demo = root / "experiments" / "ai-model-hub-inesdata-ui-demo-20260506-r8"
+            self._write_json(
+                demo / "metadata.json",
+                {
+                    "timestamp": "2026-05-06T15:49:45.352Z",
+                    "adapter": "InesdataAdapter",
+                    "topology": "vm-single",
+                },
+            )
+            (demo / "components" / "ai-model-hub" / "inesdata-ui" / "playwright-report").mkdir(parents=True)
+            (demo / "components" / "ai-model-hub" / "inesdata-ui" / "playwright-report" / "index.html").write_text(
+                "<html>playwright</html>",
+                encoding="utf-8",
+            )
+            self._write_json(
+                demo / "components" / "ai-model-hub" / "inesdata-ui" / "results.json",
+                {"suites": [{"specs": [{"tests": [{"status": "expected"}]}]}]},
+            )
+            debug_run = root / "experiments" / "ai-model-hub-inesdata-ui-demo-20260506-r7"
+            self._write_json(
+                debug_run / "components" / "ai-model-hub" / "inesdata-ui" / "results.json",
+                {"suites": [{"specs": [{"tests": [{"status": "unexpected"}]}]}]},
+            )
+
+            experiments = reports.discover_report_experiments(root=tmp)
+
+        names = [experiment["name"] for experiment in experiments]
+        self.assertIn("ai-model-hub-inesdata-ui-demo-20260506-r8", names)
+        self.assertNotIn("ai-model-hub-inesdata-ui-demo-20260506-r7", names)
+        demo_experiment = next(
+            experiment for experiment in experiments if experiment["name"] == "ai-model-hub-inesdata-ui-demo-20260506-r8"
+        )
+        self.assertIn("Playwright", demo_experiment["reports"])
+        self.assertEqual(demo_experiment["adapter"], "inesdata")
+        self.assertEqual(demo_experiment["topology"], "vm-single")
+        self.assertEqual(demo_experiment["suites"][0]["title"], "components / ai-model-hub / inesdata-ui")
+        self.assertEqual(demo_experiment["suites"][0]["status"], "passed")
+
     def test_dashboard_summarizes_without_leaking_runtime_secrets(self):
         with tempfile.TemporaryDirectory() as tmp:
             experiment_path = self._create_experiment(tmp)
@@ -142,6 +183,37 @@ class ReportViewerTests(unittest.TestCase):
         self.assertIn("Newman", content)
         self.assertIn("Kafka transfer", content)
         self.assertNotIn("must-not-appear-in-dashboard", content)
+
+    def test_dashboard_includes_optional_une_0087_alignment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_10-30-00"
+            self._write_json(experiment / "metadata.json", {"adapter": "InesdataAdapter"})
+            self._write_json(
+                experiment / "une_0087_alignment.json",
+                {
+                    "assessment_type": "non_certifying_alignment",
+                    "certification_claim": False,
+                    "summary": {
+                        "total_criteria": 23,
+                        "statuses": {
+                            "covered": 14,
+                            "partially_covered": 7,
+                            "not_covered": 2,
+                            "not_applicable": 0,
+                        },
+                    },
+                },
+            )
+            (experiment / "une_0087_alignment.md").write_text("# UNE 0087 Alignment\n", encoding="utf-8")
+
+            inspected = reports.inspect_experiment(experiment)
+            dashboard = reports.build_experiment_dashboard(inspected)
+            content = dashboard.read_text(encoding="utf-8")
+
+        self.assertIn("UNE 0087", inspected["reports"])
+        self.assertIn("UNE 0087 alignment", content)
+        self.assertIn("Formal certification claim: no", content)
+        self.assertIn("une_0087_alignment.json", content)
 
     def test_legacy_metadata_does_not_use_minikube_as_topology(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -217,6 +289,38 @@ class ReportViewerTests(unittest.TestCase):
         titles = [suite["title"] for suite in inspected["suites"]]
         self.assertEqual(titles.count("ontology-hub"), 1)
         self.assertNotIn("components / ontology-hub / functional", titles)
+
+    def test_component_report_json_is_summarized_when_no_component_summary_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment = Path(tmp) / "experiments" / "ai-model-hub-mobility-benchmarking-api-20260506"
+            self._write_json(
+                experiment / "metadata.json",
+                {
+                    "timestamp": "2026-05-06T12:31:01",
+                    "adapter_name": "inesdata",
+                    "topology": "vm-single",
+                },
+            )
+            self._write_json(
+                experiment / "components" / "ai-model-hub" / "functional" / "ai_model_hub_mobility_benchmarking_api.json",
+                {
+                    "component": "ai-model-hub",
+                    "suite": "mobility-benchmarking-api",
+                    "status": "passed",
+                    "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+                },
+            )
+
+            experiments = reports.discover_report_experiments(root=tmp)
+            inspected = experiments[0]
+            dashboard = reports.build_experiment_dashboard(inspected)
+            content = dashboard.read_text(encoding="utf-8")
+
+        self.assertEqual(inspected["name"], "ai-model-hub-mobility-benchmarking-api-20260506")
+        self.assertIn("Components", inspected["reports"])
+        self.assertEqual(inspected["suites"][0]["kind"], "component-report")
+        self.assertEqual(inspected["suites"][0]["title"], "ai-model-hub / mobility-benchmarking-api")
+        self.assertIn("ai_model_hub_mobility_benchmarking_api.json", content)
 
     def test_static_report_server_binds_only_to_loopback(self):
         with tempfile.TemporaryDirectory() as tmp:

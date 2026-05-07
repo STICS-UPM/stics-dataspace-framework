@@ -224,6 +224,37 @@ def _summarize_local_stability(experiment_path: Path) -> dict[str, Any] | None:
     }
 
 
+def _summarize_une_0087(experiment_path: Path) -> dict[str, Any] | None:
+    path = experiment_path / "une_0087_alignment.json"
+    payload = _read_json(path)
+    if not isinstance(payload, dict):
+        return None
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    statuses = summary.get("statuses") if isinstance(summary.get("statuses"), dict) else {}
+    artifacts = [_relative(path, experiment_path)]
+    markdown_path = experiment_path / "une_0087_alignment.md"
+    if markdown_path.exists():
+        artifacts.append(_relative(markdown_path, experiment_path))
+    total = int(summary.get("total_criteria") or 0)
+    not_covered = int(statuses.get("not_covered") or 0)
+    partially_covered = int(statuses.get("partially_covered") or 0)
+    status = "covered" if total and not not_covered and not partially_covered else "partial"
+    return {
+        "kind": "une-0087",
+        "title": "UNE 0087 alignment",
+        "status": status,
+        "summary": {
+            "total": total,
+            "covered": int(statuses.get("covered") or 0),
+            "partially_covered": partially_covered,
+            "not_covered": not_covered,
+            "not_applicable": int(statuses.get("not_applicable") or 0),
+        },
+        "certification_claim": bool(payload.get("certification_claim")),
+        "artifacts": artifacts,
+    }
+
+
 def _summarize_components(experiment_path: Path) -> list[dict[str, Any]]:
     results = []
     for path in sorted((experiment_path / "components").glob("*/*_component_validation.json")):
@@ -253,6 +284,58 @@ def _component_validation_components(experiment_path: Path) -> set[str]:
     for path in sorted((experiment_path / "components").glob("*/*_component_validation.json")):
         components.add(path.parent.name)
     return components
+
+
+def _component_report_json_paths(experiment_path: Path) -> list[Path]:
+    paths = []
+    component_summaries = _component_validation_components(experiment_path)
+    for path in sorted((experiment_path / "components").glob("*/*/*.json")):
+        if path.name in {"results.json", "metadata.json"} or path.name.endswith("_component_validation.json"):
+            continue
+        if "test-results" in path.parts or "playwright-report" in path.parts or "node_modules" in path.parts:
+            continue
+        relative_parts = path.relative_to(experiment_path).parts
+        if len(relative_parts) < 4:
+            continue
+        component = relative_parts[1]
+        if component in component_summaries:
+            continue
+        payload = _read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        if not isinstance(payload.get("summary"), dict):
+            continue
+        if not str(payload.get("status") or "").strip():
+            continue
+        paths.append(path)
+    return paths
+
+
+def _summarize_component_report_json(experiment_path: Path) -> list[dict[str, Any]]:
+    summaries = []
+    for path in _component_report_json_paths(experiment_path):
+        payload = _read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        relative_parts = path.relative_to(experiment_path).parts
+        component = str(payload.get("component") or relative_parts[1])
+        suite = str(payload.get("suite") or relative_parts[2])
+        summaries.append(
+            {
+                "kind": "component-report",
+                "title": f"{component} / {suite}",
+                "status": str(payload.get("status") or "unknown"),
+                "summary": {
+                    "total": summary.get("total", 0),
+                    "passed": summary.get("passed", 0),
+                    "failed": summary.get("failed", 0),
+                    "skipped": summary.get("skipped", 0),
+                },
+                "artifacts": [_relative(path, experiment_path)],
+            }
+        )
+    return summaries
 
 
 def _summarize_playwright_json(experiment_path: Path) -> list[dict[str, Any]]:
@@ -336,6 +419,8 @@ def _artifact_links(experiment_path: Path) -> list[dict[str, str]]:
         "kafka_transfer_results.json",
         "kafka_edc_results.json",
         "aggregated_metrics.json",
+        "une_0087_alignment.json",
+        "une_0087_alignment.md",
     ]
     artifacts = [
         {"title": name, "path": name}
@@ -345,7 +430,46 @@ def _artifact_links(experiment_path: Path) -> list[dict[str, str]]:
     for path in sorted(experiment_path.glob("components/*/*_component_validation.json")):
         rel = _relative(path, experiment_path)
         artifacts.append({"title": rel, "path": rel})
+    for path in _component_report_json_paths(experiment_path):
+        rel = _relative(path, experiment_path)
+        artifacts.append({"title": rel, "path": rel})
     return artifacts
+
+
+def _has_report_artifacts(experiment_path: Path) -> bool:
+    standard_artifacts = {
+        "local_capacity_preflight.json",
+        "local_stability_preflight.json",
+        "local_stability_postflight.json",
+        "newman_results.json",
+        "test_results.json",
+        "kafka_transfer_results.json",
+        "kafka_edc_results.json",
+        "aggregated_metrics.json",
+        "une_0087_alignment.json",
+        "une_0087_alignment.md",
+    }
+    if any((experiment_path / name).exists() for name in standard_artifacts):
+        return True
+    if any(experiment_path.glob("components/*/*_component_validation.json")):
+        return True
+    if _component_report_json_paths(experiment_path):
+        return True
+    if any(experiment_path.glob("**/results.json")):
+        return True
+    if any(experiment_path.glob("**/playwright-report/index.html")):
+        return True
+    return False
+
+
+def _is_reportable_experiment_path(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    if path.name.startswith(EXPERIMENT_PREFIX):
+        return True
+    if path.name.startswith("_"):
+        return False
+    return (path / "metadata.json").is_file() and _has_report_artifacts(path)
 
 
 def inspect_experiment(path: str | Path) -> dict[str, Any]:
@@ -358,10 +482,12 @@ def inspect_experiment(path: str | Path) -> dict[str, Any]:
         _summarize_newman(experiment_path),
         _summarize_kafka(experiment_path),
         _summarize_local_stability(experiment_path),
+        _summarize_une_0087(experiment_path),
     ):
         if summary:
             suites.append(summary)
     suites.extend(_summarize_components(experiment_path))
+    suites.extend(_summarize_component_report_json(experiment_path))
     suites.extend(_summarize_playwright_json(experiment_path))
 
     playwright_reports = _discover_playwright_reports(experiment_path)
@@ -372,10 +498,12 @@ def inspect_experiment(path: str | Path) -> dict[str, Any]:
         report_kinds.append("Newman")
     if any(suite.get("kind") == "kafka" for suite in suites):
         report_kinds.append("Kafka")
-    if any(suite.get("kind") == "component" for suite in suites):
+    if any(suite.get("kind") in {"component", "component-report"} for suite in suites):
         report_kinds.append("Components")
     if any(suite.get("kind") == "stability" for suite in suites):
         report_kinds.append("Stability")
+    if any(suite.get("kind") == "une-0087" for suite in suites):
+        report_kinds.append("UNE 0087")
 
     result = "No failed suites detected"
     if any(str(suite.get("status")).lower() in {"failed", "error"} for suite in suites):
@@ -408,7 +536,7 @@ def discover_report_experiments(root: str | Path | None = None) -> list[dict[str
     experiments = [
         inspect_experiment(path)
         for path in sorted(base.iterdir())
-        if path.is_dir() and path.name.startswith(EXPERIMENT_PREFIX)
+        if _is_reportable_experiment_path(path)
     ]
     return sorted(experiments, key=_sort_key, reverse=True)
 
@@ -436,7 +564,7 @@ def build_experiment_dashboard(experiment: dict[str, Any]) -> Path:
 
 def _badge(status: Any) -> str:
     normalized = str(status or "unknown").strip().lower()
-    if normalized in {"succeeded", "passed", "success", "no failed suites detected"}:
+    if normalized in {"succeeded", "passed", "success", "covered", "no failed suites detected"}:
         css = "ok"
     elif normalized in {"warning", "warning-existing", "warnings detected"}:
         css = "warn"
@@ -600,7 +728,7 @@ def _suite_details(suite: dict[str, Any]) -> str:
             metrics.append(f"avg throughput {throughput} msg/s")
         suffix = f" ({', '.join(metrics)})" if metrics else ""
         return f"Transfers: {summary.get('passed', 0)} passed, {summary.get('failed', 0)} failed{suffix}."
-    if kind in {"component", "playwright-json"}:
+    if kind in {"component", "component-report", "playwright-json"}:
         summary = suite.get("summary") or {}
         return (
             f"Total: {summary.get('total', 0)}, passed: {summary.get('passed', 0)}, "
@@ -612,6 +740,15 @@ def _suite_details(suite: dict[str, Any]) -> str:
             f"New warnings: {suite.get('warnings', 0)}, existing snapshot warnings: {snapshot_warnings}, "
             f"blocking issues: {suite.get('blocking_issues', 0)}, "
             f"NodeNotReady delta: {suite.get('node_not_ready_delta', 0)}."
+        )
+    if kind == "une-0087":
+        summary = suite.get("summary") or {}
+        claim = "yes" if suite.get("certification_claim") else "no"
+        return (
+            f"Criteria: {summary.get('covered', 0)} covered, "
+            f"{summary.get('partially_covered', 0)} partially covered, "
+            f"{summary.get('not_covered', 0)} not covered. "
+            f"Formal certification claim: {claim}."
         )
     return "Summary available in linked artifact."
 

@@ -21,6 +21,17 @@ El framework lista los experimentos disponibles bajo `experiments/`, muestra un
 resumen por adapter, topología, runtime de cluster, estado del dashboard y tipos
 de reporte detectados, y permite abrir el experimento que necesites.
 
+Además de los experimentos `experiment_<timestamp>`, el visor puede mostrar
+evidencias opt-in generadas fuera de Level 6 cuando la carpeta incluye
+`metadata.json` y artefactos reales como `results.json` o un reporte Playwright.
+Esto permite incorporar demos A5.2 cerradas sin listar intentos intermedios de
+depuración.
+
+Los runners de componente que no producen Playwright tambien pueden aparecer en
+el visor si guardan un JSON bajo `components/<componente>/<suite>/` con campos
+`status` y `summary`. Este formato se usa para evidencias como `MH-MOB-01`,
+donde el resultado principal es un benchmark reproducible por API.
+
 En experimentos antiguos puede aparecer `Topology: not recorded` si el
 artefacto `metadata.json` todavía no guardaba la topología. En ese caso,
 `minikube` o `k3s` se muestran como `Cluster runtime`, no como topología. Los
@@ -52,12 +63,35 @@ Ese dashboard concentra:
 - resumen de Newman;
 - resumen de Kafka;
 - resumen de componentes;
+- resumen de runners de componente con `status` y `summary`;
+- alineación UNE 0087 cuando existe `une_0087_alignment.json`;
 - estado del postflight local cuando existe;
 - enlaces a artefactos JSON/TXT completos.
 
 El dashboard no sustituye al reporte Playwright. Playwright mantiene su propio
 reporte especializado y el dashboard del framework funciona como punto de
 entrada del experimento.
+
+## Alineación UNE 0087
+
+La alineación UNE 0087 se genera como artefacto de apoyo, no como certificación
+formal ni como bloqueo de Level 6. Para crearla sobre un experimento existente:
+
+```bash
+python3 -m framework.reporting.une_0087_alignment --experiment-dir experiments/<experiment_id>
+```
+
+También se pueden añadir evidencias externas del mismo cierre A5.2:
+
+```bash
+python3 -m framework.reporting.une_0087_alignment \
+  --experiment-dir experiments/<experiment_id> \
+  --evidence experiments/<other_evidence_dir>
+```
+
+El comando escribe `une_0087_alignment.json` y `une_0087_alignment.md` dentro
+del experimento. Si existen, el dashboard los detecta automáticamente y muestra
+un resumen por criterios cubiertos, parcialmente cubiertos y no cubiertos.
 
 ## Seguridad
 

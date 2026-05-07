@@ -150,11 +150,12 @@ class Level6UIReportingTests(unittest.TestCase):
         catalog = load_ui_catalog()
 
         self.assertEqual(len(catalog["support_checks"]), 1)
-        self.assertEqual(len(catalog["dataspace_cases"]), 6)
+        self.assertEqual(len(catalog["dataspace_cases"]), 9)
         self.assertEqual(len(catalog["ops_checks"]), 1)
         self.assertEqual(catalog["support_checks"][0]["id"], "DS-UI-01")
         self.assertEqual(catalog["support_checks"][0]["operations"], ["login", "load_portal_shell"])
         self.assertEqual(catalog["dataspace_cases"][0]["id"], "DS-UI-03")
+        self.assertIn("DS-UI-AMH-01", [case["id"] for case in catalog["dataspace_cases"]])
         self.assertEqual(catalog["ops_checks"][0]["id"], "DS-UI-OPS-01")
         self.assertEqual(catalog["ops_checks"][0]["operations"], ["inspect_storage", "verify_bucket_visibility"])
 
