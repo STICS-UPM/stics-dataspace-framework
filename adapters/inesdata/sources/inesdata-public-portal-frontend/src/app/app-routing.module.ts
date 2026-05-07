@@ -24,6 +24,11 @@ const routes: Routes = [
       import('./pages/generic-page/generic-page.module').then((m) => m.GenericPageModule)
   },
   {
+    path: 'model-observer',
+    loadChildren: () =>
+      import('./pages/model-observer/model-observer.module').then((m) => m.ModelObserverModule)
+  },
+  {
     path: '403',
     loadChildren: () =>
       import('./pages/error/error403/error403.module').then(

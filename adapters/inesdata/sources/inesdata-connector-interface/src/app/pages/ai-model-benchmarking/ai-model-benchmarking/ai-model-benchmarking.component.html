@@ -11,6 +11,14 @@
         </p>
       </div>
       <div class="hero-actions">
+        <button class="btn ghost" *ngIf="observerAssetId" (click)="openObserverTimeline()">
+          <mat-icon>timeline</mat-icon>
+          Observer Timeline
+        </button>
+        <button class="btn ghost" *ngIf="lastBenchmarkRunId" (click)="openBenchmarkObserver()">
+          <mat-icon>history</mat-icon>
+          Benchmark Evidence
+        </button>
         <button class="btn primary" (click)="runRanking()" [disabled]="!canRunBenchmark || isRunning">
           <mat-icon *ngIf="!isRunning">play_circle</mat-icon>
           <mat-spinner *ngIf="isRunning" diameter="20"></mat-spinner>
@@ -56,7 +64,7 @@
         <div class="panel-header">
           <div>
             <h2>Model pool</h2>
-            <p class="panel-subtitle">Select 2+ HTTP models with compatible inputs</p>
+            <p class="panel-subtitle">{{ getModelPoolSubtitle() }}</p>
           </div>
           <span class="badge live">{{ selectedCount }} selected</span>
         </div>
@@ -88,6 +96,11 @@
           <button class="pill" [class.active]="activeFilter === 'vision'" (click)="setFilter('vision')">Vision</button>
         </div>
 
+        <div class="compatibility-banner" *ngIf="selectedAssetIds.length > 0">
+          <mat-icon>filter_alt</mat-icon>
+          <span>The pool is automatically narrowed to models that share the same input format as the first selected model.</span>
+        </div>
+
         <div class="model-list">
           <div class="model-item loading" *ngIf="isLoadingAssets">
             <div class="model-select"><mat-spinner diameter="20"></mat-spinner></div>
@@ -100,17 +113,18 @@
 
           <div class="empty-state" *ngIf="!isLoadingAssets && filteredModelPoolAssets.length === 0">
             <mat-icon>inbox</mat-icon>
-            <p>{{ searchKeyword || activeFilter !== 'all' ? 'No models match your search criteria' : 'No HTTP models available for benchmarking' }}</p>
+            <p>{{ selectedAssetIds.length > 0 ? 'No compatible models match the current search or task filters' : (searchKeyword || activeFilter !== 'all' ? 'No models match your search criteria' : 'No HTTP models available for benchmarking') }}</p>
           </div>
 
           <div
             class="model-item selectable"
             *ngFor="let asset of filteredModelPoolAssets"
             [class.selected]="isAssetSelected(asset)"
+            [class.muted]="!canSelectAsset(asset)"
             (click)="toggleAssetSelection(asset)"
           >
             <div class="model-select">
-              <input type="checkbox" [checked]="isAssetSelected(asset)" (click)="$event.stopPropagation()" />
+              <input type="checkbox" [checked]="isAssetSelected(asset)" [disabled]="!canSelectAsset(asset)" (click)="$event.stopPropagation()" />
             </div>
             <div class="model-content">
               <div class="model-id">
@@ -119,11 +133,15 @@
                   <mat-icon>check_circle</mat-icon>
                   SELECTED
                 </span>
+                <span class="selected-badge" *ngIf="!asset.isLocal && !asset.hasAgreement">
+                  <mat-icon>link_off</mat-icon>
+                  AGREEMENT REQUIRED
+                </span>
               </div>
               <div class="model-meta">{{ getAssetMeta(asset) }}</div>
             </div>
-            <div class="model-status" [class.success]="isAssetSelected(asset)" [class.ready]="!isAssetSelected(asset)">
-              {{ isAssetSelected(asset) ? 'Selected' : 'Ready' }}
+            <div class="model-status" [class.success]="isAssetSelected(asset)" [class.ready]="!isAssetSelected(asset) && canSelectAsset(asset)" [class.neutral]="!canSelectAsset(asset)">
+              {{ isAssetSelected(asset) ? 'Selected' : (canSelectAsset(asset) ? 'Ready' : 'Needs agreement') }}
             </div>
           </div>
         </div>
@@ -200,7 +218,7 @@
               </div>
               <div class="field-foot">
                 <mat-icon>lightbulb</mat-icon>
-                One standardized input is shared across all selected models (schema matched).
+                One standardized input is shared across all selected models (schema matched). Example values are prefilled from the first selected model whenever possible.
               </div>
             </div>
 
@@ -252,12 +270,46 @@
         <div class="panel-header">
           <div>
             <h2>Validation datasets</h2>
-            <p class="panel-subtitle">Upload a validation dataset for Run Benchmark</p>
+            <p class="panel-subtitle">{{ getValidationDatasetSubtitle() }}</p>
           </div>
           <span class="badge solid">{{ detectedTask || 'Auto' }}</span>
         </div>
 
         <div class="dataset-section">
+          <div class="suggested-datasets" *ngIf="suggestedValidationDatasets.length > 0">
+            <div class="suggested-datasets-header">
+              <div class="upload-meta">
+                <mat-icon>auto_awesome</mat-icon>
+                Suggested CSV datasets prepared for the first selected model.
+              </div>
+            </div>
+
+            <div class="suggested-dataset-list">
+              <div
+                class="suggested-dataset-card"
+                *ngFor="let dataset of suggestedValidationDatasets"
+                [class.active]="isSuggestedDatasetSelected(dataset)"
+                (click)="selectSuggestedDataset(dataset)"
+              >
+                <div class="suggested-dataset-top">
+                  <div>
+                    <div class="suggested-dataset-name">{{ dataset.name }}</div>
+                    <div class="suggested-dataset-description">{{ dataset.description }}</div>
+                  </div>
+                  <span class="badge outline">{{ dataset.rows.length }} rows</span>
+                </div>
+
+                <div class="suggested-dataset-bottom">
+                  <span class="suggested-dataset-file">{{ dataset.fileName }}</span>
+                  <button class="btn subtle compact-btn" type="button" (click)="downloadSuggestedDataset(dataset, $event)">
+                    <mat-icon>download</mat-icon>
+                    CSV
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="upload-zone">
             <input
               id="validation-dataset-file"
@@ -479,7 +531,7 @@
                 </div>
               </td>
               <td class="col-metric" *ngFor="let metric of selectedMetrics">
-                <span class="metric-value">{{ formatMetricValue(row.metrics[metric] || 0, metric) }}</span>
+                <span class="metric-value">{{ formatMetricValue(row.metrics[metric], metric) }}</span>
               </td>
               <td class="col-latency">
                 <div class="latency-cell">
@@ -546,13 +598,13 @@
                 <mat-icon class="metric-icon">star</mat-icon>
                 <div class="metric-info">
                   <div class="metric-label">{{ recommendationMetric }}</div>
-                  <div class="metric-value-large">{{ formatMetricValue(bestModel.metrics[recommendationMetric] || 0, recommendationMetric) }}</div>
+                  <div class="metric-value-large">{{ formatMetricValue(bestModel.metrics[recommendationMetric], recommendationMetric) }}</div>
                 </div>
               </div>
               <div class="metric-card" *ngFor="let metric of selectedMetrics.slice(0, 4)">
                 <div class="metric-info">
                   <div class="metric-label-small">{{ metric }}</div>
-                  <div class="metric-value-medium">{{ formatMetricValue(bestModel.metrics[metric] || 0, metric) }}</div>
+                  <div class="metric-value-medium">{{ formatMetricValue(bestModel.metrics[metric], metric) }}</div>
                 </div>
               </div>
             </div>

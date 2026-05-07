@@ -2,9 +2,11 @@ import { Component, OnInit } from '@angular/core';
 import { Router } from '@angular/router';
 import { compact } from 'jsonld';
 import { EDC_CONTEXT } from '@think-it-labs/edc-connector-client';
+import { lastValueFrom } from 'rxjs';
 import { AiModelBrowserItem } from 'src/app/shared/models/ai-model-browser-item';
 import { NotificationService } from 'src/app/shared/services/notification.service';
 import { AiModelBrowserService } from 'src/app/shared/services/ai-model-browser.service';
+import { ModelObserverJournalEvent, ModelObserverJournalService } from 'src/app/shared/services/model-observer-journal.service';
 
 interface ModelCardMetadata {
   label: string;
@@ -69,9 +71,13 @@ export class AiModelBrowserComponent implements OnInit {
   availableSoftware: string[] = [];
   availableFormats: string[] = [];
 
+  private searchPublishTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastPublishedSearchTerm = '';
+
   constructor(
     private readonly aiModelBrowserService: AiModelBrowserService,
     private readonly notificationService: NotificationService,
+    private readonly modelObserverJournalService: ModelObserverJournalService,
     private readonly router: Router
   ) {
   }
@@ -170,7 +176,30 @@ export class AiModelBrowserComponent implements OnInit {
     });
   }
 
+  onSearchTermChange(): void {
+    this.applyFilters();
+    this.scheduleSearchEvent();
+  }
+
+  clearSearchTerm(): void {
+    if (!this.searchTerm.trim()) {
+      return;
+    }
+
+    if (this.searchPublishTimer) {
+      clearTimeout(this.searchPublishTimer);
+      this.searchPublishTimer = null;
+    }
+
+    this.searchTerm = '';
+    this.applyFilters();
+    this.publishSearchEvent('CLEARED');
+  }
+
   clearFilters(): void {
+    const hadActiveFilters = this.hasActiveFilters();
+    const previousFilters = this.buildSelectedFilters();
+
     this.selectedSources = [];
     this.selectedTasks = [];
     this.selectedSubtasks = [];
@@ -181,6 +210,19 @@ export class AiModelBrowserComponent implements OnInit {
     this.selectedSoftware = [];
     this.selectedFormats = [];
     this.applyFilters();
+
+    if (hadActiveFilters) {
+      this.publishBrowserEvent({
+        eventType: 'MODEL_BROWSER_FILTERED',
+        status: 'CLEARED',
+        details: {
+          searchTerm: this.searchTerm.trim(),
+          resultCount: this.filteredModels.length,
+          filters: this.buildSelectedFilters(),
+          previousFilters
+        }
+      });
+    }
   }
 
   toggleFilter(collection: string[], value: string, checked: boolean): void {
@@ -195,6 +237,18 @@ export class AiModelBrowserComponent implements OnInit {
     }
 
     this.applyFilters();
+    this.publishBrowserEvent({
+      eventType: 'MODEL_BROWSER_FILTERED',
+      status: 'APPLIED',
+      details: {
+        searchTerm: this.searchTerm.trim(),
+        resultCount: this.filteredModels.length,
+        filters: this.buildSelectedFilters(),
+        changedFilter: this.resolveFilterName(collection),
+        changedValue: value,
+        checked
+      }
+    });
   }
 
   isSelected(collection: string[], value: string): boolean {
@@ -202,6 +256,21 @@ export class AiModelBrowserComponent implements OnInit {
   }
 
   async viewDetails(model: AiModelBrowserItem): Promise<void> {
+    this.publishBrowserEvent({
+      eventType: 'MODEL_DETAIL_VIEWED',
+      status: 'VIEWED',
+      assetId: model.id,
+      modelName: model.name,
+      taskType: model.tasks[0] || undefined,
+      details: {
+        source: model.source,
+        provider: model.provider,
+        searchTerm: this.searchTerm.trim(),
+        resultCount: this.filteredModels.length,
+        filters: this.buildSelectedFilters()
+      }
+    });
+
     if (model.source === this.ownSource && model.rawAsset) {
       try {
         const compactedAsset: any = await compact(model.rawAsset as any, this.context);
@@ -374,5 +443,132 @@ export class AiModelBrowserComponent implements OnInit {
         }
       }
     });
+  }
+
+  private scheduleSearchEvent(): void {
+    if (this.searchPublishTimer) {
+      clearTimeout(this.searchPublishTimer);
+    }
+
+    const normalizedSearchTerm = this.searchTerm.trim();
+    if (!normalizedSearchTerm) {
+      return;
+    }
+
+    this.searchPublishTimer = setTimeout(() => {
+      this.searchPublishTimer = null;
+      if (normalizedSearchTerm === this.lastPublishedSearchTerm) {
+        return;
+      }
+
+      this.publishSearchEvent('SEARCHED');
+    }, 400);
+  }
+
+  private publishSearchEvent(status: 'SEARCHED' | 'CLEARED'): void {
+    const normalizedSearchTerm = this.searchTerm.trim();
+    if (status === 'SEARCHED' && !normalizedSearchTerm) {
+      return;
+    }
+
+    this.lastPublishedSearchTerm = normalizedSearchTerm;
+    this.publishBrowserEvent({
+      eventType: 'MODEL_BROWSER_SEARCHED',
+      status,
+      details: {
+        searchTerm: normalizedSearchTerm,
+        resultCount: this.filteredModels.length,
+        filters: this.buildSelectedFilters()
+      }
+    });
+  }
+
+  private publishBrowserEvent(event: ModelObserverJournalEvent): void {
+    void lastValueFrom(this.modelObserverJournalService.publish({
+      sourceComponent: 'inesdata-connector-interface:ai-model-browser',
+      ...event
+    }));
+  }
+
+  private buildSelectedFilters(): Record<string, string[]> {
+    const filters: Record<string, string[]> = {};
+
+    if (this.selectedSources.length > 0) {
+      filters.sources = [...this.selectedSources];
+    }
+
+    if (this.selectedTasks.length > 0) {
+      filters.tasks = [...this.selectedTasks];
+    }
+
+    if (this.selectedSubtasks.length > 0) {
+      filters.subtasks = [...this.selectedSubtasks];
+    }
+
+    if (this.selectedAlgorithms.length > 0) {
+      filters.algorithms = [...this.selectedAlgorithms];
+    }
+
+    if (this.selectedLibraries.length > 0) {
+      filters.libraries = [...this.selectedLibraries];
+    }
+
+    if (this.selectedFrameworks.length > 0) {
+      filters.frameworks = [...this.selectedFrameworks];
+    }
+
+    if (this.selectedStorageTypes.length > 0) {
+      filters.storageTypes = [...this.selectedStorageTypes];
+    }
+
+    if (this.selectedSoftware.length > 0) {
+      filters.software = [...this.selectedSoftware];
+    }
+
+    if (this.selectedFormats.length > 0) {
+      filters.formats = [...this.selectedFormats];
+    }
+
+    return filters;
+  }
+
+  private resolveFilterName(collection: string[]): string {
+    if (collection === this.selectedSources) {
+      return 'source';
+    }
+
+    if (collection === this.selectedTasks) {
+      return 'task';
+    }
+
+    if (collection === this.selectedSubtasks) {
+      return 'subtask';
+    }
+
+    if (collection === this.selectedAlgorithms) {
+      return 'algorithm';
+    }
+
+    if (collection === this.selectedLibraries) {
+      return 'library';
+    }
+
+    if (collection === this.selectedFrameworks) {
+      return 'framework';
+    }
+
+    if (collection === this.selectedStorageTypes) {
+      return 'storageType';
+    }
+
+    if (collection === this.selectedSoftware) {
+      return 'software';
+    }
+
+    if (collection === this.selectedFormats) {
+      return 'format';
+    }
+
+    return 'unknown';
   }
 }

@@ -2,20 +2,23 @@
 {
   "compileOnSave": false,
   "compilerOptions": {
-    "ignoreDeprecations": "6.0",
-    "baseUrl": "./",
     "outDir": "./dist/out-tsc",
+    "rootDir": "./src",
     "forceConsistentCasingInFileNames": true,
     "strict": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "sourceMap": true,
     "declaration": false,
-    "downlevelIteration": true,
     "experimentalDecorators": true,
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "target": "es2017",
     "module": "es2020",
+    "paths": {
+      "src/*": [
+        "./src/*"
+      ]
+    },
     "lib": [
       "es2018",
       "dom"
@@ -27,8 +30,11 @@
     "enableI18nLegacyMessageIdFormat": false,
     "strictInjectionParameters": true,
     "strictInputAccessModifiers": true,
-    "strictTemplates": true,
-    "strictNullChecks": false,
-    "noImplicitReturns": false
-  }
+    "strictTemplates": true
+  },
+  "exclude": [
+    "dist",
+    "out-tsc",
+    "node_modules"
+  ]
 }

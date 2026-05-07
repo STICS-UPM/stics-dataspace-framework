@@ -1,16 +1,19 @@
 {
   "compileOnSave": false,
   "compilerOptions": {
-    "baseUrl": "./",
     "outDir": "./dist/out-tsc",
     "sourceMap": true,
     "declaration": false,
-    "downlevelIteration": true,
     "experimentalDecorators": true,
     "module": "es2020",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "importHelpers": true,
     "target": "ES2022",
+    "paths": {
+      "src/*": [
+        "./src/*"
+      ]
+    },
     "typeRoots": [
       "node_modules/@types"
     ],
@@ -21,7 +24,7 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "useDefineForClassFields": false,
-		"skipLibCheck": true
+    "skipLibCheck": true
   },
   "angularCompilerOptions": {
     "fullTemplateTypeCheck": true,

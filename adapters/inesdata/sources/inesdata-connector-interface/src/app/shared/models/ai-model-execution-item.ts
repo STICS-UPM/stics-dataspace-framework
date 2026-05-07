@@ -36,6 +36,9 @@ export interface AiModelExecutionItem {
 export interface ModelExecutionRequestPayload {
   assetId: string;
   payload: unknown;
+  correlationId?: string;
+  benchmarkRunId?: string;
+  modelName?: string;
   method?: string;
   path?: string;
   headers?: Record<string, string>;

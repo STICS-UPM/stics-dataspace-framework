@@ -1,5 +1,6 @@
 {
   "managementApiUrl": "http://localhost:19193/management",
+  "strapiUrl": "http://localhost:1337",
   "catalogUrl": "http://localhost:19193/management/federatedcatalog",
   "sharedUrl": "http://localhost:19196/shared",
   "ontologyUrl": "http://ontology-hub-demo.dev.ds.dataspaceunit.upm",

@@ -27,6 +27,17 @@
     {{ dataset.properties.shortDescription }}
   </p>
 
+  <div class="observer-actions" *ngIf="isMachineLearningAsset(dataset)">
+    <button pButton type="button" label="Ver timeline del modelo" (click)="openModelObserverTimeline(dataset)"></button>
+    <button
+      pButton
+      type="button"
+      class="p-button-outlined"
+      label="Ver resumen del participante"
+      (click)="openParticipantObserverSummary(dataset)"
+    ></button>
+  </div>
+
   <p-tabView>
     <p-tabPanel header="Información general">
 			<p-editor  *ngIf="description" [(ngModel)]="description" [readonly]="true" styleClass="description">

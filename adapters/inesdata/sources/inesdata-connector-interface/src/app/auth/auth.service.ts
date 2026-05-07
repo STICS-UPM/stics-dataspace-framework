@@ -70,6 +70,8 @@ export class AuthService {
         if (this.oauthService.hasValidAccessToken()) {
           return Promise.resolve();
         }
+
+        return undefined;
       })
       .then(() => {
         this.isDoneLoadingSubject$.next(true);

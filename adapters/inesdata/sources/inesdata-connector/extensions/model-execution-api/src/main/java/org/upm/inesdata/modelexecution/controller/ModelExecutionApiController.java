@@ -21,8 +21,12 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+import java.time.Instant;
 
 import static jakarta.ws.rs.core.HttpHeaders.ACCEPT;
 import static jakarta.ws.rs.core.HttpHeaders.AUTHORIZATION;
@@ -45,6 +49,9 @@ public class ModelExecutionApiController {
     private final String defaultCounterPartyAddress;
     private final String defaultProtocol;
     private final String defaultTransferType;
+    private final boolean observerEnabled;
+    private final String observerTargetUrl;
+    private final String observerSourceComponent;
     private final HttpClient httpClient;
 
     public ModelExecutionApiController(TypeManager typeManager,
@@ -55,7 +62,11 @@ public class ModelExecutionApiController {
                                        String defaultConnectorId,
                                        String defaultCounterPartyAddress,
                                        String defaultProtocol,
-                                       String defaultTransferType) {
+                                       String defaultTransferType,
+                                       boolean observerEnabled,
+                                       String observerJournalBaseUrl,
+                                       String observerJournalEventsPath,
+                                       String observerSourceComponent) {
         this.mapper = typeManager.getMapper();
         this.monitor = monitor;
         this.vault = vault;
@@ -65,22 +76,36 @@ public class ModelExecutionApiController {
         this.defaultCounterPartyAddress = defaultCounterPartyAddress;
         this.defaultProtocol = defaultProtocol;
         this.defaultTransferType = defaultTransferType;
+        this.observerEnabled = observerEnabled;
+        this.observerTargetUrl = buildObserverTargetUrl(observerJournalBaseUrl, observerJournalEventsPath);
+        this.observerSourceComponent = firstNonBlank(observerSourceComponent, "inesdata-connector:model-execution-api");
         this.httpClient = HttpClient.newHttpClient();
     }
 
     @POST
     @Path("/execute")
     public Response execute(String requestBody, @Context HttpHeaders httpHeaders) {
+        long startedAt = System.currentTimeMillis();
+        String assetId = null;
+        String correlationId = null;
+        String benchmarkRunId = null;
+        String modelName = null;
+        ResolvedExecutionTarget resolution = null;
+
         try {
             var requestNode = mapper.readTree(requestBody);
             if (requestNode == null || requestNode.isNull()) {
                 return error(Response.Status.BAD_REQUEST, "Missing request body");
             }
 
-            var assetId = firstNonBlank(textValue(requestNode, "assetId"), null);
+            assetId = firstNonBlank(textValue(requestNode, "assetId"), null);
             if (!hasText(assetId)) {
                 return error(Response.Status.BAD_REQUEST, "Missing assetId");
             }
+
+            correlationId = firstNonBlank(textValue(requestNode, "correlationId", "requestId"), null);
+            benchmarkRunId = firstNonBlank(textValue(requestNode, "benchmarkRunId"), null);
+            modelName = firstNonBlank(textValue(requestNode, "modelName", "name"), null);
 
             var payload = firstNode(requestNode, "payload", "body", "input");
             if (payload == null || payload.isNull()) {
@@ -88,10 +113,23 @@ public class ModelExecutionApiController {
             }
 
             var authHeaderValue = firstNonBlank(httpHeaders.getHeaderString(AUTHORIZATION), null);
-            var resolution = resolveExecutionTarget(requestNode, assetId, authHeaderValue);
+            resolution = resolveExecutionTarget(requestNode, assetId, authHeaderValue);
             if (resolution == null || !hasText(resolution.endpoint())) {
                 return error(Response.Status.BAD_REQUEST, "Unable to resolve executable endpoint for assetId");
             }
+
+            publishExecutionEvent(
+                    "MODEL_EXECUTION_REQUESTED",
+                    "REQUESTED",
+                    assetId,
+                    correlationId,
+                    benchmarkRunId,
+                    modelName,
+                    resolution,
+                    null,
+                    null,
+                    startedAt
+            );
 
             var requestedMethod = firstNonBlank(textValue(requestNode, "method"), resolution.method());
             var requestedPath = firstNonBlank(textValue(requestNode, "path"), resolution.path());
@@ -99,14 +137,50 @@ public class ModelExecutionApiController {
             var outboundResponse = invokeTarget(resolution, requestedMethod, requestedPath, headersNode, payload);
 
             var contentType = outboundResponse.headers().firstValue(CONTENT_TYPE).orElse(MediaType.APPLICATION_JSON);
+            publishExecutionEvent(
+                    "MODEL_EXECUTION_COMPLETED",
+                    "COMPLETED",
+                    assetId,
+                    correlationId,
+                    benchmarkRunId,
+                    modelName,
+                    resolution,
+                    outboundResponse.statusCode(),
+                    contentType,
+                    startedAt
+            );
             return Response.status(outboundResponse.statusCode())
                     .header(CONTENT_TYPE, contentType)
                     .entity(outboundResponse.body())
                     .build();
         } catch (ExecutionException exception) {
+            publishExecutionEvent(
+                    "MODEL_EXECUTION_FAILED",
+                    "FAILED",
+                    assetId,
+                    correlationId,
+                    benchmarkRunId,
+                    modelName,
+                    resolution,
+                    null,
+                    exception.getMessage(),
+                    startedAt
+            );
             monitor.warning("Model execution request rejected: " + exception.getMessage());
             return error(Response.Status.BAD_REQUEST, exception.getMessage());
         } catch (Exception exception) {
+            publishExecutionEvent(
+                    "MODEL_EXECUTION_FAILED",
+                    "FAILED",
+                    assetId,
+                    correlationId,
+                    benchmarkRunId,
+                    modelName,
+                    resolution,
+                    null,
+                    exception.getMessage(),
+                    startedAt
+            );
             monitor.severe("Model execution failed", exception);
             return error(Response.Status.INTERNAL_SERVER_ERROR, "Model execution failed");
         }
@@ -174,7 +248,18 @@ public class ModelExecutionApiController {
             throw new ExecutionException("Unable to resolve EDR for assetId");
         }
 
-        return new ResolvedExecutionTarget(edrInfo.endpoint(), "POST", "", edrInfo.authHeader(), edrInfo.authorization());
+        return new ResolvedExecutionTarget(
+            edrInfo.endpoint(),
+            "POST",
+            "",
+            edrInfo.authHeader(),
+            edrInfo.authorization(),
+            agreementId,
+            transferId,
+            "federated-with-agreement",
+            "edr-http",
+            transferParams.connectorId()
+        );
     }
 
     private ResolvedExecutionTarget resolveLocalAsset(String assetId, String managementAuthorization) throws Exception {
@@ -203,7 +288,86 @@ public class ModelExecutionApiController {
         var authValue = firstNonBlank(resolveAuthValue(dataAddress), null);
         var authHeader = firstNonBlank(textValue(dataAddress, "authKey", "edc:authKey"), hasText(authValue) ? AUTHORIZATION : null);
 
-        return new ResolvedExecutionTarget(endpoint, method, path, authHeader, authValue);
+        return new ResolvedExecutionTarget(
+                endpoint,
+                method,
+                path,
+                authHeader,
+                authValue,
+                null,
+                null,
+                "local",
+                "local-http",
+                localParticipantId
+        );
+    }
+
+    private void publishExecutionEvent(String eventType,
+                                       String status,
+                                       String assetId,
+                                       String correlationId,
+                                       String benchmarkRunId,
+                                       String modelName,
+                                       ResolvedExecutionTarget resolution,
+                                       Integer httpStatus,
+                                       String detailMessage,
+                                       long startedAt) {
+        if (!observerEnabled || !hasText(observerTargetUrl) || !hasText(assetId)) {
+            return;
+        }
+
+        try {
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("eventId", UUID.randomUUID().toString());
+            event.put("eventType", eventType);
+            event.put("occurredAt", Instant.now().toString());
+            event.put("sourceComponent", observerSourceComponent);
+            event.put("participantId", localParticipantId);
+            event.put("assetId", assetId);
+            event.put("status", status);
+            event.put("latencyMs", System.currentTimeMillis() - startedAt);
+
+            putIfHasText(event, "correlationId", correlationId);
+            putIfHasText(event, "benchmarkRunId", benchmarkRunId);
+            putIfHasText(event, "modelName", modelName);
+
+            if (resolution != null) {
+                putIfHasText(event, "agreementId", resolution.agreementId());
+                putIfHasText(event, "transferProcessId", resolution.transferProcessId());
+                putIfHasText(event, "executionMode", resolution.executionMode());
+                putIfHasText(event, "endpointKind", resolution.endpointKind());
+                putIfHasText(event, "providerParticipantId", resolution.remoteParticipantId());
+                event.put("consumerParticipantId", localParticipantId);
+            }
+
+            if (httpStatus != null) {
+                event.put("httpStatus", httpStatus);
+            }
+
+            Map<String, Object> details = new LinkedHashMap<>();
+            if (resolution != null) {
+                putIfHasText(details, "method", resolution.method());
+                putIfHasText(details, "path", resolution.path());
+            }
+            putIfHasText(details, "message", detailMessage);
+            if (!details.isEmpty()) {
+                event.put("details", details);
+            }
+
+            var request = HttpRequest.newBuilder()
+                    .uri(URI.create(observerTargetUrl))
+                    .header(CONTENT_TYPE, MediaType.APPLICATION_JSON)
+                    .header(ACCEPT, MediaType.APPLICATION_JSON)
+                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(event), StandardCharsets.UTF_8))
+                    .build();
+
+            var response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() / 100 != 2) {
+                monitor.warning("Model execution observer journal publish failed with status " + response.statusCode() + ": " + response.body());
+            }
+        } catch (Exception exception) {
+            monitor.warning("Model execution observer publish failed: " + exception.getMessage());
+        }
     }
 
     private String resolveAuthValue(JsonNode dataAddress) {
@@ -536,6 +700,19 @@ public class ModelExecutionApiController {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 
+    private String buildObserverTargetUrl(String journalBaseUrl, String journalEventsPath) {
+        if (!hasText(journalBaseUrl)) {
+            return "";
+        }
+
+        var normalizedBaseUrl = trimTrailingSlash(journalBaseUrl);
+        var normalizedPath = firstNonBlank(journalEventsPath, "/api/model-observer/events");
+        if (!normalizedPath.startsWith("/")) {
+            normalizedPath = "/" + normalizedPath;
+        }
+        return normalizedBaseUrl + normalizedPath;
+    }
+
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
     }
@@ -554,6 +731,12 @@ public class ModelExecutionApiController {
         return third;
     }
 
+    private void putIfHasText(Map<String, Object> target, String key, String value) {
+        if (target != null && hasText(key) && hasText(value)) {
+            target.put(key, value);
+        }
+    }
+
     private Response error(Response.Status status, String message) {
         var payload = mapper.createObjectNode();
         payload.put("error", message);
@@ -566,7 +749,16 @@ public class ModelExecutionApiController {
     private record EdrInfo(String endpoint, String authorization, String authHeader) {
     }
 
-    private record ResolvedExecutionTarget(String endpoint, String method, String path, String authHeader, String authValue) {
+    private record ResolvedExecutionTarget(String endpoint,
+                                           String method,
+                                           String path,
+                                           String authHeader,
+                                           String authValue,
+                                           String agreementId,
+                                           String transferProcessId,
+                                           String executionMode,
+                                           String endpointKind,
+                                           String remoteParticipantId) {
     }
 
     private static class ExecutionException extends RuntimeException {

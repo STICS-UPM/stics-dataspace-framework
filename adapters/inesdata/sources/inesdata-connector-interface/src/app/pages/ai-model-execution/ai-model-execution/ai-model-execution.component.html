@@ -74,6 +74,12 @@
           <span class="value">{{ selectedAsset.frameworks[0] }}</span>
         </div>
       </div>
+
+      <div class="model-observer-actions">
+        <button class="observer-action" type="button" (click)="openSelectedAssetObserverTimeline()">
+          View Observer Timeline
+        </button>
+      </div>
     </div>
 
     <div *ngIf="selectedAsset" class="tabs">

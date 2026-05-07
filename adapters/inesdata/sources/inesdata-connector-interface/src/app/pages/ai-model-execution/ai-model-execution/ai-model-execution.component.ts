@@ -7,6 +7,7 @@ import {
   ModelExecutionResponsePayload
 } from 'src/app/shared/models/ai-model-execution-item';
 import { ModelExecutionService } from 'src/app/shared/services/model-execution.service';
+import { ModelObserverJournalService } from 'src/app/shared/services/model-observer-journal.service';
 import { NotificationService } from 'src/app/shared/services/notification.service';
 
 interface InputFieldState {
@@ -52,6 +53,7 @@ export class AiModelExecutionComponent implements OnInit {
   loading = false;
   loadingAssets = false;
   executing = false;
+  lastExecutionCorrelationId = '';
 
   executableAssets: AiModelExecutionItem[] = [];
   localAssets: AiModelExecutionItem[] = [];
@@ -73,6 +75,7 @@ export class AiModelExecutionComponent implements OnInit {
 
   constructor(
     private readonly modelExecutionService: ModelExecutionService,
+    private readonly modelObserverJournalService: ModelObserverJournalService,
     private readonly notificationService: NotificationService,
     private readonly route: ActivatedRoute,
     private readonly router: Router
@@ -136,6 +139,7 @@ export class AiModelExecutionComponent implements OnInit {
 
   selectAsset(asset: AiModelExecutionItem): void {
     this.selectedAsset = asset;
+    this.lastExecutionCorrelationId = '';
     this.selectedMethod = asset.httpMethodDefault || 'POST';
     this.executionPath = asset.executionPath || '';
     this.executionResult = null;
@@ -191,6 +195,8 @@ export class AiModelExecutionComponent implements OnInit {
 
     const payload = this.buildPayload();
     const startedAt = Date.now();
+    const correlationId = this.modelObserverJournalService.createId('corr');
+    this.lastExecutionCorrelationId = correlationId;
 
     this.executing = true;
     this.executionResult = null;
@@ -200,7 +206,9 @@ export class AiModelExecutionComponent implements OnInit {
       assetId: this.selectedAsset.id,
       method: this.selectedMethod,
       path: this.executionPath,
-      payload
+      payload,
+      correlationId,
+      modelName: this.selectedAsset.name
     }).subscribe({
       next: response => {
         const executionTimeMs = Date.now() - startedAt;
@@ -227,6 +235,16 @@ export class AiModelExecutionComponent implements OnInit {
 
   goBack(): void {
     this.router.navigate(['/ai-model-browser']);
+  }
+
+  openSelectedAssetObserverTimeline(): void {
+    if (!this.selectedAsset?.id) {
+      return;
+    }
+
+    this.router.navigate(['/ai-model-observer/timeline', this.selectedAsset.id], {
+      queryParams: this.lastExecutionCorrelationId ? { correlationId: this.lastExecutionCorrelationId } : undefined
+    });
   }
 
   asPrettyJson(value: unknown): string {
@@ -304,6 +322,7 @@ export class AiModelExecutionComponent implements OnInit {
 
   private clearSelection(): void {
     this.selectedAsset = undefined;
+    this.lastExecutionCorrelationId = '';
     this.inputFields = [];
     this.inputJson = '{}';
     this.inputError = '';

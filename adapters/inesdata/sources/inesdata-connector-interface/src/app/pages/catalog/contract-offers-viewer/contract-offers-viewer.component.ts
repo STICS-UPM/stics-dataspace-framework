@@ -126,9 +126,29 @@ export class ContractOffersViewerComponent {
   }
 
   getDataAddressName(dataAddressTypeId: string) {
-    const foundObject = this.storageTypes.find(item => item.id === dataAddressTypeId);
+    const normalizedId = this.normalizeDataAddressTypeId(dataAddressTypeId);
+    const foundObject = this.storageTypes.find(item => item.id === normalizedId);
     return foundObject ? foundObject.name : null;
 }
+
+  private normalizeDataAddressTypeId(dataAddressTypeId: string): string {
+    const normalized = `${dataAddressTypeId || ''}`.trim();
+    const lower = normalized.toLowerCase();
+
+    if (lower.includes('http')) {
+      return DATA_ADDRESS_TYPES.httpData;
+    }
+
+    if (lower.includes('amazon') || lower.includes('s3')) {
+      return DATA_ADDRESS_TYPES.amazonS3;
+    }
+
+    if (lower.includes('inesdatastore')) {
+      return DATA_ADDRESS_TYPES.inesDataStore;
+    }
+
+    return normalized;
+  }
 
   processAssetData() {
     this.assetDataKeys = this.assetDataKeys.filter(key => {

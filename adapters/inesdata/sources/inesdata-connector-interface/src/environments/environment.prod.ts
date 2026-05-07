@@ -8,6 +8,7 @@ export const environment = {
   },
   runtime: {
     managementApiUrl: '',
+    strapiUrl: '',
     catalogUrl: '',
     sharedUrl: "",
     ontologyUrl: "http://ontology-hub-demo.dev.ds.dataspaceunit.upm",

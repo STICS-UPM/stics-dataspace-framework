@@ -1,12 +1,12 @@
 import { ChangeDetectionStrategy, Component, OnInit } from '@angular/core';
 import { Router, ActivatedRoute } from '@angular/router';
 import { DataOffer } from '../../../shared/models/data-offer';
-import { DomSanitizer } from '@angular/platform-browser';
 import { ASSET_TYPES } from 'src/app/shared/utils/app.constants';
 import { FormGroup } from '@angular/forms';
 import { Vocabulary } from 'src/app/shared/models/vocabulary';
 import { QuerySpec } from '@think-it-labs/edc-connector-client';
 import { CatalogBrowserService } from 'src/app/shared/services/catalog-browser.service';
+import { ModelObserverApiService } from 'src/app/shared/services/model-observer/model-observer-api.service';
 import { BehaviorSubject, switchMap } from 'rxjs';
 
 
@@ -42,7 +42,8 @@ export class AssetDetailsComponent implements OnInit {
 
   constructor(private router: Router,
               private activatedRoute: ActivatedRoute,
-              private catalogService: CatalogBrowserService) {
+              private catalogService: CatalogBrowserService,
+              private modelObserverApiService: ModelObserverApiService) {
 								if (this.router.getCurrentNavigation()?.extras.state) {
 									this.isNavigation = true;
 									this.currentPage = this.router.getCurrentNavigation().extras.state.currentPage;
@@ -92,9 +93,52 @@ export class AssetDetailsComponent implements OnInit {
         this.processAssetData(dataset);
 				this.description = dataset.properties.description;
 				this.processAsetType(dataset.properties.assetType)
+        this.publishModelDetailViewed(dataset);
         return [];
       })
     );
+  }
+
+  private publishModelDetailViewed(dataset: DataOffer): void {
+    if (!dataset || dataset.properties?.assetType !== ASSET_TYPES.machineLearning) {
+      return;
+    }
+
+    this.modelObserverApiService.createEvent({
+      eventType: 'MODEL_DETAIL_VIEWED',
+      sourceComponent: 'inesdata-public-portal-frontend:asset-details',
+      assetId: dataset.assetId,
+      providerParticipantId: dataset.properties?.participantId || null,
+      modelName: dataset.properties?.name || null,
+      status: 'VIEWED',
+      details: {
+        participantId: this.activatedRoute.snapshot.paramMap.get('participantId'),
+        datasetId: this.activatedRoute.snapshot.paramMap.get('datasetId')
+      }
+    }).subscribe({
+      error: () => undefined
+    });
+  }
+
+  isMachineLearningAsset(dataset: DataOffer): boolean {
+    return dataset?.properties?.assetType === ASSET_TYPES.machineLearning;
+  }
+
+  openModelObserverTimeline(dataset: DataOffer): void {
+    if (!dataset?.assetId) {
+      return;
+    }
+
+    this.router.navigate(['/model-observer/timeline', dataset.assetId]);
+  }
+
+  openParticipantObserverSummary(dataset: DataOffer): void {
+    const participantId = `${dataset?.properties?.participantId || ''}`.trim();
+    if (!participantId) {
+      return;
+    }
+
+    this.router.navigate(['/model-observer/participants', participantId]);
   }
 
   processAssetData(dataset: DataOffer) {

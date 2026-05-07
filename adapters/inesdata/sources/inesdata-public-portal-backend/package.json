@@ -7,7 +7,8 @@
     "develop": "strapi develop",
     "start": "strapi start",
     "build": "strapi build",
-    "strapi": "strapi"
+    "strapi": "strapi",
+    "smoke:model-observer": "MODEL_OBSERVER_DB_FILENAME=.tmp/model-observer-smoke.db node scripts/model-observer-smoke-test.js"
   },
   "devDependencies": {},
   "dependencies": {

@@ -1,498 +1,818 @@
 """
-Mock AI Model Server - 25 Models for INESDATA
-==============================================
+Deterministic model server for INESDATA.
 
-Adapted from AIModelHub. Serves 25 mock models in 5 groups:
-- Group 1: Computer Vision - Medical Imaging (5 models)
-- Group 2: NLP - Sentiment Analysis (5 models)
-- Group 3: Regression - Health Metrics (5 models)
-- Group 4: Tabular Classification - Flora (5 models)
-- Group 5: Fraud Detection - Transactional (5 models)
-
-Each group shares the same input schema for benchmarking.
-Port: 8080
+This service keeps the same 25 HTTP endpoints used by the deployment, but
+replaces random mock outputs with deterministic rule-based inference derived
+from the request payload. It is still not a trained ML serving stack because no
+serialized models are loaded, but responses are now reproducible and grounded
+in the provided input.
 """
 
-from flask import Flask, request, jsonify
-from flask_cors import CORS
 from datetime import datetime
+import json
+import os
 import time
-import random
+from urllib import error as urllib_error
+from urllib import request as urllib_request
+
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+
 
 app = Flask(__name__)
 CORS(app)
 
 execution_log = []
 
-# ============================================================================
-# GROUP 1: COMPUTER VISION - MEDICAL IMAGING
-# Input: image_url (string), image_size (string)
-# ============================================================================
+
+def _load_external_backends():
+    raw = os.environ.get("MODEL_SERVER_HTTP_BACKENDS", "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return {str(key): str(value) for key, value in parsed.items() if value}
+
+
+EXTERNAL_HTTP_BACKENDS = _load_external_backends()
+HTTP_BACKEND_TIMEOUT = _safe_float(os.environ.get("MODEL_SERVER_HTTP_TIMEOUT_SECONDS"), 15.0) if "_safe_float" in globals() else 15.0
+
+
+def _bounded(value, minimum, maximum):
+    return max(minimum, min(maximum, value))
+
+
+def _safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalized_text(*values):
+    return " ".join(str(value or "") for value in values).strip().lower()
+
+
+def _count_keywords(text, weighted_keywords):
+    return sum(weight for keyword, weight in weighted_keywords if keyword in text)
+
+
+def _best_label(score_map, fallback):
+    best_label = fallback
+    best_score = float("-inf")
+    for label, score in score_map.items():
+        if score > best_score:
+            best_label = label
+            best_score = score
+    return best_label, best_score
+
+
+def _confidence_from_scores(score_map, floor=0.55, ceiling=0.99):
+    ordered = sorted(score_map.values(), reverse=True)
+    top = ordered[0] if ordered else 0.0
+    runner_up = ordered[1] if len(ordered) > 1 else 0.0
+    margin = max(0.0, top - runner_up)
+    total = max(1.0, sum(max(score, 0.0) for score in score_map.values()))
+    confidence = floor + ((margin / total) * (ceiling - floor))
+    if top <= 0:
+        confidence = floor
+    return round(_bounded(confidence, floor, ceiling), 3)
+
+
+def _processing_time_ms(base, data, multiplier=9):
+    complexity = len(str(data or {}))
+    return round(base + min(180, complexity * multiplier / 10), 2)
+
+
+def _forward_to_external_backend(route_key, payload):
+    target_url = EXTERNAL_HTTP_BACKENDS.get(route_key)
+    if not target_url:
+        return None, None
+
+    body = json.dumps(payload or {}).encode("utf-8")
+    request_obj = urllib_request.Request(
+        target_url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib_request.urlopen(request_obj, timeout=HTTP_BACKEND_TIMEOUT) as response:
+            response_body = response.read().decode("utf-8")
+            data = json.loads(response_body) if response_body else {}
+            return data, response.status
+    except urllib_error.HTTPError as exc:
+        detail = exc.read().decode("utf-8")
+        try:
+            parsed = json.loads(detail) if detail else {}
+        except json.JSONDecodeError:
+            parsed = {"error": detail or str(exc)}
+        return parsed, exc.code
+    except (urllib_error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return {"error": f"external backend failed: {exc}"}, 502
+
+
+def _extract_dims(image_size):
+    if not isinstance(image_size, str) or "x" not in image_size.lower():
+        return 512.0, 512.0
+    width, height = image_size.lower().split("x", 1)
+    return _safe_float(width, 512.0), _safe_float(height, 512.0)
+
+
+POSITIVE_WORDS = [
+    ("excellent", 3), ("amazing", 3), ("great", 2), ("love", 2),
+    ("good", 1), ("useful", 1), ("fast", 1), ("helpful", 1),
+]
+NEGATIVE_WORDS = [
+    ("awful", 3), ("terrible", 3), ("hate", 2), ("horrible", 2),
+    ("bad", 1), ("broken", 2), ("slow", 1), ("poor", 1), ("refund", 2),
+]
+JOY_WORDS = [("love", 2), ("great", 2), ("happy", 2), ("excited", 2), ("joy", 2)]
+ANGER_WORDS = [("angry", 2), ("hate", 2), ("furious", 3), ("awful", 2), ("terrible", 2)]
+SAD_WORDS = [("sad", 2), ("disappointed", 2), ("unhappy", 2), ("upset", 1), ("poor", 1)]
+SURPRISE_WORDS = [("wow", 2), ("unexpected", 2), ("surprised", 2), ("shocking", 2)]
+
+
+def _sentiment_scores(text):
+    positive = _count_keywords(text, POSITIVE_WORDS)
+    negative = _count_keywords(text, NEGATIVE_WORDS)
+    neutral = 1.0 if positive == negative else 0.0
+    return {
+        "positive": float(positive),
+        "negative": float(negative),
+        "neutral": neutral,
+    }
+
+
+def _emotion_from_text(text):
+    emotion_scores = {
+        "joy": _count_keywords(text, JOY_WORDS),
+        "anger": _count_keywords(text, ANGER_WORDS),
+        "sadness": _count_keywords(text, SAD_WORDS),
+        "surprise": _count_keywords(text, SURPRISE_WORDS),
+        "neutral": 1.0,
+    }
+    emotion, _ = _best_label(emotion_scores, "neutral")
+    return emotion
+
+
+def _medical_context(data):
+    text = _normalized_text(data.get("image_url"), data.get("image_size"), data.get("notes"))
+    width, height = _extract_dims(data.get("image_size"))
+    area = width * height
+    return text, area
+
 
 def chest_xray_classifier(data):
-    time.sleep(random.uniform(0.1, 0.3))
-    conditions = ['Normal', 'Pneumonia', 'COVID-19', 'Tuberculosis', 'Lung Cancer']
-    predicted = random.choice(conditions)
-    return {
-        'model': 'Chest X-Ray Classifier',
-        'prediction': predicted,
-        'confidence': round(random.uniform(0.75, 0.95), 3),
-        'processing_time_ms': round(random.uniform(80, 300), 2)
+    text, area = _medical_context(data)
+    scores = {
+        "Normal": 3 + _count_keywords(text, [("normal", 3), ("clear", 2), ("healthy", 2), ("negative", 2)]),
+        "Pneumonia": _count_keywords(text, [("pneumonia", 5), ("opacity", 2), ("infiltrate", 2), ("consolidation", 3)]),
+        "COVID-19": _count_keywords(text, [("covid", 6), ("groundglass", 3), ("ground-glass", 3), ("coronavirus", 4)]),
+        "Tuberculosis": _count_keywords(text, [("tb", 6), ("tuberculosis", 6), ("cavity", 3), ("apical", 2)]),
+        "Lung Cancer": _count_keywords(text, [("nodule", 2), ("mass", 3), ("cancer", 6), ("malignant", 5)]),
     }
+    if area > 1024 * 1024:
+        scores["Lung Cancer"] += 0.5
+        scores["Pneumonia"] += 0.5
+    prediction, _ = _best_label(scores, "Normal")
+    return {
+        "model": "Chest X-Ray Classifier",
+        "prediction": prediction,
+        "confidence": _confidence_from_scores(scores),
+        "processing_time_ms": _processing_time_ms(85, data),
+    }
+
 
 def pneumonia_detector(data):
-    time.sleep(random.uniform(0.1, 0.3))
-    result = random.choice(['No_Pneumonia', 'Bacterial_Pneumonia', 'Viral_Pneumonia'])
-    return {
-        'model': 'Pneumonia Detector',
-        'prediction': result,
-        'confidence': round(random.uniform(0.78, 0.96), 3),
-        'severity': random.choice(['Mild', 'Moderate', 'Severe']) if 'Pneumonia' in result else 'None',
-        'processing_time_ms': round(random.uniform(70, 280), 2)
+    text, _ = _medical_context(data)
+    scores = {
+        "No_Pneumonia": 3 + _count_keywords(text, [("normal", 2), ("clear", 2), ("negative", 1)]),
+        "Bacterial_Pneumonia": _count_keywords(text, [("bacterial", 6), ("lobar", 4), ("consolidation", 4), ("pneumonia", 3)]),
+        "Viral_Pneumonia": _count_keywords(text, [("viral", 6), ("covid", 4), ("diffuse", 2), ("interstitial", 2), ("pneumonia", 3)]),
     }
+    prediction, winner_score = _best_label(scores, "No_Pneumonia")
+    if prediction == "No_Pneumonia":
+        severity = "None"
+    elif winner_score >= 9:
+        severity = "Severe"
+    elif winner_score >= 6:
+        severity = "Moderate"
+    else:
+        severity = "Mild"
+    return {
+        "model": "Pneumonia Detector",
+        "prediction": prediction,
+        "confidence": _confidence_from_scores(scores),
+        "severity": severity,
+        "processing_time_ms": _processing_time_ms(78, data),
+    }
+
 
 def covid19_screener(data):
-    time.sleep(random.uniform(0.1, 0.3))
-    result = random.choice(['Negative', 'Positive', 'Probable'])
-    return {
-        'model': 'COVID-19 Screener',
-        'prediction': result,
-        'confidence': round(random.uniform(0.72, 0.94), 3),
-        'recommendation': 'PCR test recommended' if result != 'Negative' else 'No further action needed',
-        'processing_time_ms': round(random.uniform(90, 320), 2)
+    text, _ = _medical_context(data)
+    scores = {
+        "Negative": 3 + _count_keywords(text, [("normal", 2), ("negative", 2), ("clear", 2)]),
+        "Positive": _count_keywords(text, [("covid", 8), ("positive", 4), ("groundglass", 4), ("ground-glass", 4)]),
+        "Probable": _count_keywords(text, [("viral", 2), ("suspected", 3), ("bilateral", 2), ("opacity", 1)]),
     }
+    prediction, _ = _best_label(scores, "Negative")
+    return {
+        "model": "COVID-19 Screener",
+        "prediction": prediction,
+        "confidence": _confidence_from_scores(scores),
+        "recommendation": "PCR test recommended" if prediction != "Negative" else "No further action needed",
+        "processing_time_ms": _processing_time_ms(95, data),
+    }
+
 
 def lung_nodule_detector(data):
-    time.sleep(random.uniform(0.1, 0.3))
-    has_nodule = random.choice([True, False])
+    text, area = _medical_context(data)
+    nodule_score = _count_keywords(text, [("nodule", 7), ("mass", 5), ("lesion", 4), ("spiculated", 5)])
+    has_nodule = nodule_score > 0 or area > 900000
+    if has_nodule:
+        malignancy_scores = {
+            "Malignant": _count_keywords(text, [("malignant", 8), ("spiculated", 6), ("cancer", 5)]),
+            "Benign": 2 + _count_keywords(text, [("benign", 7), ("calcified", 4), ("granuloma", 5)]),
+            "Indeterminate": 1 + _count_keywords(text, [("indeterminate", 5), ("unclear", 2), ("small", 1)]),
+        }
+        nodule_type, _ = _best_label(malignancy_scores, "Indeterminate")
+        confidence = _confidence_from_scores(malignancy_scores)
+        risk_score = round(_bounded((malignancy_scores.get("Malignant", 0) + (area / 300000)) / 10, 0.05, 0.98), 2)
+    else:
+        nodule_type = "None"
+        confidence = 0.82
+        risk_score = 0.0
     return {
-        'model': 'Lung Nodule Detector',
-        'has_nodule': has_nodule,
-        'nodule_type': random.choice(['Benign', 'Malignant', 'Indeterminate']) if has_nodule else 'None',
-        'confidence': round(random.uniform(0.76, 0.93), 3),
-        'risk_score': round(random.uniform(0.1, 0.9), 2) if has_nodule else 0.0,
-        'processing_time_ms': round(random.uniform(100, 340), 2)
+        "model": "Lung Nodule Detector",
+        "has_nodule": has_nodule,
+        "nodule_type": nodule_type,
+        "confidence": confidence,
+        "risk_score": risk_score,
+        "processing_time_ms": _processing_time_ms(108, data),
     }
+
 
 def tuberculosis_classifier(data):
-    time.sleep(random.uniform(0.1, 0.3))
-    result = random.choice(['Normal', 'TB_Active', 'TB_Latent', 'TB_Suspected'])
+    text, _ = _medical_context(data)
+    scores = {
+        "Normal": 3 + _count_keywords(text, [("normal", 2), ("clear", 2)]),
+        "TB_Active": _count_keywords(text, [("tb_active", 8), ("tuberculosis", 7), ("cavity", 4), ("active", 3)]),
+        "TB_Latent": _count_keywords(text, [("latent", 7), ("exposure", 3), ("screening", 1)]),
+        "TB_Suspected": _count_keywords(text, [("suspected", 4), ("apical", 3), ("fibrosis", 2), ("tb", 5)]),
+    }
+    prediction, _ = _best_label(scores, "Normal")
     return {
-        'model': 'Tuberculosis Classifier',
-        'prediction': result,
-        'confidence': round(random.uniform(0.74, 0.92), 3),
-        'follow_up': 'Sputum test recommended' if 'TB' in result else 'None',
-        'processing_time_ms': round(random.uniform(80, 300), 2)
+        "model": "Tuberculosis Classifier",
+        "prediction": prediction,
+        "confidence": _confidence_from_scores(scores),
+        "follow_up": "Sputum test recommended" if prediction != "Normal" else "None",
+        "processing_time_ms": _processing_time_ms(84, data),
     }
 
-# ============================================================================
-# GROUP 2: NLP - SENTIMENT ANALYSIS
-# Input: text (string)
-# ============================================================================
 
 def ecommerce_sentiment(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    text = data.get('text', '')
-    positive_words = ['good', 'great', 'excellent', 'love', 'amazing']
-    negative_words = ['bad', 'terrible', 'hate', 'awful', 'horrible']
-    pos_count = sum(word in text.lower() for word in positive_words)
-    neg_count = sum(word in text.lower() for word in negative_words)
-    if pos_count > neg_count:
-        sentiment, score = 'positive', random.uniform(0.7, 0.95)
-    elif neg_count > pos_count:
-        sentiment, score = 'negative', random.uniform(0.7, 0.95)
-    else:
-        sentiment, score = 'neutral', random.uniform(0.45, 0.65)
+    text = _normalized_text(data.get("text"))
+    scores = _sentiment_scores(text)
+    sentiment, _ = _best_label(scores, "neutral")
+    sentiment_value = {"positive": 4.5, "neutral": 3.0, "negative": 1.8}[sentiment]
     return {
-        'model': 'E-commerce Sentiment Analyzer',
-        'sentiment': sentiment,
-        'confidence': round(score, 3),
-        'rating_prediction': round(random.uniform(1, 5), 1),
-        'processing_time_ms': round(random.uniform(50, 200), 2)
+        "model": "E-commerce Sentiment Analyzer",
+        "sentiment": sentiment,
+        "confidence": _confidence_from_scores(scores, floor=0.5),
+        "rating_prediction": round(sentiment_value, 1),
+        "processing_time_ms": _processing_time_ms(55, data),
     }
+
 
 def twitter_sentiment(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    sentiment = random.choice(['positive', 'negative', 'neutral'])
+    text = _normalized_text(data.get("text"))
+    scores = _sentiment_scores(text)
+    sentiment, _ = _best_label(scores, "neutral")
     return {
-        'model': 'Twitter Sentiment Analyzer',
-        'sentiment': sentiment,
-        'confidence': round(random.uniform(0.68, 0.92), 3),
-        'emotion': random.choice(['joy', 'anger', 'sadness', 'surprise', 'neutral']),
-        'processing_time_ms': round(random.uniform(40, 180), 2)
+        "model": "Twitter Sentiment Analyzer",
+        "sentiment": sentiment,
+        "confidence": _confidence_from_scores(scores, floor=0.5),
+        "emotion": _emotion_from_text(text),
+        "processing_time_ms": _processing_time_ms(48, data),
     }
+
 
 def product_review_classifier(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    sentiment = random.choice(['very_positive', 'positive', 'neutral', 'negative', 'very_negative'])
+    text = _normalized_text(data.get("text"))
+    scores = _sentiment_scores(text)
+    base_sentiment, _ = _best_label(scores, "neutral")
+    intensity = abs(scores["positive"] - scores["negative"])
+    if base_sentiment == "positive":
+        sentiment = "very_positive" if intensity >= 3 else "positive"
+        stars = 4.8 if intensity >= 3 else 4.1
+    elif base_sentiment == "negative":
+        sentiment = "very_negative" if intensity >= 3 else "negative"
+        stars = 1.2 if intensity >= 3 else 2.0
+    else:
+        sentiment = "neutral"
+        stars = 3.0
     return {
-        'model': 'Product Review Classifier',
-        'sentiment': sentiment,
-        'confidence': round(random.uniform(0.71, 0.94), 3),
-        'star_rating': round(random.uniform(1, 5), 1),
-        'processing_time_ms': round(random.uniform(50, 200), 2)
+        "model": "Product Review Classifier",
+        "sentiment": sentiment,
+        "confidence": _confidence_from_scores(scores, floor=0.5),
+        "star_rating": round(stars, 1),
+        "processing_time_ms": _processing_time_ms(58, data),
     }
+
 
 def customer_feedback_analyzer(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    sentiment = random.choice(['satisfied', 'dissatisfied', 'neutral'])
-    return {
-        'model': 'Customer Feedback Analyzer',
-        'sentiment': sentiment,
-        'confidence': round(random.uniform(0.69, 0.93), 3),
-        'satisfaction_score': round(random.uniform(0, 100), 1),
-        'action_required': random.choice([True, False]),
-        'processing_time_ms': round(random.uniform(60, 200), 2)
+    text = _normalized_text(data.get("text"))
+    scores = _sentiment_scores(text)
+    base_sentiment, _ = _best_label(scores, "neutral")
+    mapped = {
+        "positive": ("satisfied", 86.0, False),
+        "neutral": ("neutral", 55.0, False),
+        "negative": ("dissatisfied", 22.0, True),
     }
+    sentiment, satisfaction_score, action_required = mapped[base_sentiment]
+    return {
+        "model": "Customer Feedback Analyzer",
+        "sentiment": sentiment,
+        "confidence": _confidence_from_scores(scores, floor=0.5),
+        "satisfaction_score": round(satisfaction_score, 1),
+        "action_required": action_required,
+        "processing_time_ms": _processing_time_ms(62, data),
+    }
+
 
 def social_media_sentiment(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    sentiment = random.choice(['positive', 'negative', 'neutral', 'mixed'])
+    text = _normalized_text(data.get("text"))
+    scores = _sentiment_scores(text)
+    positive = scores["positive"]
+    negative = scores["negative"]
+    if positive > 0 and negative > 0:
+        sentiment = "mixed"
+    else:
+        sentiment, _ = _best_label(scores, "neutral")
+    confidence_scores = {"positive": positive, "negative": negative, "neutral": scores["neutral"]}
+    virality_score = round(_bounded((len(text) / 2) + (text.count("!") * 8) + (text.count("#") * 12), 0, 100), 1)
+    engagement_prediction = "High" if virality_score >= 75 else "Medium" if virality_score >= 40 else "Low"
     return {
-        'model': 'Social Media Sentiment',
-        'sentiment': sentiment,
-        'confidence': round(random.uniform(0.70, 0.91), 3),
-        'virality_score': round(random.uniform(0, 100), 1),
-        'engagement_prediction': random.choice(['High', 'Medium', 'Low']),
-        'processing_time_ms': round(random.uniform(50, 200), 2)
+        "model": "Social Media Sentiment",
+        "sentiment": sentiment,
+        "confidence": _confidence_from_scores(confidence_scores, floor=0.5),
+        "virality_score": virality_score,
+        "engagement_prediction": engagement_prediction,
+        "processing_time_ms": _processing_time_ms(57, data),
     }
 
-# ============================================================================
-# GROUP 3: REGRESSION - HEALTH METRICS
-# Input: weight_kg (float), height_m (float)
-# ============================================================================
 
 def bmi_calculator(data):
-    time.sleep(random.uniform(0.05, 0.15))
-    weight_kg = float(data.get('weight_kg', 70.0))
-    height_m = float(data.get('height_m', 1.75))
+    weight_kg = _safe_float(data.get("weight_kg"), 70.0)
+    height_m = _bounded(_safe_float(data.get("height_m"), 1.75), 0.5, 2.5)
     bmi = weight_kg / (height_m ** 2)
-    if bmi < 18.5: category = 'Underweight'
-    elif bmi < 25: category = 'Normal'
-    elif bmi < 30: category = 'Overweight'
-    else: category = 'Obese'
+    if bmi < 18.5:
+        category = "Underweight"
+    elif bmi < 25:
+        category = "Normal"
+    elif bmi < 30:
+        category = "Overweight"
+    else:
+        category = "Obese"
     return {
-        'model': 'BMI Calculator',
-        'bmi': round(bmi, 2),
-        'category': category,
-        'weight_kg': weight_kg,
-        'height_m': height_m,
-        'processing_time_ms': round(random.uniform(50, 150), 2)
+        "model": "BMI Calculator",
+        "bmi": round(bmi, 2),
+        "category": category,
+        "weight_kg": weight_kg,
+        "height_m": height_m,
+        "processing_time_ms": _processing_time_ms(52, data),
     }
+
 
 def body_fat_estimator(data):
-    time.sleep(random.uniform(0.05, 0.15))
-    weight_kg = float(data.get('weight_kg', 70.0))
-    height_m = float(data.get('height_m', 1.75))
+    weight_kg = _safe_float(data.get("weight_kg"), 70.0)
+    height_m = _bounded(_safe_float(data.get("height_m"), 1.75), 0.5, 2.5)
     bmi = weight_kg / (height_m ** 2)
-    body_fat = (1.20 * bmi) + (0.23 * 30) - 5.4
-    body_fat = max(5, min(50, body_fat))
+    body_fat = _bounded((1.20 * bmi) + (0.23 * 30) - 5.4, 5, 50)
     return {
-        'model': 'Body Fat Estimator',
-        'body_fat_percentage': round(body_fat, 1),
-        'category': 'Athletic' if body_fat < 20 else 'Average' if body_fat < 30 else 'High',
-        'lean_mass_kg': round(weight_kg * (1 - body_fat / 100), 1),
-        'processing_time_ms': round(random.uniform(50, 150), 2)
+        "model": "Body Fat Estimator",
+        "body_fat_percentage": round(body_fat, 1),
+        "category": "Athletic" if body_fat < 20 else "Average" if body_fat < 30 else "High",
+        "lean_mass_kg": round(weight_kg * (1 - body_fat / 100), 1),
+        "processing_time_ms": _processing_time_ms(54, data),
     }
 
+
 def bmr_calculator(data):
-    time.sleep(random.uniform(0.05, 0.15))
-    weight_kg = float(data.get('weight_kg', 70.0))
-    height_m = float(data.get('height_m', 1.75))
+    weight_kg = _safe_float(data.get("weight_kg"), 70.0)
+    height_m = _bounded(_safe_float(data.get("height_m"), 1.75), 0.5, 2.5)
     height_cm = height_m * 100
     bmr = (10 * weight_kg) + (6.25 * height_cm) - (5 * 30) + 5
     return {
-        'model': 'BMR Calculator',
-        'bmr_calories': round(bmr, 0),
-        'sedentary': round(bmr * 1.2, 0),
-        'moderate_activity': round(bmr * 1.55, 0),
-        'very_active': round(bmr * 1.9, 0),
-        'processing_time_ms': round(random.uniform(50, 150), 2)
+        "model": "BMR Calculator",
+        "bmr_calories": round(bmr, 0),
+        "sedentary": round(bmr * 1.2, 0),
+        "moderate_activity": round(bmr * 1.55, 0),
+        "very_active": round(bmr * 1.9, 0),
+        "processing_time_ms": _processing_time_ms(53, data),
     }
+
 
 def ideal_weight_predictor(data):
-    time.sleep(random.uniform(0.05, 0.15))
-    height_m = float(data.get('height_m', 1.75))
-    ideal_weight = 48 + 2.7 * (height_m * 100 - 152.4) / 2.54
-    ideal_weight = max(45, min(120, ideal_weight))
+    height_m = _bounded(_safe_float(data.get("height_m"), 1.75), 0.5, 2.5)
+    ideal_weight = _bounded(48 + 2.7 * ((height_m * 100) - 152.4) / 2.54, 45, 120)
     return {
-        'model': 'Ideal Weight Predictor',
-        'ideal_weight_kg': round(ideal_weight, 1),
-        'healthy_range_min': round(ideal_weight * 0.9, 1),
-        'healthy_range_max': round(ideal_weight * 1.1, 1),
-        'processing_time_ms': round(random.uniform(50, 150), 2)
+        "model": "Ideal Weight Predictor",
+        "ideal_weight_kg": round(ideal_weight, 1),
+        "healthy_range_min": round(ideal_weight * 0.9, 1),
+        "healthy_range_max": round(ideal_weight * 1.1, 1),
+        "processing_time_ms": _processing_time_ms(51, data),
     }
+
 
 def health_risk_assessor(data):
-    time.sleep(random.uniform(0.05, 0.15))
-    weight_kg = float(data.get('weight_kg', 70.0))
-    height_m = float(data.get('height_m', 1.75))
+    weight_kg = _safe_float(data.get("weight_kg"), 70.0)
+    height_m = _bounded(_safe_float(data.get("height_m"), 1.75), 0.5, 2.5)
     bmi = weight_kg / (height_m ** 2)
-    if bmi < 18.5: risk_score = 30
-    elif bmi < 25: risk_score = 10
-    elif bmi < 30: risk_score = 40
-    else: risk_score = 70
+    risk_score = 10
+    if bmi < 18.5:
+        risk_score = 30
+    elif bmi >= 30:
+        risk_score = 70
+    elif bmi >= 25:
+        risk_score = 40
     return {
-        'model': 'Health Risk Assessor',
-        'risk_score': risk_score,
-        'risk_level': 'Low' if risk_score < 30 else 'Moderate' if risk_score < 50 else 'High',
-        'recommendations': ['Maintain healthy diet', 'Regular exercise', 'Annual checkup'],
-        'processing_time_ms': round(random.uniform(50, 150), 2)
+        "model": "Health Risk Assessor",
+        "risk_score": risk_score,
+        "risk_level": "Low" if risk_score < 30 else "Moderate" if risk_score < 50 else "High",
+        "recommendations": ["Maintain healthy diet", "Regular exercise", "Annual checkup"],
+        "processing_time_ms": _processing_time_ms(56, data),
     }
 
-# ============================================================================
-# GROUP 4: TABULAR CLASSIFICATION - FLORA
-# Input: sepal_length, sepal_width, petal_length, petal_width (floats)
-# ============================================================================
 
 def iris_classifier(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    petal_length = float(data.get('petal_length', 4.0))
-    if petal_length < 2.5: species = 'setosa'
-    elif petal_length < 5.0: species = 'versicolor'
-    else: species = 'virginica'
+    petal_length = _safe_float(data.get("petal_length"), 4.0)
+    petal_width = _safe_float(data.get("petal_width"), 1.3)
+    if petal_length < 2.5:
+        species = "setosa"
+        confidence = 0.97
+    elif petal_width < 1.8:
+        species = "versicolor"
+        confidence = 0.91
+    else:
+        species = "virginica"
+        confidence = 0.94
     return {
-        'model': 'Iris Classifier',
-        'prediction': species,
-        'confidence': round(random.uniform(0.85, 0.98), 3),
-        'processing_time_ms': round(random.uniform(50, 200), 2)
+        "model": "Iris Classifier",
+        "prediction": species,
+        "confidence": confidence,
+        "processing_time_ms": _processing_time_ms(49, data),
     }
+
 
 def flower_type_classifier(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    prediction = random.choice(['Rose', 'Tulip', 'Sunflower', 'Daisy', 'Lily'])
+    petal_length = _safe_float(data.get("petal_length"), 4.0)
+    petal_width = _safe_float(data.get("petal_width"), 1.3)
+    sepal_width = _safe_float(data.get("sepal_width"), 3.0)
+    if petal_length < 2.0:
+        prediction, color = "Daisy", "White"
+    elif petal_length > 5.5 and petal_width > 1.8:
+        prediction, color = "Lily", "White"
+    elif sepal_width > 3.4:
+        prediction, color = "Rose", "Red"
+    elif petal_width < 1.2:
+        prediction, color = "Tulip", "Yellow"
+    else:
+        prediction, color = "Sunflower", "Yellow"
     return {
-        'model': 'Flower Type Classifier',
-        'prediction': prediction,
-        'confidence': round(random.uniform(0.82, 0.96), 3),
-        'color_prediction': random.choice(['Red', 'Yellow', 'White', 'Pink', 'Purple']),
-        'processing_time_ms': round(random.uniform(50, 200), 2)
+        "model": "Flower Type Classifier",
+        "prediction": prediction,
+        "confidence": 0.86,
+        "color_prediction": color,
+        "processing_time_ms": _processing_time_ms(58, data),
     }
+
 
 def plant_species_identifier(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    prediction = random.choice(['Ficus', 'Monstera', 'Pothos', 'Snake Plant', 'Peace Lily'])
+    sepal_length = _safe_float(data.get("sepal_length"), 5.8)
+    sepal_width = _safe_float(data.get("sepal_width"), 3.0)
+    petal_length = _safe_float(data.get("petal_length"), 4.0)
+    petal_width = _safe_float(data.get("petal_width"), 1.3)
+    ratio = petal_length / max(petal_width, 0.1)
+    if ratio > 5 and sepal_width > 3.0:
+        prediction, care = "Snake Plant", "Easy"
+    elif petal_length > 5.0:
+        prediction, care = "Peace Lily", "Moderate"
+    elif sepal_length > 6.0:
+        prediction, care = "Monstera", "Moderate"
+    elif petal_width < 1.0:
+        prediction, care = "Pothos", "Easy"
+    else:
+        prediction, care = "Ficus", "Difficult"
     return {
-        'model': 'Plant Species Identifier',
-        'prediction': prediction,
-        'confidence': round(random.uniform(0.79, 0.94), 3),
-        'care_difficulty': random.choice(['Easy', 'Moderate', 'Difficult']),
-        'processing_time_ms': round(random.uniform(60, 220), 2)
+        "model": "Plant Species Identifier",
+        "prediction": prediction,
+        "confidence": 0.84,
+        "care_difficulty": care,
+        "processing_time_ms": _processing_time_ms(63, data),
     }
+
 
 def botanical_classifier(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    prediction = random.choice(['Rosaceae', 'Asteraceae', 'Fabaceae', 'Lamiaceae', 'Solanaceae'])
-    return {
-        'model': 'Botanical Classifier',
-        'family': prediction,
-        'confidence': round(random.uniform(0.81, 0.95), 3),
-        'genus_count': random.randint(50, 500),
-        'processing_time_ms': round(random.uniform(50, 200), 2)
+    sepal_length = _safe_float(data.get("sepal_length"), 5.8)
+    sepal_width = _safe_float(data.get("sepal_width"), 3.0)
+    petal_length = _safe_float(data.get("petal_length"), 4.0)
+    petal_width = _safe_float(data.get("petal_width"), 1.3)
+    family_scores = {
+        "Rosaceae": max(0.0, sepal_width - 2.8) + max(0.0, 2.0 - petal_width),
+        "Asteraceae": max(0.0, 2.2 - petal_width) + max(0.0, 5.0 - petal_length),
+        "Fabaceae": max(0.0, petal_length - 4.5) + max(0.0, 1.4 - sepal_width),
+        "Lamiaceae": max(0.0, 6.2 - sepal_length) + max(0.0, petal_width - 1.2),
+        "Solanaceae": max(0.0, petal_width - 1.6) + max(0.0, sepal_length - 6.0),
     }
+    family, _ = _best_label(family_scores, "Asteraceae")
+    genus_count = int(_bounded((petal_length + sepal_length) * 40, 50, 500))
+    return {
+        "model": "Botanical Classifier",
+        "family": family,
+        "confidence": _confidence_from_scores(family_scores, floor=0.6),
+        "genus_count": genus_count,
+        "processing_time_ms": _processing_time_ms(59, data),
+    }
+
 
 def flora_recognition(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    prediction = random.choice(['Flowering Plant', 'Conifer', 'Fern', 'Succulent', 'Grass'])
+    petal_length = _safe_float(data.get("petal_length"), 4.0)
+    petal_width = _safe_float(data.get("petal_width"), 1.3)
+    sepal_length = _safe_float(data.get("sepal_length"), 5.8)
+    if petal_length < 2.0:
+        category, edible = "Grass", False
+    elif petal_width < 0.8:
+        category, edible = "Fern", False
+    elif sepal_length < 5.5:
+        category, edible = "Succulent", True
+    elif petal_length > 5.0:
+        category, edible = "Flowering Plant", True
+    else:
+        category, edible = "Conifer", False
     return {
-        'model': 'Flora Recognition',
-        'category': prediction,
-        'confidence': round(random.uniform(0.83, 0.97), 3),
-        'edible': random.choice([True, False]),
-        'processing_time_ms': round(random.uniform(50, 200), 2)
+        "model": "Flora Recognition",
+        "category": category,
+        "confidence": 0.85,
+        "edible": edible,
+        "processing_time_ms": _processing_time_ms(57, data),
     }
 
-# ============================================================================
-# GROUP 5: FRAUD DETECTION - TRANSACTIONAL
-# Input: amount (float), merchant_category (string), location (string), timestamp (string)
-# ============================================================================
+
+def _transaction_context(data):
+    amount = _safe_float(data.get("amount"), 100.0)
+    merchant_category = _normalized_text(data.get("merchant_category"))
+    location = _normalized_text(data.get("location"))
+    timestamp = _normalized_text(data.get("timestamp"))
+    hour = 12
+    if "t" in timestamp and ":" in timestamp:
+        try:
+            hour = int(timestamp.split("t", 1)[1].split(":", 1)[0])
+        except (ValueError, IndexError):
+            hour = 12
+    return amount, merchant_category, location, hour
+
+
+def _fraud_score(amount, merchant_category, location, hour):
+    score = 0.08
+    if amount > 5000:
+        score += 0.45
+    elif amount > 2000:
+        score += 0.3
+    elif amount > 1000:
+        score += 0.18
+    if location in {"international", "offshore", "cross-border"}:
+        score += 0.22
+    if hour < 6 or hour > 22:
+        score += 0.12
+    if any(keyword in merchant_category for keyword in ("crypto", "gambling", "luxury", "gift")):
+        score += 0.18
+    if "travel" in merchant_category:
+        score += 0.07
+    return _bounded(score, 0.0, 1.0)
+
 
 def fraud_detector(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    amount = float(data.get('amount', 100.0))
-    fraud_score = random.uniform(-0.1, 0.2)
-    if amount > 1000: fraud_score += 0.3
-    if data.get('location') == 'international': fraud_score += 0.2
-    fraud_score = max(0.0, min(1.0, fraud_score))
+    amount, merchant_category, location, hour = _transaction_context(data)
+    fraud_score = _fraud_score(amount, merchant_category, location, hour)
     return {
-        'model': 'Fraud Detector',
-        'is_fraud': fraud_score > 0.5,
-        'fraud_probability': round(fraud_score, 3),
-        'risk_level': 'High' if fraud_score > 0.7 else 'Medium' if fraud_score > 0.4 else 'Low',
-        'processing_time_ms': round(random.uniform(50, 200), 2)
+        "model": "Fraud Detector",
+        "is_fraud": fraud_score > 0.5,
+        "fraud_probability": round(fraud_score, 3),
+        "risk_level": "High" if fraud_score > 0.7 else "Medium" if fraud_score > 0.4 else "Low",
+        "processing_time_ms": _processing_time_ms(61, data),
     }
+
 
 def credit_card_fraud(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    amount = float(data.get('amount', 100.0))
-    fraud_score = random.uniform(0.1, 0.9)
-    if amount > 2000: fraud_score = min(fraud_score + 0.2, 1.0)
+    amount, merchant_category, location, hour = _transaction_context(data)
+    fraud_score = _bounded(_fraud_score(amount, merchant_category, location, hour) + 0.08, 0.0, 1.0)
+    decision = "Block" if fraud_score > 0.8 else "Review" if fraud_score > 0.55 else "Approve"
     return {
-        'model': 'Credit Card Fraud Detector',
-        'is_fraud': fraud_score > 0.55,
-        'fraud_score': round(fraud_score, 3),
-        'decision': 'Block' if fraud_score > 0.8 else 'Review' if fraud_score > 0.5 else 'Approve',
-        'processing_time_ms': round(random.uniform(50, 220), 2)
+        "model": "Credit Card Fraud Detector",
+        "is_fraud": fraud_score > 0.55,
+        "fraud_score": round(fraud_score, 3),
+        "decision": decision,
+        "processing_time_ms": _processing_time_ms(64, data),
     }
+
 
 def payment_anomaly_detector(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    anomaly_score = random.uniform(0.0, 1.0)
+    amount, merchant_category, location, hour = _transaction_context(data)
+    anomaly_score = _bounded(_fraud_score(amount, merchant_category, location, hour) + (0.08 if amount < 5 else 0.0), 0.0, 1.0)
+    deviation = _bounded((anomaly_score * 100) + (15 if hour < 6 or hour > 22 else 0), 0, 150)
     return {
-        'model': 'Payment Anomaly Detector',
-        'is_anomaly': anomaly_score > 0.6,
-        'anomaly_score': round(anomaly_score, 3),
-        'deviation_percentage': round(random.uniform(0, 150), 1),
-        'processing_time_ms': round(random.uniform(40, 180), 2)
+        "model": "Payment Anomaly Detector",
+        "is_anomaly": anomaly_score > 0.6,
+        "anomaly_score": round(anomaly_score, 3),
+        "deviation_percentage": round(deviation, 1),
+        "processing_time_ms": _processing_time_ms(47, data),
     }
+
 
 def transaction_risk_scorer(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    amount = float(data.get('amount', 100.0))
-    risk_score = random.uniform(0, 100)
-    if amount > 5000: risk_score = min(risk_score + 30, 100)
+    amount, merchant_category, location, hour = _transaction_context(data)
+    risk_score = round(_fraud_score(amount, merchant_category, location, hour) * 100, 1)
     return {
-        'model': 'Transaction Risk Scorer',
-        'risk_score': round(risk_score, 1),
-        'risk_band': 'Very High' if risk_score > 80 else 'High' if risk_score > 60 else 'Medium' if risk_score > 40 else 'Low',
-        'recommended_action': 'Deny' if risk_score > 80 else 'Manual Review' if risk_score > 60 else 'Approve',
-        'processing_time_ms': round(random.uniform(50, 200), 2)
+        "model": "Transaction Risk Scorer",
+        "risk_score": risk_score,
+        "risk_band": "Very High" if risk_score > 80 else "High" if risk_score > 60 else "Medium" if risk_score > 40 else "Low",
+        "recommended_action": "Deny" if risk_score > 80 else "Manual Review" if risk_score > 60 else "Approve",
+        "processing_time_ms": _processing_time_ms(55, data),
     }
+
 
 def financial_fraud_classifier(data):
-    time.sleep(random.uniform(0.05, 0.2))
-    prediction = random.choice(['Card Fraud', 'Identity Theft', 'Account Takeover', 'Legitimate', 'Suspicious'])
+    amount, merchant_category, location, hour = _transaction_context(data)
+    score = _fraud_score(amount, merchant_category, location, hour)
+    if any(keyword in merchant_category for keyword in ("card", "retail", "pos")) and score > 0.55:
+        fraud_type = "Card Fraud"
+    elif "identity" in merchant_category or location == "cross-border":
+        fraud_type = "Identity Theft"
+    elif any(keyword in merchant_category for keyword in ("bank", "account", "transfer")) and score > 0.45:
+        fraud_type = "Account Takeover"
+    elif score > 0.35:
+        fraud_type = "Suspicious"
+    else:
+        fraud_type = "Legitimate"
     return {
-        'model': 'Financial Fraud Classifier',
-        'fraud_type': prediction,
-        'confidence': round(random.uniform(0.75, 0.95), 3),
-        'requires_investigation': prediction != 'Legitimate',
-        'processing_time_ms': round(random.uniform(60, 240), 2)
+        "model": "Financial Fraud Classifier",
+        "fraud_type": fraud_type,
+        "confidence": round(_bounded(0.6 + (score * 0.35), 0.6, 0.95), 3),
+        "requires_investigation": fraud_type != "Legitimate",
+        "processing_time_ms": _processing_time_ms(66, data),
     }
 
-# ============================================================================
-# API ENDPOINTS
-# ============================================================================
 
-def _handle(fn, name, endpoint):
+def _handle(fn, name, endpoint, route_key):
     start = time.time()
     try:
         data = request.get_json(force=True, silent=True) or {}
+        forwarded, forwarded_status = _forward_to_external_backend(route_key, data)
+        if forwarded_status is not None:
+            if isinstance(forwarded, dict):
+                forwarded.setdefault("served_by", "external-http-backend")
+                forwarded.setdefault("backend_route", route_key)
+            log_execution(name, endpoint, "success" if forwarded_status < 400 else "error", start)
+            return jsonify(forwarded), forwarded_status
         result = fn(data)
-        log_execution(name, endpoint, 'success', start)
+        if isinstance(result, dict):
+            result.setdefault("served_by", "local-rule-engine")
+        log_execution(name, endpoint, "success", start)
         return jsonify(result), 200
-    except Exception as e:
-        log_execution(name, endpoint, 'error', start)
-        return jsonify({'error': str(e)}), 500
+    except Exception as exc:
+        log_execution(name, endpoint, "error", start)
+        return jsonify({"error": str(exc)}), 500
 
-# Group 1
+
 @app.route('/api/v1/vision/chest-xray', methods=['POST'])
 def api_chest_xray():
-    return _handle(chest_xray_classifier, 'Chest X-Ray Classifier', '/api/v1/vision/chest-xray')
+    return _handle(chest_xray_classifier, 'Chest X-Ray Classifier', '/api/v1/vision/chest-xray', 'vision.chest-xray')
+
 
 @app.route('/api/v1/vision/pneumonia', methods=['POST'])
 def api_pneumonia():
-    return _handle(pneumonia_detector, 'Pneumonia Detector', '/api/v1/vision/pneumonia')
+    return _handle(pneumonia_detector, 'Pneumonia Detector', '/api/v1/vision/pneumonia', 'vision.pneumonia')
+
 
 @app.route('/api/v1/vision/covid19', methods=['POST'])
 def api_covid19():
-    return _handle(covid19_screener, 'COVID-19 Screener', '/api/v1/vision/covid19')
+    return _handle(covid19_screener, 'COVID-19 Screener', '/api/v1/vision/covid19', 'vision.covid19')
+
 
 @app.route('/api/v1/vision/lung-nodule', methods=['POST'])
 def api_lung_nodule():
-    return _handle(lung_nodule_detector, 'Lung Nodule Detector', '/api/v1/vision/lung-nodule')
+    return _handle(lung_nodule_detector, 'Lung Nodule Detector', '/api/v1/vision/lung-nodule', 'vision.lung-nodule')
+
 
 @app.route('/api/v1/vision/tuberculosis', methods=['POST'])
 def api_tuberculosis():
-    return _handle(tuberculosis_classifier, 'Tuberculosis Classifier', '/api/v1/vision/tuberculosis')
+    return _handle(tuberculosis_classifier, 'Tuberculosis Classifier', '/api/v1/vision/tuberculosis', 'vision.tuberculosis')
 
-# Group 2
+
 @app.route('/api/v1/nlp/ecommerce-sentiment', methods=['POST'])
 def api_ecommerce_sentiment():
-    return _handle(ecommerce_sentiment, 'E-commerce Sentiment', '/api/v1/nlp/ecommerce-sentiment')
+    return _handle(ecommerce_sentiment, 'E-commerce Sentiment', '/api/v1/nlp/ecommerce-sentiment', 'nlp.ecommerce-sentiment')
+
 
 @app.route('/api/v1/nlp/twitter-sentiment', methods=['POST'])
 def api_twitter_sentiment():
-    return _handle(twitter_sentiment, 'Twitter Sentiment', '/api/v1/nlp/twitter-sentiment')
+    return _handle(twitter_sentiment, 'Twitter Sentiment', '/api/v1/nlp/twitter-sentiment', 'nlp.twitter-sentiment')
+
 
 @app.route('/api/v1/nlp/product-review', methods=['POST'])
 def api_product_review():
-    return _handle(product_review_classifier, 'Product Review Classifier', '/api/v1/nlp/product-review')
+    return _handle(product_review_classifier, 'Product Review Classifier', '/api/v1/nlp/product-review', 'nlp.product-review')
+
 
 @app.route('/api/v1/nlp/customer-feedback', methods=['POST'])
 def api_customer_feedback():
-    return _handle(customer_feedback_analyzer, 'Customer Feedback Analyzer', '/api/v1/nlp/customer-feedback')
+    return _handle(customer_feedback_analyzer, 'Customer Feedback Analyzer', '/api/v1/nlp/customer-feedback', 'nlp.customer-feedback')
+
 
 @app.route('/api/v1/nlp/social-media', methods=['POST'])
 def api_social_media():
-    return _handle(social_media_sentiment, 'Social Media Sentiment', '/api/v1/nlp/social-media')
+    return _handle(social_media_sentiment, 'Social Media Sentiment', '/api/v1/nlp/social-media', 'nlp.social-media')
 
-# Group 3
+
 @app.route('/api/v1/health/bmi', methods=['POST'])
 def api_bmi():
-    return _handle(bmi_calculator, 'BMI Calculator', '/api/v1/health/bmi')
+    return _handle(bmi_calculator, 'BMI Calculator', '/api/v1/health/bmi', 'health.bmi')
+
 
 @app.route('/api/v1/health/body-fat', methods=['POST'])
 def api_body_fat():
-    return _handle(body_fat_estimator, 'Body Fat Estimator', '/api/v1/health/body-fat')
+    return _handle(body_fat_estimator, 'Body Fat Estimator', '/api/v1/health/body-fat', 'health.body-fat')
+
 
 @app.route('/api/v1/health/bmr', methods=['POST'])
 def api_bmr():
-    return _handle(bmr_calculator, 'BMR Calculator', '/api/v1/health/bmr')
+    return _handle(bmr_calculator, 'BMR Calculator', '/api/v1/health/bmr', 'health.bmr')
+
 
 @app.route('/api/v1/health/ideal-weight', methods=['POST'])
 def api_ideal_weight():
-    return _handle(ideal_weight_predictor, 'Ideal Weight Predictor', '/api/v1/health/ideal-weight')
+    return _handle(ideal_weight_predictor, 'Ideal Weight Predictor', '/api/v1/health/ideal-weight', 'health.ideal-weight')
+
 
 @app.route('/api/v1/health/risk-assessment', methods=['POST'])
 def api_health_risk():
-    return _handle(health_risk_assessor, 'Health Risk Assessor', '/api/v1/health/risk-assessment')
+    return _handle(health_risk_assessor, 'Health Risk Assessor', '/api/v1/health/risk-assessment', 'health.risk-assessment')
 
-# Group 4
+
 @app.route('/api/v1/classification/iris', methods=['POST'])
 def api_iris():
-    return _handle(iris_classifier, 'Iris Classifier', '/api/v1/classification/iris')
+    return _handle(iris_classifier, 'Iris Classifier', '/api/v1/classification/iris', 'classification.iris')
+
 
 @app.route('/api/v1/classification/flower', methods=['POST'])
 def api_flower():
-    return _handle(flower_type_classifier, 'Flower Type Classifier', '/api/v1/classification/flower')
+    return _handle(flower_type_classifier, 'Flower Type Classifier', '/api/v1/classification/flower', 'classification.flower')
+
 
 @app.route('/api/v1/classification/plant', methods=['POST'])
 def api_plant():
-    return _handle(plant_species_identifier, 'Plant Species Identifier', '/api/v1/classification/plant')
+    return _handle(plant_species_identifier, 'Plant Species Identifier', '/api/v1/classification/plant', 'classification.plant')
+
 
 @app.route('/api/v1/classification/botanical', methods=['POST'])
 def api_botanical():
-    return _handle(botanical_classifier, 'Botanical Classifier', '/api/v1/classification/botanical')
+    return _handle(botanical_classifier, 'Botanical Classifier', '/api/v1/classification/botanical', 'classification.botanical')
+
 
 @app.route('/api/v1/classification/flora', methods=['POST'])
 def api_flora():
-    return _handle(flora_recognition, 'Flora Recognition', '/api/v1/classification/flora')
+    return _handle(flora_recognition, 'Flora Recognition', '/api/v1/classification/flora', 'classification.flora')
 
-# Group 5
+
 @app.route('/api/v1/fraud/transaction', methods=['POST'])
 def api_fraud_transaction():
-    return _handle(fraud_detector, 'Fraud Detector', '/api/v1/fraud/transaction')
+    return _handle(fraud_detector, 'Fraud Detector', '/api/v1/fraud/transaction', 'fraud.transaction')
+
 
 @app.route('/api/v1/fraud/credit-card', methods=['POST'])
 def api_credit_card():
-    return _handle(credit_card_fraud, 'Credit Card Fraud', '/api/v1/fraud/credit-card')
+    return _handle(credit_card_fraud, 'Credit Card Fraud', '/api/v1/fraud/credit-card', 'fraud.credit-card')
+
 
 @app.route('/api/v1/fraud/anomaly', methods=['POST'])
 def api_anomaly():
-    return _handle(payment_anomaly_detector, 'Payment Anomaly Detector', '/api/v1/fraud/anomaly')
+    return _handle(payment_anomaly_detector, 'Payment Anomaly Detector', '/api/v1/fraud/anomaly', 'fraud.anomaly')
+
 
 @app.route('/api/v1/fraud/risk-scorer', methods=['POST'])
 def api_risk_scorer():
-    return _handle(transaction_risk_scorer, 'Transaction Risk Scorer', '/api/v1/fraud/risk-scorer')
+    return _handle(transaction_risk_scorer, 'Transaction Risk Scorer', '/api/v1/fraud/risk-scorer', 'fraud.risk-scorer')
+
 
 @app.route('/api/v1/fraud/classifier', methods=['POST'])
 def api_fraud_classifier():
-    return _handle(financial_fraud_classifier, 'Financial Fraud Classifier', '/api/v1/fraud/classifier')
+    return _handle(financial_fraud_classifier, 'Financial Fraud Classifier', '/api/v1/fraud/classifier', 'fraud.classifier')
 
-# ============================================================================
-# UTILITY ENDPOINTS
-# ============================================================================
 
 def log_execution(model, endpoint, status, start_time):
     execution_log.append({
@@ -500,10 +820,11 @@ def log_execution(model, endpoint, status, start_time):
         'model': model,
         'endpoint': endpoint,
         'status': status,
-        'duration': round((time.time() - start_time) * 1000, 2)
+        'duration': round((time.time() - start_time) * 1000, 2),
     })
     if len(execution_log) > 200:
         execution_log.pop(0)
+
 
 @app.route('/api/v1/health', methods=['GET'])
 def health_check():
@@ -511,9 +832,13 @@ def health_check():
         'status': 'healthy',
         'models': 25,
         'groups': 5,
+        'inference_mode': 'deterministic-rule-engine',
+        'trained_models_loaded': 0,
+        'external_http_backends_loaded': len(EXTERNAL_HTTP_BACKENDS),
         'total_requests': len(execution_log),
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
     }), 200
+
 
 @app.route('/', methods=['GET'])
 def root():
@@ -522,15 +847,20 @@ def root():
         'models': 25,
         'groups': 5,
         'status': 'healthy',
+        'inference_mode': 'deterministic-rule-engine',
+        'trained_models_loaded': 0,
+        'external_http_backends_loaded': len(EXTERNAL_HTTP_BACKENDS),
+        'external_http_backend_routes': sorted(EXTERNAL_HTTP_BACKENDS.keys()),
         'endpoints': {
             'health': '/api/v1/health',
             'group1_vision': ['/api/v1/vision/chest-xray', '/api/v1/vision/pneumonia', '/api/v1/vision/covid19', '/api/v1/vision/lung-nodule', '/api/v1/vision/tuberculosis'],
             'group2_nlp': ['/api/v1/nlp/ecommerce-sentiment', '/api/v1/nlp/twitter-sentiment', '/api/v1/nlp/product-review', '/api/v1/nlp/customer-feedback', '/api/v1/nlp/social-media'],
             'group3_health': ['/api/v1/health/bmi', '/api/v1/health/body-fat', '/api/v1/health/bmr', '/api/v1/health/ideal-weight', '/api/v1/health/risk-assessment'],
             'group4_flora': ['/api/v1/classification/iris', '/api/v1/classification/flower', '/api/v1/classification/plant', '/api/v1/classification/botanical', '/api/v1/classification/flora'],
-            'group5_fraud': ['/api/v1/fraud/transaction', '/api/v1/fraud/credit-card', '/api/v1/fraud/anomaly', '/api/v1/fraud/risk-scorer', '/api/v1/fraud/classifier']
-        }
+            'group5_fraud': ['/api/v1/fraud/transaction', '/api/v1/fraud/credit-card', '/api/v1/fraud/anomaly', '/api/v1/fraud/risk-scorer', '/api/v1/fraud/classifier'],
+        },
     }), 200
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=False)

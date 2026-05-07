@@ -16,6 +16,8 @@ import { NGXLogger } from 'ngx-logger';
  */
 @Injectable()
 export class ServerErrorInterceptor implements HttpInterceptor {
+  private static readonly MENU_REQUEST_FRAGMENT = '/api/menus?filters[slug][$eq]=public-portal-menu';
+
   /**
    * Creates an instance of server error interceptor.
    *
@@ -62,6 +64,8 @@ export class ServerErrorInterceptor implements HttpInterceptor {
     request: HttpRequest<any>,
     next: HttpHandler
   ): Observable<HttpEvent<any>> {
+    const isPublicMenuRequest = request.url.includes(ServerErrorInterceptor.MENU_REQUEST_FRAGMENT);
+
     switch (error.status) {
       case 400:
         this.logger.error(
@@ -106,7 +110,9 @@ export class ServerErrorInterceptor implements HttpInterceptor {
           request,
           error
         );
-        this.notificationService.showErrorException(error.error);
+        if (!isPublicMenuRequest) {
+          this.notificationService.showErrorException(error.error);
+        }
     }
 
     return throwError(error);

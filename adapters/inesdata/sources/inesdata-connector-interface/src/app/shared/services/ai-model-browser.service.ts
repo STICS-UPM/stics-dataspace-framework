@@ -146,7 +146,7 @@ export class AiModelBrowserService {
       assetType: 'machineLearning',
       contentType: this.firstText(properties.contenttype) || 'Not available',
       format: this.firstText(properties.format) || 'Unknown',
-      storageType: this.normalizeStorageType(this.firstText(properties.storageType) || ''),
+      storageType: this.normalizeStorageType(this.resolveOfferStorageType(properties)),
       fileName: this.firstText(properties.fileName) || 'Unknown',
       tasks: this.collectMetadataValues(metadataNode, ['daimo:task', 'https://w3id.org/daimo/ns#task', 'https://pionera.ai/edc/daimo#task', 'task']),
       subtasks: this.collectMetadataValues(metadataNode, ['daimo:subtask', 'https://w3id.org/daimo/ns#subtask', 'https://pionera.ai/edc/daimo#subtask', 'subtask']),
@@ -309,6 +309,17 @@ export class AiModelBrowserService {
 
   private unique(values: string[]): string[] {
     return Array.from(new Set(values.map(value => value.trim()).filter(value => value.length > 0)));
+  }
+
+  private resolveOfferStorageType(properties: Record<string, unknown>): string {
+    return this.firstText(
+      properties.storageType,
+      properties['edc:dataAddressType'],
+      properties['https://w3id.org/edc/v0.0.1/ns/dataAddressType'],
+      properties.type,
+      properties['edc:type'],
+      properties['https://w3id.org/edc/v0.0.1/ns/type']
+    );
   }
 
   private normalizeStorageType(value: string): string {

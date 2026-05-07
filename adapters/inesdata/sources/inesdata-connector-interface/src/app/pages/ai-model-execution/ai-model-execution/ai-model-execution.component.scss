@@ -160,6 +160,24 @@
   gap: 1rem;
 }
 
+.model-observer-actions {
+  margin-top: 1.25rem;
+}
+
+.observer-action {
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.observer-action:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
 .detail-row {
   display: flex;
   gap: 0.5rem;

@@ -10,10 +10,10 @@
       <input
         matInput
         [(ngModel)]="searchTerm"
-        (ngModelChange)="applyFilters()"
+        (ngModelChange)="onSearchTermChange()"
         placeholder="e.g. classification, pytorch, city council"
       />
-      <button matSuffix mat-icon-button *ngIf="searchTerm" (click)="searchTerm=''; applyFilters()" aria-label="Clear search">
+      <button matSuffix mat-icon-button *ngIf="searchTerm" (click)="clearSearchTerm()" aria-label="Clear search">
         <mat-icon>close</mat-icon>
       </button>
     </mat-form-field>

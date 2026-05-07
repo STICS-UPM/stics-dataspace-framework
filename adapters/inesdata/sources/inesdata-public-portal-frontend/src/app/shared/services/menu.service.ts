@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { MenuItem } from 'primeng/api';
 import { environment } from 'src/environments/environment';
-import { map, Observable } from 'rxjs';
+import { catchError, map, Observable, of } from 'rxjs';
 import { HttpClient } from '@angular/common/http';
 
 /**
@@ -36,6 +36,11 @@ export class MenuService {
 			routerLink: "/catalog",
 			command: e => this.activeItem = e.item,
 			title: "Catálogo"
+		}, {
+			label: "Model Observer",
+			routerLink: "/model-observer",
+			command: e => this.activeItem = e.item,
+			title: "Model Observer"
 		});
 	}
 
@@ -71,7 +76,8 @@ export class MenuService {
 				}
 
 				return this.mainMenu;
-			})
+			}),
+			catchError(() => of(this.mainMenu))
 		);
 	}
 }

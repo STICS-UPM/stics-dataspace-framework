@@ -4,12 +4,22 @@ FROM node:20.11-alpine as builder
 # working directory
 WORKDIR /app
 
-# copy everything to current working directory
-COPY . ./
+ENV NG_CLI_ANALYTICS=false \
+    npm_config_audit=false \
+    npm_config_fund=false \
+    npm_config_update_notifier=false \
+    CI=true
 
-# run npm install
-RUN npm install &&\
-  npm run build
+# install dependencies first to keep the expensive layer stable
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund --no-update-notifier
+
+# copy only the files required by the Angular production build
+COPY angular.json tsconfig.app.json tsconfig.json ./
+COPY src ./src
+COPY docker ./docker
+
+RUN NODE_OPTIONS=--max_old_space_size=1536 npm run build -- --configuration production
 
 # nginx base image
 FROM nginx:alpine

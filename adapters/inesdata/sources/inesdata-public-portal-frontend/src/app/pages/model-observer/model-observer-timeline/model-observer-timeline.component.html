@@ -1,0 +1,15 @@
+<section class="observer-view">
+  <header class="observer-view__header">
+    <h1>Timeline for {{ assetId }}</h1>
+    <p *ngIf="timeline">{{ timeline.total }} events found</p>
+  </header>
+
+  <app-model-timeline-filter [eventTypes]="eventTypes" (filterChanged)="onFilterChanged($event)"></app-model-timeline-filter>
+
+  <p *ngIf="isLoading">Loading timeline...</p>
+  <p *ngIf="error" class="observer-view__error">{{ error }}</p>
+
+  <div class="observer-view__list" *ngIf="timeline && !isLoading">
+    <app-model-event-card *ngFor="let event of timeline.items" [event]="event"></app-model-event-card>
+  </div>
+</section>

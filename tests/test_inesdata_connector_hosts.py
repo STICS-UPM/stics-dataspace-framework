@@ -19,6 +19,28 @@ class ConnectorHostsConfig:
 
 
 class ConnectorHostsTests(unittest.TestCase):
+    def test_generate_hosts_includes_public_portal_endpoints(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorHostsConfig(tmpdir)
+            with open(config.deployer_config_path(), "w", encoding="utf-8") as handle:
+                handle.write("DS_DOMAIN_BASE=dev.ds.dataspaceunit.upm\n")
+
+            adapter = INESDataConfigAdapter(config)
+            hosts = adapter.generate_hosts("demo")
+
+            self.assertIn(
+                "127.0.0.1 registration-service-demo.dev.ds.dataspaceunit.upm",
+                hosts,
+            )
+            self.assertIn(
+                "127.0.0.1 demo.dev.ds.dataspaceunit.upm",
+                hosts,
+            )
+            self.assertIn(
+                "127.0.0.1 backend-demo.dev.ds.dataspaceunit.upm",
+                hosts,
+            )
+
     def test_generate_connector_hosts_uses_ds_domain_base(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorHostsConfig(tmpdir)

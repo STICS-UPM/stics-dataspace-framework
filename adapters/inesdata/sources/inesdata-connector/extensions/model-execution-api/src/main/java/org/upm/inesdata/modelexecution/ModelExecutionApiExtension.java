@@ -13,6 +13,7 @@ import org.eclipse.edc.spi.types.TypeManager;
 import org.eclipse.edc.web.spi.WebService;
 import org.eclipse.edc.web.spi.configuration.ApiContext;
 import org.upm.inesdata.modelexecution.controller.ModelExecutionApiController;
+import org.upm.inesdata.modelexecution.controller.ModelExecutionCorsFilter;
 
 @Extension(value = ModelExecutionApiExtension.NAME)
 public class ModelExecutionApiExtension implements ServiceExtension {
@@ -21,6 +22,19 @@ public class ModelExecutionApiExtension implements ServiceExtension {
     private static final String DEFAULT_MANAGEMENT_PORT = "19193";
     private static final String DEFAULT_PROTOCOL = "dataspace-protocol-http";
     private static final String DEFAULT_TRANSFER_TYPE = "HttpData-PULL";
+    private static final String DEFAULT_OBSERVER_EVENTS_PATH = "/api/model-observer/events";
+
+    @Setting(value = "Enable or disable model observer journal emission for model executions.", defaultValue = "true")
+    private static final String OBSERVER_JOURNAL_ENABLED = "model.observer.journal.enabled";
+
+    @Setting(value = "Base URL for the model observer journal backend.", defaultValue = "")
+    private static final String OBSERVER_JOURNAL_BASE_URL = "model.observer.journal.baseurl";
+
+    @Setting(value = "Relative path used to publish model observer execution events.", defaultValue = DEFAULT_OBSERVER_EVENTS_PATH)
+    private static final String OBSERVER_JOURNAL_EVENTS_PATH = "model.observer.journal.events.path";
+
+    @Setting(value = "Source component value written into emitted model execution observer events.", defaultValue = "inesdata-connector:model-execution-api")
+    private static final String OBSERVER_SOURCE_COMPONENT = "model.observer.source.component";
 
     @Setting(value = "Internal base URL used by the model execution API to call the management API.",
             defaultValue = "http://localhost:" + DEFAULT_MANAGEMENT_PORT + DEFAULT_MANAGEMENT_PATH)
@@ -66,6 +80,7 @@ public class ModelExecutionApiExtension implements ServiceExtension {
         var managementBaseUrl = context.getSetting(MANAGEMENT_BASE_URL, defaultManagementBaseUrl);
         var localParticipantId = context.getParticipantId();
 
+        webService.registerResource(ApiContext.MANAGEMENT, new ModelExecutionCorsFilter());
         var authenticationFilter = new AuthenticationRequestFilter(authenticationRegistry, "management-api");
         webService.registerResource(ApiContext.MANAGEMENT, authenticationFilter);
         webService.registerResource(ApiContext.MANAGEMENT, new ModelExecutionApiController(
@@ -77,7 +92,11 @@ public class ModelExecutionApiExtension implements ServiceExtension {
                 context.getSetting(DEFAULT_CONNECTOR_ID, ""),
                 context.getSetting(DEFAULT_COUNTER_PARTY_ADDRESS, ""),
                 context.getSetting(DEFAULT_EXECUTION_PROTOCOL, DEFAULT_PROTOCOL),
-                context.getSetting(DEFAULT_EXECUTION_TRANSFER_TYPE, DEFAULT_TRANSFER_TYPE)
+            context.getSetting(DEFAULT_EXECUTION_TRANSFER_TYPE, DEFAULT_TRANSFER_TYPE),
+            Boolean.parseBoolean(String.valueOf(context.getSetting(OBSERVER_JOURNAL_ENABLED, "true"))),
+            context.getSetting(OBSERVER_JOURNAL_BASE_URL, ""),
+            context.getSetting(OBSERVER_JOURNAL_EVENTS_PATH, DEFAULT_OBSERVER_EVENTS_PATH),
+            context.getSetting(OBSERVER_SOURCE_COMPONENT, "inesdata-connector:model-execution-api")
         ));
     }
 }

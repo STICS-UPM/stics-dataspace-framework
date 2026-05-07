@@ -195,9 +195,39 @@ export class CatalogBrowserService {
   }
 
   private findStorageType(dataset: any): string {
-    return this.resolveTextValue(dataset?.storageType)
+    const distributions = dataset?.['http://www.w3.org/ns/dcat#distribution'];
+    const distributionList = Array.isArray(distributions) ? distributions : distributions ? [distributions] : [];
+    const datasetStorageType = this.resolveTextValue(dataset?.storageType)
       || this.resolveTextValue(dataset?.['edc:dataAddressType'])
-      || '';
+      || this.resolveTextValue(dataset?.['https://w3id.org/edc/v0.0.1/ns/dataAddressType'])
+      || this.resolveTextValue(dataset?.type)
+      || this.resolveTextValue(dataset?.['edc:type']);
+
+    if (datasetStorageType) {
+      return datasetStorageType;
+    }
+
+    for (const distribution of distributionList) {
+      const accessService = distribution?.['http://www.w3.org/ns/dcat#accessService'] || {};
+      const distributionStorageType = this.resolveTextValue(distribution?.storageType)
+        || this.resolveTextValue(distribution?.['edc:dataAddressType'])
+        || this.resolveTextValue(distribution?.['https://w3id.org/edc/v0.0.1/ns/dataAddressType'])
+        || this.resolveTextValue(distribution?.type)
+        || this.resolveTextValue(distribution?.['edc:type'])
+        || this.resolveTextValue(distribution?.['http://purl.org/dc/terms/format'])
+        || this.resolveTextValue(distribution?.['http://www.w3.org/ns/dcat#mediaType'])
+        || this.resolveTextValue(accessService?.storageType)
+        || this.resolveTextValue(accessService?.['edc:dataAddressType'])
+        || this.resolveTextValue(accessService?.type)
+        || this.resolveTextValue(accessService?.['http://purl.org/dc/terms/format'])
+        || this.resolveTextValue(accessService?.['http://www.w3.org/ns/dcat#mediaType']);
+
+      if (distributionStorageType) {
+        return distributionStorageType;
+      }
+    }
+
+    return '';
   }
 
   private findFileName(dataset: any): string {

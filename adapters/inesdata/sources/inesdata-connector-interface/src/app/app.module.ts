@@ -13,6 +13,7 @@ import { Oauth2Interceptor } from "./shared/interceptors/aouth2.interceptor";
 import { environment } from "../environments/environment";
 import { EdcConnectorClient } from "@think-it-labs/edc-connector-client";
 import { SharedModule } from './shared/shared.module';
+import { resolveOauthAllowedUrls } from './shared/utils/model-observer-runtime';
 
 import { AuthService } from './auth/auth.service';
 import { JwtHelperService, JwtModule, JWT_OPTIONS } from '@auth0/angular-jwt';
@@ -75,7 +76,7 @@ export function jwtOptionsFactory(authService: AuthService) {
     }),
     OAuthModule.forRoot({
       resourceServer: {
-        allowedUrls: environment.runtime.oauth2.allowedUrls.split(','),
+        allowedUrls: resolveOauthAllowedUrls(environment.runtime),
         // Add Auth header with Bearer token to all requests
         sendAccessToken: true
       }

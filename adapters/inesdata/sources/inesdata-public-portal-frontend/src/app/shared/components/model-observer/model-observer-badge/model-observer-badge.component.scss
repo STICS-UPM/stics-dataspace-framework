@@ -1,0 +1,26 @@
+.observer-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: #e8edf3;
+  color: #274060;
+}
+
+.observer-badge.success {
+  background: #d8f3dc;
+  color: #1b4332;
+}
+
+.observer-badge.warning {
+  background: #fff3cd;
+  color: #7a4b00;
+}
+
+.observer-badge.error {
+  background: #f8d7da;
+  color: #842029;
+}

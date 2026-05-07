@@ -27,6 +27,14 @@ export class ModelExecutionService {
   }
 
   getExecutableModels(): Observable<AiModelExecutionItem[]> {
+    return this.loadHttpModels(true);
+  }
+
+  getBenchmarkModels(): Observable<AiModelExecutionItem[]> {
+    return this.loadHttpModels(false);
+  }
+
+  private loadHttpModels(requireAgreementForFederated: boolean): Observable<AiModelExecutionItem[]> {
     return forkJoin({
       ownAssets: this.loadOwnAssets(),
       federatedOffers: this.loadFederatedOffers(),
@@ -42,8 +50,8 @@ export class ModelExecutionService {
           .filter(offer => this.isMachineLearningAsset(offer?.properties?.assetType))
           .filter(offer => !this.isCurrentConnectorOffer(offer))
           .filter(offer => this.isFederatedHttpAsset(offer))
-          .filter(offer => agreementAssetIds.has(`${offer.assetId}`))
-          .map(offer => this.mapFederatedOffer(offer));
+          .filter(offer => !requireAgreementForFederated || agreementAssetIds.has(`${offer.assetId}`))
+          .map(offer => this.mapFederatedOffer(offer, agreementAssetIds.has(`${offer.assetId}`)));
 
         return [...ownModels, ...federatedModels].sort((left, right) => {
           if (left.source !== right.source) {
@@ -143,7 +151,7 @@ export class ModelExecutionService {
     };
   }
 
-  private mapFederatedOffer(offer: DataOffer): AiModelExecutionItem {
+  private mapFederatedOffer(offer: DataOffer, hasAgreement: boolean): AiModelExecutionItem {
     const properties = this.asRecord(offer?.properties);
     const assetData = this.normalizeAssetData(properties.assetData);
     const metadataNode = [assetData, properties, offer as unknown as Record<string, unknown>];
@@ -154,7 +162,7 @@ export class ModelExecutionService {
       provider: this.firstText(offer?.properties?.participantId, offer.originator) || 'federated-provider',
       source: 'federated',
       isLocal: false,
-      hasAgreement: true,
+      hasAgreement,
       contentType: this.firstText(offer?.properties?.contenttype) || 'Not available',
       description: this.firstText(offer?.properties?.description, offer?.properties?.shortDescription),
       executionPath: this.firstText(offer?.properties?.path) || '',
@@ -192,13 +200,12 @@ export class ModelExecutionService {
   }
 
   private isLocalHttpAsset(asset: Asset): boolean {
-    const dataAddress = this.readLocalDataAddress(asset);
-    const type = this.firstText(dataAddress['type'], dataAddress['@type'], dataAddress['edc:type']).toLowerCase();
-    return type.includes('http');
+    const storageType = this.resolveLocalStorageType(asset).toLowerCase();
+    return storageType.includes('http');
   }
 
   private isFederatedHttpAsset(offer: DataOffer): boolean {
-    const storageType = this.firstText(offer?.properties?.storageType).toLowerCase();
+    const storageType = this.resolveOfferStorageType(this.asRecord(offer?.properties)).toLowerCase();
     return storageType.includes('http');
   }
 
@@ -254,11 +261,75 @@ export class ModelExecutionService {
 
   private readLocalDataAddress(asset: Asset): Record<string, unknown> {
     const assetRecord = asset as any;
-    const dataAddress = assetRecord?.['edc:dataAddress']
+    const dataAddress = this.resolveLocalDataAddressValue(assetRecord);
+    const normalized = this.asRecord(dataAddress);
+
+    for (const key of ['type', 'path', 'proxyPath', 'method']) {
+      const namespacedKey = `https://w3id.org/edc/v0.0.1/ns/${key}`;
+      const directValue = normalized[key]
+        ?? normalized[`edc:${key}`]
+        ?? normalized[namespacedKey];
+
+      if (directValue !== undefined && directValue !== null && directValue !== '') {
+        normalized[key] = directValue;
+        continue;
+      }
+
+      if (typeof (dataAddress as any)?.optionalValue === 'function') {
+        const optionalValue = (dataAddress as any).optionalValue('edc', key);
+        if (optionalValue !== undefined && optionalValue !== null && optionalValue !== '') {
+          normalized[key] = optionalValue;
+        }
+      }
+    }
+
+    if (!this.firstText(normalized['type'], normalized['@type'], normalized['edc:type'])) {
+      const resolvedStorageType = this.resolveLocalStorageType(asset);
+      if (resolvedStorageType) {
+        normalized['type'] = resolvedStorageType;
+      }
+    }
+
+    return normalized;
+  }
+
+  private resolveLocalStorageType(asset: Asset): string {
+    const dataAddress = this.readLocalDataAddressFromRecord(asset);
+    return this.firstText(
+      dataAddress['type'],
+      dataAddress['@type'],
+      dataAddress['edc:type'],
+      this.readLocalProperty(asset, [
+        'dataAddressType',
+        'edc:dataAddressType',
+        'https://w3id.org/edc/v0.0.1/ns/dataAddressType'
+      ])
+    );
+  }
+
+  private resolveOfferStorageType(properties: Record<string, unknown>): string {
+    return this.firstText(
+      properties['storageType'],
+      properties['edc:dataAddressType'],
+      properties['https://w3id.org/edc/v0.0.1/ns/dataAddressType'],
+      properties['type'],
+      properties['edc:type'],
+      properties['https://w3id.org/edc/v0.0.1/ns/type']
+    );
+  }
+
+  private readLocalDataAddressFromRecord(asset: Asset): Record<string, unknown> {
+    const assetRecord = asset as any;
+    return this.asRecord(this.resolveLocalDataAddressValue(assetRecord));
+  }
+
+  private resolveLocalDataAddressValue(assetRecord: any): unknown {
+    return this.parseJsonLikeValue(
+      assetRecord?.dataAddress
+      || assetRecord?.['dataAddress']
+      || assetRecord?.['edc:dataAddress']
       || assetRecord?.['https://w3id.org/edc/v0.0.1/ns/dataAddress']
-      || assetRecord?.dataAddress
-      || assetRecord?.['dataAddress'];
-    return this.asRecord(dataAddress);
+    );
   }
 
   private normalizeAssetData(assetData: unknown): unknown {

@@ -1,5 +1,6 @@
 {
   "managementApiUrl": "$MANAGEMENT_API_URL",
+  "strapiUrl": "$STRAPI_URL",
   "catalogUrl": "$CATALOG_URL",
   "sharedUrl": "$SHARED_URL",
   "ontologyUrl": "$ONTOLOGY_URL",

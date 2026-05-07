@@ -22,7 +22,7 @@ Usage: seed_ml_assets_for_connectors.sh [options]
 
 Options:
   --namespace <ns>            Kubernetes namespace (default: demo)
-  --count <n>                 Number of assets per connector (default: 8)
+  --count <n>                 Number of InesDataStore assets per connector (default: 8)
   --connectors <csv>          Connectors list (default: conn-citycouncil-demo,conn-company-demo)
   --credentials-dir <path>    Folder containing credentials-connector-<name>.json
   --keycloak-token-url <url>  Token endpoint. If omitted, read from deployers/inesdata/deployer.config
@@ -368,9 +368,11 @@ MODEL_DESCRIPTIONS=(
 # Group index (0-based) for each model — determines input schema and metadata
 MODEL_GROUPS=(0 0 0 0 0  1 1 1 1 1  2 2 2 2 2  3 3 3 3 3  4 4 4 4 4)
 
-GROUP_TASKS=("Image Classification" "Text Classification" "Regression" "Tabular Classification" "Anomaly Detection")
+GROUP_TASKS=("Computer vision" "Natural Language Processing" "Tabular" "Tabular" "Predictive event")
+GROUP_SUBTASKS=("Image Classification" "Text classification" "Other" "Other" "Other")
 GROUP_ALGORITHMS=("Convolutional Neural Network" "Transformer" "Linear Regression" "Random Forest" "Gradient Boosting")
-GROUP_FRAMEWORKS=("TensorFlow" "Hugging Face Transformers" "scikit-learn" "scikit-learn" "XGBoost")
+GROUP_FRAMEWORKS=("TensorFlow" "Custom" "scikit-learn" "scikit-learn" "XGBoost")
+GROUP_LIBRARIES=("Keras" "Transformers" "scikit-learn" "scikit-learn" "XGBoost")
 
 # Per-connector group context — appended to title for differentiation
 CITY_GROUP_CTX=("Municipal Health" "City Services" "Citizens Wellness" "City Botanical" "City Treasury")
@@ -451,8 +453,10 @@ seed_http_data_assets() {
     local asset_id="${tag}-${slug}"
     local asset_title="${title} - ${ctx}"
     local task="${GROUP_TASKS[$group]}"
+    local subtask="${GROUP_SUBTASKS[$group]}"
     local algo="${GROUP_ALGORITHMS[$group]}"
     local fw="${GROUP_FRAMEWORKS[$group]}"
+    local library="${GROUP_LIBRARIES[$group]}"
     local input_feat input_ex
     input_feat="$(input_features_json "$group" | tr -d '\n')"
     input_ex="$(input_example_json "$group")"
@@ -467,6 +471,7 @@ seed_http_data_assets() {
 {
   "@context": {
     "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
     "dcterms": "http://purl.org/dc/terms/",
     "dcat": "http://www.w3.org/ns/dcat#",
     "daimo": "https://w3id.org/daimo/ns#",
@@ -479,18 +484,23 @@ seed_http_data_assets() {
     "contenttype": "application/json",
     "assetType": "machineLearning",
     "shortDescription": "${desc}",
+    "dct:description": "${desc} Deployed as HTTP endpoint for ${connector}.",
     "dcterms:description": "${desc} Deployed as HTTP endpoint for ${connector}.",
     "dcat:keyword": ["machine-learning","http-model","${slug}","${tag}"],
     "assetData": {
       "${VOCABULARY_ID}": {
+        "dct:title": "${asset_title}",
         "dcterms:title": "${asset_title}",
+        "dct:description": "${desc}",
         "dcterms:description": "${desc}",
         "daimo:task": "${task}",
-        "daimo:subtask": "${slug}",
+        "daimo:subtask": "${subtask}",
         "daimo:algorithm": "${algo}",
         "daimo:framework": "${fw}",
-        "daimo:library": "${fw}",
+        "daimo:library": "${library}",
+        "dct:language": ["English","Spanish"],
         "dcterms:language": ["English","Spanish"],
+        "dct:license": "apache-2.0",
         "dcterms:license": "apache-2.0",
         "daimo:input_features": ${input_feat},
         "daimo:input_example": "${input_ex}",
@@ -537,7 +547,7 @@ ASSET_EOF
 }
 
 # =============================================================================
-# SEED 10 InesDataStore ASSETS (upload-chunk + finalize)
+# SEED N InesDataStore ASSETS (upload-chunk + finalize)
 # =============================================================================
 
 seed_inesdata_store_assets() {
@@ -548,7 +558,7 @@ seed_inesdata_store_assets() {
   local stamp
   stamp="$(date -u +%Y%m%d%H%M%S)"
 
-  for idx in $(seq 1 10); do
+  for idx in $(seq 1 "$COUNT"); do
     local id="${tag}-lgbm-$(printf '%02d' "$idx")"
     local title="LGBM ${connector} Model $(printf '%02d' "$idx")"
     local auc recall f1
@@ -561,6 +571,7 @@ seed_inesdata_store_assets() {
 {
   "@context": {
     "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
     "dcterms": "http://purl.org/dc/terms/",
     "dcat": "http://www.w3.org/ns/dcat#",
     "daimo": "https://w3id.org/daimo/ns#",
@@ -573,20 +584,25 @@ seed_inesdata_store_assets() {
     "contenttype": "application/octet-stream",
     "assetType": "machineLearning",
     "shortDescription": "Seeded LightGBM model ${idx} for ${connector}.",
+    "dct:description": "Binary classifier for default probability estimation.",
     "dcterms:description": "Binary classifier for default probability estimation.",
     "dcat:byteSize": 5242880,
     "dcterms:format": "pkl",
     "dcat:keyword": ["machine-learning","lightgbm","inesdata","${tag}"],
     "assetData": {
       "${VOCABULARY_ID}": {
+        "dct:title": "${title}",
         "dcterms:title": "${title}",
+        "dct:description": "Binary classifier for default probability estimation.",
         "dcterms:description": "Binary classifier for default probability estimation.",
         "daimo:task": "Tabular",
         "daimo:subtask": "Calculate default probability",
         "daimo:algorithm": "Gradient Boosting Decision Trees",
         "daimo:framework": "LightGBM",
         "daimo:library": "LightGBM",
+        "dct:language": ["English","Spanish"],
         "dcterms:language": ["English","Spanish"],
+        "dct:license": "apache-2.0",
         "dcterms:license": "apache-2.0",
         "daimo:input_features": [
           {"name":"age","type":"integer","description":"Applicant age in years","nullable":false,"minValue":18,"maxValue":99},
@@ -633,7 +649,7 @@ INES_EOF
     fi
   done
 
-  echo "[$connector] InesDataStore assets created: $created/10"
+  echo "[$connector] InesDataStore assets created: $created/$COUNT"
   return 0
 }
 
@@ -835,7 +851,7 @@ seed_connector() {
   fi
 
   cleanup_pf
-  echo "[$connector] seeding complete: 25 HttpData + 10 InesDataStore + policy + contract"
+  echo "[$connector] seeding complete: 25 HttpData + $COUNT InesDataStore + policy + contract"
   return 0
 }
 
@@ -1028,9 +1044,11 @@ NEG_EOF
 }
 
 negotiate_cross_connectors() {
+  local total_negotiations=$(( ${#MODEL_SLUGS[@]} * 2 ))
+
   echo ""
   echo "=========================================="
-  echo " Cross-Connector Negotiations (5 total)"
+  echo " Cross-Connector Negotiations (${total_negotiations} total)"
   echo "=========================================="
 
   local city_connector="" company_connector=""
@@ -1050,8 +1068,9 @@ negotiate_cross_connectors() {
 
   local neg_ok=0 neg_fail=0
 
-  # 3 negotiations: company (consumer) -> citycouncil (provider)
-  for asset_id in "city-chest-xray" "city-bmi" "city-fraud-transaction"; do
+  # Negotiate every provider HttpData model so consumer UIs only surface contract-ready assets.
+  for slug in "${MODEL_SLUGS[@]}"; do
+    local asset_id="city-${slug}"
     if negotiate_one "$company_connector" "$city_connector" "$asset_id" "company->city"; then
       neg_ok=$((neg_ok + 1))
     else
@@ -1059,8 +1078,8 @@ negotiate_cross_connectors() {
     fi
   done
 
-  # 2 negotiations: citycouncil (consumer) -> company (provider)
-  for asset_id in "company-twitter-sentiment" "company-iris-classifier"; do
+  for slug in "${MODEL_SLUGS[@]}"; do
+    local asset_id="company-${slug}"
     if negotiate_one "$city_connector" "$company_connector" "$asset_id" "city->company"; then
       neg_ok=$((neg_ok + 1))
     else
@@ -1070,6 +1089,15 @@ negotiate_cross_connectors() {
 
   echo ""
   echo "Negotiations complete: $neg_ok succeeded, $neg_fail failed"
+
+  if [[ "$neg_ok" -eq 0 ]]; then
+    return 1
+  fi
+
+  if [[ "$neg_fail" -gt 0 ]]; then
+    return 2
+  fi
+
   return 0
 }
 
@@ -1097,7 +1125,7 @@ for connector in "${connectors[@]}"; do
 done
 
 echo ""
-echo "Connector seeding summary: $total_ok/${#connectors[@]} succeeded (25 HttpData + 10 InesDataStore each)"
+echo "Connector seeding summary: $total_ok/${#connectors[@]} succeeded (25 HttpData + $COUNT InesDataStore each)"
 
 if [[ "${#failed_connectors[@]}" -gt 0 ]]; then
   echo "failed_connectors=${failed_connectors[*]}" >&2
@@ -1108,7 +1136,14 @@ fi
 
 # Run cross-connector negotiations only if at least 2 connectors succeeded
 if [[ "$total_ok" -ge 2 ]]; then
-  negotiate_cross_connectors || true
+  if ! negotiate_cross_connectors; then
+    if [[ "$STRICT_MODE" == "1" ]]; then
+      echo "Cross-connector negotiations did not complete successfully in strict mode" >&2
+      exit 1
+    fi
+
+    echo "Warning: cross-connector negotiations were incomplete; Step 8 finished with partial federated readiness" >&2
+  fi
 else
   echo "Skipping cross-connector negotiations (need at least 2 successful connectors)" >&2
 fi

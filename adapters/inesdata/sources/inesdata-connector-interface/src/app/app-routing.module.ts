@@ -76,6 +76,12 @@ export const routes: Routes = [
     loadChildren: () => import('./pages/ai-model-benchmarking/ai-model-benchmarking.module').then(m => m.AiModelBenchmarkingModule)
   },
   {
+    path: 'ai-model-observer',
+    data: {title: 'AI Model Observer', icon: 'monitoring'},
+    canActivate: [AuthUserGuard],
+    loadChildren: () => import('./pages/ai-model-observer/ai-model-observer.module').then(m => m.AiModelObserverModule)
+  },
+  {
     path: '', redirectTo: 'catalog', pathMatch: 'full'
   }
 ];
