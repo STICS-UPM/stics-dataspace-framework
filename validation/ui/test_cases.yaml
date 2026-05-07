@@ -192,6 +192,110 @@ test_cases:
       mode: ui_api
       ui_spec: validation/ui/core/06-consumer-transfer.spec.ts
 
+  - id: DS-UI-SV-01
+    scope: dataspace_ui
+    case_group: semantic_virtualization
+    description: Semantic Virtualization HttpData discovery and negotiation from INESData UI
+    type: ui
+    validation_type: integration
+    dataspace_dimension: semantic_interoperability
+    execution_mode: ui_api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    preconditions:
+      - INESData provider and consumer connectors are reachable
+      - The Semantic Virtualization service is deployed in Level 5
+      - The Semantic Virtualization internal HttpData URL is reachable from connector pods
+    steps:
+      - Bootstrap a provider asset whose HttpData address points to the Semantic Virtualization query endpoint
+      - Open the consumer catalog from the INESData UI
+      - Locate and open the Semantic Virtualization asset
+      - Open contract offers and negotiate access from the UI
+    operations:
+      - publish_semantic_virtualization_httpdata
+      - discover_asset
+      - open_catalog_detail
+      - negotiate_contract
+    expected_result: The Semantic Virtualization HttpData asset is visible from the consumer UI and can be negotiated successfully
+    automation:
+      status: automated_opt_in
+      mode: ui_api_opt_in
+      ui_spec: validation/ui/core/07-semantic-virtualization-httpdata.spec.ts
+      enable_with: UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO=1
+
+  - id: DS-UI-OH-01
+    scope: dataspace_ui
+    case_group: ontology_hub
+    description: Ontology Hub read-only integration from the INESData UI
+    type: ui
+    validation_type: integration
+    dataspace_dimension: semantic_interoperability
+    execution_mode: ui_readonly_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    preconditions:
+      - INESData consumer connector portal is reachable
+      - Ontology Hub public API is reachable from the browser context
+      - The connector UI runtime config exposes ontologyUrl
+      - The connector shared vocabulary API is deployed
+    steps:
+      - Open the INESData connector UI and authenticate
+      - Verify that the Vocabularies route calls the shared connector vocabulary API
+      - Verify that the Ontologies route calls the Ontology Hub vocabulary list API
+      - Capture screenshots and JSON evidence without creating or deleting resources
+    operations:
+      - login
+      - open_vocabularies_route
+      - request_shared_vocabularies
+      - open_ontologies_route
+      - request_ontology_hub_vocabulary_list
+    expected_result: INESData exposes the Ontology Hub integration points and both read-only calls return HTTP 200
+    automation:
+      status: automated_opt_in
+      mode: ui_readonly_opt_in
+      ui_spec: validation/ui/core/08-ontology-hub-inesdata-readonly.spec.ts
+      enable_with: UI_ONTOLOGY_HUB_INESDATA_DEMO=1
+      linked_cases:
+        - PT5-OH-16
+        - INT-OH-DS-03
+
+  - id: DS-UI-AMH-01
+    scope: dataspace_ui
+    case_group: ai_model_hub
+    description: AI Model Hub HttpData model discovery and negotiation from INESData UI
+    type: ui
+    validation_type: integration
+    dataspace_dimension: model_governance
+    execution_mode: ui_api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    preconditions:
+      - INESData provider and consumer connectors are reachable
+      - A controlled model endpoint can be represented as an HttpData asset
+      - The connector contract cycle is operational
+    steps:
+      - Bootstrap a provider asset whose HttpData address represents an AI Model Hub model endpoint
+      - Open the consumer catalog from the INESData UI
+      - Locate and open the AI Model Hub model asset
+      - Open contract offers and negotiate access from the UI
+    operations:
+      - publish_ai_model_httpdata
+      - discover_asset
+      - open_catalog_detail
+      - negotiate_contract
+    expected_result: The AI Model Hub HttpData model asset is visible from the consumer UI and can be negotiated successfully
+    automation:
+      status: automated_opt_in
+      mode: ui_api_opt_in
+      ui_spec: validation/ui/core/09-ai-model-hub-httpdata.spec.ts
+      enable_with: UI_AI_MODEL_HUB_HTTPDATA_DEMO=1
+      linked_cases:
+        - PT5-MH-03
+        - PT5-MH-08
+        - PT5-MH-09
+        - PT5-MH-10
+        - PT5-MH-18
+
 ops_checks:
   - id: DS-UI-OPS-01
     scope: dataspace_ui

@@ -3,6 +3,7 @@ import fs from "fs";
 
 import { DataspacePortalRuntime, resolveDataspacePortalRuntime } from "../utils/dataspace-runtime";
 import { installEdcDashboardRouteBridge } from "../utils/edc-dashboard-route-bridge";
+import { installIngressPortForwardRouteBridge } from "../utils/ingress-port-forward-route-bridge";
 
 type DataspaceFixtures = {
   dataspaceRuntime: DataspacePortalRuntime;
@@ -23,11 +24,13 @@ async function writeJsonArtifact(testInfo: TestInfo, name: string, payload: unkn
 export const test = base.extend<DataspaceFixtures>({
   dataspaceRuntime: async ({ page }, use) => {
     const runtime = resolveDataspacePortalRuntime();
+    const disposeIngressPortForwardRouteBridge = await installIngressPortForwardRouteBridge(page, runtime);
     const disposeRouteBridge = await installEdcDashboardRouteBridge(page, runtime);
     try {
       await use(runtime);
     } finally {
       await disposeRouteBridge();
+      await disposeIngressPortForwardRouteBridge();
     }
   },
 

@@ -257,15 +257,31 @@ componente.
 
 `I - INESData Tests (Normal/Live/Debug)`
 
-Ejecuta validaciones UI del portal INESData de forma independiente del nivel 6 completo.
+Ejecuta validaciones UI del portal INESData de forma independiente del nivel 6
+completo. El submenú separa `Core` de las integraciones de componentes vistas
+desde INESData:
+
+- `Ontology Hub Integration with INESData`: ejecuta `DS-UI-OH-01`.
+- `AI Model Hub Integration with INESData`: ejecuta `DS-UI-AMH-01`.
+- `Semantic Virtualization Integration with INESData`: ejecuta `DS-UI-SV-01`.
 
 `O - Ontology Hub Tests (Normal/Live/Debug)`
 
-Ejecuta validaciones UI de Ontology Hub.
+Ejecuta validaciones UI propias de Ontology Hub, es decir, sobre la aplicacion
+del componente y sus suites tecnicas/funcionales, no sobre INESData.
 
 `A - AI Model Hub Tests (Normal/Live/Debug)`
 
-Ejecuta validaciones UI de AI Model Hub.
+Ejecuta validaciones UI propias de AI Model Hub, no la demo de integracion
+desde INESData.
+
+`V - Semantic Virtualization Tests (Normal/Live/Debug)`
+
+Ejecuta validaciones UI/read-only del virtualizador semántico. La suite abre el
+endpoint público desde Playwright, valida el documento OpenAPI y comprueba que
+el endpoint de consulta responde desde el contexto del navegador. Tambien cubre
+la UI/editor del virtualizador cuando esta habilitada; la demo desde INESData se
+ejecuta desde `I`.
 
 ## Control
 

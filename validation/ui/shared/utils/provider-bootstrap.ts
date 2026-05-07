@@ -8,6 +8,18 @@ type BootstrapArtifacts = {
   contractDefinitionId: string;
 };
 
+type AssetBootstrapOptions = {
+  sourceObjectName?: string;
+  name?: string;
+  version?: string;
+  shortDescription?: string;
+  assetType?: string;
+  description?: string;
+  keywords?: string[];
+  properties?: Record<string, unknown>;
+  dataAddress?: Record<string, unknown>;
+};
+
 type CatalogDatasetReadiness = {
   assetId: string;
   counterPartyAddress: string;
@@ -36,9 +48,28 @@ type ConsumerTransferArtifacts = {
   assetId: string;
 };
 
-const TRANSIENT_HTTP_STATUSES = new Set([502, 503, 504]);
+type CleanupEntityKind = "contractdefinitions" | "policydefinitions" | "assets";
+
+type CleanupEntityReport = {
+  planned: string[];
+  deleted: string[];
+  errors: Array<{ id: string; status?: number; message: string }>;
+};
+
+type ProviderCleanupReport = {
+  enabled: boolean;
+  prefixes: {
+    contractdefinitions: string[];
+    policydefinitions: string[];
+    assets: string[];
+  };
+  entities: Record<CleanupEntityKind, CleanupEntityReport>;
+};
+
+const TRANSIENT_HTTP_STATUSES = new Set([401, 502, 503, 504]);
 const TRANSIENT_HTTP_MAX_ATTEMPTS = 4;
 const TRANSIENT_HTTP_RETRY_DELAY_MS = 2000;
+const CLEANUP_ENTITY_ORDER: CleanupEntityKind[] = ["contractdefinitions", "policydefinitions", "assets"];
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -46,6 +77,60 @@ function sleep(ms: number): Promise<void> {
 
 function isTransientHttpStatus(status: number): boolean {
   return TRANSIENT_HTTP_STATUSES.has(status);
+}
+
+function emptyCleanupEntityReport(): CleanupEntityReport {
+  return {
+    planned: [],
+    deleted: [],
+    errors: [],
+  };
+}
+
+function extractEntityId(entity: any): string | undefined {
+  if (!entity || typeof entity !== "object") {
+    return undefined;
+  }
+
+  for (const key of ["@id", "id", "assetId", "policyId", "contractDefinitionId"]) {
+    const value = entity[key];
+    if (value !== undefined && value !== null && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+
+  const properties = entity.properties;
+  if (properties && typeof properties === "object") {
+    for (const key of ["id", "https://w3id.org/edc/v0.0.1/ns/id"]) {
+      const value = properties[key];
+      if (value !== undefined && value !== null && String(value).trim()) {
+        return String(value).trim();
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function payloadItems(payload: any): any[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+
+  for (const key of ["@graph", "items", "results", "data", "content"]) {
+    if (Array.isArray(payload[key])) {
+      return payload[key];
+    }
+  }
+
+  return extractEntityId(payload) ? [payload] : [];
+}
+
+function matchesAnyPrefix(value: string, prefixes: string[]): boolean {
+  return prefixes.some((prefix) => value.startsWith(prefix));
 }
 
 async function transientHttpError(action: string, response: { status(): number; text(): Promise<string> }): Promise<Error> {
@@ -81,6 +166,81 @@ async function ensureOk(response: { ok(): boolean; status(): number; text(): Pro
 
   const body = await response.text();
   throw new Error(`${action} failed with HTTP ${response.status()}: ${body.slice(0, 500)}`);
+}
+
+async function listProviderEntityIds(
+  request: APIRequestContext,
+  runtime: DataspacePortalRuntime,
+  providerToken: string,
+  entityKind: CleanupEntityKind,
+  prefixes: string[],
+): Promise<string[]> {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const limit = 100;
+
+  for (let offset = 0; offset < 500; offset += limit) {
+    const response = await executeRetriableRequest(`List provider ${entityKind}`, () =>
+      request.post(`${runtime.provider.managementBaseUrl}/${entityKind}/request`, {
+        headers: {
+          Authorization: `Bearer ${providerToken}`,
+          "Content-Type": "application/json",
+        },
+        data: {
+          "@context": {
+            "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+          },
+          "@type": "QuerySpec",
+          offset,
+          limit,
+          filterExpression: [],
+        },
+      }),
+    );
+    const items = payloadItems(await response.json());
+    for (const item of items) {
+      const id = extractEntityId(item);
+      if (id && !seen.has(id) && matchesAnyPrefix(id, prefixes)) {
+        ids.push(id);
+        seen.add(id);
+      }
+    }
+    if (items.length < limit) {
+      break;
+    }
+  }
+
+  return ids;
+}
+
+async function deleteProviderEntity(
+  request: APIRequestContext,
+  runtime: DataspacePortalRuntime,
+  providerToken: string,
+  entityKind: CleanupEntityKind,
+  entityId: string,
+): Promise<{ status: "deleted" | "missing"; httpStatus: number } | { status: "error"; httpStatus: number; message: string }> {
+  const response = await request.delete(
+    `${runtime.provider.managementBaseUrl}/${entityKind}/${encodeURIComponent(entityId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${providerToken}`,
+      },
+    },
+  );
+
+  if (response.ok()) {
+    return { status: "deleted", httpStatus: response.status() };
+  }
+  if (response.status() === 404) {
+    return { status: "missing", httpStatus: response.status() };
+  }
+
+  return {
+    status: "error",
+    httpStatus: response.status(),
+    message: (await response.text().catch(() => "")).slice(0, 500),
+  };
 }
 
 async function issueUserToken(request: APIRequestContext, runtime: DataspacePortalRuntime): Promise<string> {
@@ -158,8 +318,15 @@ async function createAsset(
   runtime: DataspacePortalRuntime,
   providerToken: string,
   assetId: string,
-  sourceObjectName = "todos",
+  sourceObjectNameOrOptions: string | AssetBootstrapOptions = "todos",
 ): Promise<void> {
+  const options: AssetBootstrapOptions =
+    typeof sourceObjectNameOrOptions === "string"
+      ? { sourceObjectName: sourceObjectNameOrOptions }
+      : sourceObjectNameOrOptions;
+  const sourceObjectName = options.sourceObjectName || "todos";
+  const keywords = options.keywords || ["validation", "ui", "negotiation"];
+
   await executeRetriableRequest("Create asset", () =>
     request.post(`${runtime.provider.managementBaseUrl}/assets`, {
       headers: {
@@ -171,22 +338,26 @@ async function createAsset(
           "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
           dct: "http://purl.org/dc/terms/",
           dcat: "http://www.w3.org/ns/dcat#",
+          daimo: "https://w3id.org/daimo/0.0.1/ns#",
         },
         "@id": assetId,
         "@type": "Asset",
         properties: {
-          name: `UI Negotiation Asset ${assetId}`,
-          version: "1.0.0",
-          shortDescription: "Asset bootstrap for UI negotiation validation",
-          assetType: "dataset",
+          name: options.name || `UI Negotiation Asset ${assetId}`,
+          version: options.version || "1.0.0",
+          shortDescription: options.shortDescription || "Asset bootstrap for UI negotiation validation",
+          assetType: options.assetType || "dataset",
           assetData: {},
-          "dct:description": "Asset bootstrap for UI negotiation validation",
-          "dcat:keyword": ["validation", "ui", "negotiation"],
+          "dct:description": options.description || "Asset bootstrap for UI negotiation validation",
+          "dcat:keyword": keywords,
+          sourceObjectName,
+          ...(options.properties || {}),
         },
         dataAddress: {
           type: "HttpData",
           baseUrl: "https://jsonplaceholder.typicode.com/todos",
           name: sourceObjectName,
+          ...(options.dataAddress || {}),
         },
       },
     }),
@@ -258,13 +429,13 @@ export async function bootstrapProviderNegotiationArtifacts(
   runtime: DataspacePortalRuntime,
   assetId: string,
   suffix: string,
-  sourceObjectName?: string,
+  sourceObjectNameOrOptions?: string | AssetBootstrapOptions,
 ): Promise<BootstrapArtifacts> {
   const providerToken = await issueUserToken(request, runtime);
   const policyId = `policy-ui-${suffix}`;
   const contractDefinitionId = `contract-ui-${suffix}`;
 
-  await createAsset(request, runtime, providerToken, assetId, sourceObjectName);
+  await createAsset(request, runtime, providerToken, assetId, sourceObjectNameOrOptions);
   await createPolicy(request, runtime, providerToken, policyId);
   await createContractDefinition(
     request,
@@ -280,6 +451,65 @@ export async function bootstrapProviderNegotiationArtifacts(
     policyId,
     contractDefinitionId,
   };
+}
+
+export async function cleanupProviderValidationArtifacts(
+  request: APIRequestContext,
+  runtime: DataspacePortalRuntime,
+  prefixes: Partial<Record<CleanupEntityKind, string[]>>,
+): Promise<ProviderCleanupReport> {
+  const providerToken = await issueUserToken(request, runtime);
+  const normalizedPrefixes = {
+    contractdefinitions: prefixes.contractdefinitions || [],
+    policydefinitions: prefixes.policydefinitions || [],
+    assets: prefixes.assets || [],
+  };
+  const report: ProviderCleanupReport = {
+    enabled: true,
+    prefixes: normalizedPrefixes,
+    entities: {
+      contractdefinitions: emptyCleanupEntityReport(),
+      policydefinitions: emptyCleanupEntityReport(),
+      assets: emptyCleanupEntityReport(),
+    },
+  };
+
+  for (const entityKind of CLEANUP_ENTITY_ORDER) {
+    const entityPrefixes = normalizedPrefixes[entityKind];
+    if (entityPrefixes.length === 0) {
+      continue;
+    }
+
+    const entityReport = report.entities[entityKind];
+    entityReport.planned = await listProviderEntityIds(
+      request,
+      runtime,
+      providerToken,
+      entityKind,
+      entityPrefixes,
+    );
+
+    for (const entityId of entityReport.planned) {
+      const deleteResult = await deleteProviderEntity(
+        request,
+        runtime,
+        providerToken,
+        entityKind,
+        entityId,
+      );
+      if (deleteResult.status === "error") {
+        entityReport.errors.push({
+          id: entityId,
+          status: deleteResult.httpStatus,
+          message: deleteResult.message,
+        });
+      } else {
+        entityReport.deleted.push(entityId);
+      }
+    }
+  }
+
+  return report;
 }
 
 export async function fetchConsumerCatalogResponse(

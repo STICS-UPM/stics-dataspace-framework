@@ -290,7 +290,7 @@ def run_ontology_hub_ui_tests_interactive():
 
         while True:
             print("\nSelect Ontology Hub UI suite:")
-            print("1 - Ontology Hub Integration")
+            print("1 - Ontology Hub Component Integration")
             print("2 - Ontology Hub Functional")
             print("B - Back")
             try:
@@ -309,6 +309,48 @@ def run_ontology_hub_ui_tests_interactive():
                 return None
 
             print("\nInvalid selection. Please try again.\n")
+
+
+def _run_ontology_hub_ui_integration_with_inesdata(mode):
+    experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    base_dir = str(project_root() / "experiments" / experiment_id / "components" / "ontology-hub" / "inesdata-ui")
+    output_dir = os.path.join(base_dir, "test-results")
+    html_report_dir = os.path.join(base_dir, "playwright-report")
+    blob_report_dir = os.path.join(base_dir, "blob-report")
+    json_report_file = os.path.join(base_dir, "results.json")
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(html_report_dir, exist_ok=True)
+    os.makedirs(blob_report_dir, exist_ok=True)
+
+    env = _ui_runtime_env_from_adapter(_default_inesdata_adapter())
+    env.update(
+        {
+            "UI_ONTOLOGY_HUB_INESDATA_DEMO": "1",
+            "PLAYWRIGHT_OUTPUT_DIR": output_dir,
+            "PLAYWRIGHT_HTML_REPORT_DIR": html_report_dir,
+            "PLAYWRIGHT_BLOB_REPORT_DIR": blob_report_dir,
+            "PLAYWRIGHT_JSON_REPORT_FILE": json_report_file,
+            "PLAYWRIGHT_INTERACTION_MARKERS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKERS", "1"),
+            "PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "350"),
+        }
+    )
+    env.update(mode.get("env") or {})
+    cmd = [
+        "./node_modules/.bin/playwright",
+        "test",
+        "--config",
+        "playwright.config.ts",
+        "core/08-ontology-hub-inesdata-readonly.spec.ts",
+        "--workers=1",
+    ]
+    cmd.extend(mode.get("args") or [])
+
+    print(f"\nRunning Ontology Hub Integration with INESData ({mode['label']}, artifacts in {base_dir})\n")
+    try:
+        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+    finally:
+        _cleanup_playwright_processes()
+    return None
 
 
 def _resolve_ai_model_hub_base_url(adapter=None):
@@ -346,6 +388,153 @@ def _resolve_ai_model_hub_base_url(adapter=None):
     if host.startswith("http://") or host.startswith("https://"):
         return host.rstrip("/")
     return f"http://{host}".rstrip("/")
+
+
+def _resolve_semantic_virtualization_base_url(adapter=None):
+    adapter = adapter or _default_inesdata_adapter()
+    deployer_config = adapter.load_deployer_config() or {}
+    ds_name = (
+        os.environ.get("UI_DATASPACE")
+        or deployer_config.get("DS_1_NAME")
+        or InesdataConfig.dataspace_name()
+        or "demo"
+    ).strip()
+    ds_domain = (
+        os.environ.get("UI_DS_DOMAIN")
+        or deployer_config.get("DS_DOMAIN_BASE")
+        or "dev.ds.dataspaceunit.upm"
+    ).strip()
+
+    explicit_url = (
+        os.environ.get("SEMANTIC_VIRTUALIZATION_BASE_URL")
+        or os.environ.get("SEMANTIC_VIRTUALIZATION_PUBLIC_URL")
+        or ""
+    ).strip()
+    if explicit_url:
+        return explicit_url.rstrip("/")
+
+    chart_dir = project_root() / "deployers" / "shared" / "components" / "semantic-virtualization"
+    values_path = chart_dir / f"values-{ds_name}.yaml"
+    if not values_path.is_file():
+        values_path = chart_dir / "values.yaml"
+
+    host = ""
+    if values_path.is_file():
+        with open(values_path, "r", encoding="utf-8") as handle:
+            payload = yaml.safe_load(handle) or {}
+        ingress = payload.get("ingress") or {}
+        if ingress.get("enabled") and ingress.get("host"):
+            host = str(ingress.get("host") or "").strip()
+
+    if not host and ds_name and ds_domain:
+        host = f"semantic-virtualization-{ds_name}.{ds_domain}"
+
+    if not host:
+        return ""
+    if host.startswith("http://") or host.startswith("https://"):
+        return host.rstrip("/")
+    return f"http://{host}".rstrip("/")
+
+
+def _run_semantic_virtualization_ui_tests(mode):
+    base_url = _resolve_semantic_virtualization_base_url()
+    if not base_url:
+        print("Semantic Virtualization base URL could not be resolved; aborting.")
+        return None
+
+    experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    base_dir = str(project_root() / "experiments" / experiment_id / "components" / "semantic-virtualization" / "ui")
+    output_dir = os.path.join(base_dir, "test-results")
+    html_report_dir = os.path.join(base_dir, "playwright-report")
+    blob_report_dir = os.path.join(base_dir, "blob-report")
+    json_report_file = os.path.join(base_dir, "results.json")
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(html_report_dir, exist_ok=True)
+    os.makedirs(blob_report_dir, exist_ok=True)
+
+    env = {
+        **os.environ,
+        "SEMANTIC_VIRTUALIZATION_BASE_URL": base_url,
+        "PLAYWRIGHT_OUTPUT_DIR": output_dir,
+        "PLAYWRIGHT_HTML_REPORT_DIR": html_report_dir,
+        "PLAYWRIGHT_BLOB_REPORT_DIR": blob_report_dir,
+        "PLAYWRIGHT_JSON_REPORT_FILE": json_report_file,
+        "PLAYWRIGHT_INTERACTION_MARKERS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKERS", "1"),
+        "PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "350"),
+    }
+    env.update(mode.get("env") or {})
+    cmd = [
+        "./node_modules/.bin/playwright",
+        "test",
+        "--config",
+        "../components/semantic_virtualization/ui/playwright.config.js",
+        "--workers=1",
+    ]
+    cmd.extend(mode.get("args") or [])
+
+    print(f"\nRunning Semantic Virtualization UI tests (artifacts in {base_dir})\n")
+    try:
+        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+    finally:
+        _cleanup_playwright_processes()
+    return None
+
+
+def run_semantic_virtualization_ui_tests_interactive():
+    """Run Semantic Virtualization Playwright UI tests in normal/live/debug modes."""
+    while True:
+        print("\n" + "=" * 50)
+        print("SEMANTIC VIRTUALIZATION UI TESTS")
+        print("=" * 50)
+        mode = _resolve_ui_mode()
+        if mode is None:
+            return None
+        _run_semantic_virtualization_ui_tests(mode)
+        return None
+
+
+def _run_semantic_virtualization_ui_integration_with_inesdata(mode):
+    experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    base_dir = str(
+        project_root() / "experiments" / experiment_id / "components" / "semantic-virtualization" / "inesdata-ui"
+    )
+    output_dir = os.path.join(base_dir, "test-results")
+    html_report_dir = os.path.join(base_dir, "playwright-report")
+    blob_report_dir = os.path.join(base_dir, "blob-report")
+    json_report_file = os.path.join(base_dir, "results.json")
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(html_report_dir, exist_ok=True)
+    os.makedirs(blob_report_dir, exist_ok=True)
+
+    env = _ui_runtime_env_from_adapter(_default_inesdata_adapter())
+    env.update(
+        {
+            "UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO": "1",
+            "PLAYWRIGHT_OUTPUT_DIR": output_dir,
+            "PLAYWRIGHT_HTML_REPORT_DIR": html_report_dir,
+            "PLAYWRIGHT_BLOB_REPORT_DIR": blob_report_dir,
+            "PLAYWRIGHT_JSON_REPORT_FILE": json_report_file,
+            "PLAYWRIGHT_INTERACTION_MARKERS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKERS", "1"),
+            "PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "350"),
+        }
+    )
+    env.update(mode.get("env") or {})
+    cmd = [
+        "./node_modules/.bin/playwright",
+        "test",
+        "--config",
+        "playwright.config.ts",
+        "core/07-semantic-virtualization-httpdata.spec.ts",
+        "--workers=1",
+    ]
+    cmd.extend(mode.get("args") or [])
+
+    print(f"\nRunning Semantic Virtualization Integration with INESData ({mode['label']}, artifacts in {base_dir})\n")
+    try:
+        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+    finally:
+        _cleanup_playwright_processes()
+    return None
 
 
 def _run_ai_model_hub_ui_functional(mode):
@@ -393,10 +582,44 @@ def _run_ai_model_hub_ui_functional(mode):
 
 
 def _run_ai_model_hub_ui_integration(mode):
-    print(
-        "\nAI Model Hub Integration with INESData is not implemented yet. "
-        f"No tests were run ({mode['label']}).\n"
+    experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    base_dir = str(project_root() / "experiments" / experiment_id / "components" / "ai-model-hub" / "inesdata-ui")
+    output_dir = os.path.join(base_dir, "test-results")
+    html_report_dir = os.path.join(base_dir, "playwright-report")
+    blob_report_dir = os.path.join(base_dir, "blob-report")
+    json_report_file = os.path.join(base_dir, "results.json")
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(html_report_dir, exist_ok=True)
+    os.makedirs(blob_report_dir, exist_ok=True)
+
+    env = _ui_runtime_env_from_adapter(_default_inesdata_adapter())
+    env.update(
+        {
+            "UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1",
+            "PLAYWRIGHT_OUTPUT_DIR": output_dir,
+            "PLAYWRIGHT_HTML_REPORT_DIR": html_report_dir,
+            "PLAYWRIGHT_BLOB_REPORT_DIR": blob_report_dir,
+            "PLAYWRIGHT_JSON_REPORT_FILE": json_report_file,
+            "PLAYWRIGHT_INTERACTION_MARKERS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKERS", "1"),
+            "PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "350"),
+        }
     )
+    env.update(mode.get("env") or {})
+    cmd = [
+        "./node_modules/.bin/playwright",
+        "test",
+        "--config",
+        "playwright.config.ts",
+        "core/09-ai-model-hub-httpdata.spec.ts",
+        "--workers=1",
+    ]
+    cmd.extend(mode.get("args") or [])
+
+    print(f"\nRunning AI Model Hub Integration with INESData ({mode['label']}, artifacts in {base_dir})\n")
+    try:
+        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+    finally:
+        _cleanup_playwright_processes()
     return None
 
 
@@ -409,28 +632,8 @@ def run_ai_model_hub_ui_tests_interactive():
         mode = _resolve_ui_mode()
         if mode is None:
             return None
-
-        while True:
-            print("\nSelect AI Model Hub UI suite:")
-            print("1 - AI Model Hub Functional")
-            print("2 - AI Model Hub Integration with INESData")
-            print("B - Back")
-            try:
-                suite_choice = input("\nSuite: ").strip().upper()
-            except EOFError:
-                print("\nNo input. Returning to previous menu.\n")
-                return None
-
-            if suite_choice == "B":
-                return None
-            if suite_choice == "1":
-                _run_ai_model_hub_ui_functional(mode)
-                return None
-            if suite_choice == "2":
-                _run_ai_model_hub_ui_integration(mode)
-                return None
-
-            print("\nInvalid selection. Please try again.\n")
+        _run_ai_model_hub_ui_functional(mode)
+        return None
 
 
 def _build_level6_ui_artifact_paths(experiment_dir, connector):
@@ -674,14 +877,15 @@ def _run_core_ui_tests(mode, adapter=None):
 
 
 def run_inesdata_ui_tests_interactive():
-    """Run INESData UI tests for Core/Ontology Hub/AI Model Hub."""
+    """Run INESData UI tests for core flows and component integrations."""
     while True:
         print("\n" + "=" * 50)
         print("INESDATA UI TESTS")
         print("=" * 50)
         print("1 - Core")
-        print("2 - Ontology Hub")
-        print("3 - AI Model Hub")
+        print("2 - Ontology Hub Integration with INESData")
+        print("3 - AI Model Hub Integration with INESData")
+        print("4 - Semantic Virtualization Integration with INESData")
         print("B - Back")
 
         try:
@@ -692,17 +896,20 @@ def run_inesdata_ui_tests_interactive():
 
         if choice == "B":
             return None
-        if choice not in {"1", "2", "3"}:
+        if choice not in {"1", "2", "3", "4"}:
             print("\nInvalid selection. Please try again.\n")
             continue
 
+        mode = _resolve_ui_mode()
+        if mode is None:
+            return None
+
         if choice == "1":
-            mode = _resolve_ui_mode()
-            if mode is None:
-                return None
             _run_core_ui_tests(mode)
         elif choice == "2":
-            run_ontology_hub_ui_tests_interactive()
+            _run_ontology_hub_ui_integration_with_inesdata(mode)
         elif choice == "3":
-            run_ai_model_hub_ui_tests_interactive()
+            _run_ai_model_hub_ui_integration(mode)
+        elif choice == "4":
+            _run_semantic_virtualization_ui_integration_with_inesdata(mode)
         return None

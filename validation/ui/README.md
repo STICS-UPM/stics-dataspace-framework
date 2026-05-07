@@ -233,6 +233,65 @@ Estos artefactos separan `support_checks`, `dataspace_cases`, `ops_checks`, `evi
 - `UI_KEYCLOAK_CLIENT_ID`
 - `UI_PROVIDER_CONNECTOR`
 - `UI_CONSUMER_CONNECTOR`
+- `UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO`
+- `UI_SEMANTIC_VIRTUALIZATION_CATALOG_CLEANUP`
+- `UI_SEMANTIC_VIRTUALIZATION_DATA_URL`
+- `UI_SEMANTIC_VIRTUALIZATION_QUERY_PATH`
+- `UI_ONTOLOGY_HUB_INESDATA_DEMO`
+- `UI_AI_MODEL_HUB_HTTPDATA_DEMO`
+- `UI_AI_MODEL_HUB_CATALOG_CLEANUP`
+- `UI_AI_MODEL_HUB_MODEL_URL`
+- `UI_AI_MODEL_HUB_MODEL_PATH`
+- `UI_INGRESS_PORT`
+- `PLAYWRIGHT_DNS_HOST_MAP`
+- `PLAYWRIGHT_HOST_RESOLVER_RULES`
+- `PLAYWRIGHT_INGRESS_PROXY_PORT`
+- `PLAYWRIGHT_TRACE`
+
+Desde el menu del framework, `I - INESData Tests` ejecuta los flujos del portal
+INESData y las demos de integracion de componentes vistas desde INESData. Las
+opciones directas `O`, `A` y `V` quedan reservadas para suites propias de cada
+componente.
+
+`UI_ONTOLOGY_HUB_INESDATA_DEMO=1` habilita una demo read-only para
+`PT5-OH-16` / `DS-UI-OH-01`. La prueba abre INESData, valida la ruta
+`Vocabularies` contra la API compartida del conector y la ruta `Ontologies`
+contra la API publica de Ontology Hub. No crea ni elimina vocabularios, assets,
+contratos ni politicas.
+
+`UI_AI_MODEL_HUB_HTTPDATA_DEMO=1` habilita `DS-UI-AMH-01`: publica desde el
+provider un modelo controlado como asset `HttpData`, lo descubre desde el
+Catalog Browser del consumer y negocia el contrato desde la UI de INESData. No
+ejecuta inferencia ni transferencia; la demo valida el gobierno visual del
+modelo en INESData. `UI_AI_MODEL_HUB_MODEL_URL` permite fijar la URL completa
+del endpoint y `UI_AI_MODEL_HUB_MODEL_PATH` cambia la ruta por defecto
+`/api/v1/nlp/ecommerce-sentiment`.
+
+`UI_SEMANTIC_VIRTUALIZATION_CATALOG_CLEANUP=1` activa una limpieza segura previa
+solo para artefactos de validacion con prefijos `qa-ui-*` y `asset-e2e-*` en el
+provider. Es util cuando ejecuciones anteriores saturan la primera pagina del
+Catalog Browser e impiden mostrar el asset temporal de la demo.
+
+`UI_AI_MODEL_HUB_CATALOG_CLEANUP=1` aplica la misma idea solo sobre artefactos
+de validacion con prefijos `qa-ui-*`, `asset-e2e-*`, `policy-ui-*` y
+`contract-ui-*`. No elimina datasets funcionales con nombres estables, por
+ejemplo `dataset-flares-mini-subtask2`.
+
+`PLAYWRIGHT_DNS_HOST_MAP` permite resolver hosts de ingress solo dentro del
+proceso Node de Playwright, sin editar `/etc/hosts`. Su formato es
+`host=ip,host=ip`. Para Chromium se puede usar en paralelo
+`PLAYWRIGHT_HOST_RESOLVER_RULES`, por ejemplo `MAP host 192.168.49.2`. Esto es
+útil para demos opt-in como `UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO=1`.
+
+Cuando la IP de ingress de minikube no sea alcanzable desde la VM, se puede
+usar `kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller
+8088:80` y ejecutar la suite con `UI_INGRESS_PORT=8088`. Si la UI redirige a
+hosts sin puerto, `PLAYWRIGHT_INGRESS_PROXY_PORT=8088` activa un puente de rutas
+en el navegador que conserva el `Host` original y usa el port-forward local.
+
+`PLAYWRIGHT_TRACE` mantiene el comportamiento historico `on` por defecto y
+permite desactivar trazas con `PLAYWRIGHT_TRACE=off` cuando se quiera generar
+evidencia visual con menos riesgo de incluir cabeceras sensibles.
 - `PLAYWRIGHT_OUTPUT_DIR`
 - `PLAYWRIGHT_HTML_REPORT_DIR`
 - `PLAYWRIGHT_BLOB_REPORT_DIR`

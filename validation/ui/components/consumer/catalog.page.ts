@@ -39,6 +39,43 @@ export class CatalogPage {
     await expect(this.page).toHaveURL(/\/catalog/);
   }
 
+  async showLargestPageSize(): Promise<void> {
+    const pageSizeCombobox = this.page
+      .getByRole("combobox", { name: /items per page/i })
+      .first();
+
+    if ((await pageSizeCombobox.count()) === 0) {
+      return;
+    }
+
+    const currentRange = await this.paginatorRangeText();
+    await clickMarked(pageSizeCombobox, { force: true });
+    const largestOption = this.page.getByRole("option", { name: /^\s*20\s*$/ }).first();
+    const optionVisible = await largestOption
+      .waitFor({ state: "visible", timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!optionVisible) {
+      await this.page.keyboard.press("Escape").catch(() => undefined);
+      return;
+    }
+
+    await clickMarked(largestOption, { force: true });
+    await this.page.waitForFunction(
+      (previousRange) => {
+        const range = document
+          .querySelector(".mat-mdc-paginator-range-label, .mat-paginator-range-label")
+          ?.textContent
+          ?.replace(/\s+/g, " ")
+          .trim();
+        return !previousRange || (range && range !== previousRange);
+      },
+      currentRange,
+      { timeout: 3_000 },
+    ).catch(() => undefined);
+    await waitForUiTransition(this.page);
+  }
+
   async openFirstDetails(): Promise<boolean> {
     const detailButton = this.page
       .locator("button:visible")
@@ -55,23 +92,70 @@ export class CatalogPage {
   }
 
   async openDetailsForAsset(assetId: string): Promise<boolean> {
-    const assetCard = this.page.locator(".card mat-card").filter({
-      has: this.page.locator("mat-card-title", { hasText: assetId }),
-    }).first();
+    const clickedByDom = await this.clickAssetCardButtonByDom(assetId);
+    if (clickedByDom) {
+      await waitForUiTransition(this.page);
+      return true;
+    }
 
-    if ((await assetCard.count()) === 0) {
+    const detailButton = this.page
+      .locator("mat-card, .card, [class*='card']")
+      .filter({ hasText: assetId })
+      .getByRole("button", { name: /view details and contract offers/i })
+      .first();
+
+    if ((await detailButton.count()) > 0) {
+      try {
+        await clickMarked(detailButton, { force: true });
+        await waitForUiTransition(this.page);
+        return true;
+      } catch {
+        // Fall through to the DOM fallback below. Some Material card versions
+        // expose the accessible button name inconsistently under test.
+      }
+    }
+
+    const assetText = this.page.getByText(assetId, { exact: true }).first();
+    if ((await assetText.count()) === 0) {
       return false;
     }
 
-    await clickMarked(assetCard.getByRole("button", { name: /view details and contract offers/i }));
-    await waitForUiTransition(this.page);
-    return true;
+    const fallbackCard = assetText
+      .locator("xpath=ancestor::*[.//button[contains(normalize-space(.), 'View details and contract offers')]][1]");
+    const fallbackButtonByText = fallbackCard
+      .locator("button")
+      .filter({ hasText: /view details and contract offers/i })
+      .first();
+
+    if ((await fallbackButtonByText.count()) > 0) {
+      try {
+        await clickMarked(fallbackButtonByText, { force: true });
+        await waitForUiTransition(this.page);
+        return true;
+      } catch {
+        // Fall through to the accessible-name fallback below.
+      }
+    }
+
+    const fallbackButton = fallbackCard
+      .getByRole("button", { name: /view details and contract offers/i })
+      .first();
+
+    if ((await fallbackButton.count()) > 0) {
+      try {
+        await clickMarked(fallbackButton, { force: true });
+        await waitForUiTransition(this.page);
+        return true;
+      } catch {
+        // Fall through to the DOM fallback below.
+      }
+    }
+
+    return false;
   }
 
   async hasNextPage(): Promise<boolean> {
-    const nextButton = this.page.locator(
-      "button.mat-paginator-navigation-next, button[aria-label*='Next page']",
-    ).first();
+    const nextButton = this.nextPageButton();
 
     if ((await nextButton.count()) === 0) {
       return false;
@@ -81,9 +165,7 @@ export class CatalogPage {
   }
 
   async goToNextPage(): Promise<boolean> {
-    const nextButton = this.page.locator(
-      "button.mat-paginator-navigation-next, button[aria-label*='Next page']",
-    ).first();
+    const nextButton = this.nextPageButton();
 
     if ((await nextButton.count()) === 0) {
       return false;
@@ -93,9 +175,90 @@ export class CatalogPage {
       return false;
     }
 
-    await clickMarked(nextButton);
+    const currentRange = await this.paginatorRangeText();
+    await clickMarked(nextButton, { force: true });
+    let changed = await this.waitForPaginatorRangeChange(currentRange);
+    if (!changed && (await this.clickNextPageButtonByDom())) {
+      changed = await this.waitForPaginatorRangeChange(currentRange);
+    }
     await waitForUiTransition(this.page);
-    return true;
+    return changed;
+  }
+
+  private nextPageButton(): Locator {
+    return this.page
+      .getByRole("button", { name: /next page/i })
+      .or(this.page.locator("button.mat-paginator-navigation-next, button[aria-label*='Next page']"))
+      .first();
+  }
+
+  private async paginatorRangeText(): Promise<string> {
+    return this.page
+      .locator(".mat-mdc-paginator-range-label, .mat-paginator-range-label")
+      .first()
+      .innerText({ timeout: 1_000 })
+      .then(normalizeText)
+      .catch(() => "");
+  }
+
+  private async waitForPaginatorRangeChange(previousRange: string): Promise<boolean> {
+    return this.page.waitForFunction(
+      (rangeBefore) => {
+        const range = document
+          .querySelector(".mat-mdc-paginator-range-label, .mat-paginator-range-label")
+          ?.textContent
+          ?.replace(/\s+/g, " ")
+          .trim();
+        return !rangeBefore || (range && range !== rangeBefore);
+      },
+      previousRange,
+      { timeout: 3_000 },
+    ).then(() => true).catch(() => false);
+  }
+
+  private async clickAssetCardButtonByDom(assetId: string): Promise<boolean> {
+    return this.page.evaluate((targetAssetId) => {
+      const cards = Array.from(document.querySelectorAll(".card, mat-card, [class*='card']"));
+      const card = cards.find((candidate) => candidate.textContent?.includes(targetAssetId));
+      const button = card?.querySelector("button");
+      if (button instanceof HTMLElement) {
+        button.click();
+        return true;
+      }
+
+      const textMatches = Array.from(document.querySelectorAll("body *")).filter((candidate) =>
+        candidate.textContent?.includes(targetAssetId),
+      );
+      for (const match of textMatches) {
+        let current: Element | null = match;
+        for (let depth = 0; current && depth < 8; depth += 1) {
+          const detailButton = Array.from(current.querySelectorAll("button")).find((candidate) =>
+            /view details and contract offers/i.test(candidate.textContent || ""),
+          );
+          if (detailButton instanceof HTMLElement) {
+            detailButton.click();
+            return true;
+          }
+          current = current.parentElement;
+        }
+      }
+      return false;
+    }, assetId);
+  }
+
+  private async clickNextPageButtonByDom(): Promise<boolean> {
+    return this.page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll("button"));
+      const button = buttons.find((candidate) => {
+        const label = `${candidate.getAttribute("aria-label") || ""} ${candidate.className || ""}`;
+        return /next page|mat-.*paginator.*next/i.test(label);
+      });
+      if (!(button instanceof HTMLButtonElement) || button.disabled || button.getAttribute("aria-disabled") === "true") {
+        return false;
+      }
+      button.click();
+      return true;
+    });
   }
 
   async collectDetailDiagnostics(assetId?: string): Promise<CatalogDetailDiagnostics> {

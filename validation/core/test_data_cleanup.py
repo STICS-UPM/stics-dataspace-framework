@@ -78,6 +78,7 @@ SAFE_TEST_ID_PREFIXES = {
         "qa-ui-asset-",
         "qa-ui-contract-asset-",
         "qa-ui-negotiation-",
+        "qa-ui-sv-httpdata-",
         "qa-ui-transfer-",
         "qa-ui-edc-",
         "qa-edc-",

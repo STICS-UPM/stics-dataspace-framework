@@ -73,17 +73,56 @@ class UiInteractiveMenuTests(unittest.TestCase):
         _mock_resolve_mode,
         mock_run_functional,
     ):
-        with mock.patch("builtins.input", side_effect=["1"]):
-            interactive_menu.run_ai_model_hub_ui_tests_interactive()
+        interactive_menu.run_ai_model_hub_ui_tests_interactive()
 
         mock_run_functional.assert_called_once_with({"label": "Normal", "args": [], "env": {}})
 
-    @mock.patch.object(interactive_menu, "run_ai_model_hub_ui_tests_interactive")
-    def test_run_inesdata_ui_tests_interactive_routes_ai_model_hub_to_submenu(self, mock_run_ai_model_hub_ui):
+    @mock.patch.object(interactive_menu, "_run_ontology_hub_ui_integration_with_inesdata")
+    @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
+    def test_run_inesdata_ui_tests_interactive_routes_ontology_hub_integration(
+        self,
+        _mock_resolve_mode,
+        mock_run_ontology_hub_integration,
+    ):
+        with mock.patch("builtins.input", side_effect=["2"]):
+            interactive_menu.run_inesdata_ui_tests_interactive()
+
+        mock_run_ontology_hub_integration.assert_called_once_with({"label": "Normal", "args": [], "env": {}})
+
+    @mock.patch.object(interactive_menu, "_run_ai_model_hub_ui_integration")
+    @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
+    def test_run_inesdata_ui_tests_interactive_routes_ai_model_hub_integration(
+        self,
+        _mock_resolve_mode,
+        mock_run_ai_model_hub_integration,
+    ):
         with mock.patch("builtins.input", side_effect=["3"]):
             interactive_menu.run_inesdata_ui_tests_interactive()
 
-        mock_run_ai_model_hub_ui.assert_called_once()
+        mock_run_ai_model_hub_integration.assert_called_once_with({"label": "Normal", "args": [], "env": {}})
+
+    @mock.patch.object(interactive_menu, "_run_semantic_virtualization_ui_tests")
+    @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
+    def test_run_semantic_virtualization_ui_tests_interactive_routes_runner(
+        self,
+        _mock_resolve_mode,
+        mock_run_semantic_virtualization_ui,
+    ):
+        interactive_menu.run_semantic_virtualization_ui_tests_interactive()
+
+        mock_run_semantic_virtualization_ui.assert_called_once_with({"label": "Normal", "args": [], "env": {}})
+
+    @mock.patch.object(interactive_menu, "_run_semantic_virtualization_ui_integration_with_inesdata")
+    @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
+    def test_run_inesdata_ui_tests_interactive_routes_semantic_virtualization_integration(
+        self,
+        _mock_resolve_mode,
+        mock_run_semantic_virtualization_integration,
+    ):
+        with mock.patch("builtins.input", side_effect=["4"]):
+            interactive_menu.run_inesdata_ui_tests_interactive()
+
+        mock_run_semantic_virtualization_integration.assert_called_once_with({"label": "Normal", "args": [], "env": {}})
 
     @mock.patch.object(interactive_menu, "_cleanup_playwright_processes")
     @mock.patch.object(interactive_menu.subprocess, "run")
@@ -115,6 +154,99 @@ class UiInteractiveMenuTests(unittest.TestCase):
             self.assertTrue(os.path.isdir(env["PLAYWRIGHT_OUTPUT_DIR"]))
             self.assertTrue(os.path.isdir(env["PLAYWRIGHT_HTML_REPORT_DIR"]))
             self.assertTrue(os.path.isdir(env["PLAYWRIGHT_BLOB_REPORT_DIR"]))
+
+    @mock.patch.object(interactive_menu, "_cleanup_playwright_processes")
+    @mock.patch.object(interactive_menu.subprocess, "run")
+    @mock.patch.object(interactive_menu, "project_root")
+    @mock.patch.object(interactive_menu, "_resolve_semantic_virtualization_base_url", return_value="http://semantic.example.test")
+    def test_run_semantic_virtualization_ui_tests_uses_absolute_artifact_paths(
+        self,
+        _mock_resolve_base_url,
+        mock_project_root,
+        mock_subprocess_run,
+        _mock_cleanup,
+    ):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_project_root.return_value = Path(tmpdir)
+            mock_subprocess_run.return_value = mock.Mock(returncode=0)
+
+            interactive_menu._run_semantic_virtualization_ui_tests({"label": "Normal", "args": [], "env": {}})
+
+            mock_subprocess_run.assert_called_once()
+            env = mock_subprocess_run.call_args.kwargs["env"]
+            cwd = mock_subprocess_run.call_args.kwargs["cwd"]
+            base_experiments_dir = os.path.join(tmpdir, "experiments")
+
+            self.assertEqual(cwd, os.path.join(tmpdir, "validation", "ui"))
+            self.assertEqual(env["SEMANTIC_VIRTUALIZATION_BASE_URL"], "http://semantic.example.test")
+            self.assertTrue(env["PLAYWRIGHT_OUTPUT_DIR"].startswith(base_experiments_dir))
+            self.assertTrue(env["PLAYWRIGHT_HTML_REPORT_DIR"].startswith(base_experiments_dir))
+            self.assertTrue(env["PLAYWRIGHT_BLOB_REPORT_DIR"].startswith(base_experiments_dir))
+            self.assertTrue(env["PLAYWRIGHT_JSON_REPORT_FILE"].startswith(base_experiments_dir))
+            self.assertTrue(os.path.isdir(env["PLAYWRIGHT_OUTPUT_DIR"]))
+            self.assertTrue(os.path.isdir(env["PLAYWRIGHT_HTML_REPORT_DIR"]))
+            self.assertTrue(os.path.isdir(env["PLAYWRIGHT_BLOB_REPORT_DIR"]))
+
+    @mock.patch.object(interactive_menu, "_cleanup_playwright_processes")
+    @mock.patch.object(interactive_menu.subprocess, "run")
+    @mock.patch.object(interactive_menu, "project_root")
+    @mock.patch.object(interactive_menu, "_default_inesdata_adapter", return_value=FakeInteractiveAdapter())
+    def test_run_ontology_hub_ui_integration_with_inesdata_uses_expected_spec_and_markers(
+        self,
+        _mock_default_adapter,
+        mock_project_root,
+        mock_subprocess_run,
+        _mock_cleanup,
+    ):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_project_root.return_value = Path(tmpdir)
+            mock_subprocess_run.return_value = mock.Mock(returncode=0)
+
+            interactive_menu._run_ontology_hub_ui_integration_with_inesdata(
+                {"label": "Normal", "args": [], "env": {}}
+            )
+
+            mock_subprocess_run.assert_called_once()
+            command = mock_subprocess_run.call_args.args[0]
+            env = mock_subprocess_run.call_args.kwargs["env"]
+
+            self.assertIn("core/08-ontology-hub-inesdata-readonly.spec.ts", command)
+            self.assertEqual(env["UI_ONTOLOGY_HUB_INESDATA_DEMO"], "1")
+            self.assertEqual(env["PLAYWRIGHT_INTERACTION_MARKERS"], "1")
+            self.assertTrue(env["PLAYWRIGHT_OUTPUT_DIR"].startswith(os.path.join(tmpdir, "experiments")))
+            self.assertIn(os.path.join("components", "ontology-hub", "inesdata-ui"), env["PLAYWRIGHT_OUTPUT_DIR"])
+
+    @mock.patch.object(interactive_menu, "_cleanup_playwright_processes")
+    @mock.patch.object(interactive_menu.subprocess, "run")
+    @mock.patch.object(interactive_menu, "project_root")
+    @mock.patch.object(interactive_menu, "_default_inesdata_adapter", return_value=FakeInteractiveAdapter())
+    def test_run_semantic_virtualization_ui_integration_with_inesdata_uses_expected_spec_and_markers(
+        self,
+        _mock_default_adapter,
+        mock_project_root,
+        mock_subprocess_run,
+        _mock_cleanup,
+    ):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_project_root.return_value = Path(tmpdir)
+            mock_subprocess_run.return_value = mock.Mock(returncode=0)
+
+            interactive_menu._run_semantic_virtualization_ui_integration_with_inesdata(
+                {"label": "Normal", "args": [], "env": {}}
+            )
+
+            mock_subprocess_run.assert_called_once()
+            command = mock_subprocess_run.call_args.args[0]
+            env = mock_subprocess_run.call_args.kwargs["env"]
+
+            self.assertIn("core/07-semantic-virtualization-httpdata.spec.ts", command)
+            self.assertEqual(env["UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO"], "1")
+            self.assertEqual(env["PLAYWRIGHT_INTERACTION_MARKERS"], "1")
+            self.assertTrue(env["PLAYWRIGHT_OUTPUT_DIR"].startswith(os.path.join(tmpdir, "experiments")))
+            self.assertIn(
+                os.path.join("components", "semantic-virtualization", "inesdata-ui"),
+                env["PLAYWRIGHT_OUTPUT_DIR"],
+            )
 
     def test_run_core_ui_tests_routes_smoke_dataspace_and_ops_suites(self):
         mode = {"label": "Live", "args": ["--headed"], "env": {"PWDEBUG": "0"}}

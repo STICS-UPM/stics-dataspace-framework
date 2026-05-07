@@ -6668,6 +6668,7 @@ def _print_interactive_menu(adapter_name, adapter_registry=None, topology="local
     print("I - INESData Tests (Normal/Live/Debug)")
     print("O - Ontology Hub Tests (Normal/Live/Debug)")
     print("A - AI Model Hub Tests (Normal/Live/Debug)")
+    print("V - Semantic Virtualization Tests (Normal/Live/Debug)")
     print()
     print("[Control]")
     print("? - Help")
@@ -6723,9 +6724,13 @@ def _print_interactive_help():
     print("    Advanced options use explicit image recipes for the active adapter.")
     print()
     print("[UI Validation]")
-    print("I - Use to validate the INESData portal experience independently from full Level 6.")
+    print("I - Use to validate the INESData portal experience and component integrations through INESData.")
     print("O - Use when Ontology Hub UI changed or after deploying ontology-related components.")
+    print("    This runs Ontology Hub component suites, not the INESData integration demo.")
     print("A - Use when AI Model Hub UI changed or after deploying AI Model Hub components.")
+    print("    This runs AI Model Hub component suites, not the INESData integration demo.")
+    print("V - Use when Semantic Virtualization UI/API browser reachability changed or after deploying the virtualizer.")
+    print("    This runs Semantic Virtualization component/editor suites, not the INESData integration demo.")
     print()
     print("[Compatibility]")
     print("Levels 1-2 belong to the shared local foundation; the menu asks for an adapter only when an operation needs Levels 3-6, unless you preselect one with S.")
@@ -7862,6 +7867,7 @@ def _run_legacy_menu_action(action_name, current_adapter="inesdata"):
         "inesdata_ui": ui_interactive_menu.run_inesdata_ui_tests_interactive,
         "ontology_hub_ui": ui_interactive_menu.run_ontology_hub_ui_tests_interactive,
         "ai_model_hub_ui": ui_interactive_menu.run_ai_model_hub_ui_tests_interactive,
+        "semantic_virtualization_ui": ui_interactive_menu.run_semantic_virtualization_ui_tests_interactive,
     }
     if action_name == "local_images":
         return local_menu_tools.run_local_images_workflow_interactive(active_adapter=current_adapter)
@@ -8022,6 +8028,10 @@ def run_interactive_menu(
 
                 if choice == "A":
                     _run_legacy_menu_action("ai_model_hub_ui")
+                    continue
+
+                if choice == "V":
+                    _run_legacy_menu_action("semantic_virtualization_ui")
                     continue
 
                 if choice == "X":

@@ -55,6 +55,27 @@ class MainMenuMigrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "exited")
         ai_model_hub.assert_called_once_with()
 
+    def test_semantic_virtualization_ui_shortcut_runs_migrated_action_without_inesdata_py(self):
+        with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch(
+            "builtins.input",
+            side_effect=["V", "Q"],
+        ), mock.patch.object(
+            main.ui_interactive_menu,
+            "run_semantic_virtualization_ui_tests_interactive",
+            return_value="semantic-virtualization-ui-ok",
+        ) as semantic_virtualization:
+            result = main.main(
+                ["menu"],
+                adapter_registry=self.adapter_registry,
+                deployer_registry=self.deployer_registry,
+                validation_engine_cls=FakeValidationEngine,
+                metrics_collector_cls=FakeMetricsCollector,
+                experiment_storage=FakeStorage,
+            )
+
+        self.assertEqual(result["status"], "exited")
+        semantic_virtualization.assert_called_once_with()
+
     def test_legacy_shortcuts_are_routed_by_main_without_inesdata_py(self):
         with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch(
             "builtins.input",

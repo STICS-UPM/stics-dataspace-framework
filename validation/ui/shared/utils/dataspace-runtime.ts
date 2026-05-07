@@ -82,6 +82,33 @@ function normalizedAdapter(): string {
   return value || "inesdata";
 }
 
+function connectorEnvPrefix(connectorName: string): string {
+  return connectorName.toUpperCase().replace(/-/g, "_");
+}
+
+function ingressBaseUrl(host: string): string {
+  const protocol = (process.env.UI_INGRESS_PROTOCOL || "http").trim() || "http";
+  const port = (process.env.UI_INGRESS_PORT || "").trim();
+  return `${protocol}://${host}${port ? `:${port}` : ""}`;
+}
+
+function withOptionalIngressPort(urlValue: string): string {
+  const port = (process.env.UI_INGRESS_PORT || "").trim();
+  if (!port) {
+    return urlValue;
+  }
+
+  try {
+    const url = new URL(urlValue);
+    if (!url.port) {
+      url.port = port;
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return urlValue;
+  }
+}
+
 function deploymentRoot(adapter: string): string {
   const projectRootPath = projectRoot();
   return path.join(projectRootPath, "deployers", adapter, "deployments");
@@ -124,18 +151,28 @@ function discoverConnectorNames(adapter: string, environment: string, dataspace:
 function resolveDataspaceDefaults(): DataspaceDefaults {
   const deployerConfigPath = path.join(projectRoot(), "deployers", "inesdata", "deployer.config");
   const deployerConfig = parseKeyValueFile(deployerConfigPath);
+  const infrastructureConfigPath = path.join(projectRoot(), "deployers", "infrastructure", "deployer.config");
+  const infrastructureConfig = parseKeyValueFile(infrastructureConfigPath);
   const adapter = normalizedAdapter();
 
   return {
     adapter,
     dataspace: process.env.UI_DATASPACE || deployerConfig.DS_1_NAME || "demo",
-    environment: process.env.UI_ENVIRONMENT || deployerConfig.ENVIRONMENT || "DEV",
-    dsDomain: process.env.UI_DS_DOMAIN || deployerConfig.DS_DOMAIN_BASE || "dev.ds.dataspaceunit.upm",
+    environment: process.env.UI_ENVIRONMENT || deployerConfig.ENVIRONMENT || infrastructureConfig.ENVIRONMENT || "DEV",
+    dsDomain:
+      process.env.UI_DS_DOMAIN ||
+      deployerConfig.DS_DOMAIN_BASE ||
+      infrastructureConfig.DS_DOMAIN_BASE ||
+      "dev.ds.dataspaceunit.upm",
     keycloakUrl:
       process.env.UI_KEYCLOAK_URL ||
-      deployerConfig.KC_INTERNAL_URL ||
-      deployerConfig.KC_URL ||
-      "http://keycloak.dev.ed.dataspaceunit.upm",
+      withOptionalIngressPort(
+        deployerConfig.KC_INTERNAL_URL ||
+          infrastructureConfig.KC_INTERNAL_URL ||
+          deployerConfig.KC_URL ||
+          infrastructureConfig.KC_URL ||
+          "http://keycloak.dev.ed.dataspaceunit.upm",
+      ),
     keycloakClientId: process.env.UI_KEYCLOAK_CLIENT_ID || "dataspace-users",
   };
 }
@@ -152,6 +189,7 @@ function resolveConnectorRuntime(
   const username = requiredString(credentials?.connector_user?.user, `${connectorName} username`);
   const password = requiredString(credentials?.connector_user?.passwd, `${connectorName} password`);
   const host = `${connectorName}.${dsDomain}`;
+  const baseUrl = ingressBaseUrl(host);
   const deployerConfigPath = path.join(projectRoot(), "deployers", "inesdata", "deployer.config");
   const deployerConfig = parseKeyValueFile(deployerConfigPath);
   const minioHost = process.env.UI_MINIO_HOST || deployerConfig.MINIO_HOSTNAME || `minio.${deployerConfig.DOMAIN_BASE || "dev.ed.dataspaceunit.upm"}`;
@@ -160,15 +198,20 @@ function resolveConnectorRuntime(
   const endpointOverride = `${minioProtocol}://${minioHost}`;
   const minioAccessKey = credentials?.minio?.access_key;
   const minioSecretKey = credentials?.minio?.secret_key;
+  const envPrefix = connectorEnvPrefix(connectorName);
 
   return {
     adapter,
     connectorName,
     portalBaseUrl:
-      process.env[`UI_${connectorName.toUpperCase().replace(/-/g, "_")}_PORTAL_URL`] ||
-      `http://${host}${defaultPortalPath(adapter)}`,
-    managementBaseUrl: `http://${host}/management/v3`,
-    protocolBaseUrl: `http://${host}/protocol`,
+      process.env[`UI_${envPrefix}_PORTAL_URL`] ||
+      `${baseUrl}${defaultPortalPath(adapter)}`,
+    managementBaseUrl:
+      process.env[`UI_${envPrefix}_MANAGEMENT_URL`] ||
+      `${baseUrl}/management/v3`,
+    protocolBaseUrl:
+      process.env[`UI_${envPrefix}_PROTOCOL_URL`] ||
+      `${baseUrl}/protocol`,
     transferStartPath: adapter === "edc" ? "adaptertransferprocesses" : "inesdatatransferprocesses",
     transferDestinationType: adapter === "edc" ? "AmazonS3" : "InesDataStore",
     username,
@@ -177,13 +220,13 @@ function resolveConnectorRuntime(
       minioAccessKey && minioSecretKey
         ? {
             bucketName:
-              process.env[`UI_${connectorName.toUpperCase().replace(/-/g, "_")}_TRANSFER_BUCKET`] ||
+              process.env[`UI_${envPrefix}_TRANSFER_BUCKET`] ||
               `${dataspace}-${connectorName}`,
             region:
-              process.env[`UI_${connectorName.toUpperCase().replace(/-/g, "_")}_TRANSFER_REGION`] ||
+              process.env[`UI_${envPrefix}_TRANSFER_REGION`] ||
               transferRegion,
             endpointOverride:
-              process.env[`UI_${connectorName.toUpperCase().replace(/-/g, "_")}_TRANSFER_ENDPOINT`] ||
+              process.env[`UI_${envPrefix}_TRANSFER_ENDPOINT`] ||
               endpointOverride,
             accessKeyId: String(minioAccessKey),
             secretAccessKey: String(minioSecretKey),

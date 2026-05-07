@@ -1765,6 +1765,7 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("L - Build and Deploy Local Images", stdout.getvalue())
         self.assertIn("[UI Validation]", stdout.getvalue())
         self.assertIn("I - INESData Tests", stdout.getvalue())
+        self.assertIn("V - Semantic Virtualization Tests", stdout.getvalue())
         self.assertIn("? - Help", stdout.getvalue())
 
     def test_menu_help_explains_available_options(self):
@@ -1796,6 +1797,7 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("[UI Validation]", stdout.getvalue())
         self.assertIn("I - Use to validate the INESData portal experience", stdout.getvalue())
         self.assertIn("A - Use when AI Model Hub UI changed", stdout.getvalue())
+        self.assertIn("V - Use when Semantic Virtualization UI/API browser reachability changed", stdout.getvalue())
         self.assertIn("shortcuts are available directly", stdout.getvalue())
 
     def test_menu_level3_adapter_prompt_does_not_print_generic_hosts_hint(self):
@@ -2419,7 +2421,7 @@ class MainCliTests(unittest.TestCase):
         )
 
     def test_ui_validation_shortcuts_delegate_component_actions(self):
-        with mock.patch("builtins.input", side_effect=["I", "O", "A", "Q"]), mock.patch.object(
+        with mock.patch("builtins.input", side_effect=["I", "O", "A", "V", "Q"]), mock.patch.object(
             main,
             "_run_legacy_menu_action",
             return_value=None,
@@ -2436,11 +2438,11 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["status"], "exited")
         self.assertEqual(
             [call.args[0] for call in legacy_action.call_args_list],
-            ["inesdata_ui", "ontology_hub_ui", "ai_model_hub_ui"],
+            ["inesdata_ui", "ontology_hub_ui", "ai_model_hub_ui", "semantic_virtualization_ui"],
         )
 
     def test_menu_keeps_legacy_component_ui_validation_shortcuts(self):
-        with mock.patch("builtins.input", side_effect=["I", "O", "A", "Q"]), mock.patch.object(
+        with mock.patch("builtins.input", side_effect=["I", "O", "A", "V", "Q"]), mock.patch.object(
             main,
             "_run_legacy_menu_action",
             return_value=None,
@@ -2457,7 +2459,7 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["status"], "exited")
         self.assertEqual(
             [call.args[0] for call in legacy_action.call_args_list],
-            ["inesdata_ui", "ontology_hub_ui", "ai_model_hub_ui"],
+            ["inesdata_ui", "ontology_hub_ui", "ai_model_hub_ui", "semantic_virtualization_ui"],
         )
 
     def test_migrated_bootstrap_action_does_not_import_inesdata_py(self):
@@ -2560,6 +2562,17 @@ class MainCliTests(unittest.TestCase):
             result = main._run_legacy_menu_action("ai_model_hub_ui")
 
         self.assertEqual(result, "ai-model-ui-ok")
+        migrated_action.assert_called_once_with()
+
+    def test_migrated_semantic_virtualization_ui_action_does_not_import_inesdata_py(self):
+        with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch.object(
+            main.ui_interactive_menu,
+            "run_semantic_virtualization_ui_tests_interactive",
+            return_value="semantic-virtualization-ui-ok",
+        ) as migrated_action:
+            result = main._run_legacy_menu_action("semantic_virtualization_ui")
+
+        self.assertEqual(result, "semantic-virtualization-ui-ok")
         migrated_action.assert_called_once_with()
 
     def test_menu_metrics_can_run_without_kafka_by_default(self):

@@ -249,6 +249,7 @@ class TestDataCleanupTests(unittest.TestCase):
                 ],
                 "assets": [
                     {"@id": "qa-ui-edc-transfer-1"},
+                    {"@id": "qa-ui-sv-httpdata-1"},
                     {"@id": "manual-asset"},
                 ],
             },
@@ -257,7 +258,7 @@ class TestDataCleanupTests(unittest.TestCase):
 
         self.assertEqual(plan["contract_definitions"], ["contract-crud-1"])
         self.assertEqual(plan["policies"], ["qa-ui-contract-policy-1"])
-        self.assertEqual(plan["assets"], ["qa-ui-edc-transfer-1"])
+        self.assertEqual(plan["assets"], ["qa-ui-edc-transfer-1", "qa-ui-sv-httpdata-1"])
 
     def test_cleaner_deletes_safe_entities_in_dependency_order_and_writes_report(self):
         session = FakeCleanupSession()
