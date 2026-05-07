@@ -11,10 +11,19 @@ import requests
 from adapters.inesdata.config import InesdataConfig
 
 
+def _kubectl_env():
+    env = os.environ.copy()
+    if not env.get("KUBECONFIG"):
+        k3s_default = "/etc/rancher/k3s/k3s.yaml"
+        if os.path.exists(k3s_default):
+            env["KUBECONFIG"] = k3s_default
+    return env
+
+
 def _run(cmd, check=False):
     print(f"\nExecuting: {cmd}")
     try:
-        result = subprocess.run(cmd, shell=True, text=True)
+        result = subprocess.run(cmd, shell=True, text=True, env=_kubectl_env())
     except Exception as exc:
         print(f"Execution error: {exc}")
         return None

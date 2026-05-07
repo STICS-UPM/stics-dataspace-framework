@@ -104,7 +104,11 @@ class OntologyHubVocabDetailPage {
   }
 
   async expectVersionHistoryMarkers() {
-    await clickMarked(this.page.locator(".ontology-tab").filter({ hasText: "Version History" }).first());
+    const versionTab = this.page.locator(".ontology-tab").filter({ hasText: "Version History" }).first();
+    const tabVisible = await versionTab.isVisible({ timeout: 5000 }).catch(() => false);
+    if (tabVisible) {
+      await clickMarked(versionTab);
+    }
     await this.page.getByText("Vocabulary Version History", { exact: true }).waitFor({
       state: "visible",
     });

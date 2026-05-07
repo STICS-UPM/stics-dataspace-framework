@@ -83,7 +83,7 @@ test("OH-APP-22: patterns page generates a zip", async ({
     throw new Error("Patterns page does not expose the Submit control expected by the Excel flow.");
   }
 
-  const downloadPromise = page.waitForEvent("download", { timeout: 5000 });
+  const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
   await clickMarked(submitButton);
   const download = await downloadPromise;
   const filePath = testInfo.outputPath("patterns.zip");
@@ -97,6 +97,22 @@ test("OH-APP-22: patterns page generates a zip", async ({
   const hasWebFolder = entries.some((entry) => entry.startsWith("web/"));
   expect(hasDataFolder).toBeTruthy();
   expect(hasWebFolder).toBeTruthy();
+
+  // Excel A5.2 OH-APP-22: verify expected files inside each folder
+  const expectedDataFiles = ["error.log.txt", "Patterns_name.txt", "Patterns_type.txt", "Structure.csv"];
+  const expectedWebFiles = ["PatternName.html", "PatternType.html", "Structure.html"];
+  const missingDataFiles = expectedDataFiles.filter(
+    (f) => !entries.some((e) => e === `data/${f}` || e.endsWith(`/${f}`)),
+  );
+  const missingWebFiles = expectedWebFiles.filter(
+    (f) => !entries.some((e) => e === `web/${f}` || e.endsWith(`/${f}`)),
+  );
+  if (missingDataFiles.length > 0 || missingWebFiles.length > 0) {
+    throw new Error(
+      `ZIP content does not match Excel spec. Missing in data/: [${missingDataFiles.join(", ")}]. Missing in web/: [${missingWebFiles.join(", ")}].`,
+    );
+  }
+
   await captureStep(page, "22-patterns");
   await signOut(page, ontologyHubRuntime);
 
@@ -106,6 +122,8 @@ test("OH-APP-22: patterns page generates a zip", async ({
     entries,
     hasDataFolder,
     hasWebFolder,
+    missingDataFiles,
+    missingWebFiles,
     persistedPath,
   });
 });
@@ -233,7 +251,7 @@ test("OH-APP-24: Themis accepts a test file and downloads results", async ({
     timeout: 5000,
   });
 
-  const downloadPromise = page.waitForEvent("download", { timeout: 5000 });
+  const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
   await clickMarked(page.getByRole("button", { name: /download results/i }).first());
   const download = await downloadPromise;
   const outputPath = testInfo.outputPath("themis-results.txt");

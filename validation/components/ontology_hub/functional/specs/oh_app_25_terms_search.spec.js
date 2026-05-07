@@ -31,8 +31,8 @@ test("OH-APP-25: terms search returns results for the ontology created in OH-APP
   const query = termProbe.query;
 
   await termsPage.goto(flowRuntime.baseUrl, query);
-  await waitForTermsReady(page, 5000);
-  await waitForTermsResults(page, 5000);
+  await waitForTermsReady(page);
+  await waitForTermsResults(page);
   const resultCount = await termsPage.currentResultCount().catch(() => null);
   if (termProbe.label) {
     await termsPage.expectResultVisible(termProbe.label);

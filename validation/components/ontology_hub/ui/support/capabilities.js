@@ -284,6 +284,22 @@ async function probeTermSearchApi(request, runtime, options = {}) {
     return capabilityCache.get(cacheKey);
   }
 
+  // When refresh requested (e.g. after vocab creation), ES indexing may lag — retry up to 60s
+  const retryDeadline = options.refresh ? Date.now() + 60000 : Date.now();
+  let lastResult;
+  do {
+    lastResult = await _probeTermSearchApiOnce(request, runtime);
+    if (lastResult.available) break;
+    if (Date.now() < retryDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+  } while (Date.now() < retryDeadline);
+
+  capabilityCache.set(cacheKey, lastResult);
+  return lastResult;
+}
+
+async function _probeTermSearchApiOnce(request, runtime) {
   let result = {
     available: false,
     reason: "La API publica de term search no devolvio resultados reutilizables.",
@@ -334,7 +350,7 @@ async function probeTermSearchApi(request, runtime, options = {}) {
   }
 
   if (!result.available) {
-    const resourceApiProbe = await probeVocabularyResourceApi(request, runtime, options);
+    const resourceApiProbe = await probeVocabularyResourceApi(request, runtime, {});
     if (resourceApiProbe.available) {
       result = {
         ...resourceApiProbe,
@@ -343,7 +359,6 @@ async function probeTermSearchApi(request, runtime, options = {}) {
     }
   }
 
-  capabilityCache.set(cacheKey, result);
   return result;
 }
 
