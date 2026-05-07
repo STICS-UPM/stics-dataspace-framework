@@ -262,12 +262,40 @@ artifact_exists() {
   compgen -G "$pattern" > /dev/null
 }
 
+artifact_reference_path() {
+  local pattern="$1"
+  local candidate
+  local newest=""
+
+  while IFS= read -r candidate; do
+    if [[ -z "$newest" || "$candidate" -nt "$newest" ]]; then
+      newest="$candidate"
+    fi
+  done < <(compgen -G "$pattern" || true)
+
+  printf '%s\n' "$newest"
+}
+
+artifact_is_stale() {
+  local artifact_path="$1"
+  local repo_dir="$2"
+
+  if [[ -z "$artifact_path" || ! -f "$artifact_path" ]]; then
+    return 1
+  fi
+
+  find "$repo_dir" \
+    \( -path "*/.git" -o -path "*/.gradle" -o -path "*/.gradle-user-home" -o -path "*/build" -o -path "*/node_modules" \) -prune \
+    -o -type f -newer "$artifact_path" -print -quit | grep -q .
+}
+
 prepare_component_artifacts() {
   local component="$1"
   local repo_dir="$2"
   local artifact_rel="${REQUIRED_ARTIFACT[$component]:-}"
   local prebuild_args="${PREBUILD_ARGS[$component]:-}"
   local artifact_path="$repo_dir/$artifact_rel"
+  local artifact_ref=""
   local gradle_user_home="$repo_dir/.gradle-user-home"
   local should_prebuild=0
 
@@ -275,9 +303,13 @@ prepare_component_artifacts() {
     return
   fi
 
-  if ! artifact_exists "$artifact_path"; then
+  artifact_ref="$(artifact_reference_path "$artifact_path")"
+
+  if [[ -z "$artifact_ref" ]]; then
     should_prebuild=1
   elif component_has_changes "$repo_dir"; then
+    should_prebuild=1
+  elif artifact_is_stale "$artifact_ref" "$repo_dir"; then
     should_prebuild=1
   fi
 

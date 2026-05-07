@@ -156,6 +156,25 @@ class NewmanExecutor:
             json.dump(payload, f, indent=2)
 
     @staticmethod
+    def _is_missing_or_unresolved(value):
+        text = str(value or "").strip()
+        return not text or "{{" in text or "}}" in text
+
+    def _require_environment_values(self, environment_path, required_keys, context):
+        _, env_vars = self._read_environment_values(environment_path)
+        missing = [
+            key
+            for key in required_keys
+            if self._is_missing_or_unresolved(env_vars.get(key))
+        ]
+        if missing:
+            raise RuntimeError(
+                f"Cannot continue to {context} because required Newman variables are missing "
+                f"or unresolved: {', '.join(missing)}"
+            )
+        return env_vars
+
+    @staticmethod
     def _positive_int_from_env(name, default):
         value = os.getenv(name)
         if value in (None, ""):
@@ -566,7 +585,7 @@ class NewmanExecutor:
                     continue
                 if item.get("@id") == negotiation_id or item.get("id") == negotiation_id:
                     return item
-            return body[0] if body else None
+            return None if negotiation_id else (body[0] if body else None)
 
         if isinstance(body, dict):
             if not negotiation_id:
@@ -905,6 +924,13 @@ class NewmanExecutor:
                 )
                 if exported_report:
                     exported_reports.append(exported_report)
+
+                if c == "04_consumer_catalog.json":
+                    self._require_environment_values(
+                        environment_path,
+                        ("e2e_offer_policy_id", "e2e_catalog_asset_id"),
+                        "contract negotiation",
+                    )
 
                 if c == "05_consumer_negotiation.json" and self._should_wait_for_contract_agreement(environment_path):
                     self.wait_for_contract_agreement(environment_path)

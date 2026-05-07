@@ -187,23 +187,54 @@ artifact_exists() {
   compgen -G "$pattern" > /dev/null
 }
 
+artifact_reference_path() {
+  local pattern="$1"
+  local candidate
+  local newest=""
+
+  while IFS= read -r candidate; do
+    if [[ -z "$newest" || "$candidate" -nt "$newest" ]]; then
+      newest="$candidate"
+    fi
+  done < <(compgen -G "$pattern" || true)
+
+  printf '%s\n' "$newest"
+}
+
+artifact_is_stale() {
+  local artifact_path="$1"
+  local repo_dir="$2"
+
+  if [[ -z "$artifact_path" || ! -f "$artifact_path" ]]; then
+    return 1
+  fi
+
+  find "$repo_dir" \
+    \( -path "*/.git" -o -path "*/.gradle" -o -path "*/.gradle-user-home" -o -path "*/build" -o -path "*/node_modules" \) -prune \
+    -o -type f -newer "$artifact_path" -print -quit | grep -q .
+}
+
 prepare_component_artifacts() {
   local component="$1"
   local repo_dir="$2"
   local artifact_rel="${REQUIRED_ARTIFACT[$component]:-}"
   local prebuild_args="${PREBUILD_ARGS[$component]:-}"
+  local artifact_path="$repo_dir/$artifact_rel"
+  local artifact_ref=""
   local gradle_user_home="$repo_dir/.gradle-user-home"
 
   if [[ -z "$artifact_rel" ]]; then
     return
   fi
 
-  if artifact_exists "$repo_dir/$artifact_rel"; then
+  artifact_ref="$(artifact_reference_path "$artifact_path")"
+
+  if [[ -n "$artifact_ref" ]] && ! component_has_changes "$repo_dir" && ! artifact_is_stale "$artifact_ref" "$repo_dir"; then
     return
   fi
 
   if [[ -z "$prebuild_args" ]]; then
-    echo "Missing required artifact for $component: $repo_dir/$artifact_rel" >&2
+    echo "Missing required artifact for $component: $artifact_path" >&2
     exit 1
   fi
 
@@ -214,8 +245,8 @@ prepare_component_artifacts() {
   fi
   (cd "$repo_dir" && GRADLE_USER_HOME="$gradle_user_home" ./gradlew $GRADLE_COMMON_ARGS $prebuild_args)
 
-  if ! artifact_exists "$repo_dir/$artifact_rel"; then
-    echo "Artifact still missing after prebuild for $component: $repo_dir/$artifact_rel" >&2
+  if ! artifact_exists "$artifact_path"; then
+    echo "Artifact still missing after prebuild for $component: $artifact_path" >&2
     exit 1
   fi
 }

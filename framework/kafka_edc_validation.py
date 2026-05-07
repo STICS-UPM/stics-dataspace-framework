@@ -1678,6 +1678,8 @@ class KafkaEdcValidationSuite:
         started_at = time.time()
         deadline = started_at + timeout_seconds
         attempts = 0
+        # EDC may relay a previous probe after the next send; keep all in-flight probes valid.
+        pending_probe_ids = set()
         poll_timeout_ms = max(500, min(2000, int(runtime.get("consumer_request_timeout_ms", 60000))))
 
         while time.time() <= deadline:
@@ -1687,6 +1689,7 @@ class KafkaEdcValidationSuite:
                 "producer_timestamp_ms": self.time_provider(),
                 "probe": True,
             }
+            pending_probe_ids.add(probe_payload["message_id"])
             producer.send(source_topic, json.dumps(probe_payload, separators=(",", ":")).encode("utf-8"))
             producer.flush()
 
@@ -1700,12 +1703,13 @@ class KafkaEdcValidationSuite:
                         payload = self._decode_message_value(getattr(record, "value", None))
                         if not isinstance(payload, dict):
                             continue
-                        if payload.get("message_id") == probe_payload["message_id"]:
+                        matched_probe_id = payload.get("message_id")
+                        if matched_probe_id in pending_probe_ids:
                             return {
                                 "status": "ready",
                                 "attempts": attempts,
                                 "seconds_waited": round(max(0.0, time.time() - started_at), 2),
-                                "probe_message_id": probe_payload["message_id"],
+                                "probe_message_id": matched_probe_id,
                             }
             time.sleep(1)
 
@@ -1767,6 +1771,8 @@ class KafkaEdcValidationSuite:
         started_at = time.time()
         deadline = started_at + timeout_seconds
         attempts = 0
+        # EDC may relay a previous probe after the next send; keep all in-flight probes valid.
+        pending_probe_ids = set()
         poll_timeout_ms = max(500, min(2000, int(runtime.get("consumer_request_timeout_ms", 60000))))
 
         while time.time() <= deadline:
@@ -1776,6 +1782,7 @@ class KafkaEdcValidationSuite:
                 "producer_timestamp_ms": self.time_provider(),
                 "probe": True,
             }
+            pending_probe_ids.add(probe_payload["message_id"])
             self._produce_kubernetes_exec_message(runtime, source_topic, probe_payload)
             messages = self._consume_kubernetes_exec_messages(
                 runtime,
@@ -1784,12 +1791,13 @@ class KafkaEdcValidationSuite:
                 max_messages=100,
             )
             for payload in messages:
-                if payload.get("message_id") == probe_payload["message_id"]:
+                matched_probe_id = payload.get("message_id")
+                if matched_probe_id in pending_probe_ids:
                     return {
                         "status": "ready",
                         "attempts": attempts,
                         "seconds_waited": round(max(0.0, time.time() - started_at), 2),
-                        "probe_message_id": probe_payload["message_id"],
+                        "probe_message_id": matched_probe_id,
                     }
             time.sleep(max(1, int(runtime.get("poll_interval_seconds", 1))))
 

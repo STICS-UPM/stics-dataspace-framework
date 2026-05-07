@@ -83,11 +83,22 @@ class NewmanMetricsTests(unittest.TestCase):
     def test_run_validation_collections_returns_report_paths(self):
         executor = NewmanExecutor()
 
+        def fake_run_newman(path, env, report_path=None, environment_path=None):
+            if path.endswith("04_consumer_catalog.json"):
+                executor._write_environment_values(
+                    environment_path,
+                    {
+                        "e2e_offer_policy_id": "offer-123",
+                        "e2e_catalog_asset_id": "asset-123",
+                    },
+                )
+            return report_path
+
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.object(
                 executor,
                 "run_newman",
-                side_effect=lambda path, env, report_path=None, environment_path=None: report_path,
+                side_effect=fake_run_newman,
             ), mock.patch.object(
                 executor,
                 "_should_wait_for_contract_agreement",
@@ -102,11 +113,22 @@ class NewmanMetricsTests(unittest.TestCase):
     def test_run_validation_collections_waits_for_contract_agreement_after_collection_05(self):
         executor = NewmanExecutor()
 
+        def fake_run_newman(path, env, report_path=None, environment_path=None):
+            if path.endswith("04_consumer_catalog.json"):
+                executor._write_environment_values(
+                    environment_path,
+                    {
+                        "e2e_offer_policy_id": "offer-123",
+                        "e2e_catalog_asset_id": "asset-123",
+                    },
+                )
+            return report_path
+
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.object(
                 executor,
                 "run_newman",
-                side_effect=lambda path, env, report_path=None, environment_path=None: report_path,
+                side_effect=fake_run_newman,
             ) as mock_run, mock.patch.object(
                 executor,
                 "_should_wait_for_contract_agreement",
@@ -122,6 +144,21 @@ class NewmanMetricsTests(unittest.TestCase):
         self.assertTrue(mock_run.call_args_list[4].args[0].endswith("05_consumer_negotiation.json"))
         mock_wait.assert_called_once()
         self.assertTrue(mock_wait.call_args.args[0].endswith("environment.json"))
+
+    def test_run_validation_collections_stops_when_catalog_vars_are_missing(self):
+        executor = NewmanExecutor()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(
+                executor,
+                "run_newman",
+                side_effect=lambda path, env, report_path=None, environment_path=None: report_path,
+            ) as mock_run:
+                with self.assertRaisesRegex(RuntimeError, "e2e_offer_policy_id, e2e_catalog_asset_id"):
+                    executor.run_validation_collections({"provider": "conn-a"}, report_dir=tmpdir)
+
+        self.assertEqual(mock_run.call_count, 4)
+        self.assertTrue(mock_run.call_args_list[-1].args[0].endswith("04_consumer_catalog.json"))
 
     @mock.patch("framework.newman_executor.requests.post")
     def test_management_api_preflight_checks_provider_consumer_and_catalog(self, mock_post):
@@ -432,6 +469,18 @@ class NewmanMetricsTests(unittest.TestCase):
 
         self.assertEqual(agreement_id, "agreement-123")
         self.assertEqual(env_values["e2e_agreement_id"], "agreement-123")
+
+    def test_find_negotiation_does_not_fallback_to_stale_entry_when_id_is_missing(self):
+        executor = NewmanExecutor()
+        body = [
+            {
+                "@id": "old-negotiation",
+                "state": "FINALIZED",
+                "contractAgreementId": "stale-agreement",
+            }
+        ]
+
+        self.assertIsNone(executor._find_negotiation(body, "new-negotiation"))
 
     @mock.patch("framework.newman_executor.requests.post")
     def test_wait_for_contract_agreement_raises_when_timeout_expires(self, mock_post):

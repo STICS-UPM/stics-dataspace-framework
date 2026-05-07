@@ -228,6 +228,20 @@ class _FakeProducer:
         return None
 
 
+class _LaggingProbeProducer(_FakeProducer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.previous_by_topic = {}
+
+    def send(self, topic, value):
+        previous_value = self.previous_by_topic.get(topic)
+        destination_topic = _FakeBrokerState.routes.get(topic)
+        if previous_value is not None and destination_topic:
+            _FakeBrokerState.topics.setdefault(destination_topic, []).append(previous_value)
+        _FakeBrokerState.topics.setdefault(topic, []).append(value)
+        self.previous_by_topic[topic] = value
+
+
 class _FakeConsumer:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -1216,6 +1230,28 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertEqual(run_pair_mock.call_count, 2)
         self.assertEqual(kafka_manager.stop_calls, 0)
+
+    def test_end_to_end_probe_accepts_delayed_previous_probe(self):
+        _FakeBrokerState.routes["source-topic"] = "destination-topic"
+        suite = KafkaEdcValidationSuite()
+        producer = _LaggingProbeProducer()
+        consumer = _FakeConsumer()
+        consumer.subscribe(["destination-topic"])
+
+        result = suite._wait_for_end_to_end_probe(
+            {
+                "poll_interval_seconds": 1,
+                "consumer_request_timeout_ms": 500,
+            },
+            producer,
+            consumer,
+            "source-topic",
+            timeout_seconds=3,
+        )
+
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["attempts"], 2)
+        self.assertTrue(result["probe_message_id"].startswith("kafka-transfer-probe-"))
 
     def test_run_all_retries_transient_pair_failure_once(self):
         kafka_manager = _FakeKafkaManager()
