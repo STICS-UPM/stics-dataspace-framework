@@ -42,8 +42,15 @@ public class VocabularySharedApiController implements VocabularySharedApi {
     @Path("/request-by-connector")
     @Override
     public JsonArray getVocabulariesFromConnector(JsonObject connectorVocabularyJson) {
+        if (connectorVocabularyJson == null) {
+            // Empty POST body: JerseyJsonLdInterceptor skips expand when there are no bytes, then the JSON-B reader
+            // can yield null — TypeTransformerRegistryImpl.transform NPEs on requireNonNull(input).
+            throw new InvalidRequestException("JSON-LD request body is required (connectorId and @context).");
+        }
+
         var connectorVocabulary = transformerRegistry.transform(connectorVocabularyJson, ConnectorVocabulary.class)
-                .orElseThrow(InvalidRequestException::new);
+                .orElseThrow(f -> new InvalidRequestException(
+                        "Invalid connector vocabulary payload: " + f.getFailureDetail()));
 
         return vocabularySharedService.searchVocabulariesByConnector(connectorVocabulary).getContent().stream()
                 .map(it -> transformerRegistry.transform(it, JsonObject.class))

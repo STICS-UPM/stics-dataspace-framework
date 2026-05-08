@@ -237,12 +237,12 @@
             <legend>Ontology Information</legend>
 
             <mat-form-field appearance="fill" style="width:100%">
-              <mat-label>Ontology URI</mat-label>
+              <mat-label>URI Ontology</mat-label>
 
               <mat-select [(ngModel)]="ontologyUri" (selectionChange)="fillVersions($event.value)">
                 <div style="padding: 8px 16px; position: sticky; top: 0; background: white; z-index: 1;">
-                  <input matInput placeholder="Search..."
-                         (keyup)="onSearchOntology($event)"
+                  <input matInput placeholder="Buscar..." 
+                         (keyup)="onSearchOntology($event)" 
                          (keydown)="$event.stopPropagation()">
                 </div>
                 <mat-option *ngFor="let ontology of filteredOntologies" [value]="ontology.uri">
@@ -264,23 +264,23 @@
               </mat-form-field>
 
               <mat-form-field appearance="fill" style="width:100%">
-                <mat-label>SHACL shapes</mat-label>
+                <mat-label>Shacles</mat-label>
 
                 <mat-select [(ngModel)]="ontologyShacl" required (selectionChange)="fileRequiresValidation()">
                   <mat-option *ngFor="let shacl of ontologyShacls" [value]="shacl">
                     {{shacl}}
                   </mat-option>
-                  <mat-option value="newShaclFile">
-                    Upload a new SHACL file
+                  <mat-option value="newShacleFile">
+                    Upload a new shacle file
                   </mat-option>
                 </mat-select>
               </mat-form-field>
 
-              <div *ngIf="ontologyShacl === 'newShaclFile'">
-                <mat-label>SHACL File*</mat-label>
-                <app-uploader-file #shaclsFile (filesChange)="setShaclFiles($event, shaclsFile)" accept="text/plain"></app-uploader-file>
+              <div *ngIf="ontologyShacl === 'newShacleFile'">
+                <mat-label>Shacl File*</mat-label>
+                <app-uploader-file #shaclsFile (filesChange)="setShaclsFiles($event, shaclsFile)" accept="text/plain"></app-uploader-file>
                 <div *ngIf="showUploadFileButton">
-                  <button mat-raised-button color="accent" (click)="uploadShaclFile()">
+                  <button mat-raised-button color="accent" (click)="uploadShacleFile()">
                     <mat-icon>upload</mat-icon>
                     Upload file
                   </button>
@@ -290,10 +290,10 @@
             <div *ngIf="showTestFileButton">
               <button mat-raised-button color="accent" (click)="runOntologyTest()">
                 <mat-icon>check_circle</mat-icon>
-                Validate RDF asset
+                Validate Ontology
               </button>
             </div>
-
+            
           </fieldset>
         </div>
       </div>

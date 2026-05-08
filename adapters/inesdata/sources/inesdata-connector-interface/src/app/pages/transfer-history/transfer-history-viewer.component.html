@@ -40,6 +40,16 @@
         <td mat-cell *matCellDef="let item">{{item.contractId}}</td>
       </ng-container>
 
+      <ng-container matColumnDef="validation">
+        <th mat-header-cell *matHeaderCellDef scope="col">Validation</th>
+        <td mat-cell *matCellDef="let item"
+            [class]="getValidationCssClass(item)"
+            [matTooltip]="getValidationDisplay(item)"
+            matTooltipClass="validation-tooltip">
+          {{ getValidationDisplay(item) }}
+        </td>
+      </ng-container>
+
       <tr mat-header-row *matHeaderRowDef="columns" class="transfer-history-table-header"></tr>
       <tr mat-row *matRowDef="let row; columns: columns;"></tr>
 

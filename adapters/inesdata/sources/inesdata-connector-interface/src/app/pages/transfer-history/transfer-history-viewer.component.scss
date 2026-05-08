@@ -63,3 +63,36 @@ table {
   color: var(--secondary-500) !important;
   border-color: var(--secondary-500) !important;
 }
+
+.validation-success {
+  color: var(--success-500, #2e7d32);
+  font-weight: 500;
+}
+
+.validation-failed {
+  color: var(--error-500, #c62828);
+}
+
+.validation-skipped {
+  color: var(--secondary-400, #888);
+}
+
+.validation-na {
+  color: var(--secondary-400, #888);
+  font-style: italic;
+}
+
+td.validation-success,
+td.validation-failed,
+td.validation-skipped,
+td.validation-na {
+  max-width: 480px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:host ::ng-deep .validation-tooltip {
+  white-space: pre-wrap;
+  max-width: 720px;
+}

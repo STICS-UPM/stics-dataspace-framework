@@ -109,7 +109,7 @@ export class AssetCreateComponent implements OnInit {
     type: 'InesDataStore'
   };
 
-  shaclInesDataStoreAddress: InesDataStoreAddress = {
+  shaclsInesDataStoreAddress: InesDataStoreAddress = {
     type: 'InesDataStore'
   };
 
@@ -225,7 +225,10 @@ export class AssetCreateComponent implements OnInit {
     properties["assetData"] = assetDataProperty
 
     // Add general information
-    this.addInfoProperties(properties);
+    if (!this.addInfoProperties(properties)) {
+      this.loadingService.hideLoading();
+      return;
+    }
 
     // Generate the asset data address
     let dataAddress: DataAddress;
@@ -269,7 +272,7 @@ export class AssetCreateComponent implements OnInit {
 
     await this.createAsset(assetInput)
   }
-  addInfoProperties(properties: JsonDoc) {
+  addInfoProperties(properties: JsonDoc): boolean {
     // Add default information
     properties["name"] = this.name;
     properties["version"] = this.version;
@@ -282,7 +285,38 @@ export class AssetCreateComponent implements OnInit {
     properties["ontologyUri"] = this.ontologyUri;
     properties["ontologyVersion"] = this.ontologyVersion;
     properties["ontologyShacl"] = this.ontologyShacl;
+
+    if (this.ontologyUri && this.ontologyVersion && this.ontologyShacl) {
+      const selectedOntology = this.resolveSelectedOntology(this.ontologyUri);
+      const prefix = (selectedOntology?.prefix || '').trim();
+      if (!prefix) {
+        this.notificationService.showError("Unable to resolve ontology prefix. Please re-select the ontology.");
+        return false;
+      }
+
+      const ontologyVersionDate = this.ontologyVersion.split('T')[0];
+      const ontologyDownloadUrl = this.ontologyService.buildUrl(prefix, 'ontology', ontologyVersionDate);
+      const shaclDownloadUrl = this.ontologyService.buildUrl(prefix, 'shacl', this.ontologyShacl);
+      if (!ontologyDownloadUrl || !shaclDownloadUrl) {
+        this.notificationService.showError("Unable to build ontology URLs. Please verify ontology and SHACL selection.");
+        return false;
+      }
+
+      properties["ontologyDownloadUrl"] = ontologyDownloadUrl;
+      properties["shaclDownloadUrl"] = shaclDownloadUrl;
+    }
+
     this.addKeywords(properties);
+    return true;
+  }
+
+  private resolveSelectedOntology(uri: string): Ontology | undefined {
+    const normalized = this.normalizeOntologyUri(uri);
+    return this.ontologies.find(o => this.normalizeOntologyUri(o.uri) === normalized);
+  }
+
+  private normalizeOntologyUri(uri: string): string {
+    return (uri || '').trim().replace(/\/+$/, '');
   }
 
   addKeywords(properties: JsonDoc) {
@@ -326,7 +360,7 @@ export class AssetCreateComponent implements OnInit {
     if (!this.id || !this.storageTypeId || !this.name || !this.version || !this.description || !this.keywords || !this.shortDescription || !this.assetType) {
       return false;
     } else {
-      if (this.ontologyUri && (!this.ontologyVersion || !this.ontologyShacl || (this.ontologyShacl === 'newShaclFile' && !this.shaclInesDataStoreAddress.file))) {
+      if (this.ontologyUri && (!this.ontologyVersion || !this.ontologyShacl || (this.ontologyShacl === 'newShacleFile' && !this.shaclsInesDataStoreAddress.file))) {
         return false;
       }
 
@@ -396,13 +430,14 @@ export class AssetCreateComponent implements OnInit {
     }
   }
 
-  async setShaclFiles(event: File[], shaclFile:any) {
+  async setShaclsFiles(event: File[], shaclFile:any) {
     this.showUploadFileButton = false;
+    this.showTestFileButton = false;
     if (event?.length > 0) {
       this.showUploadFileButton = true;
-      this.shaclInesDataStoreAddress.file = event[0];
+      this.shaclsInesDataStoreAddress.file = event[0];
     } else {
-      delete this.shaclInesDataStoreAddress.file;
+      delete this.shaclsInesDataStoreAddress.file;
     }
   }
 
@@ -504,11 +539,12 @@ export class AssetCreateComponent implements OnInit {
 
 
   async fileRequiresValidation(){
+    this.showTestFileButton = false;
     let isSemanticFile = false;
 
-    if(!this.inesDataStoreAddress.file || this.ontologyShacl === 'newShaclFile' || this.ontologyShacl === ''){
-      return
-    }
+    if(!this.inesDataStoreAddress.file || this.ontologyShacl === 'newShacleFile' || this.ontologyShacl === ''){
+      return 
+    } 
 
     await this.semanticFileValidator.isASemanticFile(this.inesDataStoreAddress.file).then(res => {
       isSemanticFile = res
@@ -543,15 +579,16 @@ export class AssetCreateComponent implements OnInit {
       },
       error: (err) => {
         this.loadingService.hideLoading();
-
-        const detail = Array.isArray(err.error)
+        
+        // Extraemos los mensajes del array de error si existe, si no el mensaje general
+        const detail = Array.isArray(err.error) 
           ? err.error.map((e: any) => typeof e === 'string' ? e : e.message).join('\n')
           : err.error?.message || err.message || "Unknown validation error";
 
         const dialogData = new ConfirmDialogModel("Validation Failed", detail);
         dialogData.confirmText = "Close";
         dialogData.confirmColor = "warn";
-        dialogData.showCancel = false;
+        dialogData.showCancel = false; // Esto oculta el botón "Cancel"
 
         this.dialog.open(ConfirmationDialogComponent, { data: dialogData, width: '600px' });
       }
@@ -559,21 +596,12 @@ export class AssetCreateComponent implements OnInit {
   }
 
   private resolveRdfFormat(file: File): string {
-    const mimeType = (file?.type || '').toLowerCase();
-    switch (mimeType) {
-      case 'text/turtle':
-        return 'turtle';
-      case 'application/rdf+xml':
-        return 'rdfxml';
-      case 'application/ld+json':
-        return 'jsonld';
-      case 'application/n-triples':
-        return 'ntriples';
-      case 'text/n3':
-        return 'n3';
-      default:
-        break;
-    }
+    const mime = (file?.type || '').toLowerCase();
+    if (mime.includes('n3')) return 'n3';
+    if (mime.includes('turtle')) return 'turtle';
+    if (mime.includes('rdf+xml') || mime.includes('xml')) return 'rdfxml';
+    if (mime.includes('ld+json') || mime.includes('jsonld')) return 'jsonld';
+    if (mime.includes('n-triples') || mime.includes('ntriples')) return 'ntriples';
 
     const fileName = (file?.name || '').toLowerCase();
     if (fileName.endsWith('.n3')) return 'n3';
@@ -590,27 +618,31 @@ export class AssetCreateComponent implements OnInit {
     this.ontologyVersions = selectedOntology?.versions || [];
     this.ontologyShacls = selectedOntology?.artifacts?.shapes || [];
 
+    // Selección automática si solo hay una versión
     if (this.ontologyVersions.length === 1) {
       this.ontologyVersion = this.ontologyVersions[0].issued;
+      this.fileRequiresValidation();
     } else {
       this.ontologyVersion = '';
     }
 
+    // Selección automática si solo hay un Shacle
     if (this.ontologyShacls.length === 1) {
       this.ontologyShacl = this.ontologyShacls[0];
+      this.fileRequiresValidation();
     } else {
       this.ontologyShacl = '';
     }
   }
 
 
-  uploadShaclFile() {
-    if (this.ontologyShacl === 'newShaclFile' && this.shaclInesDataStoreAddress.file && this.ontologyUri) {
+  uploadShacleFile() {
+    if (this.ontologyShacl === 'newShacleFile' && this.shaclsInesDataStoreAddress.file && this.ontologyUri) {
       const selectedOntology = this.ontologies.find(o => o.uri === this.ontologyUri);
       if (selectedOntology) {
-        this.loadingService.showLoading('Uploading SHACL file...');
+        this.loadingService.showLoading('Uploading Shacl file...');
         this.ontologyService.postUploadShacl(
-          this.shaclInesDataStoreAddress.file,
+          this.shaclsInesDataStoreAddress.file,
           selectedOntology.prefix,
           selectedOntology.uri
         ).subscribe({
@@ -625,9 +657,9 @@ export class AssetCreateComponent implements OnInit {
                 this.ontologyShacl = '';
 
                 this.loadingService.hideLoading();
-                this.notificationService.showInfo('SHACL file uploaded successfully');
+                this.notificationService.showInfo('Shacl file uploaded successfully');
                 this.showUploadFileButton = false;
-                delete this.shaclInesDataStoreAddress.file;
+                delete this.shaclsInesDataStoreAddress.file;
               },
               error: () => {
                 this.loadingService.hideLoading();
@@ -637,7 +669,7 @@ export class AssetCreateComponent implements OnInit {
           },
           error: (err) => {
             this.loadingService.hideLoading();
-            this.notificationService.showError('Error uploading SHACL file');
+            this.notificationService.showError('Error uploading Shacl file');
           }
         });
       }

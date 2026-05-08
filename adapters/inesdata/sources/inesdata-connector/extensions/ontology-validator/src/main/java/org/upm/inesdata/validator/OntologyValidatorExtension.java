@@ -31,6 +31,6 @@ public class OntologyValidatorExtension implements ServiceExtension {
 
         webService.registerResource("management", controller);
 
-        monitor.info("OntologyValidatorExtension initialized");
+        monitor.info("🔥 OntologyValidatorExtension initialized!");
     }
 }

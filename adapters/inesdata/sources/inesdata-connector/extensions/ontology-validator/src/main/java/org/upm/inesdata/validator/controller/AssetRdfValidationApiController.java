@@ -3,6 +3,7 @@ package org.upm.inesdata.validator.controller;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.*;
 
+import org.eclipse.edc.validator.spi.ValidationResult;
 import org.glassfish.jersey.media.multipart.FormDataParam;
 import org.upm.inesdata.validator.services.enums.RdfFormat;
 import org.upm.inesdata.validator.services.RdfValidationService;
@@ -39,7 +40,7 @@ public class AssetRdfValidationApiController {
 
         var result = validationService.validate(
                 rdfStream,
-                rdfFormat,
+                RdfFormat.valueOf(format.toUpperCase()),
                 ontologyUrl,
                 shaclUrl
         );

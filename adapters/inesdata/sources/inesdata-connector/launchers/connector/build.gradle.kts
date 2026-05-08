@@ -20,6 +20,7 @@ dependencies {
         exclude("org.eclipse.jetty.websocket", "jetty-websocket-server")
     }
     implementation(libs.edc.configuration.filesystem)
+    implementation(libs.edc.iam.mock)
     implementation(libs.edc.management.api)
     implementation(libs.edc.transfer.data.plane.signaling)
     implementation(libs.edc.validator.data.address.http.data)
@@ -131,6 +132,7 @@ dependencies {
 
     // Ontology Validator
     implementation(project(":extensions:ontology-validator"))
+    implementation(project(":extensions:ontology-validator-dataplane-extension"))
 
     // Vulnerabilities
     implementation(libs.google.protobuf)

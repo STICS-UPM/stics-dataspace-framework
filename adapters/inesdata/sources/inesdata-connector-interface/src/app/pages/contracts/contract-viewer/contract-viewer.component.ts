@@ -153,7 +153,24 @@ export class ContractViewerComponent implements OnInit {
       dataDestination: dataAddress
     };
 
-    return iniateTransfer;
+    const clientId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+    const mgmt = environment.runtime.managementApiUrl.replace(/\/$/, '');
+    const publicBase = mgmt.replace(/\/management$/, '/public');
+    const rdfValidationCallbackUrl = `${publicBase}/validation/rdf-mirror`;
+    const dest = dataAddress as DataAddress & { properties?: Record<string, string> };
+    dest.properties = {
+      ...(dest.properties ?? {}),
+      rdfValidationCallbackUrl,
+      consumerTransferProcessId: clientId,
+    };
+
+    const extended = iniateTransfer as TransferProcessInput & {
+      id?: string;
+      '@id'?: string;
+    };
+    extended['@id'] = clientId;
+    extended.id = clientId;
+    return extended as TransferProcessInput;
   }
 
   /**

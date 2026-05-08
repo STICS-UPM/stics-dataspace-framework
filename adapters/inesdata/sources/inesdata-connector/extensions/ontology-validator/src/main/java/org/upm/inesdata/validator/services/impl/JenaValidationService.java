@@ -17,14 +17,10 @@ import org.upm.inesdata.validator.services.enums.RdfFormat;
 import org.upm.inesdata.validator.services.RdfValidationService;
 
 import java.io.InputStream;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.List;
-import java.util.regex.Pattern;
 
 public class JenaValidationService implements RdfValidationService {
-    private static final Pattern PUBLIC_ONTOLOGY_HOST = Pattern.compile("^ontology-hub-([^.]+)\\..+$");
 
     @Override
     public ValidationResult validate(
@@ -33,9 +29,11 @@ public class JenaValidationService implements RdfValidationService {
             String ontologyUrl,
             String shaclUrl
     ) {
-        ontologyUrl = transformPublicOntologyHubUrl(ontologyUrl);
-        shaclUrl = transformPublicOntologyHubUrl(shaclUrl);
+        // Transform URLs for minikube environment
+        ontologyUrl = transformUrlForMinikube(ontologyUrl);
+        shaclUrl = transformUrlForMinikube(shaclUrl);
 
+        // 1. Load RDF data
         Model dataModel = ModelFactory.createDefaultModel();
         try {
             RDFDataMgr.read(dataModel, rdfStream, mapLang(format));
@@ -43,6 +41,7 @@ public class JenaValidationService implements RdfValidationService {
             return failure("RDF data parse error", "rdf", e);
         }
 
+        // 2. Load ontology (required for validation with inference)
         Model ontologyModel = null;
         if (ontologyUrl != null && !ontologyUrl.isBlank()) {
             try {
@@ -54,10 +53,12 @@ public class JenaValidationService implements RdfValidationService {
             return failure("Ontology URL is required", "", new IllegalArgumentException("ontologyUrl cannot be null or blank"));
         }
 
+        // 3. Create inferred model using ontology
         Reasoner reasoner = ReasonerRegistry.getOWLReasoner();
         reasoner = reasoner.bindSchema(ontologyModel);
         InfModel infModel = ModelFactory.createInfModel(reasoner, dataModel);
 
+        // 4. Load SHACL shapes
         Shapes shapes;
         try {
             Model shapesModel = RDFDataMgr.loadModel(shaclUrl);
@@ -66,6 +67,7 @@ public class JenaValidationService implements RdfValidationService {
             return failure("SHACL shapes load error", shaclUrl, e);
         }
 
+        // 5. Validate
         final ValidationReport report;
         try {
             report = ShaclValidator.get().validate(shapes, infModel.getGraph());
@@ -77,6 +79,7 @@ public class JenaValidationService implements RdfValidationService {
             return ValidationResult.success();
         }
 
+        // 6. Map SHACL violations → EDC Violations
         List<Violation> violations = report.getEntries().stream()
                 .map(e -> new Violation(
                         e.message(),
@@ -120,35 +123,10 @@ public class JenaValidationService implements RdfValidationService {
         }
     }
 
-    private String transformPublicOntologyHubUrl(String url) {
-        if (url == null || url.isBlank()) {
-            return url;
+    private String transformUrlForMinikube(String url) {
+        if (url != null) {
+            return url.replace("ontology-hub-demo.dev.ds.dataspaceunit.upm", "demo-ontology-hub.components:3333");
         }
-
-        try {
-            var uri = new URI(url);
-            var host = uri.getHost();
-            if (host == null) {
-                return url;
-            }
-
-            var matcher = PUBLIC_ONTOLOGY_HOST.matcher(host);
-            if (!matcher.matches()) {
-                return url;
-            }
-
-            var internalHost = matcher.group(1) + "-ontology-hub";
-            return new URI(
-                    "http",
-                    null,
-                    internalHost,
-                    3333,
-                    uri.getRawPath(),
-                    uri.getRawQuery(),
-                    uri.getRawFragment()
-            ).toString();
-        } catch (URISyntaxException e) {
-            return url;
-        }
+        return url;
     }
 }
