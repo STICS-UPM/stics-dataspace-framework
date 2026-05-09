@@ -33,6 +33,10 @@ class ConnectorDeployHostsConfig:
 
 class ConnectorDeployHostsConfigAdapter:
     @staticmethod
+    def load_deployer_config():
+        return {}
+
+    @staticmethod
     def generate_hosts(ds_name):
         return [
             f"127.0.0.1 {ds_name}.example.local",
