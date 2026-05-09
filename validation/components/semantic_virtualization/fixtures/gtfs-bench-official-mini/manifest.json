@@ -85,9 +85,9 @@
     "csv/STOPS.csv": "756e76a5762ffb21078ab567e105c3d3f06e4ef6986e3f252d4cf39d429c54cf",
     "csv/STOP_TIMES.csv": "2c5affa47451b90ada88f57a32ca77716533fc8ad7050ed57116128a2ad2f940",
     "csv/TRIPS.csv": "4416839f32091e5ea19c2b8018190c5cd29715fc9df7f52066d54959e5204a22",
-    "references/full-q1.rq": "726b9ad0c5d786148513a8cf4d1cb9572ca4677ced94df7ef353f9a32f826b2c",
-    "references/gtfs-csv.rml.ttl": "af29a75e1cfb0c22bc6ae4db9610c8bcb06d1f4c22e9a0f3acd8b25186770b49",
-    "references/gtfs.ttl": "a51bf0e394069b80dc2b9b5eb61b60a478ba51dc8a41f652557ca6ccbf18f290",
+    "references/full-q1.rq": "8b59a4e504d5f59cca9c893f8e5fe75222fc1cc7d69c411b12e126e49eee0746",
+    "references/gtfs-csv.rml.ttl": "88956bd50a0cd2a72d4260dc26bf675fc3db0c8fa7fe1c23340831213eeafa9a",
+    "references/gtfs.ttl": "37e389500f39af159e9704be52db88dfb3106bf98495a390ba01395dc9d128db",
     "references/simple-q1.rq": "e02fee83eee4bde16cd4a4575a84aafc8e1b878be5363eb283078c1e9d767256"
   }
 }

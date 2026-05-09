@@ -52,6 +52,9 @@ class RecordingInfrastructure:
         del args, kwargs
         self.recorded_hosts = entries
 
+    def ensure_vault_unsealed(self):
+        return True
+
 
 class ConnectorDeployHostsTests(unittest.TestCase):
     def test_deploy_connectors_adds_dataspace_and_connector_hosts(self):

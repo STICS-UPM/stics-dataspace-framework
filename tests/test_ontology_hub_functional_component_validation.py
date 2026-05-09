@@ -25,7 +25,7 @@ from validation.components.ontology_hub.functional.ui_runner import (
 
 class OntologyHubFunctionalComponentValidationTests(unittest.TestCase):
     def test_functional_ui_runner_uses_validation_ui_as_workdir(self):
-        self.assertTrue(str(PLAYWRIGHT_WORKDIR).endswith("Validation-Environment/validation/ui"))
+        self.assertEqual(PLAYWRIGHT_WORKDIR, PROJECT_ROOT / "validation" / "ui")
 
     def test_build_artifact_paths_resolves_relative_experiment_dir_under_project_root(self):
         experiment_dir = f"experiments/relative-ontology-hub-test-{uuid.uuid4().hex}"

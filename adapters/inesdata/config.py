@@ -601,6 +601,8 @@ class INESDataConfigAdapter:
         ds_domain = config.get("DS_DOMAIN_BASE")
 
         if ds_domain and ds_name:
+            hosts.append(f"127.0.0.1 {ds_name}.{ds_domain}")
+            hosts.append(f"127.0.0.1 backend-{ds_name}.{ds_domain}")
             hosts.append(f"127.0.0.1 registration-service-{ds_name}.{ds_domain}")
 
         return hosts
@@ -610,6 +612,8 @@ class INESDataConfigAdapter:
         del ds_namespace
         ds_domain = self.ds_domain_base() or "dev.ds.dataspaceunit.upm"
         hostnames = self._common_service_host_alias_domains(self.load_deployer_config())
+        hostnames.append(f"{resolved_name}.{ds_domain}")
+        hostnames.append(f"backend-{resolved_name}.{ds_domain}")
         hostnames.append(f"registration-service-{resolved_name}.{ds_domain}")
         return hostnames
 

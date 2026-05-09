@@ -335,29 +335,40 @@ class INESDataInfrastructureAdapter:
         print(f"Removed credsStore={removed_creds_store} from {docker_config_path}")
         return True
 
-    def get_hosts_path(self):
+    def get_hosts_paths(self):
         import sys
 
         if self.is_wsl():
-            return "/mnt/c/Windows/System32/drivers/etc/hosts"
+            return [
+                "/mnt/c/Windows/System32/drivers/etc/hosts",
+                "/etc/hosts",
+            ]
         if sys.platform.startswith("linux"):
-            return "/etc/hosts"
+            return ["/etc/hosts"]
         if sys.platform == "darwin":
-            return "/private/etc/hosts"
-        return None
+            return ["/private/etc/hosts"]
+        return []
+
+    def get_hosts_path(self):
+        hosts_paths = self.get_hosts_paths()
+        return hosts_paths[0] if hosts_paths else None
 
     def manage_hosts_entries(self, desired_entries, header_comment="# Dataspace Local Deployment", auto_confirm=None):
-        hosts_path = self.get_hosts_path()
+        hosts_paths = self.get_hosts_paths()
 
         default_header = "# Dataspace Local Deployment"
         header_comment = (header_comment or default_header).strip() or default_header
         if not header_comment.startswith("#"):
             header_comment = f"# {header_comment}"
 
-        if not hosts_path:
+        if not hosts_paths:
             print("OS not supported for automatic hosts modification")
             return
 
+        for hosts_path in hosts_paths:
+            self._manage_hosts_entries_for_path(hosts_path, desired_entries, header_comment, auto_confirm)
+
+    def _manage_hosts_entries_for_path(self, hosts_path, desired_entries, header_comment, auto_confirm):
         print(f"\nHosts file: {hosts_path}")
 
         try:
@@ -371,12 +382,23 @@ class INESDataInfrastructureAdapter:
 
         def line_matches_entry(line: str, entry: str) -> bool:
             stripped = line.strip()
-            if not stripped.startswith(entry):
+            if not stripped or stripped.startswith("#"):
                 return False
-            if len(stripped) == len(entry):
-                return True
-            next_char = stripped[len(entry)]
-            return next_char.isspace() or next_char == "#"
+
+            line_body = line.split("#", 1)[0].strip()
+            entry_body = entry.split("#", 1)[0].strip()
+            line_parts = line_body.split()
+            entry_parts = entry_body.split()
+
+            if len(line_parts) < 2 or len(entry_parts) < 2:
+                return False
+
+            entry_ip = entry_parts[0]
+            entry_host = entry_parts[1]
+            line_ip = line_parts[0]
+            line_hosts = line_parts[1:]
+
+            return line_ip == entry_ip and entry_host in line_hosts
 
         def entry_present(entry: str) -> bool:
             return any(line_matches_entry(line, entry) for line in lines)
@@ -395,6 +417,7 @@ class INESDataInfrastructureAdapter:
         missing = [entry for entry in desired_entries if not entry_present(entry)]
 
         needs_section_migration = False
+        default_header = "# Dataspace Local Deployment"
         if header_comment != default_header:
             for entry in desired_entries:
                 if entry_present(entry) and not entry_present_under_header(entry, header_comment):
