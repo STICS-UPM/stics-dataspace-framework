@@ -128,7 +128,7 @@ Notas importantes:
 La colección define estas collection variables para acotar los reintentos y mantener una ejecución más rápida que el conjunto completo del framework:
 
 - `catalog_max_attempts = 6`
-- `negotiation_start_max_attempts = 8`
+- `negotiation_start_max_attempts = 30`
 - `negotiation_status_max_attempts = 10`
 - `transfer_start_max_attempts = 8`
 - `transfer_destination_max_attempts = 10`
@@ -666,7 +666,7 @@ function transient(code) {
 }
 
 function retryOrFail() {
-  const maxAttempts = parseInt(getVar("negotiation_start_max_attempts", "8"), 10);
+  const maxAttempts = parseInt(getVar("negotiation_start_max_attempts", "30"), 10);
   const attempt = parseInt(getVar("negotiation_start_attempt", "0"), 10) + 1;
   if (attempt < maxAttempts) {
     setVar("negotiation_start_attempt", String(attempt));

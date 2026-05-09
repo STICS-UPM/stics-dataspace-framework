@@ -318,6 +318,56 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertIn("-f /tmp/ontology-hub-override.yaml", command)
         self.assertEqual(run.call_args.kwargs["cwd"], "/tmp/chart")
 
+    def test_deploy_helm_release_retries_transient_failure(self):
+        run = mock.Mock(side_effect=[None, "ok"])
+        infra = INESDataInfrastructureAdapter(
+            run=run,
+            run_silent=mock.Mock(return_value=""),
+            auto_mode_getter=lambda: True,
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_HELM_DEPLOY_ATTEMPTS": "2",
+                "PIONERA_HELM_DEPLOY_RETRY_DELAY_SECONDS": "0",
+            },
+        ):
+            result = infra.deploy_helm_release(
+                "demo-semantic-virtualization",
+                "components",
+                ["values.yaml", "/tmp/semantic-virtualization-override.yaml"],
+                cwd="/tmp/chart",
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(run.call_count, 2)
+
+    def test_deploy_helm_release_returns_false_after_retry_budget(self):
+        run = mock.Mock(return_value=None)
+        infra = INESDataInfrastructureAdapter(
+            run=run,
+            run_silent=mock.Mock(return_value=""),
+            auto_mode_getter=lambda: True,
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_HELM_DEPLOY_ATTEMPTS": "2",
+                "PIONERA_HELM_DEPLOY_RETRY_DELAY_SECONDS": "0",
+            },
+        ):
+            result = infra.deploy_helm_release(
+                "demo-semantic-virtualization",
+                "components",
+                "values.yaml",
+                cwd="/tmp/chart",
+            )
+
+        self.assertFalse(result)
+        self.assertEqual(run.call_count, 2)
+
     def test_legacy_component_runtime_keeps_ontology_hub_override_and_namespace(self):
         infrastructure = FakeInfrastructure()
         adapter = self._make_adapter(infrastructure=infrastructure)
@@ -1346,6 +1396,59 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         )
         adapter._cleanup_components.assert_called_once_with(["ontology-hub"], "components")
         self.assertEqual(infrastructure.deploy_calls, [])
+
+    def test_components_sync_mapping_editor_hostname_when_enabled(self):
+        infrastructure = FakeInfrastructure()
+        infrastructure.manage_hosts_entries = mock.Mock(return_value=True)
+        adapter = self._make_shared_adapter(infrastructure=infrastructure)
+        deployer_config = {
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED": "true",
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST": (
+                "semantic-virtualization-editor-demo.dev.ds.dataspaceunit.upm"
+            ),
+        }
+        adapter.config_adapter.load_deployer_config = mock.Mock(return_value=deployer_config)
+        adapter._cleanup_components = mock.Mock()
+        adapter._cleanup_legacy_component_releases = mock.Mock(return_value=None)
+        adapter.prepare_component_runtime_metadata = mock.Mock(
+            return_value=[
+                {
+                    "component": "semantic-virtualization",
+                    "normalized_component": "semantic-virtualization",
+                    "excluded": False,
+                    "error": None,
+                    "chart_dir": "/tmp/chart",
+                    "values_file": "/tmp/chart/values-demo.yaml",
+                    "host": "semantic-virtualization-demo.dev.ds.dataspaceunit.upm",
+                    "release_name": "demo-semantic-virtualization",
+                }
+            ]
+        )
+        adapter.prepare_component_deployment_plan = mock.Mock(
+            return_value={
+                "component": "semantic-virtualization",
+                "normalized_component": "semantic-virtualization",
+                "chart_dir": "/tmp/chart",
+                "values_file": "/tmp/chart/values-demo.yaml",
+                "host": "semantic-virtualization-demo.dev.ds.dataspaceunit.upm",
+                "release_name": "demo-semantic-virtualization",
+                "override_plan": {"has_override": True},
+            }
+        )
+        adapter.deploy_shared_component_runtime = mock.Mock(
+            return_value={"component": "semantic-virtualization"}
+        )
+
+        with mock.patch("adapters.inesdata.components.os.path.exists", return_value=True):
+            result = adapter.COMPONENTS(["semantic-virtualization"])
+
+        self.assertEqual(result["deployed"], ["semantic-virtualization"])
+        desired_entries = infrastructure.manage_hosts_entries.call_args.args[0]
+        self.assertIn("127.0.0.1 semantic-virtualization-demo.dev.ds.dataspaceunit.upm", desired_entries)
+        self.assertIn(
+            "127.0.0.1 semantic-virtualization-editor-demo.dev.ds.dataspaceunit.upm",
+            desired_entries,
+        )
 
     def test_components_keep_ai_model_hub_on_legacy_runtime_path(self):
         infrastructure = FakeInfrastructure()

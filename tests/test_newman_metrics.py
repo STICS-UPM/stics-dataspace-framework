@@ -999,6 +999,59 @@ class NewmanMetricsTests(unittest.TestCase):
         self.assertIn('"name": "{{e2e_source_object_name}}"', raw_body)
         self.assertIn('"sourceObjectName": "{{e2e_source_object_name}}"', raw_body)
 
+    def test_validation_engine_sets_default_negotiation_retry_budget(self):
+        engine = ValidationEngine(
+            load_connector_credentials=lambda name: {"connector_user": {"user": name, "passwd": "secret"}},
+            load_deployer_config=lambda: {
+                "KC_URL": "http://keycloak-admin.local",
+                "KC_INTERNAL_URL": "http://keycloak.local",
+            },
+            ds_domain_resolver=lambda: "example.local",
+            ds_name="demo",
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_NEWMAN_NEGOTIATION_START_MAX_ATTEMPTS": "",
+                "PIONERA_NEWMAN_NEGOTIATION_STATUS_MAX_ATTEMPTS": "",
+            },
+        ):
+            env_vars = engine.build_newman_env("conn-a", "conn-b")
+
+        self.assertEqual(env_vars["e2e_negotiation_start_max_attempts"], "30")
+        self.assertEqual(env_vars["e2e_negotiation_status_max_attempts"], "10")
+
+    def test_validation_engine_allows_negotiation_retry_budget_override(self):
+        engine = ValidationEngine(
+            load_connector_credentials=lambda name: {"connector_user": {"user": name, "passwd": "secret"}},
+            load_deployer_config=lambda: {
+                "KC_URL": "http://keycloak-admin.local",
+                "KC_INTERNAL_URL": "http://keycloak.local",
+            },
+            ds_domain_resolver=lambda: "example.local",
+            ds_name="demo",
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_NEWMAN_NEGOTIATION_START_MAX_ATTEMPTS": "12",
+                "PIONERA_NEWMAN_NEGOTIATION_STATUS_MAX_ATTEMPTS": "7",
+            },
+        ):
+            env_vars = engine.build_newman_env("conn-a", "conn-b")
+
+        self.assertEqual(env_vars["e2e_negotiation_start_max_attempts"], "12")
+        self.assertEqual(env_vars["e2e_negotiation_status_max_attempts"], "7")
+
+    def test_negotiation_script_defaults_allow_longer_connector_warmup(self):
+        with open("validation/core/tests/negotiation_tests.js", "r", encoding="utf-8") as handle:
+            script = handle.read()
+
+        self.assertIn("const DEFAULT_NEGOTIATION_START_MAX_ATTEMPTS = 30", script)
+        self.assertIn("const DEFAULT_NEGOTIATION_STATUS_MAX_ATTEMPTS = 10", script)
+
     def test_validation_engine_uses_neutral_edc_transfer_contract(self):
         engine = ValidationEngine(
             load_connector_credentials=lambda name: {"connector_user": {"user": name, "passwd": "secret"}},

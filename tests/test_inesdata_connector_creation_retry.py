@@ -1606,6 +1606,99 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             )
             self.assertEqual(infra.namespace_wait_calls, [])
 
+    def test_wait_for_connector_deployments_recovers_stalled_init_pod_once(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            commands = []
+
+            class RecoveringInfra:
+                def __init__(self):
+                    self.rollout_calls = []
+                    self.rollout_results = [False, True, True]
+
+                def wait_for_deployment_rollout(self, *args, **kwargs):
+                    self.rollout_calls.append((args, kwargs))
+                    return self.rollout_results.pop(0)
+
+            def fake_run(cmd, **_kwargs):
+                commands.append(cmd)
+                return object()
+
+            def fake_run_silent(cmd, **_kwargs):
+                if "kubectl get pods" in cmd and "service=conn-a-demo" in cmd:
+                    return "conn-a-demo-123 0/1 Init:0/1 0 3m\n"
+                return ""
+
+            infra = RecoveringInfra()
+            adapter = INESDataConnectorsAdapter(
+                run=fake_run,
+                run_silent=fake_run_silent,
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=infra,
+                config_adapter=ConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+
+            self.assertTrue(adapter._wait_for_connector_deployments("conn-a-demo", namespace="demo", timeout=180))
+            self.assertEqual(
+                commands,
+                ["kubectl delete pod conn-a-demo-123 -n demo --wait=false"],
+            )
+            self.assertEqual(
+                infra.rollout_calls,
+                [
+                    (
+                        ("demo", "conn-a-demo"),
+                        {"timeout_seconds": 180, "label": "connector runtime 'conn-a-demo'"},
+                    ),
+                    (
+                        ("demo", "conn-a-demo"),
+                        {
+                            "timeout_seconds": 300,
+                            "label": "connector runtime 'conn-a-demo' after stalled init pod recovery",
+                        },
+                    ),
+                    (
+                        ("demo", "conn-a-demo-inteface"),
+                        {"timeout_seconds": 180, "label": "connector interface 'conn-a-demo'"},
+                    ),
+                ],
+            )
+
+    def test_wait_for_connector_deployments_does_not_recover_running_unready_pod(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            commands = []
+
+            class FailingInfra:
+                def __init__(self):
+                    self.rollout_calls = []
+
+                def wait_for_deployment_rollout(self, *args, **kwargs):
+                    self.rollout_calls.append((args, kwargs))
+                    return False
+
+            def fake_run(cmd, **_kwargs):
+                commands.append(cmd)
+                return object()
+
+            def fake_run_silent(cmd, **_kwargs):
+                if "kubectl get pods" in cmd and "service=conn-a-demo" in cmd:
+                    return "conn-a-demo-123 0/1 Running 0 3m\n"
+                return ""
+
+            infra = FailingInfra()
+            adapter = INESDataConnectorsAdapter(
+                run=fake_run,
+                run_silent=fake_run_silent,
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=infra,
+                config_adapter=ConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+
+            self.assertFalse(adapter._wait_for_connector_deployments("conn-a-demo", namespace="demo", timeout=180))
+            self.assertEqual(commands, [])
+            self.assertEqual(len(infra.rollout_calls), 1)
+
     def test_create_connector_uses_planned_namespace_when_level4_role_aligned_opt_in_is_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorRetryConfig(tmpdir)

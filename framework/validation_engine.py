@@ -13,6 +13,9 @@ class ValidationEngine:
     and orchestrates interoperability tests between connector pairs.
     """
 
+    DEFAULT_NEGOTIATION_START_MAX_ATTEMPTS = 30
+    DEFAULT_NEGOTIATION_STATUS_MAX_ATTEMPTS = 10
+
     def __init__(
         self,
         newman_executor=None,
@@ -40,6 +43,17 @@ class ValidationEngine:
         if dependency is None:
             raise RuntimeError(f"ValidationEngine requires dependency: {name}")
         return dependency
+
+    @staticmethod
+    def _positive_int_from_env(name, fallback):
+        raw = str(os.environ.get(name) or "").strip()
+        if not raw:
+            return fallback
+        try:
+            value = int(raw)
+        except ValueError:
+            return fallback
+        return value if value > 0 else fallback
 
     def _protocol_address(self, connector_name):
         resolver = self.protocol_address_resolver
@@ -99,6 +113,14 @@ class ValidationEngine:
             "providerParticipantId": provider,
             "providerProtocolAddress": self._protocol_address(provider),
             "consumerProtocolAddress": self._protocol_address(consumer),
+            "e2e_negotiation_start_max_attempts": str(self._positive_int_from_env(
+                "PIONERA_NEWMAN_NEGOTIATION_START_MAX_ATTEMPTS",
+                self.DEFAULT_NEGOTIATION_START_MAX_ATTEMPTS,
+            )),
+            "e2e_negotiation_status_max_attempts": str(self._positive_int_from_env(
+                "PIONERA_NEWMAN_NEGOTIATION_STATUS_MAX_ATTEMPTS",
+                self.DEFAULT_NEGOTIATION_STATUS_MAX_ATTEMPTS,
+            )),
             "e2e_expected_provider_bucket": f"{dataspace}-{provider}",
             "e2e_expected_consumer_bucket": f"{dataspace}-{consumer}",
             "adapter": adapter_name,

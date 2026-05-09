@@ -6,8 +6,8 @@
 (function() {
 const requestName = pm.info.requestName
 const status = pm.response.code
-const DEFAULT_NEGOTIATION_START_MAX_ATTEMPTS = 8
-const DEFAULT_NEGOTIATION_STATUS_MAX_ATTEMPTS = 5
+const DEFAULT_NEGOTIATION_START_MAX_ATTEMPTS = 30
+const DEFAULT_NEGOTIATION_STATUS_MAX_ATTEMPTS = 10
 
 function clearLocalVar(key) {
     pm.collectionVariables.unset(key)

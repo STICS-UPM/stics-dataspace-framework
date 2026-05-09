@@ -1099,6 +1099,15 @@ class INESDataComponentsAdapter:
             return f"semantic-virtualization-editor-{ds_name}.{ds_domain}"
         return ""
 
+    def _additional_component_public_hosts(self, normalized_component: str, deployer_config: dict) -> list[str]:
+        normalized = self._normalize_component_key(normalized_component)
+        if normalized == "semantic-virtualization" and self._semantic_virtualization_mapping_editor_enabled(
+            deployer_config
+        ):
+            editor_host = self._semantic_virtualization_mapping_editor_host(deployer_config)
+            return [editor_host] if editor_host else []
+        return []
+
     def _resolve_ontology_hub_self_host_alias_ip(self, deployer_config: dict) -> str:
         explicit_ip = (deployer_config.get("ONTOLOGY_HUB_SELF_HOST_ALIAS_IP") or "").strip()
         if explicit_ip:
@@ -1404,13 +1413,18 @@ class INESDataComponentsAdapter:
                 if host:
                     inferred_hosts[normalized] = host
 
-        if inferred_hosts:
+        hostnames_to_sync = set(inferred_hosts.values())
+        for component in components:
+            normalized = self._normalize_component_key(component)
+            hostnames_to_sync.update(self._additional_component_public_hosts(normalized, deployer_config))
+
+        if hostnames_to_sync:
             print("\nComponent hostnames inferred from values:")
-            for host in sorted(set(inferred_hosts.values())):
+            for host in sorted(hostnames_to_sync):
                 print(f"- {host}")
 
             if requires_local_runtime_access:
-                desired_entries = [f"127.0.0.1 {h}" for h in sorted(set(inferred_hosts.values()))]
+                desired_entries = [f"127.0.0.1 {h}" for h in sorted(hostnames_to_sync)]
                 self.infrastructure.manage_hosts_entries(
                     desired_entries,
                     header_comment="# Components",

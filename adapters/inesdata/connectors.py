@@ -1508,13 +1508,84 @@ class INESDataConnectorsAdapter:
                     timeout_seconds=timeout,
                     label=label,
                 ):
-                    return False
+                    if not self._recover_connector_rollout_after_stalled_init(
+                        namespace,
+                        deployment_name,
+                        timeout=timeout,
+                        label=label,
+                        rollout_waiter=rollout_waiter,
+                    ):
+                        return False
             return True
 
         wait_for_namespace_pods = getattr(self.infrastructure, "wait_for_namespace_pods", None)
         if callable(wait_for_namespace_pods):
             return bool(wait_for_namespace_pods(namespace, timeout=timeout))
         return False
+
+    def _connector_rollout_recovery_enabled(self):
+        value = os.environ.get("INESDATA_CONNECTOR_ROLLOUT_RECOVERY", "1").strip().lower()
+        return value not in {"0", "false", "no", "off"}
+
+    @staticmethod
+    def _pod_status_is_recoverable_rollout_stall(status):
+        normalized = str(status or "").strip()
+        return (
+            normalized.startswith("Init:")
+            or normalized in {"ContainerCreating", "PodInitializing", "Pending", "Unknown"}
+        )
+
+    def _recover_connector_rollout_after_stalled_init(
+        self,
+        namespace,
+        deployment_name,
+        *,
+        timeout,
+        label,
+        rollout_waiter,
+    ):
+        if not self._connector_rollout_recovery_enabled():
+            print(f"Automatic connector rollout recovery disabled; not retrying {label}.")
+            return False
+
+        selector = f"service={deployment_name}"
+        pods_output = self.run_silent(
+            f"kubectl get pods -n {shlex.quote(namespace)} "
+            f"-l {shlex.quote(selector)} --no-headers"
+        )
+        stalled_pods = []
+        for line in (pods_output or "").splitlines():
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            pod_name, status = parts[0], parts[2]
+            if self._pod_status_is_recoverable_rollout_stall(status):
+                stalled_pods.append(pod_name)
+
+        if not stalled_pods:
+            print(f"No recoverable stalled init pods found for {label}; keeping rollout failure.")
+            return False
+
+        print(
+            f"Detected stalled init pod(s) for {label}: {', '.join(stalled_pods)}. "
+            "Recreating them once before failing Level 4."
+        )
+        for pod_name in stalled_pods:
+            self.run(
+                f"kubectl delete pod {shlex.quote(pod_name)} "
+                f"-n {shlex.quote(namespace)} --wait=false",
+                check=False,
+            )
+
+        retry_timeout = max(int(timeout or 300), 300)
+        return bool(
+            rollout_waiter(
+                namespace,
+                deployment_name,
+                timeout_seconds=retry_timeout,
+                label=f"{label} after stalled init pod recovery",
+            )
+        )
 
     def load_connector_credentials(self, connector_name):
         creds_file = self.config.connector_credentials_path(connector_name)

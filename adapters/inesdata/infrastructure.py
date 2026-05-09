@@ -571,14 +571,50 @@ class INESDataInfrastructureAdapter:
         if timeout_seconds:
             cmd += f"--timeout {int(timeout_seconds)}s "
 
-        result = self.run(cmd, check=False, cwd=cwd)
+        max_attempts = self._helm_deploy_attempts()
+        retry_delay = self._helm_deploy_retry_delay_seconds()
+        result = None
+        for attempt in range(1, max_attempts + 1):
+            result = self.run(cmd, check=False, cwd=cwd)
+            if result is not None:
+                print("Release deployed successfully")
+                return True
 
-        if result is None:
-            print("Helm deployment failed")
-            return False
+            if attempt < max_attempts:
+                print(
+                    f"Helm deployment failed on attempt {attempt}/{max_attempts}; "
+                    f"retrying in {retry_delay}s..."
+                )
+                if retry_delay > 0:
+                    time.sleep(retry_delay)
 
-        print("Release deployed successfully")
-        return True
+        print("Helm deployment failed")
+        return False
+
+    @staticmethod
+    def _positive_int_env(name, default):
+        raw_value = str(os.environ.get(name, "") or "").strip()
+        if not raw_value:
+            return int(default)
+        try:
+            return max(int(raw_value), 1)
+        except ValueError:
+            return int(default)
+
+    def _helm_deploy_attempts(self):
+        return self._positive_int_env("PIONERA_HELM_DEPLOY_ATTEMPTS", 3)
+
+    @staticmethod
+    def _helm_deploy_retry_delay_seconds():
+        raw_value = str(
+            os.environ.get("PIONERA_HELM_DEPLOY_RETRY_DELAY_SECONDS", "") or ""
+        ).strip()
+        if not raw_value:
+            return 10
+        try:
+            return max(int(raw_value), 0)
+        except ValueError:
+            return 10
 
     def wait_for_deployment_rollout(self, namespace, deployment_name, timeout_seconds=180, label=None):
         namespace = (namespace or "").strip()
