@@ -52,18 +52,6 @@ export const routes: Routes = [
     loadChildren: () => import('./pages/ai-model-browser/ai-model-browser.module').then(m => m.AiModelBrowserModule)
   },
   {
-    path: 'ontologies',
-    data: {title: 'Ontologies', icon: 'schema'},
-    canActivate: [AuthUserGuard],
-    loadChildren: () => import('./pages/ontologies/ontologies.module').then(m => m.OntologiesModule)
-  },
-  {
-    path: 'ai-model-browser',
-    data: {title: 'AI Model Browser', icon: 'smart_toy'},
-    canActivate: [AuthUserGuard],
-    loadChildren: () => import('./pages/ai-model-browser/ai-model-browser.module').then(m => m.AiModelBrowserModule)
-  },
-  {
     path: 'ai-model-execution',
     data: {title: 'AI Model Execution', icon: 'play_circle'},
     canActivate: [AuthUserGuard],
@@ -80,6 +68,12 @@ export const routes: Routes = [
     data: {title: 'AI Model Observer', icon: 'monitoring'},
     canActivate: [AuthUserGuard],
     loadChildren: () => import('./pages/ai-model-observer/ai-model-observer.module').then(m => m.AiModelObserverModule)
+  },
+  {
+    path: 'ontologies',
+    data: {title: 'Ontologies', icon: 'schema'},
+    canActivate: [AuthUserGuard],
+    loadChildren: () => import('./pages/ontologies/ontologies.module').then(m => m.OntologiesModule)
   },
   {
     path: '', redirectTo: 'catalog', pathMatch: 'full'
