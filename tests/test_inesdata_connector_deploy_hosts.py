@@ -88,6 +88,7 @@ class ConnectorDeployHostsTests(unittest.TestCase):
             adapter.connector_already_exists = lambda *_args, **_kwargs: True
             adapter.connector_is_healthy = lambda *_args, **_kwargs: True
             adapter.connector_database_credentials_valid = lambda *_args, **_kwargs: True
+            adapter.create_connector = lambda *_args, **_kwargs: True
             adapter._prepare_vault_management_access = lambda *_args, **_kwargs: True
             adapter.wait_for_all_connectors = lambda *_args, **_kwargs: None
 
