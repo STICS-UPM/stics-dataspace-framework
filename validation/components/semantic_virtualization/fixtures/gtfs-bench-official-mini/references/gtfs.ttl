@@ -284,13 +284,13 @@ gtfs:parentStation rdf:type owl:ObjectProperty ;
 gtfs:pathwayMode rdf:type owl:ObjectProperty ;
                  rdfs:domain gtfs:Pathway ;
                  rdfs:range [ rdf:type owl:Class ;
-                              owl:unionOf ( gtfs:Elevator 
+                              owl:unionOf ( gtfs:Elevator
                                             gtfs:Escalator
                                             gtfs:ExitGate
                                             gtfs:FareGate
                                             gtfs:MovingSidewalk
                                             gtfs:Stairs
-                                            gtfs:Walkway 
+                                            gtfs:Walkway
                                           )
                             ] ;
                  rdfs:comment "Type of pathway between the specified gtfs:originStop and gtfs:destinationStop pair."@en ;
@@ -467,8 +467,8 @@ gtfs:transfers rdf:type owl:ObjectProperty ;
 ###  http://vocab.gtfs.org/terms#trip
 gtfs:trip rdf:type owl:ObjectProperty ;
           rdfs:domain [ rdf:type owl:Class ;
-                        owl:unionOf ( gtfs:StopTime 
-                                      gtfs:Frequency 
+                        owl:unionOf ( gtfs:StopTime
+                                      gtfs:Frequency
                                     )
                       ] ;
           rdfs:range gtfs:Trip ;
@@ -675,7 +675,7 @@ gtfs:locationType rdf:type owl:ObjectProperty ;
 
 ###  http://vocab.gtfs.org/terms#wheelchairAccessible
 gtfs:wheelchairAccessible rdf:type owl:ObjectProperty ;
-                          rdfs:domain [rdf:type owl:Class; 
+                          rdfs:domain [rdf:type owl:Class;
                                        owl:unionOf (gtfs:Station
                                                     gtfs:Trip
                                                     gtfs:Stop
@@ -781,7 +781,7 @@ gtfs:name rdf:type owl:DatatypeProperty ;
           rdfs:comment "Full name of the transit agency or the location."@en ;
           rdfs:label "Name"@en .
 
- 
+
 gtfs:url rdf:type owl:DatatypeProperty ;
          rdfs:domain [rdf:type owl:Class ;
                       owl:unionOf (gtfs:Agency
@@ -797,7 +797,7 @@ gtfs:url rdf:type owl:DatatypeProperty ;
 
 ###  http://vocab.gtfs.org/terms#timezone
 gtfs:timezone rdf:type owl:DatatypeProperty ;
-              rdfs:domain [rdf:type owl:Class ; 
+              rdfs:domain [rdf:type owl:Class ;
                            owl:unionOf (gtfs:Agency
                                         gtfs:Location
                                       )
@@ -808,12 +808,12 @@ gtfs:timezone rdf:type owl:DatatypeProperty ;
 
 
 gtfs:language rdf:type owl:DatatypeProperty ;
-              rdfs:domain [rdf:type owl:Class; 
+              rdfs:domain [rdf:type owl:Class;
                            owl:unionOf (gtfs:Agency
                                         gtfs:Feed
                                        )
                            ];
-              rdfs:range xsd:string ; 
+              rdfs:range xsd:string ;
               rdfs:subPropertyOf dct:language ;
               rdfs:comment "Language used by a transit agency, used for the text in the GTFS dataset or default language used when the data consumer doesn’t know the language of the rider."@en ;
               rdfs:label "Language"@en .
@@ -866,7 +866,7 @@ gtfs:shortName rdfs:comment "Nombre corto dado a una ruta o viaje"@es ,
                rdfs:range xsd:string ;
                rdf:type owl:DatatypeProperty ;
                rdfs:subPropertyOf dct:title ;
-               rdfs:domain [rdf:type owl:Class; 
+               rdfs:domain [rdf:type owl:Class;
                             owl:unionOf (gtfs:Route
                                          gtfs:Trip
                                         )
@@ -874,7 +874,7 @@ gtfs:shortName rdfs:comment "Nombre corto dado a una ruta o viaje"@es ,
 
 
 gtfs:desc rdf:type owl:DatatypeProperty ;
-          rdfs:domain [rdf:type owl:Class; 
+          rdfs:domain [rdf:type owl:Class;
                             owl:unionOf (gtfs:Route
                                          gtfs:Location
                                         )
@@ -928,7 +928,7 @@ gtfs:nonNegativeFloat a rdfs:Datatype ;
 
 ###  http://vocab.gtfs.org/terms#distanceTraveled
 gtfs:distanceTraveled rdf:type owl:DatatypeProperty ;
-                      rdfs:domain [rdf:type owl:Class; 
+                      rdfs:domain [rdf:type owl:Class;
                            owl:unionOf (gtfs:Shape
                                         gtfs:StopTime
                                        )
@@ -943,7 +943,7 @@ gtfs:distanceTraveled rdf:type owl:DatatypeProperty ;
 
 
 gtfs:latitude rdf:type owl:DatatypeProperty ;
-              rdfs:domain [rdf:type owl:Class; 
+              rdfs:domain [rdf:type owl:Class;
                            owl:unionOf (gtfs:ShapePoint
                                         gtfs:Stop
                                        )
@@ -954,7 +954,7 @@ gtfs:latitude rdf:type owl:DatatypeProperty ;
 
 
 gtfs:longitude rdf:type owl:DatatypeProperty ;
-               rdfs:domain [rdf:type owl:Class; 
+               rdfs:domain [rdf:type owl:Class;
                             owl:unionOf (gtfs:ShapePoint
                                          gtfs:Stop
                                         )
@@ -979,7 +979,7 @@ gtfs:pointSequence rdf:type owl:DatatypeProperty ;
 #gtfs:Service,gtfs:ServiceRule,gtfs:CalendarRule,gtfs:CalendarDateRule
 
 gtfs:startDate rdf:type owl:DatatypeProperty ;
-               rdfs:domain [rdf:type owl:Class; 
+               rdfs:domain [rdf:type owl:Class;
                             owl:unionOf (gtfs:CalendarRule
                                          gtfs:Feed
                                         )
@@ -990,7 +990,7 @@ gtfs:startDate rdf:type owl:DatatypeProperty ;
 
 
 gtfs:endDate rdf:type owl:DatatypeProperty ;
-             rdfs:domain [rdf:type owl:Class; 
+             rdfs:domain [rdf:type owl:Class;
                           owl:unionOf (gtfs:CalendarRule
                                        gtfs:Feed
                                       )
@@ -1008,7 +1008,7 @@ gtfs:date rdf:type owl:DatatypeProperty ;
           rdfs:label "Date"@en .
 
 
-#gtfs:Frequency 
+#gtfs:Frequency
 
 ###  http://vocab.gtfs.org/terms#startTime
 gtfs:startTime rdf:type owl:DatatypeProperty ;
@@ -1052,7 +1052,7 @@ gtfs:code rdf:type owl:DatatypeProperty ;
           rdfs:domain gtfs:Location ;
           rdfs:range xsd:string ;
           status:term_status "unstable"@en ;
-          rdfs:seeAlso <https://developers.google.com/transit/gtfs/reference#stops_fields> ;         
+          rdfs:seeAlso <https://developers.google.com/transit/gtfs/reference#stops_fields> ;
           rdfs:comment "Short text or a number that identifies the location for riders. These codes are often used in phone-based transit information systems or printed on signage to make it easier for riders to get information for a particular location. This field should be left empty for locations without a code presented to riders."@en ;
           rdfs:label "Location Code"@en .
 
@@ -1099,7 +1099,7 @@ gtfs:stopSequence rdf:type owl:DatatypeProperty ;
 
 ###  http://vocab.gtfs.org/terms#headsign
 gtfs:headsign rdf:type owl:DatatypeProperty ;
-              rdfs:domain [rdf:type owl:Class; 
+              rdfs:domain [rdf:type owl:Class;
                            owl:unionOf (gtfs:StopTime
                                         gtfs:Trip
                                        )
@@ -1145,7 +1145,7 @@ gtfs:version rdf:type owl:DatatypeProperty ;
              rdfs:comment "String that indicates the current version of their GTFS dataset."@en ;
              rdfs:label "Version"@en .
 
-      
+
 ###  http://vocab.gtfs.org/terms#bidirectional
 gtfs:bidirectional rdf:type owl:DatatypeProperty ;
                    rdfs:domain gtfs:Pathway ;
@@ -1524,7 +1524,7 @@ gtfs:ServiceRule rdf:type owl:Class ;
                  rdfs:label "Service rule"@en ,
                             "Regla de servicio"@es ;
                  status:term_status "unstable"@en ,
-                                    "inestable"@es .                                
+                                    "inestable"@es .
 
 
 ###  http://vocab.gtfs.org/terms#Shape
