@@ -296,6 +296,46 @@ test_cases:
         - PT5-MH-10
         - PT5-MH-18
 
+  - id: DS-UI-AMH-OBS-01
+    scope: dataspace_ui
+    case_group: ai_model_hub
+    description: AI Model Observer home and evidence navigation from INESData UI
+    type: ui
+    validation_type: non_functional
+    dataspace_dimension: model_governance
+    execution_mode: ui_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    preconditions:
+      - Edmundo's AI Model Observer UI is integrated in the INESData connector interface
+      - INESData consumer connector portal is reachable
+      - Playwright interaction markers are enabled for audit-ready evidence
+    steps:
+      - Open the INESData connector UI and authenticate
+      - Open AI Model Observer
+      - Verify the Asset timeline, Agreement evidence, Benchmark evidence and Participant summary cards
+      - Enter controlled identifiers and navigate to each evidence route
+      - Capture screenshots and JSON evidence without mutating contracts or assets
+    operations:
+      - login
+      - open_ai_model_observer
+      - verify_observer_cards
+      - navigate_asset_timeline
+      - navigate_agreement_evidence
+      - navigate_benchmark_evidence
+      - navigate_participant_summary
+    expected_result: The AI Model Observer UI is available from INESData and its main evidence navigation routes are demonstrable for auditors
+    automation:
+      status: automated_opt_in
+      mode: ui_opt_in
+      ui_spec: validation/ui/core/10-ai-model-observer.spec.ts
+      enable_with: UI_AI_MODEL_OBSERVER_DEMO=1
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      linked_cases:
+        - MH-OBS-01
+        - PT5-MH-17
+        - Model Clearing House
+
 ops_checks:
   - id: DS-UI-OPS-01
     scope: dataspace_ui

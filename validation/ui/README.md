@@ -239,6 +239,7 @@ Estos artefactos separan `support_checks`, `dataspace_cases`, `ops_checks`, `evi
 - `UI_SEMANTIC_VIRTUALIZATION_QUERY_PATH`
 - `UI_ONTOLOGY_HUB_INESDATA_DEMO`
 - `UI_AI_MODEL_HUB_HTTPDATA_DEMO`
+- `UI_AI_MODEL_OBSERVER_DEMO`
 - `UI_AI_MODEL_HUB_CATALOG_CLEANUP`
 - `UI_AI_MODEL_HUB_MODEL_URL`
 - `UI_AI_MODEL_HUB_MODEL_PATH`
@@ -266,6 +267,13 @@ ejecuta inferencia ni transferencia; la demo valida el gobierno visual del
 modelo en INESData. `UI_AI_MODEL_HUB_MODEL_URL` permite fijar la URL completa
 del endpoint y `UI_AI_MODEL_HUB_MODEL_PATH` cambia la ruta por defecto
 `/api/v1/nlp/ecommerce-sentiment`.
+
+`UI_AI_MODEL_OBSERVER_DEMO=1` habilita `DS-UI-AMH-OBS-01` / `MH-OBS-01`: abre
+`AI Model Observer` desde INESData y valida la navegacion visual hacia
+`Asset timeline`, `Agreement evidence`, `Benchmark evidence` y
+`Participant summary`. La prueba es read-only, usa IDs controlados, genera
+capturas/JSON y se marca como `skipped` si la UI del Observer aun no esta
+integrada en el build local.
 
 `UI_SEMANTIC_VIRTUALIZATION_CATALOG_CLEANUP=1` activa una limpieza segura previa
 solo para artefactos de validacion con prefijos `qa-ui-*` y `asset-e2e-*` en el

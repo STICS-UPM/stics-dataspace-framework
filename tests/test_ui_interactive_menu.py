@@ -101,6 +101,18 @@ class UiInteractiveMenuTests(unittest.TestCase):
 
         mock_run_ai_model_hub_integration.assert_called_once_with({"label": "Normal", "args": [], "env": {}})
 
+    @mock.patch.object(interactive_menu, "_run_ai_model_observer_ui_integration")
+    @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
+    def test_run_inesdata_ui_tests_interactive_routes_ai_model_observer_integration(
+        self,
+        _mock_resolve_mode,
+        mock_run_ai_model_observer_integration,
+    ):
+        with mock.patch("builtins.input", side_effect=["5"]):
+            interactive_menu.run_inesdata_ui_tests_interactive()
+
+        mock_run_ai_model_observer_integration.assert_called_once_with({"label": "Normal", "args": [], "env": {}})
+
     @mock.patch.object(interactive_menu, "_run_semantic_virtualization_ui_tests")
     @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
     def test_run_semantic_virtualization_ui_tests_interactive_routes_runner(
@@ -245,6 +257,38 @@ class UiInteractiveMenuTests(unittest.TestCase):
             self.assertTrue(env["PLAYWRIGHT_OUTPUT_DIR"].startswith(os.path.join(tmpdir, "experiments")))
             self.assertIn(
                 os.path.join("components", "semantic-virtualization", "inesdata-ui"),
+                env["PLAYWRIGHT_OUTPUT_DIR"],
+            )
+
+    @mock.patch.object(interactive_menu, "_cleanup_playwright_processes")
+    @mock.patch.object(interactive_menu.subprocess, "run")
+    @mock.patch.object(interactive_menu, "project_root")
+    @mock.patch.object(interactive_menu, "_default_inesdata_adapter", return_value=FakeInteractiveAdapter())
+    def test_run_ai_model_observer_ui_integration_uses_expected_spec_and_markers(
+        self,
+        _mock_default_adapter,
+        mock_project_root,
+        mock_subprocess_run,
+        _mock_cleanup,
+    ):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_project_root.return_value = Path(tmpdir)
+            mock_subprocess_run.return_value = mock.Mock(returncode=0)
+
+            interactive_menu._run_ai_model_observer_ui_integration(
+                {"label": "Normal", "args": [], "env": {}}
+            )
+
+            mock_subprocess_run.assert_called_once()
+            command = mock_subprocess_run.call_args.args[0]
+            env = mock_subprocess_run.call_args.kwargs["env"]
+
+            self.assertIn("core/10-ai-model-observer.spec.ts", command)
+            self.assertEqual(env["UI_AI_MODEL_OBSERVER_DEMO"], "1")
+            self.assertEqual(env["PLAYWRIGHT_INTERACTION_MARKERS"], "1")
+            self.assertTrue(env["PLAYWRIGHT_OUTPUT_DIR"].startswith(os.path.join(tmpdir, "experiments")))
+            self.assertIn(
+                os.path.join("components", "ai-model-hub", "observer-ui"),
                 env["PLAYWRIGHT_OUTPUT_DIR"],
             )
 

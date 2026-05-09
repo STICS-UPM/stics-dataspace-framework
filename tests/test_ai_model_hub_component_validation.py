@@ -490,6 +490,109 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             )
             self.assertTrue(os.path.exists(result["artifacts"]["functional_use_case_results_json"]))
 
+    def test_run_ai_model_hub_component_validation_can_include_model_observer_opt_in(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_result = {
+                "component": "ai-model-hub",
+                "suite": "bootstrap",
+                "status": "passed",
+                "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+                "executed_cases": [
+                    {
+                        "test_case_id": "MH-BOOTSTRAP-01",
+                        "type": "api",
+                        "case_group": "support",
+                        "validation_type": "support",
+                        "dataspace_dimension": "support",
+                        "mapping_status": "supporting",
+                        "coverage_status": "automated",
+                        "execution_mode": "api_support",
+                        "evaluation": {"status": "passed", "assertions": []},
+                    }
+                ],
+                "evidence_index": [],
+                "artifacts": {"report_json": os.path.join(tmpdir, "bootstrap.json")},
+            }
+            ui_result = {
+                "component": "ai-model-hub",
+                "suite": "ui",
+                "status": "skipped",
+                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
+                "executed_cases": [],
+                "evidence_index": [],
+                "artifacts": {"report_json": os.path.join(tmpdir, "ui.json")},
+            }
+            observer_result = {
+                "component": "ai-model-hub",
+                "suite": "model-observer-api",
+                "status": "passed",
+                "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+                "executed_cases": [
+                    {
+                        "test_case_id": "MH-OBS-02",
+                        "type": "api",
+                        "case_group": "observer",
+                        "validation_type": "non_functional",
+                        "dataspace_dimension": "governance",
+                        "mapping_status": "planned_observer",
+                        "coverage_status": "automated_opt_in",
+                        "execution_mode": "api_opt_in",
+                        "evaluation": {"status": "passed", "assertions": []},
+                    }
+                ],
+                "evidence_index": [
+                    {
+                        "scope": "suite",
+                        "suite": "model-observer-api",
+                        "artifact_name": "report_json",
+                        "path": os.path.join(tmpdir, "observer.json"),
+                    }
+                ],
+                "artifacts": {"report_json": os.path.join(tmpdir, "observer.json")},
+            }
+
+            with (
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_validation",
+                    return_value=bootstrap_result,
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_ui_validation",
+                    return_value=ui_result,
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_model_observer_validation",
+                    return_value=observer_result,
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "",
+                        "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING": "",
+                        "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING": "",
+                        "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER": "1",
+                    },
+                ),
+            ):
+                result = run_ai_model_hub_component_validation(
+                    "http://ai-model-hub.example.local",
+                    experiment_dir=tmpdir,
+                )
+
+            self.assertEqual(result["summary"]["total"], 2)
+            self.assertEqual(result["summary"]["passed"], 2)
+            self.assertIn("model_observer", result["suites"])
+            self.assertEqual(result["observer_case_summary"]["total"], 1)
+            self.assertEqual(result["observer_case_summary"]["passed"], 1)
+            self.assertEqual(result["catalog_alignment"]["summary"]["declared_observer_cases"], 6)
+            self.assertEqual(result["catalog_alignment"]["summary"]["executed_observer_cases"], 1)
+            self.assertEqual(result["catalog_alignment"]["summary"]["uncovered_observer_cases"], 5)
+            self.assertEqual(
+                result["observer_case_results"][0]["traceability"],
+                ["PT5-MH-17", "MH-46", "Model Clearing House"],
+            )
+            self.assertTrue(os.path.exists(result["artifacts"]["observer_case_results_json"]))
+
 
 if __name__ == "__main__":
     unittest.main()

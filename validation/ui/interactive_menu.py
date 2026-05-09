@@ -623,6 +623,48 @@ def _run_ai_model_hub_ui_integration(mode):
     return None
 
 
+def _run_ai_model_observer_ui_integration(mode):
+    experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    base_dir = str(project_root() / "experiments" / experiment_id / "components" / "ai-model-hub" / "observer-ui")
+    output_dir = os.path.join(base_dir, "test-results")
+    html_report_dir = os.path.join(base_dir, "playwright-report")
+    blob_report_dir = os.path.join(base_dir, "blob-report")
+    json_report_file = os.path.join(base_dir, "results.json")
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(html_report_dir, exist_ok=True)
+    os.makedirs(blob_report_dir, exist_ok=True)
+
+    env = _ui_runtime_env_from_adapter(_default_inesdata_adapter())
+    env.update(
+        {
+            "UI_AI_MODEL_OBSERVER_DEMO": "1",
+            "PLAYWRIGHT_OUTPUT_DIR": output_dir,
+            "PLAYWRIGHT_HTML_REPORT_DIR": html_report_dir,
+            "PLAYWRIGHT_BLOB_REPORT_DIR": blob_report_dir,
+            "PLAYWRIGHT_JSON_REPORT_FILE": json_report_file,
+            "PLAYWRIGHT_INTERACTION_MARKERS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKERS", "1"),
+            "PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "350"),
+        }
+    )
+    env.update(mode.get("env") or {})
+    cmd = [
+        "./node_modules/.bin/playwright",
+        "test",
+        "--config",
+        "playwright.config.ts",
+        "core/10-ai-model-observer.spec.ts",
+        "--workers=1",
+    ]
+    cmd.extend(mode.get("args") or [])
+
+    print(f"\nRunning AI Model Observer / Clearing House ({mode['label']}, artifacts in {base_dir})\n")
+    try:
+        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+    finally:
+        _cleanup_playwright_processes()
+    return None
+
+
 def run_ai_model_hub_ui_tests_interactive():
     """Run AI Model Hub Playwright UI tests in normal/live/debug modes."""
     while True:
@@ -886,6 +928,7 @@ def run_inesdata_ui_tests_interactive():
         print("2 - Ontology Hub Integration with INESData")
         print("3 - AI Model Hub Integration with INESData")
         print("4 - Semantic Virtualization Integration with INESData")
+        print("5 - AI Model Observer / Clearing House")
         print("B - Back")
 
         try:
@@ -896,7 +939,7 @@ def run_inesdata_ui_tests_interactive():
 
         if choice == "B":
             return None
-        if choice not in {"1", "2", "3", "4"}:
+        if choice not in {"1", "2", "3", "4", "5"}:
             print("\nInvalid selection. Please try again.\n")
             continue
 
@@ -912,4 +955,6 @@ def run_inesdata_ui_tests_interactive():
             _run_ai_model_hub_ui_integration(mode)
         elif choice == "4":
             _run_semantic_virtualization_ui_integration_with_inesdata(mode)
+        elif choice == "5":
+            _run_ai_model_observer_ui_integration(mode)
         return None

@@ -585,6 +585,196 @@ test_cases:
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
       notes: The runner consumes provider and consumer connector APIs for asset publication, policy, contract definition, catalog, negotiation, agreements and model access.
 
+observer_cases:
+  - id: MH-OBS-01
+    component: ai_model_hub
+    case_group: observer
+    description: AI Model Observer home and navigation smoke
+    type: ui
+    validation_type: non_functional
+    dataspace_dimension: governance
+    execution_mode: ui_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: planned_observer
+    preconditions:
+      - Edmundo's AI Model Observer UI is integrated in INESData
+      - INESData login credentials are available
+    steps:
+      - Sign in to the INESData connector interface
+      - Open AI Model Observer
+      - Verify the Asset timeline, Agreement evidence, Benchmark evidence and Participant summary cards
+      - Enter controlled identifiers and confirm navigation to Observer routes
+    expected_result: The Observer UI loads and exposes the main evidence navigation surfaces
+    traceability:
+      - PT5-MH-17
+      - Model Clearing House
+    automation:
+      status: automated_opt_in
+      mode: ui_opt_in
+      ui_spec: validation/ui/core/10-ai-model-observer.spec.ts
+      evidence_case: MH-OBS-01
+      enable_with: UI_AI_MODEL_OBSERVER_DEMO=1
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: Read-only audit-ready smoke. The spec skips safely when the Observer UI is not integrated yet.
+
+  - id: MH-OBS-02
+    component: ai_model_hub
+    case_group: observer
+    description: Model Observer journal API records and exposes controlled evidence events
+    type: api
+    validation_type: non_functional
+    dataspace_dimension: governance
+    execution_mode: api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: planned_observer
+    preconditions:
+      - Edmundo's Model Observer backend API is integrated and reachable
+      - A controlled QA event batch can be written without storing sensitive payloads
+    steps:
+      - POST a controlled event batch to /api/model-observer/events/bulk
+      - GET /api/model-observer/timeline/:assetId
+      - GET /api/model-observer/agreements/:agreementId
+      - GET /api/model-observer/benchmarks/:benchmarkRunId
+      - GET /api/model-observer/participants/:participantId/summary
+      - Verify that evidence contains metadata, hashes and counters instead of raw datasets or secrets
+    expected_result: Controlled Observer evidence is stored and queryable by asset, agreement, benchmark and participant
+    traceability:
+      - PT5-MH-17
+      - MH-46
+      - Model Clearing House
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/model_observer_api.py
+      evidence_case: MH-OBS-02
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1
+      configure_with: AI_MODEL_HUB_OBSERVER_API_BASE_URL=http://backend-demo.dev.ds.dataspaceunit.upm
+      suite_test: tests/test_ai_model_hub_model_observer_api.py
+      notes: The runner skips safely when the Observer API is not integrated yet, so Level 6 remains stable by default.
+
+  - id: MH-OBS-03
+    component: ai_model_hub
+    case_group: observer
+    description: AI Model Browser leaves discoverability or detail evidence in Observer
+    type: ui_api
+    validation_type: integration
+    dataspace_dimension: governance
+    execution_mode: ui_api_opt_in
+    coverage_status: planned
+    mapping_status: planned_observer
+    preconditions:
+      - AI Model Browser exposes at least one controlled model
+      - Observer timeline can be queried by assetId
+    steps:
+      - Open AI Model Browser
+      - Search or open a controlled model detail view
+      - Open the Observer timeline for that asset
+      - Verify MODEL_DETAIL_VIEWED or equivalent evidence
+    expected_result: Browser activity is visible as Observer evidence for the selected model asset
+    traceability:
+      - PT5-MH-07
+      - PT5-MH-17
+    automation:
+      status: planned
+      mode: ui_api_opt_in
+      suggested_spec: validation/components/ai_model_hub/ui/specs/mh_obs_03_browser_observer.spec.js
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER_UI=1
+      notes: Planned after Browser-to-Observer event emission is integrated.
+
+  - id: MH-OBS-04
+    component: ai_model_hub
+    case_group: observer
+    description: AI Model Execution leaves execution evidence in Observer
+    type: api
+    validation_type: integration
+    dataspace_dimension: governance
+    execution_mode: api_opt_in
+    coverage_status: planned
+    mapping_status: planned_observer
+    preconditions:
+      - A controlled model execution flow is available
+      - Execution propagates assetId, correlationId and agreementId when applicable
+    steps:
+      - Execute a controlled model through the existing execution flow
+      - Capture assetId, correlationId and agreementId when available
+      - Query the Observer timeline for the asset
+      - Verify MODEL_EXECUTION_REQUESTED and MODEL_EXECUTION_COMPLETED or FAILED
+    expected_result: Model execution is recorded with status, correlation and agreement context when available
+    traceability:
+      - PT5-MH-10
+      - PT5-MH-17
+    automation:
+      status: planned
+      mode: api_opt_in
+      suggested_runner: validation/components/ai_model_hub/model_observer_api.py
+      related_runner: validation/components/ai_model_hub/model_execution_api.py
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1
+      notes: Planned after Execution-to-Observer event emission is stable.
+
+  - id: MH-OBS-05
+    component: ai_model_hub
+    case_group: observer
+    description: AI Model Benchmark leaves benchmark evidence and summary in Observer
+    type: ui_api
+    validation_type: integration
+    dataspace_dimension: governance
+    execution_mode: ui_api_opt_in
+    coverage_status: planned
+    mapping_status: planned_observer
+    preconditions:
+      - The benchmarking demo can produce or expose a benchmarkRunId
+      - Observer benchmark evidence can be queried by benchmarkRunId
+    steps:
+      - Run the PT5-MH-12..15 benchmarking demo
+      - Capture the benchmarkRunId
+      - Open /ai-model-observer/benchmarks/:benchmarkRunId
+      - Verify compared models, aggregated metrics and benchmark summary
+    expected_result: Benchmarking is recorded as auditable evidence with metrics and summary
+    traceability:
+      - PT5-MH-12
+      - PT5-MH-13
+      - PT5-MH-14
+      - PT5-MH-15
+      - PT5-MH-17
+    automation:
+      status: planned
+      mode: ui_api_opt_in
+      suggested_spec: validation/components/ai_model_hub/ui/specs/mh_obs_05_benchmark_observer.spec.js
+      related_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER_UI=1
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: Planned audit demo linking benchmark UI evidence with clearing-house evidence.
+
+  - id: MH-OBS-06
+    component: ai_model_hub
+    case_group: observer
+    description: Participant summary exposes model operation evidence totals
+    type: api_ui
+    validation_type: non_functional
+    dataspace_dimension: governance
+    execution_mode: api_ui_opt_in
+    coverage_status: planned
+    mapping_status: planned_observer
+    preconditions:
+      - Observer events exist for a provider or consumer participant
+      - Participant summary API/UI is available
+    steps:
+      - Produce or seed controlled provider/consumer events
+      - Query /api/model-observer/participants/:participantId/summary
+      - Open the Participant summary UI
+      - Verify totals by event type, recent failures and latest evidence
+    expected_result: Auditors can inspect model activity by participant without reading internal logs
+    traceability:
+      - PT5-MH-17
+      - Model Clearing House
+    automation:
+      status: planned
+      mode: api_ui_opt_in
+      suggested_runner: validation/components/ai_model_hub/model_observer_api.py
+      suggested_spec: validation/components/ai_model_hub/ui/specs/mh_obs_06_participant_summary.spec.js
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1
+      notes: Planned after MH-OBS-02 confirms the API contract.
+
 functional_use_cases:
   - id: MH-LING-01
     component: ai_model_hub

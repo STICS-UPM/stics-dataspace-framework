@@ -15,6 +15,7 @@ const semanticVirtualizationHttpDataDemo =
   process.env.UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO === "1";
 const ontologyHubInesdataDemo = process.env.UI_ONTOLOGY_HUB_INESDATA_DEMO === "1";
 const aiModelHubHttpDataDemo = process.env.UI_AI_MODEL_HUB_HTTPDATA_DEMO === "1";
+const aiModelObserverDemo = process.env.UI_AI_MODEL_OBSERVER_DEMO === "1";
 const launchArgs = [
   ...(headedGpuFix ? ["--disable-gpu"] : []),
   ...(hostResolverRules ? [`--host-resolver-rules=${hostResolverRules}`] : []),
@@ -40,6 +41,7 @@ export default defineConfig({
     ...(semanticVirtualizationHttpDataDemo ? [] : ["core/07-semantic-virtualization-httpdata.spec.ts"]),
     ...(ontologyHubInesdataDemo ? [] : ["core/08-ontology-hub-inesdata-readonly.spec.ts"]),
     ...(aiModelHubHttpDataDemo ? [] : ["core/09-ai-model-hub-httpdata.spec.ts"]),
+    ...(aiModelObserverDemo ? [] : ["core/10-ai-model-observer.spec.ts"]),
   ],
   timeout: 4 * 60 * 1000,
   expect: {

@@ -91,6 +91,49 @@ class AIModelHubTestCasesCatalogTests(unittest.TestCase):
             "tests/test_ai_model_hub_mobility_benchmarking_api.py",
         )
 
+    def test_model_observer_cases_are_registered_for_a52_closure(self):
+        catalog = self._load_catalog()
+        cases = {case.get("id"): case for case in catalog.get("observer_cases") or []}
+
+        self.assertEqual(
+            set(cases),
+            {f"MH-OBS-{index:02d}" for index in range(1, 7)},
+        )
+
+        observer_ui_case = cases["MH-OBS-01"]
+        self.assertEqual(observer_ui_case["coverage_status"], "automated_opt_in")
+        self.assertEqual(observer_ui_case["automation"]["status"], "automated_opt_in")
+        self.assertEqual(observer_ui_case["automation"]["mode"], "ui_opt_in")
+        self.assertEqual(
+            observer_ui_case["automation"]["ui_spec"],
+            "validation/ui/core/10-ai-model-observer.spec.ts",
+        )
+        self.assertEqual(
+            observer_ui_case["automation"]["enable_with"],
+            "UI_AI_MODEL_OBSERVER_DEMO=1",
+        )
+        self.assertEqual(
+            observer_ui_case["automation"]["visual_markers"],
+            "PLAYWRIGHT_INTERACTION_MARKERS=1",
+        )
+
+        observer_api_case = cases["MH-OBS-02"]
+        self.assertEqual(observer_api_case["coverage_status"], "automated_opt_in")
+        self.assertEqual(observer_api_case["automation"]["status"], "automated_opt_in")
+        self.assertEqual(observer_api_case["automation"]["mode"], "api_opt_in")
+        self.assertEqual(
+            observer_api_case["automation"]["runner"],
+            "validation/components/ai_model_hub/model_observer_api.py",
+        )
+        self.assertEqual(
+            observer_api_case["automation"]["enable_with"],
+            "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1",
+        )
+        self.assertEqual(
+            observer_api_case["automation"]["suite_test"],
+            "tests/test_ai_model_hub_model_observer_api.py",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

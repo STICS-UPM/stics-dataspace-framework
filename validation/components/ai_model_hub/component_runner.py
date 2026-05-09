@@ -14,6 +14,7 @@ CATALOG_PATH = Path(__file__).resolve().parent / "test_cases.yaml"
 CONNECTOR_GOVERNANCE_ENV = "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE"
 MODEL_BENCHMARKING_ENV = "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING"
 MOBILITY_BENCHMARKING_ENV = "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING"
+MODEL_OBSERVER_ENV = "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER"
 
 STATUS_PRIORITY = {
     "failed": 3,
@@ -54,6 +55,7 @@ def _load_catalog() -> Dict[str, Any]:
         "source_documents": list(payload.get("source_documents") or []),
         "pt5_cases": sorted(list(payload.get("test_cases") or []), key=_case_sort_key),
         "functional_use_cases": sorted(list(payload.get("functional_use_cases") or []), key=_case_sort_key),
+        "observer_cases": sorted(list(payload.get("observer_cases") or []), key=_case_sort_key),
         "support_checks": sorted(list(payload.get("support_checks") or []), key=_case_sort_key),
     }
 
@@ -106,10 +108,11 @@ def _attach_catalog_metadata(
 def _build_findings(
     pt5_case_results: List[Dict[str, Any]],
     functional_use_case_results: List[Dict[str, Any]],
+    observer_case_results: List[Dict[str, Any]],
     support_checks: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     findings: List[Dict[str, Any]] = []
-    for case in pt5_case_results + functional_use_case_results + support_checks:
+    for case in pt5_case_results + functional_use_case_results + observer_case_results + support_checks:
         status = ((case.get("evaluation") or {}).get("status") or "").lower()
         if status != "failed":
             continue
@@ -129,19 +132,26 @@ def _build_catalog_alignment(
     catalog: Dict[str, Any],
     pt5_case_results: List[Dict[str, Any]],
     functional_use_case_results: List[Dict[str, Any]],
+    observer_case_results: List[Dict[str, Any]],
     support_checks: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     declared_pt5_cases = list(catalog.get("pt5_cases") or [])
     declared_functional_use_cases = list(catalog.get("functional_use_cases") or [])
+    declared_observer_cases = list(catalog.get("observer_cases") or [])
     declared_support_checks = list(catalog.get("support_checks") or [])
     declared_pt5_by_id = {case.get("id"): case for case in declared_pt5_cases}
     declared_functional_by_id = {case.get("id"): case for case in declared_functional_use_cases}
+    declared_observer_by_id = {case.get("id"): case for case in declared_observer_cases}
     declared_support_by_id = {case.get("id"): case for case in declared_support_checks}
 
     executed_pt5_ids = {str(case.get("test_case_id") or "") for case in pt5_case_results}
     executed_functional_ids = {
         str(case.get("test_case_id") or "")
         for case in functional_use_case_results
+    }
+    executed_observer_ids = {
+        str(case.get("test_case_id") or "")
+        for case in observer_case_results
     }
     executed_support_ids = {str(case.get("test_case_id") or "") for case in support_checks}
 
@@ -152,6 +162,11 @@ def _build_catalog_alignment(
         case
         for case in declared_functional_use_cases
         if case.get("id") not in executed_functional_ids
+    ]
+    uncovered_observer_cases = [
+        case
+        for case in declared_observer_cases
+        if case.get("id") not in executed_observer_ids
     ]
     missing_support_checks = [
         case for case in declared_support_checks if case.get("id") not in executed_support_ids
@@ -165,6 +180,9 @@ def _build_catalog_alignment(
     executed_functional_not_in_catalog = sorted(
         case_id for case_id in executed_functional_ids if case_id not in declared_functional_by_id
     )
+    executed_observer_not_in_catalog = sorted(
+        case_id for case_id in executed_observer_ids if case_id not in declared_observer_by_id
+    )
 
     return {
         "source_file": catalog.get("source_file"),
@@ -176,21 +194,28 @@ def _build_catalog_alignment(
             "declared_functional_use_cases": len(declared_functional_use_cases),
             "executed_functional_use_cases": len(executed_functional_ids),
             "uncovered_functional_use_cases": len(uncovered_functional_use_cases),
+            "declared_observer_cases": len(declared_observer_cases),
+            "executed_observer_cases": len(executed_observer_ids),
+            "uncovered_observer_cases": len(uncovered_observer_cases),
             "declared_support_checks": len(declared_support_checks),
             "executed_support_checks": len(support_checks),
             "missing_support_checks": len(missing_support_checks),
             "executed_pt5_not_in_catalog": len(executed_pt5_not_in_catalog),
             "executed_functional_not_in_catalog": len(executed_functional_not_in_catalog),
+            "executed_observer_not_in_catalog": len(executed_observer_not_in_catalog),
             "executed_support_not_in_catalog": len(executed_support_not_in_catalog),
         },
         "declared_pt5_cases": declared_pt5_cases,
         "declared_functional_use_cases": declared_functional_use_cases,
+        "declared_observer_cases": declared_observer_cases,
         "declared_support_checks": declared_support_checks,
         "uncovered_pt5_cases": uncovered_pt5_cases,
         "uncovered_functional_use_cases": uncovered_functional_use_cases,
+        "uncovered_observer_cases": uncovered_observer_cases,
         "missing_support_checks": missing_support_checks,
         "executed_pt5_not_in_catalog": executed_pt5_not_in_catalog,
         "executed_functional_not_in_catalog": executed_functional_not_in_catalog,
+        "executed_observer_not_in_catalog": executed_observer_not_in_catalog,
         "executed_support_not_in_catalog": executed_support_not_in_catalog,
     }
 
@@ -214,6 +239,10 @@ def _model_benchmarking_enabled() -> bool:
 
 def _mobility_benchmarking_enabled() -> bool:
     return (os.environ.get(MOBILITY_BENCHMARKING_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _model_observer_enabled() -> bool:
+    return (os.environ.get(MODEL_OBSERVER_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def run_ai_model_hub_connector_governance_validation(experiment_dir: str | None = None) -> Dict[str, Any]:
@@ -285,6 +314,20 @@ def run_ai_model_hub_mobility_benchmarking_validation(experiment_dir: str | None
     )
 
 
+def run_ai_model_hub_model_observer_validation(
+    base_url: str | None = None,
+    experiment_dir: str | None = None,
+) -> Dict[str, Any]:
+    from validation.components.ai_model_hub.model_observer_api import (
+        run_ai_model_hub_model_observer_validation as run_observer_suite,
+    )
+
+    return run_observer_suite(
+        base_url=base_url,
+        experiment_dir=experiment_dir,
+    )
+
+
 def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | None = None) -> Dict[str, Any]:
     started_at = datetime.now().isoformat()
     normalized_base_url = (base_url or "").rstrip("/")
@@ -316,12 +359,23 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
                 run_ai_model_hub_mobility_benchmarking_validation(experiment_dir=experiment_dir),
             )
         )
+    if _model_observer_enabled():
+        named_suite_results.append(
+            (
+                "model_observer",
+                run_ai_model_hub_model_observer_validation(
+                    base_url=normalized_base_url,
+                    experiment_dir=experiment_dir,
+                ),
+            )
+        )
     suite_results = [suite_result for _, suite_result in named_suite_results]
     catalog = _load_catalog()
     catalog_cases_by_id = {
         case.get("id"): case
         for case in list(catalog.get("pt5_cases") or [])
         + list(catalog.get("functional_use_cases") or [])
+        + list(catalog.get("observer_cases") or [])
         + list(catalog.get("support_checks") or [])
     }
 
@@ -348,14 +402,25 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
         [case for case in executed_cases if case.get("case_group") == "functional_use_case"],
         key=_case_sort_key,
     )
+    observer_case_results = sorted(
+        [case for case in executed_cases if case.get("case_group") == "observer"],
+        key=_case_sort_key,
+    )
     pt5_summary = _summarize_cases(pt5_case_results)
     functional_use_case_summary = _summarize_cases(functional_use_case_results)
+    observer_case_summary = _summarize_cases(observer_case_results)
     support_summary = _summarize_cases(support_checks)
-    findings = _build_findings(pt5_case_results, functional_use_case_results, support_checks)
+    findings = _build_findings(
+        pt5_case_results,
+        functional_use_case_results,
+        observer_case_results,
+        support_checks,
+    )
     catalog_alignment = _build_catalog_alignment(
         catalog,
         pt5_case_results,
         functional_use_case_results,
+        observer_case_results,
         support_checks,
     )
     evidence_index = [
@@ -391,6 +456,9 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
         "functional_use_case_results": functional_use_case_results,
         "functional_use_cases": functional_use_case_results,
         "functional_use_case_summary": functional_use_case_summary,
+        "observer_case_results": observer_case_results,
+        "observer_cases": observer_case_results,
+        "observer_case_summary": observer_case_summary,
         "support_checks": support_checks,
         "support_summary": support_summary,
         "evidence_index": evidence_index,
@@ -406,6 +474,10 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
             component_dir,
             "ai_model_hub_functional_use_case_results.json",
         )
+        observer_case_results_path = os.path.join(
+            component_dir,
+            "ai_model_hub_observer_case_results.json",
+        )
         support_checks_path = os.path.join(component_dir, "ai_model_hub_support_checks.json")
         evidence_index_path = os.path.join(component_dir, "ai_model_hub_evidence_index.json")
         findings_path = os.path.join(component_dir, "ai_model_hub_findings.json")
@@ -417,6 +489,13 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
             {
                 "functional_use_case_results": functional_use_case_results,
                 "summary": functional_use_case_summary,
+            },
+        )
+        _write_json(
+            observer_case_results_path,
+            {
+                "observer_case_results": observer_case_results,
+                "summary": observer_case_summary,
             },
         )
         _write_json(support_checks_path, {"support_checks": support_checks, "summary": support_summary})
@@ -433,6 +512,7 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
             "ui_json_report_file": (ui_result.get("artifacts") or {}).get("json_report_file"),
             "pt5_case_results_json": pt5_cases_path,
             "functional_use_case_results_json": functional_use_case_results_path,
+            "observer_case_results_json": observer_case_results_path,
             "support_checks_json": support_checks_path,
             "evidence_index_json": evidence_index_path,
             "findings_json": findings_path,
@@ -456,6 +536,12 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
                 "suite": "component",
                 "artifact_name": "functional_use_case_results_json",
                 "path": functional_use_case_results_path,
+            },
+            {
+                "scope": "component",
+                "suite": "component",
+                "artifact_name": "observer_case_results_json",
+                "path": observer_case_results_path,
             },
             {
                 "scope": "component",
