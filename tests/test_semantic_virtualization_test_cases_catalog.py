@@ -67,15 +67,56 @@ class SemanticVirtualizationTestCasesCatalogTests(unittest.TestCase):
         catalog = self._load_catalog()
         cases = {case.get("id"): case for case in catalog.get("ui_demo_cases") or []}
 
-        self.assertEqual(set(cases), {"SV-UI-04", "SV-UI-05", "SV-UI-06"})
+        self.assertEqual(
+            set(cases),
+            {"SV-UI-04", "SV-UI-05", "SV-UI-06", "SV-UI-07", "SV-UI-08", "SV-UI-10"},
+        )
         self.assertEqual(cases["SV-UI-04"]["automation"]["status"], "automated_opt_in")
         self.assertEqual(cases["SV-UI-05"]["automation"]["status"], "automated_opt_in")
         self.assertEqual(cases["SV-UI-06"]["automation"]["status"], "automated_opt_in")
+        self.assertEqual(cases["SV-UI-07"]["automation"]["status"], "automated_opt_in")
+        self.assertEqual(cases["SV-UI-08"]["automation"]["status"], "automated_opt_in")
+        self.assertEqual(cases["SV-UI-10"]["automation"]["status"], "automated_opt_in")
         self.assertEqual(
             cases["SV-UI-06"]["automation"]["enable_with"],
             "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1",
         )
+        self.assertEqual(
+            cases["SV-UI-07"]["automation"]["enable_with"],
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1",
+        )
         self.assertIn("PT5-VS-09", cases["SV-UI-06"]["linked_pt5_cases"])
+        self.assertIn("PT5-VS-09", cases["SV-UI-07"]["linked_pt5_cases"])
+        self.assertIn("PT5-VS-06", cases["SV-UI-08"]["linked_pt5_cases"])
+        self.assertIn("PT5-VS-07", cases["SV-UI-10"]["linked_pt5_cases"])
+
+    def test_catalog_declares_official_gtfs_bench_support_checks(self):
+        catalog = self._load_catalog()
+        cases = {case.get("id"): case for case in catalog.get("support_checks") or []}
+
+        self.assertIn("SV-GTFS-BENCH-01", cases)
+        self.assertIn("SV-GTFS-BENCH-02", cases)
+        self.assertIn("SV-GTFS-BENCH-03", cases)
+        self.assertEqual(cases["SV-GTFS-BENCH-01"]["automation"]["status"], "automated_opt_in")
+        self.assertEqual(cases["SV-GTFS-BENCH-02"]["automation"]["status"], "automated")
+        self.assertEqual(cases["SV-GTFS-BENCH-03"]["automation"]["status"], "automated_opt_in")
+        self.assertEqual(
+            cases["SV-GTFS-BENCH-03"]["automation"]["runner"],
+            "validation/components/semantic_virtualization/gtfs_bench_materialization.py",
+        )
+
+    def test_catalog_declares_official_gtfs_bench_dataspace_integration(self):
+        catalog = self._load_catalog()
+        cases = {case.get("id"): case for case in catalog.get("integration_cases") or []}
+
+        self.assertIn("SV-GTFS-BENCH-04", cases)
+        self.assertEqual(cases["SV-GTFS-BENCH-04"]["status"], "automated_opt_in")
+        self.assertEqual(
+            cases["SV-GTFS-BENCH-04"]["runner"],
+            "validation/components/semantic_virtualization/dataspace_integration.py",
+        )
+        self.assertIn("SV-GTFS-BENCH-03", cases["SV-GTFS-BENCH-04"]["linked_cases"])
+        self.assertIn("PT5-VS-11", cases["SV-GTFS-BENCH-04"]["linked_cases"])
 
 
 if __name__ == "__main__":

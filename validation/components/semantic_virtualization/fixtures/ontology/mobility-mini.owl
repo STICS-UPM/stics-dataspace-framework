@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF
+    xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+    xmlns:owl="http://www.w3.org/2002/07/owl#"
+    xmlns:mob="https://w3id.org/pionera/validation/mobility#">
+
+  <owl:Ontology rdf:about="https://w3id.org/pionera/validation/mobility">
+    <rdfs:label>PIONERA mobility validation ontology</rdfs:label>
+  </owl:Ontology>
+
+  <owl:Class rdf:about="https://w3id.org/pionera/validation/mobility#Stop">
+    <rdfs:label>Public transport stop</rdfs:label>
+  </owl:Class>
+
+  <owl:Class rdf:about="https://w3id.org/pionera/validation/mobility#Route">
+    <rdfs:label>Public transport route</rdfs:label>
+  </owl:Class>
+
+  <owl:DatatypeProperty rdf:about="https://w3id.org/pionera/validation/mobility#hasStopName">
+    <rdfs:domain rdf:resource="https://w3id.org/pionera/validation/mobility#Stop"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2000/01/rdf-schema#Literal"/>
+  </owl:DatatypeProperty>
+
+  <owl:DatatypeProperty rdf:about="https://w3id.org/pionera/validation/mobility#hasLatitude">
+    <rdfs:domain rdf:resource="https://w3id.org/pionera/validation/mobility#Stop"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2000/01/rdf-schema#Literal"/>
+  </owl:DatatypeProperty>
+
+  <owl:DatatypeProperty rdf:about="https://w3id.org/pionera/validation/mobility#hasLongitude">
+    <rdfs:domain rdf:resource="https://w3id.org/pionera/validation/mobility#Stop"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2000/01/rdf-schema#Literal"/>
+  </owl:DatatypeProperty>
+
+  <owl:DatatypeProperty rdf:about="https://w3id.org/pionera/validation/mobility#routeShortName">
+    <rdfs:domain rdf:resource="https://w3id.org/pionera/validation/mobility#Route"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2000/01/rdf-schema#Literal"/>
+  </owl:DatatypeProperty>
+
+  <owl:ObjectProperty rdf:about="https://w3id.org/pionera/validation/mobility#servesStop">
+    <rdfs:domain rdf:resource="https://w3id.org/pionera/validation/mobility#Route"/>
+    <rdfs:range rdf:resource="https://w3id.org/pionera/validation/mobility#Stop"/>
+  </owl:ObjectProperty>
+
+</rdf:RDF>

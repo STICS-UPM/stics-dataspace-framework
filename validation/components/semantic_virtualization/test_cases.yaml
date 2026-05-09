@@ -21,6 +21,68 @@ support_checks:
       mode: api_support
       runner: validation/components/semantic_virtualization/runner.py
 
+  - id: SV-GTFS-BENCH-01
+    scope: semantic_virtualization
+    case_group: support
+    description: Validate local availability of official GTFS-Madrid-Bench resources
+    type: support
+    validation_type: support
+    dataspace_dimension: official_dataset_traceability
+    execution_mode: offline_source_readiness
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    expected_result: The framework can trace Semantic Virtualization validation to the official GTFS-Madrid-Bench repository resources before running heavier generated datasets
+    automation:
+      status: automated_opt_in
+      mode: offline_source_readiness
+      runner: validation/components/semantic_virtualization/gtfs_bench_official.py
+      evidence_case: SV-GTFS-BENCH-01
+      source_repository: https://github.com/oeg-upm/gtfs-bench
+      local_source_dir: adapters/inesdata/sources/gtfs-bench
+      optional_auto_clone: python3 validation/components/semantic_virtualization/gtfs_bench_official.py --auto-clone
+      latest_evidence: experiments/semantic-virtualization-gtfs-bench-official-source-20260507/components/semantic-virtualization/gtfs-bench-official-source/semantic_virtualization_gtfs_bench_official_source.json
+
+  - id: SV-GTFS-BENCH-02
+    scope: semantic_virtualization
+    case_group: support
+    description: Validate a mini fixture derived from official GTFS-Madrid-Bench resources
+    type: support
+    validation_type: support
+    dataspace_dimension: official_dataset_traceability
+    execution_mode: offline_fixture
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: The framework has a small reproducible GTFS-Bench CSV fixture derived from official resources, with manifest, hashes and join-preserving GTFS tables
+    automation:
+      status: automated
+      mode: offline_fixture
+      runner: validation/components/semantic_virtualization/gtfs_bench_mini.py
+      evidence_case: SV-GTFS-BENCH-02
+      fixture_dir: validation/components/semantic_virtualization/fixtures/gtfs-bench-official-mini
+      source_repository: https://github.com/oeg-upm/gtfs-bench
+      regeneration_command: python3 validation/components/semantic_virtualization/gtfs_bench_mini.py --regenerate
+      latest_evidence: experiments/semantic-virtualization-gtfs-bench-official-mini-20260507/components/semantic-virtualization/gtfs-bench-official-mini/semantic_virtualization_gtfs_bench_official_mini.json
+
+  - id: SV-GTFS-BENCH-03
+    scope: semantic_virtualization
+    case_group: support
+    description: Materialize and query the official-derived GTFS-Bench mini fixture
+    type: support
+    validation_type: functional
+    dataspace_dimension: official_dataset_materialization
+    execution_mode: offline_fixture
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    expected_result: The official-derived GTFS-Bench mini fixture can be linked to the adapted official CSV mapping, materialized into RDF and queried with official shape queries
+    automation:
+      status: automated_opt_in
+      mode: offline_fixture
+      runner: validation/components/semantic_virtualization/gtfs_bench_materialization.py
+      evidence_case: SV-GTFS-BENCH-03
+      fixture_dir: validation/components/semantic_virtualization/fixtures/gtfs-bench-official-mini
+      source_repository: https://github.com/oeg-upm/gtfs-bench
+      latest_evidence: experiments/semantic-virtualization-gtfs-bench-official-materialization-20260507/components/semantic-virtualization/gtfs-bench-official-materialization/semantic_virtualization_gtfs_bench_official_materialization.json
+
 test_cases:
   - id: PT5-VS-01
     scope: semantic_virtualization
@@ -219,6 +281,7 @@ test_cases:
         - DS-UI-SV-01
       latest_ui_evidence: experiments/semantic-virtualization-inesdata-ui-marked-20260506/components/semantic-virtualization/inesdata-ui/results.json
       latest_dashboard: experiments/semantic-virtualization-inesdata-ui-marked-20260506/framework-report/index.html
+      latest_gtfs_bench_ui_evidence: experiments/experiment_2026-05-07_23-21-05/components/semantic-virtualization/inesdata-ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
 
   - id: PT5-VS-12
@@ -250,6 +313,22 @@ integration_cases:
     status: automated_opt_in
     runner: validation/components/semantic_virtualization/dataspace_integration.py
     latest_ui_evidence: experiments/semantic-virtualization-inesdata-ui-marked-20260506/components/semantic-virtualization/inesdata-ui/results.json
+
+  - id: SV-GTFS-BENCH-04
+    description: Expose the official-derived GTFS-Bench RDF output as HttpData in INESData
+    status: automated_opt_in
+    runner: validation/components/semantic_virtualization/dataspace_integration.py
+    enable_with: python3 validation/components/semantic_virtualization/dataspace_integration.py --gtfs-bench-official-materialization
+    linked_cases:
+      - SV-GTFS-BENCH-03
+      - INT-VS-DS-01
+      - INT-VS-DS-02
+      - PT5-VS-11
+    latest_materialization_evidence: experiments/semantic-virtualization-gtfs-bench-official-materialization-20260507/components/semantic-virtualization/gtfs-bench-official-materialization/semantic_virtualization_gtfs_bench_official_materialization.json
+    latest_api_evidence: experiments/semantic-virtualization-gtfs-bench-official-httpdata-20260507-skip-transfer/components/semantic-virtualization/integration/semantic_virtualization_dataspace_integration.json
+    latest_ui_evidence: experiments/experiment_2026-05-07_23-21-05/components/semantic-virtualization/inesdata-ui/results.json
+    latest_ui_report: experiments/experiment_2026-05-07_23-21-05/components/semantic-virtualization/inesdata-ui/test-results/core-07-semantic-virtualiz-8c25d-egotiation-from-INESData-UI/sv-httpdata-ui-report.json
+    expected_result: The provider publishes a Semantic Virtualization HttpData asset with official GTFS-Bench RDF materialization metadata, and the consumer can discover, negotiate and optionally transfer it through INESData.
 
   - id: INT-VS-AMH-01
     description: Trace Semantic Virtualization output as input context for AI Model Hub
@@ -330,4 +409,76 @@ ui_demo_cases:
       evidence_case: SV-UI-06
       enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
       latest_evidence: experiments/semantic-virtualization-ui-marked-20260506/components/semantic-virtualization/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+
+  - id: SV-UI-07
+    scope: semantic_virtualization
+    case_group: ui_demo
+    description: Exercise global configuration, custom namespace binding, mapping export and style controls in the mapping editor
+    type: functional_ui_demo
+    validation_type: functional
+    dataspace_dimension: mapping_editor_global_configuration_flow
+    execution_mode: ui_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    linked_pt5_cases:
+      - PT5-VS-07
+      - PT5-VS-09
+    expected_result: The editor creates a browser-session mapping, binds a custom namespace, exposes export controls and shows style controls
+    automation:
+      status: automated_opt_in
+      mode: ui_opt_in
+      ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
+      evidence_case: SV-UI-07
+      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
+      latest_evidence: experiments/semantic-virtualization-mapping-editor-sv-ui-07-20260507-r4/components/semantic-virtualization/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+
+  - id: SV-UI-08
+    scope: semantic_virtualization
+    case_group: ui_demo
+    description: Import ontology and CSV data source fixtures in the mapping editor
+    type: functional_ui_demo
+    validation_type: functional
+    dataspace_dimension: mapping_editor_input_loading_flow
+    execution_mode: ui_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    linked_pt5_cases:
+      - PT5-VS-01
+      - PT5-VS-06
+      - PT5-VS-07
+    expected_result: The editor imports an ontology fixture, uploads a CSV source fixture and exposes the loaded inputs for exploration/display
+    automation:
+      status: automated_opt_in
+      mode: ui_opt_in
+      ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
+      evidence_case: SV-UI-08
+      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
+      latest_evidence: experiments/semantic-virtualization-mapping-editor-sv-ui-08-20260507-r4/components/semantic-virtualization/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+
+  - id: SV-UI-10
+    scope: semantic_virtualization
+    case_group: ui_demo
+    description: Explore a non-empty mapping through Explore Mapping and Ontology-Mapping Lens
+    type: functional_ui_demo
+    validation_type: functional
+    dataspace_dimension: mapping_editor_exploration_lens_flow
+    execution_mode: ui_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    linked_pt5_cases:
+      - PT5-VS-01
+      - PT5-VS-06
+      - PT5-VS-07
+      - PT5-VS-09
+    expected_result: The editor imports a non-empty RML mapping, shows its network, predefined searches, preview and ontology-mapping lens panels
+    automation:
+      status: automated_opt_in
+      mode: ui_opt_in
+      ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
+      evidence_case: SV-UI-10
+      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
+      latest_evidence: experiments/semantic-virtualization-mapping-editor-sv-ui-10-20260507-r3/components/semantic-virtualization/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1

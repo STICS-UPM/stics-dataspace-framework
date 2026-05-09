@@ -7,7 +7,11 @@ from validation.components.semantic_virtualization.dataspace_integration import 
     COMPONENT_KEY,
     SemanticVirtualizationDataspaceIntegrationSuite,
     default_semantic_data_url,
+    load_gtfs_bench_official_materialization_context,
     load_gtfs_madrid_bench_mini_context,
+)
+from validation.components.semantic_virtualization.gtfs_bench_materialization import (
+    run_gtfs_bench_official_materialization_validation,
 )
 
 
@@ -178,6 +182,68 @@ class SemanticVirtualizationDataspaceIntegrationTests(unittest.TestCase):
         self.assertEqual(asset_properties["daimo:sourceDataset"], "GTFS-Madrid-Bench-mini")
         self.assertIn("GTFS-Madrid-Bench-mini", asset_properties["dcat:keyword"])
         self.assertEqual(asset_properties["sourceObjectName"], "gtfs-madrid-bench-mini.json")
+
+        transfer_requests = [
+            entry for entry in session.posts if entry["url"].endswith("/management/v3/inesdatatransferprocesses")
+        ]
+        self.assertEqual(transfer_requests, [])
+
+    def test_gtfs_bench_official_materialization_context_loads_asset_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            materialization = run_gtfs_bench_official_materialization_validation(experiment_dir=tmpdir)
+            context = load_gtfs_bench_official_materialization_context(
+                report_path=materialization["artifacts"]["report_json"],
+            )
+
+        self.assertEqual(context["case_id"], "SV-GTFS-BENCH-04")
+        self.assertEqual(context["fixture_name"], "GTFS-Bench-official-mini")
+        self.assertEqual(context["source_repository"], "https://github.com/oeg-upm/gtfs-bench")
+        self.assertEqual(context["triple_count"], 371)
+        self.assertEqual(context["query_summary"]["simple_q1_rows"], 16)
+        self.assertEqual(context["query_summary"]["full_q1_rows"], 16)
+        self.assertEqual(context["query_summary"]["route_trip_stop_join_rows"], 12)
+        self.assertEqual(len(context["asset_summary"]["expected_outputs_digest"]), 64)
+        self.assertEqual(
+            context["asset_summary"]["asset_type"],
+            "semantic-virtualization-gtfs-bench-rdf-output",
+        )
+
+    def test_run_can_attach_gtfs_bench_official_materialization_context(self):
+        session = FakeSession()
+        suite = self._suite(session)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            materialization = run_gtfs_bench_official_materialization_validation(experiment_dir=tmpdir)
+            context = load_gtfs_bench_official_materialization_context(
+                report_path=materialization["artifacts"]["report_json"],
+            )
+
+            result = suite.run(
+                provider="conn-provider",
+                consumer="conn-consumer",
+                semantic_base_url="http://semantic.example.local",
+                semantic_data_url=(
+                    "http://demo-semantic-virtualization.components.svc.cluster.local:8000"
+                    "/?query=ASK%20%7B%7D"
+                ),
+                run_transfer=False,
+                integration_context=context,
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["integration_context"]["case_id"], "SV-GTFS-BENCH-04")
+        asset_requests = [entry for entry in session.posts if entry["url"].endswith("/management/v3/assets")]
+        self.assertEqual(len(asset_requests), 1)
+        asset_properties = asset_requests[0]["json"]["properties"]
+        self.assertEqual(
+            asset_properties["assetType"],
+            "semantic-virtualization-gtfs-bench-rdf-output",
+        )
+        self.assertEqual(asset_properties["daimo:sourceDataset"], "GTFS-Bench-official-mini")
+        self.assertEqual(asset_properties["daimo:sourceRepository"], "https://github.com/oeg-upm/gtfs-bench")
+        self.assertEqual(asset_properties["daimo:tripleCount"], 371)
+        self.assertEqual(asset_properties["daimo:simpleQ1Rows"], 16)
+        self.assertIn("SV-GTFS-BENCH-04", asset_properties["dcat:keyword"])
+        self.assertEqual(asset_properties["sourceObjectName"], "gtfs_bench_official_mini_materialized.ttl")
 
         transfer_requests = [
             entry for entry in session.posts if entry["url"].endswith("/management/v3/inesdatatransferprocesses")

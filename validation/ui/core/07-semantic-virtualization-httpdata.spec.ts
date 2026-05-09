@@ -77,7 +77,7 @@ test("07 semantic virtualization HttpData: visible discovery and negotiation fro
 
   const suffix = `${Date.now()}`;
   const assetId = `qa-ui-sv-httpdata-${suffix}`;
-  const sourceObjectName = "gtfs-madrid-bench-mini.json";
+  const sourceObjectName = "gtfs_bench_official_mini_materialized.ttl";
   const semanticDataUrl = semanticVirtualizationDataUrl(dataspaceRuntime.dataspace);
   const browserDiagnostics = collectBrowserDiagnostics(page);
   const loginPage = new KeycloakLoginPage(page, {
@@ -95,7 +95,7 @@ test("07 semantic virtualization HttpData: visible discovery and negotiation fro
     assetId,
     semanticDataUrl,
     sourceObjectName,
-    linkedCases: ["INT-VS-DS-01", "INT-VS-DS-02", "PT5-VS-02", "PT5-VS-11"],
+    linkedCases: ["INT-VS-DS-01", "INT-VS-DS-02", "PT5-VS-02", "PT5-VS-11", "SV-GTFS-BENCH-03", "SV-GTFS-BENCH-04"],
     errorResponses: [],
     toleratedErrorResponses: [],
     fatalErrorResponses: [],
@@ -144,24 +144,29 @@ test("07 semantic virtualization HttpData: visible discovery and negotiation fro
       suffix,
       {
         sourceObjectName,
-        name: `GTFS-Madrid-Bench-mini via Semantic Virtualization ${suffix}`,
-        version: "mini-v1",
-        shortDescription: "Semantic Virtualization output exposed as HttpData for UI demo validation",
+        name: `GTFS-Bench official mini RDF via Semantic Virtualization ${suffix}`,
+        version: "official-mini-v1",
+        shortDescription: "Official-derived GTFS-Bench RDF output exposed as HttpData for UI demo validation",
         description:
-          "Semantic Virtualization query output exposed through INESData as a contractual HttpData asset.",
-        assetType: "semantic-virtualization-mobility-output",
+          "Semantic Virtualization RDF/Turtle output derived from the official GTFS-Bench mini fixture and exposed through INESData as a contractual HttpData asset.",
+        assetType: "semantic-virtualization-gtfs-bench-rdf-output",
         keywords: [
           "validation",
           "semantic-virtualization",
           "HttpData",
-          "GTFS-Madrid-Bench-mini",
+          "GTFS-Madrid-Bench",
+          "gtfs-bench",
+          "official-derived",
           "mobility",
+          "rdf",
           "A5.2",
+          "SV-GTFS-BENCH-04",
         ],
         properties: {
-          "daimo:sourceDataset": "GTFS-Madrid-Bench-mini",
+          "daimo:sourceDataset": "GTFS-Bench-official-mini",
+          "daimo:sourceRepository": "https://github.com/oeg-upm/gtfs-bench",
           "daimo:domain": "mobility",
-          "daimo:task": "semantic-virtualization-ui-demo",
+          "daimo:task": "semantic-virtualization-gtfs-bench-official-materialization",
         },
         dataAddress: {
           type: "HttpData",
