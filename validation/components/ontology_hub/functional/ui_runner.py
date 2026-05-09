@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -66,6 +67,15 @@ def _build_artifact_paths(experiment_dir: str | None, *, create: bool = True) ->
 def _build_playwright_command(worker_count: int) -> List[str]:
     normalized_workers = worker_count if worker_count > 0 else 1
     return [*PLAYWRIGHT_COMMAND_PREFIX, f"--workers={normalized_workers}"]
+
+
+def _functional_run_id(artifact_paths: Dict[str, str]) -> str:
+    try:
+        experiment_name = Path(artifact_paths["base_dir"]).parents[2].name
+    except IndexError:
+        experiment_name = Path(artifact_paths["base_dir"]).name
+    normalized = re.sub(r"[^A-Za-z0-9]+", "-", experiment_name).strip("-").lower()
+    return normalized[:48] or "standalone"
 
 
 def _iter_specs(suites: Iterable[Dict[str, Any]]) -> Iterable[Dict[str, Any]]:
@@ -244,6 +254,7 @@ def run_ontology_hub_functional_validation(base_url: str, experiment_dir: str | 
         **os.environ,
         "ONTOLOGY_HUB_BASE_URL": normalized_base_url,
         "ONTOLOGY_HUB_RUNTIME_FILE": artifact_paths["resolved_runtime_json"],
+        "ONTOLOGY_HUB_FUNCTIONAL_RUN_ID": _functional_run_id(artifact_paths),
         "ONTOLOGY_HUB_COMPONENTS_NAMESPACE": str(runtime.get("componentsNamespace") or "components"),
         "ONTOLOGY_HUB_UI_EXPECT_TIMEOUT_MS": str(runtime.get("uiExpectTimeoutMs") or 15000),
         "ONTOLOGY_HUB_UI_ACTION_TIMEOUT_MS": str(runtime.get("uiActionTimeoutMs") or 15000),

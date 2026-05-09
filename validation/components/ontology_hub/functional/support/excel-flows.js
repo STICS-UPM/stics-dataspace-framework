@@ -818,6 +818,36 @@ async function assertCreateUserControl(page, visible) {
   }
 }
 
+async function deleteUserByEmail(page, runtime, email) {
+  await signInToEdition(page, runtime);
+  await page.goto(`${runtime.baseUrl}/edition/users`, { waitUntil: "domcontentloaded" });
+  await expectHealthyPage(page, "Users administration");
+
+  const row = page
+    .locator(".SearchBoxperson, li, article, .editionBoxSugg")
+    .filter({ hasText: email })
+    .first();
+  if (!(await row.isVisible().catch(() => false))) {
+    return false;
+  }
+
+  await clickMarked(row.locator("img.removeUser, .removeUser").first());
+  await clickMarked(page.getByRole("button", { name: "Confirm Deletion", exact: true }));
+  await page.waitForLoadState("domcontentloaded");
+  await page.goto(`${runtime.baseUrl}/edition/users`, { waitUntil: "domcontentloaded" });
+  await expectHealthyPage(page, "Users administration after user deletion");
+
+  const remaining = page
+    .locator(".SearchBoxperson, li, article, .editionBoxSugg")
+    .filter({ hasText: email })
+    .first();
+  if (await remaining.isVisible().catch(() => false)) {
+    throw new Error(`User '${email}' is still visible after deletion.`);
+  }
+
+  return true;
+}
+
 async function editAgentFromPublicDetail(page, runtime, agentName, newAgentName) {
   await signInToEdition(page, runtime);
   await page.goto(`${runtime.baseUrl}/dataset/agents/${encodeURIComponent(agentName)}`, {
@@ -1407,6 +1437,7 @@ module.exports = {
   createVocabularyByUri,
   createVocabularyFromRepository,
   deleteAgentFromPublicDetail,
+  deleteUserByEmail,
   deleteTag,
   deleteVersion,
   deleteVocabulary,

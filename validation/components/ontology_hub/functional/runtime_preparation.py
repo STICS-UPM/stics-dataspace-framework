@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shlex
@@ -33,6 +34,32 @@ def _run(cmd, check=False):
             print(f"Command failed with exit code {result.returncode}")
         return None
     return result
+
+
+def _run_capture(cmd):
+    print(f"\nExecuting: {cmd}")
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            text=True,
+            capture_output=True,
+            env=_kubectl_env(),
+        )
+    except Exception as exc:
+        print(f"Execution error: {exc}")
+        return None
+
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    if stdout:
+        print(stdout)
+    if result.returncode != 0:
+        if stderr:
+            print(stderr)
+        print(f"Command failed with exit code {result.returncode}")
+        return None
+    return stdout
 
 
 def _ontology_hub_release_name(runtime=None):
@@ -246,6 +273,55 @@ def _ontology_hub_soft_cleanup_users(session, runtime, timeout=20):
     return deleted
 
 
+def _ontology_hub_mongo_cleanup_test_identities(runtime):
+    """Remove only the deterministic functional-suite test identities from MongoDB."""
+    namespace = _ontology_hub_components_namespace(runtime)
+    release_name = _ontology_hub_release_name(runtime)
+    deployment_ref = f"deployment/{release_name}-mongodb"
+    script = r'''
+db = db.getSiblingDB("lov");
+const emailRegex = /^testing(?:[-+][^@]+)?@myemail\.com$/i;
+const userDocs = db.users.find({ email: emailRegex }).toArray();
+const agentIds = userDocs.map((user) => user.agent).filter(Boolean);
+db.agents.find({
+  $or: [
+    { name: /^Testing User/i },
+    { prefUri: /testingUser/i }
+  ]
+}).toArray().forEach((agent) => agentIds.push(agent._id));
+const userDelete = db.users.deleteMany({
+  $or: [
+    { email: emailRegex },
+    { agent: { $in: agentIds } }
+  ]
+});
+const agentDelete = db.agents.deleteMany({
+  $or: [
+    { _id: { $in: agentIds } },
+    { name: /^Testing User/i },
+    { prefUri: /testingUser/i }
+  ]
+});
+print(JSON.stringify({ users: userDelete.deletedCount, agents: agentDelete.deletedCount }));
+'''
+    output = _run_capture(
+        "kubectl exec "
+        f"-n {shlex.quote(namespace)} "
+        f"{shlex.quote(deployment_ref)} "
+        f"-- mongosh --quiet --eval {shlex.quote(script)}"
+    )
+    if output is None:
+        return None
+
+    match = re.search(r"\{[^{}]*\"users\"[^{}]*\"agents\"[^{}]*\}", output)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+
+
 def _ontology_hub_soft_cleanup_tags(session, runtime, timeout=20):
     base_url = (runtime.get("baseUrl") or "").rstrip("/")
     tag_patterns = [
@@ -413,6 +489,7 @@ def soft_cleanup_ontology_hub_for_functional(runtime):
         return False
 
     print("\nCleaning Ontology Hub Functional leftovers without restarting pods...\n")
+    db_cleanup = _ontology_hub_mongo_cleanup_test_identities(runtime)
     users = _ontology_hub_soft_cleanup_users(session, runtime)
     agents = _ontology_hub_soft_cleanup_agents(session, runtime)
     vocabularies = _ontology_hub_soft_cleanup_vocabularies(session, runtime)
@@ -434,6 +511,8 @@ def soft_cleanup_ontology_hub_for_functional(runtime):
 
     print(
         "Ontology Hub soft cleanup summary: "
+        f"db_users={(db_cleanup or {}).get('users', 'n/a')}, "
+        f"db_agents={(db_cleanup or {}).get('agents', 'n/a')}, "
         f"users={len(users)}, agents={len(agents)}, vocabularies={len(vocabularies)}, tags={len(tags)}"
     )
     return True

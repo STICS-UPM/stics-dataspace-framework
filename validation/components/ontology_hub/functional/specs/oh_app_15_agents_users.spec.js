@@ -7,6 +7,7 @@ const {
   createAgent,
   createUserForAgent,
   deleteAgentFromPublicDetail,
+  deleteUserByEmail,
   editAgentFromPublicDetail,
   deleteRunState,
   loadRunState,
@@ -20,12 +21,25 @@ const {
 
 const AGENT_USER_STATE_KEY = "oh-app-15-agent-user";
 
+function identityRunSuffix() {
+  const rawSuffix =
+    process.env.ONTOLOGY_HUB_FUNCTIONAL_RUN_ID ||
+    process.env.ONTOLOGY_HUB_CREATION_PREFIX ||
+    `${Date.now()}`;
+  return String(rawSuffix)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "run";
+}
+
 function buildIdentity() {
+  const suffix = identityRunSuffix();
   return {
-    agentName: "Testing User",
-    updatedAgentName: "Testing User Admin",
-    prefUri: "http://ontology-hub-demo.dev.ds.dataspaceunit.upm/testingUser",
-    email: "testing@myemail.com",
+    agentName: `Testing User ${suffix}`,
+    updatedAgentName: `Testing User Admin ${suffix}`,
+    prefUri: `http://ontology-hub-demo.dev.ds.dataspaceunit.upm/testingUser-${suffix}`,
+    email: `testing-${suffix}@myemail.com`,
     password: "testing123",
   };
 }
@@ -132,6 +146,7 @@ test("OH-APP-18: delete agent from the public detail page", async ({
 }) => {
   const identity = loadRunState(AGENT_USER_STATE_KEY);
 
+  const deletedUser = await deleteUserByEmail(page, ontologyHubRuntime, identity.email);
   await deleteAgentFromPublicDetail(page, ontologyHubRuntime, identity.currentAgentName);
   await captureStep(page, "18-agent-deleted");
   await signOut(page, ontologyHubRuntime);
@@ -139,5 +154,6 @@ test("OH-APP-18: delete agent from the public detail page", async ({
 
   await attachJson("18-delete-agent-report", {
     deletedName: identity.currentAgentName,
+    deletedUser,
   });
 });

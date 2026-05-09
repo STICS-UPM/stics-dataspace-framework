@@ -17,6 +17,7 @@ from validation.components.ontology_hub.functional.ui_runner import (
     PROJECT_ROOT,
     PLAYWRIGHT_WORKDIR,
     _build_artifact_paths,
+    _functional_run_id,
     _prepare_functional_runtime,
     run_ontology_hub_functional_validation,
 )
@@ -102,6 +103,94 @@ class OntologyHubFunctionalComponentValidationTests(unittest.TestCase):
         self.assertTrue(commands)
         self.assertIn("deployment/demo-ontology-hub-mongodb -n components", commands[0])
         self.assertTrue(all(" -n components" in command for command in commands))
+
+    def test_functional_run_id_uses_normalized_experiment_name(self):
+        paths = _build_artifact_paths(
+            "experiments/Experiment 2026-05-07 17:40:25",
+            create=False,
+        )
+
+        self.assertEqual(_functional_run_id(paths), "experiment-2026-05-07-17-40-25")
+
+    def test_functional_runner_passes_unique_run_id_to_playwright(self):
+        captured_env = {}
+
+        def fake_run(command, cwd=None, env=None):
+            captured_env.update(env or {})
+            return mock.Mock(returncode=0)
+
+        with tempfile.TemporaryDirectory(dir=str(PROJECT_ROOT / "experiments")) as tmpdir, mock.patch(
+            "validation.components.ontology_hub.functional.ui_runner._prepare_functional_runtime",
+            return_value=(True, None),
+        ), mock.patch(
+            "validation.components.ontology_hub.functional.ui_runner.subprocess.run",
+            side_effect=fake_run,
+        ):
+            run_ontology_hub_functional_validation(
+                "http://ontology-hub-demo.dev.ds.dataspaceunit.upm",
+                experiment_dir=tmpdir,
+            )
+
+        self.assertEqual(
+            captured_env["ONTOLOGY_HUB_FUNCTIONAL_RUN_ID"],
+            os.path.basename(tmpdir).lower().replace("_", "-"),
+        )
+
+    def test_mongo_cleanup_targets_only_functional_test_identities(self):
+        captured_commands = []
+
+        def fake_run_capture(command):
+            captured_commands.append(command)
+            return '{"users":2,"agents":1}'
+
+        with mock.patch(
+            "validation.components.ontology_hub.functional.runtime_preparation._run_capture",
+            side_effect=fake_run_capture,
+        ):
+            result = runtime_preparation._ontology_hub_mongo_cleanup_test_identities(
+                {
+                    "dataspace": "demo",
+                    "componentsNamespace": "components",
+                }
+            )
+
+        self.assertEqual(result, {"users": 2, "agents": 1})
+        self.assertEqual(len(captured_commands), 1)
+        self.assertIn("deployment/demo-ontology-hub-mongodb", captured_commands[0])
+        self.assertIn("testing(?:[-+][^@]+)?@myemail", captured_commands[0])
+
+    def test_agents_users_spec_uses_run_scoped_test_email(self):
+        spec_path = (
+            PROJECT_ROOT
+            / "validation"
+            / "components"
+            / "ontology_hub"
+            / "functional"
+            / "specs"
+            / "oh_app_15_agents_users.spec.js"
+        )
+        with open(spec_path, "r", encoding="utf-8") as handle:
+            spec = handle.read()
+
+        self.assertIn("ONTOLOGY_HUB_FUNCTIONAL_RUN_ID", spec)
+        self.assertIn("testing-${suffix}@myemail.com", spec)
+        self.assertIn("deleteUserByEmail", spec)
+        self.assertNotIn('email: "testing@myemail.com"', spec)
+
+        support_path = (
+            PROJECT_ROOT
+            / "validation"
+            / "components"
+            / "ontology_hub"
+            / "functional"
+            / "support"
+            / "excel-flows.js"
+        )
+        with open(support_path, "r", encoding="utf-8") as handle:
+            support = handle.read()
+
+        self.assertIn("async function deleteUserByEmail", support)
+        self.assertIn("deleteUserByEmail,", support)
 
     def test_functional_ui_runner_reports_reason_when_playwright_cannot_start(self):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
