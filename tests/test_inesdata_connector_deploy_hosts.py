@@ -61,7 +61,7 @@ class RecordingInfrastructure:
 
 
 class ConnectorDeployHostsTests(unittest.TestCase):
-    def test_deploy_connectors_adds_dataspace_and_connector_hosts(self):
+    def test_deploy_connectors_adds_connector_hosts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorDeployHostsConfig(tmpdir)
             os.makedirs(config.repo_dir(), exist_ok=True)
@@ -85,12 +85,16 @@ class ConnectorDeployHostsTests(unittest.TestCase):
                     "connectors": ["conn-a-demo"],
                 }
             ]
+            def fake_create_connector(connector_name, *_args, **_kwargs):
+                open(config.connector_values_file(connector_name), "w", encoding="utf-8").close()
+                return True
+
             adapter.connector_already_exists = lambda *_args, **_kwargs: True
             adapter.connector_is_healthy = lambda *_args, **_kwargs: True
             adapter.connector_database_credentials_valid = lambda *_args, **_kwargs: True
-            adapter.create_connector = lambda *_args, **_kwargs: True
+            adapter.create_connector = fake_create_connector
             adapter._prepare_vault_management_access = lambda *_args, **_kwargs: True
-            adapter.wait_for_all_connectors = lambda *_args, **_kwargs: None
+            adapter.wait_for_all_connectors = lambda *_args, **_kwargs: True
 
             with mock.patch("adapters.inesdata.connectors.ensure_python_requirements"):
                 deployed = adapter.deploy_connectors()
@@ -99,8 +103,6 @@ class ConnectorDeployHostsTests(unittest.TestCase):
             self.assertEqual(
                 infrastructure.recorded_hosts,
                 [
-                    "127.0.0.1 demo.example.local",
-                    "127.0.0.1 backend-demo.example.local",
                     "127.0.0.1 conn-a-demo.example.local",
                 ],
             )
