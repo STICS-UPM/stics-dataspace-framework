@@ -1654,6 +1654,35 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             deployer_config={"DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm"},
         )
 
+    def test_infer_component_urls_includes_mapping_editor_when_enabled(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.load_deployer_config = mock.Mock(
+            return_value={
+                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED": "true",
+            }
+        )
+        adapter.prepare_component_runtime_metadata = mock.Mock(
+            return_value=[
+                {
+                    "normalized_component": "semantic-virtualization",
+                    "host": "semantic-virtualization-demo.dev.ds.dataspaceunit.upm",
+                    "error": None,
+                    "excluded": False,
+                },
+            ]
+        )
+
+        urls = adapter.infer_component_urls(["semantic-virtualization"])
+
+        self.assertEqual(
+            urls,
+            {
+                "semantic-virtualization": "http://semantic-virtualization-demo.dev.ds.dataspaceunit.upm",
+                "semantic-virtualization-editor": "http://semantic-virtualization-editor-demo.dev.ds.dataspaceunit.upm",
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

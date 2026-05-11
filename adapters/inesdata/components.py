@@ -1108,6 +1108,23 @@ class INESDataComponentsAdapter:
             return [editor_host] if editor_host else []
         return []
 
+    def _add_additional_component_url_hosts(
+        self,
+        inferred_hosts: dict,
+        components,
+        deployer_config: dict,
+    ) -> dict:
+        resolved_hosts = dict(inferred_hosts or {})
+        for component in components or []:
+            normalized = self._normalize_component_key(component)
+            if normalized == "semantic-virtualization" and self._semantic_virtualization_mapping_editor_enabled(
+                deployer_config
+            ):
+                editor_host = self._semantic_virtualization_mapping_editor_host(deployer_config)
+                if editor_host:
+                    resolved_hosts["semantic-virtualization-editor"] = editor_host
+        return resolved_hosts
+
     def _resolve_ontology_hub_self_host_alias_ip(self, deployer_config: dict) -> str:
         explicit_ip = (deployer_config.get("ONTOLOGY_HUB_SELF_HOST_ALIAS_IP") or "").strip()
         if explicit_ip:
@@ -1318,6 +1335,11 @@ class INESDataComponentsAdapter:
                 if host:
                     inferred_hosts[normalized] = host
 
+        inferred_hosts = self._add_additional_component_url_hosts(
+            inferred_hosts,
+            components,
+            deployer_config,
+        )
         return {k: self._to_http_url(v) for k, v in inferred_hosts.items() if v}
 
     def COMPONENTS(self, components, *, ds_name=None, namespace=None, deployer_config=None):
@@ -1607,6 +1629,11 @@ class INESDataComponentsAdapter:
 
             deployed.append(normalized)
 
+        inferred_hosts = self._add_additional_component_url_hosts(
+            inferred_hosts,
+            components,
+            deployer_config,
+        )
         urls = {k: self._to_http_url(v) for k, v in inferred_hosts.items() if v}
         return {"deployed": deployed, "urls": urls}
 
