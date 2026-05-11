@@ -14,6 +14,10 @@ spec:
       labels:
         service: {{ .Values.dataspace.name }}-public-portal-backend
     spec:
+      {{- with .Values.hostAliases }}
+      hostAliases:
+{{ toYaml . | indent 8 }}
+      {{- end }}
       initContainers:
         - name: set-volume-permissions
           image: busybox

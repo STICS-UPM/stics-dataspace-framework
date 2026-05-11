@@ -14,6 +14,10 @@ spec:
       labels:
         service: {{ .Values.dataspace.name }}-public-portal-frontend
     spec:
+      {{- with .Values.hostAliases }}
+      hostAliases:
+{{ toYaml . | indent 8 }}
+      {{- end }}
       containers:
         - image: {{ .Values.frontend.image.name }}:{{ .Values.frontend.image.tag }}
           name: public-portal-frontend

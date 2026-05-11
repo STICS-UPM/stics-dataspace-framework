@@ -42,6 +42,10 @@ class EdcConfig(InesdataConfig):
     EDC_MANAGED_LABEL = "edc"
 
     @classmethod
+    def deploy_public_portal_with_dataspace(cls):
+        return False
+
+    @classmethod
     def deployer_config_path(cls):
         return os.path.join(cls.script_dir(), "deployers", cls.ADAPTER_NAME, "deployer.config")
 

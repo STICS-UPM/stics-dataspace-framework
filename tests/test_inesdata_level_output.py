@@ -95,6 +95,27 @@ class LevelOutputConfig:
     def helm_release_rs(self):
         return "registration-service"
 
+    def deploy_public_portal_with_dataspace(self):
+        return False
+
+    def public_portal_values_file(self):
+        return os.path.join(self.public_portal_dir(), "values.yaml")
+
+    def public_portal_dir(self):
+        return os.path.join(self.repo_dir(), "dataspace", "public-portal")
+
+    def ensure_public_portal_values_file(self, refresh=False):
+        del refresh
+        return self.public_portal_values_file()
+
+    def helm_release_public_portal(self):
+        return "public-portal"
+
+
+class LevelOutputPublicPortalConfig(LevelOutputConfig):
+    def deploy_public_portal_with_dataspace(self):
+        return True
+
 
 class LevelOutputConfigAdapter:
     def __init__(self, deployer_config=None):
@@ -134,10 +155,23 @@ class InesdataLevelOutputTests(unittest.TestCase):
         self.config = LevelOutputConfig(self.tmpdir.name)
         os.makedirs(self.config.common_dir(), exist_ok=True)
         os.makedirs(self.config.registration_service_dir(), exist_ok=True)
+        os.makedirs(self.config.public_portal_dir(), exist_ok=True)
         with open(self.config.values_path(), "w", encoding="utf-8") as handle:
             handle.write("key: value\n")
         with open(self.config.registration_values_file(), "w", encoding="utf-8") as handle:
             handle.write("key: value\n")
+        with open(os.path.join(self.config.public_portal_dir(), "Chart.yaml"), "w", encoding="utf-8") as handle:
+            handle.write("apiVersion: v2\nname: public-portal\n")
+        with open(self.config.public_portal_values_file(), "w", encoding="utf-8") as handle:
+            handle.write(
+                "dataspace:\n"
+                "  name: demo\n"
+                "backend:\n"
+                "  catalog:\n"
+                "    connector: http://CHANGEME-conn-NAME-demo:19193\n"
+                "  vocabularies:\n"
+                "    connector: http://CHANGEME-conn-NAME-demo:19196\n"
+            )
 
         self.config_adapter = LevelOutputConfigAdapter()
 
@@ -1215,6 +1249,145 @@ minio:
         )
         self.assertFalse(any(call.args and call.args[0] == "minikube ip" for call in run.call_args_list))
 
+    def test_public_portal_connector_endpoints_replace_changeme_placeholders(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "DS_1_NAME": "demo",
+                "DS_1_CONNECTORS": "citycouncil,company",
+            }
+        )
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+
+        result = deployment.update_public_portal_connector_endpoints(
+            self.config.public_portal_values_file(),
+        )
+
+        self.assertTrue(result)
+        with open(self.config.public_portal_values_file(), encoding="utf-8") as handle:
+            values = yaml.safe_load(handle)
+
+        self.assertEqual(
+            values["backend"]["catalog"]["connector"],
+            "http://conn-citycouncil-demo.demo-ns.svc.cluster.local:19193",
+        )
+        self.assertEqual(
+            values["backend"]["vocabularies"]["connector"],
+            "http://conn-citycouncil-demo.demo-ns.svc.cluster.local:19196",
+        )
+
+    def test_public_portal_connector_endpoints_use_provider_namespace_when_role_aligned(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "DS_1_NAME": "demo",
+                "DS_1_NAMESPACE": "demo-core-ns",
+                "DS_1_CONNECTORS": "citycouncil",
+            }
+        )
+        self.config_adapter.namespace_plan_for_dataspace = lambda **_kwargs: {
+            "namespace_roles": {
+                "registration_service_namespace": "demo-core-ns",
+                "provider_namespace": "demo-provider-ns",
+                "consumer_namespace": "demo-consumer-ns",
+            },
+        }
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+
+        result = deployment.update_public_portal_connector_endpoints(
+            self.config.public_portal_values_file(),
+        )
+
+        self.assertTrue(result)
+        with open(self.config.public_portal_values_file(), encoding="utf-8") as handle:
+            values = yaml.safe_load(handle)
+
+        self.assertEqual(
+            values["backend"]["catalog"]["connector"],
+            "http://conn-citycouncil-demo.demo-provider-ns.svc.cluster.local:19193",
+        )
+
+    def test_deploy_dataspace_deploys_public_portal_when_enabled(self):
+        config = LevelOutputPublicPortalConfig(self.tmpdir.name)
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "DS_1_NAME": "demo",
+                "DS_1_CONNECTORS": "citycouncil",
+            }
+        )
+        infrastructure = INESDataInfrastructureAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            config_adapter=self.config_adapter,
+            config_cls=config,
+        )
+        deployment = INESDataDeploymentAdapter(
+            run=lambda cmd, **_kwargs: "127.0.0.1" if cmd == "minikube ip" else object(),
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=infrastructure,
+            config_adapter=self.config_adapter,
+            config_cls=config,
+        )
+        deployment.connectors_adapter = FakeConnectorsAdapter()
+        infrastructure.ensure_local_infra_access = mock.Mock(return_value=True)
+        infrastructure.ensure_vault_unsealed = lambda: True
+        infrastructure.reconcile_vault_state_for_local_runtime = mock.Mock(return_value=True)
+        infrastructure.sync_common_credentials_from_kubernetes = mock.Mock(return_value=True)
+        infrastructure.deploy_helm_release = mock.Mock(return_value=True)
+        infrastructure.wait_for_dataspace_level3_pods = mock.Mock(return_value=True)
+        infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
+        deployment.wait_for_keycloak_admin_ready = lambda *_args, **_kwargs: True
+        deployment.restart_registration_service = lambda: None
+        deployment.update_helm_values_with_host_aliases = mock.Mock()
+
+        with mock.patch(
+            "adapters.inesdata.deployment.ensure_python_requirements",
+            lambda *_args, **_kwargs: None,
+        ), mock.patch(
+            "adapters.inesdata.deployment.requests.get",
+            return_value=mock.Mock(status_code=200),
+        ), mock.patch(
+            "adapters.shared.deployment.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+        ):
+            deployment.deploy_dataspace()
+
+        self.assertEqual(infrastructure.deploy_helm_release.call_count, 2)
+        infrastructure.deploy_helm_release.assert_has_calls([
+            mock.call(
+                "registration-service",
+                "demo-core-ns",
+                config.registration_values_file(),
+                cwd=config.registration_service_dir(),
+            ),
+            mock.call(
+                "public-portal",
+                "demo-core-ns",
+                config.public_portal_values_file(),
+                cwd=config.public_portal_dir(),
+                timeout_seconds=300,
+            ),
+        ])
+        infrastructure.wait_for_dataspace_level3_pods.assert_called_once_with(
+            "demo-core-ns",
+            dataspace_name="demo",
+            include_public_portal=True,
+        )
+
     def test_update_registration_host_aliases_uses_vm_single_k3s_ingress_ip(self):
         self.config_adapter = LevelOutputConfigAdapter(
             {
@@ -1918,6 +2091,75 @@ minio:
         self.assertIn("Observed transient service pod error", output.getvalue())
         self.assertIn("Core services detected", output.getvalue())
 
+    def test_wait_for_level2_service_pods_recovers_pending_minikube_storage_pvcs(self):
+        infrastructure = self._make_infrastructure()
+        infrastructure.config.NS_COMMON = "common"
+        infrastructure.config.TIMEOUT_POD_WAIT = 2
+        pending = "\n".join([
+            "common-srvs-keycloak-0 0/1 CrashLoopBackOff 3 10m",
+            "common-srvs-minio-0 0/1 Pending 0 10m",
+            "common-srvs-postgresql-0 0/1 Pending 0 10m",
+            "common-srvs-vault-0 0/1 Pending 0 10m",
+        ])
+        ready = "\n".join([
+            "common-srvs-keycloak-0 1/1 Running 3 11m",
+            "common-srvs-minio-0 1/1 Running 0 11m",
+            "common-srvs-postgresql-0 1/1 Running 0 11m",
+            "common-srvs-vault-0 0/1 Running 0 11m",
+        ])
+        recovering = "\n".join([
+            "common-srvs-keycloak-0 0/1 CrashLoopBackOff 3 10m",
+            "common-srvs-minio-0 1/1 Running 0 11m",
+            "common-srvs-postgresql-0 1/1 Running 0 11m",
+            "common-srvs-vault-0 0/1 Running 0 11m",
+        ])
+        pod_snapshots = iter([pending, recovering, ready])
+        pvc_payload = json.dumps(
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "data-common-srvs-postgresql-0"},
+                        "spec": {"storageClassName": "standard"},
+                        "status": {"phase": "Pending"},
+                    },
+                    {
+                        "metadata": {"name": "common-srvs-minio"},
+                        "spec": {"storageClassName": "standard"},
+                        "status": {"phase": "Pending"},
+                    },
+                ]
+            }
+        )
+
+        def fake_run_silent(cmd, *_args, **_kwargs):
+            if cmd == "kubectl get pods -n common --no-headers":
+                return next(pod_snapshots, ready)
+            if cmd == "kubectl get pvc -n common -o json":
+                return pvc_payload
+            return ""
+
+        commands = []
+        infrastructure.run_silent = fake_run_silent
+        infrastructure.run = lambda cmd, *_args, **_kwargs: commands.append(cmd) or object()
+
+        output = io.StringIO()
+        with mock.patch("adapters.inesdata.infrastructure.time.sleep", lambda *_args, **_kwargs: None):
+            with contextlib.redirect_stdout(output):
+                result = infrastructure.wait_for_level2_service_pods(
+                    "common",
+                    timeout=2,
+                    require_vault_ready=False,
+                )
+
+        self.assertTrue(result)
+        self.assertIn("Detected common-services PVCs waiting for storage provisioning", output.getvalue())
+        self.assertIn("minikube -p minikube addons enable default-storageclass", commands)
+        self.assertIn("minikube -p minikube addons enable storage-provisioner", commands)
+        self.assertIn(
+            "kubectl delete pod storage-provisioner -n kube-system --ignore-not-found --wait=false",
+            commands,
+        )
+
     def test_wait_for_level2_service_pods_still_fails_on_unexpected_error_pod(self):
         infrastructure = self._make_infrastructure()
         infrastructure.config.NS_COMMON = "common"
@@ -2232,6 +2474,34 @@ minio:
         rendered = output.getvalue()
         self.assertIn("Level 3 dataspace pods ready", rendered)
         self.assertIn("Ignoring non-Level 3 pods", rendered)
+
+    def test_wait_for_dataspace_level3_pods_waits_for_public_portal_when_requested(self):
+        infrastructure = self._make_infrastructure()
+        snapshots = iter([
+            "demo-registration-service-58d99859cd-wqz8g 1/1 Running 0 91s",
+            "\n".join([
+                "demo-registration-service-58d99859cd-wqz8g 1/1 Running 0 92s",
+                "demo-public-portal-backend-6d8fb945cb-hdp8s 1/1 Running 0 12s",
+                "demo-public-portal-frontend-6956ff4b5b-gc7nz 1/1 Running 0 12s",
+            ]),
+        ])
+        infrastructure.run_silent = lambda *_args, **_kwargs: next(snapshots, "")
+
+        output = io.StringIO()
+        with mock.patch("adapters.inesdata.infrastructure.time.sleep", return_value=None), contextlib.redirect_stdout(output):
+            result = infrastructure.wait_for_dataspace_level3_pods(
+                "demo",
+                dataspace_name="demo",
+                timeout=3,
+                include_public_portal=True,
+            )
+
+        self.assertTrue(result)
+        rendered = output.getvalue()
+        self.assertIn("Waiting for Level 3 services to appear", rendered)
+        self.assertIn("public-portal-backend", rendered)
+        self.assertIn("public-portal-frontend", rendered)
+        self.assertIn("Level 3 dataspace pods ready", rendered)
 
     def test_wait_for_dataspace_level3_pods_waits_for_stale_rollout_error_to_disappear(self):
         infrastructure = self._make_infrastructure()

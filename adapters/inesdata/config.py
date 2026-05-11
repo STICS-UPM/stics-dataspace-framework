@@ -196,6 +196,14 @@ class InesdataConfig:
         return f"{cls.dataspace_name()}-dataspace-rs"
 
     @classmethod
+    def helm_release_public_portal(cls):
+        return f"{cls.dataspace_name()}-dataspace-pp"
+
+    @classmethod
+    def deploy_public_portal_with_dataspace(cls):
+        return True
+
+    @classmethod
     def namespace_demo(cls):
         return cls.dataspace_namespace()
 
@@ -230,6 +238,37 @@ class InesdataConfig:
             return values_file
 
         source_file = cls.legacy_registration_values_file()
+        if (refresh or not os.path.exists(values_file)) and os.path.exists(source_file):
+            os.makedirs(os.path.dirname(values_file), exist_ok=True)
+            shutil.copy2(source_file, values_file)
+        return values_file
+
+    @classmethod
+    def public_portal_dir(cls):
+        return resolve_shared_artifact_dir("dataspace", "public-portal", required_file="Chart.yaml")
+
+    @classmethod
+    def public_portal_values_file(cls):
+        values_name = f"values-{cls.dataspace_name()}.yaml"
+        if cls.use_shared_deployer_artifacts():
+            return os.path.join(cls.deployment_runtime_dir(), "dataspace", "public-portal", values_name)
+        return os.path.join(cls.public_portal_dir(), values_name)
+
+    @classmethod
+    def legacy_public_portal_dir(cls):
+        return str(legacy_deployer_artifact_dir("inesdata", "dataspace", "public-portal"))
+
+    @classmethod
+    def legacy_public_portal_values_file(cls):
+        return os.path.join(cls.legacy_public_portal_dir(), f"values-{cls.dataspace_name()}.yaml")
+
+    @classmethod
+    def ensure_public_portal_values_file(cls, refresh=False):
+        values_file = cls.public_portal_values_file()
+        if not cls.use_shared_deployer_artifacts():
+            return values_file
+
+        source_file = cls.legacy_public_portal_values_file()
         if (refresh or not os.path.exists(values_file)) and os.path.exists(source_file):
             os.makedirs(os.path.dirname(values_file), exist_ok=True)
             shutil.copy2(source_file, values_file)

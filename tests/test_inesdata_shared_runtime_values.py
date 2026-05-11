@@ -90,6 +90,40 @@ class InesdataSharedRuntimeValuesTests(unittest.TestCase):
             )
             self.assertEqual(copied_values, "dataspace:\n  name: demo\n")
 
+    def test_public_portal_values_are_copied_to_runtime_when_shared_artifacts_enabled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._write_chart(root / "deployers" / "shared" / "dataspace" / "public-portal")
+            legacy_public_portal = root / "deployers" / "inesdata" / "dataspace" / "public-portal"
+            self._write_chart(legacy_public_portal)
+            (legacy_public_portal / "values-demo.yaml").write_text(
+                "dataspace:\n  name: demo\nbackend:\n  catalog: {}\n",
+                encoding="utf-8",
+            )
+
+            config = self._config_for(root)
+            with mock.patch.object(paths, "project_root", return_value=root), mock.patch.dict(
+                os.environ,
+                {"PIONERA_USE_SHARED_DEPLOYER_ARTIFACTS": "true"},
+                clear=True,
+            ):
+                values_path = Path(config.ensure_public_portal_values_file(refresh=True))
+                copied_values = values_path.read_text(encoding="utf-8")
+
+            self.assertEqual(
+                values_path,
+                root
+                / "deployers"
+                / "inesdata"
+                / "deployments"
+                / "DEV"
+                / "demo"
+                / "dataspace"
+                / "public-portal"
+                / "values-demo.yaml",
+            )
+            self.assertEqual(copied_values, "dataspace:\n  name: demo\nbackend:\n  catalog: {}\n")
+
     def test_vault_keys_use_shared_common_without_copying_legacy_runtime_artifacts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

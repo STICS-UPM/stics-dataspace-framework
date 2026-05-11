@@ -68,6 +68,15 @@ class SharedDataspaceDeploymentAdapter:
                 return str(namespace).strip()
         return self._dataspace_namespace()
 
+    def _public_portal_namespace(self):
+        return self._registration_service_namespace()
+
+    def _public_portal_enabled(self):
+        enabled_getter = getattr(self.config, "deploy_public_portal_with_dataspace", None)
+        if not callable(enabled_getter):
+            return False
+        return bool(enabled_getter())
+
     def _dataspace_runtime_dir(self):
         bootstrap_runtime = resolve_shared_level3_bootstrap_runtime(self.config) or {}
         if bootstrap_runtime.get("runtime_dir"):
@@ -154,14 +163,17 @@ class SharedDataspaceDeploymentAdapter:
     def build_recreate_dataspace_plan(self):
         ds_name = self._dataspace_name()
         namespace = self._registration_service_namespace()
-        helm_release = self.config.helm_release_rs()
+        helm_releases = [self.config.helm_release_rs()]
+        public_portal_release_getter = getattr(self.config, "helm_release_public_portal", None)
+        if self._public_portal_enabled() and callable(public_portal_release_getter):
+            helm_releases.append(public_portal_release_getter())
         return {
             "status": "planned",
             "adapter": self._adapter_name(),
             "dataspace": ds_name,
             "namespace": namespace,
             "runtime_dir": self._dataspace_runtime_dir(),
-            "helm_releases": [helm_release],
+            "helm_releases": helm_releases,
             "actions": [
                 "uninstall_dataspace_helm_releases",
                 "delete_dataspace_namespace",
@@ -177,16 +189,20 @@ class SharedDataspaceDeploymentAdapter:
     def _cleanup_dataspace_before_recreate(self):
         ds_name = self._dataspace_name()
         namespace = self._validate_recreate_namespace(self._registration_service_namespace())
-        helm_release = self.config.helm_release_rs()
+        helm_releases = [self.config.helm_release_rs()]
+        public_portal_release_getter = getattr(self.config, "helm_release_public_portal", None)
+        if self._public_portal_enabled() and callable(public_portal_release_getter):
+            helm_releases.append(public_portal_release_getter())
         bootstrap_runtime = resolve_shared_level3_bootstrap_runtime(self.config) or {}
         repo_dir = bootstrap_runtime.get("repo_dir") or self.config.repo_dir()
         runtime_dir = self._dataspace_runtime_dir()
 
         print("\nCleaning existing dataspace Kubernetes resources...")
-        self.run(
-            f"helm uninstall {shlex.quote(helm_release)} -n {shlex.quote(namespace)}",
-            check=False,
-        )
+        for helm_release in helm_releases:
+            self.run(
+                f"helm uninstall {shlex.quote(helm_release)} -n {shlex.quote(namespace)}",
+                check=False,
+            )
         self.run(
             f"kubectl delete namespace {shlex.quote(namespace)} --ignore-not-found=true",
             check=False,
@@ -291,6 +307,188 @@ class SharedDataspaceDeploymentAdapter:
 
         with open(values_file, "w") as f:
             yaml.dump(values, f, sort_keys=False)
+
+    @staticmethod
+    def _ensure_nested_dict(parent, key):
+        value = parent.get(key)
+        if isinstance(value, dict):
+            return value
+        value = {}
+        parent[key] = value
+        return value
+
+    @staticmethod
+    def _namespace_role_value(roles, field, default=""):
+        if isinstance(roles, dict):
+            return str(roles.get(field) or default or "").strip()
+        return str(getattr(roles, field, default) or default or "").strip()
+
+    def _dataspace_index(self, ds_name, ds_namespace):
+        index_getter = getattr(self.config_adapter, "dataspace_index", None)
+        if callable(index_getter):
+            try:
+                return int(index_getter(ds_name, ds_namespace))
+            except (TypeError, ValueError):
+                return 1
+        return 1
+
+    @staticmethod
+    def _normalize_configured_connector_name(raw_name, ds_name):
+        connector = str(raw_name or "").strip()
+        if not connector:
+            return ""
+        if connector.startswith("conn-"):
+            return connector
+        return f"conn-{connector}-{ds_name}"
+
+    def _configured_dataspace_connector_names(self, ds_name=None, ds_namespace=None):
+        config = self._deployer_config()
+        resolved_ds_name = str(ds_name or self._dataspace_name()).strip() or self._dataspace_name()
+        resolved_ds_namespace = str(ds_namespace or self._dataspace_namespace()).strip() or self._dataspace_namespace()
+        ds_index = self._dataspace_index(resolved_ds_name, resolved_ds_namespace)
+        raw_connectors = str(config.get(f"DS_{ds_index}_CONNECTORS") or "").strip()
+        if not raw_connectors and ds_index != 1:
+            raw_connectors = str(config.get("DS_1_CONNECTORS") or "").strip()
+
+        connectors = []
+        for item in raw_connectors.split(","):
+            connector = self._normalize_configured_connector_name(item, resolved_ds_name)
+            if connector and connector not in connectors:
+                connectors.append(connector)
+        return connectors
+
+    def _connector_namespace_for_public_portal(self, connector_name, ds_name=None, ds_namespace=None):
+        resolved_ds_name = str(ds_name or self._dataspace_name()).strip() or self._dataspace_name()
+        resolved_ds_namespace = str(ds_namespace or self._dataspace_namespace()).strip() or self._dataspace_namespace()
+        ds_index = self._dataspace_index(resolved_ds_name, resolved_ds_namespace)
+        namespace_plan_getter = getattr(self.config_adapter, "namespace_plan_for_dataspace", None)
+        if not callable(namespace_plan_getter):
+            return resolved_ds_namespace
+
+        try:
+            namespace_plan = namespace_plan_getter(
+                ds_name=resolved_ds_name,
+                ds_namespace=resolved_ds_namespace,
+                ds_index=ds_index,
+            )
+        except Exception:
+            return resolved_ds_namespace
+
+        runtime_roles = namespace_plan.get("namespace_roles", {}) if isinstance(namespace_plan, dict) else {}
+        provider_namespace = self._namespace_role_value(
+            runtime_roles,
+            "provider_namespace",
+            resolved_ds_namespace,
+        )
+        del connector_name
+        return provider_namespace or resolved_ds_namespace
+
+    def _public_portal_connector_url(self, connector_name, port, ds_name=None, ds_namespace=None):
+        portal_namespace = self._public_portal_namespace()
+        connector_namespace = self._connector_namespace_for_public_portal(
+            connector_name,
+            ds_name=ds_name,
+            ds_namespace=ds_namespace,
+        )
+        hostname = connector_name
+        if connector_namespace and portal_namespace and connector_namespace != portal_namespace:
+            hostname = f"{connector_name}.{connector_namespace}.svc.cluster.local"
+        return f"http://{hostname}:{int(port)}"
+
+    @staticmethod
+    def _values_file_contains(values_file, token):
+        try:
+            with open(values_file, encoding="utf-8") as handle:
+                return token in handle.read()
+        except OSError:
+            return False
+
+    def update_public_portal_connector_endpoints(
+        self,
+        values_file,
+        connector_name=None,
+        ds_name=None,
+        ds_namespace=None,
+    ):
+        with open(values_file, encoding="utf-8") as handle:
+            values = yaml.safe_load(handle) or {}
+
+        dataspace = values.get("dataspace") if isinstance(values.get("dataspace"), dict) else {}
+        resolved_ds_name = str(ds_name or dataspace.get("name") or self._dataspace_name()).strip() or self._dataspace_name()
+        resolved_ds_namespace = str(ds_namespace or self._dataspace_namespace()).strip() or self._dataspace_namespace()
+        connectors = self._configured_dataspace_connector_names(resolved_ds_name, resolved_ds_namespace)
+        resolved_connector = str(connector_name or (connectors[0] if connectors else "")).strip()
+        if not resolved_connector:
+            return False
+
+        backend = self._ensure_nested_dict(values, "backend")
+        catalog = self._ensure_nested_dict(backend, "catalog")
+        vocabularies = self._ensure_nested_dict(backend, "vocabularies")
+        catalog["connector"] = self._public_portal_connector_url(
+            resolved_connector,
+            19193,
+            ds_name=resolved_ds_name,
+            ds_namespace=resolved_ds_namespace,
+        )
+        vocabularies["connector"] = self._public_portal_connector_url(
+            resolved_connector,
+            19196,
+            ds_name=resolved_ds_name,
+            ds_namespace=resolved_ds_namespace,
+        )
+
+        with open(values_file, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(values, handle, sort_keys=False)
+        return True
+
+    def deploy_public_portal_if_configured(self, *, topology, update_minikube_host_aliases=True):
+        if not self._public_portal_enabled():
+            return False
+
+        ensure_values_file = getattr(self.config, "ensure_public_portal_values_file", None)
+        values_file_getter = getattr(self.config, "public_portal_values_file", None)
+        values_file = (
+            ensure_values_file(refresh=True)
+            if callable(ensure_values_file)
+            else values_file_getter()
+            if callable(values_file_getter)
+            else ""
+        )
+        if not values_file or not os.path.exists(values_file):
+            self._fail("Public portal values file not found")
+
+        if not self.update_public_portal_connector_endpoints(values_file):
+            print("\nSkipping public portal deployment: no connector is configured for this dataspace.")
+            return False
+
+        if update_minikube_host_aliases:
+            self.update_helm_values_with_host_aliases(values_file, topology=topology)
+
+        if self._values_file_contains(values_file, "CHANGEME"):
+            self._fail(
+                "Public portal values still contain CHANGEME placeholders",
+                root_cause="connector endpoints could not be reconciled from deployer.config",
+            )
+
+        chart_dir_getter = getattr(self.config, "public_portal_dir", None)
+        release_getter = getattr(self.config, "helm_release_public_portal", None)
+        if not callable(chart_dir_getter) or not callable(release_getter):
+            self._fail("Public portal deployment helpers are not available")
+
+        chart_dir = chart_dir_getter()
+        if not os.path.exists(chart_dir):
+            self._fail("Public portal chart directory not found", root_cause=chart_dir)
+
+        print("\nDeploying public portal...")
+        if not self.infrastructure.deploy_helm_release(
+            release_getter(),
+            self._public_portal_namespace(),
+            values_file,
+            cwd=chart_dir,
+            timeout_seconds=300,
+        ):
+            self._fail("Error deploying public portal")
+        return True
 
     @staticmethod
     def _print_unique_lines(output):
@@ -637,10 +835,15 @@ class SharedDataspaceDeploymentAdapter:
             self._fail("Error deploying registration-service")
 
         self.restart_registration_service()
+        public_portal_deployed = self.deploy_public_portal_if_configured(
+            topology=normalized_topology,
+            update_minikube_host_aliases=update_minikube_host_aliases,
+        )
 
         if not self.infrastructure.wait_for_dataspace_level3_pods(
             self._registration_service_namespace(),
             dataspace_name=ds_name,
+            include_public_portal=public_portal_deployed,
         ):
             self._fail("Timeout waiting for dataspace pods")
 

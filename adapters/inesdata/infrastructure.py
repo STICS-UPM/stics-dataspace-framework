@@ -832,7 +832,7 @@ class INESDataInfrastructureAdapter:
 
             time.sleep(1)
 
-    def wait_for_dataspace_level3_pods(self, namespace, dataspace_name=None, timeout=None):
+    def wait_for_dataspace_level3_pods(self, namespace, dataspace_name=None, timeout=None, include_public_portal=False):
         """Wait only for Level 3 dataspace pods.
 
         A dataspace namespace can already contain Level 4 connector pods from a
@@ -849,10 +849,32 @@ class INESDataInfrastructureAdapter:
         if not namespace:
             return False
 
-        selected_prefixes = []
+        required_prefix_groups = []
         if dataspace:
-            selected_prefixes.append(f"{dataspace}-registration-service-")
-        selected_prefixes.append("registration-service-")
+            required_prefix_groups.append((
+                "registration-service",
+                (f"{dataspace}-registration-service-",),
+            ))
+        else:
+            required_prefix_groups.append(("registration-service", ("registration-service-",)))
+
+        if include_public_portal and dataspace:
+            required_prefix_groups.extend([
+                (
+                    "public-portal-backend",
+                    (f"{dataspace}-public-portal-backend-",),
+                ),
+                (
+                    "public-portal-frontend",
+                    (f"{dataspace}-public-portal-frontend-",),
+                ),
+            ])
+
+        selected_prefixes = [
+            prefix
+            for _label, prefixes in required_prefix_groups
+            for prefix in prefixes
+        ]
 
         print(f"\nWaiting for Level 3 dataspace pods in namespace '{namespace}'...")
         start = time.time()
@@ -866,6 +888,7 @@ class INESDataInfrastructureAdapter:
             if result:
                 selected = []
                 ignored = []
+                observed_required_groups = set()
 
                 for line in result.splitlines():
                     columns = line.split()
@@ -875,6 +898,9 @@ class INESDataInfrastructureAdapter:
 
                     if any(name.startswith(prefix) for prefix in selected_prefixes):
                         selected.append(columns)
+                        for index, (_label, prefixes) in enumerate(required_prefix_groups):
+                            if any(name.startswith(prefix) for prefix in prefixes):
+                                observed_required_groups.add(index)
                     else:
                         ignored.append(name)
 
@@ -923,6 +949,14 @@ class INESDataInfrastructureAdapter:
                         progressing.append((name, status))
                         all_ready = False
 
+                    missing_required_groups = [
+                        label
+                        for index, (label, _prefixes) in enumerate(required_prefix_groups)
+                        if index not in observed_required_groups
+                    ]
+                    if missing_required_groups:
+                        all_ready = False
+
                     transient_error_since = {
                         name: first_seen
                         for name, first_seen in transient_error_since.items()
@@ -944,6 +978,15 @@ class INESDataInfrastructureAdapter:
                         print(f"\nLevel 3 pod in error state: {name} ({status})")
                         self.run(f"kubectl get pods -n {shlex.quote(namespace)}", check=False)
                         return False
+
+                    if missing_required_groups:
+                        missing_notice = ", ".join(missing_required_groups)
+                        if missing_notice != last_stale_terminal_notice:
+                            print(
+                                "\nWaiting for Level 3 services to appear: "
+                                f"{missing_notice}"
+                            )
+                            last_stale_terminal_notice = missing_notice
 
                     if transient_error and (ready_running or progressing):
                         stale_terminal_notice = ", ".join(
@@ -1251,6 +1294,67 @@ class INESDataInfrastructureAdapter:
 
             time.sleep(1)
 
+    def _common_services_pending_pvcs(self, namespace):
+        raw = self.run_silent(f"kubectl get pvc -n {namespace} -o json")
+        if not raw:
+            return []
+        try:
+            payload = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            return []
+
+        pending = []
+        for item in payload.get("items", []):
+            metadata = item.get("metadata") or {}
+            spec = item.get("spec") or {}
+            status = item.get("status") or {}
+            name = str(metadata.get("name") or "").strip()
+            if not name or status.get("phase") != "Pending":
+                continue
+            if not (
+                name.startswith("common-srvs-minio")
+                or name.startswith("data-common-srvs-postgresql")
+                or name.startswith("data-common-srvs-vault")
+            ):
+                continue
+            pending.append(
+                {
+                    "name": name,
+                    "storage_class": str(spec.get("storageClassName") or "").strip() or "<default>",
+                }
+            )
+        return pending
+
+    def _recover_minikube_storage_provisioning(self, namespace, pending_pvcs):
+        runtime = self._cluster_runtime_config()
+        if runtime.get("cluster_type") != "minikube":
+            print(
+                "Pending common-services PVCs detected, but automatic storage recovery "
+                f"is only available for Minikube clusters (cluster_type={runtime.get('cluster_type')})."
+            )
+            return False
+
+        if not pending_pvcs:
+            return False
+
+        print("\nDetected common-services PVCs waiting for storage provisioning:")
+        for pvc in pending_pvcs:
+            print(f"  - {pvc['name']} (storageClass={pvc['storage_class']})")
+        print(
+            "Refreshing Minikube storage addons before failing the common services startup. "
+            "This does not delete PVCs or application data; it only reconciles the local provisioner."
+        )
+
+        profile = shlex.quote(self._minikube_runtime_config()["profile"])
+        self.run(f"minikube -p {profile} addons enable default-storageclass", check=False)
+        self.run(f"minikube -p {profile} addons enable storage-provisioner", check=False)
+        self.run(
+            "kubectl delete pod storage-provisioner -n kube-system --ignore-not-found --wait=false",
+            check=False,
+        )
+        self.run(f"minikube -p {profile} addons enable storage-provisioner", check=False)
+        return True
+
     def wait_for_level2_service_pods(self, namespace=None, timeout=None, require_vault_ready=False):
         namespace = namespace or self.config.NS_COMMON
         timeout = timeout or self.config.TIMEOUT_POD_WAIT
@@ -1263,6 +1367,8 @@ class INESDataInfrastructureAdapter:
             "common-srvs-vault-",
         )
         observed_expected_error = None
+        storage_recovery_attempted = False
+        last_pending_pvcs = []
 
         while True:
             result = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
@@ -1279,6 +1385,7 @@ class INESDataInfrastructureAdapter:
                     name = columns[0]
                     ready = columns[1] if len(columns) > 1 else ""
                     status = columns[2]
+                    is_expected_service_pod = any(name.startswith(prefix) for prefix in expected_prefixes)
 
                     if self._is_ignored_transient_hook_pod(namespace, name):
                         continue
@@ -1289,11 +1396,23 @@ class INESDataInfrastructureAdapter:
                         continue
 
                     if status in ["CrashLoopBackOff", "ImagePullBackOff"]:
+                        if status == "CrashLoopBackOff" and is_expected_service_pod:
+                            if not storage_recovery_attempted:
+                                last_pending_pvcs = self._common_services_pending_pvcs(namespace)
+                                if last_pending_pvcs and self._recover_minikube_storage_provisioning(
+                                    namespace,
+                                    last_pending_pvcs,
+                                ):
+                                    storage_recovery_attempted = True
+                                    observed_expected_error = f"{name} ({status})"
+                                    break
+                            if storage_recovery_attempted:
+                                observed_expected_error = f"{name} ({status})"
+                                continue
                         print(f"\nPod in error state: {name} ({status})")
                         self.run(f"kubectl get pods -n {namespace}", check=False)
                         return False
 
-                    is_expected_service_pod = any(name.startswith(prefix) for prefix in expected_prefixes)
                     if status == "Error" and not self._is_ignored_transient_hook_pod(namespace, name):
                         if is_expected_service_pod:
                             observed_expected_error = f"{name} ({status})"
@@ -1338,6 +1457,24 @@ class INESDataInfrastructureAdapter:
                     for key, pod in expected.items()
                     if key != "vault" and pod is not None
                 )
+                has_pending_expected_pods = any(
+                    pod is not None and pod["status"] == "Pending"
+                    for pod in expected.values()
+                )
+                if (
+                    has_pending_expected_pods
+                    and not (all_present and all_ready)
+                    and not storage_recovery_attempted
+                ):
+                    last_pending_pvcs = self._common_services_pending_pvcs(namespace)
+                    if last_pending_pvcs and self._recover_minikube_storage_provisioning(
+                        namespace,
+                        last_pending_pvcs,
+                    ):
+                        storage_recovery_attempted = True
+                        time.sleep(3)
+                        continue
+
                 if require_vault_ready:
                     vault_running = is_ready(expected["vault"])
                 else:
@@ -1360,6 +1497,10 @@ class INESDataInfrastructureAdapter:
                 print("\nTimeout waiting for core services\n")
                 if observed_expected_error:
                     print(f"Last transient service pod error observed: {observed_expected_error}")
+                if last_pending_pvcs:
+                    print("Pending common-services PVCs still detected:")
+                    for pvc in last_pending_pvcs:
+                        print(f"  - {pvc['name']} (storageClass={pvc['storage_class']})")
                 self.run(f"kubectl get pods -n {namespace}", check=False)
                 return False
 
