@@ -1385,6 +1385,110 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "INESData connector image override is incomplete"):
                     adapter._explicit_connector_image_override_path()
 
+    def test_update_connector_model_observer_config_uses_public_backend_url_in_compact_layout(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            values_file = os.path.join(tmpdir, "values-conn-a-demo.yaml")
+            with open(values_file, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "connector:\n"
+                    "  name: conn-a-demo\n"
+                    "  dataspace: demo\n"
+                    "  ingress:\n"
+                    "    protocol: http\n"
+                    "    hostname: conn-a-demo.dev.ds.dataspaceunit.upm\n"
+                    "connectorInterface:\n"
+                    "  ontologyHub:\n"
+                    "    url: http://ontology-hub-demo.dev.ds.dataspaceunit.upm\n"
+                )
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=ConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "demo",
+                    "namespace": "demo",
+                    "connectors": ["conn-a-demo"],
+                    "connector_details": [
+                        {
+                            "name": "conn-a-demo",
+                            "active_namespace": "demo",
+                            "registration_service_namespace": "demo",
+                        }
+                    ],
+                }
+            ]
+
+            adapter.update_connector_model_observer_config(values_file, "conn-a-demo", ds_name="demo", ds_namespace="demo")
+
+            with open(values_file, encoding="utf-8") as handle:
+                values = yaml.safe_load(handle)
+
+            self.assertEqual(
+                values["connectorInterface"]["modelObserver"],
+                {
+                    "proxyTarget": "http://backend-demo.dev.ds.dataspaceunit.upm",
+                    "strapiUrl": "http://backend-demo.dev.ds.dataspaceunit.upm",
+                },
+            )
+
+    def test_update_connector_model_observer_config_keeps_public_backend_url_for_role_aligned_layout(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            values_file = os.path.join(tmpdir, "values-conn-a-demo.yaml")
+            with open(values_file, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "connector:\n"
+                    "  name: conn-a-demo\n"
+                    "  dataspace: demo\n"
+                    "  ingress:\n"
+                    "    protocol: http\n"
+                    "    hostname: conn-a-demo.dev.ds.dataspaceunit.upm\n"
+                    "connectorInterface: {}\n"
+                )
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=ConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "demo",
+                    "namespace": "demo",
+                    "namespace_profile": "role-aligned",
+                    "connectors": ["conn-a-demo"],
+                    "connector_details": [
+                        {
+                            "name": "conn-a-demo",
+                            "active_namespace": "demo-provider",
+                            "registration_service_namespace": "demo-core",
+                        }
+                    ],
+                }
+            ]
+
+            adapter.update_connector_model_observer_config(values_file, "conn-a-demo", ds_name="demo", ds_namespace="demo")
+
+            with open(values_file, encoding="utf-8") as handle:
+                values = yaml.safe_load(handle)
+
+            self.assertEqual(
+                values["connectorInterface"]["modelObserver"]["proxyTarget"],
+                "http://backend-demo.dev.ds.dataspaceunit.upm",
+            )
+            self.assertEqual(
+                values["connectorInterface"]["modelObserver"]["strapiUrl"],
+                "http://backend-demo.dev.ds.dataspaceunit.upm",
+            )
+
     def test_level4_local_connector_images_fail_when_required_outside_managed_minikube_topology(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorRetryConfig(tmpdir)

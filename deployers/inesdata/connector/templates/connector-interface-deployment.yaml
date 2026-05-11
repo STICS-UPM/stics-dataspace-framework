@@ -1,4 +1,5 @@
 {{- $layout := .Values.connector.layout | default dict }}
+{{- $modelObserver := .Values.connectorInterface.modelObserver | default dict }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -63,6 +64,10 @@ spec:
         {{- end }}
       {{- end }}
     spec:
+      {{- with .Values.hostAliases }}
+      hostAliases:
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - env:
             - name: APP_THEME
@@ -75,6 +80,10 @@ spec:
               value: {{ .Values.connector.ingress.protocol }}://{{ .Values.connector.ingress.hostname }}/shared
             - name: ONTOLOGY_URL
               value: {{ .Values.connectorInterface.ontologyHub.url | quote }}
+            - name: STRAPI_URL
+              value: {{ (index $modelObserver "strapiUrl" | default (index $modelObserver "proxyTarget") | default "") | quote }}
+            - name: MODEL_OBSERVER_PROXY_TARGET
+              value: {{ (index $modelObserver "proxyTarget" | default (index $modelObserver "strapiUrl") | default "") | quote }}
             - name: PARTICIPANT_ID
               value: {{ .Values.connector.name }}
             - name: OAUTH2_ALLOWED_URLS

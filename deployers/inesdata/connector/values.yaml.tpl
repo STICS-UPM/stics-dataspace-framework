@@ -35,6 +35,9 @@ connectorInterface:
     tag: 20260309-2e7b345
   ontologyHub:
     url: {{ 'https' if keys.environment == 'PRO' else 'http' }}://ontology-hub-{{ keys.dataspace_name }}.{% if keys.environment == 'PRO' %}ds.dataspaceunit-project.eu{% else %}{{ keys.ds_domain_base | default('pionera.oeg.fi.upm.es') }}{% endif %}
+  modelObserver:
+    strapiUrl: {{ 'https' if keys.environment == 'PRO' else 'http' }}://backend-{{ keys.dataspace_name }}.{% if keys.environment == 'PRO' %}ds.dataspaceunit-project.eu{% else %}{{ keys.ds_domain_base | default('pionera.oeg.fi.upm.es') }}{% endif %}
+    proxyTarget: {{ 'https' if keys.environment == 'PRO' else 'http' }}://backend-{{ keys.dataspace_name }}.{% if keys.environment == 'PRO' %}ds.dataspaceunit-project.eu{% else %}{{ keys.ds_domain_base | default('pionera.oeg.fi.upm.es') }}{% endif %}
   oauth2:
     client:
       dataspace-users

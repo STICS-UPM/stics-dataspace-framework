@@ -21,6 +21,11 @@ if test -z "$MODEL_OBSERVER_PROXY_TARGET" && test -n "$STRAPI_URL"; then
     export MODEL_OBSERVER_PROXY_TARGET="$STRAPI_URL"
 fi
 
+if test -z "$MODEL_OBSERVER_PROXY_TARGET"; then
+    echo "MODEL_OBSERVER_PROXY_TARGET not configured; using inert local fallback for Nginx proxy"
+    export MODEL_OBSERVER_PROXY_TARGET="http://127.0.0.1:9"
+fi
+
 if test -f "$NGINX_DEFAULT_CONF_TPL"; then
     echo "Creando configuracion nginx desde plantilla"
     envsubst '${MODEL_OBSERVER_PROXY_TARGET}' < $NGINX_DEFAULT_CONF_TPL > $NGINX_DEFAULT_CONF

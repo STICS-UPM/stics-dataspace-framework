@@ -1025,6 +1025,33 @@ class INESDataConnectorsAdapter:
         with open(values_file, "w") as f:
             yaml.dump(values, f, sort_keys=False)
 
+    @staticmethod
+    def _connector_model_observer_public_url(values, ds_name):
+        connector = values.get("connector") or {}
+        ingress = connector.get("ingress") or {}
+        protocol = str(ingress.get("protocol") or "http").strip() or "http"
+        hostname = str(ingress.get("hostname") or "").strip()
+        if hostname and "." in hostname:
+            return f"{protocol}://backend-{ds_name}.{hostname.split('.', 1)[1]}"
+        return ""
+
+    def update_connector_model_observer_config(self, values_file, connector_name, ds_name=None, ds_namespace=None):
+        with open(values_file) as f:
+            values = yaml.safe_load(f) or {}
+
+        resolved_ds_name = str(ds_name or values.get("connector", {}).get("dataspace") or self._dataspace_name()).strip()
+        connector_interface = values.setdefault("connectorInterface", {})
+        model_observer = connector_interface.setdefault("modelObserver", {})
+        public_url = self._connector_model_observer_public_url(values, resolved_ds_name)
+        if public_url:
+            model_observer["proxyTarget"] = public_url
+            model_observer["strapiUrl"] = public_url
+        else:
+            model_observer.setdefault("proxyTarget", "http://127.0.0.1:9")
+
+        with open(values_file, "w") as f:
+            yaml.dump(values, f, sort_keys=False)
+
     def update_connector_layout_metadata(self, values_file, connector_name):
         with open(values_file) as f:
             values = yaml.safe_load(f) or {}
@@ -2408,6 +2435,12 @@ class INESDataConnectorsAdapter:
         )
         self.update_connector_service_discovery(values_file, connector_name)
         self.update_connector_layout_metadata(values_file, connector_name)
+        self.update_connector_model_observer_config(
+            values_file,
+            connector_name,
+            ds_name=ds_name,
+            ds_namespace=ds_namespace,
+        )
 
         release_name = f"{connector_name}-{ds_name}"
         print(f"Deploying connector {connector_name}...")
