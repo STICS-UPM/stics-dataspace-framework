@@ -1,0 +1,297 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pionera.local/schemas/JS_Metadata_Daimo.schema.json",
+  "title": "JS Metadata DAIMO - Machine Learning Asset",
+  "description": "Schema de metadatos para modelos de IA con formulario compacto por secciones.",
+  "@context": {
+    "dct": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "daimo": "https://w3id.org/daimo/ns#",
+    "mls": "http://www.w3.org/ns/mls#"
+  },
+  "type": "object",
+  "properties": {
+    "dct:title": {
+      "type": "string",
+      "title": "Model title",
+      "minLength": 1
+    },
+    "dct:description": {
+      "type": "string",
+      "title": "Model description",
+      "minLength": 1
+    },
+    "daimo:task": {
+      "type": "string",
+      "title": "Task",
+      "enum": [
+        "Multimodal",
+        "Computer vision",
+        "Natural Language Processing",
+        "Audio",
+        "Tabular",
+        "Predictive event"
+      ]
+    },
+    "daimo:subtask": {
+      "type": "string",
+      "title": "Subtask",
+      "enum": [
+        "Audio text to text",
+        "Visual question answering",
+        "Visual document retrieval",
+        "Image Classification",
+        "Object detection",
+        "Image Segmentation",
+        "Sentiment analysis",
+        "Text classification",
+        "Calculate default probability",
+        "Other"
+      ]
+    },
+    "daimo:algorithm": {
+      "type": "string",
+      "title": "Algorithm",
+      "minLength": 1
+    },
+    "daimo:framework": {
+      "type": "string",
+      "title": "Framework",
+      "enum": [
+        "TensorFlow",
+        "PyTorch",
+        "scikit-learn",
+        "XGBoost",
+        "LightGBM",
+        "CatBoost",
+        "ONNX",
+        "Custom"
+      ]
+    },
+    "daimo:library": {
+      "type": "string",
+      "title": "Library",
+      "enum": [
+        "Transformers",
+        "Keras",
+        "scikit-learn",
+        "PyTorch Lightning",
+        "XGBoost",
+        "LightGBM",
+        "CatBoost",
+        "spaCy",
+        "OpenCV",
+        "Other"
+      ]
+    },
+    "dct:language": {
+      "type": "array",
+      "title": "Languages",
+      "items": {
+        "type": "string",
+        "enum": [
+          "English",
+          "Chinese",
+          "Spanish",
+          "French",
+          "German",
+          "Japanese",
+          "Portuguese",
+          "Italian",
+          "Other"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "dct:license": {
+      "type": "string",
+      "title": "License",
+      "enum": [
+        "apache-2.0",
+        "mit",
+        "openrail",
+        "gemma",
+        "proprietary",
+        "other"
+      ]
+    },
+    "daimo:input_features": {
+      "type": "array",
+      "title": "Input Features",
+      "description": "Campos de entrada esperados por el modelo.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "enum": [
+              "string",
+              "integer",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "nullable": {
+            "type": "boolean",
+            "title": "Nulleable",
+            "default": false
+          },
+          "minValue": {
+            "type": "number",
+            "title": "Min Value"
+          },
+          "maxValue": {
+            "type": "number",
+            "title": "Max Value"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "daimo:input_example": {
+      "type": "string",
+      "title": "Input Example JSON",
+      "description": "Ejemplo completo de payload JSON. Puede ser extenso.",
+      "default": ""
+    },
+    "mls:ModelEvaluation": {
+      "type": "array",
+      "title": "Evaluation metrics",
+      "items": {
+        "type": "object",
+        "properties": {
+          "metric": {
+            "type": "string",
+            "enum": [
+              "AUC",
+              "GINI",
+              "Recall",
+              "R2",
+              "MSE",
+              "MAE",
+              "Precision",
+              "F1"
+            ]
+          },
+          "value": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "@uischema": {
+    "type": "VerticalLayout",
+    "elements": [
+      {
+        "type": "Group",
+        "label": "Model Overview",
+        "elements": [
+          {
+            "type": "HorizontalLayout",
+            "elements": [
+              {
+                "type": "Control",
+                "scope": "#/properties/dct:title"
+              },
+              {
+                "type": "Control",
+                "scope": "#/properties/daimo:algorithm"
+              }
+            ]
+          },
+          {
+            "type": "Control",
+            "scope": "#/properties/dct:description",
+            "options": {
+              "multi": true
+            }
+          }
+        ]
+      },
+      {
+        "type": "Group",
+        "label": "Tags Classification",
+        "elements": [
+          {
+            "type": "HorizontalLayout",
+            "elements": [
+              {
+                "type": "Control",
+                "scope": "#/properties/daimo:task"
+              },
+              {
+                "type": "Control",
+                "scope": "#/properties/daimo:subtask"
+              }
+            ]
+          },
+          {
+            "type": "HorizontalLayout",
+            "elements": [
+              {
+                "type": "Control",
+                "scope": "#/properties/daimo:framework"
+              },
+              {
+                "type": "Control",
+                "scope": "#/properties/daimo:library"
+              }
+            ]
+          },
+          {
+            "type": "HorizontalLayout",
+            "elements": [
+              {
+                "type": "Control",
+                "scope": "#/properties/dct:language"
+              },
+              {
+                "type": "Control",
+                "scope": "#/properties/dct:license"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "Group",
+        "label": "Input Definition",
+        "elements": [
+          {
+            "type": "Control",
+            "scope": "#/properties/daimo:input_features"
+          },
+          {
+            "type": "Control",
+            "scope": "#/properties/daimo:input_example",
+            "options": {
+              "multi": true
+            }
+          }
+        ]
+      },
+      {
+        "type": "Group",
+        "label": "Evaluation",
+        "elements": [
+          {
+            "type": "Control",
+            "scope": "#/properties/mls:ModelEvaluation"
+          }
+        ]
+      }
+    ]
+  },
+  "additionalProperties": true
+}
