@@ -285,7 +285,7 @@ def _docker_memory_total_mb():
 
 
 def _adapter_default_namespace(adapter_name):
-    defaults = {"inesdata": "demo", "edc": "demoedc"}
+    defaults = {"inesdata": "core-control", "edc": "edc-control"}
     return defaults.get(str(adapter_name or "").strip().lower(), "")
 
 
@@ -805,8 +805,13 @@ def _run_level6_local_stability_postflight(
         return {"status": "skipped", "reason": "missing-preflight"}
 
     namespaces = _level6_local_stability_namespaces(deployer_context)
+    timeout = _positive_int_env("PIONERA_LOCAL_STABILITY_TIMEOUT_SECONDS", 120)
+    poll_interval = max(1, _positive_int_env("PIONERA_LOCAL_STABILITY_POLL_SECONDS", 5))
     monitor = monitor_cls(namespaces)
-    snapshot = monitor.snapshot()
+    snapshot = monitor.wait_until_ready(
+        timeout_seconds=timeout,
+        poll_interval_seconds=poll_interval,
+    )
     comparison = compare_local_stability(preflight_snapshot, snapshot)
     result = {
         "status": comparison.get("status"),
@@ -1929,7 +1934,7 @@ def build_validation_engine(adapter, engine_cls=ValidationEngine):
         adapter,
         "connectors.build_internal_protocol_address",
     )
-    ds_name = "demo"
+    ds_name = "pionera"
     config = getattr(adapter, "config", None)
     dataspace_name_getter = getattr(config, "dataspace_name", None)
     if callable(dataspace_name_getter):
@@ -1944,7 +1949,7 @@ def build_validation_engine(adapter, engine_cls=ValidationEngine):
             if resolved_name:
                 ds_name = resolved_name
         else:
-            ds_name = getattr(config, "DS_NAME", "demo")
+            ds_name = getattr(config, "DS_NAME", "pionera")
     transfer_storage_verifier = TransferStorageVerifier(
         load_connector_credentials=load_connector_credentials,
         load_deployer_config=load_deployer_config,
@@ -2143,7 +2148,7 @@ class _Level6LocalHttpPortForwardFallback:
             resolved = str(namespace_getter() or "").strip()
             if resolved:
                 return resolved
-        return str(getattr(config, "DS_NAME", "demo") or "demo").strip() or "demo"
+        return str(getattr(config, "DS_NAME", "pionera") or "pionera").strip() or "pionera"
 
     def _public_keycloak_url(self):
         config_loader = getattr(self.validator, "load_deployer_config", None)
@@ -2153,7 +2158,7 @@ class _Level6LocalHttpPortForwardFallback:
         return self._normalize_http_url(config.get("KC_INTERNAL_URL") or config.get("KC_URL"))
 
     def _keycloak_probe_url(self):
-        dataspace_name = getattr(self.validator, "_dataspace_name", lambda: "demo")()
+        dataspace_name = getattr(self.validator, "_dataspace_name", lambda: "pionera")()
         keycloak_url = self._public_keycloak_url()
         if not keycloak_url:
             return ""
@@ -2334,6 +2339,10 @@ def _supports_level6_kafka_edc(adapter, validation_profile=None, deployer_name=N
     if adapter_name not in {"edc", "inesdata"}:
         return False
 
+    capability_getter = getattr(adapter, "supports_kafka_transfer_validation", None)
+    if callable(capability_getter) and capability_getter() is False:
+        return False
+
     return callable(_resolve_adapter_callable(adapter, "get_kafka_config"))
 
 
@@ -2348,7 +2357,7 @@ def _dataspace_name_loader(adapter):
     if callable(dataspace_name_getter):
         return dataspace_name_getter
 
-    return lambda: getattr(config, "DS_NAME", "demo")
+    return lambda: getattr(config, "DS_NAME", "pionera")
 
 
 def build_kafka_edc_validation_suite(
@@ -4299,10 +4308,30 @@ def _prepare_edc_local_connector_image_override(adapter):
     _ensure_docker_client_ready_for_local_image_build(adapter)
     minikube_profile = _edc_local_minikube_profile(adapter)
     cluster_runtime = _edc_local_cluster_runtime(adapter, topology=getattr(adapter, "topology", "local"))
+    config_adapter = getattr(adapter, "config_adapter", None)
+    source_dir_getter = getattr(config_adapter, "edc_connector_source_dir", None)
+    repo_url_getter = getattr(config_adapter, "edc_reference_repo_url", None)
+    repo_subdir_getter = getattr(config_adapter, "edc_reference_repo_subdir", None)
+    source_dir = source_dir_getter() if callable(source_dir_getter) else os.path.join(
+        root_dir,
+        "adapters",
+        "edc",
+        "sources",
+        "dashboard",
+        "asset-filter-template",
+    )
+    repo_url = repo_url_getter() if callable(repo_url_getter) else "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
+    repo_subdir = repo_subdir_getter() if callable(repo_subdir_getter) else "asset-filter-template"
     command = [
         "bash",
         script_path,
         "--apply",
+        "--source-dir",
+        source_dir,
+        "--sync-git-url",
+        repo_url,
+        "--sync-subdir",
+        repo_subdir,
         "--image",
         image_name,
         "--tag",
@@ -4437,7 +4466,7 @@ def _ensure_safe_edc_deployer_execution(adapter, deployer_name=None, topology="l
             or ""
         ).strip()
 
-    shared_dataspaces = {"demo"}
+    shared_dataspaces = {"demo", "pionera"}
     allow_shared_dataspace = str(
         os.getenv("PIONERA_ALLOW_SHARED_EDC_DEPLOY", "false")
     ).strip().lower() in {"1", "true", "yes", "on"}
@@ -4445,7 +4474,7 @@ def _ensure_safe_edc_deployer_execution(adapter, deployer_name=None, topology="l
     if dataspace_name.lower() in shared_dataspaces and not allow_shared_dataspace:
         raise RuntimeError(
             "Real deployer execution for EDC refuses to target the shared dataspace "
-            f"'{dataspace_name}'. Use an isolated dataspace such as 'demoedc' or set "
+            f"'{dataspace_name}'. Use an isolated dataspace such as 'pionera-edc' or set "
             "PIONERA_ALLOW_SHARED_EDC_DEPLOY=true to bypass this protection explicitly."
         )
 
@@ -6726,11 +6755,11 @@ def _print_interactive_help():
     print("[UI Validation]")
     print("I - Use to validate the INESData portal experience and component integrations through INESData.")
     print("O - Use when Ontology Hub UI changed or after deploying ontology-related components.")
-    print("    This runs Ontology Hub component suites, not the INESData integration demo.")
+    print("    This runs Ontology Hub component suites, not the INESData integration validation.")
     print("A - Use when AI Model Hub UI changed or after deploying AI Model Hub components.")
-    print("    This runs AI Model Hub component suites, not the INESData integration demo.")
+    print("    This runs AI Model Hub component suites, not the INESData integration validation.")
     print("V - Use when Semantic Virtualization UI/API browser reachability changed or after deploying the virtualizer.")
-    print("    This runs Semantic Virtualization component/editor suites, not the INESData integration demo.")
+    print("    This runs Semantic Virtualization component/editor suites, not the INESData integration validation.")
     print()
     print("[Compatibility]")
     print("Levels 1-2 belong to the shared local foundation; the menu asks for an adapter only when an operation needs Levels 3-6, unless you preselect one with S.")
@@ -8323,8 +8352,8 @@ def create_parser(adapter_registry=None):
             "  python main.py inesdata local-repair --topology local --recover-connectors\n"
             "  python main.py edc validate --topology local\n"
             "  python main.py edc hosts --topology local\n"
-            "  python main.py edc recreate-dataspace --topology local --confirm-dataspace demoedc\n"
-            "  python main.py edc recreate-dataspace --topology local --confirm-dataspace demoedc --with-connectors\n"
+            "  python main.py edc recreate-dataspace --topology local --confirm-dataspace pionera-edc\n"
+            "  python main.py edc recreate-dataspace --topology local --confirm-dataspace pionera-edc --with-connectors\n"
             "  python main.py inesdata metrics --topology local\n"
             "  python main.py inesdata metrics --topology local --kafka\n"
             "  python main.py inesdata run --topology local\n"

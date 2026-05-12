@@ -256,6 +256,44 @@ class KafkaManagerTests(unittest.TestCase):
         self.assertTrue(exec_calls)
         self.assertIn("framework-kafka-external.demo.svc.cluster.local", exec_calls[0][-1])
 
+    def test_wait_for_kubernetes_bootstrap_can_probe_connector_namespaces(self):
+        exec_calls = []
+
+        def fake_runner(args, input_text=None):
+            if args[:4] == ["kubectl", "get", "pods", "-n"]:
+                namespace = args[4]
+                if namespace == "provider":
+                    return _FakeCompletedProcess(stdout="conn-provider 1/1 Running 0 1m\n")
+                if namespace == "consumer":
+                    return _FakeCompletedProcess(stdout="conn-consumer 1/1 Running 0 1m\n")
+                return _FakeCompletedProcess(stdout="registration-service 1/1 Running 0 1m\n")
+            if args[:3] == ["kubectl", "exec", "-n"]:
+                exec_calls.append(list(args))
+                return _FakeCompletedProcess(returncode=0)
+            return _FakeCompletedProcess(stdout="")
+
+        manager = KafkaManager(
+            runtime_config={
+                "provisioner": "kubernetes",
+                "k8s_namespace": "core-control",
+                "k8s_probe_namespaces": "provider,consumer",
+                "k8s_service_name": "framework-kafka",
+            },
+            command_runner=fake_runner,
+            wait_timeout_seconds=1,
+            poll_interval_seconds=0.01,
+        )
+
+        ids = manager._kubernetes_identifiers(manager._load_manager_config())
+        result = manager._wait_for_kubernetes_internal_bootstrap(ids)
+
+        self.assertEqual(ids["probe_namespaces"], ["provider", "consumer", "core-control"])
+        self.assertEqual(result["namespace"], "provider")
+        self.assertEqual(result["pod"], "conn-provider")
+        self.assertEqual(result["host"], "framework-kafka.core-control.svc.cluster.local")
+        self.assertTrue(exec_calls)
+        self.assertEqual(exec_calls[0][:5], ["kubectl", "exec", "-n", "provider", "conn-provider"])
+
     def test_stop_kafka_only_stops_framework_managed_container(self):
         manager = KafkaManager(container_class=_FakeKafkaContainer)
         manager.container = _FakeKafkaContainer("confluentinc/cp-kafka:latest")

@@ -43,10 +43,10 @@ function resolvePortalRuntime(): ConnectorPortalRuntime {
       protocolBaseUrl: process.env.PORTAL_PROTOCOL_BASE_URL?.trim() || "",
       transferStartPath:
         process.env.PORTAL_TRANSFER_START_PATH?.trim() ||
-        (adapter === "edc" ? "adaptertransferprocesses" : "inesdatatransferprocesses"),
+        (adapter === "edc" ? "transferprocesses" : "inesdatatransferprocesses"),
       transferDestinationType:
         process.env.PORTAL_TRANSFER_DESTINATION_TYPE?.trim() ||
-        (adapter === "edc" ? "AmazonS3" : "InesDataStore"),
+        (adapter === "edc" ? "HttpData" : "InesDataStore"),
       username: process.env.PORTAL_USER ?? "",
       password: process.env.PORTAL_PASSWORD ?? "",
     };

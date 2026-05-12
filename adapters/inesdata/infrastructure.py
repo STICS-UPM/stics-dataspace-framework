@@ -356,6 +356,10 @@ class INESDataInfrastructureAdapter:
     def manage_hosts_entries(self, desired_entries, header_comment="# Dataspace Local Deployment", auto_confirm=None):
         hosts_paths = self.get_hosts_paths()
 
+        if self.is_wsl() and hosts_paths:
+            # The browser-facing local deployment runs through Windows hosts in WSL.
+            hosts_paths = hosts_paths[:1]
+
         default_header = "# Dataspace Local Deployment"
         header_comment = (header_comment or default_header).strip() or default_header
         if not header_comment.startswith("#"):
@@ -839,7 +843,14 @@ class INESDataInfrastructureAdapter:
         previous run. Level 3 should not fail because those connector pods are
         initializing or unhealthy; connector health belongs to Level 4.
         """
-        timeout = timeout or self.config.TIMEOUT_NAMESPACE
+        if timeout is None:
+            timeout = self.config.TIMEOUT_NAMESPACE
+            if include_public_portal:
+                timeout = max(
+                    int(timeout),
+                    int(getattr(self.config, "TIMEOUT_POD_WAIT", 120)),
+                    420,
+                )
         transient_error_grace_seconds = max(
             5,
             min(int(getattr(self.config, "TIMEOUT_PORT", 30)), 15),

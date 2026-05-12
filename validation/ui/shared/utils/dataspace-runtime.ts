@@ -212,8 +212,8 @@ function resolveConnectorRuntime(
     protocolBaseUrl:
       process.env[`UI_${envPrefix}_PROTOCOL_URL`] ||
       `${baseUrl}/protocol`,
-    transferStartPath: adapter === "edc" ? "adaptertransferprocesses" : "inesdatatransferprocesses",
-    transferDestinationType: adapter === "edc" ? "AmazonS3" : "InesDataStore",
+    transferStartPath: adapter === "edc" ? "transferprocesses" : "inesdatatransferprocesses",
+    transferDestinationType: adapter === "edc" ? "HttpData" : "InesDataStore",
     username,
     password,
     transferDestination:

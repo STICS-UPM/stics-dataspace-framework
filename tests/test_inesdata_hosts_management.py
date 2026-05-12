@@ -9,7 +9,7 @@ from adapters.inesdata.infrastructure import INESDataInfrastructureAdapter
 
 
 class HostsManagementTests(unittest.TestCase):
-    def test_manage_hosts_entries_updates_all_wsl_hosts_files(self):
+    def test_manage_hosts_entries_uses_windows_hosts_only_on_wsl(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             windows_hosts = os.path.join(tmpdir, "windows-hosts")
             linux_hosts = os.path.join(tmpdir, "linux-hosts")
@@ -30,10 +30,13 @@ class HostsManagementTests(unittest.TestCase):
                 "127.0.0.1 backend-demo.dev.ds.dataspaceunit.upm",
             ], auto_confirm=True)
 
-            for path in (windows_hosts, linux_hosts):
-                with open(path, "r", encoding="utf-8") as handle:
-                    content = handle.read()
-                self.assertIn("127.0.0.1 backend-demo.dev.ds.dataspaceunit.upm", content)
+            with open(windows_hosts, "r", encoding="utf-8") as handle:
+                windows_content = handle.read()
+            with open(linux_hosts, "r", encoding="utf-8") as handle:
+                linux_content = handle.read()
+
+            self.assertIn("127.0.0.1 backend-demo.dev.ds.dataspaceunit.upm", windows_content)
+            self.assertNotIn("127.0.0.1 backend-demo.dev.ds.dataspaceunit.upm", linux_content)
 
     def test_manage_hosts_entries_accepts_tab_separated_hosts_lines(self):
         with tempfile.TemporaryDirectory() as tmpdir:

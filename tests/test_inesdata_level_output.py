@@ -2503,6 +2503,41 @@ minio:
         self.assertIn("public-portal-frontend", rendered)
         self.assertIn("Level 3 dataspace pods ready", rendered)
 
+    def test_wait_for_dataspace_level3_pods_extends_default_timeout_for_public_portal(self):
+        infrastructure = self._make_infrastructure()
+        infrastructure.config.TIMEOUT_NAMESPACE = 1
+        infrastructure.config.TIMEOUT_POD_WAIT = 120
+        snapshots = iter([
+            "demo-registration-service-58d99859cd-wqz8g 1/1 Running 0 91s",
+            "demo-registration-service-58d99859cd-wqz8g 1/1 Running 0 93s",
+            "\n".join([
+                "demo-registration-service-58d99859cd-wqz8g 1/1 Running 0 94s",
+                "demo-public-portal-backend-6d8fb945cb-hdp8s 1/1 Running 0 12s",
+                "demo-public-portal-frontend-6956ff4b5b-gc7nz 1/1 Running 0 12s",
+            ]),
+        ])
+        infrastructure.run_silent = lambda *_args, **_kwargs: next(snapshots, "")
+        clock = iter([0.0, 0.0, 2.0, 3.0, 3.0])
+
+        output = io.StringIO()
+        with mock.patch(
+            "adapters.inesdata.infrastructure.time.time",
+            side_effect=lambda: next(clock),
+        ), mock.patch(
+            "adapters.inesdata.infrastructure.time.sleep",
+            return_value=None,
+        ), contextlib.redirect_stdout(output):
+            result = infrastructure.wait_for_dataspace_level3_pods(
+                "demo",
+                dataspace_name="demo",
+                include_public_portal=True,
+            )
+
+        self.assertTrue(result)
+        rendered = output.getvalue()
+        self.assertIn("Waiting for Level 3 services to appear", rendered)
+        self.assertIn("Level 3 dataspace pods ready", rendered)
+
     def test_wait_for_dataspace_level3_pods_waits_for_stale_rollout_error_to_disappear(self):
         infrastructure = self._make_infrastructure()
         infrastructure.run = mock.Mock(return_value=object())

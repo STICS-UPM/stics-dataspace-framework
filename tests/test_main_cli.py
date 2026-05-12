@@ -4111,6 +4111,23 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(events, ["validation", "newman_metrics", "kafka_edc"])
         self.assertEqual(result["kafka_edc_results"][0]["status"], "passed")
 
+    def test_level6_kafka_edc_support_honors_adapter_capability_opt_out(self):
+        class HttpOnlyEdcAdapter(FakeAdapter):
+            def get_kafka_config(self):
+                return {"bootstrap_servers": "localhost:9092"}
+
+            def supports_kafka_transfer_validation(self):
+                return False
+
+        validation_profile = types.SimpleNamespace(adapter="edc")
+
+        self.assertFalse(
+            main._supports_level6_kafka_edc(
+                HttpOnlyEdcAdapter(),
+                validation_profile=validation_profile,
+            )
+        )
+
     def test_level6_validation_mode_defaults_to_stable_only_for_local(self):
         local_mode = main._resolve_level6_validation_mode(topology="local")
         vm_mode = main._resolve_level6_validation_mode(topology="vm-single")
@@ -4146,6 +4163,46 @@ class MainCliTests(unittest.TestCase):
             )
         )
 
+    def test_level6_local_stability_postflight_waits_for_recovery(self):
+        validation_mode = main._resolve_level6_validation_mode(topology="local")
+        context = types.SimpleNamespace(namespace_roles={"registration_service_namespace": "demoedc"})
+        preflight = {
+            "status": "passed",
+            "restart_index": {},
+            "node_not_ready_event_count": 0,
+        }
+        recovered_snapshot = {
+            "status": "warning",
+            "restart_index": {},
+            "node_not_ready_event_count": 1,
+            "warnings": [{"name": "node_not_ready_events"}],
+            "blocking_issues": [],
+        }
+
+        class RecoveringMonitor:
+            def __init__(self, namespaces):
+                self.namespaces = namespaces
+
+            def wait_until_ready(self, *, timeout_seconds, poll_interval_seconds):
+                self.timeout_seconds = timeout_seconds
+                self.poll_interval_seconds = poll_interval_seconds
+                return recovered_snapshot
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = main._run_level6_local_stability_postflight(
+                validation_mode,
+                "edc",
+                context,
+                temp_dir,
+                preflight,
+                monitor_cls=RecoveringMonitor,
+            )
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["snapshot"], recovered_snapshot)
+        self.assertEqual(result["comparison"]["node_not_ready_delta"], 1)
+        self.assertFalse(result["blocking_issues"])
+
     def test_level6_local_capacity_preflight_blocks_low_memory_coexistence(self):
         validation_mode = main._resolve_level6_validation_mode(topology="local")
         context = types.SimpleNamespace(
@@ -4158,7 +4215,7 @@ class MainCliTests(unittest.TestCase):
         }
         pods_payload = {
             "items": [
-                {"metadata": {"namespace": "demo"}, "status": {"phase": "Running"}},
+                {"metadata": {"namespace": "core-control"}, "status": {"phase": "Running"}},
                 {"metadata": {"namespace": "demoedc"}, "status": {"phase": "Running"}},
             ]
         }
@@ -4197,7 +4254,7 @@ class MainCliTests(unittest.TestCase):
         }
         pods_payload = {
             "items": [
-                {"metadata": {"namespace": "demo"}, "status": {"phase": "Running"}},
+                {"metadata": {"namespace": "core-control"}, "status": {"phase": "Running"}},
                 {"metadata": {"namespace": "demoedc"}, "status": {"phase": "Running"}},
             ]
         }
@@ -4234,7 +4291,7 @@ class MainCliTests(unittest.TestCase):
     def test_local_adapter_install_capacity_preflight_blocks_second_adapter(self):
         pods_payload = {
             "items": [
-                {"metadata": {"namespace": "demo"}, "status": {"phase": "Running"}},
+                {"metadata": {"namespace": "core-control"}, "status": {"phase": "Running"}},
             ]
         }
         nodes_payload = {
@@ -4268,7 +4325,7 @@ class MainCliTests(unittest.TestCase):
             "workloads": {
                 "active_adapters": ["inesdata"],
                 "active_component_namespaces": ["components"],
-                "adapter_namespaces": {"inesdata": "demo", "edc": "demoedc"},
+                "adapter_namespaces": {"inesdata": "core-control", "edc": "demoedc"},
             }
         }
 
@@ -4276,7 +4333,7 @@ class MainCliTests(unittest.TestCase):
 
         self.assertEqual(plan["target_adapter"], "edc")
         self.assertEqual(plan["adapters_to_remove"], ["inesdata"])
-        self.assertEqual(plan["namespaces_to_delete"], ["demo", "components"])
+        self.assertEqual(plan["namespaces_to_delete"], ["core-control", "components"])
         self.assertEqual(plan["confirmation_token"], "SWITCH TO EDC")
         self.assertEqual(plan["preserved_namespaces"], ["common-srvs"])
 
@@ -4288,7 +4345,7 @@ class MainCliTests(unittest.TestCase):
         }
         pods_before = {
             "items": [
-                {"metadata": {"namespace": "demo"}, "status": {"phase": "Running"}},
+                {"metadata": {"namespace": "core-control"}, "status": {"phase": "Running"}},
             ]
         }
         pods_after = {
@@ -4300,7 +4357,7 @@ class MainCliTests(unittest.TestCase):
             "status": "completed",
             "target_adapter": "edc",
             "adapters_to_remove": ["inesdata"],
-            "deleted_namespaces": ["demo", "components"],
+            "deleted_namespaces": ["core-control", "components"],
         }
 
         with mock.patch.dict(

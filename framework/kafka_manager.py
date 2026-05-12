@@ -40,13 +40,14 @@ class KafkaManager:
         self.provisioning_mode = None
 
     @staticmethod
-    def _default_command_runner(args, input_text=None):
+    def _default_command_runner(args, input_text=None, timeout=None):
         return subprocess.run(
             args,
             text=True,
             input=input_text,
             capture_output=True,
             check=False,
+            timeout=timeout,
         )
 
     def _load_adapter_config(self):
@@ -166,10 +167,15 @@ class KafkaManager:
         local_port = int(str(config.get("k8s_local_port") or "39092").strip() or "39092")
         internal_bootstrap = f"{service_name}.{namespace}.svc.cluster.local:9092"
         external_bootstrap = f"127.0.0.1:{local_port}"
+        probe_namespaces = self._normalize_kubernetes_probe_namespaces(
+            config.get("k8s_probe_namespaces"),
+            namespace,
+        )
         return {
             "provisioner": provisioner,
             "split_kraft": split_kraft,
             "namespace": namespace,
+            "probe_namespaces": probe_namespaces,
             "service_name": service_name,
             "external_service_name": f"{service_name}-external",
             "deployment_name": service_name,
@@ -183,6 +189,24 @@ class KafkaManager:
             "external_service_bootstrap": f"{service_name}-external.{namespace}.svc.cluster.local:9094",
             "external_bootstrap": external_bootstrap,
         }
+
+    @staticmethod
+    def _normalize_kubernetes_probe_namespaces(raw_namespaces, kafka_namespace):
+        if isinstance(raw_namespaces, (list, tuple, set)):
+            candidates = raw_namespaces
+        else:
+            candidates = str(raw_namespaces or "").split(",")
+
+        namespaces = []
+        for candidate in candidates:
+            namespace = str(candidate or "").strip()
+            if namespace and namespace not in namespaces:
+                namespaces.append(namespace)
+
+        kafka_namespace = str(kafka_namespace or "").strip()
+        if kafka_namespace and kafka_namespace not in namespaces:
+            namespaces.append(kafka_namespace)
+        return namespaces
 
     @staticmethod
     def _kubernetes_cluster_id():
@@ -765,44 +789,56 @@ class KafkaManager:
     def _wait_for_kubernetes_namespace_listener(self, ids, *, host, port, listener_label):
         deadline = time.time() + self.wait_timeout_seconds
         excluded_prefixes = self._kubernetes_probe_excluded_prefixes(ids)
+        probe_namespaces = ids.get("probe_namespaces") or [ids["namespace"]]
 
         while time.time() < deadline:
-            try:
-                pods = self._list_kubernetes_probe_pods(ids["namespace"], excluded_prefixes=excluded_prefixes)
-            except Exception:
-                pods = []
+            namespace_pods = []
+            for namespace in probe_namespaces:
+                try:
+                    pods = self._list_kubernetes_probe_pods(namespace, excluded_prefixes=excluded_prefixes)
+                except Exception:
+                    pods = []
+                if pods:
+                    namespace_pods.append((namespace, pods))
 
-            preferred_pods = [pod for pod in pods if pod.startswith("conn-")]
-            candidate_pods = preferred_pods or pods
+            namespace_pods.sort(
+                key=lambda item: 0 if any(pod.startswith("conn-") for pod in item[1]) else 1
+            )
 
-            for pod_name in candidate_pods:
-                probe_command = (
-                    f"timeout 3 bash -lc '</dev/tcp/{host}/{port}'"
-                )
-                result = self.command_runner(
-                    [
-                        "kubectl",
-                        "exec",
-                        "-n",
-                        ids["namespace"],
-                        pod_name,
-                        "--",
-                        "bash",
-                        "-lc",
-                        probe_command,
-                    ]
-                )
-                if getattr(result, "returncode", 1) == 0:
-                    return {
-                        "pod": pod_name,
-                        "host": host,
-                        "port": port,
-                        "listener": listener_label,
-                    }
+            for namespace, pods in namespace_pods:
+                preferred_pods = [pod for pod in pods if pod.startswith("conn-")]
+                candidate_pods = preferred_pods or pods
+
+                for pod_name in candidate_pods:
+                    probe_command = (
+                        f"timeout 3 bash -lc '</dev/tcp/{host}/{port}'"
+                    )
+                    result = self.command_runner(
+                        [
+                            "kubectl",
+                            "exec",
+                            "-n",
+                            namespace,
+                            pod_name,
+                            "--",
+                            "bash",
+                            "-lc",
+                            probe_command,
+                        ]
+                    )
+                    if getattr(result, "returncode", 1) == 0:
+                        return {
+                            "namespace": namespace,
+                            "pod": pod_name,
+                            "host": host,
+                            "port": port,
+                            "listener": listener_label,
+                        }
             time.sleep(self.poll_interval_seconds)
 
         raise RuntimeError(
-            f"Kafka {listener_label} did not become reachable from namespace pods in time"
+            f"Kafka {listener_label} did not become reachable from namespace pods in time "
+            f"(probe namespaces: {', '.join(probe_namespaces)})"
         )
 
     def _start_kafka_kubernetes(self):

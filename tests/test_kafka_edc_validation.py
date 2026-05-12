@@ -639,6 +639,12 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
                 for command in kafka_manager.commands
             )
         )
+        self.assertFalse(
+            any(
+                "--from-beginning" in command["command"] and "kafka-console-consumer" in command["command"]
+                for command in kafka_manager.commands
+            )
+        )
 
     def test_run_pair_waits_for_contract_agreement_visibility_before_transfer(self):
         session = _DelayedAgreementSession()
@@ -1252,6 +1258,98 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
         self.assertEqual(result["status"], "ready")
         self.assertEqual(result["attempts"], 2)
         self.assertTrue(result["probe_message_id"].startswith("kafka-transfer-probe-"))
+
+    def test_kubernetes_exec_probe_accepts_late_sink_confirmation(self):
+        suite = KafkaEdcValidationSuite(uuid_factory=lambda: "late")
+        runtime = {
+            "consumer_request_timeout_ms": 500,
+            "poll_interval_seconds": 1,
+            "late_probe_confirmation_seconds": 5,
+        }
+
+        with patch.object(suite, "_kubernetes_topic_end_offset", return_value=0):
+            with patch.object(suite, "_produce_kubernetes_exec_message") as producer_mock:
+                with patch.object(
+                    suite,
+                    "_find_kubernetes_exec_probe_message",
+                    side_effect=[None, "kafka-transfer-probe-late"],
+                ) as find_probe_mock:
+                    with patch("framework.kafka_edc_validation.time.sleep", return_value=None):
+                        with patch("framework.kafka_edc_validation.time.time", side_effect=[0, 0, 2, 2]):
+                            result = suite._wait_for_end_to_end_probe_with_kubernetes_exec(
+                                runtime,
+                                "source-topic",
+                                "destination-topic",
+                                timeout_seconds=1,
+                            )
+
+        self.assertEqual(result["status"], "ready")
+        self.assertTrue(result["late_confirmation"])
+        self.assertEqual(result["probe_message_id"], "kafka-transfer-probe-late")
+        producer_mock.assert_called_once()
+        self.assertEqual(find_probe_mock.call_count, 2)
+        late_confirmation_call = find_probe_mock.call_args_list[-1]
+        self.assertEqual(late_confirmation_call.kwargs["timeout_seconds"], 5)
+        self.assertEqual(late_confirmation_call.kwargs["offset"], 0)
+
+    def test_kubernetes_exec_stabilization_waits_for_dataplane_group_before_probe(self):
+        suite = KafkaEdcValidationSuite()
+        runtime = {
+            "provisioner": "kubernetes",
+            "validation_backend": "kubernetes-exec",
+            "startup_grace_seconds": 360,
+            "poll_interval_seconds": 1,
+        }
+        transfer_process = {
+            "correlationId": "corr-1",
+            "dataDestination": {
+                "topic": "destination-topic",
+            },
+        }
+
+        with patch("framework.kafka_edc_validation.time.time", side_effect=[0, 30, 30, 35]):
+            with patch.object(
+                suite,
+                "_wait_for_kubernetes_exec_consumer_group_ready",
+                return_value={
+                    "status": "ready",
+                    "seconds_waited": 30,
+                    "group_id": "corr-1:corr-1",
+                    "member_count": 1,
+                },
+            ) as group_mock:
+                with patch.object(
+                    suite,
+                    "_wait_for_end_to_end_probe_with_kubernetes_exec",
+                    return_value={
+                        "status": "ready",
+                        "attempts": 1,
+                        "seconds_waited": 5,
+                        "probe_message_id": "probe-1",
+                    },
+                ) as probe_mock:
+                    result = suite._wait_for_transfer_runtime_stabilization(
+                        runtime,
+                        transfer_process,
+                        "source-topic",
+                    )
+
+        self.assertEqual(result["strategy"], "kubernetes_exec_probe_ready")
+        self.assertEqual(result["group_id"], "corr-1:corr-1")
+        self.assertEqual(result["group_status"], "ready")
+        self.assertEqual(result["member_count"], 1)
+        group_mock.assert_called_once_with(
+            runtime,
+            "corr-1",
+            "source-topic",
+            timeout_seconds=240,
+        )
+        probe_mock.assert_called_once_with(
+            runtime,
+            "source-topic",
+            "destination-topic",
+            timeout_seconds=120,
+        )
 
     def test_run_all_retries_transient_pair_failure_once(self):
         kafka_manager = _FakeKafkaManager()

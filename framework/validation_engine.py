@@ -125,12 +125,22 @@ class ValidationEngine:
             "e2e_expected_consumer_bucket": f"{dataspace}-{consumer}",
             "adapter": adapter_name,
             "transferStartPath": (
-                "adaptertransferprocesses"
+                "transferprocesses"
                 if adapter_name == "edc"
                 else "inesdatatransferprocesses"
             ),
+            "transferRequestType": (
+                "TransferRequestDto"
+                if adapter_name == "edc"
+                else "TransferRequest"
+            ),
+            "transferType": (
+                "HttpData-PULL"
+                if adapter_name == "edc"
+                else "AmazonS3-PUSH"
+            ),
             "transferDestinationType": (
-                "AmazonS3"
+                "HttpData"
                 if adapter_name == "edc"
                 else "InesDataStore"
             ),

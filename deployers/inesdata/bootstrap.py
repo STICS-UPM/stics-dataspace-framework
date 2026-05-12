@@ -480,13 +480,40 @@ def create_database(pg_user, pg_password, pg_host, pg_port, database, username, 
             host=pg_host,
             port=pg_port)
     conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
-    cur = conn.cursor()
-    cur.execute(f"CREATE USER {username} with encrypted password '{password}';")
-    cur.execute(f"CREATE DATABASE {database};")
-    cur.execute(f"ALTER DATABASE {database} OWNER TO {username};")
-    cur.execute(f"GRANT ALL PRIVILEGES ON DATABASE {database} TO {username};")
-    cur.close()
-    conn.close()
+    cur = None
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s;", (username,))
+        if cur.fetchone():
+            cur.execute(
+                sql.SQL("ALTER ROLE {} WITH LOGIN ENCRYPTED PASSWORD %s;").format(sql.Identifier(username)),
+                (password,),
+            )
+        else:
+            cur.execute(
+                sql.SQL("CREATE ROLE {} WITH LOGIN ENCRYPTED PASSWORD %s;").format(sql.Identifier(username)),
+                (password,),
+            )
+
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s;", (database,))
+        if not cur.fetchone():
+            cur.execute(sql.SQL("CREATE DATABASE {};").format(sql.Identifier(database)))
+        cur.execute(
+            sql.SQL("ALTER DATABASE {} OWNER TO {};").format(
+                sql.Identifier(database),
+                sql.Identifier(username),
+            )
+        )
+        cur.execute(
+            sql.SQL("GRANT ALL PRIVILEGES ON DATABASE {} TO {};").format(
+                sql.Identifier(database),
+                sql.Identifier(username),
+            )
+        )
+    finally:
+        if cur is not None:
+            cur.close()
+        conn.close()
 
 def delete_database(pg_user, pg_password, pg_host, pg_port, database, username):
     # Connect to the PostgreSQL server
@@ -516,6 +543,15 @@ def delete_database(pg_user, pg_password, pg_host, pg_port, database, username):
     cur.close()
     conn.close()
 
+def connector_participant_urls(config, connector, dataspace, environment):
+    if str(environment or "").strip().upper() == "PRO":
+        base = f"https://{connector}-{dataspace}.ds.dataspaceunit-project.eu"
+        return f"{base}/protocol", f"{base}/shared"
+
+    urls = build_connector_access_urls(connector, dataspace, environment, config)
+    return urls["connector_protocol_api"], urls["connector_shared_api"]
+
+
 def register_connector_database(pg_user, pg_password, pg_host, pg_port, database, connector, dataspace, environment):
     # Connect to the PostgreSQL server
     conn = psycopg2.connect(
@@ -526,8 +562,12 @@ def register_connector_database(pg_user, pg_password, pg_host, pg_port, database
             database=database)
     conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
     cur = conn.cursor()
-    conn_protocol = f"http://{connector}:19194/protocol" if environment == "DEV" else f"https://{connector}-{dataspace}.ds.dataspaceunit-project.eu/protocol"
-    conn_shared = f"http://{connector}:19196/shared" if environment == "DEV" else f"https://{connector}-{dataspace}.ds.dataspaceunit-project.eu/shared"
+    conn_protocol, conn_shared = connector_participant_urls(
+        load_effective_deployer_config(),
+        connector,
+        dataspace,
+        environment,
+    )
     cur.execute(f"INSERT INTO public.edc_participant (participant_id,url,created_at,shared_url) VALUES ('{connector}','{conn_protocol}',EXTRACT(EPOCH FROM NOW())::BIGINT,'{conn_shared}');")
     cur.close()
     conn.close()

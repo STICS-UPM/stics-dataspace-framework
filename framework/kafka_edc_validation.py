@@ -27,7 +27,7 @@ class KafkaEdcValidationSuite:
     DEFAULT_EDR_TIMEOUT_SECONDS = 30
     DEFAULT_POLL_INTERVAL_SECONDS = 3
     DEFAULT_CONSUMER_POLL_TIMEOUT_SECONDS = 30
-    DEFAULT_STARTUP_GRACE_SECONDS = 60
+    DEFAULT_STARTUP_GRACE_SECONDS = 360
     DEFAULT_PRE_RUN_SETTLE_SECONDS = 10
     DEFAULT_LOGIN_ATTEMPTS = 3
     DEFAULT_LOGIN_RETRY_SECONDS = 2
@@ -36,8 +36,9 @@ class KafkaEdcValidationSuite:
     DEFAULT_PAIR_ATTEMPTS = 2
     DEFAULT_PAIR_RETRY_SECONDS = 5
     DEFAULT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS = 30
-    DEFAULT_STABILIZATION_GROUP_WAIT_SECONDS = 10
-    DEFAULT_STABILIZATION_PROBE_TIMEOUT_SECONDS = 30
+    DEFAULT_STABILIZATION_GROUP_WAIT_SECONDS = 240
+    DEFAULT_STABILIZATION_PROBE_TIMEOUT_SECONDS = 120
+    DEFAULT_STABILIZATION_LATE_CONFIRMATION_SECONDS = 120
     DEFAULT_STABILIZATION_REQUEST_TIMEOUT_MS = 5000
 
     def __init__(
@@ -662,7 +663,7 @@ class KafkaEdcValidationSuite:
         service_name = str((runtime or {}).get("k8s_service_name") or "framework-kafka").strip() or "framework-kafka"
         return namespace, service_name
 
-    def _run_kubernetes_kafka_command(self, runtime, kafka_args, input_text=None):
+    def _run_kubernetes_kafka_command(self, runtime, kafka_args, input_text=None, timeout_seconds=None):
         namespace, deployment_name = self._kubernetes_exec_ids(runtime)
         command = [
             "kubectl",
@@ -679,15 +680,26 @@ class KafkaEdcValidationSuite:
         ])
         kafka_manager = self.kafka_manager
         runner = getattr(kafka_manager, "command_runner", None) if kafka_manager is not None else None
+        if timeout_seconds is None:
+            timeout_seconds = int((runtime or {}).get("kubernetes_exec_timeout_seconds", 30))
         if callable(runner):
-            return runner(command, input_text=input_text)
-        return subprocess.run(
-            command,
-            text=True,
-            input=input_text,
-            capture_output=True,
-            check=False,
-        )
+            try:
+                return runner(command, input_text=input_text, timeout=timeout_seconds)
+            except TypeError:
+                return runner(command, input_text=input_text)
+            except subprocess.TimeoutExpired as exc:
+                return subprocess.CompletedProcess(command, 124, stdout=exc.stdout or "", stderr=exc.stderr or "Command timed out")
+        try:
+            return subprocess.run(
+                command,
+                text=True,
+                input=input_text,
+                capture_output=True,
+                check=False,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return subprocess.CompletedProcess(command, 124, stdout=exc.stdout or "", stderr=exc.stderr or "Command timed out")
 
     def _ensure_topic_with_kubernetes_exec(self, runtime, topic_name):
         list_result = self._run_kubernetes_kafka_command(
@@ -756,8 +768,18 @@ class KafkaEdcValidationSuite:
 
     def _ensure_topic_with_runtime(self, runtime, topic_name):
         if self._use_kubernetes_exec_backend(runtime):
-            if self._ensure_topic_with_kubernetes_exec(runtime, topic_name):
-                return True
+            last_kubernetes_exc = None
+            for attempt in (1, 2, 3):
+                try:
+                    if self._ensure_topic_with_kubernetes_exec(runtime, topic_name):
+                        return True
+                except Exception as exc:
+                    last_kubernetes_exc = exc
+                    if attempt < 3:
+                        time.sleep(3)
+                        continue
+            if last_kubernetes_exc is not None:
+                runtime["_last_kubernetes_topic_error"] = str(last_kubernetes_exc)
 
         admin_client_class, new_topic_class = self._load_kafka_admin_classes()
         last_exc = None
@@ -1513,7 +1535,18 @@ class KafkaEdcValidationSuite:
 
         if self._use_kubernetes_exec_backend(runtime) and destination_topic:
             started_at = time.time()
-            probe_timeout_seconds = min(timeout_seconds, self.DEFAULT_STABILIZATION_PROBE_TIMEOUT_SECONDS)
+            group_result = None
+            if correlation_id:
+                group_wait_seconds = min(timeout_seconds, self.DEFAULT_STABILIZATION_GROUP_WAIT_SECONDS)
+                group_result = self._wait_for_kubernetes_exec_consumer_group_ready(
+                    runtime,
+                    correlation_id,
+                    source_topic,
+                    timeout_seconds=group_wait_seconds,
+                )
+            elapsed_seconds = max(0.0, time.time() - started_at)
+            remaining_seconds = max(int(timeout_seconds - elapsed_seconds), 1)
+            probe_timeout_seconds = min(remaining_seconds, self.DEFAULT_STABILIZATION_PROBE_TIMEOUT_SECONDS)
             try:
                 probe_result = self._wait_for_end_to_end_probe_with_kubernetes_exec(
                     runtime,
@@ -1524,9 +1557,10 @@ class KafkaEdcValidationSuite:
                 return {
                     "strategy": "kubernetes_exec_probe_ready",
                     "seconds_waited": round(max(0.0, time.time() - started_at), 2),
-                    "group_id": None,
+                    "group_id": (group_result or {}).get("group_id"),
+                    "group_status": (group_result or {}).get("status"),
                     "state": "ProbeRelayed",
-                    "member_count": 0,
+                    "member_count": (group_result or {}).get("member_count", 0),
                     "source_topic": source_topic,
                     "destination_topic": destination_topic,
                     "probe": probe_result,
@@ -1536,11 +1570,13 @@ class KafkaEdcValidationSuite:
                     "strategy": "kubernetes_exec_probe_timeout",
                     "seconds_waited": round(max(0.0, time.time() - started_at), 2),
                     "correlation_id": correlation_id,
-                    "group_id": None,
+                    "group_id": (group_result or {}).get("group_id"),
+                    "group_status": (group_result or {}).get("status"),
                     "last_state": None,
-                    "last_member_count": 0,
+                    "last_member_count": (group_result or {}).get("member_count", 0),
                     "source_topic": source_topic,
                     "destination_topic": destination_topic,
+                    "group_wait": group_result,
                     "probe_error": str(probe_exc),
                 }
 
@@ -1757,6 +1793,149 @@ class KafkaEdcValidationSuite:
                 messages.append(decoded)
         return messages
 
+    def _list_kubernetes_exec_consumer_groups(self, runtime):
+        result = self._run_kubernetes_kafka_command(
+            runtime,
+            ["kafka-consumer-groups", "--bootstrap-server", "localhost:9092", "--list"],
+        )
+        if getattr(result, "returncode", 1) != 0:
+            raise RuntimeError((getattr(result, "stderr", "") or "").strip() or "Kafka consumer group list failed")
+        groups = []
+        for line in (getattr(result, "stdout", "") or "").splitlines():
+            group_id = line.strip()
+            if group_id and group_id not in groups:
+                groups.append(group_id)
+        return groups
+
+    def _describe_kubernetes_exec_consumer_group(self, runtime, group_id, source_topic=None):
+        result = self._run_kubernetes_kafka_command(
+            runtime,
+            [
+                "kafka-consumer-groups",
+                "--bootstrap-server",
+                "localhost:9092",
+                "--describe",
+                "--group",
+                group_id,
+            ],
+        )
+        if getattr(result, "returncode", 1) != 0:
+            return {
+                "group_id": group_id,
+                "member_count": 0,
+                "topics": [],
+                "error": (getattr(result, "stderr", "") or "").strip(),
+            }
+
+        topics = []
+        consumer_ids = set()
+        for line in (getattr(result, "stdout", "") or "").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("GROUP ") or stripped.startswith("Consumer group"):
+                continue
+            parts = stripped.split()
+            if len(parts) < 7:
+                continue
+            topic = parts[1]
+            consumer_id = parts[6]
+            if topic != "-" and topic not in topics:
+                topics.append(topic)
+            if consumer_id != "-":
+                consumer_ids.add(consumer_id)
+
+        source_topic_seen = not source_topic or source_topic in topics
+        return {
+            "group_id": group_id,
+            "member_count": len(consumer_ids),
+            "topics": topics,
+            "source_topic_seen": source_topic_seen,
+        }
+
+    def _wait_for_kubernetes_exec_consumer_group_ready(
+        self,
+        runtime,
+        correlation_id,
+        source_topic,
+        *,
+        timeout_seconds,
+    ):
+        correlation_id = str(correlation_id or "").strip()
+        timeout_seconds = max(int(timeout_seconds or 0), 0)
+        if not correlation_id or timeout_seconds <= 0:
+            return {"status": "skipped", "seconds_waited": 0}
+
+        started_at = time.time()
+        deadline = started_at + timeout_seconds
+        last_description = None
+
+        while time.time() <= deadline:
+            try:
+                groups = self._list_kubernetes_exec_consumer_groups(runtime)
+            except Exception as exc:
+                return {
+                    "status": "unavailable",
+                    "seconds_waited": round(max(0.0, time.time() - started_at), 2),
+                    "error": str(exc),
+                }
+
+            matching_groups = [group_id for group_id in groups if correlation_id in group_id]
+            for group_id in matching_groups:
+                description = self._describe_kubernetes_exec_consumer_group(
+                    runtime,
+                    group_id,
+                    source_topic=source_topic,
+                )
+                last_description = description
+                if description.get("member_count", 0) > 0 and description.get("source_topic_seen", False):
+                    time.sleep(1)
+                    return {
+                        "status": "ready",
+                        "seconds_waited": round(max(0.0, time.time() - started_at), 2),
+                        **description,
+                    }
+
+            time.sleep(max(1, int(runtime.get("poll_interval_seconds", 1))))
+
+        return {
+            "status": "timeout",
+            "seconds_waited": round(max(0.0, time.time() - started_at), 2),
+            "correlation_id": correlation_id,
+            "last_description": last_description,
+        }
+
+    def _find_kubernetes_exec_probe_message(
+        self,
+        runtime,
+        destination_topic,
+        probe_ids,
+        *,
+        offset=None,
+        timeout_seconds=0,
+        poll_timeout_ms=2000,
+        max_messages=100,
+    ):
+        probe_ids = {probe_id for probe_id in probe_ids if probe_id}
+        if not probe_ids:
+            return None
+
+        deadline = time.time() + max(int(timeout_seconds), 0)
+        while True:
+            messages = self._consume_kubernetes_exec_messages(
+                runtime,
+                destination_topic,
+                timeout_ms=poll_timeout_ms,
+                max_messages=max(max_messages, len(probe_ids) + 5),
+                offset=offset,
+            )
+            for payload in messages:
+                matched_probe_id = payload.get("message_id")
+                if matched_probe_id in probe_ids:
+                    return matched_probe_id
+
+            if time.time() >= deadline:
+                return None
+            time.sleep(max(1, int(runtime.get("poll_interval_seconds", 1))))
+
     def _wait_for_end_to_end_probe_with_kubernetes_exec(self, runtime, source_topic, destination_topic, *, timeout_seconds=None):
         if timeout_seconds is None:
             timeout_seconds = runtime.get("startup_grace_seconds", 0)
@@ -1774,6 +1953,7 @@ class KafkaEdcValidationSuite:
         # EDC may relay a previous probe after the next send; keep all in-flight probes valid.
         pending_probe_ids = set()
         poll_timeout_ms = max(500, min(2000, int(runtime.get("consumer_request_timeout_ms", 60000))))
+        destination_start_offset = self._kubernetes_topic_end_offset(runtime, destination_topic)
 
         while time.time() <= deadline:
             attempts += 1
@@ -1784,22 +1964,47 @@ class KafkaEdcValidationSuite:
             }
             pending_probe_ids.add(probe_payload["message_id"])
             self._produce_kubernetes_exec_message(runtime, source_topic, probe_payload)
-            messages = self._consume_kubernetes_exec_messages(
+            matched_probe_id = self._find_kubernetes_exec_probe_message(
                 runtime,
                 destination_topic,
-                timeout_ms=poll_timeout_ms,
-                max_messages=100,
+                poll_timeout_ms=poll_timeout_ms,
+                max_messages=max(100, len(pending_probe_ids) + 5),
+                offset=destination_start_offset,
+                probe_ids=pending_probe_ids,
             )
-            for payload in messages:
-                matched_probe_id = payload.get("message_id")
-                if matched_probe_id in pending_probe_ids:
-                    return {
-                        "status": "ready",
-                        "attempts": attempts,
-                        "seconds_waited": round(max(0.0, time.time() - started_at), 2),
-                        "probe_message_id": matched_probe_id,
-                    }
+            if matched_probe_id:
+                return {
+                    "status": "ready",
+                    "attempts": attempts,
+                    "seconds_waited": round(max(0.0, time.time() - started_at), 2),
+                    "probe_message_id": matched_probe_id,
+                }
             time.sleep(max(1, int(runtime.get("poll_interval_seconds", 1))))
+
+        late_confirmation_seconds = max(
+            int(runtime.get(
+                "late_probe_confirmation_seconds",
+                self.DEFAULT_STABILIZATION_LATE_CONFIRMATION_SECONDS,
+            )),
+            0,
+        )
+        matched_probe_id = self._find_kubernetes_exec_probe_message(
+            runtime,
+            destination_topic,
+            pending_probe_ids,
+            offset=destination_start_offset,
+            timeout_seconds=late_confirmation_seconds,
+            poll_timeout_ms=poll_timeout_ms,
+            max_messages=max(100, len(pending_probe_ids) + 5),
+        )
+        if matched_probe_id:
+            return {
+                "status": "ready",
+                "attempts": attempts,
+                "seconds_waited": round(max(0.0, time.time() - started_at), 2),
+                "probe_message_id": matched_probe_id,
+                "late_confirmation": True,
+            }
 
         raise RuntimeError("Kafka transfer path did not relay a probe message in time")
 
@@ -2210,6 +2415,9 @@ class KafkaEdcValidationSuite:
                     "passed",
                     seconds_waited=cleanup_settlement["seconds_waited"],
                 )
+            provider_jwt = self._login(provider, "provider")
+            consumer_jwt = self._login(consumer, "consumer")
+            record_step("refresh_credentials_after_cleanup", "passed")
 
             asset_id, _, asset_status = self._create_asset(provider, provider_jwt, source_topic, runtime, suffix)
             payload["asset_id"] = asset_id
@@ -2230,6 +2438,8 @@ class KafkaEdcValidationSuite:
                 contract_definition_id=contract_definition_id,
             )
 
+            consumer_jwt = self._login(consumer, "consumer")
+            record_step("refresh_consumer_credentials_before_catalog", "passed")
             catalog_body, catalog_status = self._request_catalog(provider, consumer, consumer_jwt)
             catalog_info = self._select_catalog_dataset(catalog_body, asset_id, provider)
             payload["catalog_asset_id"] = catalog_info["catalog_asset_id"]

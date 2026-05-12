@@ -1067,8 +1067,10 @@ class NewmanMetricsTests(unittest.TestCase):
         env_vars = engine.build_newman_env("conn-citycounciledc-demoedc", "conn-companyedc-demoedc")
 
         self.assertEqual(env_vars["adapter"], "edc")
-        self.assertEqual(env_vars["transferStartPath"], "adaptertransferprocesses")
-        self.assertEqual(env_vars["transferDestinationType"], "AmazonS3")
+        self.assertEqual(env_vars["transferStartPath"], "transferprocesses")
+        self.assertEqual(env_vars["transferRequestType"], "TransferRequestDto")
+        self.assertEqual(env_vars["transferType"], "HttpData-PULL")
+        self.assertEqual(env_vars["transferDestinationType"], "HttpData")
 
     def test_validation_engine_uses_protocol_address_resolver_when_available(self):
         engine = ValidationEngine(

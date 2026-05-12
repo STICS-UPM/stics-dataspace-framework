@@ -1022,25 +1022,40 @@ export async function bootstrapConsumerTransfer(
   const consumerToken = await issueConsumerToken(request, runtime);
   const transferStartPath = runtime.consumer.transferStartPath || "inesdatatransferprocesses";
   const transferDestinationType = runtime.consumer.transferDestinationType || "InesDataStore";
+  const isEdcAdapter = runtime.adapter === "edc" || runtime.consumer.adapter === "edc";
+  const transferType = isEdcAdapter ? "HttpData-PULL" : "AmazonS3-PUSH";
+  const transferPayload = isEdcAdapter
+    ? {
+        "@context": {
+          "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+        },
+        "@type": "TransferRequestDto",
+        connectorId: runtime.provider.connectorName,
+        contractId: agreementId,
+        counterPartyAddress,
+        protocol: "dataspace-protocol-http",
+        transferType,
+      }
+    : {
+        "@context": {
+          "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+        },
+        "@type": "TransferRequest",
+        assetId,
+        contractId: agreementId,
+        counterPartyAddress,
+        protocol: "dataspace-protocol-http",
+        transferType,
+        dataDestination: {
+          type: transferDestinationType,
+        },
+      };
   const response = await request.post(`${runtime.consumer.managementBaseUrl}/${transferStartPath}`, {
     headers: {
       Authorization: `Bearer ${consumerToken}`,
       "Content-Type": "application/json",
     },
-    data: {
-      "@context": {
-        "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
-      },
-      "@type": "TransferRequest",
-      assetId,
-      contractId: agreementId,
-      counterPartyAddress,
-      protocol: "dataspace-protocol-http",
-      transferType: "AmazonS3-PUSH",
-      dataDestination: {
-        type: transferDestinationType,
-      },
-    },
+    data: transferPayload,
   });
   await ensureOk(response, "Consumer transfer request");
   const body = await response.json();
@@ -1063,7 +1078,7 @@ export async function bootstrapConsumerTransfer(
       return {
         transferId,
         finalState: state,
-        transferType: "AmazonS3-PUSH",
+        transferType,
         assetId,
       };
     }

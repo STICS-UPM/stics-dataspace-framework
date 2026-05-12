@@ -421,6 +421,8 @@ class InesdataConfigDataspaceTests(unittest.TestCase):
                     "admin.auth.dev.ed.dataspaceunit.upm",
                     "minio.dev.ed.dataspaceunit.upm",
                     "console.minio-s3.dev.ed.dataspaceunit.upm",
+                    "pilot.dev.ds.dataspaceunit.upm",
+                    "backend-pilot.dev.ds.dataspaceunit.upm",
                     "registration-service-pilot.dev.ds.dataspaceunit.upm",
                 ],
             )
@@ -447,6 +449,8 @@ class InesdataConfigDataspaceTests(unittest.TestCase):
                     "127.0.0.1 admin.auth.dev.ed.dataspaceunit.upm",
                     "127.0.0.1 minio.dev.ed.dataspaceunit.upm",
                     "127.0.0.1 console.minio-s3.dev.ed.dataspaceunit.upm",
+                    "127.0.0.1 pilot.dev.ds.dataspaceunit.upm",
+                    "127.0.0.1 backend-pilot.dev.ds.dataspaceunit.upm",
                     "127.0.0.1 registration-service-pilot.dev.ds.dataspaceunit.upm",
                 ],
             )
@@ -472,6 +476,8 @@ class InesdataConfigDataspaceTests(unittest.TestCase):
                     "127.0.0.1 admin.auth.dev.ed.dataspaceunit.upm",
                     "127.0.0.1 minio.dev.ed.dataspaceunit.upm",
                     "127.0.0.1 console.minio-s3.dev.ed.dataspaceunit.upm",
+                    "127.0.0.1 pilot.dev.ds.dataspaceunit.upm",
+                    "127.0.0.1 backend-pilot.dev.ds.dataspaceunit.upm",
                     "127.0.0.1 registration-service-pilot.dev.ds.dataspaceunit.upm",
                 ],
             )

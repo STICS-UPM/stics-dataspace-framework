@@ -34,6 +34,7 @@ class InesdataKafkaConfigurationTests(unittest.TestCase):
                     "KAFKA_CLUSTER_BOOTSTRAP_SERVERS=kafka.cluster.internal:39092",
                     "KAFKA_CLUSTER_ADVERTISED_HOST=cluster.kafka.internal",
                     "KAFKA_K8S_NAMESPACE=custom-kafka",
+                    "KAFKA_K8S_PROBE_NAMESPACES=provider,consumer",
                     "KAFKA_K8S_SERVICE_NAME=kafka-validation",
                     "KAFKA_K8S_LOCAL_PORT=39093",
                     "KAFKA_MINIKUBE_PROFILE=pionera",
@@ -62,6 +63,7 @@ class InesdataKafkaConfigurationTests(unittest.TestCase):
         self.assertEqual(config["cluster_bootstrap_servers"], "kafka.cluster.internal:39092")
         self.assertEqual(config["cluster_advertised_host"], "cluster.kafka.internal")
         self.assertEqual(config["k8s_namespace"], "custom-kafka")
+        self.assertEqual(config["k8s_probe_namespaces"], "provider,consumer")
         self.assertEqual(config["k8s_service_name"], "kafka-validation")
         self.assertEqual(config["k8s_local_port"], "39093")
         self.assertEqual(config["minikube_profile"], "pionera")
@@ -75,7 +77,7 @@ class InesdataKafkaConfigurationTests(unittest.TestCase):
         self.assertEqual(config["container_image"], "confluentinc/cp-kafka:7.5.2")
         self.assertEqual(config["container_env_file"], env_file)
         self.assertEqual(config["message_count"], "25")
-        self.assertEqual(config["validation_backend"], "python-client")
+        self.assertEqual(config["validation_backend"], "kubernetes-exec")
 
     def test_get_kafka_config_defaults_to_kubernetes_dataspace_namespace(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -96,10 +98,11 @@ class InesdataKafkaConfigurationTests(unittest.TestCase):
 
         self.assertEqual(config["provisioner"], "kubernetes")
         self.assertEqual(config["k8s_namespace"], "demo")
+        self.assertEqual(config["k8s_probe_namespaces"], "demo")
         self.assertEqual(config["k8s_service_name"], "framework-kafka")
-        self.assertEqual(config["validation_backend"], "python-client")
+        self.assertEqual(config["validation_backend"], "kubernetes-exec")
 
-    def test_get_kafka_config_uses_kubernetes_exec_backend_for_vm_single_by_default(self):
+    def test_get_kafka_config_uses_kubernetes_exec_backend_for_kubernetes_provisioner_by_default(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = self._write_deployer_config(
                 tmpdir,
@@ -119,7 +122,7 @@ class InesdataKafkaConfigurationTests(unittest.TestCase):
         self.assertEqual(config["topology"], "vm-single")
         self.assertEqual(config["validation_backend"], "kubernetes-exec")
 
-    def test_get_kafka_config_allows_overriding_vm_single_kafka_validation_backend(self):
+    def test_get_kafka_config_allows_overriding_kubernetes_kafka_validation_backend(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = self._write_deployer_config(
                 tmpdir,
@@ -139,7 +142,7 @@ class InesdataKafkaConfigurationTests(unittest.TestCase):
 
         self.assertEqual(config["validation_backend"], "python-client")
 
-    def test_get_kafka_config_uses_provider_namespace_when_role_aligned_level4_is_active(self):
+    def test_get_kafka_config_keeps_existing_role_aligned_kafka_namespace_behavior(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = self._write_deployer_config(
                 tmpdir,
@@ -189,6 +192,31 @@ class InesdataKafkaConfigurationTests(unittest.TestCase):
                 config = adapter.get_kafka_config()
 
         self.assertEqual(config["k8s_namespace"], "roleedcprove-provider")
+        self.assertEqual(config["k8s_probe_namespaces"], "roleedcprove")
+
+    def test_get_kafka_config_probes_provider_and_consumer_namespaces_with_control_namespace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = self._write_deployer_config(
+                tmpdir,
+                [
+                    "DS_1_NAME=pionera",
+                    "DS_1_NAMESPACE=core-control",
+                    "DS_1_PROVIDER_NAMESPACE=provider",
+                    "DS_1_CONSUMER_NAMESPACE=consumer",
+                    "DS_1_CONNECTORS=citycouncil,company",
+                    "NAMESPACE_PROFILE=role-aligned",
+                ],
+            )
+
+            with (
+                mock.patch.object(InesdataConfig, "script_dir", return_value=tmpdir),
+                mock.patch.object(InesdataConfig, "deployer_config_path", return_value=config_path),
+            ):
+                adapter = InesdataAdapter()
+                config = adapter.get_kafka_config()
+
+        self.assertEqual(config["k8s_namespace"], "core-control")
+        self.assertEqual(config["k8s_probe_namespaces"], "provider,consumer,core-control")
 
     def test_is_kafka_available_uses_configured_container_name(self):
         commands = []
