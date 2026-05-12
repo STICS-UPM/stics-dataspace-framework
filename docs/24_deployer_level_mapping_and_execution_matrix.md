@@ -60,8 +60,8 @@ El comando `recreate-dataspace` permite borrar y recrear el dataspace de forma
 controlada:
 
 ```bash
-python3 main.py edc recreate-dataspace --topology local --confirm-dataspace demoedc
-python3 main.py edc recreate-dataspace --topology local --confirm-dataspace demoedc --with-connectors
+python3 main.py edc recreate-dataspace --topology local --confirm-dataspace pionera-edc
+python3 main.py edc recreate-dataspace --topology local --confirm-dataspace pionera-edc --with-connectors
 ```
 
 Sin `--with-connectors`, se recrea el dataspace sin forzar recreacion de

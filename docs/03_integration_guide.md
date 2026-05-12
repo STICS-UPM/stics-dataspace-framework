@@ -51,9 +51,9 @@ Hoy el ejemplo real existente es:
 
 1. Crear o ajustar el chart Helm del componente en `deployers/shared/components/<component>/`.
 2. Asegurar que existe `Chart.yaml`.
-3. Añadir un `values-demo.yaml` o un `values.yaml` usable en entorno local.
+3. Añadir un `values.yaml` usable en entorno local.
 4. Definir puertos, servicios, ingress y endpoint de health.
-5. Comprobar que el componente puede desplegarse dentro del namespace `demo`.
+5. Comprobar que el componente puede desplegarse dentro del namespace `components`.
 6. Configurar `COMPONENTS` en `deployers/inesdata/deployer.config` para que `Level 5` lo despliegue.
 7. Ejecutar `Level 5` y verificar que el servicio queda disponible.
 

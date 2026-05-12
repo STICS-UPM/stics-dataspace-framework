@@ -192,7 +192,8 @@ conector rechazó assets con `DataAddress.type=Kafka`.
 Comprueba la imagen desplegada:
 
 ```bash
-kubectl get deploy -n demo -o wide
+kubectl get deploy -n provider -o wide
+kubectl get deploy -n consumer -o wide
 ```
 
 En local, `Level 4` debe preparar y desplegar una imagen local de

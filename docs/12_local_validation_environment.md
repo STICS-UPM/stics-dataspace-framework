@@ -76,9 +76,13 @@ framework, por ejemplo `SWITCH TO EDC`.
 | Rol | Namespace habitual |
 | --- | --- |
 | Servicios comunes | `common-srvs` |
-| Dataspace INESData | `demo` por defecto |
-| Dataspace EDC | namespace configurado, por ejemplo `demoedc` |
-| Componentes | namespace del dataspace o namespace de componentes configurado |
+| Dataspace INESData / control | `core-control` |
+| Conector INESData provider | `provider` |
+| Conector INESData consumer | `consumer` |
+| Dataspace EDC / control | `edc-control` |
+| Conector EDC provider | `edc-provider` |
+| Conector EDC consumer | `edc-consumer` |
+| Componentes | `components` |
 
 Los nombres reales se resuelven desde `deployers/<adapter>/deployer.config`,
 variables `PIONERA_*` y los defaults del deployer.

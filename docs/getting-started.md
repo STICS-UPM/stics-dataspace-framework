@@ -157,8 +157,14 @@ local.
 La restricción importante es que cada adapter debe usar un dataspace aislado:
 
 ```text
-inesdata -> DS_1_NAME=demo, DS_1_NAMESPACE=demo
-edc      -> DS_1_NAME=demoedc, DS_1_NAMESPACE=demoedc
+inesdata -> DS_1_NAME=pionera, DS_1_NAMESPACE=core-control
+            DS_1_PROVIDER_NAMESPACE=provider
+            DS_1_CONSUMER_NAMESPACE=consumer
+            COMPONENTS_NAMESPACE=components
+
+edc      -> DS_1_NAME=pionera-edc, DS_1_NAMESPACE=edc-control
+            DS_1_PROVIDER_NAMESPACE=edc-provider
+            DS_1_CONSUMER_NAMESPACE=edc-consumer
 ```
 
 No reutilices el mismo `DS_1_NAME` o `DS_1_NAMESPACE` para dos adapters

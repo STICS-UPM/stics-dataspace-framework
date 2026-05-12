@@ -7,7 +7,7 @@ La Fase 4 incorpora una capa de validacion UI con Playwright alineada con los fl
 La cobertura UI actual se divide en tres grupos:
 
 - `core`: flujos funcionales estables del portal del conector.
-- `extended`: flujo E2E largo para demostracion y regresion ampliada.
+- `extended`: flujo E2E largo para validacion visual y regresion ampliada.
 - `ops`: comprobaciones visuales opcionales de operacion, separadas del core.
 
 Los specs activos viven bajo:
@@ -198,7 +198,7 @@ Este spec encadena:
 - negociacion
 - transferencia
 
-Su objetivo es servir como regresion extendida y demostracion del recorrido visible de punta a punta. No sustituye a los specs atomicos `05` y `06`.
+Su objetivo es servir como regresion extendida y validacion visual del recorrido visible de punta a punta. No sustituye a los specs atomicos `05` y `06`.
 
 ## Suite Ops Opcional
 
@@ -347,7 +347,7 @@ Si el entorno sigue mostrando sintomas graficos extranos despues de varias modif
 - La UI cubre el flujo visible de negociacion y transferencia, pero no sustituye las validaciones tecnicas de `EDR` o descarga raw.
 - La comprobacion del almacenamiento final sigue siendo mas fiable por API o SDK que por la consola de MinIO.
 - La suite `ops` es opcional y no forma parte del criterio core de aceptacion del dataspace.
-- La suite `extended` es util para demos y regresion larga, pero no debe reemplazar a los specs atomicos.
+- La suite `extended` es util para evidencias visuales y regresion larga, pero no debe reemplazar a los specs atomicos.
 
 ## Resumen
 

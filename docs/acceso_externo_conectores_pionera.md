@@ -9,7 +9,7 @@ Fecha: 2026-04-25
 
 El entorno de validación está desplegado en una máquina virtual (VM) con una IP pública, representada aquí como `203.0.113.10`. Dentro de esa VM corre **Minikube**, que es un clúster Kubernetes local. Todos los servicios (conectores, Keycloak, MinIO, etc.) están dentro de Minikube en la red interna `192.168.49.2`.
 
-El problema es que esa red interna **no es accesible desde fuera de la VM**. Los dominios que usan los servicios (`conn-citycouncil-demo.example.org`, `auth.example.org`, etc.) deben resolverse en DNS hacia la IP pública de la VM.
+El problema es que esa red interna **no es accesible desde fuera de la VM**. Los dominios que usan los servicios (`conn-citycouncil-pionera.example.org`, `auth.example.org`, etc.) deben resolverse en DNS hacia la IP pública de la VM.
 
 ### Diagrama del estado actual
 
@@ -50,14 +50,14 @@ El Ingress de Kubernetes (nginx ingress controller) ya está configurado correct
 ```
 [PC usuario]
   → petición HTTP a 203.0.113.10:80
-    con cabecera: Host: conn-citycouncil-demo.example.org
+    con cabecera: Host: conn-citycouncil-pionera.example.org
 
 [VM - iptables DNAT]
   → redirige a 192.168.49.2:80
     cabecera Host se mantiene igual ✅
 
 [Minikube - nginx ingress]
-  → lee Host: conn-citycouncil-demo.example.org
+  → lee Host: conn-citycouncil-pionera.example.org
   → enruta al pod correcto ✅
 ```
 
@@ -85,11 +85,11 @@ Falta añadir un **único registro wildcard**:
 ```
 
 Esto resolvería automáticamente **todos** los subdominios:
-- `conn-citycouncil-demo.example.org → 203.0.113.10`
-- `conn-company-demo.example.org → 203.0.113.10`
+- `conn-citycouncil-pionera.example.org → 203.0.113.10`
+- `conn-company-pionera.example.org → 203.0.113.10`
 - `auth.example.org → 203.0.113.10`
 - `minio.example.org → 203.0.113.10`
-- `registration-service-demo.example.org → 203.0.113.10`
+- `registration-service-pionera.example.org → 203.0.113.10`
 - (cualquier subdominio futuro también)
 
 **Acción**: solicitar al administrador DNS del despliegue que añada el registro wildcard.
@@ -101,19 +101,19 @@ Esto resolvería automáticamente **todos** los subdominios:
 ```
 [Browser en la red autorizada o VPN]
 
-  1. Escribe: http://conn-citycouncil-demo.example.org
+  1. Escribe: http://conn-citycouncil-pionera.example.org
   
   2. DNS resuelve: 203.0.113.10
      (gracias al wildcard *.example.org)
 
   3. Browser manda petición HTTP a 203.0.113.10:80
-     con cabecera Host: conn-citycouncil-demo.example.org
+     con cabecera Host: conn-citycouncil-pionera.example.org
 
   4. VM recibe en :80, iptables redirige a 192.168.49.2:80
      (cabecera Host intacta)
 
   5. Nginx ingress de Minikube lee la cabecera Host
-     → enruta al pod conn-citycouncil-demo ✅
+     → enruta al pod conn-citycouncil-pionera ✅
 
   6. Usuario ve la interfaz del conector ✅
 ```
@@ -129,9 +129,9 @@ Esto resolvería automáticamente **todos** los subdominios:
 | `https://public.example.org/c/citycouncil/inesdata-connector-interface/` | Interfaz conector City Council |
 | `https://public.example.org/c/company/inesdata-connector-interface/` | Interfaz conector Company |
 | `https://public.example.org/auth/` | Keycloak (autenticación) |
-| `https://public.example.org/auth/admin/demo/console/` | Consola admin Keycloak |
+| `https://public.example.org/auth/admin/pionera/console/` | Consola admin Keycloak |
 | `https://public.example.org/s3-console/` | Consola MinIO (almacenamiento) |
-| `https://public.example.org/rs-demo/` | Servicio de registro del dataspace |
+| `https://public.example.org/rs-pionera/` | Servicio de registro del dataspace |
 
 ### Credenciales de acceso a los conectores
 

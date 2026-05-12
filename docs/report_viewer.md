@@ -24,8 +24,8 @@ de reporte detectados, y permite abrir el experimento que necesites.
 Además de los experimentos `experiment_<timestamp>`, el visor puede mostrar
 evidencias opt-in generadas fuera de Level 6 cuando la carpeta incluye
 `metadata.json` y artefactos reales como `results.json` o un reporte Playwright.
-Esto permite incorporar demos A5.2 cerradas sin listar intentos intermedios de
-depuración.
+Esto permite incorporar evidencias A5.2 cerradas sin listar intentos
+intermedios de depuración.
 
 Los runners de componente que no producen Playwright tambien pueden aparecer en
 el visor si guardan un JSON bajo `components/<componente>/<suite>/` con campos

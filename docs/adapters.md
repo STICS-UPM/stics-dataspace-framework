@@ -13,8 +13,8 @@ adapters/edc/
 
 Ambos adapters pueden convivir en un mismo cluster local y compartir
 `common-srvs`. Para que esa convivencia sea reproducible, cada adapter debe
-usar un dataspace y namespace propios. Un ejemplo habitual es `demo` para
-INESData y `demoedc` para EDC.
+usar un dataspace y namespace propios. La configuración local de referencia usa
+`pionera` para INESData y `pionera-edc` para EDC.
 
 No se debe reutilizar el mismo `DS_1_NAME` o `DS_1_NAMESPACE` entre adapters en
 el mismo cluster. Esa reutilización puede mezclar registration-service, bases de
@@ -85,7 +85,16 @@ deployers/edc/deployer.py
 `Level 3` de EDC reutiliza de forma transitoria la lógica compartida de
 bootstrap del dataspace base, pero lee la configuración de
 `deployers/edc/deployer.config`. Por tanto, el dataspace EDC sigue siendo
-aislado: por ejemplo `DS_1_NAME=demoedc` y `DS_1_NAMESPACE=demoedc`.
+aislado:
+
+```text
+DS_1_NAME=pionera-edc
+DS_1_NAMESPACE=edc-control
+NAMESPACE_PROFILE=role-aligned
+DS_1_REGISTRATION_NAMESPACE=edc-control
+DS_1_PROVIDER_NAMESPACE=edc-provider
+DS_1_CONSUMER_NAMESPACE=edc-consumer
+```
 
 El comportamiento operativo de `Level 3` debe ser equivalente al de INESData:
 ejecuta el bootstrap del dataspace del adapter activo aunque el namespace ya

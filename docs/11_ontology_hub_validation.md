@@ -24,7 +24,7 @@ los valores runtime se resuelven desde el deployer activo.
 
 | Propiedad | Valor habitual local |
 | --- | --- |
-| Namespace | `demo` o el namespace del dataspace activo |
+| Namespace | `components` |
 | Release Helm | `<dataspace>-ontology-hub` |
 | Host publico | `ontology-hub-<dataspace>.dev.ds.dataspaceunit.upm` |
 | Servicio interno | `ClusterIP` en puerto `3333` |
@@ -89,7 +89,7 @@ sondeos previos de `vm-single`.
 ### Bug OH-APP-14: versiones y ficheros `.n3`
 
 En sondeos previos de `vm-single`, el crash de `OH-APP-14` dejo este stack trace en el pod
-`demo-ontology-hub`:
+`<dataspace>-ontology-hub`:
 
 ```text
 Error: ENOENT: no such file or directory, unlink './versions/<vocab-id>/<vocab-id>_2026-01-01.n3'

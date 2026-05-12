@@ -54,9 +54,9 @@ fallos por objetos residuales en MinIO.
 ```bash
 cd validation/ui
 UI_ADAPTER=edc \
-UI_DATASPACE=demoedc \
-UI_PROVIDER_CONNECTOR=conn-citycounciledc-demoedc \
-UI_CONSUMER_CONNECTOR=conn-companyedc-demoedc \
+UI_DATASPACE=pionera-edc \
+UI_PROVIDER_CONNECTOR=conn-citycounciledc-pionera-edc \
+UI_CONSUMER_CONNECTOR=conn-companyedc-pionera-edc \
 npm run test:edc
 ```
 

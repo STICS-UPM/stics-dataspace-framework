@@ -272,7 +272,7 @@ del componente y sus suites tecnicas/funcionales, no sobre INESData.
 
 `A - AI Model Hub Tests (Normal/Live/Debug)`
 
-Ejecuta validaciones UI propias de AI Model Hub, no la demo de integracion
+Ejecuta validaciones UI propias de AI Model Hub, no la validacion de integracion
 desde INESData.
 
 `V - Semantic Virtualization Tests (Normal/Live/Debug)`
@@ -280,7 +280,7 @@ desde INESData.
 Ejecuta validaciones UI/read-only del virtualizador semántico. La suite abre el
 endpoint público desde Playwright, valida el documento OpenAPI y comprueba que
 el endpoint de consulta responde desde el contexto del navegador. Tambien cubre
-la UI/editor del virtualizador cuando esta habilitada; la demo desde INESData se
+la UI/editor del virtualizador cuando esta habilitada; la validacion desde INESData se
 ejecuta desde `I`.
 
 ## Control

@@ -122,30 +122,30 @@ Puedes partir de un environment como este, ajustando credenciales y dominios a t
 
 ```json
 {
-  "provider": "conn-citycouncil-demo",
-  "consumer": "conn-company-demo",
-  "provider_user": "user-conn-citycouncil-demo",
+  "provider": "conn-citycouncil-pionera",
+  "consumer": "conn-company-pionera",
+  "provider_user": "user-conn-citycouncil-pionera",
   "provider_password": "<copiar localmente>",
-  "consumer_user": "user-conn-company-demo",
+  "consumer_user": "user-conn-company-pionera",
   "consumer_password": "<copiar localmente>",
   "dsDomain": "dev.ds.dataspaceunit.upm",
-  "dataspace": "demo",
+  "dataspace": "pionera",
   "keycloakUrl": "http://auth.dev.ed.dataspaceunit.upm",
   "keycloakClientId": "dataspace-users",
   "adapter": "inesdata",
   "transferStartPath": "inesdatatransferprocesses",
   "transferDestinationType": "InesDataStore",
-  "providerProtocolAddress": "http://conn-citycouncil-demo:19194/protocol",
-  "consumerProtocolAddress": "http://conn-company-demo:19194/protocol"
+  "providerProtocolAddress": "http://conn-citycouncil-pionera.provider.svc.cluster.local:19194/protocol",
+  "consumerProtocolAddress": "http://conn-company-pionera.consumer.svc.cluster.local:19194/protocol"
 }
 ```
 
 ## Paso 3. Obtener las credenciales
 
-En el entorno demo actual, las contraseñas locales están en:
+En el entorno local actual, las contraseñas locales se generan en:
 
-- `deployers/inesdata/deployments/DEV/demo/credentials-connector-conn-citycouncil-demo.json`
-- `deployers/inesdata/deployments/DEV/demo/credentials-connector-conn-company-demo.json`
+- `deployers/inesdata/deployments/DEV/pionera/credentials-connector-conn-citycouncil-pionera.json`
+- `deployers/inesdata/deployments/DEV/pionera/credentials-connector-conn-company-pionera.json`
 
 El campo que interesa es:
 
