@@ -3035,10 +3035,11 @@ class MainCliTests(unittest.TestCase):
             clear=True,
         ):
             result = main.run_level(adapter, 3, deployer_name="fake", topology="vm-single")
+            restored_kubeconfig = os.environ.get("KUBECONFIG")
 
         self.assertEqual(result["status"], "completed")
         self.assertEqual(observed["kubeconfig"], "/etc/rancher/k3s/k3s.yaml")
-        self.assertIsNone(os.environ.get("KUBECONFIG"))
+        self.assertIsNone(restored_kubeconfig)
 
     def test_run_level_four_uses_vm_single_connector_deployment(self):
         adapter = FakeAdapter()
