@@ -1,0 +1,187 @@
+{
+  "info": {
+    "name": "06 Consumer Transfer",
+    "_postman_id": "consumer-transfer-06",
+    "description": "Consumer starts the transfer process and validates the resolved storage destination",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "eval(pm.environment.get('test_script'));"
+        ]
+      }
+    }
+  ],
+
+  "item": [
+
+    {
+      "name": "Consumer Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "url": {
+          "raw": "{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token",
+          "host": [
+            "{{keycloakUrl}}"
+          ],
+          "path": [
+            "realms",
+            "{{dataspace}}",
+            "protocol",
+            "openid-connect",
+            "token"
+          ]
+        },
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "grant_type", "value": "password", "type": "text" },
+            { "key": "client_id", "value": "{{keycloakClientId}}", "type": "text" },
+            { "key": "username", "value": "{{consumer_user}}", "type": "text" },
+            { "key": "password", "value": "{{consumer_password}}", "type": "text" },
+            { "key": "scope", "value": "openid profile email", "type": "text" }
+          ]
+        }
+      }
+    },
+
+    {
+      "name": "Start Transfer Process",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const agreementId = pm.collectionVariables.get('e2e_agreement_id') || pm.environment.get('e2e_agreement_id');",
+              "if (!agreementId) { pm.execution.skipRequest(); }",
+              "const adapter = String(pm.collectionVariables.get('adapter') || pm.environment.get('adapter') || '').toLowerCase();",
+              "const provider = pm.collectionVariables.get('providerParticipantId') || pm.environment.get('providerParticipantId') || pm.collectionVariables.get('provider') || pm.environment.get('provider');",
+              "const providerProtocolAddress = pm.collectionVariables.get('providerProtocolAddress') || pm.environment.get('providerProtocolAddress');",
+              "const protocol = 'dataspace-protocol-http';",
+              "let payload;",
+              "if (adapter === 'edc') {",
+              "  payload = {",
+              "    '@context': { '@vocab': 'https://w3id.org/edc/v0.0.1/ns/' },",
+              "    '@type': pm.collectionVariables.get('transferRequestType') || pm.environment.get('transferRequestType') || 'TransferRequestDto',",
+              "    connectorId: provider,",
+              "    counterPartyAddress: providerProtocolAddress,",
+              "    contractId: agreementId,",
+              "    protocol,",
+              "    transferType: pm.collectionVariables.get('transferType') || pm.environment.get('transferType') || 'HttpData-PULL'",
+              "  };",
+              "} else {",
+              "  payload = {",
+              "    '@context': { '@vocab': 'https://w3id.org/edc/v0.0.1/ns/' },",
+              "    '@type': pm.collectionVariables.get('transferRequestType') || pm.environment.get('transferRequestType') || 'TransferRequest',",
+              "    assetId: pm.collectionVariables.get('e2e_asset_id') || pm.environment.get('e2e_asset_id'),",
+              "    contractId: agreementId,",
+              "    counterPartyAddress: providerProtocolAddress,",
+              "    protocol,",
+              "    transferType: pm.collectionVariables.get('transferType') || pm.environment.get('transferType') || 'AmazonS3-PUSH',",
+              "    dataDestination: {",
+              "      type: pm.collectionVariables.get('transferDestinationType') || pm.environment.get('transferDestinationType') || 'InesDataStore'",
+              "    }",
+              "  };",
+              "}",
+              "pm.variables.set('transferRequestBody', JSON.stringify(payload, null, 2));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/{{transferStartPath}}",
+          "host": [
+            "{{consumer}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "{{transferStartPath}}"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{{transferRequestBody}}"
+        }
+      }
+    },
+
+    {
+      "name": "Check Transfer Status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          }
+        ],
+        "url": {
+          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/transferprocesses/{{e2e_transfer_id}}",
+          "host": [
+            "{{consumer}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "transferprocesses",
+            "{{e2e_transfer_id}}"
+          ]
+        }
+      }
+    },
+
+    {
+      "name": "Resolve Current Transfer Destination",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          }
+        ],
+        "url": {
+          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/transferprocesses/{{e2e_transfer_id}}",
+          "host": [
+            "{{consumer}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "transferprocesses",
+            "{{e2e_transfer_id}}"
+          ]
+        }
+      }
+    }
+
+  ]
+}

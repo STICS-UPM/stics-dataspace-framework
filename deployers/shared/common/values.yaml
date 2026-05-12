@@ -1,0 +1,86 @@
+postgresql:
+  image:
+    repository: bitnamilegacy/postgresql
+    tag: 16.3.0-debian-12-r9
+  auth:
+    postgresPassword: CHANGE_ME
+    # We initially setup the database for keycloak
+    username: keycloak
+    password: CHANGE_ME
+    database: keycloak
+keycloak:
+  image:
+    repository: bitnamilegacy/keycloak
+    tag: 24.0.4-debian-12-r1
+  proxy: none
+  auth:
+    adminUser: admin
+    adminPassword: CHANGE_ME
+  postgresql:
+    enabled: false
+  externalDatabase:
+    host: "{{ .Release.Name }}-postgresql"
+    user: keycloak
+    password: CHANGE_ME
+    database: keycloak
+    port: 5432
+  ingress:
+    enabled: true
+    hostname: auth.dev.ed.dataspaceunit.upm
+    annotations:
+      nginx.ingress.kubernetes.io/configuration-snippet: |
+        proxy_cookie_flags ~ nosecure nosamesite;
+  adminIngress:
+    enabled: true
+    hostname: admin.auth.dev.ed.dataspaceunit.upm
+    annotations:
+      nginx.ingress.kubernetes.io/configuration-snippet: |
+        proxy_cookie_flags ~ nosecure nosamesite;
+  keycloakConfigCli:
+    image:
+      repository: bitnamilegacy/keycloak-config-cli
+      tag: 5.12.0-debian-12-r4
+    enabled: true
+    extraEnv:
+      - name: KEYCLOAK_USER
+        value: admin
+      - name: KEYCLOAK_PASSWORD
+        value: CHANGE_ME
+    configuration:
+      master.json: |
+        {
+          "realm" : "master",
+          "attributes": {
+            "frontendUrl": "http://admin.auth.dev.ed.dataspaceunit.upm"
+          }
+        }
+minio:
+  mode: standalone
+  rootUser: admin
+  rootPassword: CHANGE_ME
+  replicas: 1
+  persistence:
+    size: 100Gi
+  ingress:
+    enabled: true
+    hosts:
+      - minio.dev.ed.dataspaceunit.upm
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "0"
+  consoleIngress:
+    enabled: true
+    hosts:
+      - console.minio-s3.dev.ed.dataspaceunit.upm
+  resources:
+    requests:
+      memory: 2Gi
+vault:
+  serviceAccount:
+    create: true
+    name: vault
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: standard
+  injector:
+    enabled: false

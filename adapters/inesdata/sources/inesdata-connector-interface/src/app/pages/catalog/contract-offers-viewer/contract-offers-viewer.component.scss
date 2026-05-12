@@ -1,0 +1,178 @@
+@import "../../../../theme.scss";
+.mat-mdc-card {
+  --mdc-elevated-card-container-color: $grey-400;
+  box-shadow: unset;
+}
+
+mat-card-title {
+  margin-bottom: 10px;
+  color: var(--secondary-600);
+}
+
+.property-title {
+  font-weight: bold !important;
+  font-size:  14px;
+}
+
+mat-list-item:hover .property-title,
+.property-title {
+  color: var(--secondary-600);
+}
+
+.property-value {
+  font-size: 14px;
+  color: var(--secondary-600);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.property-icon {
+  margin: 15px;
+}
+
+.property {
+  padding: 0px 5px;
+}
+
+.json-policy {
+  white-space: break-spaces;
+}
+
+:host ::ng-deep .grey .detail-item {
+  background: var(--grey-400);
+  padding: 1rem 1.25rem;
+  border-radius: 16px;
+}
+
+.details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.detail-item {
+  flex: 1 1 calc((100% / 2) - 20px);
+  min-width: calc((100% / 2) - 20px);
+  box-sizing: border-box;
+}
+
+@media (max-width: 480px) {
+  .detail-item {
+    flex: 1 1 100%;
+    min-width: 100%;
+  }
+}
+
+.detail-title {
+  font-weight: bold;
+  color: var(--secondary-600);
+  display: block;
+
+  &-inline {
+    font-weight: bold;
+    color: var(--secondary-600);
+    display: inline;
+  }
+}
+
+.detail-value {
+  font-size: 14px;
+  color: var(--secondary-600);
+  display: block;
+
+  &-inline {
+    font-size: 14px;
+    color: var(--secondary-600);
+    display: inline;
+  }
+}
+
+ul {
+  margin: 0px;
+}
+
+li::marker {
+  color: var(--secondary-500);
+}
+
+.property-value.description {
+  white-space: normal;
+}
+
+.mdc-card.vocabulary {
+  padding: 20px 20px 0px 20px;
+}
+
+.mdc-card:not(.vocabulary):not(.contract-offer) {
+  padding: 20px;
+}
+
+.grey {
+  margin-bottom: 15px;
+}
+
+mat-expansion-panel-header {
+  font-size: 16px;
+}
+
+.contract-offer {
+  margin: 20px;
+  background-color: white;
+}
+
+.value-not-available {
+  font-style: italic;
+}
+
+:host ::ng-deep td {
+  border: 1px solid white;
+}
+
+:host ::ng-deep a {
+  color: var(--grey-400);
+}
+
+.mat-mdc-card-actions {
+  padding: 16px;
+}
+
+.mat-mdc-card-actions button:first-child {
+  margin-right: 10px;
+}
+
+.mdc-linear-progress {
+  margin-top: var(--mdc-linear-progress-track-height, -4px);
+}
+
+:host ::ng-deep policy-expression {
+  font-size: 14px;
+}
+
+.property-value:before {
+  content: unset;
+}
+
+.mat-expansion-panel{
+  background-color: var(--grey-400);
+  box-shadow: unset   !important;
+}
+
+:host ::ng-deep .mat-expansion-indicator:after{
+  color: var(--secondary-600);
+}
+
+.contract-offer mat-card-title {
+  letter-spacing: 1.25px;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+:host ::ng-deep policy-expression {
+  color: var(--secondary-500);
+}
+
+mat-card-actions {
+  padding-right: 10px !important;
+  padding-bottom: 15px !important;
+  text-align: end !important;
+}

@@ -1,0 +1,65 @@
+<div *ngIf="landingPageContent$ | async as landingPageContent" id="wrapper">
+
+	<div class="welcome-block mb-8">
+		<div class="relative w-12 h-full block font-bold border-round-3xl p-4 block-img"
+			style="background-image: url('{{landingPageContent.welcomeBlock.backgroundImageUrl}}');">
+			<div class="absolute w-6 h-6 bottom-0 left-0 border-round p-4 font-bold ">
+				<h1 class="welcome-text">{{ landingPageContent.welcomeBlock.text }}</h1>
+			</div>
+		</div>
+	</div>
+
+	<div class="home-catalogo">
+		<div class="home-catalogo__container">
+			<div class="home-catalogo__title-block">
+				<div class="home-catalogo__titles">
+					<h2 class="home-catalogo__title">{{ landingPageContent.catalogBlock.title }}</h2>
+					<h4 class="home-catalogo__subtitle">{{ landingPageContent.catalogBlock.description }}</h4>
+				</div>
+			</div>
+			<div *ngFor="let dataset of datasets | slice:0:5" class="home-catalogo__item"
+				style="background-image: url('{{landingPageContent.catalogBlock.backgroundImageUrl}}')">
+				<div class="home-catalogo__item__content">
+					<div class="flex flex-justify-between">
+						<span class="home-catalogo__item-data">{{ dataset.properties.assetType }}</span>
+						<span class="home-catalogo__item-data">{{ dataset.properties.format }}</span>
+					</div>
+					<h4 class="home-catalogo__item-title">{{!!dataset.properties.name ? dataset.properties.name :
+						dataset.assetId}}</h4>
+					<p class="home-catalogo__item-description">{{ dataset.properties.shortDescription }}</p>
+					<div class="flex flex-justify-right">
+						<button class="home-catalogo__item-btn" (click)="viewDataset(dataset)">
+							<span>Ver más</span>
+							<img class="ml-1" src="../../../assets/images/arrow-right-blue.svg" alt="arrow-right-blue">
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
+		<button type="button" routerLink="/catalog"
+			class="home-catalogo__btn btn bg-primary-700 text-0 px-3 py-2 text-base border-none border-round-2xl flex flex-center">
+			<span>Ver todo el catálogo</span>
+			<img class="ml-2" src="../../../assets/images/arrow-right.svg" alt="Flecha derecha">
+		</button>
+	</div>
+
+	<div class="get-to-know-us-block mb-8">
+		<div class="block bg-primary p-4 border-round-3xl mb-3 know-us"
+			style="background-image: url('{{landingPageContent.getToKnowUsBlock.backgroundImageUrl}}');">
+			<div class="know-us__content">
+				<h1>{{ landingPageContent.getToKnowUsBlock.title }}</h1>
+				<markdown [data]="landingPageContent.getToKnowUsBlock.description"></markdown>
+			</div>
+		</div>
+	</div>
+
+	<div class="home-unete">
+		<div class="home-unete__content">
+			<img class="home-unete__img" src="{{ landingPageContent.joinBlock.imageUrl }}">
+			<div class="flex flex-column">
+				<h1 class="home-unete__title">{{ landingPageContent.joinBlock.title }}</h1>
+				<markdown class="home-unete__description" [data]="landingPageContent.joinBlock.description"></markdown>
+			</div>
+		</div>
+	</div>
+</div>

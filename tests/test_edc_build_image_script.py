@@ -1,0 +1,245 @@
+import os
+import stat
+import subprocess
+import tempfile
+import time
+import unittest
+
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+SCRIPT_PATH = os.path.join(PROJECT_ROOT, "adapters", "edc", "scripts", "build_image.sh")
+DASHBOARD_SCRIPT_PATH = os.path.join(
+    PROJECT_ROOT,
+    "adapters",
+    "edc",
+    "scripts",
+    "build_dashboard_image.sh",
+)
+LOCAL_EDC_SERVICE_EXTENSIONS_PATH = os.path.join(
+    PROJECT_ROOT,
+    "adapters",
+    "edc",
+    "sources",
+    "dashboard",
+    "asset-filter-template",
+    "final-connector",
+    "src",
+    "main",
+    "resources",
+    "META-INF",
+    "services",
+    "org.eclipse.edc.spi.system.ServiceExtension",
+)
+
+
+def _touch(path, *, contents="", executable=False, mtime=None):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(contents)
+    if executable:
+        current = os.stat(path).st_mode
+        os.chmod(path, current | stat.S_IXUSR)
+    if mtime is not None:
+        os.utime(path, (mtime, mtime))
+
+
+class EdcBuildImageScriptTests(unittest.TestCase):
+    def test_dashboard_image_script_invokes_sync_with_bash(self):
+        with open(DASHBOARD_SCRIPT_PATH, "r", encoding="utf-8") as handle:
+            script = handle.read()
+
+        self.assertIn('bash "$SCRIPT_DIR/sync_dashboard_sources.sh" --apply', script)
+        self.assertNotIn('\n  "$SCRIPT_DIR/sync_dashboard_sources.sh" --apply', script)
+
+    def test_local_edc_service_extensions_register_adapter_kafka_bridge(self):
+        if not os.path.isfile(LOCAL_EDC_SERVICE_EXTENSIONS_PATH):
+            self.skipTest("local EDC connector source checkout is not materialized")
+
+        with open(LOCAL_EDC_SERVICE_EXTENSIONS_PATH, "r", encoding="utf-8") as handle:
+            entries = [line.strip() for line in handle.readlines() if line.strip()]
+
+        self.assertIn("com.pionera.assetfilter.infer.InferenceExtension", entries)
+        self.assertIn("com.pionera.assetfilter.proxy.CustomProxyDataPlaneExtension", entries)
+
+    def _create_fake_source_tree(self, root_dir):
+        _touch(os.path.join(root_dir, "settings.gradle.kts"), contents="rootProject.name = \"connector\"\n")
+        _touch(os.path.join(root_dir, "gradle", "libs.versions.toml"), contents="[versions]\n")
+        _touch(os.path.join(root_dir, "gradlew"), contents="#!/usr/bin/env bash\n", executable=True)
+        _touch(os.path.join(root_dir, "gradle", "wrapper", "gradle-wrapper.jar"), contents="jar")
+        _touch(
+            os.path.join(
+                root_dir,
+                "final-connector",
+                "build.gradle.kts",
+            ),
+            contents="plugins {}\n",
+        )
+        _touch(
+            os.path.join(
+                root_dir,
+                "final-connector",
+                "src",
+                "main",
+                "java",
+                "Example.java",
+            ),
+            contents="class Example {}\n",
+        )
+        _touch(
+            os.path.join(
+                root_dir,
+                "final-connector",
+                "build",
+                "libs",
+                "connector.jar",
+            ),
+            contents="fake-jar",
+        )
+
+    def test_build_image_reuses_existing_connector_jar_when_inputs_are_older(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_fake_source_tree(tmpdir)
+            jar_path = os.path.join(
+                tmpdir,
+                "final-connector",
+                "build",
+                "libs",
+                "connector.jar",
+            )
+            now = time.time()
+            os.utime(jar_path, (now, now))
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    SCRIPT_PATH,
+                    "--source-dir",
+                    tmpdir,
+                    "--skip-minikube-load",
+                ],
+                text=True,
+                capture_output=True,
+                cwd=PROJECT_ROOT,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("Reusing existing connector jar", completed.stdout)
+        self.assertNotIn("GradleWrapperMain", completed.stdout)
+
+    def test_build_image_rebuilds_connector_jar_when_runtime_inputs_changed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_fake_source_tree(tmpdir)
+            runtime_build_file = os.path.join(
+                tmpdir,
+                "final-connector",
+                "build.gradle.kts",
+            )
+            jar_path = os.path.join(
+                tmpdir,
+                "final-connector",
+                "build",
+                "libs",
+                "connector.jar",
+            )
+            base_time = time.time()
+            os.utime(jar_path, (base_time, base_time))
+            os.utime(runtime_build_file, (base_time + 10, base_time + 10))
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    SCRIPT_PATH,
+                    "--source-dir",
+                    tmpdir,
+                    "--skip-minikube-load",
+                ],
+                text=True,
+                capture_output=True,
+                cwd=PROJECT_ROOT,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("Connector jar is outdated and will be rebuilt", completed.stdout)
+        self.assertIn("source changed: final-connector/build.gradle.kts", completed.stdout)
+        self.assertIn("GradleWrapperMain", completed.stdout)
+
+    def test_build_image_refuses_custom_source_sync_when_source_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing_source = os.path.join(tmpdir, "missing-connector")
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    SCRIPT_PATH,
+                    "--source-dir",
+                    missing_source,
+                    "--skip-minikube-load",
+                ],
+                text=True,
+                capture_output=True,
+                cwd=PROJECT_ROOT,
+                check=False,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("Refusing to synchronize into a custom source directory", completed.stderr)
+        self.assertNotIn("sync_sources.sh", completed.stdout + completed.stderr)
+        self.assertNotIn("git clone", completed.stdout + completed.stderr)
+
+    def test_build_image_refreshes_minikube_image_before_loading_stable_tag(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_fake_source_tree(tmpdir)
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    SCRIPT_PATH,
+                    "--source-dir",
+                    tmpdir,
+                ],
+                text=True,
+                capture_output=True,
+                cwd=PROJECT_ROOT,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(
+            "minikube -p \"minikube\" ssh \"docker image rm -f 'validation-environment/edc-connector:local' >/dev/null 2>&1 || true\"",
+            completed.stdout,
+        )
+        self.assertIn(
+            "minikube -p \"minikube\" image load \"validation-environment/edc-connector:local\"",
+            completed.stdout,
+        )
+
+    def test_build_image_imports_local_image_into_k3s_runtime(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_fake_source_tree(tmpdir)
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    SCRIPT_PATH,
+                    "--source-dir",
+                    tmpdir,
+                    "--cluster-runtime",
+                    "k3s",
+                ],
+                text=True,
+                capture_output=True,
+                cwd=PROJECT_ROOT,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("Cluster runtime:   k3s", completed.stdout)
+        self.assertIn("docker save \"validation-environment/edc-connector:local\"", completed.stdout)
+        self.assertIn("sudo k3s ctr -n k8s.io images import", completed.stdout)
+        self.assertNotIn("minikube -p \"minikube\" image load", completed.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

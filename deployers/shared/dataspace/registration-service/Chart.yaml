@@ -1,0 +1,4 @@
+apiVersion: v2
+name: dataspace-registration-service
+description: Deploy Registration Service
+version: 0.1.0

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ai-model-hub
+description: AI Model Hub component for INESData
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

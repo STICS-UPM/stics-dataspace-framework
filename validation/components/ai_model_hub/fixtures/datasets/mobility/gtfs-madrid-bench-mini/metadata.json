@@ -1,0 +1,61 @@
+{
+  "datasetName": "GTFS-Madrid-Bench-mini",
+  "domain": "mobility",
+  "task": "GTFS route, stop and travel-time benchmark",
+  "format": "application/json",
+  "language": "es",
+  "source": {
+    "name": "GTFS-Madrid-Bench",
+    "repository": "local synthetic fixture for Validation-Environment",
+    "license": "CC-BY-4.0-compatible synthetic sample",
+    "notes": [
+      "The fixture uses GTFS-like field names but does not include an operational Madrid transit feed.",
+      "Stop names and coordinates are illustrative and only support reproducible validation flows.",
+      "The fixture is local and stable; it is not refreshed automatically during validation runs."
+    ]
+  },
+  "version": "mini-v1",
+  "keywords": [
+    "gtfs",
+    "mobility",
+    "madrid",
+    "routes",
+    "stops",
+    "benchmark",
+    "semantic-virtualization"
+  ],
+  "assetPublication": {
+    "assetId": "dataset-gtfs-madrid-bench-mini",
+    "policyId": "policy-gtfs-madrid-bench-mini",
+    "contractDefinitionId": "contractdef-gtfs-madrid-bench-mini",
+    "storeFolder": "mobility-gtfs-madrid-bench-mini",
+    "uploadFile": "benchmark_sample.json",
+    "uploadMediaType": "application/json",
+    "fileName": "gtfs-madrid-bench-mini.json",
+    "publicationMode": "connector_s3assets_api",
+    "dataAddressType": "InesDataStore",
+    "description": "Synthetic GTFS-like mini fixture used to bootstrap the mobility validation flow in AI Model Hub."
+  },
+  "selection": {
+    "objective": "Small, non-sensitive and reproducible subset for Phase 3 bootstrap and MH-MOB-01 scaffolding.",
+    "entities": [
+      "stops",
+      "routes",
+      "trips",
+      "stop_times",
+      "transfer_benchmark_cases"
+    ],
+    "recordCounts": {
+      "stops": 5,
+      "routes": 2,
+      "trips": 2,
+      "stop_times": 6,
+      "transfer_benchmark_cases": 3
+    },
+    "notes": [
+      "The sample preserves the minimum GTFS join keys required by the validation plan.",
+      "Expected outputs focus on route sequence and travel-time checks.",
+      "This first slice prepares publication and benchmarking; it does not execute a mobility model yet."
+    ]
+  }
+}

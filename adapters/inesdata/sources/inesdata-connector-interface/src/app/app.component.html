@@ -1,0 +1,4 @@
+<ng-container *ngIf="(authService.isAuthenticated$ | async) as isAuthenticated">
+  <app-navigation *ngIf="isAuthenticated"></app-navigation>
+  <h2 *ngIf="!isAuthenticated"></h2>
+</ng-container>

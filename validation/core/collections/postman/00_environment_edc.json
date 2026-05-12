@@ -1,0 +1,109 @@
+{
+  "id": "postman-environment-00-edc",
+  "name": "01 Environment - EDC Demo",
+  "values": [
+    {
+      "key": "provider",
+      "value": "conn-citycounciledc-pionera-edc",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "consumer",
+      "value": "conn-companyedc-pionera-edc",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "provider_user",
+      "value": "user-conn-citycounciledc-pionera-edc",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "provider_password",
+      "value": "<copiar localmente>",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "consumer_user",
+      "value": "user-conn-companyedc-pionera-edc",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "consumer_password",
+      "value": "<copiar localmente>",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "dsDomain",
+      "value": "dev.ds.dataspaceunit.upm",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "dataspace",
+      "value": "pionera-edc",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "keycloakUrl",
+      "value": "http://auth.dev.ed.dataspaceunit.upm",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "keycloakClientId",
+      "value": "dataspace-users",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "adapter",
+      "value": "edc",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "transferStartPath",
+      "value": "transferprocesses",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "transferRequestType",
+      "value": "TransferRequestDto",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "transferType",
+      "value": "HttpData-PULL",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "transferDestinationType",
+      "value": "HttpData",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "providerProtocolAddress",
+      "value": "http://conn-citycounciledc-pionera-edc:19194/protocol",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "consumerProtocolAddress",
+      "value": "http://conn-companyedc-pionera-edc:19194/protocol",
+      "type": "text",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment"
+}

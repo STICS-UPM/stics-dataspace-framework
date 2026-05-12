@@ -1,0 +1,15 @@
+dependencies:
+- name: postgresql
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 15.4.2
+- name: keycloak
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 21.2.2
+- name: minio
+  repository: https://charts.min.io/
+  version: 5.2.0
+- name: vault
+  repository: https://helm.releases.hashicorp.com
+  version: 0.28.1
+digest: sha256:5226e50657f2a5babb47d44ea66b3e2257191a830d178b2356ff4b352b4d67eb
+generated: "2024-09-30T08:02:37.146862638+02:00"

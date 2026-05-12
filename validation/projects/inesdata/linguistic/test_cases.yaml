@@ -1,0 +1,39 @@
+suite: linguistic
+project: inesdata
+profile: read-only
+cases:
+  - id: INESDATA-LING-01
+    title: Acceso al portal lingüístico
+    type: playwright
+    profile: read-only
+    status: proposed
+    objective: Verificar que el portal del espacio lingüístico está disponible para el usuario de validación.
+    preconditions:
+      - Target externo configurado con `dataspaces[].name=linguistic`.
+      - Credenciales de validación resueltas por entorno, secret manager o prompt seguro.
+    evidence:
+      - Screenshot o trace de Playwright.
+      - URL validada redactada si el target lo requiere.
+  - id: INESDATA-LING-02
+    title: Catálogo lingüístico visible
+    type: playwright
+    profile: read-only
+    status: proposed
+    objective: Verificar que el usuario puede abrir el catálogo lingüístico y ver resultados publicados.
+    preconditions:
+      - El target define `public_portal_url` para el espacio lingüístico.
+      - Existen datos públicos o aprobados para validación read-only.
+    evidence:
+      - Captura del catálogo.
+      - Conteo o texto visible no sensible.
+  - id: INESDATA-LING-03
+    title: Smoke API del dataspace lingüístico
+    type: newman
+    profile: read-only
+    status: proposed
+    objective: Reutilizar Newman core contra conectores lingüísticos cuando el target aporte endpoints compatibles.
+    preconditions:
+      - Conectores provider/consumer definidos en el target.
+      - Management API accesible para el usuario de validación.
+    evidence:
+      - Reporte JSON Newman.

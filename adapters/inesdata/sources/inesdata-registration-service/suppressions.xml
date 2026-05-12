@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+   <suppress>
+      <notes><![CDATA[
+		  sonar dependency that cannot be forced
+      ]]></notes>
+      <packageUrl regex="true">^pkg:maven/com\.h2database/h2@.*$</packageUrl>
+      <cpe>cpe:/a:h2database:h2</cpe>
+      <cpe>cpe:/a:service_project:service</cpe>
+   </suppress>
+   <suppress>
+      <notes><![CDATA[
+      file name: sonar-scanner-api-2.16.2.588.jar
+      ]]></notes>
+      <packageUrl regex="true">^pkg:maven/com\.squareup\.okhttp3/okhttp.*@.*$</packageUrl>
+      <cpe>cpe:/a:squareup:okhttp</cpe>
+      <cpe>cpe:/a:squareup:okhttp3</cpe>
+      <cve>CVE-2018-14335</cve>
+      <cve>CVE-2021-0341</cve>
+   </suppress>
+   <suppress>
+      <notes><![CDATA[
+      file name: sonar-scanner-api-2.16.2.588.jar
+      ]]></notes>
+      <packageUrl regex="true">^pkg:maven/com\.squareup\.okio/okio@.*$</packageUrl>
+      <cpe>cpe:/a:squareup:okio</cpe>
+      <cve>CVE-2023-3635</cve>
+   </suppress>
+
+</suppressions>

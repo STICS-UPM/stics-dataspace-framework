@@ -1,0 +1,71 @@
+<div class="flex flex-row dialog-header justify-between space-x-2">
+  <div class="mat-card-header" mat-dialog-title removeClass="mat-dialog-title">
+    <div class="mat-card-header-text">
+      <div class="mat-card-title">
+        Transfer
+      </div>
+    </div>
+  </div>
+  <button mat-icon-button color="accent" mat-dialog-close>
+    <mat-icon>cancel</mat-icon>
+  </button>
+</div>
+
+<mat-dialog-content>
+
+  <mat-form-field class="form-field" color="accent" id="form-field-destination">
+    <mat-label>Destination</mat-label>
+    <mat-select [(ngModel)]="storageTypeId" required>
+      <mat-option *ngFor="let trasnferType of transferTypes" [value]="trasnferType.id">
+        {{trasnferType.name}}
+      </mat-option>
+    </mat-select>
+  </mat-form-field>
+
+  <div *ngIf="storageTypeId === 'AmazonS3'">
+    <mat-form-field class="form-field" color="accent">
+      <mat-label>Region</mat-label>
+      <input required [(ngModel)]="amazonS3DataAddress.region" matInput>
+    </mat-form-field>
+
+    <mat-form-field class="form-field" color="accent">
+      <mat-label>Bucket Name</mat-label>
+      <input required [(ngModel)]="amazonS3DataAddress.bucketName" matInput>
+    </mat-form-field>
+
+    <mat-form-field class="form-field" color="accent">
+      <mat-label>Key Prefix</mat-label>
+      <input [(ngModel)]="amazonS3DataAddress.keyPrefix" matInput>
+    </mat-form-field>
+
+    <mat-form-field class="form-field" color="accent">
+      <mat-label>Folder Name</mat-label>
+      <input [(ngModel)]="amazonS3DataAddress.folderName" matInput>
+    </mat-form-field>
+
+    <mat-form-field class="form-field" color="accent">
+      <mat-label>Access Key Id</mat-label>
+      <input required [(ngModel)]="amazonS3DataAddress.accessKeyId" matInput>
+    </mat-form-field>
+
+    <mat-form-field class="form-field" color="accent">
+      <mat-label>Secret Access Key</mat-label>
+      <input required [(ngModel)]="amazonS3DataAddress.secretAccessKey" matInput>
+    </mat-form-field>
+
+    <mat-form-field class="form-field" color="accent">
+      <mat-label>Endpoint Override</mat-label>
+      <input required [(ngModel)]="amazonS3DataAddress.endpointOverride" matInput>
+    </mat-form-field>
+  </div>
+
+  <div *ngIf="storageTypeId === 'InesDataStore'">
+  </div>
+
+</mat-dialog-content>
+
+<mat-dialog-actions>
+    <button (click)="onTransfer()" color="accent" mat-stroked-button>
+      <mat-icon>downloading</mat-icon> Start transfer
+    </button>
+</mat-dialog-actions>

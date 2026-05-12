@@ -1,0 +1,17 @@
+{{- $dashboard := (index .Values "dashboard") | default dict }}
+{{- $dashboardProxy := (index $dashboard "proxy") | default dict }}
+{{- if and .Values.dashboard.enabled ((index $dashboardProxy "enabled") | default false) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.connector.name }}-dashboard-proxy
+  labels:
+    validation-environment-adapter: edc
+spec:
+  selector:
+    app: {{ .Values.connector.name }}-dashboard-proxy
+  ports:
+    - name: http
+      port: {{ (index $dashboardProxy "port") | default 8080 }}
+      targetPort: http
+{{- end }}

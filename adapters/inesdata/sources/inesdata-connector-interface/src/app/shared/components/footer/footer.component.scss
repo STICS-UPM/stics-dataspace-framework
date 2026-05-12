@@ -1,0 +1,71 @@
+/* Custom FOOTER component styles */
+
+.footer {
+  padding: 10px 20px;
+  border-top: 3px solid #E6E6E6;
+  background-color: white;
+
+  &__company {
+    padding: 10px 0;
+    font-family: "Open Sans", sans-serif;
+    color: var(--secondary-600);
+    text-align: center;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 16.34px;
+    text-align: center;
+    text-underline-position: from-font;
+    text-decoration-skip-ink: none;
+    background-color: white;
+
+    p {
+      margin: 0;
+    }
+  }
+
+  &__logos {
+    text-align: center;
+
+    img {
+      height: 60px;
+      margin: 10px 30px;
+    }
+  }
+
+  &__title {
+    color: #ffffff;
+    font-size: 42px;
+    margin: 0 0 8px 0;
+  }
+}
+
+@media (max-width: 1600px) {
+  .footer {
+    &__logos {
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 15px;
+    }
+  }
+}
+
+@media (max-width: 1400px) {
+  .footer {
+    padding: 15px;
+
+    &__logos {
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+    }
+  }
+}
+
+@media (max-width: 1200px) {
+  .footer {
+    padding: 10px;
+
+    &__logos {
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+    }
+  }
+}

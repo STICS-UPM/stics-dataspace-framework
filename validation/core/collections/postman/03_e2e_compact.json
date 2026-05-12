@@ -1,0 +1,1203 @@
+{
+  "info": {
+    "name": "03 E2E Compact Flow",
+    "_postman_id": "postman-e2e-compact-03",
+    "description": "Colección compacta y autocontenida para Postman. Embebe los scripts necesarios para encadenar el flujo E2E principal sin depender de test_script inyectado por Newman.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "catalog_max_attempts",
+      "value": "6"
+    },
+    {
+      "key": "negotiation_start_max_attempts",
+      "value": "30"
+    },
+    {
+      "key": "negotiation_status_max_attempts",
+      "value": "10"
+    },
+    {
+      "key": "transfer_start_max_attempts",
+      "value": "8"
+    },
+    {
+      "key": "transfer_destination_max_attempts",
+      "value": "10"
+    }
+  ],
+  "item": [
+    {
+      "name": "Provider Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  return;",
+              "}",
+              "",
+              "pm.test(\"HTTP status is 200\", function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Provider login returns access_token\", function () {",
+              "  pm.expect(body.access_token).to.be.a(\"string\").and.not.empty;",
+              "});",
+              "",
+              "const suffix = String(Date.now());",
+              "setVar(\"provider_jwt\", body.access_token);",
+              "setVar(\"e2e_suffix\", suffix);",
+              "setVar(\"e2e_asset_id\", `asset-e2e-${suffix}`);",
+              "setVar(\"e2e_policy_id\", `policy-e2e-${suffix}`);",
+              "setVar(\"e2e_contract_definition_id\", `contract-e2e-${suffix}`);",
+              "setVar(\"e2e_expected_provider_bucket\", `${pm.environment.get(\"dataspace\")}-${pm.environment.get(\"provider\")}`);",
+              "setVar(\"e2e_expected_consumer_bucket\", `${pm.environment.get(\"dataspace\")}-${pm.environment.get(\"consumer\")}`);",
+              "[",
+              "  \"providerParticipantId\",",
+              "  \"e2e_offer_policy_id\",",
+              "  \"e2e_catalog_asset_id\",",
+              "  \"e2e_negotiation_id\",",
+              "  \"e2e_agreement_id\",",
+              "  \"e2e_transfer_id\",",
+              "  \"e2e_transfer_destination_bucket\",",
+              "  \"catalog_lookup_attempt\",",
+              "  \"negotiation_start_attempt\",",
+              "  \"negotiation_status_attempt\",",
+              "  \"transfer_start_attempt\",",
+              "  \"transfer_destination_attempt\"",
+              "].forEach(function (key) {",
+              "  pm.environment.unset(key);",
+              "  pm.collectionVariables.unset(key);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "url": {
+          "raw": "{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token",
+          "host": [
+            "{{keycloakUrl}}"
+          ],
+          "path": [
+            "realms",
+            "{{dataspace}}",
+            "protocol",
+            "openid-connect",
+            "token"
+          ]
+        },
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "password",
+              "type": "text"
+            },
+            {
+              "key": "client_id",
+              "value": "{{keycloakClientId}}",
+              "type": "text"
+            },
+            {
+              "key": "username",
+              "value": "{{provider_user}}",
+              "type": "text"
+            },
+            {
+              "key": "password",
+              "value": "{{provider_password}}",
+              "type": "text"
+            },
+            {
+              "key": "scope",
+              "value": "openid profile email",
+              "type": "text"
+            }
+          ]
+        },
+        "description": "Autentica al proveedor y genera los identificadores e2e_* usados en el resto del flujo manual compactado."
+      }
+    },
+    {
+      "name": "Create E2E Asset",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  return;",
+              "}",
+              "",
+              "pm.test(\"HTTP status indicates resource creation\", function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "});",
+              "",
+              "pm.test(\"Asset creation returns @id\", function () {",
+              "  pm.expect(body[\"@id\"] || pm.environment.get(\"e2e_asset_id\")).to.exist;",
+              "});",
+              "",
+              "if (body[\"@id\"]) {",
+              "  setVar(\"e2e_asset_id\", body[\"@id\"]);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/assets",
+          "protocol": "http",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "assets"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"dct\": \"http://purl.org/dc/terms/\",\n    \"dcat\": \"http://www.w3.org/ns/dcat#\"\n  },\n  \"@id\": \"{{e2e_asset_id}}\",\n  \"@type\": \"Asset\",\n  \"properties\": {\n    \"name\": \"E2E Dataspace Asset {{e2e_suffix}}\",\n    \"version\": \"1.0.0\",\n    \"shortDescription\": \"Asset for end-to-end dataspace validation\",\n    \"assetType\": \"dataset\",\n    \"dct:description\": \"Asset for end-to-end dataspace validation\",\n    \"dcat:keyword\": [\"validation\", \"e2e\", \"dataspace\"]\n  },\n  \"dataAddress\": {\n    \"type\": \"HttpData\",\n    \"baseUrl\": \"https://jsonplaceholder.typicode.com/todos\",\n    \"name\": \"todos\"\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Crea el asset negociable mínimo del proveedor."
+      }
+    },
+    {
+      "name": "Create E2E Policy",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  return;",
+              "}",
+              "",
+              "pm.test(\"HTTP status indicates resource creation\", function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "});",
+              "",
+              "pm.test(\"Policy creation returns @id\", function () {",
+              "  pm.expect(body[\"@id\"] || pm.environment.get(\"e2e_policy_id\")).to.exist;",
+              "});",
+              "",
+              "if (body[\"@id\"]) {",
+              "  setVar(\"e2e_policy_id\", body[\"@id\"]);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/policydefinitions",
+          "protocol": "http",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "policydefinitions"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"odrl\": \"http://www.w3.org/ns/odrl/2/\"\n  },\n  \"@id\": \"{{e2e_policy_id}}\",\n  \"policy\": {\n    \"@context\": \"http://www.w3.org/ns/odrl.jsonld\",\n    \"@type\": \"Set\",\n    \"permission\": [],\n    \"prohibition\": [],\n    \"obligation\": []\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Crea la policy asociada al asset E2E."
+      }
+    },
+    {
+      "name": "Create E2E Contract Definition",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  return;",
+              "}",
+              "",
+              "pm.test(\"HTTP status indicates resource creation\", function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "});",
+              "",
+              "pm.test(\"Contract definition creation returns @id\", function () {",
+              "  pm.expect(body[\"@id\"] || pm.environment.get(\"e2e_contract_definition_id\")).to.exist;",
+              "});",
+              "",
+              "if (body[\"@id\"]) {",
+              "  setVar(\"e2e_contract_definition_id\", body[\"@id\"]);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/contractdefinitions",
+          "protocol": "http",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "contractdefinitions"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@id\": \"{{e2e_contract_definition_id}}\",\n  \"accessPolicyId\": \"{{e2e_policy_id}}\",\n  \"contractPolicyId\": \"{{e2e_policy_id}}\",\n  \"assetsSelector\": [\n    {\n      \"operandLeft\": \"https://w3id.org/edc/v0.0.1/ns/id\",\n      \"operator\": \"=\",\n      \"operandRight\": \"{{e2e_asset_id}}\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Crea la contract definition que referencia asset y policy."
+      }
+    },
+    {
+      "name": "Consumer Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  return;",
+              "}",
+              "",
+              "pm.test(\"HTTP status is 200\", function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Consumer login returns access_token\", function () {",
+              "  pm.expect(body.access_token).to.be.a(\"string\").and.not.empty;",
+              "});",
+              "",
+              "setVar(\"consumer_jwt\", body.access_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "url": {
+          "raw": "{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token",
+          "host": [
+            "{{keycloakUrl}}"
+          ],
+          "path": [
+            "realms",
+            "{{dataspace}}",
+            "protocol",
+            "openid-connect",
+            "token"
+          ]
+        },
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "password",
+              "type": "text"
+            },
+            {
+              "key": "client_id",
+              "value": "{{keycloakClientId}}",
+              "type": "text"
+            },
+            {
+              "key": "username",
+              "value": "{{consumer_user}}",
+              "type": "text"
+            },
+            {
+              "key": "password",
+              "value": "{{consumer_password}}",
+              "type": "text"
+            },
+            {
+              "key": "scope",
+              "value": "openid profile email",
+              "type": "text"
+            }
+          ]
+        },
+        "description": "Autentica al consumidor para catálogo, negociación y transferencia."
+      }
+    },
+    {
+      "name": "Request Federated Catalog (Management API)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "function getVar(key, fallback) {",
+              "  return pm.collectionVariables.get(key) || pm.environment.get(key) || fallback;",
+              "}",
+              "",
+              "function setNext(name) {",
+              "  if (pm.execution && typeof pm.execution.setNextRequest === \"function\") {",
+              "    pm.execution.setNextRequest(name);",
+              "  } else if (typeof postman !== \"undefined\" && typeof postman.setNextRequest === \"function\") {",
+              "    postman.setNextRequest(name);",
+              "  }",
+              "}",
+              "",
+              "function scheduleRetry() {",
+              "  const maxAttempts = parseInt(getVar(\"catalog_max_attempts\", \"6\"), 10);",
+              "  const attempt = parseInt(getVar(\"catalog_lookup_attempt\", \"0\"), 10) + 1;",
+              "  if (attempt < maxAttempts) {",
+              "    setVar(\"catalog_lookup_attempt\", String(attempt));",
+              "    pm.test(`Catalog lookup pending (${attempt}/${maxAttempts})`, function () {",
+              "      pm.expect(true).to.equal(true);",
+              "    });",
+              "    setNext(pm.info.requestName);",
+              "    return true;",
+              "  }",
+              "  pm.environment.unset(\"catalog_lookup_attempt\");",
+              "  pm.collectionVariables.unset(\"catalog_lookup_attempt\");",
+              "  return false;",
+              "}",
+              "",
+              "if (pm.response.code !== 200) {",
+              "  pm.test(\"Federated catalog request returns 200\", function () {",
+              "    pm.expect.fail(`Expected HTTP 200, got ${pm.response.code}. Body: ${pm.response.text()}`);",
+              "  });",
+              "  setNext(null);",
+              "  return;",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  setNext(null);",
+              "  return;",
+              "}",
+              "",
+              "const catalog = Array.isArray(body) ? body[0] : body;",
+              "pm.test(\"Catalog response contains dcat:dataset\", function () {",
+              "  pm.expect(catalog).to.have.property(\"dcat:dataset\");",
+              "});",
+              "",
+              "let datasets = catalog[\"dcat:dataset\"];",
+              "if (!Array.isArray(datasets)) {",
+              "  datasets = datasets ? [datasets] : [];",
+              "}",
+              "",
+              "const expectedAssetId = getVar(\"e2e_asset_id\", \"\");",
+              "const dataset = datasets.find(function (item) {",
+              "  return item && JSON.stringify(item).includes(expectedAssetId);",
+              "});",
+              "",
+              "if (!dataset) {",
+              "  if (!scheduleRetry()) {",
+              "    pm.test(\"Catalog contains the E2E asset\", function () {",
+              "      pm.expect.fail(`Asset ${expectedAssetId} did not appear in the federated catalog after retries`);",
+              "    });",
+              "    setNext(null);",
+              "  }",
+              "  return;",
+              "}",
+              "",
+              "pm.environment.unset(\"catalog_lookup_attempt\");",
+              "pm.collectionVariables.unset(\"catalog_lookup_attempt\");",
+              "",
+              "let policy = dataset[\"odrl:hasPolicy\"];",
+              "if (Array.isArray(policy)) {",
+              "  policy = policy[0];",
+              "}",
+              "",
+              "pm.test(\"Catalog contains the E2E asset\", function () {",
+              "  pm.expect(JSON.stringify(dataset)).to.include(expectedAssetId);",
+              "});",
+              "pm.test(\"Catalog dataset exposes @id\", function () {",
+              "  pm.expect(dataset[\"@id\"] || expectedAssetId).to.exist;",
+              "});",
+              "pm.test(\"Catalog dataset exposes a policy\", function () {",
+              "  pm.expect(policy).to.exist;",
+              "  pm.expect(policy[\"@id\"]).to.exist;",
+              "});",
+              "",
+              "setVar(\"providerParticipantId\", catalog[\"dspace:participantId\"] || getVar(\"provider\", \"\"));",
+              "setVar(\"e2e_offer_policy_id\", policy[\"@id\"]);",
+              "setVar(\"e2e_catalog_asset_id\", dataset[\"@id\"] || expectedAssetId);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/catalog/request",
+          "protocol": "http",
+          "host": [
+            "{{consumer}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "catalog",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"CatalogRequest\",\n  \"counterPartyAddress\": \"{{providerProtocolAddress}}\",\n  \"counterPartyId\": \"{{provider}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"querySpec\": {\n    \"offset\": 0,\n    \"limit\": 100,\n    \"filterExpression\": []\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Localiza desde el consumidor la oferta publicada por el proveedor y extrae participantId, policyId y assetId de catálogo."
+      }
+    },
+    {
+      "name": "Start Contract Negotiation",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "function getVar(key, fallback) {",
+              "  return pm.collectionVariables.get(key) || pm.environment.get(key) || fallback;",
+              "}",
+              "",
+              "function setNext(name) {",
+              "  if (pm.execution && typeof pm.execution.setNextRequest === \"function\") {",
+              "    pm.execution.setNextRequest(name);",
+              "  } else if (typeof postman !== \"undefined\" && typeof postman.setNextRequest === \"function\") {",
+              "    postman.setNextRequest(name);",
+              "  }",
+              "}",
+              "",
+              "function transient(code) {",
+              "  return [401, 403, 404, 409, 423, 429, 500, 502, 503, 504].includes(code);",
+              "}",
+              "",
+              "function retryOrFail() {",
+              "  const maxAttempts = parseInt(getVar(\"negotiation_start_max_attempts\", \"30\"), 10);",
+              "  const attempt = parseInt(getVar(\"negotiation_start_attempt\", \"0\"), 10) + 1;",
+              "  if (attempt < maxAttempts) {",
+              "    setVar(\"negotiation_start_attempt\", String(attempt));",
+              "    pm.test(`Negotiation start pending (${attempt}/${maxAttempts})`, function () {",
+              "      pm.expect(true).to.equal(true);",
+              "    });",
+              "    setNext(pm.info.requestName);",
+              "    return true;",
+              "  }",
+              "  pm.environment.unset(\"negotiation_start_attempt\");",
+              "  pm.collectionVariables.unset(\"negotiation_start_attempt\");",
+              "  pm.test(\"Contract negotiation can be started\", function () {",
+              "    pm.expect.fail(`Start Contract Negotiation kept returning HTTP ${pm.response.code}: ${pm.response.text()}`);",
+              "  });",
+              "  setNext(null);",
+              "  return false;",
+              "}",
+              "",
+              "if (transient(pm.response.code)) {",
+              "  retryOrFail();",
+              "  return;",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  setNext(null);",
+              "  return;",
+              "}",
+              "",
+              "pm.environment.unset(\"negotiation_start_attempt\");",
+              "pm.collectionVariables.unset(\"negotiation_start_attempt\");",
+              "",
+              "pm.test(\"HTTP status indicates negotiation creation\", function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "});",
+              "",
+              "pm.test(\"Negotiation start returns @id\", function () {",
+              "  pm.expect(body[\"@id\"]).to.exist;",
+              "});",
+              "",
+              "setVar(\"e2e_negotiation_id\", body[\"@id\"]);",
+              "pm.environment.unset(\"e2e_agreement_id\");",
+              "pm.collectionVariables.unset(\"e2e_agreement_id\");"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/contractnegotiations",
+          "protocol": "http",
+          "host": [
+            "{{consumer}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "contractnegotiations"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"ContractRequest\",\n  \"counterPartyAddress\": \"{{providerProtocolAddress}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"policy\": {\n    \"@context\": \"http://www.w3.org/ns/odrl.jsonld\",\n    \"@type\": \"odrl:Offer\",\n    \"@id\": \"{{e2e_offer_policy_id}}\",\n    \"assigner\": \"{{providerParticipantId}}\",\n    \"target\": \"{{e2e_catalog_asset_id}}\",\n    \"permission\": [],\n    \"prohibition\": [],\n    \"obligation\": []\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Lanza la negociación contractual con la oferta localizada en catálogo."
+      }
+    },
+    {
+      "name": "Check Negotiation Status",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "function getVar(key, fallback) {",
+              "  return pm.collectionVariables.get(key) || pm.environment.get(key) || fallback;",
+              "}",
+              "",
+              "function setNext(name) {",
+              "  if (pm.execution && typeof pm.execution.setNextRequest === \"function\") {",
+              "    pm.execution.setNextRequest(name);",
+              "  } else if (typeof postman !== \"undefined\" && typeof postman.setNextRequest === \"function\") {",
+              "    postman.setNextRequest(name);",
+              "  }",
+              "}",
+              "",
+              "function transient(code) {",
+              "  return [401, 403, 404, 429, 500, 502, 503, 504].includes(code);",
+              "}",
+              "",
+              "function retryOrFail(reason) {",
+              "  const maxAttempts = parseInt(getVar(\"negotiation_status_max_attempts\", \"10\"), 10);",
+              "  const attempt = parseInt(getVar(\"negotiation_status_attempt\", \"0\"), 10) + 1;",
+              "  if (attempt < maxAttempts) {",
+              "    setVar(\"negotiation_status_attempt\", String(attempt));",
+              "    pm.test(`Negotiation status pending (${attempt}/${maxAttempts})`, function () {",
+              "      pm.expect(true).to.equal(true);",
+              "    });",
+              "    if (reason) console.log(reason);",
+              "    setNext(pm.info.requestName);",
+              "    return true;",
+              "  }",
+              "  pm.environment.unset(\"negotiation_status_attempt\");",
+              "  pm.collectionVariables.unset(\"negotiation_status_attempt\");",
+              "  pm.test(\"Contract agreement becomes available\", function () {",
+              "    pm.expect.fail(reason || \"Negotiation did not produce contractAgreementId after retries\");",
+              "  });",
+              "  setNext(null);",
+              "  return false;",
+              "}",
+              "",
+              "if (transient(pm.response.code)) {",
+              "  retryOrFail(`Check Negotiation Status returned HTTP ${pm.response.code}: ${pm.response.text()}`);",
+              "  return;",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  setNext(null);",
+              "  return;",
+              "}",
+              "",
+              "pm.test(\"HTTP status is 200\", function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const negotiationId = getVar(\"e2e_negotiation_id\", \"\");",
+              "let negotiation = Array.isArray(body)",
+              "  ? body.find(item => item && (item[\"@id\"] === negotiationId || item.id === negotiationId))",
+              "  : body;",
+              "",
+              "if (!negotiation) {",
+              "  retryOrFail(`Negotiation ${negotiationId} is still not visible in the status list`);",
+              "  return;",
+              "}",
+              "",
+              "const state = negotiation.state;",
+              "pm.test(\"Negotiation state is recognized\", function () {",
+              "  pm.expect(state).to.be.oneOf([",
+              "    \"INITIAL\",",
+              "    \"REQUESTED\",",
+              "    \"REQUESTING\",",
+              "    \"VERIFYING\",",
+              "    \"IN_PROGRESS\",",
+              "    \"AGREED\",",
+              "    \"VERIFIED\",",
+              "    \"FINALIZED\",",
+              "    \"TERMINATED\"",
+              "  ]);",
+              "});",
+              "",
+              "if (state === \"TERMINATED\") {",
+              "  pm.test(\"Negotiation did not terminate\", function () {",
+              "    pm.expect.fail(`Negotiation reached TERMINATED state${negotiation.errorDetail ? `: ${negotiation.errorDetail}` : ''}`);",
+              "  });",
+              "  setNext(null);",
+              "  return;",
+              "}",
+              "",
+              "const agreementId = negotiation.contractAgreementId;",
+              "if (!agreementId) {",
+              "  retryOrFail(`Negotiation ${negotiationId} is in state ${state || 'unknown'} without contractAgreementId`);",
+              "  return;",
+              "}",
+              "",
+              "pm.environment.unset(\"negotiation_status_attempt\");",
+              "pm.collectionVariables.unset(\"negotiation_status_attempt\");",
+              "setVar(\"e2e_agreement_id\", agreementId);",
+              "pm.test(\"Contract agreement is available\", function () {",
+              "  pm.expect(agreementId).to.be.a(\"string\").and.not.empty;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/contractnegotiations/request",
+          "protocol": "http",
+          "host": [
+            "{{consumer}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "contractnegotiations",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 100\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Reintenta la consulta hasta obtener contractAgreementId o agotar presupuesto."
+      }
+    },
+    {
+      "name": "Start Transfer Process",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!(pm.collectionVariables.get(\"e2e_agreement_id\") || pm.environment.get(\"e2e_agreement_id\"))) {",
+              "  if (pm.execution && typeof pm.execution.skipRequest === \"function\") {",
+              "    pm.execution.skipRequest();",
+              "  }",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "function getVar(key, fallback) {",
+              "  return pm.collectionVariables.get(key) || pm.environment.get(key) || fallback;",
+              "}",
+              "",
+              "function setNext(name) {",
+              "  if (pm.execution && typeof pm.execution.setNextRequest === \"function\") {",
+              "    pm.execution.setNextRequest(name);",
+              "  } else if (typeof postman !== \"undefined\" && typeof postman.setNextRequest === \"function\") {",
+              "    postman.setNextRequest(name);",
+              "  }",
+              "}",
+              "",
+              "function transient(code) {",
+              "  return [401, 403, 404, 409, 423, 429, 500, 502, 503, 504].includes(code);",
+              "}",
+              "",
+              "function retryOrFail() {",
+              "  const maxAttempts = parseInt(getVar(\"transfer_start_max_attempts\", \"8\"), 10);",
+              "  const attempt = parseInt(getVar(\"transfer_start_attempt\", \"0\"), 10) + 1;",
+              "  if (attempt < maxAttempts) {",
+              "    setVar(\"transfer_start_attempt\", String(attempt));",
+              "    pm.test(`Transfer start pending (${attempt}/${maxAttempts})`, function () {",
+              "      pm.expect(true).to.equal(true);",
+              "    });",
+              "    setNext(pm.info.requestName);",
+              "    return true;",
+              "  }",
+              "  pm.environment.unset(\"transfer_start_attempt\");",
+              "  pm.collectionVariables.unset(\"transfer_start_attempt\");",
+              "  pm.test(\"Transfer process can be started\", function () {",
+              "    pm.expect.fail(`Start Transfer Process kept returning HTTP ${pm.response.code}: ${pm.response.text()}`);",
+              "  });",
+              "  setNext(null);",
+              "  return false;",
+              "}",
+              "",
+              "if (transient(pm.response.code)) {",
+              "  retryOrFail();",
+              "  return;",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  setNext(null);",
+              "  return;",
+              "}",
+              "",
+              "pm.environment.unset(\"transfer_start_attempt\");",
+              "pm.collectionVariables.unset(\"transfer_start_attempt\");",
+              "",
+              "pm.test(\"HTTP status indicates transfer creation\", function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "});",
+              "",
+              "pm.test(\"Transfer start returns @id\", function () {",
+              "  pm.expect(body[\"@id\"]).to.exist;",
+              "});",
+              "",
+              "setVar(\"e2e_transfer_id\", body[\"@id\"]);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/{{transferStartPath}}",
+          "protocol": "http",
+          "host": [
+            "{{consumer}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "{{transferStartPath}}"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"TransferRequest\",\n  \"assetId\": \"{{e2e_asset_id}}\",\n  \"contractId\": \"{{e2e_agreement_id}}\",\n  \"counterPartyAddress\": \"{{providerProtocolAddress}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"transferType\": \"AmazonS3-PUSH\",\n  \"dataDestination\": {\n    \"type\": \"{{transferDestinationType}}\"\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Inicia la transferencia AmazonS3-PUSH usando el endpoint del adapter configurado."
+      }
+    },
+    {
+      "name": "Resolve Current Transfer Destination",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!(pm.collectionVariables.get(\"e2e_transfer_id\") || pm.environment.get(\"e2e_transfer_id\"))) {",
+              "  if (pm.execution && typeof pm.execution.skipRequest === \"function\") {",
+              "    pm.execution.skipRequest();",
+              "  }",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "function getVar(key, fallback) {",
+              "  return pm.collectionVariables.get(key) || pm.environment.get(key) || fallback;",
+              "}",
+              "",
+              "function setNext(name) {",
+              "  if (pm.execution && typeof pm.execution.setNextRequest === \"function\") {",
+              "    pm.execution.setNextRequest(name);",
+              "  } else if (typeof postman !== \"undefined\" && typeof postman.setNextRequest === \"function\") {",
+              "    postman.setNextRequest(name);",
+              "  }",
+              "}",
+              "",
+              "function transient(code) {",
+              "  return [401, 403, 404, 429, 500, 502, 503, 504].includes(code);",
+              "}",
+              "",
+              "function readField(obj, fieldName) {",
+              "  if (!obj || typeof obj !== \"object\") return undefined;",
+              "  const namespaced = `https://w3id.org/edc/v0.0.1/ns/${fieldName}`;",
+              "  if (Object.prototype.hasOwnProperty.call(obj, fieldName)) return obj[fieldName];",
+              "  if (Object.prototype.hasOwnProperty.call(obj, namespaced)) return obj[namespaced];",
+              "  if (obj.properties && typeof obj.properties === \"object\") {",
+              "    if (Object.prototype.hasOwnProperty.call(obj.properties, fieldName)) return obj.properties[fieldName];",
+              "    if (Object.prototype.hasOwnProperty.call(obj.properties, namespaced)) return obj.properties[namespaced];",
+              "  }",
+              "  return undefined;",
+              "}",
+              "",
+              "function retryOrFail(reason) {",
+              "  const maxAttempts = parseInt(getVar(\"transfer_destination_max_attempts\", \"10\"), 10);",
+              "  const attempt = parseInt(getVar(\"transfer_destination_attempt\", \"0\"), 10) + 1;",
+              "  if (attempt < maxAttempts) {",
+              "    setVar(\"transfer_destination_attempt\", String(attempt));",
+              "    pm.test(`Transfer destination pending (${attempt}/${maxAttempts})`, function () {",
+              "      pm.expect(true).to.equal(true);",
+              "    });",
+              "    if (reason) console.log(reason);",
+              "    setNext(pm.info.requestName);",
+              "    return true;",
+              "  }",
+              "  pm.environment.unset(\"transfer_destination_attempt\");",
+              "  pm.collectionVariables.unset(\"transfer_destination_attempt\");",
+              "  pm.test(\"Transfer destination is resolved\", function () {",
+              "    pm.expect.fail(reason || \"Transfer destination did not become available after retries\");",
+              "  });",
+              "  setNext(null);",
+              "  return false;",
+              "}",
+              "",
+              "if (transient(pm.response.code)) {",
+              "  retryOrFail(`Resolve Current Transfer Destination returned HTTP ${pm.response.code}: ${pm.response.text()}`);",
+              "  return;",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  setNext(null);",
+              "  return;",
+              "}",
+              "",
+              "pm.test(\"HTTP status is 200\", function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const transferId = getVar(\"e2e_transfer_id\", \"\");",
+              "let transfer = Array.isArray(body)",
+              "  ? body.find(item => item && (item[\"@id\"] === transferId || item.id === transferId))",
+              "  : body;",
+              "",
+              "if (!transfer) {",
+              "  retryOrFail(`Transfer ${transferId} is still not visible while resolving destination`);",
+              "  return;",
+              "}",
+              "",
+              "const state = readField(transfer, \"state\") || transfer.state;",
+              "if (state === \"TERMINATED\") {",
+              "  pm.test(\"Transfer did not terminate\", function () {",
+              "    pm.expect.fail(`Transfer reached TERMINATED state${transfer.errorDetail ? `: ${transfer.errorDetail}` : ''}`);",
+              "  });",
+              "  setNext(null);",
+              "  return;",
+              "}",
+              "",
+              "const dataDestination =",
+              "  readField(transfer, \"dataDestination\") ||",
+              "  transfer.dataDestination ||",
+              "  transfer[\"https://w3id.org/edc/v0.0.1/ns/dataDestination\"];",
+              "",
+              "if (!dataDestination) {",
+              "  retryOrFail(`Transfer ${transferId} is visible but does not expose dataDestination yet`);",
+              "  return;",
+              "}",
+              "",
+              "pm.environment.unset(\"transfer_destination_attempt\");",
+              "pm.collectionVariables.unset(\"transfer_destination_attempt\");",
+              "",
+              "const transferAssetId = readField(transfer, \"assetId\") || transfer.assetId;",
+              "const expectedAssetId = getVar(\"e2e_asset_id\", \"\");",
+              "const transferType = readField(transfer, \"transferType\") || transfer.transferType;",
+              "const destinationType = readField(dataDestination, \"type\");",
+              "const bucketName = readField(dataDestination, \"bucketName\");",
+              "const endpointOverride = readField(dataDestination, \"endpointOverride\");",
+              "const expectedBucket = getVar(\"e2e_expected_consumer_bucket\", \"\");",
+              "",
+              "pm.test(\"Transfer still references the negotiated asset\", function () {",
+              "  pm.expect(transferAssetId).to.equal(expectedAssetId);",
+              "});",
+              "",
+              "pm.test(\"Transfer uses AmazonS3-PUSH\", function () {",
+              "  pm.expect(transferType).to.equal(\"AmazonS3-PUSH\");",
+              "});",
+              "",
+              "pm.test(\"Resolved destination type is AmazonS3\", function () {",
+              "  pm.expect(destinationType).to.equal(\"AmazonS3\");",
+              "});",
+              "",
+              "pm.test(\"Resolved destination bucket matches consumer bucket\", function () {",
+              "  pm.expect(bucketName).to.equal(expectedBucket);",
+              "});",
+              "",
+              "pm.test(\"Resolved destination exposes endpointOverride\", function () {",
+              "  pm.expect(endpointOverride).to.be.a(\"string\").and.not.empty;",
+              "});",
+              "",
+              "setVar(\"e2e_transfer_destination_bucket\", bucketName);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          }
+        ],
+        "url": {
+          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/transferprocesses/{{e2e_transfer_id}}",
+          "protocol": "http",
+          "host": [
+            "{{consumer}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "transferprocesses",
+            "{{e2e_transfer_id}}"
+          ]
+        },
+        "description": "Resuelve el destino final del transfer process y valida el bucket del consumidor."
+      }
+    }
+  ]
+}

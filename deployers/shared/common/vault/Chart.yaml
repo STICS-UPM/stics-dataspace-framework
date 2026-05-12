@@ -1,0 +1,9 @@
+name: dataspaceunit-ds-common
+description: Helm chart to deploy the base services for an dataspaceunit dataspaces-deployment
+version: 1.0.0
+apiVersion: v2
+dependencies:
+  - name: vault
+    alias: vault
+    version: "~0.28.1"
+    repository: https://helm.releases.hashicorp.com

@@ -1,0 +1,34 @@
+export interface ModelObserverEvent {
+  eventId: string;
+  eventType: string;
+  occurredAt: string;
+  sourceComponent: string;
+  participantId: string | null;
+  actorType: string | null;
+  actorId: string | null;
+  correlationId: string | null;
+  processId: string | null;
+  assetId: string | null;
+  agreementId: string | null;
+  negotiationId: string | null;
+  transferProcessId: string | null;
+  benchmarkRunId: string | null;
+  status: string | null;
+  modelName: string | null;
+  providerParticipantId: string | null;
+  consumerParticipantId: string | null;
+  executionMode: string | null;
+  endpointKind: string | null;
+  httpStatus: number | null;
+  latencyMs: number | null;
+  taskType: string | null;
+  datasetFingerprint: string | null;
+  datasetRowCount: number | null;
+  selectedMetrics: string[];
+  benchmarkSummary: Record<string, unknown> | null;
+  details: Record<string, unknown> | null;
+  payloadHash: string | null;
+  responseHash: string | null;
+  rawEvent: Record<string, unknown> | null;
+  createdAt: string | null;
+}

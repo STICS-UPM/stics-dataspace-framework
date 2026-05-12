@@ -1,0 +1,13 @@
+*
+.*
+!resources/
+!resources/**
+!launchers/
+launchers/*
+!launchers/connector/
+launchers/connector/*
+!launchers/connector/build/
+launchers/connector/build/*
+!launchers/connector/build/libs/
+launchers/connector/build/libs/*
+!launchers/connector/build/libs/*.jar

@@ -1,0 +1,4 @@
+apiVersion: v2
+name: dataspace
+description: A Helm chart to add a connector in the Dataspaceunit platform
+version: 0.1.0

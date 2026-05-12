@@ -1,0 +1,6 @@
+dashboard:
+  enabled: true
+  image:
+    name: validation-environment/edc-dashboard
+    tag: latest
+    pullPolicy: IfNotPresent

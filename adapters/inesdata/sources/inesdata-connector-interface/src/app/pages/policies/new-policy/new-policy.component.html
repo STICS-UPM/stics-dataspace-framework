@@ -1,0 +1,29 @@
+<mat-card class="creation-card">
+  <mat-card-header>
+    <mat-card-title>Create a new policy</mat-card-title>
+  </mat-card-header>
+
+  <!--  ID -->
+  <mat-form-field *ngIf="form.group.controls.id; let ctrl" id="form-field-id" color="accent">
+    <mat-label>ID</mat-label>
+    <input matInput autocomplete="newvalue" [formControl]="ctrl" />
+    <mat-error *ngIf="ctrl.invalid && ctrl.errors?.pattern">{{
+      validationMessages.invalidSpecialCharactersMessage
+      }}</mat-error>
+  </mat-form-field>
+
+  <div class="form-section-title">Policy Expression</div>
+
+  <policy-form-expression [treeNode]="expressionFormHandler.tree.root"></policy-form-expression>
+
+  <div fxLayout="row" fxLayoutGap="15px" fxLayoutAlign="end">
+    <button (click)="navigateToPolicies()" color="warn" mat-stroked-button>
+      <mat-icon>cancel</mat-icon> Cancel
+    </button>
+
+    <button (click)="onSave()" color="accent" mat-stroked-button [disabled]="this.form.group.invalid">
+      <mat-icon>add_circle_outline</mat-icon>
+      Create
+    </button>
+  </div>
+</mat-card>

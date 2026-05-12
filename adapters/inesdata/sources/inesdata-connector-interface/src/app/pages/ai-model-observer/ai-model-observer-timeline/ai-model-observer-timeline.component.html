@@ -1,0 +1,61 @@
+<section class="observer-page">
+  <div class="observer-page__header">
+    <button class="observer-page__back" type="button" (click)="goBack()">← Back to observer home</button>
+    <div>
+      <p class="observer-page__eyebrow">AI Model Observer</p>
+      <h1>Asset timeline</h1>
+      <p class="observer-page__subtitle">Observer evidence for asset {{ assetId }}</p>
+    </div>
+  </div>
+
+  <div *ngIf="isLoading" class="observer-state">Loading observer timeline...</div>
+  <div *ngIf="error" class="observer-state observer-state--error">{{ error }}</div>
+
+  <div class="observer-filter-bar">
+    <input [(ngModel)]="correlationIdFilter" placeholder="Filter by correlationId" (keyup.enter)="applyFilters()" />
+    <select [(ngModel)]="selectedEventType">
+      <option value="">All event types</option>
+      <option *ngFor="let eventType of eventTypes" [value]="eventType">{{ eventType }}</option>
+    </select>
+    <input [(ngModel)]="statusFilter" placeholder="Filter by status" (keyup.enter)="applyFilters()" />
+    <button class="observer-filter-bar__action" type="button" (click)="applyFilters()">Apply</button>
+    <button class="observer-filter-bar__action observer-filter-bar__action--secondary" type="button" (click)="clearFilters()">Clear</button>
+  </div>
+
+  <div *ngIf="hasActiveCorrelationFilter()" class="observer-state observer-state--hint">
+    Narrowing evidence to correlationId {{ correlationIdFilter }}.
+  </div>
+
+  <div *ngIf="timeline && !isLoading" class="observer-list">
+    <div *ngIf="timeline.items.length === 0" class="observer-state">No observer events match the current filters.</div>
+    <article *ngFor="let event of timeline.items" class="observer-card">
+      <div class="observer-card__top">
+        <div>
+          <h2>{{ event.eventType }}</h2>
+          <p>{{ event.occurredAt | date:'medium' }}</p>
+        </div>
+        <span class="observer-badge">{{ event.status || 'UNKNOWN' }}</span>
+      </div>
+
+      <div class="observer-meta">
+        <span *ngIf="event.modelName">Model: {{ event.modelName }}</span>
+        <span *ngIf="event.correlationId">Correlation: {{ event.correlationId }}</span>
+        <span *ngIf="event.participantId">Participant: {{ event.participantId }}</span>
+        <span *ngIf="event.agreementId">Agreement: {{ event.agreementId }}</span>
+        <span *ngIf="event.httpStatus !== null">HTTP: {{ event.httpStatus }}</span>
+        <span *ngIf="event.latencyMs !== null">Latency: {{ event.latencyMs }}ms</span>
+      </div>
+
+      <div class="observer-actions">
+        <button *ngIf="event.agreementId" class="observer-actions__button" type="button" (click)="openAgreementEvidence(event.agreementId)">
+          Open agreement evidence
+        </button>
+        <button *ngIf="event.participantId" class="observer-actions__button observer-actions__button--secondary" type="button" (click)="openParticipantSummary(event.participantId)">
+          Open participant summary
+        </button>
+      </div>
+
+      <pre *ngIf="event.details" class="observer-details">{{ event.details | json }}</pre>
+    </article>
+  </div>
+</section>

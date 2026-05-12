@@ -1,0 +1,1641 @@
+import os
+import shlex
+import tempfile
+import time
+import ipaddress
+
+import yaml
+
+from deployers.shared.lib.components import (
+    resolve_component_release_name,
+    component_values_file_candidates,
+    configured_component_host,
+    infer_component_hostname,
+    strip_url_scheme,
+)
+from deployers.shared.lib.cluster_runtime import build_cluster_runtime
+from deployers.infrastructure.lib.paths import shared_artifact_roots
+from .config import INESDataConfigAdapter, InesdataConfig
+
+
+class INESDataComponentsAdapter:
+    """Deploy optional platform components via Helm charts (Level 5).
+
+    This adapter is intentionally isolated from Level 3/4 logic so introducing
+    components does not change the stability of Levels 1-4.
+    """
+
+    _LEVEL6_EXCLUDED_KEYS = {
+        # Components that are part of the base dataspace lifecycle.
+        "registration-service",
+        "public-portal",
+    }
+    _ONTOLOGY_HUB_REPO_URL = "https://github.com/ProyectoPIONERA/Ontology-Hub.git"
+    _ONTOLOGY_HUB_REPO_DIRNAME = "Ontology-Hub"
+    _AI_MODEL_HUB_REPO_URL = "https://github.com/ProyectoPIONERA/AIModelHub.git"
+    _AI_MODEL_HUB_REPO_DIRNAME = "AIModelHub"
+    _RDFLIB_VIRT_REPO_URL = "https://github.com/ProyectoPIONERA/rdflib-virt.git"
+    _RDFLIB_VIRT_REPO_DIRNAME = "rdflib-virt"
+    _MAPPING_EDITOR_REPO_URL = "https://github.com/ProyectoPIONERA/mapping-editor.git"
+    _MAPPING_EDITOR_REPO_DIRNAME = "mapping-editor"
+
+    def __init__(
+        self,
+        run,
+        run_silent,
+        auto_mode_getter,
+        infrastructure_adapter,
+        config_adapter=None,
+        config_cls=None,
+    ):
+        self.run = run
+        self.run_silent = run_silent
+        self.auto_mode_getter = auto_mode_getter
+        self.infrastructure = infrastructure_adapter
+        self.config = config_cls or InesdataConfig
+        self.config_adapter = config_adapter or INESDataConfigAdapter(self.config)
+        self._attempted_platform_repo_refresh = False
+
+    def _auto_mode(self) -> bool:
+        return self.auto_mode_getter() if callable(self.auto_mode_getter) else bool(self.auto_mode_getter)
+
+    @staticmethod
+    def _fail(message, root_cause=None):
+        if root_cause:
+            raise RuntimeError(f"{message}. Root cause: {root_cause}")
+        raise RuntimeError(message)
+
+    def _dataspace_name(self):
+        getter = getattr(self.config, "dataspace_name", None)
+        if callable(getter):
+            return getter()
+        return (getattr(self.config, "DS_NAME", "demo") or "demo").strip() or "demo"
+
+    @staticmethod
+    def _normalize_component_key(component: str) -> str:
+        return (component or "").strip().lower().replace("_", "-")
+
+    @staticmethod
+    def _to_http_url(host_or_url: str) -> str:
+        value = (host_or_url or "").strip()
+        if not value:
+            return ""
+        if value.startswith("http://"):
+            return value
+        if value.startswith("https://"):
+            return "http://" + value[len("https://"):]
+        return f"http://{value}"
+
+    def _component_chart_roots(self):
+        return shared_artifact_roots("components")
+
+    def _refresh_platform_repo_once(self):
+        if self._attempted_platform_repo_refresh:
+            return
+        self._attempted_platform_repo_refresh = True
+
+        repo_dir = self.config.repo_dir()
+        git_dir = os.path.join(repo_dir, ".git")
+        if not os.path.isdir(git_dir):
+            return
+
+        repo_q = shlex.quote(repo_dir)
+        print("Refreshing INESData deployer artifacts repository (git pull) to discover component charts...")
+        self.run(f"git -C {repo_q} fetch --all --prune", check=False)
+        self.run(f"git -C {repo_q} pull --ff-only", check=False)
+
+    def _discover_component_charts(self) -> dict:
+        """Discover deployable Helm charts.
+
+        Convention:
+        - Each component chart is a directory containing a Chart.yaml.
+        - Root: <repo_dir>/components/*
+        """
+        charts = {}
+        for root in self._component_chart_roots():
+            if not os.path.isdir(root):
+                continue
+            for entry in os.listdir(root):
+                chart_dir = os.path.join(root, entry)
+                if not os.path.isdir(chart_dir):
+                    continue
+                if os.path.isfile(os.path.join(chart_dir, "Chart.yaml")):
+                    charts[self._normalize_component_key(entry)] = chart_dir
+        if charts:
+            return charts
+
+        # If the repo exists but charts are missing, attempt a single refresh.
+        self._refresh_platform_repo_once()
+
+        charts = {}
+        for root in self._component_chart_roots():
+            if not os.path.isdir(root):
+                continue
+            for entry in os.listdir(root):
+                chart_dir = os.path.join(root, entry)
+                if not os.path.isdir(chart_dir):
+                    continue
+                if os.path.isfile(os.path.join(chart_dir, "Chart.yaml")):
+                    charts[self._normalize_component_key(entry)] = chart_dir
+        return charts
+
+    def list_deployable_components(self):
+        return sorted(self._discover_component_charts().keys())
+
+    def _resolve_component_chart_dir(self, component_key: str) -> str:
+        normalized = self._normalize_component_key(component_key)
+        charts = self._discover_component_charts()
+        chart_dir = charts.get(normalized)
+        if chart_dir:
+            return chart_dir
+
+        if not charts:
+            self._fail(
+                "No deployable component charts discovered in deployer artifacts",
+                root_cause=(
+                    "Expected Helm charts under deployers/shared/components or deployers/inesdata/components. "
+                    "Verify that the deployer artifacts are present in this repository checkout."
+                ),
+            )
+
+        available = ", ".join(sorted(charts)) or "(none)"
+        self._fail(
+            f"Unknown component '{component_key}'. "
+            f"Deployable components discovered in deployer artifacts: {available}"
+        )
+
+    def _resolve_component_values_file(self, chart_dir: str, ds_name: str, namespace: str) -> str:
+        candidates = component_values_file_candidates(chart_dir, ds_name, namespace)
+        for candidate in candidates:
+            if os.path.isfile(candidate):
+                return candidate
+
+        self._fail(
+            "No values file found for component chart. "
+            f"Tried: {', '.join(os.path.basename(p) for p in candidates)} in {chart_dir}"
+        )
+
+    def _resolve_component_release_name(self, normalized_component: str) -> str:
+        return resolve_component_release_name(
+            normalized_component,
+            dataspace_name=self._dataspace_name(),
+            registration_service_release_name=self.config.helm_release_rs(),
+        )
+
+    def _resolve_dataspace_index(self, *, ds_name=None, ds_namespace=None, deployer_config=None) -> int:
+        resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        resolved_name = str(ds_name or "").strip()
+        resolved_namespace = str(ds_namespace or "").strip()
+
+        dataspace_index_getter = getattr(self.config_adapter, "dataspace_index", None)
+        if callable(dataspace_index_getter):
+            try:
+                resolved_index = int(
+                    dataspace_index_getter(
+                        ds_name=resolved_name or None,
+                        ds_namespace=resolved_namespace or None,
+                    )
+                )
+            except TypeError:
+                try:
+                    resolved_index = int(dataspace_index_getter(resolved_name or None, resolved_namespace or None))
+                except Exception:
+                    resolved_index = 1
+            except Exception:
+                resolved_index = 1
+            return resolved_index if resolved_index >= 1 else 1
+
+        index = 1
+        while True:
+            configured_name = str(resolved_config.get(f"DS_{index}_NAME") or "").strip()
+            configured_namespace = str(
+                resolved_config.get(f"DS_{index}_NAMESPACE") or configured_name
+            ).strip()
+            if not configured_name:
+                break
+            if resolved_name and configured_name == resolved_name:
+                return index
+            if resolved_namespace and configured_namespace == resolved_namespace:
+                return index
+            index += 1
+        return 1
+
+    def _resolve_legacy_components_namespace(self, *, ds_name=None, deployer_config=None) -> str:
+        resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        resolved_name = str(ds_name or self._dataspace_name() or "").strip() or self._dataspace_name()
+        resolved_index = self._resolve_dataspace_index(
+            ds_name=resolved_name,
+            deployer_config=resolved_config,
+        )
+
+        configured_namespace = str(
+            resolved_config.get(f"DS_{resolved_index}_NAMESPACE")
+            or resolved_config.get(f"DS_{resolved_index}_NAME")
+            or ""
+        ).strip()
+        if configured_namespace:
+            return configured_namespace
+
+        primary_namespace_getter = getattr(self.config_adapter, "primary_dataspace_namespace", None)
+        if callable(primary_namespace_getter):
+            try:
+                resolved_primary_namespace = str(primary_namespace_getter() or "").strip()
+            except Exception:
+                resolved_primary_namespace = ""
+            if resolved_primary_namespace:
+                return resolved_primary_namespace
+
+        legacy_namespace_getter = getattr(self.config, "namespace_demo", None)
+        if callable(legacy_namespace_getter):
+            try:
+                resolved_legacy_namespace = str(legacy_namespace_getter() or "").strip()
+            except Exception:
+                resolved_legacy_namespace = ""
+            if resolved_legacy_namespace:
+                return resolved_legacy_namespace
+
+        return resolved_name
+
+    @staticmethod
+    def _extract_components_namespace(namespace_plan) -> str:
+        if isinstance(namespace_plan, dict):
+            namespace_roles = namespace_plan.get("namespace_roles") or namespace_plan.get("planned_namespace_roles") or {}
+        else:
+            namespace_roles = namespace_plan
+
+        if isinstance(namespace_roles, dict):
+            resolved_namespace = namespace_roles.get("components_namespace")
+        else:
+            resolved_namespace = getattr(namespace_roles, "components_namespace", None)
+
+        return str(resolved_namespace or "").strip()
+
+    def _resolve_components_namespace(self, *, ds_name=None, namespace=None, deployer_config=None) -> str:
+        explicit_namespace = str(namespace or "").strip()
+        if explicit_namespace:
+            return explicit_namespace
+
+        resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        resolved_name = str(ds_name or self._dataspace_name() or "").strip() or self._dataspace_name()
+        resolved_legacy_namespace = self._resolve_legacy_components_namespace(
+            ds_name=resolved_name,
+            deployer_config=resolved_config,
+        )
+        resolved_index = self._resolve_dataspace_index(
+            ds_name=resolved_name,
+            ds_namespace=resolved_legacy_namespace,
+            deployer_config=resolved_config,
+        )
+
+        namespace_plan_getter = getattr(self.config_adapter, "namespace_plan_for_dataspace", None)
+        if callable(namespace_plan_getter):
+            try:
+                namespace_plan = namespace_plan_getter(
+                    ds_name=resolved_name,
+                    ds_namespace=resolved_legacy_namespace,
+                    ds_index=resolved_index,
+                )
+            except TypeError:
+                try:
+                    namespace_plan = namespace_plan_getter(
+                        ds_name=resolved_name,
+                        ds_namespace=resolved_legacy_namespace,
+                    )
+                except Exception:
+                    namespace_plan = None
+            except Exception:
+                namespace_plan = None
+            resolved_components_namespace = self._extract_components_namespace(namespace_plan)
+            if resolved_components_namespace:
+                return resolved_components_namespace
+
+        configured_namespace = str(resolved_config.get("COMPONENTS_NAMESPACE") or "").strip()
+        if configured_namespace:
+            return configured_namespace
+        return "components"
+
+    @staticmethod
+    def _parse_bool(value, default=False) -> bool:
+        if value is None:
+            return default
+        raw = str(value).strip().lower()
+        if raw == "":
+            return default
+        if raw in ("1", "true", "yes", "y", "on"):
+            return True
+        if raw in ("0", "false", "no", "n", "off"):
+            return False
+        return default
+
+    @staticmethod
+    def _strip_url_scheme(host_or_url: str) -> str:
+        return strip_url_scheme(host_or_url)
+
+    def _cleanup_components(self, components, namespace: str):
+        namespace = (namespace or "").strip()
+        if not namespace:
+            return
+
+        ns_q = shlex.quote(namespace)
+        print("\nCleaning previous component deployments (Level 5)...")
+
+        for component in components:
+            normalized = self._normalize_component_key(component)
+            if normalized in self._LEVEL6_EXCLUDED_KEYS:
+                continue
+
+            release_name = self._resolve_component_release_name(normalized)
+            rel_q = shlex.quote(release_name)
+
+            status = self.run_silent(f"helm status {rel_q} -n {ns_q}")
+            if status is None:
+                continue
+
+            print(f"- Removing {normalized} (release {release_name})")
+
+            pvc_pvs = []
+            pv_list = self.run_silent(
+                f"kubectl get pvc -n {ns_q} -l app.kubernetes.io/instance={rel_q} "
+                f"-o jsonpath='{{range .items[*]}}{{.spec.volumeName}}{{\"\\n\"}}{{end}}'"
+            )
+            if pv_list:
+                pvc_pvs = [line.strip() for line in pv_list.splitlines() if line.strip()]
+
+            self.run(f"helm uninstall {rel_q} -n {ns_q}", check=False)
+            self.run(
+                f"kubectl delete pvc -n {ns_q} -l app.kubernetes.io/instance={rel_q} --ignore-not-found",
+                check=False,
+            )
+            self.run(
+                f"kubectl wait --for=delete pod -n {ns_q} -l app.kubernetes.io/instance={rel_q} --timeout=5m",
+                check=False,
+            )
+
+            for pv_name in pvc_pvs:
+                pv_q = shlex.quote(pv_name)
+                reclaim = self.run_silent(
+                    f"kubectl get pv {pv_q} -o jsonpath='{{.spec.persistentVolumeReclaimPolicy}}'"
+                )
+                if reclaim and reclaim.strip().upper() == "RETAIN":
+                    self.run(f"kubectl delete pv {pv_q}", check=False)
+
+    def _cleanup_legacy_component_releases(
+        self,
+        components,
+        *,
+        active_namespace,
+        ds_name=None,
+        deployer_config=None,
+    ):
+        resolved_active_namespace = str(active_namespace or "").strip()
+        if not resolved_active_namespace:
+            return None
+
+        legacy_namespace = self._resolve_legacy_components_namespace(
+            ds_name=ds_name,
+            deployer_config=deployer_config,
+        )
+        if not legacy_namespace or legacy_namespace == resolved_active_namespace:
+            return None
+
+        legacy_ns_q = shlex.quote(legacy_namespace)
+        for component in list(components or []):
+            normalized = self._normalize_component_key(component)
+            if normalized in self._LEVEL6_EXCLUDED_KEYS:
+                continue
+            release_name = self._resolve_component_release_name(normalized)
+            rel_q = shlex.quote(release_name)
+            status = self.run_silent(f"helm status {rel_q} -n {legacy_ns_q}")
+            if status is None:
+                continue
+            print(
+                "\nDetected legacy component release outside components namespace; "
+                f"cleaning {release_name} from {legacy_namespace} before deploying to {resolved_active_namespace}"
+            )
+            self._cleanup_components(components, legacy_namespace)
+            return legacy_namespace
+        return None
+
+    @staticmethod
+    def _safe_load_yaml_file(path: str) -> dict:
+        try:
+            with open(path) as f:
+                return yaml.safe_load(f) or {}
+        except Exception as exc:
+            raise RuntimeError(f"Could not load YAML file: {path}. {exc}")
+
+    @staticmethod
+    def _extract_primary_image_ref(values: dict):
+        image = (values or {}).get("image") or {}
+        repository = (image.get("repository") or "").strip()
+        tag_raw = image.get("tag")
+        tag = str(tag_raw).strip() if tag_raw is not None else ""
+        if not repository or not tag:
+            return None
+        return f"{repository}:{tag}"
+
+    @staticmethod
+    def _extract_mapping_editor_image_ref(values: dict):
+        mapping_editor = (values or {}).get("mappingEditor") or {}
+        image = mapping_editor.get("image") or {}
+        repository = (image.get("repository") or "").strip()
+        tag_raw = image.get("tag")
+        tag = str(tag_raw).strip() if tag_raw is not None else ""
+        if not repository or not tag:
+            return None
+        return f"{repository}:{tag}"
+
+    def _minikube_is_available(self, profile: str) -> bool:
+        profile_q = shlex.quote(profile)
+        return self.run_silent(f"minikube -p {profile_q} status") is not None
+
+    def _minikube_has_image(self, profile: str, image_ref: str) -> bool:
+        profile_q = shlex.quote(profile)
+        output = self.run_silent(f"minikube -p {profile_q} image ls")
+        if not output:
+            return False
+
+        suffix = image_ref.strip()
+        for line in output.splitlines():
+            candidate = (line or "").strip()
+            if candidate.endswith(suffix):
+                return True
+        return False
+
+    def _cluster_runtime(self, deployer_config: dict | None = None) -> dict:
+        runtime_getter = getattr(self.config_adapter, "cluster_runtime", None)
+        if callable(runtime_getter):
+            try:
+                return dict(runtime_getter() or {})
+            except Exception:
+                pass
+        config = dict(deployer_config or {})
+        if not config:
+            try:
+                config = dict(self.config_adapter.load_deployer_config() or {})
+            except Exception:
+                config = {}
+        topology = str(getattr(self.config_adapter, "topology", "local") or "local").strip().lower() or "local"
+        return build_cluster_runtime(config, topology=topology)
+
+    def _resolve_ontology_hub_source_dir(self, deployer_config: dict) -> str:
+        sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")
+        ontology_hub_dir = os.path.join(sources_dir, self._ONTOLOGY_HUB_REPO_DIRNAME)
+        dockerfile_path = os.path.join(ontology_hub_dir, "Dockerfile")
+        if os.path.isfile(dockerfile_path):
+            return ontology_hub_dir
+
+        should_clone = not os.path.isdir(ontology_hub_dir)
+        if not should_clone:
+            try:
+                remaining_entries = os.listdir(ontology_hub_dir)
+            except OSError:
+                remaining_entries = []
+            should_clone = len(remaining_entries) == 0
+
+        if should_clone:
+            os.makedirs(sources_dir, exist_ok=True)
+            if os.path.isdir(ontology_hub_dir):
+                try:
+                    os.rmdir(ontology_hub_dir)
+                except OSError:
+                    pass
+            print(f"Cloning Ontology-Hub into {ontology_hub_dir} ...")
+            import subprocess
+            try:
+                subprocess.run(["git", "clone", self._ONTOLOGY_HUB_REPO_URL, ontology_hub_dir], check=True)
+            except Exception as exc:
+                self._fail(
+                    "Could not clone Ontology-Hub repository",
+                    root_cause=str(exc),
+                )
+
+        if os.path.isfile(dockerfile_path):
+            return ontology_hub_dir
+
+        self._fail(
+            "Ontology-Hub source directory is not usable",
+            root_cause=(
+                f"Expected Dockerfile at: {dockerfile_path}. "
+                "Level 5 expects the canonical checkout at "
+                "adapters/inesdata/sources/Ontology-Hub."
+            ),
+        )
+
+    def _resolve_ai_model_hub_source_dir(self, deployer_config: dict) -> str:
+        sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")
+        ai_model_hub_dir = os.path.join(sources_dir, self._AI_MODEL_HUB_REPO_DIRNAME)
+        dashboard_dir = os.path.join(ai_model_hub_dir, "DataDashboard")
+        dockerfile_path = os.path.join(dashboard_dir, "Dockerfile")
+        if os.path.isfile(dockerfile_path):
+            return dashboard_dir
+
+        should_clone = not os.path.isdir(ai_model_hub_dir)
+        if not should_clone:
+            try:
+                remaining_entries = os.listdir(ai_model_hub_dir)
+            except OSError:
+                remaining_entries = []
+            should_clone = len(remaining_entries) == 0
+
+        if should_clone:
+            os.makedirs(sources_dir, exist_ok=True)
+            if os.path.isdir(ai_model_hub_dir):
+                try:
+                    os.rmdir(ai_model_hub_dir)
+                except OSError:
+                    pass
+            print(f"Cloning AI Model Hub into {ai_model_hub_dir} ...")
+            import subprocess
+            try:
+                subprocess.run(["git", "clone", self._AI_MODEL_HUB_REPO_URL, ai_model_hub_dir], check=True)
+            except Exception as exc:
+                self._fail(
+                    "Could not clone AI Model Hub repository",
+                    root_cause=str(exc),
+                )
+
+        if os.path.isfile(dockerfile_path):
+            return dashboard_dir
+
+        self._fail(
+            "AI Model Hub source directory is not usable",
+            root_cause=(
+                f"Expected Dockerfile at: {dockerfile_path}. "
+                "Level 5 expects the canonical checkout at "
+                "adapters/inesdata/sources/AIModelHub."
+            ),
+        )
+
+    def _resolve_rdflib_virt_source_dir(self, deployer_config: dict) -> str:
+        sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")
+        rdflib_virt_dir = os.path.join(sources_dir, self._RDFLIB_VIRT_REPO_DIRNAME)
+        pyproject_path = os.path.join(rdflib_virt_dir, "pyproject.toml")
+        package_path = os.path.join(rdflib_virt_dir, "src", "pycottas", "__init__.py")
+        if os.path.isfile(pyproject_path) and os.path.isfile(package_path):
+            return rdflib_virt_dir
+
+        should_clone = not os.path.isdir(rdflib_virt_dir)
+        if not should_clone:
+            try:
+                remaining_entries = os.listdir(rdflib_virt_dir)
+            except OSError:
+                remaining_entries = []
+            should_clone = len(remaining_entries) == 0
+
+        if should_clone:
+            os.makedirs(sources_dir, exist_ok=True)
+            if os.path.isdir(rdflib_virt_dir):
+                try:
+                    os.rmdir(rdflib_virt_dir)
+                except OSError:
+                    pass
+            print(f"Cloning rdflib-virt into {rdflib_virt_dir} ...")
+            import subprocess
+            try:
+                subprocess.run(["git", "clone", self._RDFLIB_VIRT_REPO_URL, rdflib_virt_dir], check=True)
+            except Exception as exc:
+                self._fail(
+                    "Could not clone rdflib-virt repository",
+                    root_cause=str(exc),
+                )
+
+        if os.path.isfile(pyproject_path) and os.path.isfile(package_path):
+            return rdflib_virt_dir
+
+        self._fail(
+            "rdflib-virt source directory is not usable",
+            root_cause=(
+                f"Expected pyproject.toml at: {pyproject_path} and package at: {package_path}. "
+                "Level 5 expects the canonical checkout at "
+                "adapters/inesdata/sources/rdflib-virt."
+            ),
+        )
+
+    def _resolve_mapping_editor_source_dir(self, deployer_config: dict) -> str:
+        sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")
+        mapping_editor_dir = os.path.join(sources_dir, self._MAPPING_EDITOR_REPO_DIRNAME)
+        app_path = os.path.join(mapping_editor_dir, "Mapping_Editor.py")
+        requirements_path = os.path.join(mapping_editor_dir, "requirements.txt")
+        if os.path.isfile(app_path) and os.path.isfile(requirements_path):
+            return mapping_editor_dir
+
+        should_clone = not os.path.isdir(mapping_editor_dir)
+        if not should_clone:
+            try:
+                remaining_entries = os.listdir(mapping_editor_dir)
+            except OSError:
+                remaining_entries = []
+            should_clone = len(remaining_entries) == 0
+
+        if should_clone:
+            os.makedirs(sources_dir, exist_ok=True)
+            if os.path.isdir(mapping_editor_dir):
+                try:
+                    os.rmdir(mapping_editor_dir)
+                except OSError:
+                    pass
+            print(f"Cloning mapping-editor into {mapping_editor_dir} ...")
+            import subprocess
+            try:
+                subprocess.run(["git", "clone", self._MAPPING_EDITOR_REPO_URL, mapping_editor_dir], check=True)
+            except Exception as exc:
+                self._fail(
+                    "Could not clone mapping-editor repository",
+                    root_cause=str(exc),
+                )
+
+        if os.path.isfile(app_path) and os.path.isfile(requirements_path):
+            return mapping_editor_dir
+
+        self._fail(
+            "mapping-editor source directory is not usable",
+            root_cause=(
+                f"Expected Mapping_Editor.py at: {app_path} and requirements.txt at: {requirements_path}. "
+                "Level 5 expects the canonical checkout at "
+                "adapters/inesdata/sources/mapping-editor."
+            ),
+        )
+
+    def _semantic_virtualization_api_dockerfile(self) -> str:
+        return os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "containers",
+            "semantic-virtualization-api",
+            "Dockerfile",
+        )
+
+    def _mapping_editor_dockerfile(self) -> str:
+        return os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "containers",
+            "mapping-editor",
+            "Dockerfile",
+        )
+
+    def _ontology_hub_build_args(self, ontology_hub_dir: str) -> dict:
+        compose_path = os.path.join(ontology_hub_dir, "docker-compose.yml")
+        if os.path.isfile(compose_path):
+            compose = self._safe_load_yaml_file(compose_path)
+            lov_server = ((compose.get("services") or {}).get("lov_server") or {})
+            build = lov_server.get("build") or {}
+            args = build.get("args") or {}
+            if isinstance(args, dict) and args:
+                return {str(k): str(v) for k, v in args.items() if v is not None}
+
+        return {
+            "REPO_URL": "https://github.com/ProyectoPIONERA/Ontology-Hub-Scripts.git",
+            "BRANCH_NAME": "dev",
+            "REPO_NAME": "Ontology-Hub-Scripts",
+            "REPO_PATRONES": "https://github.com/oeg-upm/GrOwEr.git",
+        }
+
+    def _host_has_image(self, image_ref: str) -> bool:
+        image_q = shlex.quote(image_ref)
+        return self.run_silent(f"docker image inspect {image_q}") is not None
+
+    def _load_image_into_minikube(self, profile: str, image_ref: str):
+        profile_q = shlex.quote(profile)
+        image_q = shlex.quote(image_ref)
+        print(f"\nLoading image into minikube: {image_ref}")
+        if self.run(f"minikube -p {profile_q} image load {image_q}", check=False) is None:
+            self._fail("Failed to load image into minikube", root_cause=image_ref)
+
+    def _load_image_into_k3s(self, image_ref: str):
+        image_q = shlex.quote(image_ref)
+        fd, archive_path = tempfile.mkstemp(prefix="pionera-component-image-", suffix=".tar")
+        os.close(fd)
+        archive_q = shlex.quote(archive_path)
+        try:
+            print(f"\nLoading image into k3s containerd: {image_ref}")
+            if self.run(f"docker save {image_q} -o {archive_q}", check=False) is None:
+                self._fail("Failed to export local image for k3s", root_cause=image_ref)
+            if self.run(f"sudo k3s ctr -n k8s.io images import {archive_q}", check=False) is None:
+                self._fail("Failed to import image into k3s containerd", root_cause=image_ref)
+        finally:
+            try:
+                os.unlink(archive_path)
+            except OSError:
+                pass
+
+    def _load_image_into_cluster_runtime(self, cluster_runtime: str, profile: str, image_ref: str):
+        if cluster_runtime == "k3s":
+            self._load_image_into_k3s(image_ref)
+            return
+        self._load_image_into_minikube(profile, image_ref)
+
+    def _build_ontology_hub_image_on_host(self, image_ref: str, deployer_config: dict):
+        ontology_hub_dir = self._resolve_ontology_hub_source_dir(deployer_config)
+        dockerfile_path = os.path.join(ontology_hub_dir, "Dockerfile")
+        if not os.path.isfile(dockerfile_path):
+            self._fail(
+                "Ontology-Hub source directory not found",
+                root_cause=(
+                    f"Expected Dockerfile at: {dockerfile_path}. "
+                    "The canonical checkout in adapters/inesdata/sources/Ontology-Hub is missing or incomplete."
+                ),
+            )
+
+        build_args = self._ontology_hub_build_args(ontology_hub_dir)
+        required = ("REPO_URL", "BRANCH_NAME", "REPO_NAME", "REPO_PATRONES")
+        missing = [k for k in required if not (build_args.get(k) or "").strip()]
+        if missing:
+            self._fail(
+                "Ontology-Hub build args are missing",
+                root_cause=f"Missing keys: {', '.join(missing)} (see {os.path.join(ontology_hub_dir, 'docker-compose.yml')})",
+            )
+
+        image_q = shlex.quote(image_ref)
+        arg_flags = " ".join(
+            f"--build-arg {shlex.quote(f'{k}={v}')}"
+            for k, v in build_args.items()
+            if (v is not None and str(v).strip() != "")
+        )
+
+        print(f"\nBuilding local image on host: {image_ref}")
+        cmd = f"docker build -t {image_q}"
+        if arg_flags:
+            cmd += f" {arg_flags}"
+        cmd += " -f Dockerfile ."
+        if self.run(cmd, check=False, cwd=ontology_hub_dir) is None:
+            self._fail("Failed to build ontology-hub image on host", root_cause=image_ref)
+
+    def _build_ai_model_hub_image_on_host(self, image_ref: str, deployer_config: dict):
+        dashboard_dir = self._resolve_ai_model_hub_source_dir(deployer_config)
+        dockerfile_path = os.path.join(dashboard_dir, "Dockerfile")
+        if not os.path.isfile(dockerfile_path):
+            self._fail(
+                "AI Model Hub source directory not found",
+                root_cause=(
+                    f"Expected Dockerfile at: {dockerfile_path}. "
+                    "The canonical checkout in adapters/inesdata/sources/AIModelHub is missing or incomplete."
+                ),
+            )
+
+        image_q = shlex.quote(image_ref)
+        print(f"\nBuilding local image on host: {image_ref}")
+        cmd = f"docker build -t {image_q} ."
+        if self.run(cmd, check=False, cwd=dashboard_dir) is None:
+            self._fail("Failed to build AI Model Hub image on host", root_cause=image_ref)
+
+    def _build_semantic_virtualization_image_on_host(self, image_ref: str, deployer_config: dict):
+        rdflib_virt_dir = self._resolve_rdflib_virt_source_dir(deployer_config)
+        # Keep the UI/editor source available as part of the component bundle,
+        # while the A5.2 API image is built from rdflib-virt.
+        self._resolve_mapping_editor_source_dir(deployer_config)
+        dockerfile_path = self._semantic_virtualization_api_dockerfile()
+        if not os.path.isfile(dockerfile_path):
+            self._fail(
+                "Semantic Virtualization API Dockerfile not found",
+                root_cause=(
+                    f"Expected Dockerfile at: {dockerfile_path}. "
+                    "The framework wraps rdflib-virt as a local SPARQL API for A5.2 validation."
+                ),
+            )
+
+        image_q = shlex.quote(image_ref)
+        dockerfile_q = shlex.quote(dockerfile_path)
+        print(f"\nBuilding local image on host: {image_ref}")
+        cmd = f"docker build -t {image_q} -f {dockerfile_q} ."
+        if self.run(cmd, check=False, cwd=rdflib_virt_dir) is None:
+            self._fail("Failed to build Semantic Virtualization image on host", root_cause=image_ref)
+
+    def _build_mapping_editor_image_on_host(self, image_ref: str, deployer_config: dict):
+        mapping_editor_dir = self._resolve_mapping_editor_source_dir(deployer_config)
+        dockerfile_path = self._mapping_editor_dockerfile()
+        if not os.path.isfile(dockerfile_path):
+            self._fail(
+                "mapping-editor Dockerfile not found",
+                root_cause=(
+                    f"Expected Dockerfile at: {dockerfile_path}. "
+                    "The framework deploys mapping-editor as an opt-in Streamlit UI for A5.2 validation."
+                ),
+            )
+
+        image_q = shlex.quote(image_ref)
+        dockerfile_q = shlex.quote(dockerfile_path)
+        print(f"\nBuilding local image on host: {image_ref}")
+        cmd = f"docker build -t {image_q} -f {dockerfile_q} ."
+        if self.run(cmd, check=False, cwd=mapping_editor_dir) is None:
+            self._fail("Failed to build mapping-editor image on host", root_cause=image_ref)
+
+    def _effective_component_values(self, normalized_component: str, values_file: str, deployer_config: dict) -> dict:
+        values = dict(self._safe_load_yaml_file(values_file) or {})
+        overrides = self._component_values_override_payload(normalized_component, deployer_config)
+
+        image_overrides = overrides.get("image") or {}
+        if image_overrides:
+            image_values = dict(values.get("image") or {})
+            image_values.update(image_overrides)
+            values["image"] = image_values
+
+        return values
+
+    def _maybe_prepare_level6_local_image(self, normalized_component: str, values_file: str, deployer_config: dict) -> bool:
+        """Ensure local images referenced by a Level 5 component exist in the active cluster runtime.
+
+        Returns True when the active cluster runtime image cache was updated.
+        """
+        values = self._effective_component_values(normalized_component, values_file, deployer_config)
+        image_ref = self._extract_primary_image_ref(values)
+        runtime = self._cluster_runtime(deployer_config)
+        cluster_type = str(runtime.get("cluster_type") or "minikube").strip().lower() or "minikube"
+
+        profile = (
+            deployer_config.get("MINIKUBE_PROFILE")
+            or getattr(self.config, "MINIKUBE_PROFILE", "minikube")
+            or "minikube"
+        ).strip() or "minikube"
+
+        if normalized_component == "ontology-hub":
+            if not image_ref:
+                self._fail(
+                    "Ontology-Hub chart image is not declared",
+                    root_cause=f"Values file: {values_file}",
+                )
+            if not image_ref.lower().endswith(":local"):
+                self._fail(
+                    "Ontology-Hub must use a local image in Level 5/6",
+                    root_cause=f"Configured image: {image_ref}",
+                )
+            if cluster_type == "minikube" and not self._minikube_is_available(profile):
+                self._fail(
+                    "Minikube profile is not available for Ontology-Hub local image deployment",
+                    root_cause=profile,
+                )
+            self._build_ontology_hub_image_on_host(image_ref, deployer_config)
+            self._load_image_into_cluster_runtime(cluster_type, profile, image_ref)
+            return True
+
+        auto_build_flag = deployer_config.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
+        if auto_build_flag is None:
+            auto_build_flag = deployer_config.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
+
+        if not self._parse_bool(auto_build_flag, default=True):
+            return False
+
+        if not image_ref:
+            return False
+
+        if not image_ref.lower().endswith(":local"):
+            return False
+
+        if cluster_type == "minikube" and not self._minikube_is_available(profile):
+            print(
+                f"Local image '{image_ref}' referenced, but minikube profile '{profile}' is not available. "
+                "Skipping auto-build."
+            )
+            return False
+
+        if normalized_component == "ai-model-hub":
+            self._build_ai_model_hub_image_on_host(image_ref, deployer_config)
+            self._load_image_into_cluster_runtime(cluster_type, profile, image_ref)
+            return True
+
+        if normalized_component == "semantic-virtualization":
+            self._build_semantic_virtualization_image_on_host(image_ref, deployer_config)
+            self._load_image_into_cluster_runtime(cluster_type, profile, image_ref)
+            if self._semantic_virtualization_mapping_editor_enabled(deployer_config):
+                editor_image_ref = self._extract_mapping_editor_image_ref(values)
+                if not editor_image_ref:
+                    self._fail(
+                        "mapping-editor chart image is not declared",
+                        root_cause=f"Values file: {values_file}",
+                    )
+                if editor_image_ref.lower().endswith(":local"):
+                    self._build_mapping_editor_image_on_host(editor_image_ref, deployer_config)
+                    self._load_image_into_cluster_runtime(cluster_type, profile, editor_image_ref)
+            return True
+
+        if cluster_type == "minikube" and self._minikube_has_image(profile, image_ref):
+            return False
+
+        print(
+            f"Local image '{image_ref}' is missing in {cluster_type}, "
+            f"but no auto-build recipe exists for '{normalized_component}'."
+        )
+        return False
+
+    def _infer_component_hostname(self, normalized_component: str, values_file: str, deployer_config: dict):
+        """Infer component hostname (ingress host) from Helm values."""
+        try:
+            values = self._safe_load_yaml_file(values_file)
+        except Exception:
+            return None
+
+        return infer_component_hostname(
+            normalized_component,
+            values,
+            deployer_config,
+            dataspace_name=(getattr(self.config, "DS_NAME", "") or "").strip(),
+        )
+
+    def _configured_component_host(self, normalized_component: str, deployer_config: dict) -> str:
+        return configured_component_host(
+            normalized_component,
+            deployer_config,
+            dataspace_name=(getattr(self.config, "DS_NAME", "") or "").strip(),
+        )
+
+    def _resolve_dataspace_connector_ids(self, *, ds_name=None, deployer_config=None):
+        resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        resolved_name = str(ds_name or self._dataspace_name() or "").strip() or self._dataspace_name()
+        resolved_index = self._resolve_dataspace_index(
+            ds_name=resolved_name,
+            deployer_config=resolved_config,
+        )
+
+        raw = str(resolved_config.get(f"DS_{resolved_index}_CONNECTORS") or "").strip()
+        connector_ids = []
+        for token in raw.split(","):
+            normalized = str(token or "").strip()
+            if not normalized:
+                continue
+            if normalized.startswith("conn-"):
+                connector_ids.append(normalized)
+            else:
+                connector_ids.append(f"conn-{normalized}-{resolved_name}")
+        return connector_ids
+
+    def _connector_public_base_url(self, connector_id: str, deployer_config: dict) -> str:
+        resolved_connector_id = str(connector_id or "").strip()
+        if not resolved_connector_id:
+            return ""
+
+        resolved_domain = str((deployer_config or {}).get("DS_DOMAIN_BASE") or "").strip()
+        if not resolved_domain:
+            return ""
+        return self._to_http_url(f"{resolved_connector_id}.{resolved_domain}")
+
+    def _ai_model_hub_connector_config(self, *, ds_name=None, deployer_config=None) -> list[dict]:
+        resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        connector_ids = self._resolve_dataspace_connector_ids(
+            ds_name=ds_name,
+            deployer_config=resolved_config,
+        )
+        if not connector_ids:
+            return []
+
+        provider_id = connector_ids[0] if connector_ids else ""
+        consumer_id = connector_ids[1] if len(connector_ids) > 1 else ""
+        entries = []
+
+        if consumer_id:
+            consumer_base = self._connector_public_base_url(consumer_id, resolved_config)
+            if consumer_base:
+                entries.append(
+                    {
+                        "connectorName": "Consumer",
+                        "managementUrl": f"{consumer_base}/management",
+                        "defaultUrl": f"{consumer_base}/api",
+                        "protocolUrl": f"{consumer_base}/protocol",
+                        "federatedCatalogEnabled": False,
+                    }
+                )
+
+        if provider_id:
+            provider_base = self._connector_public_base_url(provider_id, resolved_config)
+            if provider_base:
+                entries.append(
+                    {
+                        "connectorName": "Provider",
+                        "managementUrl": f"{provider_base}/management",
+                        "defaultUrl": f"{provider_base}/api",
+                        "protocolUrl": f"{provider_base}/protocol",
+                        "federatedCatalogEnabled": False,
+                    }
+                )
+
+        return entries
+
+    def _component_values_override_payload(self, normalized_component: str, deployer_config: dict) -> dict:
+        normalized = self._normalize_component_key(normalized_component)
+        overrides = {}
+
+        if normalized == "ontology-hub":
+            host = self._configured_component_host(normalized, deployer_config)
+            if host:
+                base_url = self._to_http_url(host)
+                overrides["ingress"] = {
+                    "enabled": True,
+                    "host": host,
+                }
+                overrides["env"] = {
+                    "SELF_HOST_URL": base_url,
+                    "BASE_URL": base_url,
+                }
+                host_alias_ip = self._resolve_ontology_hub_self_host_alias_ip(deployer_config)
+                if host_alias_ip:
+                    overrides["hostAliases"] = [
+                        {
+                            "ip": host_alias_ip,
+                            "hostnames": [host],
+                        }
+                    ]
+
+            if "ONTOLOGY_HUB_SAMPLE_DATA_ENABLED" in deployer_config:
+                overrides.setdefault("sampleData", {})["enabled"] = self._parse_bool(
+                    deployer_config.get("ONTOLOGY_HUB_SAMPLE_DATA_ENABLED"),
+                    default=True,
+                )
+
+        if normalized == "ai-model-hub":
+            host = self._configured_component_host(normalized, deployer_config)
+            if host:
+                overrides["ingress"] = {
+                    "enabled": True,
+                    "host": host,
+                }
+
+            connector_config = self._ai_model_hub_connector_config(
+                ds_name=self._dataspace_name(),
+                deployer_config=deployer_config,
+            )
+            if connector_config:
+                overrides.setdefault("config", {})["edcConnectorConfig"] = connector_config
+
+        if normalized == "semantic-virtualization":
+            host = self._configured_component_host(normalized, deployer_config)
+            if host:
+                overrides["ingress"] = {
+                    "enabled": True,
+                    "host": host,
+                }
+                overrides.setdefault("env", {})["SEMANTIC_VIRTUALIZATION_PUBLIC_URL"] = self._to_http_url(host)
+
+            if self._semantic_virtualization_mapping_editor_enabled(deployer_config):
+                editor_host = self._semantic_virtualization_mapping_editor_host(deployer_config)
+                mapping_editor = {"enabled": True}
+                if editor_host:
+                    mapping_editor["ingress"] = {
+                        "enabled": True,
+                        "host": editor_host,
+                    }
+                overrides["mappingEditor"] = mapping_editor
+
+        return overrides
+
+    def _semantic_virtualization_mapping_editor_enabled(self, deployer_config: dict) -> bool:
+        config = dict(deployer_config or {})
+        enabled = config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED")
+        if enabled is None:
+            enabled = config.get("MAPPING_EDITOR_ENABLED")
+        return self._parse_bool(enabled, default=False)
+
+    def _semantic_virtualization_mapping_editor_host(self, deployer_config: dict) -> str:
+        config = dict(deployer_config or {})
+        explicit = (
+            config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST")
+            or config.get("MAPPING_EDITOR_HOST")
+            or config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL")
+        )
+        explicit_host = self._strip_url_scheme(explicit or "")
+        if explicit_host:
+            return explicit_host
+
+        ds_domain = str(config.get("DS_DOMAIN_BASE") or "").strip()
+        ds_name = self._dataspace_name()
+        if ds_domain and ds_name:
+            return f"semantic-virtualization-editor-{ds_name}.{ds_domain}"
+        return ""
+
+    def _additional_component_public_hosts(self, normalized_component: str, deployer_config: dict) -> list[str]:
+        normalized = self._normalize_component_key(normalized_component)
+        if normalized == "semantic-virtualization" and self._semantic_virtualization_mapping_editor_enabled(
+            deployer_config
+        ):
+            editor_host = self._semantic_virtualization_mapping_editor_host(deployer_config)
+            return [editor_host] if editor_host else []
+        return []
+
+    def _add_additional_component_url_hosts(
+        self,
+        inferred_hosts: dict,
+        components,
+        deployer_config: dict,
+    ) -> dict:
+        resolved_hosts = dict(inferred_hosts or {})
+        for component in components or []:
+            normalized = self._normalize_component_key(component)
+            if normalized == "semantic-virtualization" and self._semantic_virtualization_mapping_editor_enabled(
+                deployer_config
+            ):
+                editor_host = self._semantic_virtualization_mapping_editor_host(deployer_config)
+                if editor_host:
+                    resolved_hosts["semantic-virtualization-editor"] = editor_host
+        return resolved_hosts
+
+    def _resolve_ontology_hub_self_host_alias_ip(self, deployer_config: dict) -> str:
+        explicit_ip = (deployer_config.get("ONTOLOGY_HUB_SELF_HOST_ALIAS_IP") or "").strip()
+        if explicit_ip:
+            return explicit_ip if self._is_ip_address(explicit_ip) else ""
+
+        namespace = (
+            deployer_config.get("ONTOLOGY_HUB_SELF_HOST_ALIAS_SERVICE_NAMESPACE")
+            or "ingress-nginx"
+        ).strip()
+        service_name = (
+            deployer_config.get("ONTOLOGY_HUB_SELF_HOST_ALIAS_SERVICE_NAME")
+            or "ingress-nginx-controller"
+        ).strip()
+        if not namespace or not service_name:
+            return ""
+
+        svc_q = shlex.quote(service_name)
+        ns_q = shlex.quote(namespace)
+        ip = (
+            self.run_silent(
+                f"kubectl get svc {svc_q} -n {ns_q} -o jsonpath='{{.spec.clusterIP}}'"
+            )
+            or ""
+        ).strip()
+        return ip if self._is_ip_address(ip) else ""
+
+    @staticmethod
+    def _is_ip_address(value: str) -> bool:
+        try:
+            ipaddress.ip_address((value or "").strip())
+            return True
+        except ValueError:
+            return False
+
+    def _write_component_values_override_file(self, chart_dir: str, normalized_component: str, deployer_config: dict):
+        override_planner = getattr(self, "plan_component_override_values", None)
+        if callable(override_planner):
+            override_plan = override_planner(
+                normalized_component,
+                chart_dir=chart_dir,
+                deployer_config=deployer_config,
+            )
+            payload = dict(override_plan.get("payload") or {})
+        else:
+            payload = self._component_values_override_payload(normalized_component, deployer_config)
+        if not payload:
+            return None
+
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=f"{self._normalize_component_key(normalized_component)}-override-",
+            suffix=".yaml",
+            dir=chart_dir,
+            delete=False,
+        )
+        try:
+            yaml.safe_dump(payload, handle, sort_keys=False)
+        finally:
+            handle.close()
+        return handle.name
+
+    def _wait_for_pods_ready_by_selector(self, namespace: str, selector: str, timeout_seconds: int, label: str = "component") -> bool:
+        namespace = (namespace or "").strip()
+        selector = (selector or "").strip()
+        if not namespace or not selector:
+            return False
+
+        ns_q = shlex.quote(namespace)
+        sel_q = shlex.quote(selector)
+        print(f"Waiting for {label} pods to be Running and Ready...")
+
+        start = time.time()
+        error_markers = (
+            "ImagePullBackOff",
+            "ErrImagePull",
+            "CrashLoopBackOff",
+            "CreateContainerConfigError",
+            "RunContainerError",
+        )
+
+        while True:
+            result = self.run_silent(f"kubectl get pods -n {ns_q} -l {sel_q} --no-headers")
+
+            if result:
+                all_ready = True
+                for line in result.splitlines():
+                    columns = line.split()
+                    if len(columns) < 3:
+                        continue
+
+                    pod_name = columns[0]
+                    ready = columns[1] if len(columns) > 1 else ""
+                    status = columns[2]
+
+                    if any(marker in status for marker in error_markers) or "BackOff" in status:
+                        print(f"\nPod in error state: {pod_name} ({status})")
+                        self.run(f"kubectl get pods -n {ns_q} -l {sel_q}", check=False)
+                        self.run(f"kubectl describe pod -n {ns_q} {shlex.quote(pod_name)}", check=False)
+                        return False
+
+                    if status == "Completed":
+                        continue
+
+                    if status != "Running":
+                        all_ready = False
+                        break
+
+                    if "/" in ready:
+                        ready_current, ready_total = ready.split("/", 1)
+                        if ready_current != ready_total:
+                            all_ready = False
+                            break
+                    else:
+                        all_ready = False
+                        break
+
+                if all_ready:
+                    print(f"\n{label} pods are Running and Ready\n")
+                    self.run(f"kubectl get pods -n {ns_q} -l {sel_q}", check=False)
+                    return True
+
+            if time.time() - start > timeout_seconds:
+                print(f"\nTimeout waiting for {label} pods to be ready\n")
+                self.run(f"kubectl get pods -n {ns_q} -l {sel_q}", check=False)
+                return False
+
+            time.sleep(2)
+
+    def _wait_for_component_rollout(self, namespace: str, deployment_name: str, timeout_seconds: int, label: str) -> bool:
+        rollout_waiter = getattr(self.infrastructure, "wait_for_deployment_rollout", None)
+        if callable(rollout_waiter):
+            return bool(
+                rollout_waiter(
+                    namespace,
+                    deployment_name,
+                    timeout_seconds=timeout_seconds,
+                    label=label,
+                )
+            )
+
+        selector = f"app.kubernetes.io/instance={deployment_name}"
+        return self._wait_for_pods_ready_by_selector(
+            namespace,
+            selector,
+            timeout_seconds=timeout_seconds,
+            label=label,
+        )
+
+    def deploy_components(self, components, *, ds_name=None, namespace=None, deployer_config=None):
+        return self.COMPONENTS(
+            components,
+            ds_name=ds_name,
+            namespace=namespace,
+            deployer_config=deployer_config,
+        )
+
+    def infer_component_urls(self, components, *, ds_name=None, namespace=None, deployer_config=None):
+        if not components:
+            return {}
+
+        ds_name = str(ds_name or self._dataspace_name() or "").strip()
+        deployer_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        namespace = self._resolve_components_namespace(
+            ds_name=ds_name,
+            namespace=namespace,
+            deployer_config=deployer_config,
+        )
+        runtime_batch_resolver = getattr(self, "prepare_component_runtime_metadata", None)
+        runtime_resolver = getattr(self, "resolve_component_runtime_metadata", None)
+
+        inferred_hosts = {}
+        if callable(runtime_batch_resolver):
+            prepared_metadata = runtime_batch_resolver(
+                components,
+                ds_name=ds_name,
+                namespace=namespace,
+                deployer_config=deployer_config,
+            )
+            for metadata in prepared_metadata:
+                if metadata.get("excluded") or metadata.get("error"):
+                    continue
+                normalized = metadata.get("normalized_component")
+                host = metadata.get("host")
+                if normalized and host:
+                    inferred_hosts[normalized] = host
+        else:
+            for component in components:
+                normalized = self._normalize_component_key(component)
+                if normalized in self._LEVEL6_EXCLUDED_KEYS:
+                    continue
+                try:
+                    if callable(runtime_resolver):
+                        runtime_metadata = runtime_resolver(
+                            normalized,
+                            ds_name=ds_name,
+                            namespace=namespace,
+                            deployer_config=deployer_config,
+                        )
+                        host = runtime_metadata.get("host")
+                    else:
+                        chart_dir = self._resolve_component_chart_dir(normalized)
+                        values_file = self._resolve_component_values_file(chart_dir, ds_name=ds_name, namespace=namespace)
+                        host = self._infer_component_hostname(normalized, values_file, deployer_config)
+                except Exception:
+                    host = None
+
+                if host:
+                    inferred_hosts[normalized] = host
+
+        inferred_hosts = self._add_additional_component_url_hosts(
+            inferred_hosts,
+            components,
+            deployer_config,
+        )
+        return {k: self._to_http_url(v) for k, v in inferred_hosts.items() if v}
+
+    def COMPONENTS(self, components, *, ds_name=None, namespace=None, deployer_config=None):
+        if not components:
+            print("No components selected for deployment")
+            return {"deployed": [], "urls": {}}
+
+        topology = str(getattr(self.config_adapter, "topology", "local") or "local").strip().lower() or "local"
+        requires_local_runtime_access = topology == "local"
+        repo_dir = self.config.repo_dir()
+        if not os.path.exists(repo_dir):
+            self._fail("Repository not found. Run Level 2 first")
+
+        if requires_local_runtime_access:
+            if not self.infrastructure.ensure_local_infra_access():
+                self._fail("Local access to PostgreSQL/Vault is not available")
+        else:
+            print(
+                f"Skipping local PostgreSQL/Vault/MinIO port-forward checks for topology '{topology}'."
+            )
+
+        if not self.infrastructure.ensure_vault_unsealed():
+            self._fail("Vault is not initialized or unsealed")
+
+        reconcile_vault_state = getattr(self.infrastructure, "reconcile_vault_state_for_local_runtime", None)
+        if callable(reconcile_vault_state) and not reconcile_vault_state():
+            self._fail("Vault token could not be synchronized with the shared local runtime")
+
+        deployer_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        ds_name = str(ds_name or self._dataspace_name() or "").strip()
+        namespace = self._resolve_components_namespace(
+            ds_name=ds_name,
+            namespace=namespace,
+            deployer_config=deployer_config,
+        )
+        runtime_batch_resolver = getattr(self, "prepare_component_runtime_metadata", None)
+        runtime_resolver = getattr(self, "resolve_component_runtime_metadata", None)
+        deployment_plan_builder = getattr(self, "prepare_component_deployment_plan", None)
+        component_release_deployer = getattr(self, "deploy_component_release", None)
+        runtime_execution_preparer = getattr(self, "prepare_component_runtime_execution", None)
+        runtime_finalizer = getattr(self, "finalize_component_runtime", None)
+        publication_verifier = getattr(self, "verify_component_publication", None)
+        shared_runtime_deployer = getattr(self, "deploy_shared_component_runtime", None)
+        self._cleanup_legacy_component_releases(
+            components,
+            active_namespace=namespace,
+            ds_name=ds_name,
+            deployer_config=deployer_config,
+        )
+        self._cleanup_components(components, namespace)
+
+        prepared_metadata = None
+        metadata_by_component = {}
+        inferred_hosts = {}
+        if callable(runtime_batch_resolver):
+            prepared_metadata = runtime_batch_resolver(
+                components,
+                ds_name=ds_name,
+                namespace=namespace,
+                deployer_config=deployer_config,
+            )
+            for metadata in prepared_metadata:
+                normalized = metadata.get("normalized_component")
+                if normalized:
+                    metadata_by_component[normalized] = metadata
+                if metadata.get("excluded") or metadata.get("error"):
+                    continue
+                host = metadata.get("host")
+                if normalized and host:
+                    inferred_hosts[normalized] = host
+        else:
+            for component in components:
+                normalized = self._normalize_component_key(component)
+                if normalized in self._LEVEL6_EXCLUDED_KEYS:
+                    continue
+
+                try:
+                    if callable(runtime_resolver):
+                        runtime_metadata = runtime_resolver(
+                            normalized,
+                            ds_name=ds_name,
+                            namespace=namespace,
+                            deployer_config=deployer_config,
+                        )
+                        host = runtime_metadata.get("host")
+                    else:
+                        chart_dir = self._resolve_component_chart_dir(normalized)
+                        values_file = self._resolve_component_values_file(chart_dir, ds_name=ds_name, namespace=namespace)
+                        host = self._infer_component_hostname(normalized, values_file, deployer_config)
+                except Exception:
+                    host = None
+
+                if host:
+                    inferred_hosts[normalized] = host
+
+        hostnames_to_sync = set(inferred_hosts.values())
+        for component in components:
+            normalized = self._normalize_component_key(component)
+            hostnames_to_sync.update(self._additional_component_public_hosts(normalized, deployer_config))
+
+        if hostnames_to_sync:
+            print("\nComponent hostnames inferred from values:")
+            for host in sorted(hostnames_to_sync):
+                print(f"- {host}")
+
+            if requires_local_runtime_access:
+                desired_entries = [f"127.0.0.1 {h}" for h in sorted(hostnames_to_sync)]
+                self.infrastructure.manage_hosts_entries(
+                    desired_entries,
+                    header_comment="# Components",
+                    auto_confirm=True,
+                )
+            else:
+                print(f"Skipping component hosts synchronization for topology '{topology}'.")
+
+        deployed = []
+        for component in components:
+            normalized = self._normalize_component_key(component)
+
+            if normalized in self._LEVEL6_EXCLUDED_KEYS:
+                self._fail(
+                    f"'{normalized}' is part of the base dataspace and must not be deployed via Level 5. "
+                    "Deploy it via Level 3 (dataspace) and remove it from COMPONENTS."
+                )
+
+            if normalized in metadata_by_component and not metadata_by_component[normalized].get("error"):
+                runtime_metadata = metadata_by_component[normalized]
+            elif callable(runtime_resolver):
+                runtime_metadata = runtime_resolver(
+                    normalized,
+                    ds_name=ds_name,
+                    namespace=namespace,
+                    deployer_config=deployer_config,
+                )
+            else:
+                runtime_metadata = None
+
+            if callable(deployment_plan_builder):
+                deployment_plan = deployment_plan_builder(
+                    normalized,
+                    ds_name=ds_name,
+                    namespace=namespace,
+                    deployer_config=deployer_config,
+                    runtime_metadata=runtime_metadata,
+                )
+                chart_dir = deployment_plan["chart_dir"]
+                values_file = deployment_plan["values_file"]
+                release_name = deployment_plan["release_name"]
+                override_plan = dict(deployment_plan.get("override_plan") or {})
+            else:
+                if runtime_metadata:
+                    chart_dir = runtime_metadata["chart_dir"]
+                    values_file = runtime_metadata["values_file"]
+                    release_name = runtime_metadata["release_name"]
+                else:
+                    chart_dir = self._resolve_component_chart_dir(normalized)
+                    values_file = self._resolve_component_values_file(chart_dir, ds_name=ds_name, namespace=namespace)
+                    release_name = self._resolve_component_release_name(normalized)
+                override_planner = getattr(self, "plan_component_override_values", None)
+                if callable(override_planner):
+                    override_plan = dict(
+                        override_planner(
+                            normalized,
+                            chart_dir=chart_dir,
+                            deployer_config=deployer_config,
+                        )
+                        or {}
+                    )
+                else:
+                    legacy_payload = self._component_values_override_payload(normalized, deployer_config)
+                    override_plan = {
+                        "normalized_component": normalized,
+                        "chart_dir": chart_dir,
+                        "payload": legacy_payload,
+                        "has_override": bool(legacy_payload),
+                        "filename_prefix": f"{normalized}-override-" if legacy_payload else None,
+                    }
+            current_deployment_plan = {
+                "component": component,
+                "normalized_component": normalized,
+                "chart_dir": chart_dir,
+                "values_file": values_file,
+                "host": runtime_metadata.get("host") if runtime_metadata else None,
+                "release_name": release_name,
+                "override_plan": override_plan,
+            }
+
+            if callable(shared_runtime_deployer):
+                shared_runtime_result = shared_runtime_deployer(
+                    normalized,
+                    deployment_plan=current_deployment_plan,
+                    namespace=namespace,
+                    deployer_config=deployer_config,
+                )
+                if shared_runtime_result is not None:
+                    deployed.append(normalized)
+                    continue
+
+            if callable(runtime_execution_preparer):
+                execution = runtime_execution_preparer(
+                    normalized,
+                    deployment_plan=current_deployment_plan,
+                    namespace=namespace,
+                    deployer_config=deployer_config,
+                )
+                built_local_image = execution["built_local_image"]
+            else:
+                built_local_image = False
+                try:
+                    built_local_image = self._maybe_prepare_level6_local_image(normalized, values_file, deployer_config)
+                except Exception as exc:
+                    self._fail(
+                        f"Error preparing local images for component '{normalized}'",
+                        root_cause=str(exc),
+                    )
+
+            if callable(component_release_deployer):
+                component_release_deployer(
+                    normalized,
+                    deployment_plan=current_deployment_plan,
+                    namespace=namespace,
+                    deployer_config=deployer_config,
+                )
+            else:
+                override_values_file = None
+                print(f"\nDeploying component: {normalized}")
+                print(f"  Chart: {chart_dir}")
+                print(f"  Values: {os.path.basename(values_file)}")
+                print(f"  Release: {release_name}")
+                print(f"  Namespace: {namespace}")
+                try:
+                    if override_plan.get("has_override"):
+                        override_values_file = self._write_component_values_override_file(
+                            chart_dir,
+                            normalized,
+                            deployer_config,
+                        )
+                    else:
+                        override_values_file = None
+                    values_files = [os.path.basename(values_file)]
+                    if override_values_file:
+                        values_files.append(override_values_file)
+                        print(f"  Override values: {os.path.basename(override_values_file)}")
+
+                    if not self.infrastructure.deploy_helm_release(
+                        release_name,
+                        namespace,
+                        values_files,
+                        cwd=chart_dir,
+                    ):
+                        self._fail(f"Error deploying component '{normalized}'")
+                finally:
+                    if override_values_file and os.path.exists(override_values_file):
+                        os.unlink(override_values_file)
+
+            if callable(runtime_finalizer):
+                runtime_finalizer(
+                    normalized,
+                    release_name=release_name,
+                    namespace=namespace,
+                    built_local_image=built_local_image,
+                )
+            else:
+                if built_local_image:
+                    print(f"Restarting deployment/{release_name} to pick up local image...\n")
+                    self.run(
+                        f"kubectl rollout restart deployment/{release_name} -n {namespace}",
+                        check=False,
+                    )
+
+                    if normalized == "ontology-hub":
+                        timeout_seconds = 1800
+                        if not self._wait_for_component_rollout(
+                            namespace,
+                            release_name,
+                        timeout_seconds=timeout_seconds,
+                        label=normalized,
+                        ):
+                            self._fail(f"Timeout waiting for component '{normalized}' deployment rollout")
+
+            if callable(publication_verifier):
+                publication_verifier(
+                    normalized,
+                    deployment_plan=current_deployment_plan,
+                    namespace=namespace,
+                )
+
+            deployed.append(normalized)
+
+        inferred_hosts = self._add_additional_component_url_hosts(
+            inferred_hosts,
+            components,
+            deployer_config,
+        )
+        urls = {k: self._to_http_url(v) for k, v in inferred_hosts.items() if v}
+        return {"deployed": deployed, "urls": urls}
+
+    def describe(self) -> str:
+        return "INESDataComponentsAdapter deploys optional components via Helm charts."

@@ -1,0 +1,42 @@
+<mat-card class="creation-card">
+  <mat-card-header>
+    <mat-card-title>Create a vocabulary</mat-card-title>
+  </mat-card-header>
+
+  <div>
+    <mat-form-field class="form-field" color="accent">
+      <mat-label>ID</mat-label>
+      <input required [(ngModel)]="id" matInput>
+    </mat-form-field>
+
+    <mat-form-field class="form-field" color="accent">
+      <mat-label>Name</mat-label>
+      <input required [(ngModel)]="name" matInput>
+    </mat-form-field>
+  </div>
+
+  <mat-form-field class="form-field" color="accent">
+    <mat-label>Asset category</mat-label>
+    <mat-select [(ngModel)]="category" required>
+      <mat-option *ngFor="let cat of categories" [value]="cat[0]">
+        {{ cat[1] }}
+      </mat-option>
+    </mat-select>
+  </mat-form-field>
+
+  <!--  Json schema -->
+  <mat-form-field class="form-field-stretch" color="accent" id="form-field-permissions">
+    <mat-label>Schema (JSON)</mat-label>
+    <textarea required [(ngModel)]="jsonSchema" rows=4 matInput></textarea>
+  </mat-form-field>
+
+  <div fxLayout="row" fxLayoutGap="15px" fxLayoutAlign="end">
+    <button (click)="navigateToVocabularies()" color="warn" mat-stroked-button>
+      <mat-icon>cancel</mat-icon> Cancel
+    </button>
+
+    <button (click)="onSave()" color="accent" mat-stroked-button>
+      <mat-icon>add_circle_outline</mat-icon> Create
+    </button>
+  </div>
+</mat-card>

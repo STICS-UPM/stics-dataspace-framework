@@ -1,0 +1,50 @@
+[
+  {
+    "Id": 157,
+    "Text": "Las medidas que no se basan en pruebas […] son inadecuadas para alcanzar el objetivo fundamentalmente legítimo que persiguen, a saber, evitar la sobrecarga del sistema sanitario o reducir la incidencia de la infección por el SRAS-CoV-2.",
+    "5W1H_Label": "WHAT",
+    "Tag_Text": "el objetivo fundamentalmente legítimo",
+    "Tag_Start": 73,
+    "Tag_End": 110
+  },
+  {
+    "Id": 1067,
+    "Text": "Los implantes aumentaron tras el inicio de la pandemia, dada la aversión a tocar cosas, incluso en su propio domicilio.",
+    "5W1H_Label": "WHEN",
+    "Tag_Text": "tras el inicio de la pandemia",
+    "Tag_Start": 25,
+    "Tag_End": 54
+  },
+  {
+    "Id": 294,
+    "Text": "Y es que, a pesar de que su consumo en forma de suplementos es muy habitual, la fundamentación científica es escasa.",
+    "5W1H_Label": "HOW",
+    "Tag_Text": "en forma de suplementos",
+    "Tag_Start": 36,
+    "Tag_End": 59
+  },
+  {
+    "Id": 493,
+    "Text": "Lo último de lo que nos hemos enterado a través de un vídeo que circula por internet es ya absolutamente surrealista y demuestra hasta qué punto alguno de los agentes de ese cuerpo van por la vida de generales.",
+    "5W1H_Label": "WHERE",
+    "Tag_Text": "por internet",
+    "Tag_Start": 72,
+    "Tag_End": 84
+  },
+  {
+    "Id": 94,
+    "Text": "Por eso tenemos todo el derecho a preguntarnos qué sentido tienen esas medidas que ha provocado que miles de españoles pierdan sus empleos sin con ello haber derrotado el virus, pese a los anuncios triunfalistas de Pedro Sánchez a las puertas del verano de 2020.",
+    "5W1H_Label": "WHO",
+    "Tag_Text": "de Pedro Sánchez",
+    "Tag_Start": 212,
+    "Tag_End": 228
+  },
+  {
+    "Id": 1011,
+    "Text": "De todas maneras, se están evaluando cada caso para saber la relación que estos pueden tener con la administración de la vacuna de AstraZeneca.El grupo Vivantes, que gestiona clínicas y residencias, ha decidido suspender la administración de tales vacunas en mujeres jóvenes como  medida de precaución.31 casos y 9 fallecidosEl Instituto Paul-Ehrlich para la vacunación en Alemania ha detectado 31 casos de trombosis en personas que recibieron esta vacuna.",
+    "5W1H_Label": "WHY",
+    "Tag_Text": "como  medida de precaución",
+    "Tag_Start": 275,
+    "Tag_End": 301
+  }
+]

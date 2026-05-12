@@ -1,0 +1,15 @@
+{{- if and .Values.elasticsearch.enabled .Values.elasticsearch.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ontology-hub.fullname" . }}-elasticsearch
+  labels:
+    {{- include "ontology-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: elasticsearch
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.elasticsearch.persistence.size | quote }}
+{{- end }}

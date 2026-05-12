@@ -1,0 +1,5 @@
+connector:
+  image:
+    name: validation-environment/edc-connector
+    tag: local
+    pullPolicy: IfNotPresent

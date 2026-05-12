@@ -1,0 +1,7 @@
+dashboard:
+  proxy:
+    enabled: true
+    image:
+      name: validation-environment/edc-dashboard-proxy
+      tag: latest
+      pullPolicy: IfNotPresent

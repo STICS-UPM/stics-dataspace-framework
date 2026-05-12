@@ -1,0 +1,66 @@
+.observer-home {
+  padding: 2rem;
+  background: linear-gradient(180deg, #f6fbff 0%, #ffffff 100%);
+}
+
+.observer-home__hero {
+  max-width: 860px;
+  margin-bottom: 2rem;
+}
+
+.observer-home__eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.78rem;
+  color: #557a95;
+}
+
+.observer-home__hero h1 {
+  margin: 0.2rem 0 0.8rem;
+  color: #13324b;
+}
+
+.observer-home__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.observer-home__card {
+  padding: 1.1rem;
+  border-radius: 1rem;
+  border: 1px solid #dce6ef;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(18, 50, 75, 0.06);
+}
+
+.observer-home__card h2 {
+  margin: 0 0 0.5rem;
+  color: #16324f;
+}
+
+.observer-home__label {
+  display: block;
+  margin-top: 0.9rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.82rem;
+  color: #51697e;
+}
+
+.observer-home__input {
+  width: 100%;
+  margin-bottom: 0.85rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid #cfdbe6;
+  border-radius: 0.8rem;
+  background: #fbfdff;
+}
+
+.observer-home__card code {
+  display: block;
+  margin-top: 0.8rem;
+  margin-bottom: 0.8rem;
+  padding: 0.65rem;
+  border-radius: 0.75rem;
+  background: #f5f7fa;
+}

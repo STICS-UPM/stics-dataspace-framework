@@ -1,0 +1,12 @@
+<section class="observer-view">
+  <header class="observer-view__header">
+    <h1>Benchmark history for {{ benchmarkRunId }}</h1>
+    <p *ngIf="benchmark">{{ benchmark.total }} benchmark-linked events</p>
+  </header>
+
+  <p *ngIf="error" class="observer-view__error">{{ error }}</p>
+
+  <div class="observer-view__list" *ngIf="benchmark">
+    <app-model-event-card *ngFor="let event of benchmark.items" [event]="event"></app-model-event-card>
+  </div>
+</section>

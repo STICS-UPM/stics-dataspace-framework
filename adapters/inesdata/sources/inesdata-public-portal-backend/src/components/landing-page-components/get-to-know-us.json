@@ -1,0 +1,26 @@
+{
+  "collectionName": "components_landing_page_components_get_to_know_uses",
+  "info": {
+    "displayName": "Get To Know us",
+    "description": ""
+  },
+  "options": {},
+  "attributes": {
+    "Title": {
+      "type": "string",
+      "required": true
+    },
+    "Description": {
+      "type": "richtext",
+      "required": true
+    },
+    "Background": {
+      "allowedTypes": [
+        "images"
+      ],
+      "type": "media",
+      "multiple": false,
+      "required": true
+    }
+  }
+}

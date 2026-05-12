@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.dataspace.name }}-public-portal-frontend
+  labels:
+    service: {{ .Values.dataspace.name }}-public-portal-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      service: {{ .Values.dataspace.name }}-public-portal-frontend
+  template:
+    metadata:
+      labels:
+        service: {{ .Values.dataspace.name }}-public-portal-frontend
+    spec:
+      {{- with .Values.hostAliases }}
+      hostAliases:
+{{ toYaml . | indent 8 }}
+      {{- end }}
+      containers:
+        - image: {{ .Values.frontend.image.name }}:{{ .Values.frontend.image.tag }}
+          name: public-portal-frontend
+          ports:
+            - containerPort: 80
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.dataspace.name }}-public-portal-frontend-config
+      restartPolicy: Always

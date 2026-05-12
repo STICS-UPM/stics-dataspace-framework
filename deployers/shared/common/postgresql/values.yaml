@@ -1,0 +1,30 @@
+postgresql:
+  auth:
+    postgresPassword: xxxxCHANGEMExxxx
+    # We initially setup the database for keycloak
+    username: keycloak
+    password: xxxxCHANGEMExxxx
+    database: keycloak
+  persistence:
+    size: 100Gi
+  volumePermissions:
+    enabled: true
+  tls:
+    enabled: true
+    certificatesSecret: postgresql-tls-cert
+    certFilename: tls.crt
+    certKeyFilename: tls.key
+  primary:
+    persistence:
+      size: 100Gi
+    resources:
+      requests:
+        memory: 2Gi
+        cpu: 1000m
+      limits:
+        memory: 8Gi
+        cpu: 2000m
+    # SSL connections mandatory
+    pgHbaConfiguration: |-
+      hostssl all all 0.0.0.0/0 md5
+      hostssl all all ::0/0 md5

@@ -1,0 +1,61 @@
+<div id="wrapper">
+
+  <div fxLayout="row" fxLayoutAlign="space-between" class="section-header">
+  <a
+    mat-stroked-button
+    color="accent"
+    [href]="baseUrl + '/edition'"
+    target="_blank"
+    rel="noopener noreferrer"
+    aria-label="Create ontology"
+  >
+    <mat-icon>add_circle_outline</mat-icon>
+    Create ontology
+  </a>
+</div>
+
+  <ng-container *ngIf="ontologies.length > 0; else noData">
+    <div class="container" *ngIf="ontologies">
+      <div *ngFor="let ontology of ontologies" class="card">
+      <mat-card>
+        <mat-card-header>
+          <mat-icon mat-card-avatar>schema</mat-icon>
+          <mat-card-title>{{ontology.titles[0].value}}</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <mat-list dense>
+            <mat-list-item>
+              <mat-icon matListItemIcon>info</mat-icon>
+              <div class="main-property" matListItemTitle>URL</div>
+              <div matListItemLine><a [href]="ontology.uri">{{ontology.uri}}</a></div>
+            </mat-list-item>
+          </mat-list>
+        </mat-card-content>
+
+        <mat-card-actions class="card-actions align-content-end text-align-end">
+          <mat-card-actions class="card-actions align-content-end text-align-end">
+            <a
+              [href]="baseUrl + '/dataset/vocabs/' + ontology.prefix"
+              target="_blank"
+              rel="noopener noreferrer"
+              color="info"
+              mat-stroked-button
+            >
+              <mat-icon>visibility</mat-icon>
+              View Ontology
+            </a>
+          </mat-card-actions>
+        </mat-card-actions>
+        <mat-card-footer>
+        </mat-card-footer>
+      </mat-card>
+    </div>
+    </div>
+  </ng-container>
+
+  <ng-template #noData>
+    <div class="no-items" *ngIf="ontologies.length <= 0">
+      There are no ontologies created.
+    </div>
+  </ng-template>
+</div>

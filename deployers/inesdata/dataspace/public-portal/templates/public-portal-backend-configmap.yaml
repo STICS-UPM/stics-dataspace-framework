@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.dataspace.name }}-public-portal-backend-config
+  labels:
+    service: {{ .Values.dataspace.name }}-public-portal-backend
+data:
+  DATABASE_CLIENT: postgres
+  DATABASE_HOST: {{ .Values.services.db.hostname }}
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: {{ .Values.services.db.portal.name }}
+  NODE_ENV: production
+  TOKEN_CLIENT_ID: {{ .Values.backend.oauth2.client }}
+  KEYCLOAK_BASE_URL: {{ .Values.services.keycloak.url }}
+  CATALOG_BASE_URL: {{ .Values.backend.catalog.connector }}
+  VOCABULARIES_BASE_URL: {{ .Values.backend.vocabularies.connector }}
+{{- if eq .Values.dataspace.environment "pro" }}
+  DATABASE_SSL: "true"
+  DATABASE_SSL_REJECT_UNAUTHORIZED: "false"
+{{- end }}

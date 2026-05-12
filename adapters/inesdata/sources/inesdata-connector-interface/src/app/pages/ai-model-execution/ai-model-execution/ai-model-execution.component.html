@@ -1,0 +1,272 @@
+<div class="model-execution-container">
+  <div class="page-header">
+    <button class="btn-back" type="button" (click)="goBack()">← Back to AI Model Browser</button>
+    <h1>AI Execution</h1>
+    <p class="subtitle">Execute AI models through HttpData endpoints from this connector and from providers with an existing agreement.</p>
+  </div>
+
+  <div *ngIf="loading" class="loading-container">
+    <div class="spinner"></div>
+    <p>Loading executable model information...</p>
+  </div>
+
+  <div *ngIf="!loading" class="execution-content">
+    <div *ngIf="!selectedAsset && executableAssets.length > 0" class="model-selector">
+      <label for="assetSelect">Select a model to execute:</label>
+      <select id="assetSelect" class="asset-select" [value]="selectedAssetId" (change)="onAssetSelect($event)">
+        <option value="">-- Choose an executable model --</option>
+        <optgroup *ngIf="localAssets.length > 0" [label]="'Local Assets (' + localAssets.length + ')'">
+          <option *ngFor="let asset of localAssets" [value]="asset.id">
+            {{ getSelectorLabel(asset) }}
+          </option>
+        </optgroup>
+        <optgroup *ngIf="externalAssets.length > 0" [label]="'External Assets With Agreement (' + externalAssets.length + ')'">
+          <option *ngFor="let asset of externalAssets" [value]="asset.id">
+            {{ getSelectorLabel(asset) }}
+          </option>
+        </optgroup>
+      </select>
+    </div>
+
+    <div *ngIf="!selectedAsset && executableAssets.length === 0 && !loadingAssets" class="empty-state">
+      <div class="empty-icon">📦</div>
+      <h2>No Executable Models Available</h2>
+      <p>Only machine learning assets stored as HttpData are listed here.</p>
+      <p>External models appear only after a negotiation has produced a local agreement.</p>
+    </div>
+
+    <div *ngIf="selectedAsset" class="model-info-card">
+      <div class="model-header">
+        <h2>{{ selectedAsset.name }}</h2>
+        <span class="badge badge-primary">{{ selectedAsset.contentType || 'HttpData' }}</span>
+      </div>
+
+      <div class="model-chip-row">
+        <span class="soft-chip">{{ getSourceLabel(selectedAsset) }}</span>
+        <span class="soft-chip">{{ selectedAsset.provider }}</span>
+        <span class="soft-chip" *ngIf="selectedAsset.algorithms.length > 0">{{ selectedAsset.algorithms[0] }}</span>
+        <span class="soft-chip" *ngIf="selectedAsset.frameworks.length > 0">{{ selectedAsset.frameworks[0] }}</span>
+        <span class="soft-chip" *ngIf="selectedAsset.tasks.length > 0">{{ selectedAsset.tasks[0] }}</span>
+        <span class="soft-chip" *ngIf="selectedAsset.hasAgreement && !selectedAsset.isLocal">Agreement ready</span>
+      </div>
+
+      <p class="model-description" *ngIf="selectedAsset.description">{{ selectedAsset.description }}</p>
+
+      <div class="model-details">
+        <div class="detail-row">
+          <span class="label">Provider:</span>
+          <span class="value">{{ selectedAsset.provider }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="label">Method:</span>
+          <span class="value">{{ selectedMethod }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="label">Path:</span>
+          <span class="value">{{ executionPath || '/' }}</span>
+        </div>
+        <div class="detail-row" *ngIf="selectedAsset.algorithms.length > 0">
+          <span class="label">Algorithm:</span>
+          <span class="value">{{ selectedAsset.algorithms[0] }}</span>
+        </div>
+        <div class="detail-row" *ngIf="selectedAsset.frameworks.length > 0">
+          <span class="label">Framework:</span>
+          <span class="value">{{ selectedAsset.frameworks[0] }}</span>
+        </div>
+      </div>
+
+      <div class="model-observer-actions">
+        <button class="observer-action" type="button" (click)="openSelectedAssetObserverTimeline()">
+          View Observer Timeline
+        </button>
+      </div>
+    </div>
+
+    <div *ngIf="selectedAsset" class="tabs">
+      <button class="tab-button" type="button" [class.active]="activeTab === 'input'" (click)="activeTab = 'input'">Input</button>
+      <button class="tab-button" type="button" [class.active]="activeTab === 'output'" (click)="activeTab = 'output'">Output</button>
+      <button class="tab-button" type="button" [class.active]="activeTab === 'history'" (click)="viewHistory()">
+        History ({{ selectedExecutionHistory.length }})
+      </button>
+    </div>
+
+    <div *ngIf="selectedAsset" class="tab-content">
+      <div *ngIf="activeTab === 'input'" class="input-panel">
+        <div class="panel-header">
+          <h3>Model Input</h3>
+          <div class="header-actions">
+            <button
+              *ngIf="canUseGeneratedForm"
+              class="btn-primary"
+              type="button"
+              [disabled]="inputMode === 'form'"
+              (click)="setInputMode('form')">
+              Generated Form
+            </button>
+            <button
+              *ngIf="canUseGeneratedForm"
+              class="btn-primary"
+              type="button"
+              [disabled]="inputMode === 'json'"
+              (click)="setInputMode('json')">
+              JSON Payload
+            </button>
+            <button class="btn-primary" type="button" (click)="executeModel()" [disabled]="executing">
+              <span *ngIf="!executing">▶ Execute Model</span>
+              <span *ngIf="executing">⏳ Executing...</span>
+            </button>
+          </div>
+        </div>
+
+        <div *ngIf="selectedAsset?.inputExample !== undefined && selectedAsset?.inputExample !== null" class="history-section">
+          <strong>Detected example payload</strong>
+          <pre class="json-small">{{ asPrettyJson(selectedAsset?.inputExample) }}</pre>
+        </div>
+
+        <div *ngIf="inputMode === 'form' && inputFields.length > 0" class="form-section">
+          <div *ngFor="let field of inputFields" class="form-group">
+            <label [for]="field.spec.name" class="form-label">
+              {{ field.spec.name }}
+              <span *ngIf="field.spec.required" class="required">*</span>
+              <span *ngIf="field.spec.description" class="field-hint">💡 {{ field.spec.description }}</span>
+            </label>
+
+            <input
+              *ngIf="!isBooleanField(field)"
+              [id]="field.spec.name"
+              [(ngModel)]="field.value"
+              [type]="isNumericField(field) ? 'number' : 'text'"
+              [step]="getNumericStep(field)"
+              class="form-input"
+              [attr.min]="field.spec.minValue"
+              [attr.max]="field.spec.maxValue"
+              [placeholder]="field.spec.description || 'Enter ' + field.spec.name" />
+
+            <label *ngIf="isBooleanField(field)" class="checkbox-label">
+              <input [id]="field.spec.name" [(ngModel)]="field.value" type="checkbox" class="form-checkbox" />
+              <span>Enable {{ field.spec.name }}</span>
+            </label>
+
+            <div *ngIf="isNumericField(field) && (field.spec.minValue !== undefined || field.spec.maxValue !== undefined)" class="range-hint">
+              <span *ngIf="field.spec.minValue !== undefined">Min: {{ field.spec.minValue }}</span>
+              <span *ngIf="field.spec.maxValue !== undefined">Max: {{ field.spec.maxValue }}</span>
+            </div>
+          </div>
+
+          <div *ngIf="inputError" class="error-message">⚠️ {{ inputError }}</div>
+        </div>
+
+        <div *ngIf="inputMode === 'json'" class="input-section">
+          <label for="inputJson">Input JSON Payload:</label>
+          <textarea
+            id="inputJson"
+            [(ngModel)]="inputJson"
+            class="json-input"
+            rows="12"
+            placeholder='{ "feature1": 0.5, "feature2": 1.2 }'
+            [class.error]="!!inputError"></textarea>
+          <div *ngIf="inputError" class="error-message">⚠️ {{ inputError }}</div>
+          <div class="input-hint">
+            💡 Tip: The JSON payload is validated against the model input metadata before execution.
+          </div>
+        </div>
+      </div>
+
+      <div *ngIf="activeTab === 'output'" class="output-panel">
+        <div *ngIf="executing" class="executing-state">
+          <div class="spinner"></div>
+          <h3>Executing Model...</h3>
+          <p>Waiting for response from {{ executionPath || selectedAsset.executionPath || '/' }}</p>
+        </div>
+
+        <div *ngIf="!executing && !executionResult" class="empty-output">
+          <div class="empty-icon">📊</div>
+          <p>No execution result yet. Execute the model to see output.</p>
+        </div>
+
+        <div *ngIf="!executing && executionResult" class="result-container">
+          <div class="result-header">
+            <h3>Execution Result</h3>
+            <span [class]="'badge ' + getStatusClass(executionResult.status)">
+              {{ executionResult.status.toUpperCase() }}
+            </span>
+          </div>
+
+          <div class="result-metadata">
+            <div class="metadata-item">
+              <span class="label">Execution ID:</span>
+              <span class="value">{{ executionResult.executionId }}</span>
+            </div>
+            <div class="metadata-item">
+              <span class="label">Status Code:</span>
+              <span class="value">{{ executionResult.statusCode || 'N/A' }}</span>
+            </div>
+            <div class="metadata-item">
+              <span class="label">Execution Time:</span>
+              <span class="value">{{ formatExecutionTime(executionResult.executionTimeMs) }}</span>
+            </div>
+            <div class="metadata-item">
+              <span class="label">Timestamp:</span>
+              <span class="value">{{ executionResult.timestamp | date:'medium' }}</span>
+            </div>
+          </div>
+
+          <div *ngIf="executionResult.status === 'success'" class="output-success">
+            <h4>✅ Output Data:</h4>
+            <pre class="json-output">{{ asPrettyJson(executionResult.output) }}</pre>
+          </div>
+
+          <div *ngIf="executionResult.status === 'error'" class="output-error">
+            <h4>❌ Error Details:</h4>
+            <div class="error-details">
+              <p><strong>Message:</strong> {{ executionResult.error?.message }}</p>
+              <p><strong>Code:</strong> {{ executionResult.error?.code }}</p>
+              <p *ngIf="executionResult.error?.httpStatus"><strong>HTTP Status:</strong> {{ executionResult.error?.httpStatus }}</p>
+            </div>
+            <details *ngIf="executionResult.error?.details">
+              <summary>Show detailed error</summary>
+              <pre class="json-output">{{ asPrettyJson(executionResult.error?.details) }}</pre>
+            </details>
+          </div>
+        </div>
+      </div>
+
+      <div *ngIf="activeTab === 'history'" class="history-panel">
+        <h3>Execution History</h3>
+
+        <div *ngIf="selectedExecutionHistory.length === 0" class="empty-history">
+          <p>No execution history available for this model in the current session.</p>
+        </div>
+
+        <div *ngIf="selectedExecutionHistory.length > 0" class="history-list">
+          <div *ngFor="let execution of selectedExecutionHistory" class="history-item">
+            <div class="history-header">
+              <span [class]="'badge ' + getStatusClass(execution.status)">{{ execution.status }}</span>
+              <span class="history-time">{{ execution.createdAt | date:'short' }}</span>
+              <span *ngIf="execution.executionTimeMs !== undefined" class="history-duration">{{ formatExecutionTime(execution.executionTimeMs) }}</span>
+            </div>
+            <div class="history-details">
+              <details>
+                <summary>View details</summary>
+                <div class="history-content">
+                  <div class="history-section">
+                    <strong>Input:</strong>
+                    <pre class="json-small">{{ asPrettyJson(execution.inputPayload) }}</pre>
+                  </div>
+                  <div *ngIf="execution.outputPayload !== undefined" class="history-section">
+                    <strong>Output:</strong>
+                    <pre class="json-small">{{ asPrettyJson(execution.outputPayload) }}</pre>
+                  </div>
+                  <div *ngIf="execution.errorMessage" class="history-section">
+                    <strong>Error:</strong>
+                    <p class="error-text">{{ execution.errorMessage }}</p>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

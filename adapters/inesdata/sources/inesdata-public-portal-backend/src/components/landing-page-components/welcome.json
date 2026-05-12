@@ -1,0 +1,23 @@
+{
+  "collectionName": "components_landing_page_components_welcomes",
+  "info": {
+    "displayName": "Welcome",
+    "icon": "",
+    "description": ""
+  },
+  "options": {},
+  "attributes": {
+    "Text": {
+      "type": "string",
+      "required": true
+    },
+    "Image": {
+      "type": "media",
+      "multiple": false,
+      "required": true,
+      "allowedTypes": [
+        "images"
+      ]
+    }
+  }
+}

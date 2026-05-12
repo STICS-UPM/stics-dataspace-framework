@@ -1,0 +1,28 @@
+@prefix ex: <https://w3id.org/pionera/validation/resource/> .
+@prefix mob: <https://w3id.org/pionera/validation/mobility#> .
+@prefix ql: <http://semweb.mmlab.be/ns/ql#> .
+@prefix rr: <http://www.w3.org/ns/r2rml#> .
+@prefix rml: <http://semweb.mmlab.be/ns/rml#> .
+
+<#RouteTriplesMap>
+    a rr:TriplesMap ;
+    rml:logicalSource [
+        rml:source "sources/json/routes.json" ;
+        rml:referenceFormulation ql:JSONPath ;
+        rml:iterator "$[*]"
+    ] ;
+    rr:subjectMap [
+        rr:template "https://w3id.org/pionera/validation/resource/route/{route_id}" ;
+        rr:class mob:Route
+    ] ;
+    rr:predicateObjectMap [
+        rr:predicate mob:routeShortName ;
+        rr:objectMap [ rml:reference "route_short_name" ]
+    ] ;
+    rr:predicateObjectMap [
+        rr:predicate mob:servesStop ;
+        rr:objectMap [
+            rr:template "https://w3id.org/pionera/validation/resource/stop/{main_stop_id}" ;
+            rr:termType rr:IRI
+        ]
+    ] .

@@ -1,0 +1,28 @@
+<section class="observer-home">
+  <header class="observer-home__hero">
+    <p class="observer-home__eyebrow">Model Observer</p>
+    <h1>Observability layer for model agreements, executions and benchmarks</h1>
+    <p>
+      Use this area as an operational entry point to inspect evidence already emitted by catalog, agreement,
+      execution and benchmarking flows.
+    </p>
+  </header>
+
+  <div class="observer-home__grid">
+    <article class="observer-home__card" *ngFor="let card of cards">
+      <h2>{{ card.title }}</h2>
+      <p>{{ card.description }}</p>
+      <code>{{ card.pathHint }}</code>
+      <label class="observer-home__label" [for]="card.inputKey">Identifier</label>
+      <input
+        class="observer-home__input"
+        [id]="card.inputKey"
+        [name]="card.inputKey"
+        [placeholder]="card.placeholder"
+        [(ngModel)]="lookup[card.inputKey]"
+        (keyup.enter)="openCard(card)"
+      />
+      <button pButton type="button" [label]="card.actionLabel" (click)="openCard(card)"></button>
+    </article>
+  </div>
+</section>

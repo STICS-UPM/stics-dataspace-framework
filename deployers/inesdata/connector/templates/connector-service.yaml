@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    service: {{ .Values.connector.name }}
+  name: {{ .Values.connector.name }}
+spec:
+  ports:
+    - name: "19191"
+      port: 19191
+      targetPort: 19191
+    - name: "19192"
+      port: 19192
+      targetPort: 19192
+    - name: "19193"
+      port: 19193
+      targetPort: 19193
+    - name: "19194"
+      port: 19194
+      targetPort: 19194
+    - name: "19195"
+      port: 19195
+      targetPort: 19195
+    - name: "19196"
+      port: 19196
+      targetPort: 19196
+    - name: "19291"
+      port: 19291
+      targetPort: 19291
+  selector:
+    service: {{ .Values.connector.name }}

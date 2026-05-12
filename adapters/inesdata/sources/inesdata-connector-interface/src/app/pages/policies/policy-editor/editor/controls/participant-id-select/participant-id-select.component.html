@@ -1,0 +1,24 @@
+<mat-form-field class="grow" appearance="outline" color="accent">
+  <mat-label>Participant ID</mat-label>
+  <mat-chip-grid
+    #chipList
+    [formControl]="control">
+    <mat-chip
+      *ngFor="let participantId of control?.value ?? []"
+      (removed)="remove(participantId)">
+      {{ participantId }}
+      <button matChipRemove>
+        <mat-icon>cancel</mat-icon>
+      </button>
+    </mat-chip>
+    <input
+      [matChipInputAddOnBlur]="true"
+      [matChipInputFor]="chipList"
+      [matChipInputSeparatorKeyCodes]="separatorKeysCodes"
+      (matChipInputTokenEnd)="add($event)" />
+  </mat-chip-grid>
+  <mat-hint>
+    The Participant ID of your Connector can be
+    found on the dashboard of your Connector.
+  </mat-hint>
+</mat-form-field>

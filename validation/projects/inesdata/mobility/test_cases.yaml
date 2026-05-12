@@ -1,0 +1,26 @@
+suite: mobility
+project: inesdata
+profile: read-only
+cases:
+  - id: INESDATA-MOB-01
+    title: Acceso al portal de movilidad
+    type: playwright
+    profile: read-only
+    status: proposed
+    objective: Verificar que el portal de movilidad está disponible si el target lo habilita.
+    preconditions:
+      - Target externo configurado con `dataspaces[].name=mobility`.
+      - URL pública o validable definida para el portal de movilidad.
+    evidence:
+      - Screenshot o trace de Playwright.
+  - id: INESDATA-MOB-02
+    title: Catálogo de movilidad visible
+    type: playwright
+    profile: read-only
+    status: proposed
+    objective: Verificar que el catálogo de movilidad muestra información pública o aprobada.
+    preconditions:
+      - Existen datasets públicos o aprobados para validación read-only.
+    evidence:
+      - Captura del catálogo.
+      - Conteo o texto visible no sensible.

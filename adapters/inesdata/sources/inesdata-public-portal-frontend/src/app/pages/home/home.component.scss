@@ -1,0 +1,291 @@
+.welcome-block {
+	height: 500px;
+}
+
+.welcome-block .block-img {
+	background-size: cover;
+	background-position: center;
+	background-repeat: no-repeat;
+}
+
+.welcome-text {
+	color: #404040;
+	font-size: 64px;
+	font-weight: 900;
+	max-width: 500px;
+	line-height: 64px;
+}
+
+.welcome-block>div,
+.data-offer {
+	background-size: cover;
+}
+
+#wrapper {
+	white-space: pre-wrap;
+}
+
+// TODO: Change the img height to be set dinamically to the sibling div
+.join-block img {
+	width: 100%;
+	height: 300px;
+	object-fit: cover;
+	object-position: center;
+}
+
+button {
+	height: 3em;
+}
+
+.data-offer {
+	height: 100%;
+}
+
+.join-block .grid {
+	position: relative;
+}
+
+.join-block button,
+.catalog-block button {
+	width: 100%;
+}
+
+.catalog-block .col-4:not(.catalog-button) {
+	height: 350px;
+}
+
+.home-catalogo {
+	margin-bottom: 104px;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+
+	&__container {
+		width: 100%;
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		grid-gap: 50px;
+	}
+
+	&__title-block {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	&__titles {
+		max-width: 300px;
+		margin-left: 30px;
+	}
+
+	&__title {
+		font-size: 54px;
+		font-weight: 900;
+		margin: 0;
+		line-height: 54px;
+		color: #404040;
+	}
+
+	&__subtitle {
+		font-weight: 600;
+		font-size: 24px;
+		margin: 0;
+		color: #404040;
+	}
+
+	&__item {
+		border-radius: 40px;
+		background-size: cover;
+		background-position: center;
+		background-repeat: no-repeat;
+		padding: 24px;
+		position: relative;
+
+		&::after,
+		&::before {
+			-webkit-backdrop-filter: blur(5px);
+			/* Use for Safari 9+, Edge 17+ (not a mistake) and iOS Safari 9.2+ */
+			backdrop-filter: blur(5px);
+			/* Supported in all major browsers */
+
+			content: "";
+			display: block;
+			position: absolute;
+			width: 100%;
+			height: 100%;
+			top: 0;
+			left: 0;
+			border-radius: 40px;
+		}
+
+		&::before {
+			opacity: 0.7;
+			background-color: #efefef;
+		}
+
+		&__content {
+			position: relative;
+			z-index: 1;
+		}
+	}
+
+	&__item-data,
+	&__item-date {
+		color: #777777;
+		font-weight: 500;
+		font-size: 14px;
+	}
+
+	&__item-title {
+		color: #404040;
+		font-weight: 600;
+		font-size: 32px;
+		margin-top: 60px;
+		margin-bottom: 0;
+		line-height: 32px;
+	}
+
+	&__item-description {
+		color: #404040;
+		font-weight: 400;
+		font-size: 16px;
+		margin-top: 8px;
+		margin-bottom: 0;
+	}
+
+	&__item-btn {
+		background: transparent;
+		color: #3b66b9;
+		border: none;
+		display: flex;
+		align-items: center;
+		font-size: 16px;
+		font-weight: 500;
+		cursor: pointer;
+	}
+
+	&__btn {
+		width: max-content;
+		margin-top: 24px;
+		align-items: center;
+		display: flex;
+		cursor: pointer;
+	}
+}
+
+.know-us {
+	position: relative;
+	background-size: cover;
+	background-position: center;
+	background-repeat: no-repeat;
+
+	&::before {
+		opacity: 0.7;
+		background-color: #282828;
+
+		content: "";
+		display: block;
+		position: absolute;
+		width: 100%;
+		height: 100%;
+		top: 0;
+		left: 0;
+		border-radius: 20px;
+	}
+
+	&__content {
+		position: relative;
+		z-index: 1;
+	}
+}
+
+.home-unete {
+	margin-bottom: 104px;
+
+	&__content {
+		display: flex;
+		align-items: center;
+	}
+
+	&__img {
+		border-radius: 40px;
+		max-width: 390px;
+		margin-right: 30px;
+		mask-image: linear-gradient(to left, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 1) 50%);
+		-webkit-mask-image: linear-gradient(to left, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 1) 50%);
+		object-fit: cover;
+		object-position: center;
+	}
+
+	&__title,
+	&__description {
+		color: #404040;
+	}
+
+	&__title {
+		font-weight: 700;
+		font-size: 54px;
+		margin: 0 0 16px 0;
+		line-height: 54px;
+	}
+
+	&__btn {
+		align-self: end;
+		width: max-content;
+		cursor: pointer;
+	}
+}
+
+// RESPONSIVE
+// Tablet
+@media (max-width: 991px) {
+	.home-catalogo {
+		&__container {
+			grid-template-columns: repeat(2, 1fr);
+		}
+
+		&__title-block {
+			grid-column: 1 / -1;
+			display: block;
+		}
+
+		&__titles {
+			margin-left: 0;
+			max-width: none;
+		}
+
+		&__title {
+			font-size: 42px;
+		}
+	}
+
+	.home-unete {
+		&__title {
+			font-size: 42px;
+		}
+	}
+}
+
+// Mobile
+@media (max-width: 767px) {
+	.home-catalogo {
+		&__container {
+			grid-template-columns: repeat(1, 1fr);
+		}
+
+		&__item-title {
+			margin-top: 30px;
+		}
+	}
+
+	.home-unete {
+		&__content {
+			flex-direction: column-reverse;
+			align-items: center;
+		}
+	}
+
+	.welcome-text {
+		font-size: 44px;
+	}
+}

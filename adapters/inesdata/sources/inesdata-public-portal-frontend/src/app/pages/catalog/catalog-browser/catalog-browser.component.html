@@ -1,0 +1,131 @@
+<div class="catalog-container">
+  <header class="catalog-header">
+    <h1>{{ 'catalog.title' | translate }}</h1>
+		<div class="catalog-search">
+			<input type="text" pInputText placeholder="Buscar" class="search-input" [(ngModel)]="searchText" />
+    	<button pButton label="Buscar" (click)="search()" icon="pi pi-search" class="search-button"></button>
+		</div>
+  </header>
+
+  <div class="catalog-body">
+    <aside class="sidebar" *ngIf="schemas.length > 0">
+			<h5>Vocabularios</h5>
+			<form>
+				<div *ngFor="let schema of schemas; let i = index" style="margin-bottom: 20px;">
+					<p-accordion [multiple]="false">
+						<p-accordionTab [header]="vocabulariesDefinition[i].name" iconPos="end">
+							<div [formGroup]="forms[i]">
+								<div *ngFor="let key of getKeys(schema.properties)">
+									<ng-container [ngSwitch]="schema.properties[key].type">
+										<div *ngSwitchCase="'array'">
+											<div *ngIf="schema.properties[key].items.type === 'object'" class="grey">
+												<p-accordion [multiple]="false">
+													<p-accordionTab [header]="schema.properties[key].title || schema.properties[key].split(':').pop()" iconPos="end">
+														<div *ngFor="let subKey of getKeys(schema.properties[key].items.properties)">
+															<label>{{ schema.properties[key].items.properties[subKey].title || subKey.split(':').pop() }}</label>
+															<ng-container [ngSwitch]="subKey.format">
+																<div *ngSwitchCase="'date'">
+																	<p-calendar [formControlName]="key + '.' + subKey" dateFormat="yy-mm-dd"></p-calendar>
+																</div>
+																<div *ngSwitchCase="'boolean'">
+																	<p-checkbox [formControlName]="key + '.' + subKey"></p-checkbox>
+																</div>
+																<div *ngSwitchDefault>
+																	<input type="text" pInputText [formControlName]="key + '.' + subKey"/>
+																</div>
+															</ng-container>
+														</div>
+													</p-accordionTab>
+												</p-accordion>
+											</div>
+											<div *ngIf="schema.properties[key].items.type !== 'object'">
+												<label>{{ schema.properties[key].title }}</label>
+												<ng-container [ngSwitch]="schema.properties[key].format">
+													<div *ngSwitchCase="'date'">
+														<p-calendar [formControlName]="key" dateFormat="yy-mm-dd"></p-calendar>
+													</div>
+													<div *ngSwitchCase="'boolean'">
+														<p-checkbox [formControlName]="key"></p-checkbox>
+													</div>
+													<div *ngSwitchDefault>
+														<input type="text" pInputText [formControlName]="key"/>
+													</div>
+												</ng-container>
+											</div>
+										</div>
+										<div *ngSwitchCase="'object'" class="grey">
+
+											<p-accordion [multiple]="false">
+												<p-accordionTab [header]="schema.properties[key].title || schema.properties[key].split(':').pop()" iconPos="end">
+													<div *ngFor="let subKey of getKeys(schema.properties[key].properties)">
+														<label>{{ schema.properties[key].properties[subKey].title || subKey.split(':').pop() }}</label>
+														<ng-container [ngSwitch]="subKey.format">
+															<div *ngSwitchCase="'date'">
+																<p-calendar [formControlName]="key + '.' + subKey" dateFormat="yy-mm-dd"></p-calendar>
+															</div>
+															<div *ngSwitchCase="'boolean'">
+																<p-checkbox [formControlName]="key + '.' + subKey"></p-checkbox>
+															</div>
+															<div *ngSwitchDefault>
+																<input type="text" pInputText [formControlName]="key + '.' + subKey"/>
+															</div>
+														</ng-container>
+													</div>
+												</p-accordionTab>
+											</p-accordion>
+										</div>
+										<div *ngSwitchDefault>
+											<label>{{ schema.properties[key].title || key.split(':').pop() }}</label>
+											<ng-container [ngSwitch]="schema.properties[key].format">
+												<div *ngSwitchCase="'date'">
+													<p-calendar [formControlName]="key" dateFormat="yy-mm-dd"></p-calendar>
+												</div>
+												<div *ngSwitchCase="'boolean'">
+													<p-checkbox [formControlName]="key"></p-checkbox>
+												</div>
+												<div *ngSwitchDefault>
+													<input type="text" pInputText [formControlName]="key"/>
+												</div>
+											</ng-container>
+										</div>
+									</ng-container>
+								</div>
+							</div>
+						</p-accordionTab>
+					</p-accordion>
+
+				</div>
+			</form>
+
+
+
+    </aside>
+
+    <section class="results-section">
+      <div class="results-header">
+				{{paginatorLength}} Resultados encontrados
+      </div>
+
+      <div (click)="viewDetails(dataset)" *ngFor="let dataset of datasets" class="result-item">
+				<div class="result-item-title">
+					<span [ngClass]="getAssetTypeIconClass(dataset.properties.assetType)" class="pi"></span>
+					<h4>{{ dataset.properties.name }}</h4>
+					<div class="result-item-id">{{ dataset.assetId }}</div>
+				</div>
+				<div class="result-item-version">Versión {{ dataset.properties.version }}</div>
+        <div class="result-item-description">
+					<p>{{ dataset.properties.shortDescription }}</p>
+        </div>
+      </div>
+			<p-paginator
+				[first]="offset"
+				 [rows]="pageSize"
+				[totalRecords]="paginatorLength"
+				[rowsPerPageOptions]="[5, 10, 20]"
+				(onPageChange)="changePage($event)">
+			</p-paginator>
+    </section>
+
+
+  </div>
+</div>

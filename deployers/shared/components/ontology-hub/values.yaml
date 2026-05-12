@@ -1,0 +1,95 @@
+# Default values for ontology-hub.
+# NOTE: Level 6 prefers values-<DS_NAME>.yaml (e.g. values-demo.yaml).
+
+replicaCount: 1
+
+image:
+  repository: ontology-hub
+  tag: local
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 3333
+
+health:
+  # Ontology Hub routes use session/CSRF/database middleware. A TCP probe is a
+  # safer Kubernetes readiness gate for local clusters; the framework still
+  # verifies /dataset and /edition after rollout.
+  probeType: tcp
+  path: /
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 2
+  startupProbe:
+    enabled: true
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 180
+
+ingress:
+  enabled: false
+  host: ""
+  path: /
+  pathType: Prefix
+  annotations: {}
+
+# Optional host aliases injected into the pod /etc/hosts.
+# The framework can populate this to make the public host resolvable
+# from inside the Ontology Hub container itself.
+hostAliases: []
+
+mongodb:
+  enabled: true
+  image:
+    repository: mongo
+    tag: "6"
+    pullPolicy: IfNotPresent
+  # NOTE: Ontology Hub startup scripts expect the hostname to be exactly "mongodb".
+  serviceName: mongodb
+  port: 27017
+  persistence:
+    enabled: false
+    size: 1Gi
+  resources: {}
+
+elasticsearch:
+  enabled: true
+  image:
+    repository: docker.elastic.co/elasticsearch/elasticsearch
+    tag: "9.2.4"
+    pullPolicy: IfNotPresent
+  # NOTE: Ontology Hub expects the hostname to be exactly "elasticsearch".
+  serviceName: elasticsearch
+  port: 9200
+  auth:
+    username: elastic
+    password: changeme
+  javaOpts: "-Xms512m -Xmx512m"
+  persistence:
+    enabled: false
+    size: 5Gi
+  resources: {}
+
+# Non-secret environment variables.
+# The chart sets sensible defaults for the required variables;
+# use this map for extra envs or overrides.
+env: {}
+
+versions:
+  mountPath: /app/versions
+  persistence:
+    enabled: false
+    size: 1Gi
+
+secrets:
+  existingSecretName: ""
+  values: {}
+
+secretEnvKeys: []
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

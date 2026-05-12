@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    service: {{ .Values.dataspace.name }}-registration-service
+  name: {{ .Values.dataspace.name }}-registration-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      service: {{ .Values.dataspace.name }}-registration-service
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/registration-service-configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/registration-service-secret.yaml") . | sha256sum }}
+      labels:
+        service: {{ .Values.dataspace.name }}-registration-service
+    spec:
+      {{- with .Values.hostAliases }}
+      hostAliases:
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - image: {{ .Values.registration.image.name }}:{{ .Values.registration.image.tag }}
+          name: registration-service
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          envFrom:
+            - secretRef:
+                name: {{ .Values.dataspace.name }}-registration-service-secret
+            - configMapRef:
+                name: {{ .Values.dataspace.name }}-registration-service-config
+      restartPolicy: Always

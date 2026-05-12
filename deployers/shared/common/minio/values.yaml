@@ -1,0 +1,47 @@
+minio:
+  mode: standalone
+  rootUser: admin
+  rootPassword: xxxxCHANGEMExxxx
+  replicas: 1
+  persistence:
+    size: 5Ti
+  env:
+    - name: MINIO_LOG_LEVEL
+      value: "debug"
+    - name: MINIO_HTTP_TRACE
+      value: "/tmp/minio.log"
+  tls:
+    enabled: true
+    certSecret: minio-tls-cert
+    publicCrt: tls.crt
+    privateKey: tls.key
+  ingress:
+    enabled: true
+    hosts:
+      - storage.ds.dataspaceunit-project.eu
+    annotations:
+      nginx.ingress.kubernetes.io/secure-backends: "true"
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    tls:
+      - secretName: minio-api-tls-cert
+        hosts:
+        - storage.ds.dataspaceunit-project.eu
+  consoleIngress:
+    enabled: true
+    hosts:
+      - console-storage.ds.dataspaceunit-project.eu
+    annotations:
+      nginx.ingress.kubernetes.io/secure-backends: "true"
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+      nginx.org/websocket-services: "comsrvs-minio-console"
+    tls:
+      - secretName: minio-console-tls-cert
+        hosts:
+        - console-storage.ds.dataspaceunit-project.eu
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 1000m
+    limits:
+      memory: 4Gi
+      cpu: 2000m

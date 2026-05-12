@@ -1,0 +1,278 @@
+{
+  "title": "Inesdata ML schema",
+  "type": "object",
+  "properties": {
+      "description": {
+          "type": "string",
+          "title": "Description"
+      },
+      "keywords": {
+          "type": "array",
+          "title": "Keywords",
+          "items": {
+              "type": "string"
+          }
+      },
+      "headline": {
+          "type": "string",
+          "title": "Headline"
+      },
+      "task": {
+          "type": "array",
+          "title": "Tasks",
+          "items": {
+              "type": "string"
+          }
+      },
+      "modelCategory": {
+          "type": "array",
+          "title": "Model category",
+          "items": {
+              "type": "string"
+          }
+      },
+      "language": {
+          "type": "array",
+          "title": "Language",
+          "items": {
+              "type": "string"
+          }
+      },
+      "license": {
+          "type": "string",
+          "title": "License"
+      },
+      "parameterSize": {
+          "type": "string",
+          "title": "Parameter size"
+      },
+      "developmentStatus": {
+          "type": "string",
+          "title": "Development status"
+      },
+      "dateCreated": {
+          "type": "string",
+          "title": "Creation date",
+          "format": "date"
+      },
+      "dateModified": {
+          "type": "string",
+          "title": "Modification date",
+          "format": "date"
+      },
+      "citation": {
+          "type": "string",
+          "title": "Citation"
+      },
+      "codeRepository": {
+          "type": "string",
+          "title": "Code repository"
+      },
+      "developmentLibrary": {
+          "type": "string",
+          "title": "Development library"
+      },
+      "usageInstructions": {
+          "type": "string",
+          "title": "Usage instructions"
+      },
+      "modelRisks": {
+          "type": "array",
+          "title": "Model risks",
+          "items": {
+              "type": "string"
+          }
+      },
+      "evaluationMetrics": {
+          "type": "array",
+          "title": "Evaluation metrics",
+          "items": {
+              "type": "string"
+          }
+      },
+      "trainedOn": {
+          "type": "array",
+          "title": "Trained on",
+          "items": {
+              "type": "object",
+              "title": "Training dataset",
+              "properties": {
+                  "identifier": {
+                      "type": "string",
+                      "title": "id"
+                  },
+                  "name": {
+                      "type": "string",
+                      "title": "Name"
+                  },
+                  "description": {
+                      "type": "string",
+                      "title": "Description"
+                  },
+                  "url": {
+                      "type": "string",
+                      "title": "URL"
+                  }
+              },
+              "required": [
+                  "name"
+              ]
+          }
+      },
+      "testedOn": {
+          "type": "array",
+          "title": "Tested on",
+          "items": {
+              "type": "object",
+              "title": "Testing dataset",
+              "properties": {
+                  "identifier": {
+                      "type": "string",
+                      "title": "id"
+                  },
+                  "name": {
+                      "type": "string",
+                      "title": "Name"
+                  },
+                  "description": {
+                      "type": "string",
+                      "title": "Description"
+                  },
+                  "url": {
+                      "type": "string",
+                      "title": "URL"
+                  }
+              },
+              "required": [
+                  "name"
+              ]
+          }
+      }
+  },
+  "required": [
+      "description",
+      "license"
+  ],
+  "@uischema": {
+      "type": "Categorization",
+      "elements": [
+          {
+              "type": "Category",
+              "label": "ML info",
+              "elements": [
+                  {
+                      "type": "VerticalLayout",
+                      "elements": [
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/description",
+                              "options": {
+                                "multi": true
+                              }
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/keywords"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/license"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/language"
+                          },
+                          {
+                              "type": "HorizontalLayout",
+                              "elements": [
+                                  {
+                                      "type": "Control",
+                                      "scope": "#/properties/dateCreated"
+                                  },
+                                  {
+                                      "type": "Control",
+                                      "scope": "#/properties/dateModified"
+                                  }
+                              ]
+                          }
+                      ]
+                  }
+              ]
+          },
+          {
+              "type": "Category",
+              "label": "ML process",
+              "elements": [
+                  {
+                      "type": "VerticalLayout",
+                      "elements": [
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/headline"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/task"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/modelCategory"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/parameterSize"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/developmentStatus"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/citation"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/codeRepository"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/developmentLibrary"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/usageInstructions"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/modelRisks"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/evaluationMetrics"
+                          }
+                      ]
+                  }
+              ]
+          },
+          {
+              "type": "Category",
+              "label": "ML datasets",
+              "elements": [
+                  {
+                      "type": "VerticalLayout",
+                      "elements": [
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/trainedOn"
+                          },
+                          {
+                              "type": "Control",
+                              "scope": "#/properties/testedOn"
+                          }
+                      ]
+                  }
+              ]
+          }
+      ]
+  }
+}

@@ -1,0 +1,474 @@
+{
+  "info": {
+    "name": "01 Environment Health",
+    "_postman_id": "postman-environment-health-01",
+    "description": "Versión Postman autocontenida de la colección 01 Environment Health, con tests embebidos y sin dependencia de test_script inyectado por Newman.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Provider Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "url": {
+          "raw": "{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token",
+          "host": [
+            "{{keycloakUrl}}"
+          ],
+          "path": [
+            "realms",
+            "{{dataspace}}",
+            "protocol",
+            "openid-connect",
+            "token"
+          ]
+        },
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "password",
+              "type": "text"
+            },
+            {
+              "key": "client_id",
+              "value": "{{keycloakClientId}}",
+              "type": "text"
+            },
+            {
+              "key": "username",
+              "value": "{{provider_user}}",
+              "type": "text"
+            },
+            {
+              "key": "password",
+              "value": "{{provider_password}}",
+              "type": "text"
+            },
+            {
+              "key": "scope",
+              "value": "openid profile email",
+              "type": "text"
+            }
+          ]
+        },
+        "description": "Versión Postman autocontenida de `Provider Login`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  return;",
+              "}",
+              "",
+              "pm.test(\"HTTP status is 200\", function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Provider login returns access_token\", function () {",
+              "  pm.expect(body.access_token).to.be.a(\"string\").and.not.empty;",
+              "});",
+              "",
+              "setVar(\"provider_jwt\", body.access_token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Consumer Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "url": {
+          "raw": "{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token",
+          "host": [
+            "{{keycloakUrl}}"
+          ],
+          "path": [
+            "realms",
+            "{{dataspace}}",
+            "protocol",
+            "openid-connect",
+            "token"
+          ]
+        },
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "password",
+              "type": "text"
+            },
+            {
+              "key": "client_id",
+              "value": "{{keycloakClientId}}",
+              "type": "text"
+            },
+            {
+              "key": "username",
+              "value": "{{consumer_user}}",
+              "type": "text"
+            },
+            {
+              "key": "password",
+              "value": "{{consumer_password}}",
+              "type": "text"
+            },
+            {
+              "key": "scope",
+              "value": "openid profile email",
+              "type": "text"
+            }
+          ]
+        },
+        "description": "Versión Postman autocontenida de `Consumer Login`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  return;",
+              "}",
+              "",
+              "pm.test(\"HTTP status is 200\", function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Consumer login returns access_token\", function () {",
+              "  pm.expect(body.access_token).to.be.a(\"string\").and.not.empty;",
+              "});",
+              "",
+              "setVar(\"consumer_jwt\", body.access_token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Provider Management API Health",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/assets/request",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "assets",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 1,\n  \"filterExpression\": []\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `Provider Management API Health`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  return;",
+              "}",
+              "",
+              "pm.test(\"Provider Management API Health returns 200\", function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"Provider Management API Health returns JSON content\", function () {",
+              "  pm.expect(body).to.not.equal(null);",
+              "});",
+              "pm.test(\"Provider Management API Health does not contain EDC error\", function () {",
+              "  pm.expect(body && body.error).to.equal(undefined);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Consumer Management API Health",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/assets/request",
+          "host": [
+            "{{consumer}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "assets",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 1,\n  \"filterExpression\": []\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `Consumer Management API Health`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  return;",
+              "}",
+              "",
+              "pm.test(\"Consumer Management API Health returns 200\", function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"Consumer Management API Health returns JSON content\", function () {",
+              "  pm.expect(body).to.not.equal(null);",
+              "});",
+              "pm.test(\"Consumer Management API Health does not contain EDC error\", function () {",
+              "  pm.expect(body && body.error).to.equal(undefined);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Provider DSP Catalog Endpoint",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/protocol/catalog/request",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "protocol",
+            "catalog",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"protocol\": \"dataspace-protocol-http\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `Provider DSP Catalog Endpoint`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const status = pm.response.code;",
+              "pm.test(\"Provider DSP Catalog Endpoint returns a recognized environment response\", function () {",
+              "  pm.expect([200, 400, 401]).to.include(status);",
+              "});",
+              "if (status === 200) {",
+              "  let body;",
+              "  try {",
+              "    body = pm.response.json();",
+              "  } catch (e) {",
+              "    pm.test(\"Response body is valid JSON\", function () {",
+              "      pm.expect.fail(\"Response body is not valid JSON\");",
+              "    });",
+              "    return;",
+              "  }",
+              "  pm.test(\"Provider DSP Catalog Endpoint responded functionally\", function () {",
+              "    pm.expect(body).to.not.equal(null);",
+              "  });",
+              "} else if (status === 401) {",
+              "  pm.test(\"Provider DSP Catalog Endpoint requires authentication (tolerated)\", function () {",
+              "    pm.expect(status).to.equal(401);",
+              "  });",
+              "} else {",
+              "  pm.test(\"Provider DSP Catalog Endpoint returned tolerated non-functional response\", function () {",
+              "    pm.expect(status).to.equal(400);",
+              "  });",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Consumer DSP Catalog Endpoint",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{consumer}}.{{dsDomain}}/protocol/catalog/request",
+          "host": [
+            "{{consumer}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "protocol",
+            "catalog",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"protocol\": \"dataspace-protocol-http\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `Consumer DSP Catalog Endpoint`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const status = pm.response.code;",
+              "pm.test(\"Consumer DSP Catalog Endpoint returns a recognized environment response\", function () {",
+              "  pm.expect([200, 400, 401]).to.include(status);",
+              "});",
+              "if (status === 200) {",
+              "  let body;",
+              "  try {",
+              "    body = pm.response.json();",
+              "  } catch (e) {",
+              "    pm.test(\"Response body is valid JSON\", function () {",
+              "      pm.expect.fail(\"Response body is not valid JSON\");",
+              "    });",
+              "    return;",
+              "  }",
+              "  pm.test(\"Consumer DSP Catalog Endpoint responded functionally\", function () {",
+              "    pm.expect(body).to.not.equal(null);",
+              "  });",
+              "} else if (status === 401) {",
+              "  pm.test(\"Consumer DSP Catalog Endpoint requires authentication (tolerated)\", function () {",
+              "    pm.expect(status).to.equal(401);",
+              "  });",
+              "} else {",
+              "  pm.test(\"Consumer DSP Catalog Endpoint returned tolerated non-functional response\", function () {",
+              "    pm.expect(status).to.equal(400);",
+              "  });",
+              "}"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

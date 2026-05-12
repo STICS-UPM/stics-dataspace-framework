@@ -1,0 +1,99 @@
+{
+  "title": "DCAT",
+  "type": "object",
+  "properties": {
+    "dct:language": {
+        "type": "array",
+        "title": "Language",
+        "items": {
+          "type": "string"
+        }
+    },
+    "dct:keyword": {
+      "type": "array",
+      "title": "Keywords",
+      "items": {
+        "type": "string"
+      }
+    },
+    "dct:description": {
+      "type": "string",
+      "title": "Description"
+    },
+    "dct:identifier": {
+      "type": "string",
+      "title": "Identifier"
+    },
+    "dct:issued": {
+      "type": "string",
+      "title": "Creation date",
+      "format": "date"
+    },
+    "dct:modified": {
+      "type": "string",
+      "title": "Modification date",
+      "format": "date"
+    },
+    "dcat:theme": {
+      "type": "array",
+      "title": "Themes",
+      "description": "Themes",
+      "items": {
+        "type": "object",
+        "properties": {
+          "@id": {
+            "type": "string",
+            "title": "@id"
+          }
+        }
+      }
+    },
+    "dct:publisher": {
+      "type": "object",
+      "title": "Publisher",
+      "layout": "vertical",
+      "properties": {
+        "@id": {
+          "type": "string",
+          "title": "id"
+        },
+        "skos:notation": {
+          "type": "string",
+          "title": "Notation"
+        },
+        "skos:prefLabel": {
+          "type": "string",
+          "title": "Label"
+        }
+      }
+    },
+    "dcat:contactPoint": {
+      "type": "object",
+      "title": "Contact point",
+      "layout": "vertical",
+      "properties": {
+        "vcard:fn": {
+          "type": "string",
+          "title": "Contact name"
+        },
+        "vcard:nickname": {
+          "type": "string",
+          "title": "Nickname"
+        },
+        "vcard:hasEmail": {
+          "type": "string",
+          "title": "Email"
+        }
+      }
+    }
+  },
+  "required": [ "dct:description" ],
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "dct": "http://purl.org/dc/terms/",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "vcard": "http://www.w3.org/2006/vcard/ns#",
+    "skos": "http://www.w3.org/2004/02/skos/core#"
+  }
+}

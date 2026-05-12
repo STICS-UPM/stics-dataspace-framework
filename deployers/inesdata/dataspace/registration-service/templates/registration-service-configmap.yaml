@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.dataspace.name }}-registration-service-config
+  labels:
+    service: {{ .Values.dataspace.name }}-registration-service
+data:
+  SERVER_PORT: "8080"
+  SERVER_SERVLET_CONTEXTPATH: /api
+  SPRING_WEB_CORS_ALLOWEDORIGINS: "*"
+  SPRING_WEB_CORS_ALLOWEDHEADERS: origin, content-type, accept, authorization, x-api-key
+  SPRING_DATASOURCE_URL: jdbc:postgresql://{{ .Values.services.db.hostname }}:5432/{{ .Values.services.db.registration.name }}
+  SPRING_DATASOURCE_USERNAME: {{ .Values.services.db.registration.user }}
+  SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE: "10"
+  SPRING_DATASOURCE_HIKARI_MINIMUMIDLE: "5"
+  SPRING_DATASOURCE_HIKARI_IDLETIMEOUT: "60000"
+  SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.PostgreSQLDialect
+  SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_KEYCLOAK_TOKENURI: {{ .Values.services.keycloak.protocol }}://{{ .Values.services.keycloak.hostname }}/realms/{{ .Values.services.keycloak.realm }}/protocol/openid-connect/token
+  SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_KEYCLOAK_JWKSETURI: {{ .Values.services.keycloak.protocol }}://{{ .Values.services.keycloak.hostname }}/realms/{{ .Values.services.keycloak.realm }}/protocol/openid-connect/certs
+  APP_SECURITY_OAUTH2_ALLOWEDROLES0: connector-admin
+  APP_SECURITY_OAUTH2_ALLOWEDROLES1: connector-management
+  APP_SECURITY_OAUTH2_ALLOWEDROLES2: connector-user
+  APP_SECURITY_OAUTH2_ALLOWEDROLES3: dataspace-admin
+  APP_ALLOWED_ROLE: dataspace-admin
+  MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+  MANAGEMENT_ENDPOINT_HEALTH_SHOWDETAILS: always
+  SPRING_LIQUIBASE_ENABLED: "true"
+  SPRING_LIQUIBASE_CHANGELOG: classpath:/db/changelog/db.changelog-master.xml

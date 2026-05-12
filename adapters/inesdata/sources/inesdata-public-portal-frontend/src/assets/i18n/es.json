@@ -1,0 +1,38 @@
+{
+  "header": {
+    "home": "INESData"
+  },
+  "home": {
+    "body": "Este es un proyecto que sirve como base.",
+    "welcome": "Bienvenido al espacio de datos"
+  },
+	"catalog": {
+    "title": "Catálogo"
+  },
+  "labels": {
+    "no": "No",
+    "yes": "Sí"
+  },
+	"menu": {
+		"home": {
+			"sort": "INESData",
+			"title": "INESData"
+		},
+		"catalog": {
+			"sort": "Catálogo",
+			"title": "Catálogo"
+		}
+	},
+  "messages": {
+    "errors": {
+      "generic": "Ha ocurrido un error procesando la operación",
+      "internet": {
+        "connection": "No hay conexión a internet"
+      },
+      "login": "Error al acceder",
+      "required": "El campo es requerido",
+      "title": "Error"
+    },
+    "success": "Éxito"
+  }
+}

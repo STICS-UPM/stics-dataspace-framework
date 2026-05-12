@@ -1,0 +1,277 @@
+.item-detail {
+	padding: 20px;
+	border-radius: 8px;
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+
+	.header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 20px;
+
+		.title-version {
+			display: flex;
+		}
+
+		.icon {
+			width: 50px;
+			height: 50px;
+			align-self: center;
+			font-size: 2.5rem;
+			margin-right: 15px;
+
+			&.pi-machinelearning {
+				&::before {
+					filter: saturate(0) brightness(0.6);
+					width: 50px;
+					height: 50px;
+				}
+			}
+		}
+
+		.title {
+			align-content: center;
+			color: #404040;
+			font-size: 36px;
+			font-weight: bold;
+			margin: 0;
+			margin-right: 15px;
+		}
+
+		.version {
+			align-content: center;
+			font-size: 18px;
+			color: #777;
+		}
+
+		.item-id {
+			align-content: center;
+			font-size: 36px;
+			color: #A1A1A1;
+			font-weight: bold;
+			flex-grow: 1;
+			text-align: end;
+		}
+	}
+
+	.short-description {
+		width: 100%;
+		font-size: 26px;
+		letter-spacing: -1px;
+		color: #A1A1A1;
+		margin-bottom: 35px;
+	}
+
+	.observer-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 12px;
+		margin-bottom: 24px;
+	}
+
+	.description {
+		color: #404040;
+		background-color: #fff;
+		margin-bottom: 40px;
+		font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+
+		h2 {
+			font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+			font-size: 18px;
+			margin-bottom: 10px;
+		}
+
+		p {
+			font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+			font-size: 14px;
+			color: #666;
+		}
+	}
+
+	.keywords {
+		h3 {
+			font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+			font-size: 16px;
+			margin-bottom: 0px;
+		}
+
+		span {
+			font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+			font-size: 14px;
+			color: #666;
+			display: block;
+		}
+	}
+}
+
+:host ::ng-deep .p-tabview-nav-content {
+	background: #eee;
+}
+
+:host ::ng-deep .p-tabview .p-tabview-nav,
+:host ::ng-deep .p-tabview .p-tabview-nav li.p-highlight .p-tabview-nav-link {
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+}
+
+.clickable {
+	margin-left: 20px;
+	color: #4367bc;
+	cursor: pointer;
+
+	.pi-arrow-left:before {
+		font-size: 0.75rem;
+	}
+
+	&:hover {
+		color: #435a91;
+	}
+}
+
+.clickable.download{
+	font-size: 18px;
+	font-weight: 500;
+	 i {
+			margin-right: 8px;
+	 }
+}
+
+:host ::ng-deep .grey .p-accordion-tab {
+	.p-accordion-header-link {
+		border: 0px;
+		border-radius: 16px;
+		background: #eeeeee;
+	}
+
+	.p-toggleable-content {
+		margin-top: -12px;
+
+		.p-accordion-content {
+			border: 0px;
+			border-bottom-left-radius: 16px;
+			border-bottom-right-radius: 16px;
+			padding: 1rem 1.25rem;
+			background: #eeeeee;
+
+			.p-field-checkbox {
+				margin: 10px 0px;
+
+				p-checkbox {
+					.p-checkbox {
+						.p-checkbox-box.p-highlight {
+							border-color: #4367bc;
+							background: #4367bc;
+						}
+					}
+
+					.p-checkbox-label {
+						cursor: pointer;
+						font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+						font-size: 18px;
+						color: #4367bc;
+					}
+				}
+			}
+		}
+	}
+}
+
+:host ::ng-deep .grey .p-accordion p-accordiontab .p-accordion-tab-active {
+	margin-bottom: 15px;
+}
+
+:host ::ng-deep .grey .p-accordion p-accordiontab .p-accordion-tab:not(.p-accordion-tab-active) {
+	margin-bottom: 25px;
+}
+
+:host ::ng-deep .grey .p-accordion .detail-item {
+	background: #fff;
+	padding: 1rem 1.25rem;
+	border-radius: 16px;
+}
+
+.details {
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 20px;
+}
+
+.detail-item {
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+	flex: 1 1 calc((100% / 4) - 20px);
+	min-width: calc((100% / 4) - 20px);
+	box-sizing: border-box;
+}
+
+@media (max-width: 1024px) {
+	.detail-item {
+		flex: 1 1 calc((100% / 3) - 20px);
+		min-width: calc((100% / 3) - 20px);
+	}
+}
+
+@media (max-width: 768px) {
+	.detail-item {
+		flex: 1 1 calc((100% / 2) - 20px);
+		min-width: calc((100% / 2) - 20px);
+	}
+}
+
+@media (max-width: 480px) {
+	.detail-item {
+		flex: 1 1 100%;
+		min-width: 100%;
+	}
+
+	.item-detail {
+		.observer-actions {
+			flex-direction: column;
+		}
+	}
+}
+
+.detail-title {
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+	font-weight: bold;
+	color: #333;
+	display: block;
+
+	&-inline {
+		font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+		font-weight: bold;
+		color: #333;
+		display: inline;
+	}
+}
+
+.detail-value {
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+	font-size: 14px;
+	color: #555;
+	display: block;
+
+	&-inline {
+		font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+		font-size: 14px;
+		color: #555;
+		display: inline;
+	}
+}
+
+ul {
+	margin-top: 0;
+	margin-bottom: 10px;
+}
+
+:host ::ng-deep .p-editor-container .p-editor-content .ql-editor{
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+	padding: 1px;
+	margin-bottom: 16px;
+}
+
+:host ::ng-deep .p-editor-container .p-editor-toolbar.ql-snow,
+:host ::ng-deep .p-editor-container .p-editor-content.ql-snow{
+	border: 0;
+	padding: 0;
+}

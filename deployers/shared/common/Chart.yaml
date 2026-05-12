@@ -1,0 +1,18 @@
+name: dataspaceunit-ds-common
+description: Helm chart to deploy the base services for an dataspaceunit dataspaces-deployment DEV environment
+version: 0.0.1
+apiVersion: v2
+dependencies:
+  - name: postgresql
+    version: "~15.4.1"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+  - name: keycloak
+    version: "~21.2.1"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+  - name: minio
+    version: "~5.2.0"
+    repository: https://charts.min.io/
+  - name: vault
+    alias: vault
+    version: "~0.28.1"
+    repository: https://helm.releases.hashicorp.com

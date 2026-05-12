@@ -1,0 +1,312 @@
+<div class="creation-card">
+  <mat-card-header>
+    <mat-card-title>Create an asset</mat-card-title>
+  </mat-card-header>
+
+  <mat-tab-group animationDuration="0ms" mat-stretch-tabs="false" mat-align-tabs="start" class="main-tab-group">
+    <mat-tab label="Asset information">
+      <div class="asset-creation-tab">
+        <div>
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>ID</mat-label>
+            <input required [(ngModel)]="id" matInput>
+          </mat-form-field>
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Name</mat-label>
+            <input required [(ngModel)]="name" matInput>
+          </mat-form-field>
+        </div>
+        <div>
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Content Type</mat-label>
+            <input [(ngModel)]="contenttype" matInput [placeholder]="'text/plain'">
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Version</mat-label>
+            <input required [(ngModel)]="version" matInput [placeholder]="'1.0'">
+          </mat-form-field>
+        </div>
+        <div>
+          <mat-form-field class="form-field" class="short-description" color="accent">
+            <mat-label>Short description</mat-label>
+            <textarea required [(ngModel)]="shortDescription" matInput rows=3 maxlength="200"
+              [placeholder]="'A short description of the asset (max 200 characters)'"></textarea>
+          </mat-form-field>
+        </div>
+        <div>
+          <ckeditor [(ngModel)]="description" #descriptionModel="ngModel" [config]="config" [editor]="editor" [ngClass]="{'ckeditor-error': descriptionModel.invalid && descriptionModel.touched}" required></ckeditor>
+        </div>
+        <div>
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Asset type</mat-label>
+            <mat-select [(ngModel)]="assetType" (selectionChange)="assetTypeChange()" required>
+              <mat-option *ngFor="let assetType of assetTypes" [value]="assetType[0]">
+                {{ assetType[1] }}
+              </mat-option>
+            </mat-select>
+          </mat-form-field>
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Keywords</mat-label>
+            <input required [(ngModel)]="keywords" matInput [placeholder]="'blue,green,red'">
+          </mat-form-field>
+        </div>
+        <div>
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Byte Size</mat-label>
+            <input [(ngModel)]="byteSize" matInput [placeholder]="'128000'">
+          </mat-form-field>
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>File format</mat-label>
+            <input [(ngModel)]="format" matInput [placeholder]="'html'">
+          </mat-form-field>
+        </div>
+      </div>
+    </mat-tab>
+
+    <mat-tab label="Detailed information" *ngIf="vocabularies?.length > 0 && ((defaultVocabularies?.length>0 && defaultForms?.length>0) || selectedVocabularies?.length>0)">
+      <mat-tab-group animationDuration="0ms" mat-stretch-tabs="false" mat-align-tabs="start">
+        <mat-tab label="Default information" *ngIf="defaultVocabularies?.length>0 && defaultForms?.length>0">
+          <div class="asset-creation-vocabularies">
+            <div *ngFor="let defaultForm of defaultForms">
+              <mat-expansion-panel class="custom-expansion">
+                <mat-expansion-panel-header>
+                  <mat-panel-title>
+                    <mat-icon>edit_note</mat-icon>{{defaultForm.name}}
+                  </mat-panel-title>
+                </mat-expansion-panel-header>
+                <jsonforms class="asset-form" [(data)]="defaultForm.data" [schema]="defaultForm.schema"
+                  [uischema]="defaultForm.uischema" [renderers]="defaultForm.renderers" [ajv]="ajv"></jsonforms>
+              </mat-expansion-panel>
+            </div>
+          </div>
+        </mat-tab>
+        <mat-tab [label]="getAssetTypeText()+' information'" *ngIf="selectedVocabularies?.length>0">
+          <div class="asset-creation-tab">
+            <mat-form-field class="form-field-full" color="accent">
+              <mat-label>Vocabularies</mat-label>
+              <mat-select [(ngModel)]="selectedAssetTypeVocabularies" multiple
+                (selectionChange)="onSelectionChangeVocabulary()">
+                <mat-option *ngFor="let v of selectedVocabularies" [value]="v">
+                  {{ v.name }}
+                </mat-option>
+              </mat-select>
+            </mat-form-field>
+          </div>
+          <div class="asset-creation-vocabularies">
+            <div *ngFor="let selectedForm of selectedForms">
+              <mat-expansion-panel class="custom-expansion">
+                <mat-expansion-panel-header>
+                  <mat-panel-title>
+                    <mat-icon>edit_note</mat-icon>{{selectedForm.name}}
+                  </mat-panel-title>
+                </mat-expansion-panel-header>
+                <jsonforms class="asset-form" [(data)]="selectedForm.data" [schema]="selectedForm.schema"
+                  [uischema]="selectedForm.uischema" [renderers]="selectedForm.renderers" [ajv]="ajv"></jsonforms>
+              </mat-expansion-panel>
+
+
+            </div>
+          </div>
+        </mat-tab>
+      </mat-tab-group>
+
+    </mat-tab>
+
+    <mat-tab label="Storage information">
+      <div class="asset-creation-tab">
+        <div>
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Destination</mat-label>
+            <mat-select [(ngModel)]="storageTypeId" required>
+              <mat-option *ngFor="let storageType of storageTypes " [value]="storageType.id">
+                {{storageType.name}}
+              </mat-option>
+            </mat-select>
+          </mat-form-field>
+        </div>
+
+        <div *ngIf="storageTypeId === 'HttpData'">
+          <div>
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Name</mat-label>
+            <input [(ngModel)]="httpDataAddress.name" matInput required>
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Path</mat-label>
+            <input [(ngModel)]="httpDataAddress.path" matInput>
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Base URL</mat-label>
+            <input [(ngModel)]="httpDataAddress.baseUrl" matInput required>
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Auth Key</mat-label>
+            <input [(ngModel)]="httpDataAddress.authKey" matInput>
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Auth Code</mat-label>
+            <input [(ngModel)]="httpDataAddress.authCode" matInput>
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Secret Name</mat-label>
+            <input [(ngModel)]="httpDataAddress.secretName" matInput>
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Content Type</mat-label>
+            <input [(ngModel)]="httpDataAddress.contentType" matInput>
+          </mat-form-field>
+          </div>
+
+          <div class="form-field toggle">
+            <mat-slide-toggle [(ngModel)]="httpDataAddress.proxyBody"(ngModelChange)="onToggleChange('proxyBody', $event)" color="accent">
+              Proxy Body
+            </mat-slide-toggle>
+          </div>
+
+          <div class="form-field toggle">
+            <mat-slide-toggle [(ngModel)]="httpDataAddress.proxyPath" (ngModelChange)="onToggleChange('proxyPath', $event)" color="accent">
+              Proxy Path
+            </mat-slide-toggle>
+          </div>
+
+          <div class="form-field toggle">
+            <mat-slide-toggle [(ngModel)]="httpDataAddress.proxyQueryParams" (ngModelChange)="onToggleChange('proxyQueryParams', $event)" color="accent">
+              Proxy Query Params
+            </mat-slide-toggle>
+          </div>
+
+          <div class="form-field toggle">
+            <mat-slide-toggle [(ngModel)]="httpDataAddress.proxyMethod" (ngModelChange)="onToggleChange('proxyMethod', $event)" color="accent">
+              Proxy Method
+            </mat-slide-toggle>
+          </div>
+        </div>
+
+        <div *ngIf="storageTypeId === 'AmazonS3'">
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Region</mat-label>
+            <input required [(ngModel)]="amazonS3DataAddress.region" matInput>
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Bucket Name</mat-label>
+            <input required [(ngModel)]="amazonS3DataAddress.bucketName" matInput>
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Key Prefix</mat-label>
+            <input [(ngModel)]="amazonS3DataAddress.keyPrefix" matInput>
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Folder Name</mat-label>
+            <input [(ngModel)]="amazonS3DataAddress.folderName" matInput>
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Access Key Id</mat-label>
+            <input required [(ngModel)]="amazonS3DataAddress.accessKeyId" matInput>
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Secret Access Key</mat-label>
+            <input required [(ngModel)]="amazonS3DataAddress.secretAccessKey" matInput>
+          </mat-form-field>
+
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Endpoint Override</mat-label>
+            <input required [(ngModel)]="amazonS3DataAddress.endpointOverride" matInput>
+          </mat-form-field>
+        </div>
+
+        <div *ngIf="storageTypeId === 'InesDataStore'">
+          <mat-form-field class="form-field" color="accent">
+            <mat-label>Folder</mat-label>
+            <input [(ngModel)]="inesDataStoreAddress.folder" matInput>
+          </mat-form-field>
+          <app-uploader-file (filesChange)="setFiles($event)"></app-uploader-file>
+
+          <fieldset>
+            <legend>Ontology Information</legend>
+
+            <mat-form-field appearance="fill" style="width:100%">
+              <mat-label>URI Ontology</mat-label>
+
+              <mat-select [(ngModel)]="ontologyUri" (selectionChange)="fillVersions($event.value)">
+                <div style="padding: 8px 16px; position: sticky; top: 0; background: white; z-index: 1;">
+                  <input matInput placeholder="Buscar..." 
+                         (keyup)="onSearchOntology($event)" 
+                         (keydown)="$event.stopPropagation()">
+                </div>
+                <mat-option *ngFor="let ontology of filteredOntologies" [value]="ontology.uri">
+                  {{ontology.titles[0]?.value}}
+                </mat-option>
+              </mat-select>
+            </mat-form-field>
+
+            <div *ngIf="ontologyUri">
+
+              <mat-form-field appearance="fill" style="width:100%">
+                <mat-label>Versions</mat-label>
+
+                <mat-select [(ngModel)]="ontologyVersion" required>
+                  <mat-option *ngFor="let version of ontologyVersions" [value]="version.issued">
+                    {{version.name}}
+                  </mat-option>
+                </mat-select>
+              </mat-form-field>
+
+              <mat-form-field appearance="fill" style="width:100%">
+                <mat-label>Shacles</mat-label>
+
+                <mat-select [(ngModel)]="ontologyShacl" required (selectionChange)="fileRequiresValidation()">
+                  <mat-option *ngFor="let shacl of ontologyShacls" [value]="shacl">
+                    {{shacl}}
+                  </mat-option>
+                  <mat-option value="newShacleFile">
+                    Upload a new shacle file
+                  </mat-option>
+                </mat-select>
+              </mat-form-field>
+
+              <div *ngIf="ontologyShacl === 'newShacleFile'">
+                <mat-label>Shacl File*</mat-label>
+                <app-uploader-file #shaclsFile (filesChange)="setShaclsFiles($event, shaclsFile)" accept="text/plain"></app-uploader-file>
+                <div *ngIf="showUploadFileButton">
+                  <button mat-raised-button color="accent" (click)="uploadShacleFile()">
+                    <mat-icon>upload</mat-icon>
+                    Upload file
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div *ngIf="showTestFileButton">
+              <button mat-raised-button color="accent" (click)="runOntologyTest()">
+                <mat-icon>check_circle</mat-icon>
+                Validate Ontology
+              </button>
+            </div>
+            
+          </fieldset>
+        </div>
+      </div>
+    </mat-tab>
+  </mat-tab-group>
+
+  <div fxLayout="row" fxLayoutGap="15px" fxLayoutAlign="end" class="form-actions">
+    <button (click)="navigateToAsset()" color="warn" mat-stroked-button>
+      <mat-icon>cancel</mat-icon> Cancel
+    </button>
+
+    <button (click)="onSave()" color="accent" mat-stroked-button>
+      <mat-icon>add_circle_outline</mat-icon> Create
+    </button>
+  </div>
+</div>

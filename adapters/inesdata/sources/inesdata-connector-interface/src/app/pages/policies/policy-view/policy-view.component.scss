@@ -1,0 +1,45 @@
+:host ::ng-deep div.mat-expansion-panel-body {
+  padding-left: 0 !important;
+}
+
+mat-card-content {
+  margin: 1em 0em;
+}
+
+.mat-mdc-card-avatar {
+  height: 24px;
+}
+
+:host ::ng-deep policy-expression {
+  font-size: 14px;
+  color: var(--secondary-500);
+}
+
+.card-actions button {
+  margin-right: 10px;
+}
+
+.mat-mdc-card-content {
+  height: 100%;
+}
+
+.code {
+  word-wrap: break-word;
+}
+
+.mat-mdc-card-title {
+  padding-right: 30px !important;
+}
+
+:host ::ng-deep .mat-mdc-card-header-text{
+  width: 100%;
+}
+
+mat-card-actions {
+  padding-right: 5px !important;
+  padding-bottom: 15px !important;
+}
+
+.mat-mdc-card-content {
+  padding-left: 32px;
+}

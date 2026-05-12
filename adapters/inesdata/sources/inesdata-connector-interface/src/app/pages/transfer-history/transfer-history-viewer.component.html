@@ -1,0 +1,63 @@
+<div id="wrapper">
+
+  <div>
+    <div fxLayout="row" fxLayoutAlign="space-between" class="table-header-container">
+      <button mat-stroked-button (click)="refresh()" color="accent">
+        <mat-icon>cached</mat-icon>
+        Refresh
+      </button>
+      <mat-paginator (page)="changePage($event)" [pageSize]="pageSize" [pageIndex]="currentPage"
+        [length]="paginatorLength" [pageSizeOptions]="[5, 10, 20]">
+      </mat-paginator>
+    </div>
+
+
+    <table mat-table [dataSource]="transferProcesses" class="transfer-history-table"
+      aria-describedby="Transfer processes">
+
+      <ng-container matColumnDef="state">
+        <th mat-header-cell *matHeaderCellDef scope="col">State</th>
+        <td mat-cell *matCellDef="let item">{{item.state}}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="lastUpdated">
+        <th mat-header-cell *matHeaderCellDef scope="col">Last updated</th>
+        <td mat-cell *matCellDef="let item">{{asDate(item.stateTimestamp)}}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="connectorId">
+        <th mat-header-cell *matHeaderCellDef scope="col">Connector ID</th>
+        <td mat-cell *matCellDef="let item">{{item.connectorId}}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="assetId">
+        <th mat-header-cell *matHeaderCellDef scope="col">Asset ID</th>
+        <td mat-cell *matCellDef="let item">{{item.assetId}}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="contractId">
+        <th mat-header-cell *matHeaderCellDef scope="col">Contract ID</th>
+        <td mat-cell *matCellDef="let item">{{item.contractId}}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="validation">
+        <th mat-header-cell *matHeaderCellDef scope="col">Validation</th>
+        <td mat-cell *matCellDef="let item"
+            [class]="getValidationCssClass(item)"
+            [matTooltip]="getValidationDisplay(item)"
+            matTooltipClass="validation-tooltip">
+          {{ getValidationDisplay(item) }}
+        </td>
+      </ng-container>
+
+      <tr mat-header-row *matHeaderRowDef="columns" class="transfer-history-table-header"></tr>
+      <tr mat-row *matRowDef="let row; columns: columns;"></tr>
+
+      <tr class="mat-row" *matNoDataRow>
+        <td class="mat-cell" [attr.colspan]="5">
+          There are no transfers.
+        </td>
+      </tr>
+    </table>
+  </div>
+</div>

@@ -1,0 +1,15 @@
+{{- if .Values.dashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.connector.name }}-dashboard-config
+  labels:
+    validation-environment-adapter: edc
+data:
+  app-config.json: |
+{{ toPrettyJson .Values.dashboard.runtime.appConfig | indent 4 }}
+  edc-connector-config.json: |
+{{ toPrettyJson .Values.dashboard.runtime.connectorConfig | indent 4 }}
+  APP_BASE_HREF.txt: |
+    {{ default "/edc-dashboard/" .Values.dashboard.runtime.baseHref }}
+{{- end }}

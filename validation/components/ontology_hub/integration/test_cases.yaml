@@ -1,0 +1,505 @@
+source_documents:
+  - Official PT5 cases normalized for Ontology Hub
+  - Consolidated functional traceability for the component
+  - Real validation surface observed on the deployed framework instance
+  - E5.2-oriented methodological adjustments over the current framework baseline
+
+support_checks:
+  - id: OH-LOGIN
+    component: ontology_hub
+    case_group: support
+    description: Authenticated access to the editing area
+    type: ui
+    validation_type: support
+    dataspace_dimension: support
+    execution_mode: ui_support
+    coverage_status: automated
+    mapping_status: supporting
+    preconditions:
+      - Ontology Hub is deployed and reachable
+      - Administrator credentials are available
+    steps:
+      - Open the login route for the editing area
+      - Enter valid administrator credentials
+      - Confirm that the editing interface becomes accessible
+    expected_result: Authenticated access to the editing area
+    automation:
+      status: automated
+      mode: ui_support
+      ui_spec: validation/components/ontology_hub/integration/specs/oh_login.spec.js
+      real_flow:
+        method: MULTISTEP
+        pages:
+          - /edition/login
+          - /edition
+      notes: Supporting check to ensure the authenticated flow required by editing scenarios is still operational.
+
+  - id: OH-LIST-SEARCH
+    component: ontology_hub
+    case_group: support
+    description: Public listing and opening of a search result
+    type: ui
+    validation_type: support
+    dataspace_dimension: support
+    execution_mode: ui_support
+    coverage_status: automated
+    mapping_status: supporting
+    preconditions:
+      - Ontology Hub is deployed and reachable
+      - At least one public vocabulary is visible
+    steps:
+      - Open the public catalog
+      - Search using a known listing term
+      - Open one of the visible results
+    expected_result: The public catalog lists vocabularies and opens a search result
+    automation:
+      status: automated
+      mode: ui_support
+      ui_spec: validation/components/ontology_hub/integration/specs/oh_list_search.spec.js
+      real_flow:
+        method: MULTISTEP
+        pages:
+          - /dataset
+          - /dataset/terms
+          - /dataset/vocabs/s4grid
+      notes: Supporting check to ensure the public catalog baseline navigation remains available.
+
+test_cases:
+  - id: PT5-OH-01
+    component: ontology_hub
+    case_group: pt5
+    description: Create vocabulary entry
+    type: api
+    validation_type: functional
+    dataspace_dimension: publication
+    execution_mode: ui
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - Ontology Hub is deployed and reachable
+      - A user with publication or ingestion permissions is available
+    steps:
+      - Register an ontology by URI or repository
+      - Verify that the ontology appears in the catalog
+    expected_result: The ontology is registered and visible in the catalog
+    traceability:
+      - OntHub-1
+      - OntHub-4
+    automation:
+      status: automated
+      mode: ui
+      ui_spec: validation/components/ontology_hub/integration/specs/pt5_oh_01_create_vocab.spec.js
+      real_flow:
+        method: MULTISTEP
+        pages:
+          - /edition/login
+          - /edition/createVocabulary
+          - /dataset/vocabs
+      notes: The current automation validates the real creation flow from the configured source (URI or repository) through the editing interface and waits for catalog publication without any external shell initialization step.
+
+  - id: PT5-OH-02
+    component: ontology_hub
+    case_group: pt5
+    description: Edit vocabulary entry
+    type: ui
+    validation_type: functional
+    dataspace_dimension: publication
+    execution_mode: ui
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - A registered ontology already exists
+      - A user with editing permissions is available
+    steps:
+      - Modify the metadata of an existing ontology
+      - Query the ontology again
+    expected_result: The changes are reflected correctly
+    traceability:
+      - OntHub-2
+    automation:
+      status: automated
+      mode: ui
+      ui_spec: validation/components/ontology_hub/integration/specs/pt5_oh_02_edit_vocab.spec.js
+      real_flow:
+        method: MULTISTEP
+        pages:
+          - /edition/login
+          - /edition/vocabs/:prefix
+          - /dataset/vocabs/:prefix
+      notes: The framework edits the temporary vocabulary created during the workflow bootstrap to avoid modifying shared seeded resources.
+
+  - id: PT5-OH-03
+    component: ontology_hub
+    case_group: pt5
+    description: Delete vocabulary entry
+    type: api
+    validation_type: functional
+    dataspace_dimension: publication
+    execution_mode: manual
+    coverage_status: manual
+    mapping_status: supporting
+    preconditions:
+      - A registered ontology already exists
+      - A user with delete permissions is available
+    steps:
+      - Delete a registered ontology
+      - Attempt to find it again in the catalog
+    expected_result: The ontology is no longer available
+    traceability:
+      - OntHub-3
+
+  - id: PT5-OH-04
+    component: ontology_hub
+    case_group: pt5
+    description: Tag management
+    type: ui
+    validation_type: functional
+    dataspace_dimension: curation
+    execution_mode: manual
+    coverage_status: manual
+    mapping_status: supporting
+    preconditions:
+      - A registered ontology already exists
+      - The system exposes tag management
+    steps:
+      - Create tags
+      - Edit existing tags
+      - Delete tags
+    expected_result: Tags are managed as expected
+    traceability:
+      - OntHub-8
+      - OntHub-9
+      - OntHub-10
+
+  - id: PT5-OH-05
+    component: ontology_hub
+    case_group: pt5
+    description: User and role management
+    type: ui
+    validation_type: functional
+    dataspace_dimension: access_control
+    execution_mode: not_currently_executable
+    coverage_status: not_currently_executable
+    mapping_status: partial
+    preconditions:
+      - The system exposes user and role management
+      - At least two differentiated profiles exist
+    steps:
+      - Create users
+      - Assign roles
+      - Validate access according to the assigned role
+    expected_result: Visible options match the assigned role
+    traceability:
+      - OntHub-11-14
+    notes: Automation is postponed until the deployed environment provides a stable role and permission surface.
+
+  - id: PT5-OH-06
+    component: ontology_hub
+    case_group: pt5
+    description: Action logging
+    type: api
+    validation_type: non_functional
+    dataspace_dimension: governance
+    execution_mode: not_currently_executable
+    coverage_status: not_currently_executable
+    mapping_status: partial
+    preconditions:
+      - The system exposes a functional auditing or logging mechanism
+    steps:
+      - Execute ontology operations
+      - Query the audit trail
+    expected_result: Actions are recorded for auditing
+    traceability:
+      - OntHub-15
+    notes: The framework does not yet provide stable audit evidence that can be used as an automated PT5 case.
+
+  - id: PT5-OH-07
+    component: ontology_hub
+    case_group: pt5
+    description: RDF / OWL compatibility
+    type: api
+    validation_type: interoperability
+    dataspace_dimension: interoperability
+    execution_mode: manual
+    coverage_status: manual
+    mapping_status: supporting
+    preconditions:
+      - An RDF or OWL ontology is available to register
+    steps:
+      - Register an RDF or OWL ontology
+      - Validate the semantic compatibility of the resource
+    expected_result: The ontology satisfies the semantic requirements
+    traceability:
+      - OntHub-6
+      - OntHub-7
+
+  - id: PT5-OH-08
+    component: ontology_hub
+    case_group: pt5
+    description: Vocabulary search
+    type: api
+    validation_type: functional
+    dataspace_dimension: discovery
+    execution_mode: api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - Ontology Hub is deployed and reachable
+      - The search API is available
+    steps:
+      - Execute a free-text search
+      - Validate the response returned by the API or UI
+    expected_result: Search results are coherent with the query
+    traceability:
+      - OntHub-33
+    automation:
+      status: automated
+      mode: api
+      runner_case: pt5_oh_08_term_search
+      real_flow:
+        method: GET
+        path: /dataset/api/v2/term/search
+        query:
+          q: Person
+          type: class
+      seeded_fixture_dependency:
+        required: true
+        vocabulary_prefix: s4grid
+        tag: Catalogs
+
+  - id: PT5-OH-09
+    component: ontology_hub
+    case_group: pt5
+    description: Vocabulary filtering
+    type: ui
+    validation_type: functional
+    dataspace_dimension: discovery
+    execution_mode: ui
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - Visible facets or filters exist in the catalog
+    steps:
+      - Filter by metadata and tags
+      - Review the resulting set
+    expected_result: Filtered results are correct
+    traceability:
+      - OntHub-34
+      - OntHub-35
+    automation:
+      status: automated
+      mode: ui
+      ui_spec: validation/components/ontology_hub/integration/specs/pt5_oh_09_filters.spec.js
+      api_equivalent_runner_case: pt5_oh_09_filtered_search
+      real_flow:
+        method: GET
+        path: /dataset/terms
+        query:
+          q: Person
+      notes: The primary evidence is UI-based over the current /dataset publication; the framework also keeps an equivalent API check over the current /dataset/api/v2 surface.
+      seeded_fixture_dependency:
+        required: true
+        vocabulary_prefix: s4grid
+        tag: Catalogs
+
+  - id: PT5-OH-10
+    component: ontology_hub
+    case_group: pt5
+    description: Version selection
+    type: ui
+    validation_type: functional
+    dataspace_dimension: discovery
+    execution_mode: ui
+    coverage_status: partial
+    mapping_status: partial
+    preconditions:
+      - At least one ontology exists with multiple versions
+    steps:
+      - Open an ontology with multiple versions
+      - Select a specific version
+    expected_result: The requested version is displayed
+    traceability:
+      - OntHub-21
+      - OntHub-36
+    automation:
+      status: automated
+      mode: ui_partial
+      ui_spec: validation/components/ontology_hub/integration/specs/pt5_oh_10_versions.spec.js
+      real_flow:
+        method: GET
+        path: /dataset/vocabs/s4grid
+      notes: The UI exposes version history and versioned resources, but the functional selection remains only a partial PT5 coverage.
+
+  - id: PT5-OH-11
+    component: ontology_hub
+    case_group: pt5
+    description: Complete ontology visualization
+    type: ui
+    validation_type: functional
+    dataspace_dimension: visualization
+    execution_mode: ui
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - An ontology detail page is accessible
+    steps:
+      - Open the detail page of an ontology
+      - Review metadata, code, and graphical elements
+    expected_result: Metadata, code, and graphics are visible
+    traceability:
+      - OntHub-17-20
+    automation:
+      status: automated
+      mode: ui
+      ui_spec: validation/components/ontology_hub/integration/specs/pt5_oh_11_vocab_detail.spec.js
+      real_flow:
+        method: GET
+        path: /dataset/vocabs/s4grid
+
+  - id: PT5-OH-12
+    component: ontology_hub
+    case_group: pt5
+    description: Ontology statistics
+    type: ui
+    validation_type: functional
+    dataspace_dimension: visualization
+    execution_mode: ui
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - The detail page or catalog shows statistics or popularity
+    steps:
+      - Check statistics and popularity for an ontology
+    expected_result: Metrics are visible as defined
+    traceability:
+      - OntHub-22
+      - OntHub-23
+    automation:
+      status: automated
+      mode: ui
+      ui_spec: validation/components/ontology_hub/integration/specs/pt5_oh_12_statistics.spec.js
+      real_flow:
+        method: GET
+        path: /dataset/vocabs/s4grid
+
+  - id: PT5-OH-13
+    component: ontology_hub
+    case_group: pt5
+    description: SPARQL query
+    type: api
+    validation_type: interoperability
+    dataspace_dimension: interoperability
+    execution_mode: api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - The instance exposes SPARQL access or a query page
+    steps:
+      - Execute a SPARQL query
+      - Validate the obtained response
+    expected_result: The query returns valid results
+    traceability:
+      - OntHub-26
+    automation:
+      status: automated
+      mode: api
+      runner_case: pt5_oh_13_sparql_access
+      real_flow:
+        method: GET
+        path: /dataset/sparql
+        query:
+          query: ASK { <http://schema.org/Person> ?p ?o }
+      notes: A real SPARQL query is executed against the public SPARQL endpoint using the class URI exposed by the current seeded search result.
+
+  - id: PT5-OH-14
+    component: ontology_hub
+    case_group: pt5
+    description: External service execution
+    type: api
+    validation_type: integration
+    dataspace_dimension: services
+    execution_mode: api
+    coverage_status: partial
+    mapping_status: partial
+    preconditions:
+      - External ontology services are deployed
+    steps:
+      - Execute an ontology service such as checker or patterns
+      - Review the functional result
+    expected_result: The service executes correctly
+    traceability:
+      - OntHub-52
+      - OntHub-53
+    automation:
+      status: automated
+      mode: api
+      runner_case: pt5_oh_14_patterns_access
+      real_flow:
+        method: GET
+        path: /dataset/patterns
+        query:
+          q: s4grid
+      notes: The check validates the public patterns page with a real vocabulary query; internal pattern generation operations still have no stable public contract in the framework.
+
+  - id: PT5-OH-15
+    component: ontology_hub
+    case_group: pt5
+    description: UI and API access
+    type: ui
+    validation_type: integration
+    dataspace_dimension: integration
+    execution_mode: hybrid
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - The instance exposes both UI and API documentation
+    steps:
+      - Access the equivalent functionality through the UI
+      - Access the equivalent functionality through the API
+    expected_result: Functional parity between UI and API
+    traceability:
+      - OntHub-54
+      - OntHub-55
+    automation:
+      status: automated
+      mode: hybrid
+      ui_spec: validation/components/ontology_hub/integration/specs/pt5_oh_15_ui_access.spec.js
+      api_equivalent_runner_case: pt5_oh_15_ui_api_access
+      real_flow:
+        requests:
+          - method: GET
+            path: /dataset
+          - method: GET
+            path: /dataset/api
+      notes: This PT5 case is considered automated when Playwright evidence and the component HTTP/API equivalent check converge.
+
+  - id: PT5-OH-16
+    component: ontology_hub
+    case_group: pt5
+    description: Connector integration
+    type: ui
+    validation_type: integration
+    dataspace_dimension: integration
+    execution_mode: ui_readonly_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: mapped
+    preconditions:
+      - Ontology Hub is deployed in the PT5 environment
+      - Dataspace connectors are available
+      - INESData connector UI exposes the Vocabularies and Ontologies routes
+      - Ontology Hub public vocabulary list API is reachable
+    steps:
+      - Open INESData as an authenticated connector user
+      - Open the Vocabularies route and validate the shared connector vocabulary API response
+      - Open the Ontologies route and validate the Ontology Hub vocabulary list response
+      - Store screenshots and JSON evidence without mutating connector resources
+    expected_result: Operational integration with the dataspace
+    traceability:
+      - OntHub-56
+    automation:
+      status: automated_opt_in
+      mode: ui_readonly_opt_in
+      ui_spec: validation/ui/core/08-ontology-hub-inesdata-readonly.spec.ts
+      evidence_case: DS-UI-OH-01
+      enable_with: UI_ONTOLOGY_HUB_INESDATA_DEMO=1
+    notes: This is a conservative read-only integration check. It validates the connector UI and shared vocabulary/Ontology Hub APIs without creating assets, contracts, vocabularies or policies.

@@ -1,0 +1,63 @@
+<mat-card class="creation-card">
+  <mat-card-header>
+    <mat-card-title>Create a contract definition</mat-card-title>
+  </mat-card-header>
+
+  <mat-form-field class="form-field" color="accent" id="form-field-id">
+    <mat-label>ID</mat-label>
+    <input [(ngModel)]="contractDefinition['@id']" [disabled]="editMode" matInput required>
+  </mat-form-field>
+
+  <div>
+    <mat-form-field class="form-field form-field-policy" id="form-field-access-policy">
+      <mat-label>Access policy</mat-label>
+      <mat-select [(ngModel)]="accessPolicy" required>
+        <mat-option *ngFor="let policy of policies" [value]="policy">
+          {{policy['@id']}}
+        </mat-option>
+      </mat-select>
+    </mat-form-field>
+
+    <mat-form-field class="form-field form-field-policy" id="form-field-contract-policy">
+      <mat-label>Contract policy</mat-label>
+      <mat-select [(ngModel)]="contractPolicy" required>
+        <mat-option *ngFor="let policy of policies" [value]="policy">
+          {{policy['@id']}}
+        </mat-option>
+      </mat-select>
+    </mat-form-field>
+
+    <mat-form-field class="form-field form-field-assets" id="form-field-contract-assets" floatLabel="always">
+
+      <mat-label>Assets</mat-label>
+      <mat-autocomplete #auto="matAutocomplete" [displayWith]="displayAsset">
+        <mat-option *ngFor="let asset of filteredAssets" [value]="asset" (onSelectionChange)="addAsset($event, asset)">
+          {{ asset.id }}
+        </mat-option>
+      </mat-autocomplete>
+
+      <mat-chip-listbox>
+        <mat-chip *ngFor="let asset of selectedAssets" [removable]="true" (removed)="removeAsset(asset)">
+          {{ asset.id }}
+          <mat-icon matChipRemove>cancel</mat-icon>
+        </mat-chip>
+
+        <input
+          matInput
+          placeholder="Search assets"
+          [formControl]="assetControl"
+          [matAutocomplete]="auto">
+      </mat-chip-listbox>
+    </mat-form-field>
+  </div>
+
+  <div fxLayout="row" fxLayoutGap="15px" fxLayoutAlign="end">
+    <button (click)="navigateToContractDefinitions()" color="warn" mat-stroked-button>
+      <mat-icon>cancel</mat-icon> Cancel
+    </button>
+
+    <button (click)="onSave()" *ngIf="!editMode" color="accent" mat-stroked-button>
+      <mat-icon>add_circle_outline</mat-icon> Create
+    </button>
+  </div>
+</mat-card>

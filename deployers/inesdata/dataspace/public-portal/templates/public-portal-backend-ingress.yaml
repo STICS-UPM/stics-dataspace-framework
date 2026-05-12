@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.dataspace.name }}-public-portal-backend-ingress
+  annotations:
+  {{- if eq .Values.dataspace.environment "pro" }}
+      kubernetes.io/ingress.allow-http: "false"
+  {{- end }}
+      nginx.org/client-max-body-size: "20m"
+spec:
+  rules:
+  - host: {{ .Values.ingress.backend.hostname }}
+    http:
+      paths:
+      - pathType: Prefix
+        path: /
+        backend:
+          service:
+            name: {{ .Values.dataspace.name }}-public-portal-backend
+            port:
+              number: 1337
+{{- if eq .Values.dataspace.environment "pro" }}
+  tls:
+  - hosts:
+    - {{ .Values.ingress.backend.hostname }}
+    secretName: {{ .Values.dataspace.name }}-ppb-tls-cert
+{{- end }}

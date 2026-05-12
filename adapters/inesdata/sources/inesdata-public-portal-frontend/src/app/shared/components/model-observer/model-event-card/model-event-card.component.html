@@ -1,0 +1,19 @@
+<article class="event-card" *ngIf="event">
+  <div class="event-card__header">
+    <div>
+      <h3>{{ event.eventType }}</h3>
+      <p>{{ event.occurredAt | date:'medium' }}</p>
+    </div>
+    <app-model-observer-badge [text]="event.status || 'unknown'" [tone]="tone"></app-model-observer-badge>
+  </div>
+
+  <div class="event-card__meta">
+    <span *ngIf="event.modelName">Model: {{ event.modelName }}</span>
+    <span *ngIf="event.assetId">Asset: {{ event.assetId }}</span>
+    <span *ngIf="event.participantId">Participant: {{ event.participantId }}</span>
+    <span *ngIf="event.agreementId">Agreement: {{ event.agreementId }}</span>
+    <span *ngIf="event.benchmarkRunId">Benchmark: {{ event.benchmarkRunId }}</span>
+  </div>
+
+  <pre *ngIf="event.details" class="event-card__details">{{ event.details | json }}</pre>
+</article>

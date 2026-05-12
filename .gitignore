@@ -1,20 +1,145 @@
-# Python
+# =========================
+# PYTHON
+# =========================
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.coverage
+htmlcov/
+
+# =========================
+# VIRTUAL ENVS
+# =========================
 .venv/
 venv/
+env/
 
-# Runtime / artifacts
-runtime/workdir/
-runtime/logs/
+# =========================
+# BUILD / ARTIFACTS
+# =========================
+build/
+dist/
+*.egg-info/
+.gradle-user-home/
+**/.gradle-user-home/
 
-# Local env
+# EDC adapter build sources are part of the framework; generated image contexts stay ignored.
+!adapters/edc/build/
+!adapters/edc/build/docker/
+!adapters/edc/build/docker/**
+!adapters/edc/build/local-overrides/
+!adapters/edc/build/local-overrides/**
+!adapters/edc/build/dashboard-proxy/
+!adapters/edc/build/dashboard-proxy/**
+adapters/edc/build/dashboard-proxy/__pycache__/
+adapters/edc/build/dashboard-proxy/*.py[cod]
+adapters/edc/build/dashboard-image-context/
+adapters/edc/build/dashboard-proxy-image-context/
+
+# =========================
+# NODE / PLAYWRIGHT
+# =========================
+node_modules/
+validation/ui/node_modules/
+
+# Playwright outputs (standard)
+playwright-report/
+test-results/
+blob-report/
+
+# Playwright outputs
+validation/ui/ops-test-results/
+validation/ui/ops-playwright-report/
+validation/ui/ops-blob-report/
+validation/ui/manual-runs/
+
+# =========================
+# EXPERIMENTS / METRICS
+# =========================
+experiments/
+newman/
+
+# =========================
+# SENSITIVE CONFIGURATION
+# =========================
+deployer.config
+/deployer.config.example
+deployers/infrastructure/topologies/vm-single.config
+deployers/infrastructure/topologies/vm-distributed.config
+inesdata-deployment/
+edc-deployment/
+
+# Shared deployer artifacts: keep chart sources tracked, not generated/runtime material.
+deployers/shared/common/charts/
+deployers/shared/common/init-keys-vault.json
+deployers/shared/dataspace/registration-service/cacerts.jks
+deployers/shared/dataspace/registration-service/cert.yaml
+deployers/shared/dataspace/registration-service/values-*.yaml
+deployers/shared/components/*/values-*.yaml
+deployers/*/deployments/
+deployers/inesdata/connector/values-*.yaml
+deployers/inesdata/dataspace/*/values-*.yaml
+deployers/edc/connector/values-*.yaml
+
+# =========================
+# VARIABLES DE ENTORNO
+# =========================
 .env
-.env.*
+validation/ui/.env
 
-# IDE
-.vscode/
+# =========================
+# IDE / EDITOR
+# =========================
 .idea/
+.vscode/
+*.iml
 
-# OS
+# =========================
+# OS FILES
+# =========================
 .DS_Store
+Thumbs.db
+
+# =========================
+# LOGS / TEMP
+# =========================
+*.log
+*.tmp
+*.bak
+~$*.xlsx
+
+# Heavy files generated during experiments
+*.zip
+*.webm
+*.png
+!docs/*.png
+
+# =========================
+# PROJECT
+# =========================
+logs/
+context/
+docs_/
+bugs/
+validation/components/ontology_hub/tools
+adapters/inesdata/sources/Ontology-Hub
+adapters/inesdata/sources/mapping-editor
+adapters/inesdata/sources/rdflib-virt
+adapters/inesdata/sources/gtfs-bench
+adapters/inesdata/sources/inesdata-connector/extensions/vocabulary-shared-retrieval/src/main/java/org/upm/inesdata/vocabulary/shared/retrieval/VocabularySharedRetrievalExtension.java
+adapters/inesdata/sources/AIModelHub
+validation/components/ontology_hub/functional/generated
+validation/components/ontology_hub/functional/state/
+docs/INVENTARIO DE ENTORNO.docx
+
+
+validation/components/ai_model_hub/README.md
+docs/A5.2_Casos_Prueba_ copy.xlsx
+adapters/edc/sources/connector
+adapters/edc/sources/dashboard

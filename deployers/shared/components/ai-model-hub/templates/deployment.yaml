@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ai-model-hub.fullname" . }}
+  labels:
+    {{- include "ai-model-hub.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "ai-model-hub.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "ai-model-hub.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: {{ include "ai-model-hub.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+          volumeMounts:
+            - name: ai-model-hub-config
+              mountPath: {{ .Values.config.mountPath | default "/app/config" }}
+          env:
+            - name: PORT
+              value: {{ .Values.service.port | quote }}
+            {{- range $key, $val := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+            {{- if and .Values.secrets.existingSecretName (gt (len .Values.secretEnvKeys) 0) }}
+            {{- range $k := .Values.secretEnvKeys }}
+            - name: {{ $k }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.secrets.existingSecretName }}
+                  key: {{ $k }}
+            {{- end }}
+            {{- else if and (gt (len .Values.secrets.values) 0) (gt (len .Values.secretEnvKeys) 0) }}
+            {{- range $k := .Values.secretEnvKeys }}
+            - name: {{ $k }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ai-model-hub.secretName" $ }}
+                  key: {{ $k }}
+            {{- end }}
+            {{- end }}
+          {{- if .Values.health.startupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.health.path | quote }}
+              port: http
+            initialDelaySeconds: {{ .Values.health.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.health.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.health.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.health.startupProbe.failureThreshold }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.health.path | quote }}
+              port: http
+            initialDelaySeconds: {{ .Values.health.initialDelaySeconds }}
+            periodSeconds: {{ .Values.health.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.health.path | quote }}
+              port: http
+            initialDelaySeconds: {{ .Values.health.initialDelaySeconds }}
+            periodSeconds: {{ .Values.health.periodSeconds }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: ai-model-hub-config
+          configMap:
+            name: {{ include "ai-model-hub.fullname" . }}-config
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}

@@ -1,0 +1,39 @@
+{
+  "name": "inesdata-public-portal-backend",
+  "private": true,
+  "version": "0.10.0-SNAPSHOT",
+  "description": "A Strapi application",
+  "scripts": {
+    "develop": "strapi develop",
+    "start": "strapi start",
+    "build": "strapi build",
+    "strapi": "strapi",
+    "smoke:model-observer": "MODEL_OBSERVER_DB_FILENAME=.tmp/model-observer-smoke.db node scripts/model-observer-smoke-test.js"
+  },
+  "devDependencies": {},
+  "dependencies": {
+    "@ckeditor/strapi-plugin-ckeditor": "0.0.13",
+    "@strapi/plugin-cloud": "4.22.1",
+    "@strapi/plugin-i18n": "4.22.1",
+    "@strapi/plugin-users-permissions": "4.22.1",
+    "@strapi/strapi": "4.22.1",
+    "better-sqlite3": "8.6.0",
+    "pg": "^8.13.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "react-router-dom": "5.3.4",
+    "strapi-plugin-menus": "^1.6.1",
+    "styled-components": "5.3.3"
+  },
+  "author": {
+    "name": "A Strapi developer"
+  },
+  "strapi": {
+    "uuid": "26a1698e-e318-4beb-b6ae-1e8aa9938ecf"
+  },
+  "engines": {
+    "node": ">=18.0.0 <=20.x.x",
+    "npm": ">=6.0.0"
+  },
+  "license": "MIT"
+}

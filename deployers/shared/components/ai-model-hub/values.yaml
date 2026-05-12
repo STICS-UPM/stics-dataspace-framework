@@ -1,0 +1,108 @@
+# Default values for ai-model-hub.
+# NOTE: Level 5 prefers values-<DS_NAME>.yaml (e.g. values-demo.yaml).
+
+replicaCount: 1
+
+image:
+  repository: eclipse-edc/data-dashboard
+  tag: local
+  pullPolicy: IfNotPresent
+
+containerPort: 8080
+
+service:
+  type: ClusterIP
+  port: 8080
+
+health:
+  path: /
+  initialDelaySeconds: 20
+  periodSeconds: 10
+  startupProbe:
+    enabled: false
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 1
+    failureThreshold: 60
+
+ingress:
+  enabled: false
+  host: ""
+  path: /
+  pathType: Prefix
+  annotations: {}
+
+config:
+  mountPath: /app/config
+  appConfig:
+    healthCheckIntervalSeconds: 30
+    enableUserConfig: false
+    menuItems:
+      - text: Home
+        materialSymbol: home_app_logo
+        routerPath: home
+        divider: true
+      - text: ML Assets
+        materialSymbol: deployed_code_update
+        routerPath: ml-assets
+        viewDescription: "Browse local and external ML assets with server-side filtering support. External assets can be negotiated directly from this view."
+      - text: Model Execution
+        materialSymbol: smart_toy
+        routerPath: model-execution
+        viewDescription: "Run inference requests against executable assets through the infer extension endpoint."
+      - text: Model Benchmarking
+        materialSymbol: query_stats
+        routerPath: model-benchmarking
+        viewDescription: "Compare multiple executable models on the same dataset with client-side latency, success, throughput, and optional accuracy metrics."
+      - text: Catalog
+        materialSymbol: book_ribbon
+        routerPath: catalog
+        viewDescription: "In the catalog view you can browse datasets of other connectors. For each dataset you can run contract negotiations to consume the data afterwards. If the selected connector has a federated catalog, the available datasets of other participants will be displayed automatically. Otherwise, you can request the catalog of other connectors configured in the dashboard. At any time you can request the catalog of unknown connectors by requesting it manually."
+      - text: Assets
+        materialSymbol: deployed_code_update
+        routerPath: assets
+        viewDescription: "The asset view allows you to create, edit and delete the assets (datasets) in your connector. An asset represents any data that can be shared, for example static files, streaming data or API access. The dashboard only allows you to create assets with data types that your data plane(s) support."
+      - text: Policy Definitions
+        materialSymbol: policy
+        routerPath: policies
+        viewDescription: "The policy definitions view allows you to create, edit and delete policies. Policies are a generic way of defining a set of duties, rights, or obligations. EDC and DSP express policies with ODRL."
+      - text: Contract Definitions
+        materialSymbol: contract_edit
+        routerPath: contract-definitions
+        viewDescription: "The contract definitions view allows you to create, edit and delete contract definitions. Contract definitions link assets and policies by declaring which policies apply to a set of assets. Contract definitions contain two types of policies: an access policy (who can see or discover the data contract offer) and a contract policy (the actual terms and conditions of data use once a contract has been agreed upon)."
+        divider: true
+      - text: Contracts
+        materialSymbol: handshake
+        routerPath: contracts
+        viewDescription: "The contract view allows you to browse all contract negotiations that have been finished with an agreement. You can switch between providing and consuming contracts of the selected connector. For consuming contracts a transfer process can be started to receive the asset."
+      - text: Transfer History
+        materialSymbol: schedule_send
+        routerPath: transfer-history
+        viewDescription: "The transfer history view lets you browse and deprovision finished and ongoing transfer processes. You can switch between providing and consuming transfer processes of the selected connector."
+  edcConnectorConfig:
+    - connectorName: Consumer
+      managementUrl: http://localhost:29193/management
+      defaultUrl: http://localhost:29191/api
+      protocolUrl: http://localhost:29194/protocol
+      federatedCatalogEnabled: false
+    - connectorName: Provider
+      managementUrl: http://localhost:19193/management
+      defaultUrl: http://localhost:19191/api
+      protocolUrl: http://localhost:19194/protocol
+      federatedCatalogEnabled: false
+
+# Non-secret environment variables.
+# Use this map for extra envs or overrides.
+env: {}
+
+secrets:
+  existingSecretName: ""
+  values: {}
+
+# Extra env sourced from existingSecretName.
+secretEnvKeys: []
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

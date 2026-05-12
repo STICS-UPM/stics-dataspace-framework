@@ -1,0 +1,846 @@
+source_documents:
+  - PIONERA E4.1 - final.docx
+  - Official PT5 cases normalized for AI Model Hub
+  - Local functional analysis of the AIModelHub repository
+  - E5.2 pre-integration strategy for Validation-Environment
+
+support_checks:
+  - id: MH-BOOTSTRAP-01
+    component: ai_model_hub
+    case_group: support
+    description: Dashboard shell availability
+    type: api
+    validation_type: support
+    dataspace_dimension: support
+    execution_mode: api_support
+    coverage_status: automated
+    mapping_status: supporting
+    preconditions:
+      - AI Model Hub base URL is known
+      - The dashboard is deployed and reachable
+    steps:
+      - Open the dashboard base URL
+      - Confirm that the application shell is returned
+    expected_result: The dashboard shell is served successfully
+    automation:
+      status: automated
+      mode: api_support
+      runner_case: mh_bootstrap_01_shell
+      real_flow:
+        method: GET
+        path: /
+      notes: Bootstrap support check used before PT5 UI automation is enabled.
+
+  - id: MH-BOOTSTRAP-02
+    component: ai_model_hub
+    case_group: support
+    description: Runtime application configuration availability
+    type: api
+    validation_type: support
+    dataspace_dimension: support
+    execution_mode: api_support
+    coverage_status: automated
+    mapping_status: supporting
+    preconditions:
+      - AI Model Hub base URL is known
+      - The dashboard serves runtime configuration files
+    steps:
+      - Request the runtime application configuration
+      - Confirm that the payload exposes dashboard metadata
+    expected_result: Runtime configuration is available and usable
+    automation:
+      status: automated
+      mode: api_support
+      runner_case: mh_bootstrap_02_runtime_config
+      real_flow:
+        method: GET
+        path: /config/app-config.json
+      notes: Bootstrap support check used to confirm that runtime configuration is wired before UI flows are automated.
+
+test_cases:
+  - id: PT5-MH-01
+    component: ai_model_hub
+    case_group: pt5
+    description: Access to the model catalog
+    type: ui
+    validation_type: functional
+    dataspace_dimension: access
+    execution_mode: ui
+    coverage_status: partial
+    mapping_status: partial
+    preconditions:
+      - AI Model Hub is deployed and reachable
+      - At least one valid connector or catalog context configuration exists
+    steps:
+      - Access the catalog from the component UI
+      - Confirm that the main catalog view becomes operational
+    expected_result: The catalog loads correctly
+    traceability:
+      - MH-01
+    notes: Priority candidate for the first UI automation wave in the framework.
+    automation:
+      status: automated
+      mode: ui_partial
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_01_catalog_access.spec.js
+      notes: The current Playwright slice verifies that the catalog route and its primary request surface render correctly.
+
+  - id: PT5-MH-02
+    component: ai_model_hub
+    case_group: pt5
+    description: Model publication
+    type: ui
+    validation_type: functional
+    dataspace_dimension: publication
+    execution_mode: ui
+    coverage_status: partial
+    mapping_status: partial
+    preconditions:
+      - A provider user with adequate permissions is available
+      - The model creation form is accessible
+    steps:
+      - Register a model with valid metadata
+      - Save the model in local state
+    expected_result: The model is created in local state
+    traceability:
+      - MH-04
+      - MH-05
+      - MH-06
+      - MH-07
+      - MH-08
+      - MH-09
+      - MH-10
+      - MH-11
+      - MH-12
+      - MH-13
+    notes: The AIModelHub repository already provides a clear UI baseline for this flow, but it is not yet integrated into Validation-Environment.
+    automation:
+      status: automated
+      mode: ui_partial
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_02_model_registration.spec.js
+      notes: The first Playwright slice covers provider-side local asset creation with valid metadata and validation of the resulting asset card.
+
+  - id: PT5-MH-03
+    component: ai_model_hub
+    case_group: pt5
+    description: Model publication
+    type: ui
+    validation_type: integration
+    dataspace_dimension: publication
+    execution_mode: api_ui
+    coverage_status: partial
+    mapping_status: partial
+    preconditions:
+      - A local model has already been registered
+      - The connector federated catalog is available
+    steps:
+      - Publish the model into the federated catalog
+      - Check the external visibility of the model
+    expected_result: The model is externally visible
+    traceability:
+      - MH-14
+      - MH-15
+    notes: Key case to validate the alignment between the component UI and the connector APIs.
+    automation:
+      status: automated
+      mode: api_ui
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_03_catalog_publication.spec.js
+      latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
+      latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The first automation slice bootstraps a provider-side published asset via management API and verifies external visibility from the consumer catalog UI.
+
+  - id: PT5-MH-04
+    component: ai_model_hub
+    case_group: pt5
+    description: Model discovery
+    type: ui
+    validation_type: functional
+    dataspace_dimension: discovery
+    execution_mode: ui
+    coverage_status: partial
+    mapping_status: partial
+    preconditions:
+      - Published or visible models exist in the catalog
+    steps:
+      - Open the model catalog
+      - Check that the model list is displayed correctly
+    expected_result: Models are listed correctly
+    traceability:
+      - MH-16
+    notes: Priority candidate for the first framework UI suite.
+    automation:
+      status: automated
+      mode: ui_partial
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_04_model_listing.spec.js
+      notes: The current Playwright slice verifies that the ML assets discovery view renders without entering an application error state.
+
+  - id: PT5-MH-05
+    component: ai_model_hub
+    case_group: pt5
+    description: Model discovery
+    type: ui
+    validation_type: functional
+    dataspace_dimension: discovery
+    execution_mode: ui
+    coverage_status: partial
+    mapping_status: partial
+    preconditions:
+      - Models are indexed in the catalog
+      - The global search bar is visible
+    steps:
+      - Search models using free text
+      - Review the returned result set
+    expected_result: Search results are coherent with the query
+    traceability:
+      - MH-17
+    notes: Priority candidate for UI automation because the flow is well defined in the E4.1 user manual.
+    automation:
+      status: automated
+      mode: ui_partial
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_05_search.spec.js
+      notes: The current Playwright slice verifies that the discovery search input is available and accepts free text queries.
+
+  - id: PT5-MH-06
+    component: ai_model_hub
+    case_group: pt5
+    description: Model discovery
+    type: ui
+    validation_type: functional
+    dataspace_dimension: discovery
+    execution_mode: ui
+    coverage_status: partial
+    mapping_status: partial
+    preconditions:
+      - The catalog shows a filter panel
+      - Sufficient metadata exists to discriminate results
+    steps:
+      - Filter models by metadata
+      - Review the resulting set
+    expected_result: Filters are applied correctly
+    traceability:
+      - MH-18
+      - MH-19
+      - MH-20
+      - MH-21
+      - MH-22
+      - MH-23
+      - MH-24
+    notes: Priority candidate for UI automation; it should rely on controlled demo data and stable filters.
+    automation:
+      status: automated
+      mode: ui_partial
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_06_filters.spec.js
+      notes: The current Playwright slice verifies that the filter shell is present and can interact with dynamic filters when they are available.
+
+  - id: PT5-MH-07
+    component: ai_model_hub
+    case_group: pt5
+    description: Model discovery
+    type: ui
+    validation_type: functional
+    dataspace_dimension: visualization
+    execution_mode: ui
+    coverage_status: partial
+    mapping_status: partial
+    preconditions:
+      - At least one model is visible in the catalog
+    steps:
+      - Open the detailed model page
+      - Review functional and technical metadata
+    expected_result: Complete metadata is visible
+    traceability:
+      - MH-25
+      - MH-26
+    notes: Priority case to complete the first discovery coverage slice.
+    automation:
+      status: automated
+      mode: api_ui
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_07_model_details.spec.js
+      notes: The first automation slice bootstraps a local consumer-side model asset via management API and validates the detailed metadata modal in ML Assets.
+
+  - id: PT5-MH-08
+    component: ai_model_hub
+    case_group: pt5
+    description: Contracting and execution
+    type: ui
+    validation_type: integration
+    dataspace_dimension: contracts
+    execution_mode: api_ui
+    coverage_status: manual
+    mapping_status: partial
+    preconditions:
+      - A model with an available contract offer exists
+      - The connector contract cycle is operational
+    steps:
+      - Start the contract negotiation
+      - Finalize the negotiation from the consumer side
+      - Confirm the creation of the contract or related agreement
+    expected_result: The contract is registered
+    traceability:
+      - MH-28
+      - MH-29
+      - MH-30
+      - MH-31
+      - MH-32
+    notes: Last recommended case in the first wave. It already requires a minimal integration with EDC APIs in the environment.
+    automation:
+      status: automated
+      mode: api_ui
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_08_contract_negotiation.spec.js
+      latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
+      latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The first automation slice publishes a provider asset, negotiates it from the consumer catalog UI and confirms the resulting agreement through the consumer management API.
+
+  - id: PT5-MH-09
+    component: ai_model_hub
+    case_group: pt5
+    description: Contracting and execution
+    type: api
+    validation_type: integration
+    dataspace_dimension: execution
+    execution_mode: api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
+    preconditions:
+      - A valid agreement exists for the remote model
+      - The transfer mechanism is configured
+    steps:
+      - Request download or access to the model
+      - Validate the authorized transfer
+    expected_result: Authorized transfer
+    traceability:
+      - MH-33
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/connector_governance_api.py
+      evidence_case: PT5-MH-09
+      enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
+      latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
+      latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner publishes a temporary HttpData model endpoint, negotiates access and starts an authorized model access transfer from the consumer connector.
+
+  - id: PT5-MH-10
+    component: ai_model_hub
+    case_group: pt5
+    description: Contracting and execution
+    type: api
+    validation_type: integration
+    dataspace_dimension: execution
+    execution_mode: api_opt_in
+    coverage_status: api_smoke_opt_in
+    mapping_status: partial
+    preconditions:
+      - A controlled executable model endpoint exists as HttpData
+      - For remote models, the corresponding contractual agreement is active
+    steps:
+      - Create a temporary HttpData asset for the executable endpoint
+      - Execute inference through /management/v3/modelexecutions/execute
+      - Validate the model response
+      - Delete the temporary asset
+    expected_result: Response conforms to the model contract
+    traceability:
+      - MH-34
+      - MH-35
+    notes: A connector-side API smoke is available for controlled HttpData model endpoints; the full FLARES functional inference path remains pending.
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/model_execution_api.py
+      latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
+      latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner creates a temporary HttpData asset, calls /management/v3/modelexecutions/execute and deletes the asset after execution.
+
+  - id: PT5-MH-11
+    component: ai_model_hub
+    case_group: pt5
+    description: Contracting and execution
+    type: api
+    validation_type: integration
+    dataspace_dimension: execution
+    execution_mode: api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
+    preconditions:
+      - Active agreements exist for consumable models
+    steps:
+      - List current agreements
+      - Select an active agreement to operate on the model
+    expected_result: Only active agreements are available
+    traceability:
+      - MH-36
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/connector_governance_api.py
+      evidence_case: PT5-MH-11
+      enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
+      notes: The runner lists contract agreements after negotiation and selects the agreement linked to the temporary model asset.
+
+  - id: PT5-MH-12
+    component: ai_model_hub
+    case_group: pt5
+    description: Model comparison
+    type: ui
+    validation_type: functional
+    dataspace_dimension: comparison
+    execution_mode: api_fixture_ui_ready
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
+    preconditions:
+      - Multiple comparable models exist
+      - The comparison module is accessible
+    steps:
+      - Select multiple models
+      - Confirm that they are prepared for comparison
+    expected_result: Models are selected correctly
+    traceability:
+      - MH-37
+    automation:
+      status: automated_opt_in
+      mode: api_fixture
+      runner: validation/components/ai_model_hub/model_benchmarking_api.py
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      evidence_case: PT5-MH-12
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1
+      ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
+      latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner selects two controlled FLARES-mini compatible model assets and records the benchmark-ready dataset mapping. The Playwright UI demo reuses the same fixture and controlled infer route without touching AIModelHub sources.
+
+  - id: PT5-MH-13
+    component: ai_model_hub
+    case_group: pt5
+    description: Model comparison
+    type: api
+    validation_type: functional
+    dataspace_dimension: comparison
+    execution_mode: api_fixture
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
+    preconditions:
+      - Multiple comparable and executable models exist
+      - The same input can be sent to all of them
+    steps:
+      - Execute multiple models with the same input
+      - Collect comparison responses
+    expected_result: Executions are comparable
+    traceability:
+      - MH-38
+    automation:
+      status: automated_opt_in
+      mode: api_fixture
+      runner: validation/components/ai_model_hub/model_benchmarking_api.py
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      evidence_case: PT5-MH-13
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1
+      ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
+      latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner executes both controlled models over the same FLARES-mini input fingerprints and stores per-model execution evidence. The Playwright demo clicks Run Benchmark and shows those executions in the UI.
+
+  - id: PT5-MH-14
+    component: ai_model_hub
+    case_group: pt5
+    description: Model comparison
+    type: api
+    validation_type: functional
+    dataspace_dimension: comparison
+    execution_mode: api_fixture
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
+    preconditions:
+      - The comparison module produces aggregated metrics
+    steps:
+      - Collect and calculate comparison metrics
+      - Review the coherence of the resulting values
+    expected_result: Metrics are coherent with the task
+    traceability:
+      - MH-39
+    automation:
+      status: automated_opt_in
+      mode: api_fixture
+      runner: validation/components/ai_model_hub/model_benchmarking_api.py
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      evidence_case: PT5-MH-14
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1
+      ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
+      latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner calculates accuracy, success rate, latency, throughput and score, then validates ranking coherence. The Playwright demo asserts that the UI renders the metrics columns.
+
+  - id: PT5-MH-15
+    component: ai_model_hub
+    case_group: pt5
+    description: Model comparison
+    type: ui
+    validation_type: functional
+    dataspace_dimension: comparison
+    execution_mode: api_fixture_ui_ready
+    coverage_status: automated_partial_ui
+    mapping_status: phase_3
+    preconditions:
+      - Comparison metrics have already been calculated
+    steps:
+      - Display comparison tables and charts
+      - Review the resulting visualization
+    expected_result: Comparative results are visible
+    traceability:
+      - MH-40
+      - MH-41
+      - MH-42
+    automation:
+      status: automated_opt_in
+      mode: api_fixture_ui_ready
+      runner: validation/components/ai_model_hub/model_benchmarking_api.py
+      ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      evidence_case: PT5-MH-15
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1
+      ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
+      latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner produces renderable table rows and chart series for the comparison dashboard. The Playwright demo now validates the visible table and best-model summary for auditors.
+
+  - id: PT5-MH-16
+    component: ai_model_hub
+    case_group: pt5
+    description: Security and identity
+    type: api
+    validation_type: integration
+    dataspace_dimension: identity
+    execution_mode: api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
+    preconditions:
+      - A working OIDC/OAuth2 integration exists in the final environment
+    steps:
+      - Access the API with OIDC
+      - Validate access control and authorization
+    expected_result: Access is authenticated correctly
+    traceability:
+      - MH-45
+    notes: Automated through the connector OIDC flow used by the current INESData deployment; tokens and Bearer headers are intentionally excluded from evidence.
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/connector_governance_api.py
+      evidence_case: PT5-MH-16
+      enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
+
+  - id: PT5-MH-17
+    component: ai_model_hub
+    case_group: pt5
+    description: Traceability and auditing
+    type: api
+    validation_type: non_functional
+    dataspace_dimension: governance
+    execution_mode: api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
+    preconditions:
+      - The system exposes verifiable operational traceability
+    steps:
+      - Execute relevant operations on the component
+      - Review the traceability record or evidence
+    expected_result: Operations are recorded
+    traceability:
+      - MH-46
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/connector_governance_api.py
+      evidence_case: PT5-MH-17
+      enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
+      notes: The runner writes a non-secret traceability record with operation names, HTTP statuses and created entity identifiers.
+
+  - id: PT5-MH-18
+    component: ai_model_hub
+    case_group: pt5
+    description: Dataspace integration
+    type: api
+    validation_type: integration
+    dataspace_dimension: integration
+    execution_mode: api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: phase_3
+    preconditions:
+      - The component is integrated with EDC APIs and the PT5 environment connectors
+    steps:
+      - Consume connector APIs from the component
+      - Validate the end-to-end behavior
+    expected_result: Functional integration
+    traceability:
+      - MH-47
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/connector_governance_api.py
+      evidence_case: PT5-MH-18
+      enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
+      latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
+      latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The runner consumes provider and consumer connector APIs for asset publication, policy, contract definition, catalog, negotiation, agreements and model access.
+
+observer_cases:
+  - id: MH-OBS-01
+    component: ai_model_hub
+    case_group: observer
+    description: AI Model Observer home and navigation smoke
+    type: ui
+    validation_type: non_functional
+    dataspace_dimension: governance
+    execution_mode: ui_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: planned_observer
+    preconditions:
+      - Edmundo's AI Model Observer UI is integrated in INESData
+      - INESData login credentials are available
+    steps:
+      - Sign in to the INESData connector interface
+      - Open AI Model Observer
+      - Verify the Asset timeline, Agreement evidence, Benchmark evidence and Participant summary cards
+      - Enter controlled identifiers and confirm navigation to Observer routes
+    expected_result: The Observer UI loads and exposes the main evidence navigation surfaces
+    traceability:
+      - PT5-MH-17
+      - Model Clearing House
+    automation:
+      status: automated_opt_in
+      mode: ui_opt_in
+      ui_spec: validation/ui/core/10-ai-model-observer.spec.ts
+      evidence_case: MH-OBS-01
+      enable_with: UI_AI_MODEL_OBSERVER_DEMO=1
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: Read-only audit-ready smoke. The spec skips safely when the Observer UI is not integrated yet.
+
+  - id: MH-OBS-02
+    component: ai_model_hub
+    case_group: observer
+    description: Model Observer journal API records and exposes controlled evidence events
+    type: api
+    validation_type: non_functional
+    dataspace_dimension: governance
+    execution_mode: api_opt_in
+    coverage_status: automated_opt_in
+    mapping_status: planned_observer
+    preconditions:
+      - Edmundo's Model Observer backend API is integrated and reachable
+      - A controlled QA event batch can be written without storing sensitive payloads
+    steps:
+      - POST a controlled event batch to /api/model-observer/events/bulk
+      - GET /api/model-observer/timeline/:assetId
+      - GET /api/model-observer/agreements/:agreementId
+      - GET /api/model-observer/benchmarks/:benchmarkRunId
+      - GET /api/model-observer/participants/:participantId/summary
+      - Verify that evidence contains metadata, hashes and counters instead of raw datasets or secrets
+    expected_result: Controlled Observer evidence is stored and queryable by asset, agreement, benchmark and participant
+    traceability:
+      - PT5-MH-17
+      - MH-46
+      - Model Clearing House
+    automation:
+      status: automated_opt_in
+      mode: api_opt_in
+      runner: validation/components/ai_model_hub/model_observer_api.py
+      evidence_case: MH-OBS-02
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1
+      configure_with: AI_MODEL_HUB_OBSERVER_API_BASE_URL=http://backend-demo.dev.ds.dataspaceunit.upm
+      suite_test: tests/test_ai_model_hub_model_observer_api.py
+      notes: The runner skips safely when the Observer API is not integrated yet, so Level 6 remains stable by default.
+
+  - id: MH-OBS-03
+    component: ai_model_hub
+    case_group: observer
+    description: AI Model Browser leaves discoverability or detail evidence in Observer
+    type: ui_api
+    validation_type: integration
+    dataspace_dimension: governance
+    execution_mode: ui_api_opt_in
+    coverage_status: planned
+    mapping_status: planned_observer
+    preconditions:
+      - AI Model Browser exposes at least one controlled model
+      - Observer timeline can be queried by assetId
+    steps:
+      - Open AI Model Browser
+      - Search or open a controlled model detail view
+      - Open the Observer timeline for that asset
+      - Verify MODEL_DETAIL_VIEWED or equivalent evidence
+    expected_result: Browser activity is visible as Observer evidence for the selected model asset
+    traceability:
+      - PT5-MH-07
+      - PT5-MH-17
+    automation:
+      status: planned
+      mode: ui_api_opt_in
+      suggested_spec: validation/components/ai_model_hub/ui/specs/mh_obs_03_browser_observer.spec.js
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER_UI=1
+      notes: Planned after Browser-to-Observer event emission is integrated.
+
+  - id: MH-OBS-04
+    component: ai_model_hub
+    case_group: observer
+    description: AI Model Execution leaves execution evidence in Observer
+    type: api
+    validation_type: integration
+    dataspace_dimension: governance
+    execution_mode: api_opt_in
+    coverage_status: planned
+    mapping_status: planned_observer
+    preconditions:
+      - A controlled model execution flow is available
+      - Execution propagates assetId, correlationId and agreementId when applicable
+    steps:
+      - Execute a controlled model through the existing execution flow
+      - Capture assetId, correlationId and agreementId when available
+      - Query the Observer timeline for the asset
+      - Verify MODEL_EXECUTION_REQUESTED and MODEL_EXECUTION_COMPLETED or FAILED
+    expected_result: Model execution is recorded with status, correlation and agreement context when available
+    traceability:
+      - PT5-MH-10
+      - PT5-MH-17
+    automation:
+      status: planned
+      mode: api_opt_in
+      suggested_runner: validation/components/ai_model_hub/model_observer_api.py
+      related_runner: validation/components/ai_model_hub/model_execution_api.py
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1
+      notes: Planned after Execution-to-Observer event emission is stable.
+
+  - id: MH-OBS-05
+    component: ai_model_hub
+    case_group: observer
+    description: AI Model Benchmark leaves benchmark evidence and summary in Observer
+    type: ui_api
+    validation_type: integration
+    dataspace_dimension: governance
+    execution_mode: ui_api_opt_in
+    coverage_status: planned
+    mapping_status: planned_observer
+    preconditions:
+      - The benchmarking demo can produce or expose a benchmarkRunId
+      - Observer benchmark evidence can be queried by benchmarkRunId
+    steps:
+      - Run the PT5-MH-12..15 benchmarking demo
+      - Capture the benchmarkRunId
+      - Open /ai-model-observer/benchmarks/:benchmarkRunId
+      - Verify compared models, aggregated metrics and benchmark summary
+    expected_result: Benchmarking is recorded as auditable evidence with metrics and summary
+    traceability:
+      - PT5-MH-12
+      - PT5-MH-13
+      - PT5-MH-14
+      - PT5-MH-15
+      - PT5-MH-17
+    automation:
+      status: planned
+      mode: ui_api_opt_in
+      suggested_spec: validation/components/ai_model_hub/ui/specs/mh_obs_05_benchmark_observer.spec.js
+      related_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER_UI=1
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: Planned audit demo linking benchmark UI evidence with clearing-house evidence.
+
+  - id: MH-OBS-06
+    component: ai_model_hub
+    case_group: observer
+    description: Participant summary exposes model operation evidence totals
+    type: api_ui
+    validation_type: non_functional
+    dataspace_dimension: governance
+    execution_mode: api_ui_opt_in
+    coverage_status: planned
+    mapping_status: planned_observer
+    preconditions:
+      - Observer events exist for a provider or consumer participant
+      - Participant summary API/UI is available
+    steps:
+      - Produce or seed controlled provider/consumer events
+      - Query /api/model-observer/participants/:participantId/summary
+      - Open the Participant summary UI
+      - Verify totals by event type, recent failures and latest evidence
+    expected_result: Auditors can inspect model activity by participant without reading internal logs
+    traceability:
+      - PT5-MH-17
+      - Model Clearing House
+    automation:
+      status: planned
+      mode: api_ui_opt_in
+      suggested_runner: validation/components/ai_model_hub/model_observer_api.py
+      suggested_spec: validation/components/ai_model_hub/ui/specs/mh_obs_06_participant_summary.spec.js
+      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1
+      notes: Planned after MH-OBS-02 confirms the API contract.
+
+functional_use_cases:
+  - id: MH-LING-01
+    component: ai_model_hub
+    case_group: functional
+    description: Linguistic domain use case with FLARES-mini
+    type: api_ui
+    validation_type: functional
+    dataspace_dimension: linguistic
+    execution_mode: api_ui_opt_in
+    coverage_status: partial
+    mapping_status: phase_3
+    preconditions:
+      - AI Model Hub, provider connector and consumer connector are deployed
+      - FLARES-mini fixture is available in the framework
+    steps:
+      - Publish FLARES-mini on demand as a provider dataset asset
+      - Discover the published dataset from the consumer catalog
+      - Negotiate the corresponding contract agreement from the consumer side
+      - Bootstrap benchmark-ready linguistic models in the consumer
+      - Load the FLARES benchmark dataset inside Model Benchmarking
+      - Execute a FLARES-mini record through the connector-side model execution API
+      - Link the execution evidence to expected_outputs.json for the future reliability-label assertion
+    expected_result: FLARES-mini can populate the dataspace on demand, reach a negotiated agreement, prepare the linguistic benchmarking flow and execute a FLARES payload through the connector API without requiring global seeding
+    traceability:
+      - MH-LING-01
+    notes: Opt-in scaffold for Phase 3. The current automated slice covers provider publication, consumer negotiation and benchmark-ready dataset/model linkage; connector-side model execution is validated through the PT5-MH-10 runner with --flares-mini. The semantic FLARES reliability-label comparison remains pending until a FLARES-compatible model endpoint is available.
+    automation:
+      status: automated
+      mode: api_ui_opt_in
+      ui_spec: validation/components/ai_model_hub/functional/specs/mh_ling_01_flares_reliability.spec.js
+      api_runner: validation/components/ai_model_hub/model_execution_api.py --flares-mini
+      notes: Suite-specific bootstrap publishes FLARES-mini only when the linguistic functional suite is explicitly enabled, while the API runner validates connector-side execution with a FLARES-mini payload and records the remaining model-specific semantic comparison gap.
+
+  - id: MH-MOB-01
+    component: ai_model_hub
+    case_group: functional
+    description: Mobility domain use case with GTFS-Madrid-Bench-mini
+    type: fixture_api
+    validation_type: functional
+    dataspace_dimension: mobility
+    execution_mode: api_fixture_opt_in
+    coverage_status: automated_fixture
+    mapping_status: phase_3
+    preconditions:
+      - GTFS-Madrid-Bench-mini fixture is available in the framework
+      - At least two controlled mobility benchmark models are selected by the suite
+    steps:
+      - Load GTFS-Madrid-Bench-mini metadata, schema, sample and expected outputs
+      - Validate GTFS-like join keys for stops, routes, trips and stop times
+      - Build deterministic mobility benchmark rows from transfer_benchmark_cases
+      - Execute controlled mobility route-estimation models against the benchmark rows
+      - Compare route sequence and travel-time outputs against expected_outputs.json
+      - Generate UI-ready ranking, table and chart data for a future Model Benchmarking demo
+    expected_result: GTFS-Madrid-Bench-mini produces a reproducible mobility benchmark evidence package with validated GTFS-like joins, expected route/duration outputs and ranked model metrics
+    traceability:
+      - MH-MOB-01
+      - GTFS-Madrid-Bench
+    notes: Safe Phase 3 slice for A5.2. The suite does not call a live mobility inference endpoint or mutate INESData; it validates the functional mobility benchmark contract with deterministic fixture evidence until the stable UI/API route is selected.
+    automation:
+      status: automated_opt_in
+      mode: api_fixture
+      runner: validation/components/ai_model_hub/mobility_benchmarking_api.py
+      enable_with: AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING=1
+      fixture: validation/components/ai_model_hub/fixtures/datasets/mobility/gtfs-madrid-bench-mini
+      unit_test: tests/test_ai_model_hub_gtfs_fixture.py
+      suite_test: tests/test_ai_model_hub_mobility_benchmarking_api.py
+      integration_runner: validation/components/ai_model_hub/virtualization_traceability.py
+      integration_case: INT-VS-AMH-01
+      notes: Runner is opt-in and writes JSON evidence under experiments without changing component sources or cluster state.

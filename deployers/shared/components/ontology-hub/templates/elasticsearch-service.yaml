@@ -1,0 +1,19 @@
+{{- if .Values.elasticsearch.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.elasticsearch.serviceName | default "elasticsearch" }}
+  labels:
+    {{- include "ontology-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: elasticsearch
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.elasticsearch.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: elasticsearch
+{{- end }}

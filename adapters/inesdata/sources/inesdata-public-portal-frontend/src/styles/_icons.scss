@@ -1,0 +1,13 @@
+.pi-machinelearning {
+	position: relative;
+	height: 26px;
+	width: 26px;
+	&::before {
+		content: url(../assets/images/machinelearning.svg);
+		position: absolute;
+		top: 0px;
+		left: 0px;
+		height: 26px;
+		width: 26px;
+	}
+}

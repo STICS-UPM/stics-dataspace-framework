@@ -1,0 +1,76 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.4.1'
+	id 'io.spring.dependency-management' version '1.1.5'
+	id 'jacoco'
+	id 'org.sonarqube' version '6.0.0.5145'
+	id 'org.owasp.dependencycheck' version '11.1.1'
+}
+
+group = 'org.upm.inesdata'
+version = '0.8.0-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(17)
+	}
+}
+
+repositories {
+	gradlePluginPortal()
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-security'
+	implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+	implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.1'
+	implementation 'org.liquibase:liquibase-core'
+	implementation 'org.projectlombok:lombok:1.18.22'
+	runtimeOnly 'org.postgresql:postgresql'
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testImplementation 'com.h2database:h2:2.3.232'
+	implementation 'org.sonarsource.scanner.gradle:sonarqube-gradle-plugin:6.0.0.5145'
+	implementation 'org.owasp:dependency-check-gradle:11.1.1'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	annotationProcessor 'org.projectlombok:lombok:1.18.22'
+}
+
+configurations.all {
+    resolutionStrategy {
+        force 'org.bouncycastle:bcprov-jdk18on:1.78.1'
+		force 'com.h2database:h2:2.3.232'
+		force 'com.squareup.okhttp3:okhttp:4.12.0'
+		force 'com.squareup.okio:okio:3.9.0'
+    }
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
+sonar {
+	properties {
+		// Recommended way to use the plugin. Compilation must be ensured
+		// externally before calling the sonar task
+		property "sonar.gradle.skipCompile", "true"
+	}
+}
+
+dependencyCheck {
+    failBuildOnCVSS = 7
+    suppressionFile "suppressions.xml"
+    analyzers {
+		// To avoid trying to analyze DLL files
+		assemblyEnabled=false
+		ossIndex {
+			// remote errors from the OSS Index (e.g. BAD GATEWAY, RATE LIMIT EXCEEDED)
+			// will result in warnings only instead of failing execution.
+			warnOnlyOnRemoteErrors = true
+		}
+    }
+}

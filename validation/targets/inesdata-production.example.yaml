@@ -1,0 +1,56 @@
+name: inesdata-production
+project: inesdata
+mode: validation-only
+environment: production
+
+safety:
+  default_profile: read-only
+  allow_write_tests: false
+  allow_destructive_tests: false
+  require_explicit_confirmation_for_write: true
+  redact_artifacts: true
+
+auth:
+  keycloak_url: https://auth.example.org
+  realm: inesdata
+  client_id: validation-framework
+  username_env: INESDATA_PROD_VALIDATION_USER
+  password_env: INESDATA_PROD_VALIDATION_PASSWORD
+
+dataspaces:
+  - name: linguistic
+    public_portal_url: https://linguistic.example.org
+    connectors:
+      - name: provider-linguistic
+        role: provider
+        portal_url: https://provider-linguistic.example.org
+        management_api_url: https://provider-linguistic-api.example.org
+        protocol_url: https://provider-linguistic-protocol.example.org
+      - name: consumer-linguistic
+        role: consumer
+        portal_url: https://consumer-linguistic.example.org
+        management_api_url: https://consumer-linguistic-api.example.org
+        protocol_url: https://consumer-linguistic-protocol.example.org
+  - name: mobility
+    public_portal_url: https://mobility.example.org
+    connectors: []
+
+suites:
+  newman_core:
+    enabled: true
+    profile: read-only
+  kafka_edc:
+    enabled: false
+  playwright_core:
+    enabled: true
+    profile: smoke
+
+components: {}
+
+project_suites:
+  inesdata:
+    linguistic:
+      enabled: true
+      profile: read-only
+    mobility:
+      enabled: false

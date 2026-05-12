@@ -1,0 +1,24 @@
+{
+  "name": "validation-ui",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "typecheck": "tsc --noEmit --pretty false",
+    "test:e2e": "playwright test",
+    "test:inesdata": "playwright test --config=playwright.config.ts",
+    "test:edc": "playwright test --config=playwright.edc.config.ts",
+    "test:ops": "playwright test --config=playwright.ops.config.ts",
+    "test:e2e:headed": "playwright test --headed",
+    "test:edc:headed": "playwright test --config=playwright.edc.config.ts --headed",
+    "test:ops:headed": "playwright test --config=playwright.ops.config.ts --headed",
+    "test:e2e:debug": "playwright test --debug",
+    "test:edc:debug": "playwright test --config=playwright.edc.config.ts --debug",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.53.0",
+    "@types/node": "^25.5.0",
+    "dotenv": "^16.4.5",
+    "typescript": "^6.0.3"
+  }
+}

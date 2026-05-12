@@ -1,0 +1,40 @@
+<section class="observer-home-page">
+  <div class="observer-home-page__hero">
+    <p class="observer-home-page__eyebrow">AI Model Observer</p>
+    <h1>Inspect clearing-house evidence inside connector-interface</h1>
+    <p>
+      Use asset, agreement, benchmark and participant identifiers emitted by the connector ecosystem
+      to inspect the observer journal without leaving this application.
+    </p>
+  </div>
+
+  <div class="observer-home-page__grid">
+    <article class="observer-home-page__card">
+      <h2>Asset timeline</h2>
+      <p>Open the end-to-end event stream recorded for one model asset.</p>
+      <input [(ngModel)]="assetId" placeholder="Enter assetId" (keyup.enter)="openAssetTimeline()" />
+      <button class="observer-home-page__action" type="button" (click)="openAssetTimeline()">Open asset timeline</button>
+    </article>
+
+    <article class="observer-home-page__card">
+      <h2>Agreement evidence</h2>
+      <p>Inspect the observer trail linked to one finalized agreement.</p>
+      <input [(ngModel)]="agreementId" placeholder="Enter agreementId" (keyup.enter)="openAgreementEvidence()" />
+      <button class="observer-home-page__action" type="button" (click)="openAgreementEvidence()">Open agreement evidence</button>
+    </article>
+
+    <article class="observer-home-page__card">
+      <h2>Benchmark evidence</h2>
+      <p>Open the evidence linked to one benchmark run emitted during benchmarking.</p>
+      <input [(ngModel)]="benchmarkRunId" placeholder="Enter benchmarkRunId" (keyup.enter)="openBenchmarkEvidence()" />
+      <button class="observer-home-page__action" type="button" (click)="openBenchmarkEvidence()">Open benchmark evidence</button>
+    </article>
+
+    <article class="observer-home-page__card">
+      <h2>Participant summary</h2>
+      <p>Review event totals, failures and latest evidence for one participant.</p>
+      <input [(ngModel)]="participantId" placeholder="Enter participantId" (keyup.enter)="openParticipantSummary()" />
+      <button class="observer-home-page__action" type="button" (click)="openParticipantSummary()">Open participant summary</button>
+    </article>
+  </div>
+</section>

@@ -1,0 +1,12 @@
+<section class="observer-view">
+  <header class="observer-view__header">
+    <h1>Agreement evidence for {{ agreementId }}</h1>
+    <p *ngIf="timeline">{{ timeline.total }} linked events</p>
+  </header>
+
+  <p *ngIf="error" class="observer-view__error">{{ error }}</p>
+
+  <div class="observer-view__list" *ngIf="timeline">
+    <app-model-event-card *ngFor="let event of timeline.items" [event]="event"></app-model-event-card>
+  </div>
+</section>

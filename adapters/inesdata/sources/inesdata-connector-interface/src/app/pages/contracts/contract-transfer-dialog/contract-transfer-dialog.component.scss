@@ -1,0 +1,24 @@
+mat-dialog-content {
+  width: 800px;
+}
+
+.form-field:nth-child(odd) {
+  margin-right: 10px;
+  width: calc(50% - 10px)
+}
+
+.form-field:nth-child(even) {
+  width: 50%
+}
+
+:host ::ng-deep .mdc-dialog .mdc-dialog__content {
+  margin-bottom: 0;
+}
+
+:host ::ng-deep .mdc-dialog__title::before{
+  height: 0;
+}
+
+.mat-mdc-dialog-actions {
+  justify-content: end;
+}

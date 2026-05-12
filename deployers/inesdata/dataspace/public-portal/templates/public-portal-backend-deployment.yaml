@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    service: {{ .Values.dataspace.name }}-public-portal-backend
+  name: {{ .Values.dataspace.name }}-public-portal-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      service: {{ .Values.dataspace.name }}-public-portal-backend
+  template:
+    metadata:
+      labels:
+        service: {{ .Values.dataspace.name }}-public-portal-backend
+    spec:
+      {{- with .Values.hostAliases }}
+      hostAliases:
+{{ toYaml . | indent 8 }}
+      {{- end }}
+      initContainers:
+        - name: set-volume-permissions
+          image: busybox
+          command: ["sh", "-c", "chown -R 1000:1000 /opt/app/public/uploads"]
+          volumeMounts:
+            - name: {{ .Values.dataspace.name }}-public-portal-storage
+              mountPath: /opt/app/public/uploads
+      containers:
+        - image: {{ .Values.backend.image.name }}:{{ .Values.backend.image.tag }}
+          name: public-portal-backend
+          ports:
+            - containerPort: 1337
+              protocol: TCP
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: {{ .Values.dataspace.name }}-public-portal-storage
+              mountPath: /opt/app/public/uploads
+          envFrom:
+            - secretRef:
+                name: {{ .Values.dataspace.name }}-public-portal-backend-secret
+            - configMapRef:
+                name: {{ .Values.dataspace.name }}-public-portal-backend-config
+      volumes:
+        - name: {{ .Values.dataspace.name }}-public-portal-storage
+          persistentVolumeClaim:
+            claimName: {{ .Values.dataspace.name }}-public-portal-pvc
+      restartPolicy: Always

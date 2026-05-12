@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FLARES-mini records",
+  "description": "Schema reference for the curated FLARES-mini fixture used in AI Model Hub linguistic validation.",
+  "$defs": {
+    "subtask2AnnotatedRecord": {
+      "type": "object",
+      "required": [
+        "Id",
+        "Text",
+        "Reliability_Label",
+        "5W1H_Label",
+        "Tag_Text",
+        "Tag_Start",
+        "Tag_End"
+      ],
+      "properties": {
+        "Id": {
+          "type": "integer"
+        },
+        "Text": {
+          "type": "string"
+        },
+        "Reliability_Label": {
+          "type": "string",
+          "enum": [
+            "confiable",
+            "semiconfiable",
+            "no confiable"
+          ]
+        },
+        "5W1H_Label": {
+          "type": "string",
+          "enum": [
+            "WHO",
+            "WHAT",
+            "WHEN",
+            "WHERE",
+            "HOW",
+            "WHY"
+          ]
+        },
+        "Tag_Text": {
+          "type": "string"
+        },
+        "Tag_Start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "Tag_End": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "subtask2InferenceRecord": {
+      "type": "object",
+      "required": [
+        "Id",
+        "Text",
+        "5W1H_Label",
+        "Tag_Text",
+        "Tag_Start",
+        "Tag_End"
+      ],
+      "properties": {
+        "Id": {
+          "type": "integer"
+        },
+        "Text": {
+          "type": "string"
+        },
+        "5W1H_Label": {
+          "type": "string",
+          "enum": [
+            "WHO",
+            "WHAT",
+            "WHEN",
+            "WHERE",
+            "HOW",
+            "WHY"
+          ]
+        },
+        "Tag_Text": {
+          "type": "string"
+        },
+        "Tag_Start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "Tag_End": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "samples": {
+    "subtask2_trial_sample": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/subtask2AnnotatedRecord"
+      }
+    },
+    "subtask2_test_sample": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/subtask2InferenceRecord"
+      }
+    }
+  }
+}

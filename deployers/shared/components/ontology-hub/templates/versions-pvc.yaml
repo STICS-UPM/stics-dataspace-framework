@@ -1,0 +1,15 @@
+{{- if .Values.versions.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ontology-hub.fullname" . }}-versions
+  labels:
+    {{- include "ontology-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: versions
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.versions.persistence.size | quote }}
+{{- end }}

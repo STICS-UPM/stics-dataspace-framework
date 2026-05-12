@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node", "@playwright/test"]
+  },
+  "include": [
+    "*.ts",
+    "adapters/**/*.ts",
+    "components/**/*.ts",
+    "core/**/*.ts",
+    "shared/**/*.ts"
+  ],
+  "exclude": [
+    "blob-report",
+    "node_modules",
+    "playwright-report",
+    "test-results"
+  ]
+}

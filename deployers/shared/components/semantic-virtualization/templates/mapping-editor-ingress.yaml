@@ -1,0 +1,35 @@
+{{- $mappingEditor := .Values.mappingEditor | default (dict) }}
+{{- $ingress := $mappingEditor.ingress | default (dict) }}
+{{- $service := $mappingEditor.service | default (dict) }}
+{{- $enabled := $mappingEditor.enabled | default false }}
+{{- $ingressEnabled := $ingress.enabled | default false }}
+{{- $ingressHost := $ingress.host | default "" }}
+{{- if and $enabled $ingressEnabled $ingressHost }}
+{{- $annotations := $ingress.annotations | default (dict) }}
+{{- $path := $ingress.path | default "/" }}
+{{- $pathType := $ingress.pathType | default "Prefix" }}
+{{- $servicePort := $service.port | default 8501 }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "semantic-virtualization.editorFullname" . }}
+  labels:
+    {{- include "semantic-virtualization.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mapping-editor
+  {{- with $annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  rules:
+    - host: {{ $ingressHost }}
+      http:
+        paths:
+          - path: {{ $path }}
+            pathType: {{ $pathType }}
+            backend:
+              service:
+                name: {{ include "semantic-virtualization.editorFullname" . }}
+                port:
+                  number: {{ $servicePort }}
+{{- end }}

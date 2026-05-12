@@ -1,0 +1,38 @@
+{
+	"header": {
+		"home": "INESData"
+	},
+	"home": {
+		"body": "This is a project base.",
+		"welcome": "Explore Open Data"
+	},
+	"catalog": {
+		"title": "Catalog"
+	},
+	"labels": {
+		"no": "No",
+		"yes": "Yes"
+	},
+	"menu": {
+		"home": {
+			"sort": "INESData",
+			"title": "INESData"
+		},
+		"catalog": {
+			"sort": "Catalog",
+			"title": "Catalog"
+		}
+	},
+	"messages": {
+		"errors": {
+			"generic": "An error occurred while processing your operation",
+			"internet": {
+				"connection": "No internet connection"
+			},
+			"login": "Login error",
+			"required": "The value field is required",
+			"title": "Error"
+		},
+		"success": "Success"
+	}
+}

@@ -1,0 +1,78 @@
+# Default values for semantic-virtualization.
+# Override the image and API paths from deployer runtime config when a concrete
+# virtualizer service image is available.
+
+replicaCount: 1
+
+image:
+  repository: rdflib-virt
+  tag: local
+  pullPolicy: IfNotPresent
+
+containerPort: 8000
+
+service:
+  type: ClusterIP
+  port: 8000
+
+health:
+  path: /
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  startupProbe:
+    enabled: false
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 1
+    failureThreshold: 60
+
+ingress:
+  enabled: false
+  host: ""
+  path: /
+  pathType: Prefix
+  annotations: {}
+
+env:
+  SEMANTIC_VIRTUALIZATION_HEALTH_PATH: /
+  SEMANTIC_VIRTUALIZATION_CAPABILITIES_PATH: /openapi.json
+  SEMANTIC_VIRTUALIZATION_QUERY_PATH: "/?query=SELECT%20*%20WHERE%20%7B%20%3Fs%20%3Fp%20%3Fo%20.%20%7D%20LIMIT%201"
+
+mappingEditor:
+  # Disabled by default so existing Level 5/6 Semantic Virtualization API
+  # deployments keep their current behaviour unless explicitly opted in.
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: mapping-editor
+    tag: local
+    pullPolicy: IfNotPresent
+  containerPort: 8501
+  service:
+    type: ClusterIP
+    port: 8501
+  health:
+    path: /_stcore/health
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    startupProbe:
+      enabled: true
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 60
+  ingress:
+    enabled: false
+    host: ""
+    path: /
+    pathType: Prefix
+    annotations: {}
+  env:
+    STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
+    STREAMLIT_SERVER_HEADLESS: "true"
+  resources: {}
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

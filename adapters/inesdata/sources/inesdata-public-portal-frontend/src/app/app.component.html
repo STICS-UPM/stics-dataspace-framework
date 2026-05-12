@@ -1,0 +1,17 @@
+<!-- Notification component -->
+<app-notification></app-notification>
+
+<app-header></app-header>
+
+<div class="container">
+    <router-outlet></router-outlet>
+</div>
+
+<app-footer></app-footer>
+
+<!-- Spinner service -->
+<div *ngIf="spinnerService.loading" class="loading p-d-flex p-justify-center p-align-center" role="alert"
+  aria-live="assertive">
+  <p-progressSpinner></p-progressSpinner>
+  <p class="loadint__text">Content is loading...</p>
+</div>

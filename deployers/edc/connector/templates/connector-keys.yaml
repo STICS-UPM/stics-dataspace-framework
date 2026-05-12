@@ -1,0 +1,14 @@
+{{- if .Values.connector.keys.createSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.connector.name }}-keys
+  labels:
+    validation-environment-adapter: edc
+type: Opaque
+stringData:
+  README: "Placeholder secret for connector key material. Prefer Vault integration for production use."
+{{- if .Values.connector.keys.existingSecret }}
+  existing-secret: {{ .Values.connector.keys.existingSecret | quote }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,45 @@
+<div id="wrapper">
+
+  <div fxLayout="row" fxLayoutAlign="space-between" class="section-header">
+    <button (click)="onCreate()" color="accent" mat-stroked-button>
+      <mat-icon>add_circle_outline</mat-icon>
+      Create vocabulary
+    </button>
+  </div>
+
+  <div class="container" *ngIf="vocabularies.length > 0">
+    <div *ngFor="let vocabulary of vocabularies" class="card">
+      <mat-card>
+        <mat-card-header>
+          <mat-icon mat-card-avatar>book</mat-icon>
+          <mat-card-title>{{vocabulary.name}}</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <mat-list dense>
+            <mat-list-item>
+              <mat-icon matListItemIcon>info</mat-icon>
+              <div class="main-property" matListItemTitle>Connector</div>
+              <div matListItemLine>{{vocabulary.connectorId}}</div>
+            </mat-list-item>
+          </mat-list>
+        </mat-card-content>
+
+        <mat-card-actions class="card-actions align-content-end text-align-end">
+          <button (click)="viewSchema(vocabulary.name, vocabulary.jsonSchema)" [disabled]="isBusy()" color="info" mat-stroked-button>
+            <mat-icon>info</mat-icon> View json schema
+          </button>
+          <button *ngIf="PARTICIPANT_ID === vocabulary.connectorId" (click)="onDelete(vocabulary)" [disabled]="isBusy()" color="warn" mat-stroked-button>
+            <mat-icon>delete_sweep</mat-icon> Delete
+          </button>
+        </mat-card-actions>
+        <mat-card-footer>
+          <mat-progress-bar *ngIf="isBusy()" color="accent" mode="indeterminate"></mat-progress-bar>
+        </mat-card-footer>
+      </mat-card>
+    </div>
+  </div>
+
+  <div *ngIf="vocabularies.length == 0" class="no-items">
+    There are no vocabularies created.
+  </div>
+</div>

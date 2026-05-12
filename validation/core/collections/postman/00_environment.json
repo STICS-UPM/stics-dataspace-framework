@@ -1,0 +1,97 @@
+{
+  "id": "postman-environment-00",
+  "name": "02 Environment - INESData Demo",
+  "values": [
+    {
+      "key": "provider",
+      "value": "conn-citycouncil-demo",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "consumer",
+      "value": "conn-company-demo",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "provider_user",
+      "value": "user-conn-citycouncil-demo",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "provider_password",
+      "value": "<copiar localmente>",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "consumer_user",
+      "value": "user-conn-company-demo",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "consumer_password",
+      "value": "<copiar localmente>",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "dsDomain",
+      "value": "dev.ds.dataspaceunit.upm",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "dataspace",
+      "value": "demo",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "keycloakUrl",
+      "value": "http://auth.dev.ed.dataspaceunit.upm",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "keycloakClientId",
+      "value": "dataspace-users",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "adapter",
+      "value": "inesdata",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "transferStartPath",
+      "value": "inesdatatransferprocesses",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "transferDestinationType",
+      "value": "InesDataStore",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "providerProtocolAddress",
+      "value": "http://conn-citycouncil-demo:19194/protocol",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "consumerProtocolAddress",
+      "value": "http://conn-company-demo:19194/protocol",
+      "type": "text",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment"
+}

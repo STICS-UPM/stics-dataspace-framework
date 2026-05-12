@@ -1,0 +1,13 @@
+<header class="header ui-fluid">
+	<div *ngIf="menu">
+	<p-menubar [model]="menuService.mainMenu">
+		<ng-template pTemplate="start">
+			<h1 role="banner" class="header__logo">
+				<a class="header__logo__link" routerLink="home">
+					<img src="../../../../assets/images/logo.png" alt="Logo">
+				</a>
+			</h1>
+		</ng-template>
+	</p-menubar>
+</div>
+</header>

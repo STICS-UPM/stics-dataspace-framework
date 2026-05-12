@@ -1,0 +1,83 @@
+{
+  "managementApiUrl": "$MANAGEMENT_API_URL",
+  "strapiUrl": "$STRAPI_URL",
+  "catalogUrl": "$CATALOG_URL",
+  "sharedUrl": "$SHARED_URL",
+  "ontologyUrl": "$ONTOLOGY_URL",
+  "ontologyAdminUser": "$ONTOLOGY_ADMIN_USER",
+  "ontologyAdminPassword": "$ONTOLOGY_ADMIN_PASSWORD",
+  "participantId": "$PARTICIPANT_ID",
+  "storageAccount": "$STORAGE_ACCOUNT",
+  "storageExplorerLinkTemplate": "$STORAGE_LINK_TEMPLATE",
+  "service": {
+    "asset": {
+      "baseUrl": "/v3/assets",
+      "uploadChunk": "/s3assets/upload-chunk",
+      "finalizeUpload": "/s3assets/finalize-upload",
+      "get": "/",
+      "getAll": "/request",
+      "count": "/pagination/count?type=asset"
+    },
+    "contractAgreement": {
+      "baseUrl": "/v3/contractagreements",
+      "get": "/",
+      "getAll": "/request",
+      "getNegotiation": "/negotiation",
+      "count": "/pagination/count?type=contractAgreement"
+    },
+    "policy": {
+      "baseUrl": "/v3/policydefinitions",
+      "complexBaseUrl": "/v3/complexpolicydefinitions",
+      "get": "/",
+      "getAll": "/request",
+      "count": "/pagination/count?type=policyDefinition"
+    },
+    "contractDefinition": {
+      "baseUrl": "/v3/contractdefinitions",
+      "get": "/",
+      "getAll": "/request",
+      "count": "/pagination/count?type=contractDefinition"
+    },
+    "contractNegotiation": {
+      "baseUrl": "/v3/contractnegotiations",
+      "get": "/",
+      "agreement": "/agreement",
+      "state": "/state",
+      "terminate": "/terminate",
+      "getAll": "/request"
+    },
+    "transferProcess": {
+      "baseUrl": "/v3/transferprocesses",
+      "inesdataBaseUrl": "/v3/inesdatatransferprocesses",
+      "get": "/",
+      "deprovision": "/deprovision",
+      "state": "/state",
+      "terminate": "/terminate",
+      "getAll": "/request",
+      "count": "/pagination/count?type=transferProcess"
+    },
+    "vocabulary": {
+      "baseUrl": "/connector-vocabularies",
+      "getAll": "/request-by-connector",
+      "managementUrl":"/vocabularies",
+      "getAllShared":"/request"
+    },
+    "federatedCatalog": {
+      "count": "/pagination/count?type=federatedCatalog",
+      "paginationRequest": "/request"
+    },
+    "modelExecution": {
+      "baseUrl": "/v3/modelexecutions",
+      "execute": "/execute"
+    }
+  },
+  "oauth2": {
+    "issuer": "$OAUTH2_ISSUER",
+    "redirectPath": "$OAUTH2_REDIRECT_PATH",
+    "clientId": "$OAUTH2_CLIENT_ID",
+    "scope": "$OAUTH2_SCOPE",
+    "responseType": "$OAUTH2_RESPONSE_TYPE",
+    "showDebugInformation": $OAUTH2_SHOW_DEBUG_INFO,
+    "allowedUrls": "$OAUTH2_ALLOWED_URLS"
+  }
+}

@@ -1,0 +1,75 @@
+/* Custom HEADER component styles */
+
+.header__logo {
+	margin: 0;
+	padding: 0;
+}
+
+.header__logo__image {
+	height: 2em;
+	vertical-align: middle;
+}
+
+.main-menu__header {
+	display: none;
+}
+
+.main-menu__list {
+	list-style-type: none;
+	margin: 0;
+	padding: 0;
+}
+
+.main-menu__list__item {
+	display: inline-block;
+	padding: 0 1.4em 0 0;
+}
+
+.header__brand {
+	display: flex;
+	flex-direction: row;
+}
+
+.header__menu {
+	display: flex;
+	flex-direction: row;
+}
+
+.header__user {
+	display: flex;
+	flex-direction: row;
+	margin-right: 10px;
+}
+
+.header__logo__link {
+	text-decoration: none;
+	font-family: fantasy;
+	font-style: oblique;
+	font-weight: lighter;
+	margin-left: 60px;
+	color: #404040;
+}
+
+.header__logo {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	width: 100%;
+	margin: 0 auto;
+}
+
+.header__logo__link img {
+	width: 300px;
+	height: auto;
+	display: block;
+	margin: 0 auto;
+}
+
+header {
+	background-color: #ef7011;
+	margin-left: -60px;
+	margin-right: -60px;
+	margin-bottom: 30px;
+}
+
+

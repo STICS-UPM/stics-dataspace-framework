@@ -1,0 +1,49 @@
+@prefix mob: <https://w3id.org/pionera/validation/mobility#> .
+@prefix ql: <http://semweb.mmlab.be/ns/ql#> .
+@prefix rml: <http://w3id.org/rml/> .
+
+<#StopTriplesMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "sources/csv/stops.csv" ;
+        rml:referenceFormulation ql:CSV
+    ] ;
+    rml:subjectMap [
+        rml:template "https://w3id.org/pionera/validation/resource/stop/{stop_id}" ;
+        rml:class mob:Stop
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate mob:hasStopName ;
+        rml:objectMap [ rml:reference "stop_name" ]
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate mob:hasLatitude ;
+        rml:objectMap [ rml:reference "stop_lat" ]
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate mob:hasLongitude ;
+        rml:objectMap [ rml:reference "stop_lon" ]
+    ] .
+
+<#RouteTriplesMap>
+    a rml:TriplesMap ;
+    rml:logicalSource [
+        rml:source "sources/json/routes.json" ;
+        rml:referenceFormulation ql:JSONPath ;
+        rml:iterator "$[*]"
+    ] ;
+    rml:subjectMap [
+        rml:template "https://w3id.org/pionera/validation/resource/route/{route_id}" ;
+        rml:class mob:Route
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate mob:routeShortName ;
+        rml:objectMap [ rml:reference "route_short_name" ]
+    ] ;
+    rml:predicateObjectMap [
+        rml:predicate mob:servesStop ;
+        rml:objectMap [
+            rml:template "https://w3id.org/pionera/validation/resource/stop/{main_stop_id}" ;
+            rml:termType rml:IRI
+        ]
+    ] .

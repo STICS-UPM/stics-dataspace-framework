@@ -1,0 +1,28 @@
+.timeline-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: #fff;
+  border: 1px solid #d7dde5;
+  border-radius: 1rem;
+}
+
+.timeline-filter__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+
+.timeline-filter__fields input,
+.timeline-filter__fields select {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #cdd6df;
+  border-radius: 0.75rem;
+}
+
+.timeline-filter__actions {
+  display: flex;
+  gap: 0.75rem;
+}

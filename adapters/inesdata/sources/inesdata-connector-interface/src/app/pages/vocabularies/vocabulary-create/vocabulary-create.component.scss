@@ -1,0 +1,13 @@
+.form-field:nth-child(odd) {
+    margin-right: 10px;
+    width: calc(50% - 10px);
+}
+
+.form-field:nth-child(even) {
+  width: calc(50% - 1px);
+}
+
+.form-field-stretch{
+  box-sizing: border-box;
+  width: 100%;
+}

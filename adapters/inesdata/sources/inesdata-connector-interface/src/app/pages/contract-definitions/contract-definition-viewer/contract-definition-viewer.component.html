@@ -1,0 +1,59 @@
+<div id="wrapper">
+
+  <div fxLayout="row" fxLayoutAlign="space-between" class="section-header">
+    <button (click)="onCreate()" color="accent" mat-stroked-button>
+      <mat-icon>add_circle_outline</mat-icon>
+      Create contract definition
+    </button>
+
+    <mat-paginator (page)="changePage($event)" [pageSize]="pageSize" [length]="paginatorLength"
+      [pageIndex]="currentPage" [pageSizeOptions]="[5, 10, 20]">
+    </mat-paginator>
+  </div>
+
+  <div class="container" *ngIf="contractDefinitions.length > 0">
+    <div *ngFor="let contractDefinition of contractDefinitions" class="card">
+      <mat-card>
+        <mat-card-header>
+          <mat-icon mat-card-avatar>policy</mat-icon>
+          <mat-card-title>{{contractDefinition.id}}</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <mat-list dense>
+            <mat-list-item>
+              <mat-icon matListItemIcon>policy</mat-icon>
+              <div class="bold-text" matListItemTitle>Access policy</div>
+              <div matListItemLine>{{contractDefinition.accessPolicyId}}</div>
+            </mat-list-item>
+            <mat-list-item>
+              <mat-icon matListItemIcon>policy</mat-icon>
+              <div class="bold-text" matListItemTitle>Contract policy</div>
+              <div matListItemLine>{{contractDefinition.contractPolicyId}}</div>
+            </mat-list-item>
+            <mat-list-item class="contract-assets">
+              <div class="bold-text" matListItemTitle>Assets</div>
+              <mat-icon matListItemIcon>policy</mat-icon>
+
+              <div matListItemLine *ngIf="contractDefinition.assetsSelector.length == 0; else elseBlock">All assets
+              </div>
+              <ng-template #elseBlock>
+                <div matListItemLine *ngFor="let criterion of contractDefinition.assetsSelector">
+                  {{getCriterionFormat(criterion)}}</div>
+              </ng-template>
+            </mat-list-item>
+          </mat-list>
+        </mat-card-content>
+
+        <mat-card-actions class="card-actions text-align-end">
+          <button (click)="onDelete(contractDefinition)" color="warn" mat-stroked-button>
+            <mat-icon>delete_sweep</mat-icon> Delete
+          </button>
+        </mat-card-actions>
+      </mat-card>
+    </div>
+  </div>
+
+  <div *ngIf="contractDefinitions.length == 0" class="no-items">
+    There are no contract definitions created.
+  </div>
+</div>

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ontology-hub
+description: Ontology Hub component (example chart for Validation-Environment Level 6)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

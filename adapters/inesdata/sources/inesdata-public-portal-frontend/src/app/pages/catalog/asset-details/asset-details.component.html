@@ -1,0 +1,123 @@
+
+<div class="clickable" (click)="goBack()" *ngIf="isNavigation">
+  <i class="pi pi-arrow-left"></i>
+  Volver al catálogo
+</div>
+
+<div class="item-detail" *ngIf="(dataset$ | async) as dataset">
+  <div class="header">
+    <div class="title-version">
+      <span [ngClass]="assetTypeIconClass" class="pi icon"></span>
+      <div>
+        <h1 class="title">{{ dataset.properties.name }}</h1>
+        <span class="version">Versión {{ dataset.properties.version }}</span>
+      </div>
+    </div>
+
+    <div class="item-id">
+      {{ dataset.assetId }}
+      <div class="clickable download" (click)="dynamicDownloadAssetJson(dataset)">
+        <span class="pi pi-download"></span>
+        Descargar metadatos
+      </div>
+    </div>
+  </div>
+
+  <p class="short-description">
+    {{ dataset.properties.shortDescription }}
+  </p>
+
+  <div class="observer-actions" *ngIf="isMachineLearningAsset(dataset)">
+    <button pButton type="button" label="Ver timeline del modelo" (click)="openModelObserverTimeline(dataset)"></button>
+    <button
+      pButton
+      type="button"
+      class="p-button-outlined"
+      label="Ver resumen del participante"
+      (click)="openParticipantObserverSummary(dataset)"
+    ></button>
+  </div>
+
+  <p-tabView>
+    <p-tabPanel header="Información general">
+			<p-editor  *ngIf="description" [(ngModel)]="description" [readonly]="true" styleClass="description">
+				<ng-template pTemplate="header"></ng-template>
+			</p-editor>
+      <div class="details">
+        <div class="detail-item">
+          <span class="detail-title">Tipo de contenido</span>
+          <span class="detail-value">{{ dataset.properties.contentType || 'No disponible' }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-title">Tipo de asset</span>
+          <span class="detail-value">{{ this.datasetTypeText }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-title">Tamaño en bytes</span>
+          <span class="detail-value">{{ dataset.properties.byteSize || 'No disponible' }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-title">Formato</span>
+          <span class="detail-value">{{ dataset.properties.format || 'No disponible' }}</span>
+        </div>
+      </div>
+
+      <div class="keywords">
+        <h3>Palabras clave</h3>
+        <span>{{ dataset.properties.keywords }}</span>
+      </div>
+    </p-tabPanel>
+
+    <p-tabPanel *ngFor="let key of assetDataKeys" [header]="key">
+      <div *ngFor="let item of assetDataEntries[key]" class="grey">
+        <ng-container *ngIf="item.isArray; else objectOrPlainValue">
+          <ng-container *ngIf="containsOnlyObjects(item.value); else simpleList">
+            <p-accordion [multiple]="true">
+              <p-accordionTab [header]="item.key" iconPos="end">
+                <div class="details">
+                  <ng-container *ngFor="let subItem of item.value">
+                    <div class="detail-item">
+                      <ng-container *ngFor="let subEntry of getEntries(subItem)">
+                        <div>
+                          <span class="detail-title-inline">{{ subEntry.key }}: </span> <span class="detail-value-inline">{{ subEntry.value }}</span>
+                        </div>
+                      </ng-container>
+                    </div>
+                  </ng-container>
+                </div>
+              </p-accordionTab>
+            </p-accordion>
+          </ng-container>
+          <ng-template #simpleList>
+            <span class="detail-title-inline">{{ item.key }}: </span>
+            <ul>
+              <li *ngFor="let subItem of item.value">
+                <ng-container *ngIf="!isObject(subItem)">
+                  <span class="detail-value-inline">{{ subItem }}</span>
+                </ng-container>
+              </li>
+            </ul>
+          </ng-template>
+        </ng-container>
+        <ng-template #objectOrPlainValue>
+          <ng-container *ngIf="item.isObject; else plainValue">
+            <p-accordion [multiple]="false">
+              <p-accordionTab [header]="item.key" iconPos="end">
+                <ng-container *ngFor="let subEntry of item.entries">
+                  <div>
+                    <span class="detail-title-inline">{{ subEntry.key }}: </span> <span class="detail-value-inline">{{ subEntry.value }}</span>
+                  </div>
+                </ng-container>
+              </p-accordionTab>
+            </p-accordion>
+          </ng-container>
+          <ng-template #plainValue>
+            <div>
+              <span class="detail-title-inline">{{ item.key }}: </span> <span class="detail-value-inline">{{ item.value }}</span>
+            </div>
+          </ng-template>
+        </ng-template>
+      </div>
+    </p-tabPanel>
+  </p-tabView>
+</div>

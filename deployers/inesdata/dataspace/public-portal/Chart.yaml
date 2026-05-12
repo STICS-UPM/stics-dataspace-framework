@@ -1,0 +1,4 @@
+apiVersion: v2
+name: dataspace-public-portal
+description: Deploy Dataspaceunit Public Portal
+version: 0.1.0

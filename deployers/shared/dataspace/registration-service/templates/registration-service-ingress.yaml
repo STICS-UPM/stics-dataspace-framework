@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.dataspace.name }}-registration-service-ingress
+{{- if eq .Values.dataspace.environment "pro" }}
+  annotations:
+    kubernetes.io/ingress.allow-http: "false"
+{{- end }}
+spec:
+  rules:
+  - host: {{ .Values.ingress.registration.hostname }}
+    http:
+      paths:
+      - pathType: Prefix
+        path: /
+        backend:
+          service:
+            name: {{ .Values.dataspace.name }}-registration-service
+            port:
+              number: 8080
+{{- if eq .Values.dataspace.environment "pro" }}
+  tls:
+  - hosts:
+    - {{ .Values.ingress.registration.hostname }}
+    secretName: {{ .Values.dataspace.name }}-rs-tls-cert
+{{- end }}

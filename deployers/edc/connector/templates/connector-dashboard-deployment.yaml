@@ -1,0 +1,82 @@
+{{- $layout := .Values.connector.layout | default dict }}
+{{- if .Values.dashboard.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.connector.name }}-dashboard
+  labels:
+    validation-environment-adapter: edc
+    {{- with (index $layout "role") }}
+    validation-environment-role: {{ . | quote }}
+    {{- end }}
+    {{- with (index $layout "namespaceProfile") }}
+    validation-environment-namespace-profile: {{ . | quote }}
+    {{- end }}
+  {{- if or (index $layout "runtimeNamespace") (index $layout "activeNamespace") (index $layout "plannedNamespace") (index $layout "registrationServiceNamespace") (index $layout "plannedRegistrationServiceNamespace") }}
+  annotations:
+    {{- with (index $layout "runtimeNamespace") }}
+    validation-environment/runtime-namespace: {{ . | quote }}
+    {{- end }}
+    {{- with (index $layout "activeNamespace") }}
+    validation-environment/active-namespace: {{ . | quote }}
+    {{- end }}
+    {{- with (index $layout "plannedNamespace") }}
+    validation-environment/planned-namespace: {{ . | quote }}
+    {{- end }}
+    {{- with (index $layout "registrationServiceNamespace") }}
+    validation-environment/registration-service-namespace: {{ . | quote }}
+    {{- end }}
+    {{- with (index $layout "plannedRegistrationServiceNamespace") }}
+    validation-environment/planned-registration-service-namespace: {{ . | quote }}
+    {{- end }}
+  {{- end }}
+spec:
+  replicas: {{ default 1 .Values.dashboard.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.connector.name }}-dashboard
+  template:
+    metadata:
+      annotations:
+        checksum/dashboard-config: {{ toJson .Values.dashboard.runtime | sha256sum | quote }}
+        {{- with (index $layout "runtimeNamespace") }}
+        validation-environment/runtime-namespace: {{ . | quote }}
+        {{- end }}
+        {{- with (index $layout "activeNamespace") }}
+        validation-environment/active-namespace: {{ . | quote }}
+        {{- end }}
+        {{- with (index $layout "plannedNamespace") }}
+        validation-environment/planned-namespace: {{ . | quote }}
+        {{- end }}
+        {{- with (index $layout "registrationServiceNamespace") }}
+        validation-environment/registration-service-namespace: {{ . | quote }}
+        {{- end }}
+        {{- with (index $layout "plannedRegistrationServiceNamespace") }}
+        validation-environment/planned-registration-service-namespace: {{ . | quote }}
+        {{- end }}
+      labels:
+        app: {{ .Values.connector.name }}-dashboard
+        validation-environment-adapter: edc
+        {{- with (index $layout "role") }}
+        validation-environment-role: {{ . | quote }}
+        {{- end }}
+        {{- with (index $layout "namespaceProfile") }}
+        validation-environment-namespace-profile: {{ . | quote }}
+        {{- end }}
+    spec:
+      containers:
+        - name: dashboard
+          image: "{{ .Values.dashboard.image.name }}:{{ .Values.dashboard.image.tag }}"
+          imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
+          ports:
+            - containerPort: 80
+              name: http
+          volumeMounts:
+            - name: dashboard-config
+              mountPath: /usr/share/nginx/html/edc-dashboard/config
+              readOnly: true
+      volumes:
+        - name: dashboard-config
+          configMap:
+            name: {{ .Values.connector.name }}-dashboard-config
+{{- end }}

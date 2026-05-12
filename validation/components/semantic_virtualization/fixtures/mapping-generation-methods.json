@@ -1,0 +1,37 @@
+{
+  "version": "1.0.0",
+  "purpose": "Deterministic A5.2 fixture for comparing mapping generation approaches without requiring the editor runtime.",
+  "criteria": {
+    "parseable_mapping": 25,
+    "source_resolved": 25,
+    "ontology_terms_resolved": 25,
+    "triples_map_present": 15,
+    "expected_source_format": 10
+  },
+  "methods": [
+    {
+      "id": "manual-rml-csv",
+      "name": "Manual RML mapping over CSV",
+      "approach": "manual_authoring",
+      "mapping": "mappings/mobility_stops_csv.rml.ttl",
+      "expected_source_format": "csv",
+      "expected_min_score": 90
+    },
+    {
+      "id": "manual-rml-json",
+      "name": "Manual RML mapping over JSON",
+      "approach": "manual_authoring",
+      "mapping": "mappings/mobility_routes_json.rml.ttl",
+      "expected_source_format": "json",
+      "expected_min_score": 90
+    },
+    {
+      "id": "template-assisted-r2rml",
+      "name": "Template-assisted R2RML mapping over relational schema",
+      "approach": "template_assisted",
+      "mapping": "mappings/mobility_stops_table.r2rml.ttl",
+      "expected_source_format": "relational",
+      "expected_min_score": 90
+    }
+  ]
+}

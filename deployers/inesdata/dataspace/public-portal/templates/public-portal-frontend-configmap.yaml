@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.dataspace.name }}-public-portal-frontend-config
+  labels:
+    service: {{ .Values.dataspace.name }}-public-portal-frontend
+data:
+  STRAPI_URL: {{ .Values.ingress.protocol }}://{{ .Values.ingress.backend.hostname }}

@@ -1,0 +1,83 @@
+[
+  {
+    "Id": 463,
+    "Text": "Con el Plan Nacional de Vacunación, el Gobierno Nacional busca reducir la mortalidad e incidencia de casos graves por covid-19, así como proteger a los trabajadores de la salud y avanzar en la disminución del contagio para generar inmunidad colectiva.",
+    "Reliability_Label": "confiable",
+    "5W1H_Label": "WHO",
+    "Tag_Text": "a los trabajadores de la salud",
+    "Tag_Start": 146,
+    "Tag_End": 176
+  },
+  {
+    "Id": 522,
+    "Text": "Estos diagnósticos elevan a 11 el total de casos confirmados de la cepa británica en España, dado que a los seis de Madrid se añaden los cinco reportados hasta el momento por Andalucía.",
+    "Reliability_Label": "confiable",
+    "5W1H_Label": "WHAT",
+    "Tag_Text": "los cinco reportados",
+    "Tag_Start": 133,
+    "Tag_End": 153
+  },
+  {
+    "Id": 523,
+    "Text": "Estos diagnósticos elevan a 11 el total de casos confirmados de la cepa británica en España, dado que a los seis de Madrid se añaden los cinco reportados hasta el momento por Andalucía.",
+    "Reliability_Label": "semiconfiable",
+    "5W1H_Label": "WHEN",
+    "Tag_Text": "hasta el momento",
+    "Tag_Start": 154,
+    "Tag_End": 170
+  },
+  {
+    "Id": 329,
+    "Text": "Si Usted olvida su número de teléfono hoy, indica que el proceso de degradación en su cerebro comenzó hace 20 ó 30 años.",
+    "Reliability_Label": "confiable",
+    "5W1H_Label": "WHERE",
+    "Tag_Text": "en su cerebro",
+    "Tag_Start": 80,
+    "Tag_End": 93
+  },
+  {
+    "Id": 403,
+    "Text": "•Cocinarlas al microondas, cocidas o al horno en vez de fritas. ",
+    "Reliability_Label": "confiable",
+    "5W1H_Label": "HOW",
+    "Tag_Text": "al microondas, cocidas o al horno en vez de fritas",
+    "Tag_Start": 12,
+    "Tag_End": 62
+  },
+  {
+    "Id": 366,
+    "Text": "No hay ninguna excepción médica para la [imposición] de mascarillas porque la falta de oxígeno es peligrosa para todos los cerebros. ",
+    "Reliability_Label": "confiable",
+    "5W1H_Label": "WHY",
+    "Tag_Text": "porque la falta de oxígeno es peligrosa para todos los cerebros",
+    "Tag_Start": 68,
+    "Tag_End": 131
+  },
+  {
+    "Id": 106,
+    "Text": "Privar al cerebro de un niño o adolescente de oxígeno, o restringirlo de cualquier manera, no sólo es peligroso para su salud, sino que es absolutamente criminal. ",
+    "Reliability_Label": "no confiable",
+    "5W1H_Label": "WHAT",
+    "Tag_Text": "que es absolutamente criminal.",
+    "Tag_Start": 132,
+    "Tag_End": 162
+  },
+  {
+    "Id": 534,
+    "Text": "La reinhalación del aire que respiramos conduce indudablemente a una deficiencia de oxígeno y a la saturación de dióxido de carbono. ",
+    "Reliability_Label": "no confiable",
+    "5W1H_Label": "HOW",
+    "Tag_Text": "indudablemente",
+    "Tag_Start": 48,
+    "Tag_End": 62
+  },
+  {
+    "Id": 113,
+    "Text": "Sus cerebros también son increíblemente activos porque tienen mucho que aprender. ",
+    "Reliability_Label": "semiconfiable",
+    "5W1H_Label": "WHY",
+    "Tag_Text": "porque tienen mucho que aprender",
+    "Tag_Start": 48,
+    "Tag_End": 80
+  }
+]

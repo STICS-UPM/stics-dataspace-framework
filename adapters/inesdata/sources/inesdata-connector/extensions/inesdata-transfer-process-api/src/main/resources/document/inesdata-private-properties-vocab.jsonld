@@ -1,0 +1,12 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "edc": "https://w3id.org/edc/v0.0.1/ns/",
+    "privateProperties": {
+      "@id": "edc:privateProperties",
+      "@context": {
+        "@vocab": "https://w3id.org/edc/v0.0.1/ns/"
+      }
+    }
+  }
+}

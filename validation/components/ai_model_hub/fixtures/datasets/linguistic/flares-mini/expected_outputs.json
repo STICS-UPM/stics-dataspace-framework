@@ -1,0 +1,95 @@
+{
+  "subtask2_trial_sample": {
+    "recordCount": 9,
+    "classDistribution": {
+      "confiable": 5,
+      "semiconfiable": 2,
+      "no confiable": 2
+    },
+    "records": [
+      {
+        "Id": 463,
+        "5W1H_Label": "WHO",
+        "expectedReliability": "confiable"
+      },
+      {
+        "Id": 522,
+        "5W1H_Label": "WHAT",
+        "expectedReliability": "confiable"
+      },
+      {
+        "Id": 523,
+        "5W1H_Label": "WHEN",
+        "expectedReliability": "semiconfiable"
+      },
+      {
+        "Id": 329,
+        "5W1H_Label": "WHERE",
+        "expectedReliability": "confiable"
+      },
+      {
+        "Id": 403,
+        "5W1H_Label": "HOW",
+        "expectedReliability": "confiable"
+      },
+      {
+        "Id": 366,
+        "5W1H_Label": "WHY",
+        "expectedReliability": "confiable"
+      },
+      {
+        "Id": 106,
+        "5W1H_Label": "WHAT",
+        "expectedReliability": "no confiable"
+      },
+      {
+        "Id": 534,
+        "5W1H_Label": "HOW",
+        "expectedReliability": "no confiable"
+      },
+      {
+        "Id": 113,
+        "5W1H_Label": "WHY",
+        "expectedReliability": "semiconfiable"
+      }
+    ]
+  },
+  "subtask2_test_sample": {
+    "recordCount": 6,
+    "unlabeled": true,
+    "requiredFields": [
+      "Id",
+      "Text",
+      "5W1H_Label",
+      "Tag_Text",
+      "Tag_Start",
+      "Tag_End"
+    ],
+    "records": [
+      {
+        "Id": 157,
+        "5W1H_Label": "WHAT"
+      },
+      {
+        "Id": 1067,
+        "5W1H_Label": "WHEN"
+      },
+      {
+        "Id": 294,
+        "5W1H_Label": "HOW"
+      },
+      {
+        "Id": 493,
+        "5W1H_Label": "WHERE"
+      },
+      {
+        "Id": 94,
+        "5W1H_Label": "WHO"
+      },
+      {
+        "Id": 1011,
+        "5W1H_Label": "WHY"
+      }
+    ]
+  }
+}

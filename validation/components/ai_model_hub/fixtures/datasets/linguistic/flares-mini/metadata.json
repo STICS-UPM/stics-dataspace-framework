@@ -1,0 +1,64 @@
+{
+  "datasetName": "FLARES-mini",
+  "domain": "linguistic",
+  "task": "5W1H-based reliability classification",
+  "format": "application/json",
+  "language": "es",
+  "source": {
+    "name": "FLARES",
+    "repository": "https://github.com/rsepulveda911112/Flares-dataset",
+    "license": "Apache-2.0",
+    "sourceFiles": {
+      "trial": "5w1h_subtask_2_trial.json",
+      "test": "5w1h_subtarea_2_test.json"
+    }
+  },
+  "version": "mini-v1",
+  "keywords": [
+    "nlp",
+    "linguistic",
+    "5w1h",
+    "reliability",
+    "flares",
+    "span-annotation"
+  ],
+  "assetPublication": {
+    "assetId": "dataset-flares-mini-subtask2",
+    "policyId": "policy-flares-mini-subtask2",
+    "contractDefinitionId": "contractdef-flares-mini-subtask2",
+    "storeFolder": "linguistic-flares-mini",
+    "uploadFile": "subtask2_trial_sample.json",
+    "uploadMediaType": "application/json",
+    "fileName": "flares-mini-subtask2-trial.json",
+    "publicationMode": "connector_s3assets_api",
+    "dataAddressType": "InesDataStore",
+    "description": "Curated FLARES mini fixture used to bootstrap the linguistic validation flow in AI Model Hub."
+  },
+  "selection": {
+    "objective": "Small but representative subset for Phase 3 bootstrap and MH-LING-01 scaffolding.",
+    "trialRecordIds": [
+      463,
+      522,
+      523,
+      329,
+      403,
+      366,
+      106,
+      534,
+      113
+    ],
+    "testRecordIds": [
+      157,
+      1067,
+      294,
+      493,
+      94,
+      1011
+    ],
+    "notes": [
+      "The trial subset preserves the original reliability labels and covers all 5W1H dimensions.",
+      "The test subset preserves the original unlabeled structure for future inference-oriented checks.",
+      "This fixture is local and stable; it is not refreshed automatically from the upstream repository during validation runs."
+    ]
+  }
+}

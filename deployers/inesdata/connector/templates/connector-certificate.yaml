@@ -1,0 +1,24 @@
+{{- if eq .Values.connector.environment "pro" }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.connector.dataspace }}-{{ .Values.connector.name }}-cert
+spec:
+  secretName: {{ .Values.connector.dataspace }}-{{ .Values.connector.name }}-tls-cert
+  duration: 8760h
+  renewBefore: 720h
+  commonName: {{ .Values.connector.dataspace }}-{{ .Values.connector.name }}
+  dnsNames:
+    - "*.{{ .Values.connector.dataspace }}-{{ .Values.connector.name }}"
+    - "*.{{ .Values.connector.name }}.svc"
+    - "*.ds.dataspaceunit-project.eu"
+    - {{ .Values.connector.ingress.hostname }}
+    - {{ .Values.connector.dataspace }}-{{ .Values.connector.name }}
+    - {{ .Values.connector.name }}-{{ .Values.connector.dataspace }}.ds.dataspaceunit-project.eu
+    - {{ .Values.connector.name }}
+  ipAddresses:
+    - 127.0.0.1
+  issuerRef:
+    name: elastic-selfsigned-cluster-issuer
+    kind: ClusterIssuer
+{{- end }}

@@ -1,0 +1,8 @@
+name: dataspaceunit-ds-common
+description: Helm chart to deploy the base services for an dataspaceunit dataspaces-deployment
+version: 1.0.0
+apiVersion: v2
+dependencies:
+  - name: minio
+    version: "~5.2.0"
+    repository: https://charts.min.io/

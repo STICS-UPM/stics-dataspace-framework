@@ -1,0 +1,66 @@
+@use "@angular/material" as mat;
+
+@import "https://fonts.googleapis.com/icon?family=Material+Icons";
+@import url("https://fonts.googleapis.com/css2?family=Open+Sans&display=swap");
+
+@import "node_modules/@angular/material/theming";
+@include mat-core();
+
+$theming-material-components-primary: mat-palette($mat-teal);
+$theming-material-components-accent: mat-palette($mat-orange, A200, A100, A400);
+$theming-material-components-warn: mat-palette($mat-red);
+$theming-material-components-typography: mat.define-typography-config(
+  $font-family: "Open Sans",
+);
+
+$custom-primary: mat.define-palette((
+  50: #eaf3f7,
+  100: #c8dbe4,
+  200: #a4c2d0,
+  300: #7fa8bb,
+  400: #5f92a9,
+  500: #3c6b85,
+  600: #203f57,
+  700: #212529,
+  800: #18202c,
+  900: #0f1519,
+  contrast: (
+    50: black,
+    100: black,
+    200: black,
+    300: black,
+    400: black,
+    500: white,
+    600: white,
+    700: white,
+    800: white,
+    900: white
+  ),
+));
+
+
+$custom-theme: mat-light-theme((
+  color: (
+    primary: $custom-primary,
+    accent: $custom-primary,
+    warn: mat-palette($mat-red),
+  ),
+  typography: $theming-material-components-typography,
+  density: 0,
+));
+
+$primary: #ffab40;
+
+$border-radius: 8px;
+$grey-100: #101010;
+$grey-200: #202020;
+$grey-300: #303030;
+$grey-400: #404040;
+$grey-500: #505050;
+$grey-600: #606060;
+$grey-700: #707070;
+$grey-800: #808080;
+$grey-900: #909090;
+
+@include mat.all-component-themes($custom-theme);
+

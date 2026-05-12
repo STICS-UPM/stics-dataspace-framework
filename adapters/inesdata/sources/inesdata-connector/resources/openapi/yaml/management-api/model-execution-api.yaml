@@ -1,0 +1,68 @@
+openapi: 3.0.1
+info:
+  version: v3
+paths:
+  /v3/modelexecutions/execute:
+    post:
+      operationId: executeModel
+      summary: Execute a machine learning model over an HttpData asset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelExecutionRequest"
+      responses:
+        "200":
+          description: Upstream model execution response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+        "400":
+          description: Request cannot be executed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Model execution failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      tags:
+        - Model Execution
+components:
+  schemas:
+    ModelExecutionRequest:
+      type: object
+      required:
+        - assetId
+        - payload
+      properties:
+        assetId:
+          type: string
+        method:
+          type: string
+          example: POST
+        path:
+          type: string
+          example: /infer
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        payload:
+          description: Request body forwarded to the model endpoint.
+          type: object
+          additionalProperties: true
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string

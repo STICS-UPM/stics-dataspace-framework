@@ -1,0 +1,27 @@
+<section class="observer-view">
+  <header class="observer-view__header">
+    <h1>Participant summary for {{ participantId }}</h1>
+  </header>
+
+  <p *ngIf="error" class="observer-view__error">{{ error }}</p>
+
+  <div class="summary-grid" *ngIf="summary">
+    <article class="summary-card">
+      <h2>Recent failures</h2>
+      <strong>{{ summary.recentFailures }}</strong>
+    </article>
+
+    <article class="summary-card">
+      <h2>Latest event</h2>
+      <p>{{ summary.latestEvent?.eventType || 'No events yet' }}</p>
+    </article>
+  </div>
+
+  <article class="summary-table" *ngIf="summary">
+    <h2>Totals by event type</h2>
+    <div class="summary-row" *ngFor="let key of totalKeys">
+      <span>{{ key }}</span>
+      <strong>{{ summary.totalsByEventType[key] }}</strong>
+    </div>
+  </article>
+</section>

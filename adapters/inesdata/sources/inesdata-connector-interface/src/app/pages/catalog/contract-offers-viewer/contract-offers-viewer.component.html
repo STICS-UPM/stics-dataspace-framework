@@ -1,0 +1,191 @@
+
+  <button class="go-back" (click)="backToList()" color="accent" mat-stroked-button>
+    <mat-icon>arrow_back</mat-icon> Go back
+  </button>
+
+  <mat-tab-group [selectedIndex]="selectedMainTabIndex" animationDuration="0ms" mat-stretch-tabs="false" mat-align-tabs="start" class="main-tab-group">
+    <mat-tab label="Asset information">
+      <mat-tab-group animationDuration="0ms" mat-stretch-tabs="false" mat-align-tabs="start">
+        <mat-tab label="General information">
+          <mat-card class="dialog-card">
+            <div fxLayout="row" fxLayoutGap="15px">
+              <mat-list-item class="property" fxFlex="50">
+                <div class="property-title" matListItemTitle>ID</div>
+                <div class="property-value" matListItemLine><p>{{data.properties.id}}</p></div>
+              </mat-list-item>
+              <mat-list-item class="property" fxFlex="50">
+                <div class="property-title" matListItemTitle>Name</div>
+                <div class="property-value" matListItemLine><p>{{data.properties.name}}</p></div>
+              </mat-list-item>
+            </div>
+            <div fxLayout="row" fxLayoutGap="15px">
+              <mat-list-item class="property" fxFlex="50">
+                <div class="property-title" matListItemTitle>Content-Type</div>
+                <div class="property-value"
+                  [ngClass]="{'value-not-available': data.properties.contenttype === undefined || data.properties.contenttype === ''}"
+                  matListItemLine><p>{{data.properties.contenttype ? data.properties.contenttype : 'Not available'}}</p></div>
+              </mat-list-item>
+              <mat-list-item class="property" fxFlex="50">
+                <div class="property-title" matListItemTitle>Version</div>
+                <div class="property-value" matListItemLine><p>{{data.properties.version}}</p></div>
+              </mat-list-item>
+            </div>
+            <div fxLayout="row">
+              <mat-list-item class="property">
+                <div class="property-title" matListItemTitle>Short description</div>
+                <div class="property-value description" matListItemLine><p>{{data.properties.shortDescription}}</p></div>
+              </mat-list-item>
+            </div>
+            <div fxLayout="row">
+              <mat-list-item class="property description">
+                <div class="property-title" matListItemTitle>Description</div>
+                <div class="property-value" [innerHTML]="data.properties.description" matListItemLine></div>
+              </mat-list-item>
+            </div>
+            <div fxLayout="row" fxLayoutGap="15px">
+              <mat-list-item class="property" fxFlex="50">
+                <div class="property-title" matListItemTitle>Asset type</div>
+                <div class="property-value" matListItemLine><p>{{data.properties.assetType}}</p></div>
+              </mat-list-item>
+              <mat-list-item class="property" fxFlex="50">
+                <div class="property-title" matListItemTitle>Keywords</div>
+                <div class="property-value" matListItemLine><p>{{data.properties.keywords}}</p></div>
+              </mat-list-item>
+            </div>
+            <div fxLayout="row" fxLayoutGap="15px">
+              <mat-list-item class="property" fxFlex="50">
+                <div class="property-title" matListItemTitle>Byte size</div>
+                <div class="property-value"
+                  [ngClass]="{'value-not-available': data.properties.byteSize === undefined || data.properties.byteSize === ''}"
+                  matListItemLine><p>{{data.properties.byteSize ? data.properties.byteSize : 'Not available'}}</p></div>
+              </mat-list-item>
+              <mat-list-item class="property" fxFlex="50">
+                <div class="property-title" matListItemTitle>File format</div>
+                <div class="property-value"
+                  [ngClass]="{'value-not-available': data.properties.format === undefined || data.properties.format === ''}"
+                  matListItemLine><p>{{data.properties.format ? data.properties.format : 'Not available'}}</p></div>
+              </mat-list-item>
+            </div>
+          </mat-card>
+        </mat-tab>
+        <mat-tab *ngFor="let key of assetDataKeys" [label]="key">
+          <mat-card class="dialog-card vocabulary">
+            <div *ngFor="let item of assetDataEntries[key]" class="grey">
+              <ng-container *ngIf="item.isArray; else objectOrPlainValue">
+                <ng-container *ngIf="containsOnlyObjects(item.value); else simpleList">
+                  <mat-expansion-panel>
+                    <mat-expansion-panel-header>
+                      <mat-panel-title class="property-title">{{item.key}}</mat-panel-title>
+                    </mat-expansion-panel-header>
+                    <div class="details">
+                      <ng-container *ngFor="let subItem of item.value">
+                        <div class="detail-item">
+                          <ng-container *ngFor="let subEntry of getEntries(subItem)">
+                            <div>
+                              <span class="property-title">{{ subEntry.key }}: </span> <span class="property-value">{{
+                                subEntry.value }}</span>
+                            </div>
+                          </ng-container>
+                        </div>
+                      </ng-container>
+                    </div>
+                  </mat-expansion-panel>
+                </ng-container>
+                <ng-template #simpleList>
+                  <span class="property-title">{{ item.key }}:</span>
+                  <ul>
+                    <li *ngFor="let subItem of item.value">
+                      <ng-container *ngIf="!isObject(subItem)">
+                        <span class="property-value">{{ subItem }}</span>
+                      </ng-container>
+                    </li>
+                  </ul>
+                </ng-template>
+              </ng-container>
+              <ng-template #objectOrPlainValue>
+                <ng-container *ngIf="item.isObject; else plainValue">
+                  <mat-expansion-panel>
+                    <mat-expansion-panel-header>
+                      <mat-panel-title class="property-title">{{item.key}}</mat-panel-title>
+                    </mat-expansion-panel-header>
+                    <ng-container *ngFor="let subEntry of item.entries">
+                      <div>
+                        <span class="property-title">{{ subEntry.key }}: </span> <span class="property-value">{{
+                          subEntry.value }}</span>
+                      </div>
+                    </ng-container>
+                  </mat-expansion-panel>
+                </ng-container>
+                <ng-template #plainValue>
+                  <div>
+                    <span class="property-title">{{ item.key }}:</span> <span class="property-value"> {{ item.value
+                      }}</span>
+                  </div>
+                </ng-template>
+              </ng-template>
+            </div>
+          </mat-card>
+        </mat-tab>
+        <ng-container *ngIf="!data.isCatalogView">
+          <mat-tab label="Storage information">
+            <mat-card class="dialog-card">
+              <div fxLayout="row">
+                <mat-list-item class="property">
+                  <div class="property-title" matListItemTitle>Storage type</div>
+                  <div class="property-value" matListItemLine><p>{{ dataAddressType }}</p></div>
+                </mat-list-item>
+              </div>
+              <ng-container *ngIf="data.privateProperties; else dataAddressProperties">
+                <div fxLayout="row">
+                  <mat-list-item class="property">
+                    <div class="property-title" matListItemTitle>File</div>
+                    <div class="property-value" matListItemLine><p>{{ data.dataAddress.keyName }}</p></div>
+                  </mat-list-item>
+                </div>
+              </ng-container>
+              <ng-template #dataAddressProperties>
+                <div fxLayout="row wrap" fxLayoutGap="15px">
+                  <ng-container *ngFor="let property of data.dataAddress | keyvalue">
+                    <div fxFlex="1 1 calc(50% - 15px)" *ngIf="property.key != 'type'">
+                      <mat-list-item class="property">
+                        <div class="property-title" matListItemTitle>{{ property.key }}</div>
+                        <div class="property-value" matListItemLine><p>{{ property.value }}</p></div>
+                      </mat-list-item>
+                    </div>
+                  </ng-container>
+                </div>
+              </ng-template>
+            </mat-card>
+          </mat-tab>
+        </ng-container>
+      </mat-tab-group>
+    </mat-tab>
+    <ng-container *ngIf="data.isCatalogView">
+      <mat-tab label="Contract Offers">
+        <mat-card class="dialog-card contract-offer" *ngFor="let offer of offers">
+          <mat-card-header>
+            <mat-card-title>Contract offer</mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
+            <app-policy-renderer [expression]="offer.policyCard.expression" [errors]="offer.policyCard.irregularities">
+            </app-policy-renderer>
+          </mat-card-content>
+          <mat-card-actions align="end">
+            <button (click)="onPolicyDetailClick(offer.policyCard)" color="accent" mat-stroked-button>
+              <mat-icon>info</mat-icon> View JSON-LD
+            </button>
+            <button (click)="onNegotiateClicked(offer.policy)" color="accent" mat-stroked-button
+              [disabled]="isBusy(offer.policy) || isNegotiated(offer.policy)">
+              <mat-icon>drive_file_rename_outline</mat-icon> Negotiate Contract
+            </button>
+          </mat-card-actions>
+          <mat-card-footer>
+            <mat-progress-bar diameter="10" mode="indeterminate" color="accent" *ngIf="isBusy(offer.policy)">
+            </mat-progress-bar>
+          </mat-card-footer>
+        </mat-card>
+      </mat-tab>
+    </ng-container>
+  </mat-tab-group>
+
+

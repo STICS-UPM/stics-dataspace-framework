@@ -1,0 +1,39 @@
+/* Custom FOOTER component styles */
+
+.footer {
+	background-color: #ef7011;
+	padding: 50px 40px;
+	margin-left: -60px;
+  margin-right: -60px;
+
+	&__company {
+		color: white;
+		font-weight: 500;
+		margin: 30px auto;
+		text-align: center;
+		color: #404040;
+	}
+	&__logos {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+		justify-content: center;
+		align-items: center;
+		gap: 40px;
+		img {
+			margin: auto;
+		}
+	}
+	&__title {
+		color: #ffffff;
+		font-size: 42px;
+		margin: 0 0 8px 0;
+	}
+}
+
+// RESPONSIVE
+// Desktop
+@media (max-width: 991px) {
+	.footer {
+		margin: 0 -30px;
+	}
+}

@@ -1,0 +1,47 @@
+<div id="wrapper">
+
+  <div fxLayout="row" fxLayoutAlign="space-between" class="section-header">
+    <button (click)="onCreate()" color="accent" mat-stroked-button>
+      <mat-icon>add_circle_outline</mat-icon>
+      Create policy
+    </button>
+
+    <mat-paginator
+      (page)="changePage($event)"
+      [pageSize]="pageSize"
+      [length]="paginatorLength"
+      [pageIndex]="currentPage"
+      [pageSizeOptions]="[5, 10, 20]">
+    </mat-paginator>
+  </div>
+
+  <div class="container" *ngIf="policyCards.length > 0">
+    <div *ngFor="let policyCard of policyCards" class="card">
+      <mat-card>
+        <mat-card-header>
+          <mat-icon mat-card-avatar>policy</mat-icon>
+          <mat-card-title><span>{{policyCard.id}}</span></mat-card-title>
+        </mat-card-header>
+
+        <mat-card-content>
+          <app-policy-renderer
+              [expression]="policyCard.expression"
+              [errors]="policyCard.irregularities"></app-policy-renderer>
+        </mat-card-content>
+
+        <mat-card-actions class="card-actions align-content-end text-align-end">
+          <button (click)="onPolicyDetailClick(policyCard)" color="info" mat-stroked-button>
+            <mat-icon>info</mat-icon> View JSON-LD
+          </button>
+          <button (click)="delete(policyCard.id)" color="warn" mat-stroked-button>
+            <mat-icon>delete_sweep</mat-icon> Delete
+          </button>
+        </mat-card-actions>
+      </mat-card>
+    </div>
+  </div>
+
+  <div *ngIf="policyCards.length == 0" class="no-items">
+    There are no policies created.
+  </div>
+</div>

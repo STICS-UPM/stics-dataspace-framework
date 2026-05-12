@@ -1,0 +1,13 @@
+DS_1_NAME=pionera-edc
+DS_1_NAMESPACE=edc-control
+NAMESPACE_PROFILE=role-aligned
+DS_1_REGISTRATION_NAMESPACE=edc-control
+DS_1_PROVIDER_NAMESPACE=edc-provider
+DS_1_CONSUMER_NAMESPACE=edc-consumer
+COMMON_SERVICES_NAMESPACE=common-srvs
+DS_1_CONNECTORS=citycounciledc,companyedc
+EDC_DASHBOARD_ENABLED=true
+EDC_DASHBOARD_PROXY_AUTH_MODE=oidc-bff
+EDC_DASHBOARD_PROXY_CLIENT_ID=dataspace-users
+EDC_DASHBOARD_PROXY_SCOPE=openid profile email
+EDC_DASHBOARD_BASE_HREF=/edc-dashboard/

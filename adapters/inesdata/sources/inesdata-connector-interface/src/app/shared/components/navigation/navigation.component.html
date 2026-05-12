@@ -1,0 +1,52 @@
+<div class="navigation-container">
+  <mat-sidenav-container class="sidenav-container">
+    <mat-sidenav
+      #drawer
+      class="sidenav"
+      fixedInViewport
+      [attr.role]="(isHandset$ | async) ? 'dialog' : 'navigation'"
+      [mode]="(isHandset$ | async) ? 'over' : 'side'"
+      [opened]="(isHandset$ | async) === false"
+    >
+      <mat-toolbar>INESData</mat-toolbar>
+      <mat-nav-list>
+        <ng-container *ngFor="let route of routes">
+          <a
+            mat-list-item
+            *ngIf="route.data?.title"
+            [routerLink]="[route.path]"
+          >
+            <mat-icon matListItemIcon>{{ route.data?.icon }}</mat-icon>
+            {{ route.data?.title ?? route.path }}
+          </a>
+        </ng-container>
+      </mat-nav-list>
+    </mat-sidenav>
+    <mat-sidenav-content>
+      <mat-toolbar color="primary">
+        <button
+          type="button"
+          aria-label="Toggle sidenav"
+          mat-icon-button
+          (click)="drawer.toggle()"
+          *ngIf="isHandset$ | async"
+        >
+          <mat-icon aria-label="Side nav toggle icon">menu</mat-icon>
+        </button>
+        <span>{{ titleService.getTitle() }}</span>
+        <div class="logout">
+          <span (click)="logout()">
+            <mat-icon aria-label="Side nav toggle icon">logout</mat-icon>
+            <div>Log out</div>
+          </span>
+        </div>
+      </mat-toolbar>
+      <div class="scrollable-content">
+        <router-outlet></router-outlet>
+
+      </div>
+    </mat-sidenav-content>
+  </mat-sidenav-container>
+  <app-footer class="footer-content"></app-footer>
+  <app-spinner></app-spinner>
+</div>

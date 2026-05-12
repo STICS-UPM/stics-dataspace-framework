@@ -1,0 +1,712 @@
+{
+  "info": {
+    "name": "02 Connector Management CRUD",
+    "_postman_id": "postman-connector-management-crud-02",
+    "description": "Versión Postman autocontenida de la colección 02 Connector Management CRUD, con scripts embebidos para crear, listar, borrar y verificar assets, policies y contract definitions.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Provider Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "url": {
+          "raw": "{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token",
+          "host": [
+            "{{keycloakUrl}}"
+          ],
+          "path": [
+            "realms",
+            "{{dataspace}}",
+            "protocol",
+            "openid-connect",
+            "token"
+          ]
+        },
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "password",
+              "type": "text"
+            },
+            {
+              "key": "client_id",
+              "value": "{{keycloakClientId}}",
+              "type": "text"
+            },
+            {
+              "key": "username",
+              "value": "{{provider_user}}",
+              "type": "text"
+            },
+            {
+              "key": "password",
+              "value": "{{provider_password}}",
+              "type": "text"
+            },
+            {
+              "key": "scope",
+              "value": "openid profile email",
+              "type": "text"
+            }
+          ]
+        },
+        "description": "Versión Postman autocontenida de `Provider Login`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) {",
+              "  pm.environment.set(key, value);",
+              "  pm.collectionVariables.set(key, value);",
+              "}",
+              "",
+              "let body;",
+              "try {",
+              "  body = pm.response.json();",
+              "} catch (e) {",
+              "  pm.test(\"Response body is valid JSON\", function () {",
+              "    pm.expect.fail(\"Response body is not valid JSON\");",
+              "  });",
+              "  return;",
+              "}",
+              "",
+              "pm.test(\"HTTP status is 200\", function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"Provider login returns access_token\", function () {",
+              "  pm.expect(body.access_token).to.be.a(\"string\").and.not.empty;",
+              "});",
+              "const suffix = String(Date.now());",
+              "setVar(\"provider_jwt\", body.access_token);",
+              "setVar(\"crud_suffix\", suffix);",
+              "setVar(\"crud_asset_id\", `asset-crud-${suffix}`);",
+              "setVar(\"crud_policy_id\", `policy-crud-${suffix}`);",
+              "setVar(\"crud_contract_definition_id\", `contract-crud-${suffix}`);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create CRUD Asset",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/assets",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "assets"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"dct\": \"http://purl.org/dc/terms/\",\n    \"dcat\": \"http://www.w3.org/ns/dcat#\"\n  },\n  \"@id\": \"{{crud_asset_id}}\",\n  \"@type\": \"Asset\",\n  \"properties\": {\n    \"name\": \"CRUD Test Asset {{crud_suffix}}\",\n    \"version\": \"1.0.0\",\n    \"shortDescription\": \"CRUD validation asset\",\n    \"assetType\": \"dataset\",\n    \"dct:description\": \"CRUD validation asset\",\n    \"dcat:keyword\": [\"validation\", \"crud\"]\n  },\n  \"dataAddress\": {\n    \"type\": \"HttpData\",\n    \"baseUrl\": \"https://jsonplaceholder.typicode.com/todos\",\n    \"name\": \"todos\"\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `Create CRUD Asset`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) { pm.environment.set(key, value); pm.collectionVariables.set(key, value); }",
+              "let body;",
+              "try { body = pm.response.json(); } catch (e) { pm.test(\"Response body is valid JSON\", function () { pm.expect.fail(\"Response body is not valid JSON\"); }); return; }",
+              "pm.test(\"HTTP status indicates resource creation\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+              "pm.test(\"CRUD asset creation returns @id\", function () { pm.expect(body[\"@id\"] || pm.environment.get(\"crud_asset_id\")).to.exist; });",
+              "if (body[\"@id\"]) { setVar(\"crud_asset_id\", body[\"@id\"]); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List CRUD Assets",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/assets/request",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "assets",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 1,\n  \"filterExpression\": [\n    {\n      \"operandLeft\": \"https://w3id.org/edc/v0.0.1/ns/id\",\n      \"operator\": \"=\",\n      \"operandRight\": \"{{crud_asset_id}}\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `List CRUD Assets`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let body;",
+              "try { body = pm.response.json(); } catch (e) { pm.test(\"Response body is valid JSON\", function () { pm.expect.fail(\"Response body is not valid JSON\"); }); return; }",
+              "pm.test(\"HTTP status is 200\", function () { pm.response.to.have.status(200); });",
+              "const assetId = pm.collectionVariables.get(\"crud_asset_id\") || pm.environment.get(\"crud_asset_id\");",
+              "pm.test(\"CRUD asset id is available\", function () { pm.expect(assetId).to.be.a(\"string\").and.not.empty; });",
+              "pm.test(\"CRUD asset appears in asset lookup result\", function () { pm.expect(Array.isArray(body)).to.equal(true); pm.expect(body.some((asset) => asset && asset[\"@id\"] === assetId)).to.equal(true); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create CRUD Policy",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/policydefinitions",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "policydefinitions"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"odrl\": \"http://www.w3.org/ns/odrl/2/\"\n  },\n  \"@id\": \"{{crud_policy_id}}\",\n  \"policy\": {\n    \"@context\": \"http://www.w3.org/ns/odrl.jsonld\",\n    \"@type\": \"Set\",\n    \"permission\": [],\n    \"prohibition\": [],\n    \"obligation\": []\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `Create CRUD Policy`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) { pm.environment.set(key, value); pm.collectionVariables.set(key, value); }",
+              "let body;",
+              "try { body = pm.response.json(); } catch (e) { pm.test(\"Response body is valid JSON\", function () { pm.expect.fail(\"Response body is not valid JSON\"); }); return; }",
+              "pm.test(\"HTTP status indicates resource creation\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+              "pm.test(\"CRUD policy creation returns @id\", function () { pm.expect(body[\"@id\"] || pm.environment.get(\"crud_policy_id\")).to.exist; });",
+              "if (body[\"@id\"]) { setVar(\"crud_policy_id\", body[\"@id\"]); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List CRUD Policies",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/policydefinitions/request",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "policydefinitions",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 1,\n  \"filterExpression\": [\n    {\n      \"operandLeft\": \"id\",\n      \"operator\": \"=\",\n      \"operandRight\": \"{{crud_policy_id}}\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `List CRUD Policies`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let body;",
+              "try { body = pm.response.json(); } catch (e) { pm.test(\"Response body is valid JSON\", function () { pm.expect.fail(\"Response body is not valid JSON\"); }); return; }",
+              "pm.test(\"HTTP status is 200\", function () { pm.response.to.have.status(200); });",
+              "const policyId = pm.collectionVariables.get(\"crud_policy_id\") || pm.environment.get(\"crud_policy_id\");",
+              "pm.test(\"CRUD policy id is available\", function () { pm.expect(policyId).to.be.a(\"string\").and.not.empty; });",
+              "pm.test(\"CRUD policy appears in policy lookup result\", function () { pm.expect(Array.isArray(body)).to.equal(true); pm.expect(body.some((policy) => policy && policy[\"@id\"] === policyId)).to.equal(true); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create CRUD Contract Definition",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/contractdefinitions",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "contractdefinitions"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@id\": \"{{crud_contract_definition_id}}\",\n  \"accessPolicyId\": \"{{crud_policy_id}}\",\n  \"contractPolicyId\": \"{{crud_policy_id}}\",\n  \"assetsSelector\": [\n    {\n      \"operandLeft\": \"https://w3id.org/edc/v0.0.1/ns/id\",\n      \"operator\": \"=\",\n      \"operandRight\": \"{{crud_asset_id}}\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `Create CRUD Contract Definition`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "function setVar(key, value) { pm.environment.set(key, value); pm.collectionVariables.set(key, value); }",
+              "let body;",
+              "try { body = pm.response.json(); } catch (e) { pm.test(\"Response body is valid JSON\", function () { pm.expect.fail(\"Response body is not valid JSON\"); }); return; }",
+              "pm.test(\"HTTP status indicates resource creation\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+              "pm.test(\"CRUD contract definition creation returns @id\", function () { pm.expect(body[\"@id\"] || pm.environment.get(\"crud_contract_definition_id\")).to.exist; });",
+              "if (body[\"@id\"]) { setVar(\"crud_contract_definition_id\", body[\"@id\"]); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List CRUD Contract Definitions",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/contractdefinitions/request",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "contractdefinitions",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 1,\n  \"filterExpression\": [\n    {\n      \"operandLeft\": \"id\",\n      \"operator\": \"=\",\n      \"operandRight\": \"{{crud_contract_definition_id}}\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `List CRUD Contract Definitions`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let body;",
+              "try { body = pm.response.json(); } catch (e) { pm.test(\"Response body is valid JSON\", function () { pm.expect.fail(\"Response body is not valid JSON\"); }); return; }",
+              "pm.test(\"HTTP status is 200\", function () { pm.response.to.have.status(200); });",
+              "const contractId = pm.collectionVariables.get(\"crud_contract_definition_id\") || pm.environment.get(\"crud_contract_definition_id\");",
+              "pm.test(\"CRUD contract definition id is available\", function () { pm.expect(contractId).to.be.a(\"string\").and.not.empty; });",
+              "pm.test(\"CRUD contract definition appears in lookup result\", function () { pm.expect(Array.isArray(body)).to.equal(true); pm.expect(body.some((contract) => contract && contract[\"@id\"] === contractId)).to.equal(true); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete CRUD Contract Definition",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/contractdefinitions/{{crud_contract_definition_id}}",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "contractdefinitions",
+            "{{crud_contract_definition_id}}"
+          ]
+        },
+        "description": "Versión Postman autocontenida de `Delete CRUD Contract Definition`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"CRUD contract definition deletion completed\", function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 204]);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Verify CRUD Contract Definition Deleted",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/contractdefinitions/request",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "contractdefinitions",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 1,\n  \"filterExpression\": [\n    {\n      \"operandLeft\": \"id\",\n      \"operator\": \"=\",\n      \"operandRight\": \"{{crud_contract_definition_id}}\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `Verify CRUD Contract Definition Deleted`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let body;",
+              "try { body = pm.response.json(); } catch (e) { pm.test(\"Response body is valid JSON\", function () { pm.expect.fail(\"Response body is not valid JSON\"); }); return; }",
+              "pm.test(\"HTTP status is 200\", function () { pm.response.to.have.status(200); });",
+              "const contractId = pm.collectionVariables.get(\"crud_contract_definition_id\") || pm.environment.get(\"crud_contract_definition_id\");",
+              "pm.test(\"CRUD contract definition id is available\", function () { pm.expect(contractId).to.be.a(\"string\").and.not.empty; });",
+              "pm.test(\"CRUD contract definition no longer appears in lookup result\", function () { pm.expect(Array.isArray(body)).to.equal(true); pm.expect(body.some((contract) => contract && contract[\"@id\"] === contractId)).to.equal(false); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete CRUD Policy",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/policydefinitions/{{crud_policy_id}}",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "policydefinitions",
+            "{{crud_policy_id}}"
+          ]
+        },
+        "description": "Versión Postman autocontenida de `Delete CRUD Policy`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"CRUD policy deletion completed\", function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 204]);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Verify CRUD Policy Deleted",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/policydefinitions/request",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "policydefinitions",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 1,\n  \"filterExpression\": [\n    {\n      \"operandLeft\": \"id\",\n      \"operator\": \"=\",\n      \"operandRight\": \"{{crud_policy_id}}\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `Verify CRUD Policy Deleted`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let body;",
+              "try { body = pm.response.json(); } catch (e) { pm.test(\"Response body is valid JSON\", function () { pm.expect.fail(\"Response body is not valid JSON\"); }); return; }",
+              "pm.test(\"HTTP status is 200\", function () { pm.response.to.have.status(200); });",
+              "const policyId = pm.collectionVariables.get(\"crud_policy_id\") || pm.environment.get(\"crud_policy_id\");",
+              "pm.test(\"CRUD policy id is available\", function () { pm.expect(policyId).to.be.a(\"string\").and.not.empty; });",
+              "pm.test(\"CRUD policy no longer appears in lookup result\", function () { pm.expect(Array.isArray(body)).to.equal(true); pm.expect(body.some((policy) => policy && policy[\"@id\"] === policyId)).to.equal(false); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete CRUD Asset",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/assets/{{crud_asset_id}}",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "assets",
+            "{{crud_asset_id}}"
+          ]
+        },
+        "description": "Versión Postman autocontenida de `Delete CRUD Asset`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"CRUD asset deletion completed\", function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 204]);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Verify CRUD Asset Deleted",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://{{provider}}.{{dsDomain}}/management/v3/assets/request",
+          "host": [
+            "{{provider}}",
+            "{{dsDomain}}"
+          ],
+          "path": [
+            "management",
+            "v3",
+            "assets",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Versión Postman autocontenida de `Verify CRUD Asset Deleted`."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let body;",
+              "try { body = pm.response.json(); } catch (e) { pm.test(\"Response body is valid JSON\", function () { pm.expect.fail(\"Response body is not valid JSON\"); }); return; }",
+              "pm.test(\"HTTP status is 200\", function () { pm.response.to.have.status(200); });",
+              "const assetId = pm.collectionVariables.get(\"crud_asset_id\") || pm.environment.get(\"crud_asset_id\");",
+              "pm.test(\"CRUD asset id is available\", function () { pm.expect(assetId).to.be.a(\"string\").and.not.empty; });",
+              "pm.test(\"CRUD asset no longer appears in lookup result\", function () { pm.expect(Array.isArray(body)).to.equal(true); pm.expect(body.some((asset) => asset && asset[\"@id\"] === assetId)).to.equal(false); });"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

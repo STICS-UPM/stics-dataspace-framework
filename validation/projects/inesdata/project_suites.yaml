@@ -1,0 +1,15 @@
+project: inesdata
+description: Suites extendidas opt-in para INESData externo.
+suites:
+  linguistic:
+    default_profile: read-only
+    test_cases: linguistic/test_cases.yaml
+    specs_dir: linguistic/specs
+    fixtures_dir: linguistic/fixtures
+    status: scaffold
+  mobility:
+    default_profile: read-only
+    test_cases: mobility/test_cases.yaml
+    specs_dir: mobility/specs
+    fixtures_dir: mobility/fixtures
+    status: scaffold

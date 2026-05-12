@@ -1,0 +1,10 @@
+*
+.*
+!docker/
+docker/*
+!docker/docker-entrypoint.sh
+!build/
+build/*
+!build/libs/
+build/libs/*
+!build/libs/*.jar

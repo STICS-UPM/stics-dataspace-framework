@@ -1,0 +1,942 @@
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import time
+
+import requests
+
+
+class NewmanExecutor:
+    """Runs Postman collections through Newman.
+
+    Encapsulates Newman command execution, environment variable injection,
+    and dynamic test script loading for validation collections.
+    """
+
+    CONTRACT_AGREEMENT_TIMEOUT_SECONDS = 60
+    CONTRACT_AGREEMENT_POLL_INTERVAL_SECONDS = 3
+    ASYNC_COLLECTION_DELAY_REQUEST_MS = 2000
+    TRANSIENT_AUTH_ATTEMPTS = 3
+    TRANSIENT_AUTH_RETRY_DELAY_SECONDS = 5
+    MANAGEMENT_PREFLIGHT_ATTEMPTS = 3
+    MANAGEMENT_PREFLIGHT_RETRY_DELAY_SECONDS = 2
+    AUTH_LOGIN_REQUESTS = {"Provider Login", "Consumer Login"}
+    AUTH_HEALTH_REQUESTS = {"Provider Management API Health", "Consumer Management API Health"}
+    TRANSIENT_AUTH_STATUS_CODES = {502, 503, 504}
+    TRANSIENT_AUTH_ERROR_HINTS = (
+        "ECONNRESET",
+        "ECONNREFUSED",
+        "ETIMEDOUT",
+        "ESOCKETTIMEDOUT",
+        "socket hang up",
+    )
+
+    def ensure_available(self):
+        newman_cmd = self.resolve_newman_command()
+        if newman_cmd is not None:
+            return newman_cmd
+
+        package_json = "package.json"
+        if os.path.exists(package_json):
+            print("[INFO] Newman not found. Installing local Node.js tooling with npm...")
+            result = subprocess.run(
+                ["npm", "install"],
+                check=False,
+                capture_output=False,
+                text=True,
+            )
+            if result.returncode == 0:
+                newman_cmd = self.resolve_newman_command()
+                if newman_cmd is not None:
+                    return newman_cmd
+
+        return None
+
+    def resolve_newman_command(self):
+        local_newman = os.path.join("node_modules", ".bin", "newman")
+        if os.path.exists(local_newman):
+            return [local_newman]
+
+        global_newman = shutil.which("newman")
+        if global_newman:
+            return [global_newman]
+
+        return None
+
+    def is_available(self):
+        return self.ensure_available() is not None
+
+    def _load_file(self, path):
+        """Read a file and return its content as string."""
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def load_test_scripts(self, collection_name):
+        scripts = []
+
+        scripts.append(self._load_file("validation/shared/api/common_tests.js"))
+
+        if "environment_health" in collection_name:
+            scripts.append(self._load_file("validation/core/tests/health_tests.js"))
+
+        if "management" in collection_name:
+            scripts.append(self._load_file("validation/core/tests/management_tests.js"))
+
+        if "provider" in collection_name:
+            scripts.append(self._load_file("validation/core/tests/provider_tests.js"))
+
+        if "catalog" in collection_name:
+            scripts.append(self._load_file("validation/core/tests/catalog_tests.js"))
+
+        if "negotiation" in collection_name:
+            scripts.append(self._load_file("validation/core/tests/negotiation_tests.js"))
+
+        if "transfer" in collection_name:
+            scripts.append(self._load_file("validation/core/tests/transfer_tests.js"))
+
+        return "\n".join(scripts)
+
+    def _write_environment_file(self, env_vars, environment_path):
+        payload = {
+            "id": "validation-environment",
+            "name": "Validation Environment",
+            "values": [
+                {
+                    "key": key,
+                    "value": value,
+                    "type": "text",
+                    "enabled": True,
+                }
+                for key, value in env_vars.items()
+            ],
+            "_postman_variable_scope": "environment",
+        }
+        with open(environment_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+
+    def _read_environment_payload(self, environment_path):
+        with open(environment_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _read_environment_values(self, environment_path):
+        payload = self._read_environment_payload(environment_path)
+        values = {}
+        for entry in payload.get("values", []):
+            key = entry.get("key")
+            if key:
+                values[key] = entry.get("value")
+        return payload, values
+
+    def _write_environment_values(self, environment_path, updates):
+        payload = self._read_environment_payload(environment_path)
+        entries = payload.setdefault("values", [])
+        indexed_entries = {
+            entry.get("key"): entry
+            for entry in entries
+            if entry.get("key")
+        }
+
+        for key, value in updates.items():
+            if key in indexed_entries:
+                indexed_entries[key]["value"] = value
+                indexed_entries[key]["enabled"] = True
+                indexed_entries[key]["type"] = indexed_entries[key].get("type") or "text"
+                continue
+
+            entries.append({
+                "key": key,
+                "value": value,
+                "type": "text",
+                "enabled": True,
+            })
+
+        with open(environment_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+
+    @staticmethod
+    def _is_missing_or_unresolved(value):
+        text = str(value or "").strip()
+        return not text or "{{" in text or "}}" in text
+
+    def _require_environment_values(self, environment_path, required_keys, context):
+        _, env_vars = self._read_environment_values(environment_path)
+        missing = [
+            key
+            for key in required_keys
+            if self._is_missing_or_unresolved(env_vars.get(key))
+        ]
+        if missing:
+            raise RuntimeError(
+                f"Cannot continue to {context} because required Newman variables are missing "
+                f"or unresolved: {', '.join(missing)}"
+            )
+        return env_vars
+
+    @staticmethod
+    def _positive_int_from_env(name, default):
+        value = os.getenv(name)
+        if value in (None, ""):
+            return default
+        try:
+            return max(1, int(value))
+        except ValueError:
+            print(f"[WARNING] Ignoring invalid {name}={value!r}; using {default}")
+            return default
+
+    @staticmethod
+    def _positive_float_from_env(name, default):
+        value = os.getenv(name)
+        if value in (None, ""):
+            return default
+        try:
+            return max(0.0, float(value))
+        except ValueError:
+            print(f"[WARNING] Ignoring invalid {name}={value!r}; using {default}")
+            return default
+
+    @staticmethod
+    def _response_header(response, header_name):
+        expected = header_name.lower()
+        for header in response.get("header", []) or []:
+            key = str(header.get("key") or "").lower()
+            if key == expected:
+                return header.get("value")
+        return None
+
+    @staticmethod
+    def _response_body_text(response):
+        stream = response.get("stream")
+        if isinstance(stream, dict) and stream.get("type") == "Buffer":
+            try:
+                return bytes(stream.get("data") or []).decode("utf-8", errors="replace")
+            except (TypeError, ValueError):
+                return ""
+        if isinstance(stream, str):
+            return stream
+        body = response.get("body")
+        return body if isinstance(body, str) else ""
+
+    def _newman_auth_execution(self, report, request_name):
+        for execution in report.get("run", {}).get("executions", []) or []:
+            item_name = (execution.get("item") or {}).get("name")
+            if item_name == request_name:
+                return execution
+        return None
+
+    def _newman_auth_failure_detail(self, report_path):
+        """Return a retry reason when Newman hit a transient auth endpoint failure."""
+        if not report_path or not os.path.exists(report_path):
+            return None
+
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                report = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        failures = report.get("run", {}).get("failures", []) or []
+        for failure in failures:
+            request_name = (failure.get("source") or {}).get("name")
+            if request_name not in self.AUTH_LOGIN_REQUESTS and request_name not in self.AUTH_HEALTH_REQUESTS:
+                continue
+
+            error = failure.get("error") or {}
+            error_text = " ".join(
+                str(error.get(key) or "")
+                for key in ("name", "test", "message")
+            )
+            execution = self._newman_auth_execution(report, request_name)
+            response = (execution or {}).get("response") or {}
+            status_code = response.get("code")
+            status_text = response.get("status") or ""
+            content_type = self._response_header(response, "Content-Type") or "unknown content type"
+
+            if status_code in self.TRANSIENT_AUTH_STATUS_CODES:
+                return (
+                    f"{request_name} returned HTTP {status_code} {status_text} "
+                    f"({content_type})"
+                )
+
+            body_text = self._response_body_text(response)
+            if (
+                request_name in self.AUTH_HEALTH_REQUESTS
+                and status_code == 401
+                and "AuthenticationFailed" in body_text
+            ):
+                return (
+                    f"{request_name} returned transient HTTP 401 AuthenticationFailed "
+                    f"({content_type})"
+                )
+
+            if any(hint in error_text for hint in self.TRANSIENT_AUTH_ERROR_HINTS):
+                return f"{request_name} failed with transient network error: {error_text.strip()}"
+
+        return None
+
+    def _should_wait_for_contract_agreement(self, environment_path):
+        _, env_vars = self._read_environment_values(environment_path)
+        return bool(env_vars.get("e2e_negotiation_id") and not env_vars.get("e2e_agreement_id"))
+
+    @staticmethod
+    def _management_url(connector, ds_domain, path):
+        normalized_path = f"/{str(path or '').lstrip('/')}"
+        return f"http://{connector}.{ds_domain}{normalized_path}"
+
+    @staticmethod
+    def _response_preview(response, limit=300):
+        try:
+            text = str(getattr(response, "text", "") or "").strip()
+        except Exception:
+            text = ""
+        text = " ".join(text.split())
+        return text[:limit]
+
+    def _request_with_transient_retry(self, send_request, label, attempts, retry_delay):
+        for attempt in range(1, attempts + 1):
+            try:
+                response = send_request()
+            except requests.RequestException as exc:
+                if attempt >= attempts:
+                    raise RuntimeError(f"{label} request failed: {exc}") from exc
+                print(
+                    f"[INFO] {label} request failed with a transient network error: {exc}. "
+                    f"Retrying in {retry_delay:g}s ({attempt + 1}/{attempts})"
+                )
+                time.sleep(retry_delay)
+                continue
+
+            if response.status_code in self.TRANSIENT_AUTH_STATUS_CODES and attempt < attempts:
+                print(
+                    f"[INFO] {label} returned transient HTTP {response.status_code}. "
+                    f"Retrying in {retry_delay:g}s ({attempt + 1}/{attempts})"
+                )
+                time.sleep(retry_delay)
+                continue
+
+            return response
+
+        raise RuntimeError(f"{label} request failed unexpectedly")
+
+    def _connector_login(self, env_vars, role, attempts, retry_delay):
+        keycloak_url = str(env_vars.get("keycloakUrl") or "").strip().rstrip("/")
+        dataspace = str(env_vars.get("dataspace") or "").strip()
+        client_id = str(env_vars.get("keycloakClientId") or "dataspace-users").strip()
+        username = str(env_vars.get(f"{role}_user") or "").strip()
+        password = str(env_vars.get(f"{role}_password") or "").strip()
+        missing = [
+            name
+            for name, value in (
+                ("keycloakUrl", keycloak_url),
+                ("dataspace", dataspace),
+                (f"{role}_user", username),
+                (f"{role}_password", password),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(f"{role} login missing environment values: {', '.join(missing)}")
+
+        login_url = f"{keycloak_url}/realms/{dataspace}/protocol/openid-connect/token"
+        payload = {
+            "grant_type": "password",
+            "client_id": client_id,
+            "username": username,
+            "password": password,
+            "scope": "openid profile email",
+        }
+        response = self._request_with_transient_retry(
+            lambda: requests.post(
+                login_url,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                data=payload,
+                timeout=15,
+            ),
+            f"{role} login",
+            attempts,
+            retry_delay,
+        )
+        if response.status_code != 200:
+            preview = self._response_preview(response)
+            raise RuntimeError(
+                f"{role} login returned HTTP {response.status_code}"
+                + (f": {preview}" if preview else "")
+            )
+
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"{role} login returned a non-JSON body") from exc
+
+        token = body.get("access_token")
+        if not token:
+            raise RuntimeError(f"{role} login did not return access_token")
+        return login_url, token
+
+    def _post_management_json(self, url, token, payload, label, attempts, retry_delay):
+        response = self._request_with_transient_retry(
+            lambda: requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=15,
+            ),
+            label,
+            attempts,
+            retry_delay,
+        )
+        if response.status_code != 200:
+            preview = self._response_preview(response)
+            raise RuntimeError(
+                f"{label} returned HTTP {response.status_code}"
+                + (f": {preview}" if preview else "")
+            )
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"{label} returned a non-JSON body") from exc
+        return response, body
+
+    @staticmethod
+    def _preflight_body_summary(body):
+        if isinstance(body, list):
+            return f"items={len(body)}"
+        if isinstance(body, dict):
+            datasets = body.get("dcat:dataset")
+            if isinstance(datasets, list):
+                return f"datasets={len(datasets)}"
+            if datasets:
+                return "datasets=1"
+            return f"keys={len(body)}"
+        return type(body).__name__
+
+    def run_management_api_preflight(self, env_vars, report_dir=None):
+        attempts = self._positive_int_from_env(
+            "PIONERA_NEWMAN_PREFLIGHT_ATTEMPTS",
+            self.MANAGEMENT_PREFLIGHT_ATTEMPTS,
+        )
+        retry_delay = self._positive_float_from_env(
+            "PIONERA_NEWMAN_PREFLIGHT_RETRY_DELAY_SECONDS",
+            self.MANAGEMENT_PREFLIGHT_RETRY_DELAY_SECONDS,
+        )
+        provider = str(env_vars.get("provider") or "").strip()
+        consumer = str(env_vars.get("consumer") or "").strip()
+        ds_domain = str(env_vars.get("dsDomain") or "").strip()
+        provider_protocol = str(env_vars.get("providerProtocolAddress") or "").strip()
+        provider_participant_id = str(env_vars.get("providerParticipantId") or provider).strip()
+        diagnostics = {
+            "provider": provider,
+            "consumer": consumer,
+            "dsDomain": ds_domain,
+            "checks": [],
+        }
+        failures = []
+        report_path = None
+
+        def record_check(name, endpoint, ok, detail, status_code=None):
+            diagnostics["checks"].append(
+                {
+                    "name": name,
+                    "endpoint": endpoint,
+                    "ok": bool(ok),
+                    "status_code": status_code,
+                    "detail": str(detail or ""),
+                }
+            )
+            if not ok:
+                failures.append(f"{name}: {detail}")
+
+        provider_token = None
+        consumer_token = None
+
+        try:
+            provider_login_url, provider_token = self._connector_login(
+                env_vars,
+                "provider",
+                attempts,
+                retry_delay,
+            )
+            record_check("provider-login", provider_login_url, True, "access_token acquired", 200)
+        except RuntimeError as exc:
+            provider_login_url = str(env_vars.get("keycloakUrl") or "").strip()
+            record_check("provider-login", provider_login_url, False, str(exc))
+
+        try:
+            consumer_login_url, consumer_token = self._connector_login(
+                env_vars,
+                "consumer",
+                attempts,
+                retry_delay,
+            )
+            record_check("consumer-login", consumer_login_url, True, "access_token acquired", 200)
+        except RuntimeError as exc:
+            consumer_login_url = str(env_vars.get("keycloakUrl") or "").strip()
+            record_check("consumer-login", consumer_login_url, False, str(exc))
+
+        if provider_token and provider and ds_domain:
+            url = self._management_url(provider, ds_domain, "/management/v3/assets/request")
+            try:
+                response, body = self._post_management_json(
+                    url,
+                    provider_token,
+                    {
+                        "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
+                        "offset": 0,
+                        "limit": 1,
+                        "filterExpression": [],
+                    },
+                    "provider assets preflight",
+                    attempts,
+                    retry_delay,
+                )
+                record_check(
+                    "provider-assets-request",
+                    url,
+                    True,
+                    self._preflight_body_summary(body),
+                    response.status_code,
+                )
+            except RuntimeError as exc:
+                record_check("provider-assets-request", url, False, str(exc))
+
+        if consumer_token and consumer and ds_domain:
+            url = self._management_url(consumer, ds_domain, "/management/v3/contractnegotiations/request")
+            try:
+                response, body = self._post_management_json(
+                    url,
+                    consumer_token,
+                    {
+                        "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
+                        "offset": 0,
+                        "limit": 1,
+                    },
+                    "consumer negotiation preflight",
+                    attempts,
+                    retry_delay,
+                )
+                record_check(
+                    "consumer-contractnegotiations-request",
+                    url,
+                    True,
+                    self._preflight_body_summary(body),
+                    response.status_code,
+                )
+            except RuntimeError as exc:
+                record_check("consumer-contractnegotiations-request", url, False, str(exc))
+
+        if consumer_token and consumer and ds_domain and provider_protocol and provider_participant_id:
+            url = self._management_url(consumer, ds_domain, "/management/v3/catalog/request")
+            try:
+                response, body = self._post_management_json(
+                    url,
+                    consumer_token,
+                    {
+                        "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
+                        "@type": "CatalogRequest",
+                        "counterPartyAddress": provider_protocol,
+                        "counterPartyId": provider_participant_id,
+                        "protocol": "dataspace-protocol-http",
+                        "querySpec": {
+                            "offset": 0,
+                            "limit": 1,
+                            "filterExpression": [],
+                        },
+                    },
+                    "consumer catalog preflight",
+                    attempts,
+                    retry_delay,
+                )
+                record_check(
+                    "consumer-catalog-request",
+                    url,
+                    True,
+                    self._preflight_body_summary(body),
+                    response.status_code,
+                )
+            except RuntimeError as exc:
+                record_check("consumer-catalog-request", url, False, str(exc))
+
+        if report_dir:
+            os.makedirs(report_dir, exist_ok=True)
+            report_path = os.path.join(report_dir, "00_management_api_preflight.json")
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(diagnostics, f, indent=2)
+
+        if failures:
+            message = (
+                f"Newman management preflight failed for provider={provider}, consumer={consumer}: "
+                + "; ".join(failures)
+            )
+            if report_path:
+                message += f". See {report_path}"
+            raise RuntimeError(message)
+
+        return diagnostics
+
+    @staticmethod
+    def _find_negotiation(body, negotiation_id):
+        if isinstance(body, list):
+            for item in body:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("@id") == negotiation_id or item.get("id") == negotiation_id:
+                    return item
+            return None if negotiation_id else (body[0] if body else None)
+
+        if isinstance(body, dict):
+            if not negotiation_id:
+                return body
+            if body.get("@id") == negotiation_id or body.get("id") == negotiation_id:
+                return body
+
+        return None
+
+    @staticmethod
+    def _negotiation_summary(negotiation):
+        if not isinstance(negotiation, dict):
+            return ""
+
+        fields = []
+        for key in ("@id", "id", "type", "state", "counterPartyId", "contractAgreementId", "errorDetail"):
+            value = negotiation.get(key)
+            if value not in (None, ""):
+                fields.append(f"{key}={value}")
+        return ", ".join(fields)
+
+    def _provider_negotiation_diagnostic(self, env_vars):
+        provider = env_vars.get("provider")
+        consumer = env_vars.get("consumer")
+        ds_domain = env_vars.get("dsDomain")
+        provider_jwt = env_vars.get("provider_jwt")
+        missing = [
+            key for key, value in (
+                ("provider", provider),
+                ("consumer", consumer),
+                ("dsDomain", ds_domain),
+                ("provider_jwt", provider_jwt),
+            )
+            if not value
+        ]
+        if missing:
+            return "provider diagnostics unavailable; missing " + ", ".join(missing)
+
+        url = f"http://{provider}.{ds_domain}/management/v3/contractnegotiations/request"
+        payload = {
+            "@context": {
+                "@vocab": "https://w3id.org/edc/v0.0.1/ns/"
+            },
+            "offset": 0,
+            "limit": 100,
+        }
+        try:
+            response = requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {provider_jwt}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            return f"provider diagnostics request failed: {exc}"
+
+        if response.status_code != 200:
+            return f"provider diagnostics returned HTTP {response.status_code}"
+
+        try:
+            body = response.json()
+        except ValueError:
+            return "provider diagnostics response body is not valid JSON"
+
+        if not isinstance(body, list):
+            return "provider diagnostics response body is not a negotiation list"
+
+        candidates = [
+            item for item in body
+            if isinstance(item, dict) and item.get("counterPartyId") == consumer
+        ]
+        if not candidates:
+            return f"provider diagnostics found no negotiation with counterPartyId={consumer}"
+
+        candidates.sort(key=lambda item: item.get("createdAt") or 0, reverse=True)
+        terminated = [
+            item for item in candidates
+            if item.get("state") == "TERMINATED"
+        ]
+        selected = terminated[0] if terminated else candidates[0]
+        summary = self._negotiation_summary(selected)
+        return summary or "provider diagnostics found a negotiation but could not summarize it"
+
+    def wait_for_contract_agreement(self, environment_path, timeout=None, poll_interval=None):
+        timeout = (
+            self.CONTRACT_AGREEMENT_TIMEOUT_SECONDS
+            if timeout is None
+            else timeout
+        )
+        poll_interval = (
+            self.CONTRACT_AGREEMENT_POLL_INTERVAL_SECONDS
+            if poll_interval is None
+            else poll_interval
+        )
+
+        _, env_vars = self._read_environment_values(environment_path)
+        agreement_id = env_vars.get("e2e_agreement_id")
+        if agreement_id:
+            return agreement_id
+
+        negotiation_id = env_vars.get("e2e_negotiation_id")
+        consumer = env_vars.get("consumer")
+        ds_domain = env_vars.get("dsDomain")
+        consumer_jwt = env_vars.get("consumer_jwt")
+        missing = [
+            key for key, value in (
+                ("e2e_negotiation_id", negotiation_id),
+                ("consumer", consumer),
+                ("dsDomain", ds_domain),
+                ("consumer_jwt", consumer_jwt),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                "Cannot wait for contractAgreementId because these environment variables are missing: "
+                + ", ".join(missing)
+            )
+
+        url = f"http://{consumer}.{ds_domain}/management/v3/contractnegotiations/request"
+        payload = {
+            "@context": {
+                "@vocab": "https://w3id.org/edc/v0.0.1/ns/"
+            },
+            "offset": 0,
+            "limit": 10,
+        }
+        deadline = time.time() + float(timeout)
+        last_state = None
+        last_issue = None
+
+        while time.time() <= deadline:
+            try:
+                response = requests.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {consumer_jwt}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=10,
+                )
+            except requests.RequestException as exc:
+                last_issue = str(exc)
+            else:
+                if response.status_code != 200:
+                    last_issue = f"HTTP {response.status_code}"
+                else:
+                    try:
+                        body = response.json()
+                    except ValueError:
+                        last_issue = "response body is not valid JSON"
+                    else:
+                        negotiation = self._find_negotiation(body, negotiation_id)
+                        if negotiation is None:
+                            last_issue = f"negotiation {negotiation_id} not found"
+                        else:
+                            last_state = negotiation.get("state")
+                            agreement_id = negotiation.get("contractAgreementId")
+                            if agreement_id:
+                                self._write_environment_values(
+                                    environment_path,
+                                    {"e2e_agreement_id": agreement_id},
+                                )
+                                print(
+                                    "[INFO] contractAgreementId obtained before transfer: "
+                                    f"{agreement_id}"
+                                )
+                                return agreement_id
+                            last_issue = negotiation.get("errorDetail") or f"state={last_state or 'unknown'}"
+                            if last_state == "TERMINATED":
+                                provider_detail = self._provider_negotiation_diagnostic(env_vars)
+                                if provider_detail:
+                                    last_issue = f"{last_issue}; provider_side=({provider_detail})"
+                                raise RuntimeError(
+                                    "Negotiation reached TERMINATED before contractAgreementId. "
+                                    f"Negotiation={negotiation_id}, detail={last_issue}"
+                                )
+
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+
+            wait_detail = last_issue or f"state={last_state or 'unknown'}"
+            print(
+                "[INFO] Waiting for contractAgreementId from negotiation "
+                f"{negotiation_id} ({wait_detail})"
+            )
+            time.sleep(min(float(poll_interval), remaining))
+
+        raise RuntimeError(
+            "Timed out waiting for contractAgreementId before 06_consumer_transfer.json. "
+            f"Negotiation={negotiation_id}, last_state={last_state or 'unknown'}, "
+            f"detail={last_issue or 'no detail'}"
+        )
+
+    def run_newman(self, collection_path, env_vars, report_path=None, environment_path=None):
+        """
+        Execute a Postman collection using Newman with dynamic environment variables,
+        injected test scripts, and optional JSON report export.
+        """
+        print(f"\nExecuting: newman run {collection_path}")
+
+        test_script = self.load_test_scripts(collection_path)
+        newman_cmd = self.ensure_available()
+        if newman_cmd is None:
+            print("ERROR: Newman is not installed or not available locally")
+            print("Install with: npm install or npm install -g newman")
+            return None
+
+        cmd = newman_cmd + [
+            "run",
+            collection_path,
+            "--reporters",
+            "cli,json",
+        ]
+
+        collection_name = os.path.basename(collection_path)
+        if collection_name in {"05_consumer_negotiation.json", "06_consumer_transfer.json"}:
+            cmd.extend([
+                "--delay-request",
+                str(self.ASYNC_COLLECTION_DELAY_REQUEST_MS),
+            ])
+
+        if environment_path:
+            cmd.extend([
+                "--environment",
+                environment_path,
+                "--export-environment",
+                environment_path,
+            ])
+        else:
+            for key, value in env_vars.items():
+                cmd.extend([
+                    "--env-var",
+                    f"{key}={value}"
+                ])
+
+        cmd.extend([
+            "--env-var",
+            f"test_script={test_script}"
+        ])
+
+        if report_path:
+            os.makedirs(os.path.dirname(report_path), exist_ok=True)
+            cmd.extend([
+                "--reporter-json-export",
+                report_path,
+            ])
+
+        max_attempts = (
+            self._positive_int_from_env(
+                "PIONERA_NEWMAN_TRANSIENT_AUTH_ATTEMPTS",
+                self.TRANSIENT_AUTH_ATTEMPTS,
+            )
+            if report_path
+            else 1
+        )
+        retry_delay = self._positive_float_from_env(
+            "PIONERA_NEWMAN_TRANSIENT_AUTH_RETRY_DELAY_SECONDS",
+            self.TRANSIENT_AUTH_RETRY_DELAY_SECONDS,
+        )
+
+        for attempt in range(1, max_attempts + 1):
+            if report_path and os.path.exists(report_path):
+                os.remove(report_path)
+
+            try:
+                result = subprocess.run(
+                    cmd,
+                    check=False,
+                    capture_output=False,
+                    text=True
+                )
+            except FileNotFoundError:
+                print("ERROR: Newman is not installed or not available locally")
+                print("Install with: npm install or npm install -g newman")
+                return None
+
+            if result.returncode == 0:
+                return report_path
+
+            transient_auth_detail = self._newman_auth_failure_detail(report_path)
+            if transient_auth_detail and attempt < max_attempts:
+                print(
+                    "[INFO] Newman auth endpoint was temporarily unavailable: "
+                    f"{transient_auth_detail}. Retrying "
+                    f"{os.path.basename(collection_path)} in {retry_delay:g}s "
+                    f"({attempt + 1}/{max_attempts})"
+                )
+                time.sleep(retry_delay)
+                continue
+
+            print(f"[WARNING] Newman returned exit code {result.returncode}")
+            return report_path
+
+        return report_path
+
+    def run_validation_collections(self, env_vars, report_dir=None):
+        """Run all validation collections in sequence and optionally export JSON reports."""
+        base = os.path.join("validation", "core", "collections")
+
+        collections = [
+            "01_environment_health.json",
+            "02_connector_management_api.json",
+            "03_provider_setup.json",
+            "04_consumer_catalog.json",
+            "05_consumer_negotiation.json",
+            "06_consumer_transfer.json"
+        ]
+
+        total = len(collections)
+        exported_reports = []
+
+        with tempfile.TemporaryDirectory(prefix="validation-newman-env-") as tmpdir:
+            environment_path = os.path.join(tmpdir, "environment.json")
+            self._write_environment_file(env_vars, environment_path)
+
+            for i, c in enumerate(collections, 1):
+                collection_path = os.path.join(base, c)
+                print(f"[{i}/{total}] Running collection: {c}")
+
+                report_path = None
+                if report_dir:
+                    report_name = f"{os.path.splitext(c)[0]}.json"
+                    report_path = os.path.join(report_dir, report_name)
+
+                exported_report = self.run_newman(
+                    collection_path,
+                    env_vars,
+                    report_path=report_path,
+                    environment_path=environment_path,
+                )
+                if exported_report:
+                    exported_reports.append(exported_report)
+
+                if c == "04_consumer_catalog.json":
+                    self._require_environment_values(
+                        environment_path,
+                        ("e2e_offer_policy_id", "e2e_catalog_asset_id"),
+                        "contract negotiation",
+                    )
+
+                if c == "05_consumer_negotiation.json" and self._should_wait_for_contract_agreement(environment_path):
+                    self.wait_for_contract_agreement(environment_path)
+
+        return exported_reports
+
+    def describe(self) -> str:
+        return "NewmanExecutor runs Postman collections using Newman."
+

@@ -1,0 +1,29 @@
+{
+  "kind": "collectionType",
+  "collectionName": "generic_pages",
+  "info": {
+    "singularName": "generic-page",
+    "pluralName": "generic-pages",
+    "displayName": "Generic Page",
+    "description": ""
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "Title": {
+      "type": "string"
+    },
+    "Content": {
+      "type": "customField",
+      "options": {
+        "output": "HTML",
+        "preset": "rich",
+        "maxLengthCharacters": null
+      },
+      "required": true,
+      "customField": "plugin::ckeditor.CKEditor"
+    }
+  }
+}

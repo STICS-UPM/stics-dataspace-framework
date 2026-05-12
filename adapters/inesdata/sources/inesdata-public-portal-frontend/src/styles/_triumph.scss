@@ -1,0 +1,126 @@
+// CURSORS
+
+.cursor-pointer {
+  cursor: pointer;
+}
+.cursor-none {
+  cursor: none;
+}
+
+//TEXT DECORATION
+.text {
+  &-underline {
+    text-decoration: underline;
+  }
+  &-capitalize {
+    text-transform: capitalize;
+  }
+  &-uppercase {
+    text-transform: uppercase;
+  }
+  &-bold {
+    font-weight: 600;
+  }
+  &-strong {
+    font-weight: 500;
+  }
+  &-italic {
+    font-style: italic;
+  }
+}
+
+// POSITIONS AND DDISPLAYS
+
+.relative {
+  position: relative;
+}
+.absolute {
+  position: absolute;
+}
+
+.inline-block {
+  display: inline-block;
+}
+
+.block {
+  display: block;
+}
+
+// AlIGNS
+
+.align {
+  &-right {
+    text-align: right;
+  }
+  &-left {
+    text-align: left;
+  }
+  &-center {
+    text-align: center;
+  }
+}
+
+// FLEXBOX
+
+.flex {
+  display: flex;
+  &-center {
+    align-items: center;
+  }
+  &-stretch {
+    align-items: stretch;
+  }
+  &-end {
+    align-items: flex-end;
+  }
+  &-baseline {
+    align-items: baseline;
+  }
+  &-start {
+    align-items: flex-start;
+  }
+  &-flow {
+    flex-flow: row wrap;
+  }
+  &-root {
+    display: flow-root;
+  }
+  &-wrap {
+    flex-wrap: wrap;
+  }
+  &-nowrap {
+    flex-wrap: nowrap;
+  }
+  &-column {
+    flex-direction: column;
+  }
+  &-column-reverse {
+    flex-direction: column-reverse;
+  }
+  &-row {
+    flex-direction: row;
+  }
+  &-row-reverse {
+    flex-direction: row-reverse;
+  }
+  &-justify {
+    &-right {
+      justify-content: flex-end;
+    }
+    &-start {
+      justify-content: flex-start;
+    }
+    &-space-evenly {
+      justify-content: space-evenly;
+    }
+    &-between {
+      justify-content: space-between;
+    }
+    &-around {
+      justify-content: space-around;
+    }
+    &-center {
+      justify-content: center;
+    }
+  }
+}

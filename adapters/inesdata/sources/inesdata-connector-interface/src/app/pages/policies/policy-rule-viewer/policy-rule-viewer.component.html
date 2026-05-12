@@ -1,0 +1,12 @@
+<h2 mat-dialog-title>{{data.title}}</h2>
+<mat-dialog-content>
+  <div class="rule-json-panel">
+    <pre><p>{{data.rules | json}}</p></pre>
+  </div>
+</mat-dialog-content>
+<mat-dialog-actions>
+  <button color="accent" mat-dialog-close mat-stroked-button>
+    <mat-icon>cancel</mat-icon>
+    close
+  </button>
+</mat-dialog-actions>

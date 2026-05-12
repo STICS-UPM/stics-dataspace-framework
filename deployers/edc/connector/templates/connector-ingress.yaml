@@ -1,0 +1,90 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.connector.name }}-ingress
+  labels:
+    validation-environment-adapter: edc
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: {{ default "800m" .Values.connector.ingress.proxyBodySize | quote }}
+    nginx.org/client-max-body-size: {{ default "800m" .Values.connector.ingress.proxyBodySize | quote }}
+spec:
+  rules:
+    - host: {{ .Values.connector.ingress.hostname }}
+      http:
+        paths:
+          - pathType: Prefix
+            path: /api
+            backend:
+              service:
+                name: {{ .Values.connector.name }}
+                port:
+                  number: 19191
+          - pathType: Prefix
+            path: /control
+            backend:
+              service:
+                name: {{ .Values.connector.name }}
+                port:
+                  number: 19192
+          - pathType: Prefix
+            path: /management
+            backend:
+              service:
+                name: {{ .Values.connector.name }}
+                port:
+                  number: 19193
+          - pathType: Prefix
+            path: /protocol
+            backend:
+              service:
+                name: {{ .Values.connector.name }}
+                port:
+                  number: 19194
+          - pathType: Prefix
+            path: /version
+            backend:
+              service:
+                name: {{ .Values.connector.name }}
+                port:
+                  number: 19195
+          - pathType: Prefix
+            path: /shared
+            backend:
+              service:
+                name: {{ .Values.connector.name }}
+                port:
+                  number: 19196
+          - pathType: Prefix
+            path: /public
+            backend:
+              service:
+                name: {{ .Values.connector.name }}
+                port:
+                  number: 19291
+{{- if .Values.dashboard.enabled }}
+{{- $dashboard := (index .Values "dashboard") | default dict }}
+{{- $dashboardProxy := (index $dashboard "proxy") | default dict }}
+{{- $dashboardProxyEnabled := (index $dashboardProxy "enabled") | default false }}
+{{- if $dashboardProxyEnabled }}
+          - pathType: Prefix
+            path: /edc-dashboard-api
+            backend:
+              service:
+                name: {{ .Values.connector.name }}-dashboard-proxy
+                port:
+                  number: {{ (index $dashboardProxy "port") | default 8080 }}
+{{- end }}
+          - pathType: Prefix
+            path: /edc-dashboard
+            backend:
+              service:
+                name: {{ .Values.connector.name }}-dashboard
+                port:
+                  number: 80
+{{- end }}
+{{- if eq .Values.connector.environment "pro" }}
+  tls:
+    - hosts:
+        - {{ .Values.connector.ingress.hostname }}
+      secretName: {{ .Values.connector.dataspace }}-{{ .Values.connector.name }}-tls-cert
+{{- end }}

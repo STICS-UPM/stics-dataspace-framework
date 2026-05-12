@@ -1,0 +1,249 @@
+<div class="ai-browser-page">
+  <div class="page-header">
+    <h1>AI Model Browser</h1>
+    <p>Browse machine learning assets from this connector and from other connectors with available contracts.</p>
+  </div>
+
+  <div class="search-row">
+    <mat-form-field appearance="outline" class="search-field">
+      <mat-label>Search by name, keyword, provider or framework</mat-label>
+      <input
+        matInput
+        [(ngModel)]="searchTerm"
+        (ngModelChange)="onSearchTermChange()"
+        placeholder="e.g. classification, pytorch, city council"
+      />
+      <button matSuffix mat-icon-button *ngIf="searchTerm" (click)="clearSearchTerm()" aria-label="Clear search">
+        <mat-icon>close</mat-icon>
+      </button>
+    </mat-form-field>
+  </div>
+
+  <div class="content-layout">
+    <aside class="filters-panel">
+      <div class="filters-header">
+        <h3>Filters</h3>
+        <button mat-stroked-button color="primary" *ngIf="hasActiveFilters()" (click)="clearFilters()">Clear</button>
+      </div>
+
+      <mat-expansion-panel *ngIf="availableSources.length > 0" [expanded]="expandedSections.source" class="filter-panel">
+        <mat-expansion-panel-header>
+          <mat-panel-title>Asset Source ({{ availableSources.length }})</mat-panel-title>
+        </mat-expansion-panel-header>
+        <div class="filter-options">
+          <mat-checkbox
+            *ngFor="let source of availableSources"
+            [checked]="isSelected(selectedSources, source)"
+            (change)="toggleFilter(selectedSources, source, $event.checked)">
+            {{ source }}
+          </mat-checkbox>
+        </div>
+      </mat-expansion-panel>
+
+      <mat-expansion-panel *ngIf="availableTasks.length > 0" [expanded]="expandedSections.tasks" class="filter-panel">
+        <mat-expansion-panel-header>
+          <mat-panel-title>Tasks ({{ availableTasks.length }})</mat-panel-title>
+        </mat-expansion-panel-header>
+        <div class="filter-options">
+          <mat-checkbox
+            *ngFor="let task of availableTasks"
+            [checked]="isSelected(selectedTasks, task)"
+            (change)="toggleFilter(selectedTasks, task, $event.checked)">
+            {{ task }}
+          </mat-checkbox>
+        </div>
+      </mat-expansion-panel>
+
+      <mat-expansion-panel *ngIf="availableSubtasks.length > 0" [expanded]="expandedSections.subtasks" class="filter-panel">
+        <mat-expansion-panel-header>
+          <mat-panel-title>Subtasks ({{ availableSubtasks.length }})</mat-panel-title>
+        </mat-expansion-panel-header>
+        <div class="filter-options">
+          <mat-checkbox
+            *ngFor="let subtask of availableSubtasks"
+            [checked]="isSelected(selectedSubtasks, subtask)"
+            (change)="toggleFilter(selectedSubtasks, subtask, $event.checked)">
+            {{ subtask }}
+          </mat-checkbox>
+        </div>
+      </mat-expansion-panel>
+
+      <mat-expansion-panel *ngIf="availableAlgorithms.length > 0" [expanded]="expandedSections.algorithms" class="filter-panel">
+        <mat-expansion-panel-header>
+          <mat-panel-title>Algorithms ({{ availableAlgorithms.length }})</mat-panel-title>
+        </mat-expansion-panel-header>
+        <div class="filter-options">
+          <mat-checkbox
+            *ngFor="let algorithm of availableAlgorithms"
+            [checked]="isSelected(selectedAlgorithms, algorithm)"
+            (change)="toggleFilter(selectedAlgorithms, algorithm, $event.checked)">
+            {{ algorithm }}
+          </mat-checkbox>
+        </div>
+      </mat-expansion-panel>
+
+      <mat-expansion-panel *ngIf="availableLibraries.length > 0" [expanded]="expandedSections.libraries" class="filter-panel">
+        <mat-expansion-panel-header>
+          <mat-panel-title>Libraries ({{ availableLibraries.length }})</mat-panel-title>
+        </mat-expansion-panel-header>
+        <div class="filter-options">
+          <mat-checkbox
+            *ngFor="let library of availableLibraries"
+            [checked]="isSelected(selectedLibraries, library)"
+            (change)="toggleFilter(selectedLibraries, library, $event.checked)">
+            {{ library }}
+          </mat-checkbox>
+        </div>
+      </mat-expansion-panel>
+
+      <mat-expansion-panel *ngIf="availableFrameworks.length > 0" [expanded]="expandedSections.frameworks" class="filter-panel">
+        <mat-expansion-panel-header>
+          <mat-panel-title>Frameworks ({{ availableFrameworks.length }})</mat-panel-title>
+        </mat-expansion-panel-header>
+        <div class="filter-options">
+          <mat-checkbox
+            *ngFor="let framework of availableFrameworks"
+            [checked]="isSelected(selectedFrameworks, framework)"
+            (change)="toggleFilter(selectedFrameworks, framework, $event.checked)">
+            {{ framework }}
+          </mat-checkbox>
+        </div>
+      </mat-expansion-panel>
+
+      <mat-expansion-panel *ngIf="availableStorageTypes.length > 0" [expanded]="expandedSections.storage" class="filter-panel">
+        <mat-expansion-panel-header>
+          <mat-panel-title>Storage Type ({{ availableStorageTypes.length }})</mat-panel-title>
+        </mat-expansion-panel-header>
+        <div class="filter-options">
+          <mat-checkbox
+            *ngFor="let storageType of availableStorageTypes"
+            [checked]="isSelected(selectedStorageTypes, storageType)"
+            (change)="toggleFilter(selectedStorageTypes, storageType, $event.checked)">
+            {{ storageType }}
+          </mat-checkbox>
+        </div>
+      </mat-expansion-panel>
+
+      <mat-expansion-panel *ngIf="availableSoftware.length > 0" [expanded]="expandedSections.software" class="filter-panel">
+        <mat-expansion-panel-header>
+          <mat-panel-title>Software ({{ availableSoftware.length }})</mat-panel-title>
+        </mat-expansion-panel-header>
+        <div class="filter-options">
+          <mat-checkbox
+            *ngFor="let software of availableSoftware"
+            [checked]="isSelected(selectedSoftware, software)"
+            (change)="toggleFilter(selectedSoftware, software, $event.checked)">
+            {{ software }}
+          </mat-checkbox>
+        </div>
+      </mat-expansion-panel>
+
+      <mat-expansion-panel *ngIf="availableFormats.length > 0" [expanded]="expandedSections.format" class="filter-panel">
+        <mat-expansion-panel-header>
+          <mat-panel-title>Format ({{ availableFormats.length }})</mat-panel-title>
+        </mat-expansion-panel-header>
+        <div class="filter-options">
+          <mat-checkbox
+            *ngFor="let format of availableFormats"
+            [checked]="isSelected(selectedFormats, format)"
+            (change)="toggleFilter(selectedFormats, format, $event.checked)">
+            {{ format }}
+          </mat-checkbox>
+        </div>
+      </mat-expansion-panel>
+    </aside>
+
+    <section class="models-panel">
+      <div class="results-line">
+        <span *ngIf="!loading">{{ filteredModels.length }} machine learning assets</span>
+      </div>
+
+      <div class="loading-block" *ngIf="loading">
+        <mat-spinner diameter="32"></mat-spinner>
+        <span>Loading machine learning assets...</span>
+      </div>
+
+      <div class="empty-block" *ngIf="!loading && filteredModels.length === 0">
+        No machine learning assets match the selected filters.
+      </div>
+
+      <div class="models-grid" *ngIf="!loading && filteredModels.length > 0">
+        <mat-card class="model-card" *ngFor="let model of filteredModels">
+          <div class="card-header">
+            <div class="title-block">
+              <div class="title-row">
+                <h2>{{ model.name || model.id }}</h2>
+                <span class="version-badge">{{ getVersionLabel(model) }}</span>
+              </div>
+              <p class="asset-id" [title]="model.id">{{ model.id }}</p>
+            </div>
+          </div>
+
+          <div class="badge-row compact">
+            <span class="source-badge" [class.external]="model.source === federatedSource">
+              {{ getSourceBadgeLabel(model) }}
+            </span>
+            <span class="contract-badge" [class.external]="model.source === federatedSource">
+              {{ getContractBadgeLabel(model) }}
+            </span>
+          </div>
+
+          <div class="provider-row" [title]="model.provider">
+            <mat-icon>apartment</mat-icon>
+            <span>{{ model.provider }}</span>
+          </div>
+
+          <p class="description">{{ model.shortDescription || model.description || 'No description available' }}</p>
+
+          <ng-container *ngIf="getCardMetadata(model) as metadata">
+            <div class="metadata-list" *ngIf="metadata.length > 0">
+              <div class="metadata-chip" *ngFor="let item of metadata">
+                <span class="metadata-chip-label">{{ item.label }}</span>
+                <span class="metadata-chip-value" [title]="item.value">{{ item.value }}</span>
+              </div>
+            </div>
+          </ng-container>
+
+          <div class="keywords-block" *ngIf="model.keywords.length > 0">
+            <span class="keywords-label">Keywords</span>
+            <div class="keyword-chips">
+              <span class="keyword-chip" *ngFor="let keyword of getDisplayKeywords(model)">{{ keyword }}</span>
+              <span class="keyword-chip extra" *ngIf="getHiddenKeywordsCount(model) > 0">+{{ getHiddenKeywordsCount(model) }}</span>
+            </div>
+          </div>
+
+          <div class="asset-facts">
+            <div class="asset-fact">
+              <span class="fact-label">Content</span>
+              <span class="fact-value" [title]="model.contentType">{{ model.contentType }}</span>
+            </div>
+            <div class="asset-fact">
+              <span class="fact-label">Format</span>
+              <span class="fact-value">{{ getFormatLabel(model) }}</span>
+            </div>
+            <div class="asset-fact">
+              <span class="fact-label">Storage</span>
+              <span class="fact-value">{{ getStorageTypeLabel(model) }}</span>
+            </div>
+          </div>
+
+          <div class="file-row" *ngIf="getFileNameLabel(model) !== 'Unknown'">
+            <span class="file-label">File</span>
+            <span class="file-value" [title]="getFileNameLabel(model)">{{ getFileNameLabel(model) }}</span>
+          </div>
+
+          <div class="card-actions">
+            <button mat-stroked-button class="details-action" (click)="viewDetails(model)">
+              <mat-icon>visibility</mat-icon>
+              <span>View details</span>
+            </button>
+            <button mat-flat-button class="primary-action" (click)="goToPrimaryAction(model)">
+              <mat-icon>{{ getPrimaryActionIcon(model) }}</mat-icon>
+              <span>{{ getPrimaryActionLabel(model) }}</span>
+            </button>
+          </div>
+        </mat-card>
+      </div>
+    </section>
+  </div>
+</div>

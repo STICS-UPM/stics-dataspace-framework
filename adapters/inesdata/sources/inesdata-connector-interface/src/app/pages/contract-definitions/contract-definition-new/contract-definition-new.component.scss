@@ -1,0 +1,26 @@
+.form-field {
+    width: 300px;
+}
+
+#form-field-id,
+#form-field-contract-assets {
+    width: 100%;
+}
+
+.form-field-policy {
+    box-sizing: border-box;
+    margin-right: 0;
+    width: 50%;
+}
+
+#form-field-access-policy {
+    padding-right: 5px;
+}
+
+#form-field-contract-policy {
+    padding-left: 5px;
+}
+
+.form-field-operator {
+    width: 90px;
+}

@@ -1,0 +1,63 @@
+<div id="wrapper">
+
+  <div fxLayout="row" fxLayoutAlign="space-between" class="section-header">
+    <button (click)="onCreate()" color="accent" mat-stroked-button>
+      <mat-icon>add_circle_outline</mat-icon>
+      Create asset
+    </button>
+
+    <mat-paginator
+      (page)="changePage($event)"
+      [pageSize]="pageSize"
+      [length]="paginatorLength"
+      [pageIndex]="currentPage"
+      [pageSizeOptions]="[5, 10, 20]">
+    </mat-paginator>
+  </div>
+
+  <div class="container" *ngIf="assets.length > 0">
+    <div *ngFor="let asset of assets" class="card">
+      <mat-card>
+        <mat-card-header>
+          <mat-icon mat-card-avatar>upload</mat-icon>
+          <mat-card-title>{{asset.id}}</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <mat-list dense>
+            <mat-list-item>
+              <mat-icon matListItemIcon>info</mat-icon>
+              <div class="asset-property" matListItemTitle>Name</div>
+              <div matListItemLine>{{asset.properties.optionalValue('edc','name')}}</div>
+            </mat-list-item>
+            <mat-list-item>
+              <mat-icon matListItemIcon>category</mat-icon>
+              <div class="asset-property" matListItemTitle>Content Type</div>
+              <div matListItemLine>{{asset.properties.contenttype ? asset.properties.contenttype : 'Not available'}}</div>
+            </mat-list-item>
+            <mat-list-item>
+              <mat-icon matListItemIcon>file_copy</mat-icon>
+              <div class="asset-property" matListItemTitle>Version</div>
+              <div matListItemLine>{{asset.properties.optionalValue('edc','version')}}</div>
+            </mat-list-item>
+          </mat-list>
+        </mat-card-content>
+
+        <mat-card-actions class="card-actions align-content-end text-align-end">
+          <button (click)="viewAsset(asset)" [disabled]="isBusy()" color="info" mat-stroked-button>
+            <mat-icon>info</mat-icon> View asset
+          </button>
+          <button (click)="onDelete(asset)" [disabled]="isBusy()" color="warn" mat-stroked-button>
+            <mat-icon>delete_sweep</mat-icon> Delete
+          </button>
+        </mat-card-actions>
+        <mat-card-footer>
+          <mat-progress-bar *ngIf="isBusy()" color="accent" mode="indeterminate"></mat-progress-bar>
+        </mat-card-footer>
+      </mat-card>
+    </div>
+  </div>
+
+  <div *ngIf="assets.length == 0" class="no-items">
+    There are no assets created.
+  </div>
+</div>

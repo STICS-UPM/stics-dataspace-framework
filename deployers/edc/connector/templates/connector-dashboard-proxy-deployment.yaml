@@ -1,0 +1,110 @@
+{{- $layout := .Values.connector.layout | default dict }}
+{{- $dashboard := (index .Values "dashboard") | default dict }}
+{{- $dashboardProxy := (index $dashboard "proxy") | default dict }}
+{{- $dashboardProxyImage := (index $dashboardProxy "image") | default dict }}
+{{- if and .Values.dashboard.enabled ((index $dashboardProxy "enabled") | default false) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.connector.name }}-dashboard-proxy
+  labels:
+    validation-environment-adapter: edc
+    {{- with (index $layout "role") }}
+    validation-environment-role: {{ . | quote }}
+    {{- end }}
+    {{- with (index $layout "namespaceProfile") }}
+    validation-environment-namespace-profile: {{ . | quote }}
+    {{- end }}
+  {{- if or (index $layout "runtimeNamespace") (index $layout "activeNamespace") (index $layout "plannedNamespace") (index $layout "registrationServiceNamespace") (index $layout "plannedRegistrationServiceNamespace") }}
+  annotations:
+    {{- with (index $layout "runtimeNamespace") }}
+    validation-environment/runtime-namespace: {{ . | quote }}
+    {{- end }}
+    {{- with (index $layout "activeNamespace") }}
+    validation-environment/active-namespace: {{ . | quote }}
+    {{- end }}
+    {{- with (index $layout "plannedNamespace") }}
+    validation-environment/planned-namespace: {{ . | quote }}
+    {{- end }}
+    {{- with (index $layout "registrationServiceNamespace") }}
+    validation-environment/registration-service-namespace: {{ . | quote }}
+    {{- end }}
+    {{- with (index $layout "plannedRegistrationServiceNamespace") }}
+    validation-environment/planned-registration-service-namespace: {{ . | quote }}
+    {{- end }}
+  {{- end }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.connector.name }}-dashboard-proxy
+  template:
+    metadata:
+      annotations:
+        checksum/dashboard-proxy-config: {{ toJson ((index $dashboardProxy "config") | default dict) | sha256sum | quote }}
+        checksum/dashboard-proxy-auth: {{ toJson ((index $dashboardProxy "auth") | default dict) | sha256sum | quote }}
+        {{- with (index $layout "runtimeNamespace") }}
+        validation-environment/runtime-namespace: {{ . | quote }}
+        {{- end }}
+        {{- with (index $layout "activeNamespace") }}
+        validation-environment/active-namespace: {{ . | quote }}
+        {{- end }}
+        {{- with (index $layout "plannedNamespace") }}
+        validation-environment/planned-namespace: {{ . | quote }}
+        {{- end }}
+        {{- with (index $layout "registrationServiceNamespace") }}
+        validation-environment/registration-service-namespace: {{ . | quote }}
+        {{- end }}
+        {{- with (index $layout "plannedRegistrationServiceNamespace") }}
+        validation-environment/planned-registration-service-namespace: {{ . | quote }}
+        {{- end }}
+      labels:
+        app: {{ .Values.connector.name }}-dashboard-proxy
+        validation-environment-adapter: edc
+        {{- with (index $layout "role") }}
+        validation-environment-role: {{ . | quote }}
+        {{- end }}
+        {{- with (index $layout "namespaceProfile") }}
+        validation-environment-namespace-profile: {{ . | quote }}
+        {{- end }}
+    spec:
+      {{- with .Values.hostAliases }}
+      hostAliases:
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: dashboard-proxy
+          image: "{{ (index $dashboardProxyImage "name") | default "validation-environment/edc-dashboard-proxy" }}:{{ (index $dashboardProxyImage "tag") | default "latest" }}"
+          imagePullPolicy: {{ (index $dashboardProxyImage "pullPolicy") | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ (index $dashboardProxy "port") | default 8080 }}
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /edc-dashboard-api/auth/me
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /edc-dashboard-api/auth/me
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: proxy-config
+              mountPath: /app/config/proxy-config.json
+              subPath: proxy-config.json
+              readOnly: true
+            - name: proxy-auth
+              mountPath: /app/config/proxy-auth.json
+              subPath: proxy-auth.json
+              readOnly: true
+      volumes:
+        - name: proxy-config
+          configMap:
+            name: {{ .Values.connector.name }}-dashboard-proxy-config
+        - name: proxy-auth
+          secret:
+            secretName: {{ .Values.connector.name }}-dashboard-proxy-auth
+{{- end }}

@@ -1,0 +1,17 @@
+<form class="timeline-filter" [formGroup]="form">
+  <div class="timeline-filter__fields">
+    <select formControlName="eventType">
+      <option value="">All event types</option>
+      <option *ngFor="let eventType of eventTypes" [value]="eventType">{{ eventType }}</option>
+    </select>
+
+    <input type="text" formControlName="status" placeholder="Status" />
+    <input type="datetime-local" formControlName="from" />
+    <input type="datetime-local" formControlName="to" />
+  </div>
+
+  <div class="timeline-filter__actions">
+    <button pButton type="button" label="Apply" (click)="apply()"></button>
+    <button pButton type="button" label="Clear" class="p-button-outlined" (click)="clear()"></button>
+  </div>
+</form>

@@ -1,0 +1,10 @@
+DS_1_NAME=pionera
+DS_1_NAMESPACE=core-control
+NAMESPACE_PROFILE=role-aligned
+DS_1_REGISTRATION_NAMESPACE=core-control
+DS_1_PROVIDER_NAMESPACE=provider
+DS_1_CONSUMER_NAMESPACE=consumer
+COMMON_SERVICES_NAMESPACE=common-srvs
+COMPONENTS_NAMESPACE=components
+DS_1_CONNECTORS=citycouncil,company
+COMPONENTS=ontology-hub,ai-model-hub

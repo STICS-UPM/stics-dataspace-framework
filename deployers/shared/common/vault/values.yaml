@@ -1,0 +1,49 @@
+vault:
+  global:
+   enabled: true
+   tlsDisable: false
+  injector:
+    enabled: false
+  server:
+    resources:
+      requests:
+        memory: 1Gi
+        cpu: 1000m
+      limits:
+        memory: 4Gi
+        cpu: 2000m
+    dataStorage:
+      enabled: true
+      size: 50Gi
+    extraEnvironmentVars:
+      VAULT_CACERT: /vault/userconfig/vault-tls-cert/ca.crt
+      VAULT_TLSCERT: /vault/userconfig/vault-tls-cert/tls.crt
+      VAULT_TLSKEY: /vault/userconfig/vault-tls-cert/tls.key
+    extraVolumes:
+      - name: vault-tls-cert
+        type: secret
+    standalone:
+      enabled: false
+    affinity: ""
+    ha:
+      enabled: true
+      replicas: 3
+      raft:
+        enabled: true
+        setNodeId: true
+        config: |
+          cluster_name = "vault-integrated-storage"
+          ui = true
+          listener "tcp" {
+            tls_disable = 0
+            address = "[::]:8200"
+            cluster_address = "[::]:8201"
+            tls_cert_file = "/vault/userconfig/vault-tls-cert/tls.crt"
+            tls_key_file  = "/vault/userconfig/vault-tls-cert/tls.key"
+            tls_client_ca_file = "/vault/userconfig/vault-tls-cert/ca.crt"
+          }
+          storage "raft" {
+            path = "/vault/data"
+          }
+          disable_mlock = true
+          service_registration "kubernetes" {}

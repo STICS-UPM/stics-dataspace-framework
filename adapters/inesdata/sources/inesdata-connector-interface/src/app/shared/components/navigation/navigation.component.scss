@@ -1,0 +1,91 @@
+.sidenav-container {
+  height: 100%;
+  display: flex;
+  flex-grow: 1;
+}
+
+.sidenav {
+  width: 300px;
+  box-shadow: 0.2em 0em 0.5em rgba(0, 0, 0, 0.1);
+}
+
+.sidenav .mat-toolbar {
+  background: inherit;
+  font-size: 26px;
+  font-weight: 400;
+  line-height: 27.24px;
+  color: var(--secondary-600);
+}
+
+.mat-toolbar.mat-primary {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--brand-500);
+}
+
+.logout {
+  width: 100%;
+  text-align: right;
+  display: flex;
+  justify-content: flex-end;
+  font-size: 18px;
+}
+
+.logout span {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  transition: color 0.3s;
+}
+
+
+.logout mat-icon {
+  font-size: 18px;
+  margin-right: 10px;
+  align-content: center;
+}
+
+.navigation-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+mat-sidenav-content {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+}
+
+.scrollable-content {
+  flex-grow: 1;
+  padding: 15px;
+  overflow-y: auto;
+}
+
+mat-toolbar {
+  min-height: 64px;
+  font-size: 18px;
+}
+
+:host ::ng-deep .mdc-list-item__primary-text,
+:host ::ng-deep mat-nav-list mat-icon{
+  color: var(--secondary-600) !important;
+}
+
+mat-sidenav :host ::ng-deep .mdc-list-item__primary-text {
+  font-size: 18px;
+}
+
+:host ::ng-deep .mdc-list-item:focus::before {
+  background-color: unset;
+}
+
+:host ::ng-deep .mdc-list-item:focus {
+  background-color: var(--grey-400);
+}
+
+.mat-drawer-container {
+  background-color: white;
+}

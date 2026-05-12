@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.dataspace.name }}-registration-service
+  labels:
+    service: {{ .Values.dataspace.name }}-registration-service
+spec:
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  selector:
+    service: {{ .Values.dataspace.name }}-registration-service

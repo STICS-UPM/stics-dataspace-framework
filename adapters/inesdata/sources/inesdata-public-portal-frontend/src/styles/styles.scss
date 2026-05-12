@@ -1,0 +1,168 @@
+/* You can add global styles to this file, and also import other style files */
+@import "triumph";
+@import "typography";
+@import "icons";
+
+body {
+	margin: 0;
+	padding: 0;
+	color: #272525;
+	background: #f5f5f5;
+	border: 0 none;
+	font-size: 1.125em;
+	line-height: 1.4;
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+	padding: 0 60px;
+}
+
+.loading {
+	position: fixed;
+	z-index: 999;
+	overflow: visible;
+	margin: auto;
+	top: 0;
+	left: 0;
+	bottom: 0;
+	right: 0;
+	width: 50px;
+	height: 50px;
+}
+
+/* Transparent Overlay */
+.loading:before {
+	content: "";
+	display: block;
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.loadint__text {
+	text-indent: -9999px;
+}
+
+button {
+	min-width: 100px;
+	height: 25px;
+}
+
+.p-menubar {
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+	justify-content: space-between;
+	background-color: unset;
+	padding: 15px;
+}
+
+.p-menubar .p-menubar-end {
+	margin-left: unset;
+}
+
+.p-menubar .p-menubar-root-list > .p-menuitem > .p-menuitem-content .p-menuitem-link .p-menuitem-text {
+	color: #fff;
+}
+
+.p-menubar .p-menubar-root-list > .p-menuitem:not(.p-highlight):not(.p-disabled) > .p-menuitem-content:hover {
+	color: unset;
+	font-weight: bold;
+}
+
+.p-menubar .p-menubar-root-list > .p-menuitem > .p-menuitem-content {
+	background-color: transparent;
+}
+
+.p-menubar .p-menubar-root-list > .p-menuitem:not(.p-highlight):not(.p-disabled) > .p-menuitem-content:active {
+	font-weight: bold;
+}
+
+.p-menubar .p-menubar-root-list > .p-menuitem > .p-menuitem-content .p-menuitem-link.p-menuitem-link-active {
+	font-weight: bold;
+}
+
+.p-accordion-header-text {
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+}
+
+// style for buttons
+
+.btn,
+.p-button {
+	display: flex !important;
+	border-radius: 1rem !important;
+	height: 3em;
+	width: max-content;
+	min-width: 100px;
+	align-items: center;
+	display: flex;
+	cursor: pointer;
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+	border-width: 0px !important;
+  border-style: none;
+	padding-top: 0.5rem !important;
+  padding-bottom: 0.5rem !important;
+	padding-left: 1rem !important;
+  padding-right: 1rem !important;
+	font-size: 1rem !important;
+	color: var(--surface-0) !important;
+	background-color: var(--primary-700) !important;
+}
+
+.p-inputtext {
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+}
+
+.p-paginator {
+	border-radius: 16px;
+	.p-paginator-element.p-link {
+		opacity: 1;
+		margin: 0 8px;
+		min-width: 40px;
+		height: 40px;
+		border-radius: 8px;
+		border-color: #4367bc;
+		&.p-highlight {
+			background-color: #4367bc;
+		}
+		.p-paginator-icon {
+			filter: brightness(0.6);
+		}
+	}
+	.p-dropdown {
+		height: 40px;
+		border-color: #4367bc;
+		border-radius: 8px;
+		.p-dropdown-label {
+			color: #4367bc;
+		}
+	}
+}
+
+.p-tabview {
+	margin-bottom: 28px;
+	.p-tabview-nav-container {
+		.p-tabview-nav-content {
+			border-top-left-radius: 16px;
+			border-top-right-radius: 16px;
+			.p-tabview-nav {
+				.p-tabview-nav-link {
+					padding: 0.75rem 2rem;
+					border-top-right-radius: 16px;
+					border-top-left-radius: 16px;
+				}
+			}
+		}
+	}
+	.p-tabview-panels {
+		border-bottom-right-radius: 16px;
+    border-bottom-left-radius: 16px;
+	}
+}
+
+// RESPONSIVE
+// Desktop
+@media (max-width: 991px) {
+	body {
+		padding: 0 30px;
+	}
+}

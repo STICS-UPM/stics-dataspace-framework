@@ -1,0 +1,262 @@
+.catalog-container {
+	display: flex;
+	flex-direction: column;
+	margin: 0 auto;
+	padding: 1rem;
+	max-width: 1200px;
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+}
+
+.catalog-header {
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 2rem;
+
+	h1 {
+		font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+		font-size: 40px;
+		margin-top: 0;
+	}
+
+	.catalog-search{
+		display: flex;
+
+		.search-input {
+			width: 85%;
+			margin-right: 1rem;
+			border-color: #4367bc;
+			border-radius: 12px;
+		}
+
+		.search-button{
+			flex-grow: 1;
+			background: #4367bc;
+			height: 100%;
+			border-radius: 12px;
+		}
+	}
+}
+
+.catalog-body {
+	display: flex;
+
+	.sidebar {
+		width: 300px;
+		margin-right: 1rem;
+		background-color: #eeeeee;
+		border-radius: 15px;
+		padding: 1rem;
+
+		h5 {
+			font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+			font-size: 20px;
+			margin-top: 0;
+		}
+	}
+
+	.results-section {
+		flex: 1;
+
+		.results-header {
+			margin-bottom: 0.75rem;
+			font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+			font-weight: bold;
+		}
+
+		.filters {
+			display: flex;
+			margin-bottom: 1rem;
+
+			.filter-tag {
+				font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+				background: #4367bc;
+				color: white;
+				border-radius: 15px;
+				padding: 0.2rem 0.5rem;
+				font-size: 0.80rem;
+			}
+
+			.filter-tag:not(:first-child) {
+				margin-left: 0.5rem;
+			}
+		}
+
+
+		.result-item {
+			cursor: pointer;
+			background: white;
+			border-radius: 30px;
+			padding: 1rem;
+			margin-bottom: 1rem;
+			transition: background .2s;
+
+			.result-item-title {
+				display: flex;
+				align-items: center;
+				font-size: 1.5rem;
+				color: #4367bc;
+
+				span {
+					align-content: center;
+					font-size: 1.5rem;
+					margin-right: 0.5rem;
+				}
+
+				h4 {
+					font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+					font-size: 32px;
+					margin: 0;
+					width: 100%;
+					align-content: center;
+					transition: color .2s;
+				}
+
+				.result-item-id{
+					font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+					font-size: 18px;
+					align-content: center;
+					color: #A1A1A1;
+				}
+			}
+
+			.result-item-version {
+				font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+				font-size: 14px;
+				color: #777;
+			}
+
+			.result-item-description {
+				font-size: 20px;
+				color: #404040;
+			}
+
+			&:hover {
+				background: #dee6ff;
+				h4,
+				.pi::before {
+					color: #435a91;
+				}
+				.pi-machinelearning {
+					filter: brightness(0.8);
+				}
+			}
+		}
+	}
+}
+
+:host ::ng-deep .p-accordion-tab {
+	.p-accordion-header-link {
+		border: 0px;
+		border-radius: 16px;
+		background: white;
+	}
+	.p-toggleable-content {
+		margin-top: -12px;
+		.p-accordion-content {
+			border: 0px;
+			border-bottom-left-radius: 16px;
+			border-bottom-right-radius: 16px;
+			padding: 1rem 1.25rem;
+			.p-field-checkbox {
+				margin: 10px 0px;
+				p-checkbox {
+					.p-checkbox {
+						.p-checkbox-box.p-highlight {
+							border-color: #4367bc;
+							background: #4367bc;
+						}
+					}
+					.p-checkbox-label {
+						cursor: pointer;
+						font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+						font-size: 18px;
+						color: #4367bc;
+					}
+				}
+			}
+		}
+	}
+}
+:host ::ng-deep .grey .p-accordion{
+	padding-bottom: 20px;
+	padding-top: 10px;
+}
+
+:host ::ng-deep .grey .p-accordion:has(.p-accordion-tab-active) {
+	padding-bottom: 10px;
+    padding-top: 10px;
+}
+
+:host ::ng-deep .grey .p-accordion-tab {
+	.p-accordion-header-link {
+		border: 0px;
+		border-radius: 16px;
+		background: #eeeeee;
+	}
+	.p-toggleable-content {
+		margin-top: -12px;
+		.p-accordion-content {
+			border: 0px;
+			border-bottom-left-radius: 16px;
+			border-bottom-right-radius: 16px;
+			padding: 1rem 1.25rem;
+			background: #eeeeee;
+			.p-field-checkbox {
+				margin: 10px 0px;
+				p-checkbox {
+					.p-checkbox {
+						.p-checkbox-box.p-highlight {
+							border-color: #4367bc;
+							background: #4367bc;
+						}
+					}
+					.p-checkbox-label {
+						cursor: pointer;
+						font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+						font-size: 18px;
+						color: #4367bc;
+					}
+				}
+			}
+		}
+	}
+}
+
+
+.accordion {
+  margin-bottom: 10px;
+}
+
+label {
+  display: block;
+  margin-top: 10px;
+	font-family: "Baloo 2", Helvetica, Arial, sans-serif;
+	font-size: 16px;
+	color: #4367bc;
+}
+
+input {
+  width: 100% !important;
+  padding: 5px;
+  margin-bottom: 10px;
+  border-radius: 14px !important;
+  border-color: #4367bc;
+}
+
+:host ::ng-deep .p-calendar input {
+  width: 100% !important;
+  padding: 5px;
+  margin-bottom: 10px;
+  border-radius: 14px !important;
+  border-color: #4367bc;
+}
+
+:host ::ng-deep .p-calendar{
+  width: 100% !important;
+}
+
+.p-accordion-margin{
+
+	margin-top: 10px;
+	margin-bottom: 10px;
+}

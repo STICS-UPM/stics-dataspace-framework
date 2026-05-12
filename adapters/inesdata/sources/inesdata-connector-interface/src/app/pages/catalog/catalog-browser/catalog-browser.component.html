@@ -1,0 +1,45 @@
+<div id="wrapper">
+  <div fxLayout="row" fxLayoutAlign="end" class="section-header">
+    <mat-paginator (page)="changePage($event)" [pageSize]="pageSize" [length]="paginatorLength"
+      [pageIndex]="currentPage" [pageSizeOptions]="[5, 10, 20]">
+    </mat-paginator>
+  </div>
+
+  <div class="container" *ngIf="dataOffers.length > 0">
+    <div class="card" *ngFor="let dataOffer of dataOffers">
+      <mat-card>
+        <mat-card-header>
+          <mat-icon mat-card-avatar>sim_card</mat-icon>
+          <mat-card-title>{{dataOffer.assetId}}</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <mat-list dense>
+            <mat-list-item *ngIf="dataOffer.properties.type">
+              <mat-icon matListItemIcon>category</mat-icon>
+              <div class="asset-property-name" matListItemTitle>Type</div>
+              <div matListItemLine>{{dataOffer.properties.type}}</div>
+            </mat-list-item>
+            <mat-list-item *ngIf="dataOffer.originator">
+              <mat-icon matListItemIcon>link</mat-icon>
+              <div class="asset-property-name" matListItemTitle>Originator</div>
+              <div matListItemLine>{{dataOffer.originator}}</div>
+            </mat-list-item>
+          </mat-list>
+        </mat-card-content>
+
+        <mat-card-actions class="card-actions text-align-center">
+          <button color="accent" mat-stroked-button
+            (click)="viewContractOffers(dataOffer.assetId, dataOffer.contractOffers, dataOffer.endpointUrl, dataOffer.properties)">
+            View details and contract offers
+          </button>
+        </mat-card-actions>
+        <mat-card-footer>
+        </mat-card-footer>
+      </mat-card>
+    </div>
+  </div>
+
+  <div *ngIf="dataOffers.length == 0" class="no-items">
+    There are no offerings in the catalog.
+  </div>
+</div>

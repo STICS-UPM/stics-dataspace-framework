@@ -1,0 +1,76 @@
+<section class="observer-summary-page">
+  <div class="observer-summary-page__header">
+    <button class="observer-summary-page__back" type="button" (click)="goBack()">← Back to observer home</button>
+    <div>
+      <p class="observer-summary-page__eyebrow">AI Model Observer</p>
+      <h1>Participant summary</h1>
+      <p class="observer-summary-page__subtitle">Aggregated observer view for participant {{ participantId }}</p>
+    </div>
+  </div>
+
+  <div *ngIf="isLoading" class="observer-summary-page__state">Loading participant summary...</div>
+  <div *ngIf="error" class="observer-summary-page__state observer-summary-page__state--error">{{ error }}</div>
+
+  <div *ngIf="summary && !isLoading" class="observer-summary-page__grid">
+    <article class="observer-summary-page__panel observer-summary-page__panel--metrics">
+      <div class="observer-summary-page__metric">
+        <span class="observer-summary-page__metric-label">Participant</span>
+        <strong>{{ summary.participantId }}</strong>
+      </div>
+      <div class="observer-summary-page__metric">
+        <span class="observer-summary-page__metric-label">Event types tracked</span>
+        <strong>{{ totalKeys.length }}</strong>
+      </div>
+      <div class="observer-summary-page__metric">
+        <span class="observer-summary-page__metric-label">Recent failures</span>
+        <strong>{{ summary.recentFailures }}</strong>
+      </div>
+    </article>
+
+    <article class="observer-summary-page__panel">
+      <h2>Totals by event type</h2>
+      <div *ngIf="totalKeys.length === 0" class="observer-summary-page__empty">No events recorded for this participant.</div>
+      <div *ngIf="totalKeys.length > 0" class="observer-summary-page__totals">
+        <div *ngFor="let eventType of totalKeys" class="observer-summary-page__total-row">
+          <span>{{ eventType }}</span>
+          <strong>{{ summary.totalsByEventType[eventType] }}</strong>
+        </div>
+      </div>
+    </article>
+
+    <article class="observer-summary-page__panel observer-summary-page__panel--latest">
+      <h2>Latest event</h2>
+      <div *ngIf="!summary.latestEvent" class="observer-summary-page__empty">No latest event is available for this participant.</div>
+      <div *ngIf="summary.latestEvent as event" class="observer-latest-event">
+        <div class="observer-latest-event__top">
+          <div>
+            <h3>{{ event.eventType }}</h3>
+            <p>{{ event.occurredAt | date:'medium' }}</p>
+          </div>
+          <span class="observer-latest-event__badge">{{ event.status || 'UNKNOWN' }}</span>
+        </div>
+
+        <div class="observer-latest-event__meta">
+          <span *ngIf="event.modelName">Model: {{ event.modelName }}</span>
+          <span *ngIf="event.assetId">Asset: {{ event.assetId }}</span>
+          <span *ngIf="event.agreementId">Agreement: {{ event.agreementId }}</span>
+          <span *ngIf="event.benchmarkRunId">Benchmark: {{ event.benchmarkRunId }}</span>
+        </div>
+
+        <div class="observer-latest-event__actions">
+          <button *ngIf="event.assetId" class="observer-latest-event__button" type="button" (click)="openAssetTimeline(event.assetId)">
+            Open asset timeline
+          </button>
+          <button *ngIf="event.agreementId" class="observer-latest-event__button observer-latest-event__button--secondary" type="button" (click)="openAgreementEvidence(event.agreementId)">
+            Open agreement evidence
+          </button>
+          <button *ngIf="event.benchmarkRunId" class="observer-latest-event__button observer-latest-event__button--secondary" type="button" (click)="openBenchmarkEvidence(event.benchmarkRunId)">
+            Open benchmark evidence
+          </button>
+        </div>
+
+        <pre *ngIf="event.details" class="observer-latest-event__details">{{ event.details | json }}</pre>
+      </div>
+    </article>
+  </div>
+</section>
