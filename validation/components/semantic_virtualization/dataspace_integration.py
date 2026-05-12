@@ -126,9 +126,10 @@ class SemanticVirtualizationDataspaceIntegrationSuite:
         if not runtime["keycloak_url"]:
             raise RuntimeError("KC_INTERNAL_URL/KC_URL could not be resolved")
         runtime["transfer_start_path"] = (
-            "adaptertransferprocesses" if runtime["adapter"] == "edc" else "inesdatatransferprocesses"
+            "transferprocesses" if runtime["adapter"] == "edc" else "inesdatatransferprocesses"
         )
-        runtime["transfer_destination_type"] = "AmazonS3" if runtime["adapter"] == "edc" else "InesDataStore"
+        runtime["transfer_destination_type"] = "HttpData" if runtime["adapter"] == "edc" else "InesDataStore"
+        runtime["transfer_type"] = "HttpData-PULL" if runtime["adapter"] == "edc" else "AmazonS3-PUSH"
         return runtime
 
     def _management_url(self, connector: str, path: str) -> str:
@@ -443,16 +444,27 @@ class SemanticVirtualizationDataspaceIntegrationSuite:
         agreement_id: str,
         runtime: dict[str, Any],
     ):
-        payload = {
-            "@context": {"@vocab": EDC_NAMESPACE},
-            "@type": "TransferRequest",
-            "assetId": asset_id,
-            "contractId": agreement_id,
-            "counterPartyAddress": self._protocol_address(provider),
-            "protocol": "dataspace-protocol-http",
-            "transferType": "AmazonS3-PUSH",
-            "dataDestination": {"type": runtime["transfer_destination_type"]},
-        }
+        if runtime["adapter"] == "edc":
+            payload = {
+                "@context": {"@vocab": EDC_NAMESPACE},
+                "@type": "TransferRequestDto",
+                "connectorId": provider,
+                "contractId": agreement_id,
+                "counterPartyAddress": self._protocol_address(provider),
+                "protocol": "dataspace-protocol-http",
+                "transferType": runtime["transfer_type"],
+            }
+        else:
+            payload = {
+                "@context": {"@vocab": EDC_NAMESPACE},
+                "@type": "TransferRequest",
+                "assetId": asset_id,
+                "contractId": agreement_id,
+                "counterPartyAddress": self._protocol_address(provider),
+                "protocol": "dataspace-protocol-http",
+                "transferType": runtime["transfer_type"],
+                "dataDestination": {"type": runtime["transfer_destination_type"]},
+            }
         body, status_code = self._post_json(
             self._management_url(consumer, f"/management/v3/{runtime['transfer_start_path']}"),
             consumer_jwt,

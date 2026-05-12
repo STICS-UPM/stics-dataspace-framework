@@ -126,6 +126,7 @@ class SemanticVirtualizationDataspaceIntegrationTests(unittest.TestCase):
         ]
         self.assertEqual(len(transfer_requests), 1)
         self.assertEqual(transfer_requests[0]["json"]["transferType"], "AmazonS3-PUSH")
+        self.assertEqual(transfer_requests[0]["json"]["@type"], "TransferRequest")
         self.assertEqual(transfer_requests[0]["json"]["dataDestination"]["type"], "InesDataStore")
 
     def test_default_semantic_data_url_uses_internal_cluster_service(self):
