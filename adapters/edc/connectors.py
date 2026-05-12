@@ -108,7 +108,14 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         resolver = getattr(self.config_adapter, "edc_connector_source_dir", None)
         if callable(resolver):
             return resolver()
-        return os.path.join(self._framework_root_dir(), "adapters", "edc", "sources", "connector")
+        return os.path.join(
+            self._framework_root_dir(),
+            "adapters",
+            "edc",
+            "sources",
+            "dashboard",
+            "asset-filter-template",
+        )
 
     def _edc_runtime_dir(self, ds_name=None):
         return self.config_adapter.edc_dataspace_runtime_dir(ds_name=ds_name)
@@ -263,11 +270,19 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         print("\nPreparing local EDC connector image for Level 4...")
         print(f"Cluster runtime: {cluster_type}")
         print(f"This builds and loads {image['name']}:{image['tag']} before Helm deploy.")
+        repo_url_getter = getattr(self.config_adapter, "edc_reference_repo_url", None)
+        repo_subdir_getter = getattr(self.config_adapter, "edc_reference_repo_subdir", None)
+        repo_url = repo_url_getter() if callable(repo_url_getter) else "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
+        repo_subdir = repo_subdir_getter() if callable(repo_subdir_getter) else "asset-filter-template"
         if not self._run_level4_edc_image_script(
             script_path,
             args=[
                 "--source-dir",
                 self._edc_connector_source_dir(),
+                "--sync-git-url",
+                repo_url,
+                "--sync-subdir",
+                repo_subdir,
                 "--image",
                 image["name"],
                 "--tag",
@@ -936,8 +951,8 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                     "publickey": f"{ds_name}/{connector_name}/public-key",
                 },
                 "transfer": {
-                    "privatekey": f"{ds_name}/{connector_name}/private-key",
-                    "publickey": f"{ds_name}/{connector_name}/public-key",
+                    "privatekey": "private-key",
+                    "publickey": "public-key",
                 },
                 "keys": {
                     "createSecret": False,

@@ -5,22 +5,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADAPTER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SYNC_SCRIPT="$ADAPTER_DIR/scripts/sync_sources.sh"
 
-SOURCE_DIR="$ADAPTER_DIR/sources/connector"
+DEFAULT_SOURCE_DIR="$ADAPTER_DIR/sources/dashboard/asset-filter-template"
+SOURCE_DIR="$DEFAULT_SOURCE_DIR"
 DOCKERFILE="$ADAPTER_DIR/build/docker/connector.Dockerfile"
 IMAGE_NAME="validation-environment/edc-connector"
 IMAGE_TAG="local"
 MINIKUBE_PROFILE="minikube"
 CLUSTER_RUNTIME="${CLUSTER_RUNTIME:-minikube}"
 K3S_IMAGE_IMPORT_COMMAND="${K3S_IMAGE_IMPORT_COMMAND:-sudo k3s ctr -n k8s.io images import}"
-GRADLE_TASK=":transfer:transfer-00-prerequisites:connector:shadowJar"
-CONNECTOR_JAR="transfer/transfer-00-prerequisites/connector/build/libs/connector.jar"
-CONNECTOR_RUNTIME_DIR="transfer/transfer-00-prerequisites/connector"
+GRADLE_TASK=":final-connector:shadowJar"
+CONNECTOR_JAR="final-connector/build/libs/connector.jar"
+CONNECTOR_RUNTIME_DIR="final-connector"
 
 APPLY=0
 FORCE_BUILD=0
 SKIP_MINIKUBE_LOAD=0
 SYNC_SOURCE=""
-SYNC_GIT_URL=""
+SYNC_GIT_URL="https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
+SYNC_SUBDIR="${PIONERA_EDC_REFERENCE_REPO_SUBDIR:-asset-filter-template}"
 
 usage() {
   cat <<'EOF'
@@ -28,9 +30,10 @@ Usage: build_image.sh [--apply] [--source-dir <path>] [--image <name>] [--tag <t
                       [--dockerfile <path>] [--gradle-task <task>] [--jar-path <path>]
                       [--minikube-profile <name>] [--cluster-runtime <minikube|k3s>]
                       [--skip-minikube-load] [--force-build]
-                      [--sync-source <path>] [--sync-git-url <url>]
+                      [--sync-source <path>] [--sync-git-url <url>] [--sync-subdir <path>]
 
-Build the local generic EDC connector image from adapters/edc/sources/connector.
+Build the local generic EDC connector image from the benchmark connector source
+provided by ProyectoPIONERA/EDC-asset-filter-dashboard.
 
 Options:
   --apply                    Execute the build workflow. Default is dry-run.
@@ -46,6 +49,7 @@ Options:
   --force-build              Force rebuilding connector.jar through Gradle even if it already exists.
   --sync-source <path>       Local source directory passed through to sync_sources.sh.
   --sync-git-url <url>       Git URL passed through to sync_sources.sh.
+  --sync-subdir <path>       Connector subdirectory inside the synchronized repo.
   -h, --help                 Show this help message.
 EOF
 }
@@ -158,6 +162,10 @@ while [[ $# -gt 0 ]]; do
       SYNC_GIT_URL="${2:-}"
       shift 2
       ;;
+    --sync-subdir|--source-subdir)
+      SYNC_SUBDIR="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -179,15 +187,18 @@ fi
 if [[ -n "$SYNC_GIT_URL" ]]; then
   sync_cmd+=("--git-url" "\"$SYNC_GIT_URL\"")
 fi
+if [[ -n "$SYNC_SUBDIR" ]]; then
+  sync_cmd+=("--source-subdir" "\"$SYNC_SUBDIR\"")
+fi
 
 if [[ ! -d "$SOURCE_DIR" || ! -x "$SOURCE_DIR/gradlew" ]]; then
-  if [[ -z "$SYNC_SOURCE" ]]; then
+  if [[ -z "$SYNC_SOURCE" && "$SOURCE_DIR" != "$DEFAULT_SOURCE_DIR" ]]; then
     echo "Connector source not ready in $SOURCE_DIR." >&2
-    echo "Refusing to synchronize from the default remote. Provide --source-dir with a prepared local checkout, or pass --sync-source explicitly." >&2
+    echo "Refusing to synchronize into a custom source directory. Provide a prepared --source-dir, or pass --sync-source explicitly." >&2
     exit 1
   fi
 
-  echo "Connector source not ready in $SOURCE_DIR. Syncing from explicit local source..."
+  echo "Connector source not ready in $SOURCE_DIR. Synchronizing configured benchmark connector source..."
   if [[ "$APPLY" -eq 1 ]]; then
     bash -lc "${sync_cmd[*]} --apply"
   else

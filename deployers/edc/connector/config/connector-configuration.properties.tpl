@@ -28,8 +28,10 @@ web.http.shared.path=/shared
 
 {{- if eq .Values.connector.environment "pro" }}
 edc.dataplane.api.public.baseurl=https://{{ .Values.connector.ingress.hostname }}/public
+edc.dataplane.proxy.public.endpoint=https://{{ .Values.connector.ingress.hostname }}/public
 {{- else }}
 edc.dataplane.api.public.baseurl=http://{{ .Values.connector.ingress.hostname }}/public
+edc.dataplane.proxy.public.endpoint=http://{{ .Values.connector.ingress.hostname }}/public
 {{- end }}
 
 edc.transfer.proxy.token.signer.privatekey.alias={{ .Values.connector.transfer.privatekey }}

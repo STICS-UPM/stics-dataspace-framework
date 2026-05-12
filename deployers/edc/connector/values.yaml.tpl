@@ -1,4 +1,4 @@
-# This chart deploys a generic EDC connector for the Validation-Environment.
+# This chart deploys the PIONERA benchmark EDC connector for the Validation-Environment.
 #
 connector:
   name: {{ keys.connector_name }}
@@ -26,8 +26,8 @@ connector:
     privatekey: {{ keys.dataspace_name }}/{{ keys.connector_name }}/private-key
     publickey: {{ keys.dataspace_name }}/{{ keys.connector_name }}/public-key
   transfer:
-    privatekey: {{ keys.dataspace_name }}/{{ keys.connector_name }}/private-key
-    publickey: {{ keys.dataspace_name }}/{{ keys.connector_name }}/public-key
+    privatekey: private-key
+    publickey: public-key
   keys:
     createSecret: false
     existingSecret: ""

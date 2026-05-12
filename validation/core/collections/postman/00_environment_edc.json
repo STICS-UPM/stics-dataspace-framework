@@ -4,19 +4,19 @@
   "values": [
     {
       "key": "provider",
-      "value": "conn-citycounciledc-demoedc",
+      "value": "conn-citycounciledc-pionera-edc",
       "type": "text",
       "enabled": true
     },
     {
       "key": "consumer",
-      "value": "conn-companyedc-demoedc",
+      "value": "conn-companyedc-pionera-edc",
       "type": "text",
       "enabled": true
     },
     {
       "key": "provider_user",
-      "value": "user-conn-citycounciledc-demoedc",
+      "value": "user-conn-citycounciledc-pionera-edc",
       "type": "text",
       "enabled": true
     },
@@ -28,7 +28,7 @@
     },
     {
       "key": "consumer_user",
-      "value": "user-conn-companyedc-demoedc",
+      "value": "user-conn-companyedc-pionera-edc",
       "type": "text",
       "enabled": true
     },
@@ -46,7 +46,7 @@
     },
     {
       "key": "dataspace",
-      "value": "demoedc",
+      "value": "pionera-edc",
       "type": "text",
       "enabled": true
     },
@@ -70,25 +70,37 @@
     },
     {
       "key": "transferStartPath",
-      "value": "adaptertransferprocesses",
+      "value": "transferprocesses",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "transferRequestType",
+      "value": "TransferRequestDto",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "transferType",
+      "value": "HttpData-PULL",
       "type": "text",
       "enabled": true
     },
     {
       "key": "transferDestinationType",
-      "value": "AmazonS3",
+      "value": "HttpData",
       "type": "text",
       "enabled": true
     },
     {
       "key": "providerProtocolAddress",
-      "value": "http://conn-citycounciledc-demoedc:19194/protocol",
+      "value": "http://conn-citycounciledc-pionera-edc:19194/protocol",
       "type": "text",
       "enabled": true
     },
     {
       "key": "consumerProtocolAddress",
-      "value": "http://conn-companyedc-demoedc:19194/protocol",
+      "value": "http://conn-companyedc-pionera-edc:19194/protocol",
       "type": "text",
       "enabled": true
     }

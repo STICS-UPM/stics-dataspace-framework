@@ -32,7 +32,16 @@ class EdcConfigPathTests(unittest.TestCase):
         self.assertTrue(adapter.edc_adapter_dir().endswith("Validation-Environment/adapters/edc"))
         self.assertTrue(adapter.edc_scripts_dir().endswith("Validation-Environment/adapters/edc/scripts"))
         self.assertTrue(adapter.edc_sources_dir().endswith("Validation-Environment/adapters/edc/sources"))
-        self.assertTrue(adapter.edc_connector_source_dir().endswith("Validation-Environment/adapters/edc/sources/connector"))
+        self.assertEqual(
+            adapter.edc_reference_repo_url(),
+            "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard",
+        )
+        self.assertEqual(adapter.edc_reference_repo_subdir(), "asset-filter-template")
+        self.assertTrue(
+            adapter.edc_connector_source_dir().endswith(
+                "Validation-Environment/adapters/edc/sources/dashboard/asset-filter-template"
+            )
+        )
         self.assertTrue(adapter.edc_dashboard_source_dir().endswith("Validation-Environment/adapters/edc/sources/dashboard"))
         self.assertTrue(adapter.edc_build_dir().endswith("Validation-Environment/adapters/edc/build"))
         self.assertTrue(adapter.edc_build_docker_dir().endswith("Validation-Environment/adapters/edc/build/docker"))
@@ -72,8 +81,8 @@ class EdcConfigPathTests(unittest.TestCase):
             )
         )
         self.assertTrue(
-            adapter.edc_dataspace_runtime_dir("demoedc").endswith(
-                "Validation-Environment/deployers/edc/deployments/DEV/demoedc"
+            adapter.edc_dataspace_runtime_dir("pionera-edc").endswith(
+                "Validation-Environment/deployers/edc/deployments/DEV/pionera-edc"
             )
         )
         self.assertTrue(
@@ -87,18 +96,18 @@ class EdcConfigPathTests(unittest.TestCase):
             )
         )
         self.assertTrue(
-            adapter.edc_connector_values_file("conn-demoedc", ds_name="demoedc").endswith(
-                "Validation-Environment/deployers/edc/deployments/DEV/demoedc/values-conn-demoedc.yaml"
+            adapter.edc_connector_values_file("conn-pionera-edc", ds_name="pionera-edc").endswith(
+                "Validation-Environment/deployers/edc/deployments/DEV/pionera-edc/values-conn-pionera-edc.yaml"
             )
         )
         self.assertTrue(
-            adapter.edc_connector_certs_dir("demoedc").endswith(
-                "Validation-Environment/deployers/edc/deployments/DEV/demoedc/certs"
+            adapter.edc_connector_certs_dir("pionera-edc").endswith(
+                "Validation-Environment/deployers/edc/deployments/DEV/pionera-edc/certs"
             )
         )
         self.assertTrue(
-            adapter.edc_dashboard_runtime_dir("conn-demoedc", ds_name="demoedc").endswith(
-                "Validation-Environment/deployers/edc/deployments/DEV/demoedc/dashboard/conn-demoedc"
+            adapter.edc_dashboard_runtime_dir("conn-pionera-edc", ds_name="pionera-edc").endswith(
+                "Validation-Environment/deployers/edc/deployments/DEV/pionera-edc/dashboard/conn-pionera-edc"
             )
         )
         self.assertTrue(adapter.edc_dashboard_enabled())
@@ -110,14 +119,14 @@ class EdcConfigPathTests(unittest.TestCase):
     def test_edc_connector_credentials_path_uses_edc_deployment_runtime_dir(self):
         previous = self._clear_pionera_overrides()
         try:
-            path = EdcConfig.connector_credentials_path("conn-companyedc-demoedc")
+            path = EdcConfig.connector_credentials_path("conn-companyedc-pionera-edc")
         finally:
             self._restore_environment(previous)
 
         self.assertTrue(
             path.endswith(
-                "Validation-Environment/deployers/edc/deployments/DEV/demoedc/"
-                "credentials-connector-conn-companyedc-demoedc.json"
+                "Validation-Environment/deployers/edc/deployments/DEV/pionera-edc/"
+                "credentials-connector-conn-companyedc-pionera-edc.json"
             )
         )
 
@@ -130,7 +139,7 @@ class EdcConfigPathTests(unittest.TestCase):
 
         self.assertTrue(
             path.endswith(
-                "Validation-Environment/deployers/edc/deployments/DEV/demoedc/certs"
+                "Validation-Environment/deployers/edc/deployments/DEV/pionera-edc/certs"
             )
         )
 
@@ -191,8 +200,12 @@ class EdcConfigPathTests(unittest.TestCase):
 
         self.assertEqual(config["KC_URL"], "http://keycloak.local")
         self.assertEqual(config["DS_DOMAIN_BASE"], "dev.ds.dataspaceunit.upm")
-        self.assertEqual(config["DS_1_NAME"], "demoedc")
-        self.assertEqual(config["DS_1_NAMESPACE"], "demoedc")
+        self.assertEqual(config["DS_1_NAME"], "pionera-edc")
+        self.assertEqual(config["DS_1_NAMESPACE"], "edc-control")
+        self.assertEqual(config["NAMESPACE_PROFILE"], "role-aligned")
+        self.assertEqual(config["DS_1_REGISTRATION_NAMESPACE"], "edc-control")
+        self.assertEqual(config["DS_1_PROVIDER_NAMESPACE"], "edc-provider")
+        self.assertEqual(config["DS_1_CONSUMER_NAMESPACE"], "edc-consumer")
         self.assertEqual(config["DS_1_CONNECTORS"], "citycounciledc,companyedc")
         self.assertEqual(config["COMPONENTS"], "")
         self.assertEqual(config["EDC_DASHBOARD_ENABLED"], "true")
@@ -268,7 +281,7 @@ class EdcConfigPathTests(unittest.TestCase):
 
         self.assertEqual(config["KC_URL"], "http://shared-keycloak")
         self.assertEqual(config["VM_EXTERNAL_IP"], "192.0.2.10")
-        self.assertEqual(config["DS_1_NAME"], "demoedc")
+        self.assertEqual(config["DS_1_NAME"], "pionera-edc")
         self.assertEqual(config["EDC_DASHBOARD_ENABLED"], "false")
 
     def test_edc_infrastructure_config_overrides_legacy_shared_config(self):
@@ -301,7 +314,7 @@ class EdcConfigPathTests(unittest.TestCase):
 
         self.assertEqual(config["KC_URL"], "http://shared-keycloak")
         self.assertEqual(config["KC_PASSWORD"], "shared-secret")
-        self.assertEqual(config["DS_1_NAME"], "demoedc")
+        self.assertEqual(config["DS_1_NAME"], "pionera-edc")
 
     def test_edc_environment_overrides_remain_highest_priority(self):
         previous = self._clear_pionera_overrides()

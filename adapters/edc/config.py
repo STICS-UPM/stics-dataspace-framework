@@ -15,10 +15,11 @@ class EdcConfig(InesdataConfig):
 
     ADAPTER_NAME = "edc"
     REPO_DIR = os.path.join("deployers", "edc")
-    DS_NAME = "demoedc"
+    DS_NAME = "pionera-edc"
     DEFAULT_TOPOLOGY = "local"
     EDC_NATIVE_BOOTSTRAP = True
-    EDC_REFERENCE_REPO_URL = "https://github.com/luciamartinnunez/Connector"
+    EDC_REFERENCE_REPO_URL = "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
+    EDC_REFERENCE_REPO_SUBDIR = "asset-filter-template"
     EDC_DASHBOARD_REPO_URL = "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
     EDC_MANAGEMENT_PORT = 19193
     EDC_PROTOCOL_PORT = 19194
@@ -117,6 +118,13 @@ class EDCConfigAdapter(INESDataConfigAdapter):
     def edc_reference_repo_url(self):
         return self.config.EDC_REFERENCE_REPO_URL
 
+    def edc_reference_repo_subdir(self):
+        config = self.load_deployer_config()
+        subdir = str(
+            config.get("EDC_REFERENCE_REPO_SUBDIR", self.config.EDC_REFERENCE_REPO_SUBDIR)
+        ).strip().strip("/")
+        return subdir or self.config.EDC_REFERENCE_REPO_SUBDIR
+
     @staticmethod
     def _read_config_file(path):
         values = {}
@@ -147,8 +155,13 @@ class EDCConfigAdapter(INESDataConfigAdapter):
 
     def _edc_default_deployer_values(self):
         return {
-            "DS_1_NAME": getattr(self.config, "DS_NAME", "demoedc"),
-            "DS_1_NAMESPACE": getattr(self.config, "DS_NAME", "demoedc"),
+            "DS_1_NAME": getattr(self.config, "DS_NAME", "pionera-edc"),
+            "DS_1_NAMESPACE": "edc-control",
+            "NAMESPACE_PROFILE": "role-aligned",
+            "DS_1_REGISTRATION_NAMESPACE": "edc-control",
+            "DS_1_PROVIDER_NAMESPACE": "edc-provider",
+            "DS_1_CONSUMER_NAMESPACE": "edc-consumer",
+            "COMMON_SERVICES_NAMESPACE": "common-srvs",
             "DS_1_CONNECTORS": "citycounciledc,companyedc",
             "COMPONENTS": "",
             "EDC_DASHBOARD_ENABLED": "true",
@@ -193,7 +206,7 @@ class EDCConfigAdapter(INESDataConfigAdapter):
         return os.path.join(self.edc_adapter_dir(), "sources")
 
     def edc_connector_source_dir(self):
-        return os.path.join(self.edc_sources_dir(), "connector")
+        return os.path.join(self.edc_dashboard_source_dir(), self.edc_reference_repo_subdir())
 
     def edc_dashboard_source_dir(self):
         return os.path.join(self.edc_sources_dir(), "dashboard")

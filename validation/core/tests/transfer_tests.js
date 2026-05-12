@@ -9,6 +9,25 @@ const status = pm.response.code
 const DEFAULT_TRANSFER_START_MAX_ATTEMPTS = 8
 const DEFAULT_TRANSFER_STATUS_MAX_ATTEMPTS = 10
 const DEFAULT_TRANSFER_DESTINATION_MAX_ATTEMPTS = 10
+const VALID_TRANSFER_STATES = [
+    "INITIAL",
+    "STARTED",
+    "REQUESTING",
+    "PROVISIONING",
+    "PROVISIONED",
+    "REQUESTED",
+    "REQUESTED_ACK",
+    "IN_PROGRESS",
+    "STREAMING",
+    "COMPLETED",
+    "DEPROVISIONING",
+    "DEPROVISIONING_REQ",
+    "DEPROVISIONED",
+    "ENDED",
+    // Keep backward compatibility with older runtimes or adapters.
+    "FINALIZED",
+    "TERMINATED"
+]
 
 function clearLocalVar(key) {
     pm.collectionVariables.unset(key)
@@ -100,6 +119,14 @@ function readField(obj, fieldName) {
     return undefined
 }
 
+function currentAdapter() {
+    return String(getStoredVar("adapter") || "").trim().toLowerCase()
+}
+
+function isEdcAdapter() {
+    return currentAdapter() === "edc"
+}
+
 if (requestName === "Consumer Login") {
     const body = parseJsonResponse()
     handleLoginToken(body)
@@ -180,7 +207,7 @@ if (requestName === "Start Transfer Process") {
     extractAtId(body, "e2e_transfer_id")
     const expectedPath = getStoredVar("transferStartPath")
     assertNotEmpty(expectedPath, "transferStartPath")
-    pm.test("Transfer request is aligned with the adapter-compatible push flow", function () {
+    pm.test("Transfer request is aligned with the adapter-compatible transfer flow", function () {
         pm.expect(pm.request.url.toString()).to.include(`/management/v3/${expectedPath}`)
     })
     return
@@ -220,27 +247,8 @@ if (requestName === "Check Transfer Status") {
     assertFieldExists(transfer, "state")
     const state = transfer.state
     const transferErrorDetail = transfer.errorDetail || transfer.error || null
-    const validTransferStates = [
-        "INITIAL",
-        "STARTED",
-        "REQUESTING",
-        "PROVISIONING",
-        "PROVISIONED",
-        "REQUESTED",
-        "REQUESTED_ACK",
-        "IN_PROGRESS",
-        "STREAMING",
-        "COMPLETED",
-        "DEPROVISIONING",
-        "DEPROVISIONING_REQ",
-        "DEPROVISIONED",
-        "ENDED",
-        // Keep backward compatibility with older runtimes or adapters.
-        "FINALIZED",
-        "TERMINATED"
-    ]
     pm.test("Transfer state is recognized by the framework", function () {
-        pm.expect(state).to.be.oneOf(validTransferStates)
+        pm.expect(state).to.be.oneOf(VALID_TRANSFER_STATES)
     })
     if (state === "TERMINATED") {
         clearLocalVar("e2e_transfer_status_attempt")
@@ -332,9 +340,17 @@ if (requestName === "Resolve Current Transfer Destination") {
     }
 
     const transferType = readField(transfer, "transferType") || transfer.transferType
-    pm.test("Transfer request is using the AmazonS3 push mode", function () {
-        pm.expect(transferType).to.equal("AmazonS3-PUSH")
+    const expectedTransferType = getStoredVar("transferType") || "AmazonS3-PUSH"
+    pm.test("Transfer request uses the transfer type expected by the adapter", function () {
+        pm.expect(transferType).to.equal(expectedTransferType)
     })
+
+    if (isEdcAdapter()) {
+        pm.test("EDC transfer state is queryable through the standard management API", function () {
+            pm.expect(state).to.be.oneOf(VALID_TRANSFER_STATES)
+        })
+        return
+    }
 
     const dataDestination =
         readField(transfer, "dataDestination") ||

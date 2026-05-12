@@ -169,6 +169,10 @@ class EdcAdapter(InesdataAdapter):
                 finalizer(success=True)
             return result
 
+    def supports_kafka_transfer_validation(self):
+        """The generic EDC dashboard connector currently exposes HTTP data flows only."""
+        return False
+
     def _preview_common_services(self):
         namespace = self.config.NS_COMMON
         pod_output = self.run_silent(f"kubectl get pods -n {namespace} --no-headers") or ""

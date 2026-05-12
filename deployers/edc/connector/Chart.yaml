@@ -1,6 +1,6 @@
 apiVersion: v2
 name: edc-connector
-description: A Helm chart for deploying a generic EDC connector in the Validation-Environment
+description: A Helm chart for deploying the PIONERA benchmark EDC connector in the Validation-Environment
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "asset-filter-template"

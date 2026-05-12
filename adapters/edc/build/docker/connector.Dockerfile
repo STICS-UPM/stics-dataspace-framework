@@ -2,7 +2,7 @@ FROM eclipse-temurin:17-jre
 
 WORKDIR /opt/connector
 
-ARG CONNECTOR_JAR=transfer/transfer-00-prerequisites/connector/build/libs/connector.jar
+ARG CONNECTOR_JAR=final-connector/build/libs/connector.jar
 
 COPY ${CONNECTOR_JAR} /opt/connector/connector.jar
 

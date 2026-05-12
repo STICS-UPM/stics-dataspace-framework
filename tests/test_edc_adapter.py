@@ -217,7 +217,11 @@ class EdcConnectorConfigAdapter:
 
     @staticmethod
     def edc_reference_repo_url():
-        return "https://github.com/luciamartinnunez/Connector"
+        return "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
+
+    @staticmethod
+    def edc_reference_repo_subdir():
+        return "asset-filter-template"
 
     def edc_connector_source_dir(self):
         return os.path.join(self.root, "source")
@@ -252,6 +256,10 @@ class EdcAdapterTests(unittest.TestCase):
     def test_edc_adapter_uses_shared_components_adapter(self):
         adapter = EdcAdapter(dry_run=True)
         self.assertIsInstance(adapter.components, SharedComponentsAdapter)
+
+    def test_edc_adapter_disables_kafka_transfer_validation_by_default(self):
+        adapter = EdcAdapter(dry_run=True)
+        self.assertFalse(adapter.supports_kafka_transfer_validation())
 
 
 class EdcConnectorTopologyTests(unittest.TestCase):
@@ -605,7 +613,7 @@ class EdcDeploymentTests(unittest.TestCase):
         )
         self.assertIn(
             "Validation-Environment/deployers/inesdata/bootstrap.py",
-            deployment._delegate.config.bootstrap_dataspace_command("create", dataspace="demoedc"),
+            deployment._delegate.config.bootstrap_dataspace_command("create", dataspace="pionera-edc"),
         )
         bootstrap_runtime = resolve_shared_level3_bootstrap_runtime(deployment._delegate.config)
         self.assertTrue(
@@ -616,7 +624,7 @@ class EdcDeploymentTests(unittest.TestCase):
         )
         self.assertTrue(
             bootstrap_runtime["runtime_dir"].endswith(
-                "Validation-Environment/deployers/edc/deployments/DEV/demoedc"
+                "Validation-Environment/deployers/edc/deployments/DEV/pionera-edc"
             )
         )
         self.assertEqual(
@@ -625,13 +633,13 @@ class EdcDeploymentTests(unittest.TestCase):
         )
         self.assertTrue(
             deployment._delegate.config.shared_level3_dataspace_runtime_dir().endswith(
-                "Validation-Environment/deployers/inesdata/deployments/DEV/demoedc"
+                "Validation-Environment/deployers/inesdata/deployments/DEV/pionera-edc"
             )
         )
         self.assertTrue(
             deployment._delegate.config.shared_level3_dataspace_credentials_file().endswith(
-                "Validation-Environment/deployers/inesdata/deployments/DEV/demoedc/"
-                "credentials-dataspace-demoedc.json"
+                "Validation-Environment/deployers/inesdata/deployments/DEV/pionera-edc/"
+                "credentials-dataspace-pionera-edc.json"
             )
         )
         self.assertTrue(
@@ -641,13 +649,13 @@ class EdcDeploymentTests(unittest.TestCase):
         )
         self.assertTrue(
             deployment._delegate.config.registration_values_file().endswith(
-                "Validation-Environment/deployers/edc/deployments/DEV/demoedc/"
-                "dataspace/registration-service/values-demoedc.yaml"
+                "Validation-Environment/deployers/edc/deployments/DEV/pionera-edc/"
+                "dataspace/registration-service/values-pionera-edc.yaml"
             )
         )
         self.assertTrue(
             deployment._delegate.config.legacy_registration_values_file().endswith(
-                "Validation-Environment/deployers/inesdata/dataspace/registration-service/values-demoedc.yaml"
+                "Validation-Environment/deployers/inesdata/dataspace/registration-service/values-pionera-edc.yaml"
             )
         )
         self.assertEqual(deployment._delegate.config.RUNTIME_LABEL, "shared dataspace")
@@ -663,16 +671,16 @@ class EdcDeploymentTests(unittest.TestCase):
 
         context = deployment._shared_level3_runtime_context()
 
-        self.assertEqual(context["dataspace"], "demoedc")
+        self.assertEqual(context["dataspace"], "pionera-edc")
         self.assertEqual(context["environment"], "DEV")
         self.assertTrue(
             context["source_runtime_dir"].endswith(
-                "Validation-Environment/deployers/inesdata/deployments/DEV/demoedc"
+                "Validation-Environment/deployers/inesdata/deployments/DEV/pionera-edc"
             )
         )
         self.assertTrue(
             context["target_runtime_dir"].endswith(
-                "Validation-Environment/deployers/edc/deployments/DEV/demoedc"
+                "Validation-Environment/deployers/edc/deployments/DEV/pionera-edc"
             )
         )
 
@@ -1200,6 +1208,8 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         self.assertEqual(payload["connector"]["ingress"]["hostname"], "conn-citycounciledc-demoedc.dev.ds.dataspaceunit.upm")
         self.assertEqual(payload["connector"]["minio"]["accesskey"], "minio-access-key")
         self.assertEqual(payload["connector"]["minio"]["secretkey"], "minio-secret-key")
+        self.assertEqual(payload["connector"]["transfer"]["privatekey"], "private-key")
+        self.assertEqual(payload["connector"]["transfer"]["publickey"], "public-key")
         self.assertEqual(payload["services"]["keycloak"]["hostname"], "keycloak.dev.ed.dataspaceunit.upm")
         self.assertEqual(payload["services"]["minio"]["bucket"], "demoedc-conn-citycounciledc-demoedc")
         self.assertEqual(payload["services"]["vault"]["path"], "demoedc/conn-citycounciledc-demoedc/")

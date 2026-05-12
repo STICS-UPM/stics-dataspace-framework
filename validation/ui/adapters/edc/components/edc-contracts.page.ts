@@ -55,7 +55,7 @@ export class EdcContractsPage {
 
     const selectedTransferType = await this.selectPreferredTransferType(
       dialog,
-      Boolean(consumerRuntime.transferDestination),
+      consumerRuntime.adapter !== "edc" && Boolean(consumerRuntime.transferDestination),
     );
     if (PUSH_TRANSFER_PATTERN.test(selectedTransferType)) {
       await this.fillPushDestination(dialog, consumerRuntime, objectName);

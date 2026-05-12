@@ -22,6 +22,7 @@ type TransferStorageReport = {
   transferObjectName: string;
   finalTransferState?: string;
   selectedTransferType?: string;
+  storageValidation?: string;
   consumerBucketName?: string;
   consumerBucketBrowserUrl?: string;
   providerBootstrap?: {
@@ -37,7 +38,7 @@ type TransferStorageReport = {
   errorResponses: Array<{ url: string; status: number }>;
 };
 
-test("05 edc transfer storage: transferred object visible in consumer MinIO bucket", async ({
+test("05 edc transfer storage: validates object storage only for push transfers", async ({
   page,
   request,
   dataspaceRuntime,
@@ -137,20 +138,30 @@ test("05 edc transfer storage: transferred object visible in consumer MinIO buck
     report.finalTransferState = await transferHistoryPage.waitForSuccessfulTransfer(assetId, 120_000);
     await captureStep(page, "05-edc-transfer-storage-history");
 
-    const minioRuntime = resolveMinioConsoleRuntime({
-      consumerExpectedObject: objectName,
-    });
-    const consumerTarget = minioRuntime.targets.find((item) => item.role === "consumer");
-    expect(consumerTarget, "Consumer MinIO target is not configured").toBeTruthy();
-    report.consumerBucketName = consumerTarget!.bucketName;
-    report.consumerBucketBrowserUrl = consumerTarget!.bucketBrowserUrl;
+    const validatesObjectStorage =
+      /push/i.test(report.selectedTransferType || "") &&
+      dataspaceRuntime.consumer.transferDestinationType !== "HttpData";
 
-    await minioLoginPage.open(consumerTarget!.bucketBrowserUrl);
-    await minioLoginPage.loginIfNeeded(consumerTarget!.credentials);
-    await bucketBrowserPage.expectReady(consumerTarget!.bucketName);
-    await bucketBrowserPage.assertNoBucketPermissionError();
-    await bucketBrowserPage.waitForObjectVisible(objectName, 90_000);
-    await captureStep(page, "06-edc-transfer-storage-minio");
+    if (validatesObjectStorage) {
+      const minioRuntime = resolveMinioConsoleRuntime({
+        consumerExpectedObject: objectName,
+      });
+      const consumerTarget = minioRuntime.targets.find((item) => item.role === "consumer");
+      expect(consumerTarget, "Consumer MinIO target is not configured").toBeTruthy();
+      report.consumerBucketName = consumerTarget!.bucketName;
+      report.consumerBucketBrowserUrl = consumerTarget!.bucketBrowserUrl;
+
+      await minioLoginPage.open(consumerTarget!.bucketBrowserUrl);
+      await minioLoginPage.loginIfNeeded(consumerTarget!.credentials);
+      await bucketBrowserPage.expectReady(consumerTarget!.bucketName);
+      await bucketBrowserPage.assertNoBucketPermissionError();
+      await bucketBrowserPage.waitForObjectVisible(objectName, 90_000);
+      report.storageValidation = "consumer-minio-object-visible";
+      await captureStep(page, "06-edc-transfer-storage-minio");
+    } else {
+      report.storageValidation = "not-applicable-for-httpdata-pull";
+      await captureStep(page, "06-edc-transfer-storage-not-applicable");
+    }
 
     expect(report.selectedTransferType, "No transfer type was selected").toBeTruthy();
     expect(report.finalTransferState, "No final EDC transfer state was detected").toBeTruthy();

@@ -20,10 +20,9 @@ LOCAL_EDC_SERVICE_EXTENSIONS_PATH = os.path.join(
     "adapters",
     "edc",
     "sources",
-    "connector",
-    "transfer",
-    "transfer-00-prerequisites",
-    "connector",
+    "dashboard",
+    "asset-filter-template",
+    "final-connector",
     "src",
     "main",
     "resources",
@@ -59,7 +58,8 @@ class EdcBuildImageScriptTests(unittest.TestCase):
         with open(LOCAL_EDC_SERVICE_EXTENSIONS_PATH, "r", encoding="utf-8") as handle:
             entries = [line.strip() for line in handle.readlines() if line.strip()]
 
-        self.assertIn("org.eclipse.edc.sample.runtime.kafka.AdapterKafkaSupportExtension", entries)
+        self.assertIn("com.pionera.assetfilter.infer.InferenceExtension", entries)
+        self.assertIn("com.pionera.assetfilter.proxy.CustomProxyDataPlaneExtension", entries)
 
     def _create_fake_source_tree(self, root_dir):
         _touch(os.path.join(root_dir, "settings.gradle.kts"), contents="rootProject.name = \"connector\"\n")
@@ -69,9 +69,7 @@ class EdcBuildImageScriptTests(unittest.TestCase):
         _touch(
             os.path.join(
                 root_dir,
-                "transfer",
-                "transfer-00-prerequisites",
-                "connector",
+                "final-connector",
                 "build.gradle.kts",
             ),
             contents="plugins {}\n",
@@ -79,9 +77,7 @@ class EdcBuildImageScriptTests(unittest.TestCase):
         _touch(
             os.path.join(
                 root_dir,
-                "transfer",
-                "transfer-00-prerequisites",
-                "connector",
+                "final-connector",
                 "src",
                 "main",
                 "java",
@@ -92,9 +88,7 @@ class EdcBuildImageScriptTests(unittest.TestCase):
         _touch(
             os.path.join(
                 root_dir,
-                "transfer",
-                "transfer-00-prerequisites",
-                "connector",
+                "final-connector",
                 "build",
                 "libs",
                 "connector.jar",
@@ -107,9 +101,7 @@ class EdcBuildImageScriptTests(unittest.TestCase):
             self._create_fake_source_tree(tmpdir)
             jar_path = os.path.join(
                 tmpdir,
-                "transfer",
-                "transfer-00-prerequisites",
-                "connector",
+                "final-connector",
                 "build",
                 "libs",
                 "connector.jar",
@@ -140,16 +132,12 @@ class EdcBuildImageScriptTests(unittest.TestCase):
             self._create_fake_source_tree(tmpdir)
             runtime_build_file = os.path.join(
                 tmpdir,
-                "transfer",
-                "transfer-00-prerequisites",
-                "connector",
+                "final-connector",
                 "build.gradle.kts",
             )
             jar_path = os.path.join(
                 tmpdir,
-                "transfer",
-                "transfer-00-prerequisites",
-                "connector",
+                "final-connector",
                 "build",
                 "libs",
                 "connector.jar",
@@ -174,10 +162,10 @@ class EdcBuildImageScriptTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("Connector jar is outdated and will be rebuilt", completed.stdout)
-        self.assertIn("source changed: transfer/transfer-00-prerequisites/connector/build.gradle.kts", completed.stdout)
+        self.assertIn("source changed: final-connector/build.gradle.kts", completed.stdout)
         self.assertIn("GradleWrapperMain", completed.stdout)
 
-    def test_build_image_refuses_default_remote_sync_when_source_is_missing(self):
+    def test_build_image_refuses_custom_source_sync_when_source_is_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             missing_source = os.path.join(tmpdir, "missing-connector")
 
@@ -196,7 +184,7 @@ class EdcBuildImageScriptTests(unittest.TestCase):
             )
 
         self.assertNotEqual(completed.returncode, 0)
-        self.assertIn("Refusing to synchronize from the default remote", completed.stderr)
+        self.assertIn("Refusing to synchronize into a custom source directory", completed.stderr)
         self.assertNotIn("sync_sources.sh", completed.stdout + completed.stderr)
         self.assertNotIn("git clone", completed.stdout + completed.stderr)
 

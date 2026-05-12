@@ -64,7 +64,38 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "if (!(pm.collectionVariables.get('e2e_agreement_id') || pm.environment.get('e2e_agreement_id'))) { pm.execution.skipRequest(); }"
+              "const agreementId = pm.collectionVariables.get('e2e_agreement_id') || pm.environment.get('e2e_agreement_id');",
+              "if (!agreementId) { pm.execution.skipRequest(); }",
+              "const adapter = String(pm.collectionVariables.get('adapter') || pm.environment.get('adapter') || '').toLowerCase();",
+              "const provider = pm.collectionVariables.get('providerParticipantId') || pm.environment.get('providerParticipantId') || pm.collectionVariables.get('provider') || pm.environment.get('provider');",
+              "const providerProtocolAddress = pm.collectionVariables.get('providerProtocolAddress') || pm.environment.get('providerProtocolAddress');",
+              "const protocol = 'dataspace-protocol-http';",
+              "let payload;",
+              "if (adapter === 'edc') {",
+              "  payload = {",
+              "    '@context': { '@vocab': 'https://w3id.org/edc/v0.0.1/ns/' },",
+              "    '@type': pm.collectionVariables.get('transferRequestType') || pm.environment.get('transferRequestType') || 'TransferRequestDto',",
+              "    connectorId: provider,",
+              "    counterPartyAddress: providerProtocolAddress,",
+              "    contractId: agreementId,",
+              "    protocol,",
+              "    transferType: pm.collectionVariables.get('transferType') || pm.environment.get('transferType') || 'HttpData-PULL'",
+              "  };",
+              "} else {",
+              "  payload = {",
+              "    '@context': { '@vocab': 'https://w3id.org/edc/v0.0.1/ns/' },",
+              "    '@type': pm.collectionVariables.get('transferRequestType') || pm.environment.get('transferRequestType') || 'TransferRequest',",
+              "    assetId: pm.collectionVariables.get('e2e_asset_id') || pm.environment.get('e2e_asset_id'),",
+              "    contractId: agreementId,",
+              "    counterPartyAddress: providerProtocolAddress,",
+              "    protocol,",
+              "    transferType: pm.collectionVariables.get('transferType') || pm.environment.get('transferType') || 'AmazonS3-PUSH',",
+              "    dataDestination: {",
+              "      type: pm.collectionVariables.get('transferDestinationType') || pm.environment.get('transferDestinationType') || 'InesDataStore'",
+              "    }",
+              "  };",
+              "}",
+              "pm.variables.set('transferRequestBody', JSON.stringify(payload, null, 2));"
             ]
           }
         }
@@ -95,7 +126,7 @@
         },
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"TransferRequest\",\n  \"assetId\": \"{{e2e_asset_id}}\",\n  \"contractId\": \"{{e2e_agreement_id}}\",\n  \"counterPartyAddress\": \"{{providerProtocolAddress}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"transferType\": \"AmazonS3-PUSH\",\n  \"dataDestination\": {\n    \"type\": \"{{transferDestinationType}}\"\n  }\n}"
+          "raw": "{{transferRequestBody}}"
         }
       }
     },
