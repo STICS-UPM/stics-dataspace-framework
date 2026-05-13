@@ -1297,7 +1297,7 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
         runtime = {
             "provisioner": "kubernetes",
             "validation_backend": "kubernetes-exec",
-            "startup_grace_seconds": 360,
+            "startup_grace_seconds": 60,
             "poll_interval_seconds": 1,
         }
         transfer_process = {
@@ -1342,13 +1342,13 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
             runtime,
             "corr-1",
             "source-topic",
-            timeout_seconds=240,
+            timeout_seconds=10,
         )
         probe_mock.assert_called_once_with(
             runtime,
             "source-topic",
             "destination-topic",
-            timeout_seconds=120,
+            timeout_seconds=30,
         )
 
     def test_run_all_retries_transient_pair_failure_once(self):
@@ -1436,6 +1436,46 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
         self.assertTrue(results[0]["retry_attempted"])
         self.assertEqual(results[0]["attempt_count"], 2)
         self.assertIn("No Kafka messages were consumed", results[0]["retry_reason"])
+        sleep_mock.assert_called_once_with(5)
+
+    def test_run_all_retries_transient_authentication_failure_once(self):
+        kafka_manager = _FakeKafkaManager()
+        suite = KafkaEdcValidationSuite(
+            load_connector_credentials=lambda connector: {
+                "connector_user": {"user": "user", "passwd": "pass"}
+            },
+            load_deployer_config=lambda: {"KC_URL": "http://keycloak.local"},
+            kafka_runtime_loader=lambda: {},
+            ds_domain_resolver=lambda: "example.local",
+            ds_name_loader=lambda: "dataspace",
+            kafka_manager=kafka_manager,
+            session=_FakeSession(),
+        )
+
+        run_pair_results = [
+            {
+                "provider": "conn-a",
+                "consumer": "conn-b",
+                "status": "failed",
+                "error": {
+                    "type": "RuntimeError",
+                    "message": "provider Kafka asset creation failed with HTTP 401: Request could not be authenticated",
+                },
+                "steps": [],
+            },
+            {"provider": "conn-a", "consumer": "conn-b", "status": "passed", "steps": []},
+            {"provider": "conn-b", "consumer": "conn-a", "status": "passed", "steps": []},
+        ]
+
+        with patch.object(suite, "run_pair", side_effect=run_pair_results) as run_pair_mock:
+            with patch("framework.kafka_edc_validation.time.sleep", return_value=None) as sleep_mock:
+                results = suite.run_all(["conn-a", "conn-b"], experiment_dir=None)
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(run_pair_mock.call_count, 3)
+        self.assertTrue(results[0]["retry_attempted"])
+        self.assertEqual(results[0]["attempt_count"], 2)
+        self.assertIn("HTTP 401", results[0]["retry_reason"])
         sleep_mock.assert_called_once_with(5)
 
     def test_run_all_can_opt_in_to_reset_framework_kubernetes_kafka_between_retry_attempts(self):

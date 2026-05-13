@@ -27,7 +27,7 @@ class KafkaEdcValidationSuite:
     DEFAULT_EDR_TIMEOUT_SECONDS = 30
     DEFAULT_POLL_INTERVAL_SECONDS = 3
     DEFAULT_CONSUMER_POLL_TIMEOUT_SECONDS = 30
-    DEFAULT_STARTUP_GRACE_SECONDS = 360
+    DEFAULT_STARTUP_GRACE_SECONDS = 60
     DEFAULT_PRE_RUN_SETTLE_SECONDS = 10
     DEFAULT_LOGIN_ATTEMPTS = 3
     DEFAULT_LOGIN_RETRY_SECONDS = 2
@@ -36,9 +36,9 @@ class KafkaEdcValidationSuite:
     DEFAULT_PAIR_ATTEMPTS = 2
     DEFAULT_PAIR_RETRY_SECONDS = 5
     DEFAULT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS = 30
-    DEFAULT_STABILIZATION_GROUP_WAIT_SECONDS = 240
-    DEFAULT_STABILIZATION_PROBE_TIMEOUT_SECONDS = 120
-    DEFAULT_STABILIZATION_LATE_CONFIRMATION_SECONDS = 120
+    DEFAULT_STABILIZATION_GROUP_WAIT_SECONDS = 10
+    DEFAULT_STABILIZATION_PROBE_TIMEOUT_SECONDS = 30
+    DEFAULT_STABILIZATION_LATE_CONFIRMATION_SECONDS = 30
     DEFAULT_STABILIZATION_REQUEST_TIMEOUT_MS = 5000
 
     def __init__(
@@ -1752,16 +1752,29 @@ class KafkaEdcValidationSuite:
         raise RuntimeError("Kafka transfer path did not relay a probe message in time")
 
     def _produce_kubernetes_exec_message(self, runtime, topic, payload):
+        timeout_seconds = int(runtime.get("kubernetes_exec_timeout_seconds", 30))
         result = self._run_kubernetes_kafka_command(
             runtime,
-            ["kafka-console-producer", "--bootstrap-server", "localhost:9092", "--topic", topic],
+            [
+                "timeout",
+                str(timeout_seconds),
+                "kafka-console-producer",
+                "--bootstrap-server",
+                "localhost:9092",
+                "--topic",
+                topic,
+            ],
             input_text=json.dumps(payload, separators=(",", ":")) + "\n",
+            timeout_seconds=timeout_seconds + 5,
         )
         if getattr(result, "returncode", 1) != 0:
             raise RuntimeError((getattr(result, "stderr", "") or "").strip() or "Kafka console producer failed")
 
     def _consume_kubernetes_exec_messages(self, runtime, topic, timeout_ms=2000, max_messages=50, offset=None):
+        timeout_seconds = int(runtime.get("kubernetes_exec_timeout_seconds", 30))
         kafka_args = [
+            "timeout",
+            str(timeout_seconds),
             "kafka-console-consumer",
             "--bootstrap-server",
             "localhost:9092",
@@ -1778,7 +1791,11 @@ class KafkaEdcValidationSuite:
             "--max-messages",
             str(int(max_messages)),
         ])
-        result = self._run_kubernetes_kafka_command(runtime, kafka_args)
+        result = self._run_kubernetes_kafka_command(
+            runtime,
+            kafka_args,
+            timeout_seconds=timeout_seconds + 5,
+        )
         output = getattr(result, "stdout", "") or ""
         messages = []
         for line in output.splitlines():
@@ -2313,6 +2330,8 @@ class KafkaEdcValidationSuite:
             "failed with HTTP 502",
             "failed with HTTP 503",
             "failed with HTTP 504",
+            "failed with HTTP 401",
+            "Request could not be authenticated",
             "Unable to obtain credentials",
             "Kafka transfer path did not relay a probe message in time",
             "No Kafka messages were consumed through the EDC transfer",
