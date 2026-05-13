@@ -98,6 +98,7 @@ class KafkaManagerTests(unittest.TestCase):
                 bootstrap = manager.ensure_kafka_running()
 
         self.assertEqual(bootstrap, "127.0.0.1:39092")
+        self.assertEqual(manager._provisioner(), "kubernetes")
         mocked_start.assert_called_once()
 
     def test_auto_starts_kafka_broker_in_kubernetes_when_configured(self):
@@ -169,6 +170,56 @@ class KafkaManagerTests(unittest.TestCase):
         self.assertTrue(manager.started_by_framework)
         self.assertEqual(manager.provisioning_mode, "kubernetes")
         self.assertTrue(any(call["args"][:3] == ["kubectl", "rollout", "status"] for call in commands))
+
+    def test_kubernetes_start_removes_stale_split_controller_in_combined_mode(self):
+        commands = []
+
+        def fake_runner(args, input_text=None):
+            commands.append({"args": list(args), "input": input_text})
+            return _FakeCompletedProcess(stdout="")
+
+        manager = KafkaManager(
+            runtime_config={
+                "provisioner": "kubernetes",
+                "k8s_namespace": "demo",
+                "k8s_service_name": "framework-kafka",
+                "k8s_local_port": "39092",
+            },
+            command_runner=fake_runner,
+        )
+
+        with mock.patch.object(KafkaManager, "_start_kubernetes_port_forward", return_value=object()):
+            with mock.patch.object(KafkaManager, "_wait_for_kubernetes_internal_bootstrap", return_value={"pod": "conn-a"}):
+                with mock.patch.object(KafkaManager, "_wait_for_kubernetes_external_service_bootstrap", return_value={"pod": "conn-a"}):
+                    with mock.patch.object(KafkaManager, "is_kafka_available", side_effect=[False, True]):
+                        manager.ensure_kafka_running()
+
+        command_args = [call["args"] for call in commands]
+        self.assertIn(
+            [
+                "kubectl",
+                "delete",
+                "deployment/framework-kafka-controller",
+                "service/framework-kafka-controller",
+                "-n",
+                "demo",
+                "--ignore-not-found=true",
+            ],
+            command_args,
+        )
+        delete_index = command_args.index(
+            [
+                "kubectl",
+                "delete",
+                "deployment/framework-kafka-controller",
+                "service/framework-kafka-controller",
+                "-n",
+                "demo",
+                "--ignore-not-found=true",
+            ]
+        )
+        apply_index = command_args.index(["kubectl", "apply", "-f", "-"])
+        self.assertLess(delete_index, apply_index)
 
     def test_auto_starts_kafka_broker_in_split_kraft_mode(self):
         commands = []
@@ -441,9 +492,11 @@ class KafkaManagerTests(unittest.TestCase):
         self.assertIn("KAFKA_BROKER_HEARTBEAT_INTERVAL_MS", manifest)
         self.assertIn('value: "3000"', manifest)
         self.assertIn("KAFKA_BROKER_SESSION_TIMEOUT_MS", manifest)
-        self.assertIn('value: "30000"', manifest)
+        self.assertIn('value: "60000"', manifest)
         self.assertIn("KAFKA_CONTROLLER_QUORUM_REQUEST_TIMEOUT_MS", manifest)
-        self.assertIn('value: "10000"', manifest)
+        self.assertIn('value: "30000"', manifest)
+        self.assertIn("KAFKA_INITIAL_BROKER_REGISTRATION_TIMEOUT_MS", manifest)
+        self.assertIn('value: "120000"', manifest)
         self.assertIn("resources:", manifest)
         self.assertIn('cpu: "100m"', manifest)
         self.assertIn('memory: "256Mi"', manifest)

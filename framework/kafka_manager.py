@@ -282,6 +282,25 @@ class KafkaManager:
         return refs
 
     @staticmethod
+    def _kubernetes_stale_resource_refs(ids):
+        if ids.get("split_kraft"):
+            return []
+        return [
+            f"deployment/{ids['controller_deployment_name']}",
+            f"service/{ids['controller_service_name']}",
+        ]
+
+    def _cleanup_stale_kubernetes_resources(self, ids):
+        stale_refs = self._kubernetes_stale_resource_refs(ids)
+        if not stale_refs:
+            return
+        self._run_command(
+            ["kubectl", "delete"]
+            + stale_refs
+            + ["-n", ids["namespace"], "--ignore-not-found=true"]
+        )
+
+    @staticmethod
     def _kubernetes_rollout_targets(ids):
         targets = []
         if ids.get("split_kraft"):
@@ -376,9 +395,11 @@ class KafkaManager:
                     - name: KAFKA_BROKER_HEARTBEAT_INTERVAL_MS
                       value: "3000"
                     - name: KAFKA_BROKER_SESSION_TIMEOUT_MS
-                      value: "30000"
+                      value: "60000"
                     - name: KAFKA_CONTROLLER_QUORUM_REQUEST_TIMEOUT_MS
-                      value: "10000"
+                      value: "30000"
+                    - name: KAFKA_INITIAL_BROKER_REGISTRATION_TIMEOUT_MS
+                      value: "120000"
                     - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
                       value: "0"
                     - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
@@ -509,7 +530,7 @@ class KafkaManager:
                     - name: KAFKA_CONTROLLER_QUORUM_VOTERS
                       value: "{controller_node_id}@{controller_bootstrap}"
                     - name: KAFKA_CONTROLLER_QUORUM_REQUEST_TIMEOUT_MS
-                      value: "10000"
+                      value: "30000"
                     - name: KAFKA_LOG_DIRS
                       value: "/var/lib/kafka/data/kraft-controller-logs"
                     resources:
@@ -619,9 +640,11 @@ class KafkaManager:
                     - name: KAFKA_BROKER_HEARTBEAT_INTERVAL_MS
                       value: "3000"
                     - name: KAFKA_BROKER_SESSION_TIMEOUT_MS
-                      value: "30000"
+                      value: "60000"
                     - name: KAFKA_CONTROLLER_QUORUM_REQUEST_TIMEOUT_MS
-                      value: "10000"
+                      value: "30000"
+                    - name: KAFKA_INITIAL_BROKER_REGISTRATION_TIMEOUT_MS
+                      value: "120000"
                     - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
                       value: "0"
                     - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
@@ -850,6 +873,7 @@ class KafkaManager:
         self.provisioning_mode = ids["provisioner"]
         rollout_error = None
 
+        self._cleanup_stale_kubernetes_resources(ids)
         self._run_command(["kubectl", "apply", "-f", "-"], input_text=manifest)
         rollout_errors = []
         for rollout_target in self._kubernetes_rollout_targets(ids):
