@@ -14,6 +14,8 @@ import java.util.Set;
 import java.util.function.Supplier;
 
 public class ValidatingDataSinkFactory implements DataSinkFactory {
+    private static final String KAFKA_TYPE = "Kafka";
+
     private final DataSinkFactory delegate;
     private final Supplier<RdfValidationService> validationServiceProvider;
     private final Monitor monitor;
@@ -50,6 +52,11 @@ public class ValidatingDataSinkFactory implements DataSinkFactory {
 
     @Override
     public DataSink createSink(DataFlowStartMessage request) {
+        if (isKafkaDestination(request)) {
+            monitor.info("RDF in-stream validation bypassed for Kafka transfer " + request.getProcessId());
+            return delegate.createSink(request);
+        }
+
         return new ValidatingDataSink(
                 delegate.createSink(request),
                 request,
@@ -66,5 +73,12 @@ public class ValidatingDataSinkFactory implements DataSinkFactory {
     @Override
     public Result<Void> validateRequest(DataFlowStartMessage request) {
         return delegate.validateRequest(request);
+    }
+
+    static boolean isKafkaDestination(DataFlowStartMessage request) {
+        if (request == null || request.getDestinationDataAddress() == null) {
+            return false;
+        }
+        return KAFKA_TYPE.equalsIgnoreCase(request.getDestinationDataAddress().getType());
     }
 }

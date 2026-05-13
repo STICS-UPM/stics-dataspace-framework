@@ -16,4 +16,7 @@ dependencies {
     implementation(libs.edc.lib.validator)
     implementation(libs.edc.transaction.spi)
     implementation(libs.edc.transaction.datasource.spi)
+
+    testImplementation(libs.assertj)
+    testImplementation(libs.edc.core.junit)
 }
