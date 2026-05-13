@@ -3229,6 +3229,14 @@ class INESDataInfrastructureAdapter:
             f"-n ingress-nginx --type merge -p {shlex.quote(patch_json)}",
             check=False,
         )
+        self.run(
+            "kubectl rollout restart deployment/ingress-nginx-controller -n ingress-nginx",
+            check=False,
+        )
+        self.run(
+            "kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=180s",
+            check=False,
+        )
 
     def _deploy_infrastructure_runtime(self, *, skip_hosts=False, host_sync_message=None):
         self.announce_level(2, "DEPLOY COMMON SERVICES")

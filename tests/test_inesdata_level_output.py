@@ -255,6 +255,14 @@ class InesdataLevelOutputTests(unittest.TestCase):
         infrastructure.run.assert_any_call(
             "minikube start -p vm-local --driver=docker --cpus=4 --memory=8192"
         )
+        infrastructure.run.assert_any_call(
+            "kubectl rollout restart deployment/ingress-nginx-controller -n ingress-nginx",
+            check=False,
+        )
+        infrastructure.run.assert_any_call(
+            "kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=180s",
+            check=False,
+        )
         infrastructure.run_silent.assert_any_call("minikube -p vm-local addons enable ingress")
 
     def test_wsl_docker_config_repair_removes_desktop_exe_creds_store(self):
