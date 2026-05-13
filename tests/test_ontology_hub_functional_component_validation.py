@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import tempfile
 import unittest
@@ -158,6 +160,40 @@ class OntologyHubFunctionalComponentValidationTests(unittest.TestCase):
         self.assertEqual(len(captured_commands), 1)
         self.assertIn("deployment/demo-ontology-hub-mongodb", captured_commands[0])
         self.assertIn("testing(?:[-+][^@]+)?@myemail", captured_commands[0])
+
+    def test_mongo_cleanup_console_output_omits_inline_script_by_default(self):
+        completed = mock.Mock(
+            returncode=0,
+            stdout='{"users":2,"agents":1}\n',
+            stderr="",
+        )
+
+        stdout = io.StringIO()
+        with mock.patch(
+            "validation.components.ontology_hub.functional.runtime_preparation.subprocess.run",
+            return_value=completed,
+        ), mock.patch.dict(os.environ, {"PIONERA_VERBOSE_COMMANDS": "false"}, clear=False):
+            with contextlib.redirect_stdout(stdout):
+                result = runtime_preparation._ontology_hub_mongo_cleanup_test_identities(
+                    {
+                        "dataspace": "demo",
+                        "componentsNamespace": "components",
+                    }
+                )
+
+        output = stdout.getvalue()
+        self.assertEqual(result, {"users": 2, "agents": 1})
+        self.assertIn("mongosh --quiet --eval <script omitted", output)
+        self.assertNotIn("deleteMany", output)
+        self.assertNotIn('{"users":2,"agents":1}', output)
+
+    def test_verbose_commands_can_show_inline_mongo_script(self):
+        cmd = "kubectl exec -n components deployment/demo-ontology-hub-mongodb -- mongosh --quiet --eval 'deleteMany()'"
+
+        with mock.patch.dict(os.environ, {"PIONERA_VERBOSE_COMMANDS": "true"}, clear=False):
+            formatted = runtime_preparation._format_command_for_console(cmd)
+
+        self.assertIn("deleteMany()", formatted)
 
     def test_agents_users_spec_uses_run_scoped_test_email(self):
         spec_path = (

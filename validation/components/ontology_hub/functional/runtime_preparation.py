@@ -21,8 +21,30 @@ def _kubectl_env():
     return env
 
 
+def _env_flag(name, default=False):
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return bool(default)
+    return str(raw_value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _format_command_for_console(cmd):
+    if _env_flag("PIONERA_VERBOSE_COMMANDS", False):
+        return cmd
+    if "-- mongosh " in cmd and " --eval " in cmd:
+        prefix = cmd.split(" --eval ", 1)[0]
+        return f"{prefix} --eval <script omitted; set PIONERA_VERBOSE_COMMANDS=true to show>"
+    return cmd
+
+
+def _should_echo_command_output(cmd):
+    if _env_flag("PIONERA_VERBOSE_COMMANDS", False):
+        return True
+    return not ("-- mongosh " in cmd and " --eval " in cmd)
+
+
 def _run(cmd, check=False):
-    print(f"\nExecuting: {cmd}")
+    print(f"\nExecuting: {_format_command_for_console(cmd)}")
     try:
         result = subprocess.run(cmd, shell=True, text=True, env=_kubectl_env())
     except Exception as exc:
@@ -37,7 +59,8 @@ def _run(cmd, check=False):
 
 
 def _run_capture(cmd):
-    print(f"\nExecuting: {cmd}")
+    echo_output = _should_echo_command_output(cmd)
+    print(f"\nExecuting: {_format_command_for_console(cmd)}")
     try:
         result = subprocess.run(
             cmd,
@@ -52,7 +75,7 @@ def _run_capture(cmd):
 
     stdout = (result.stdout or "").strip()
     stderr = (result.stderr or "").strip()
-    if stdout:
+    if stdout and echo_output:
         print(stdout)
     if result.returncode != 0:
         if stderr:
