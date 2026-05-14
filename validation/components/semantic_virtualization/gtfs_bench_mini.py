@@ -385,7 +385,7 @@ def _write_readme(path: Path) -> None:
                 "",
                 "- validate that Semantic Virtualization can work with official GTFS-Bench shaped CSV files;",
                 "- provide a stable mapping-editor and API fixture for A5.2 evidence;",
-                "- keep Docker/MySQL/full benchmark generation as an opt-in activity;",
+                "- keep Docker/MySQL/full benchmark generation as an explicit maintenance activity outside Level 6;",
                 "- support future INESData HttpData demos without publishing the full dataset by default.",
                 "",
                 "## Regeneration",
@@ -493,7 +493,7 @@ def generate_gtfs_bench_official_mini_fixture(
             "recordCounts": {table: len(rows) for table, rows in selected.items()},
             "notes": [
                 "The slice preserves GTFS joins across agency, route, service, trip, stop times, stops and shapes.",
-                "The full official generator remains opt-in because it requires MySQL/Docker-style runtime services.",
+                "The full official generator is kept as an explicit maintenance activity outside Level 6 because it requires MySQL/Docker-style runtime services.",
                 "This fixture is intentionally small and does not replace the complete benchmark.",
             ],
         },

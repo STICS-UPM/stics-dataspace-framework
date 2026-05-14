@@ -24,8 +24,8 @@ FUNCTIONAL_CASE_METADATA: Dict[str, Dict[str, Any]] = {
         "validation_type": "functional",
         "dataspace_dimension": "linguistic",
         "mapping_status": "phase_3",
-        "automation_mode": "api_ui_opt_in",
-        "execution_mode": "api_ui_opt_in",
+        "automation_mode": "api_ui",
+        "execution_mode": "api_ui",
         "coverage_status": "partial",
         "expected_result": (
             "FLARES-mini can populate the dataspace on demand, reach a negotiated agreement, "

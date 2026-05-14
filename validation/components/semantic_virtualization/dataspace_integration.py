@@ -892,7 +892,7 @@ def load_gtfs_bench_official_materialization_context(
         "notes": [
             "This context exposes the official-derived RDF artifact as INESData HttpData metadata.",
             "The default dataAddress still points to the deployed Semantic Virtualization endpoint unless overridden.",
-            "The complete official benchmark/generator remains opt-in to avoid destabilizing Level 6.",
+            "The complete official benchmark/generator is kept as an explicit maintenance activity outside Level 6 to avoid destabilizing validation runs.",
         ],
     }
 

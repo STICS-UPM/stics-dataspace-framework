@@ -473,7 +473,7 @@ def run_gtfs_bench_official_materialization_validation(
         "mapping_status": "mapped",
         "automation_mode": "offline_fixture",
         "execution_mode": "offline_fixture",
-        "coverage_status": "automated_opt_in",
+        "coverage_status": "automated",
         "evaluation": {
             "status": validation["status"],
             "assertions": list(validation.get("assertions") or []),

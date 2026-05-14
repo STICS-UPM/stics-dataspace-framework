@@ -12,10 +12,11 @@ from validation.components.ai_model_hub.runner import (
 )
 from validation.components.ai_model_hub.ui_runner import run_ai_model_hub_ui_validation
 
-AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED = {
+AI_MODEL_HUB_A52_SUITES_DISABLED = {
     "AI_MODEL_HUB_ENABLE_UI_VALIDATION": "",
     "AI_MODEL_HUB_ENABLE_FUNCTIONAL_VALIDATION": "",
     "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "",
+    "AI_MODEL_HUB_ENABLE_MODEL_EXECUTION": "",
     "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING": "",
     "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING": "",
     "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER": "",
@@ -111,7 +112,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
 
             with (
                 mock.patch("validation.components.ai_model_hub.runner._http_get", side_effect=fake_http_get),
-                mock.patch.dict(os.environ, AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED, clear=False),
+                mock.patch.dict(os.environ, AI_MODEL_HUB_A52_SUITES_DISABLED, clear=False),
             ):
                 result = run_ai_model_hub_component_validation(
                     "http://ai-model-hub.example.local",
@@ -137,6 +138,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertTrue(os.path.exists(result["artifacts"]["report_json"]))
             self.assertTrue(os.path.exists(result["artifacts"]["support_checks_json"]))
             self.assertTrue(os.path.exists(result["artifacts"]["catalog_alignment_json"]))
+            self.assertTrue(os.path.exists(result["artifacts"]["artifact_manifest_json"]))
 
     def test_run_ai_model_hub_component_validation_combines_bootstrap_and_ui_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -198,7 +200,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                     "validation.components.ai_model_hub.component_runner.run_ai_model_hub_ui_validation",
                     return_value=ui_result,
                 ),
-                mock.patch.dict(os.environ, AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED, clear=False),
+                mock.patch.dict(os.environ, AI_MODEL_HUB_A52_SUITES_DISABLED, clear=False),
             ):
                 result = run_ai_model_hub_component_validation(
                     "http://ai-model-hub.example.local",
@@ -221,7 +223,87 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertEqual(result["pt5_case_results"][0]["traceability"], ["MH-01"])
             self.assertTrue(result["artifacts"]["ui_report_json"].endswith("ui.json"))
 
-    def test_run_ai_model_hub_component_validation_can_include_connector_governance_opt_in(self):
+    def test_run_ai_model_hub_component_validation_runs_a52_suites_by_default(self):
+        def suite_result(suite, case_id, case_group="pt5", validation_type="functional"):
+            return {
+                "component": "ai-model-hub",
+                "suite": suite,
+                "status": "passed",
+                "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+                "executed_cases": [
+                    {
+                        "test_case_id": case_id,
+                        "type": "api",
+                        "case_group": case_group,
+                        "validation_type": validation_type,
+                        "dataspace_dimension": "test",
+                        "mapping_status": "phase_3",
+                        "coverage_status": "automated",
+                        "execution_mode": "api",
+                        "evaluation": {"status": "passed", "assertions": []},
+                    }
+                ],
+                "evidence_index": [],
+                "artifacts": {},
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            patches = [
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_validation",
+                    return_value=suite_result("bootstrap", "MH-BOOTSTRAP-01", "support", "support"),
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_ui_validation",
+                    return_value=suite_result("ui", "PT5-MH-01"),
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_functional_validation",
+                    return_value=suite_result("linguistic-functional", "MH-LING-01", "functional_use_case"),
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_connector_governance_validation",
+                    return_value=suite_result("connector-governance-api", "PT5-MH-16", "pt5", "integration"),
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_model_execution_validation",
+                    return_value=suite_result("model-execution-api", "PT5-MH-10", "pt5", "integration"),
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_model_benchmarking_validation",
+                    return_value=suite_result("model-benchmarking-api", "PT5-MH-12"),
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_mobility_benchmarking_validation",
+                    return_value=suite_result("mobility-benchmarking-api", "MH-MOB-01", "functional_use_case"),
+                ),
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_model_observer_validation",
+                    return_value=suite_result("model-observer-api", "MH-OBS-02", "observer", "non_functional"),
+                ),
+            ]
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with patches[0] as bootstrap, patches[1] as ui, patches[2] as functional, patches[3] as governance:
+                    with patches[4] as execution, patches[5] as benchmarking, patches[6] as mobility, patches[7] as observer:
+                        result = run_ai_model_hub_component_validation(
+                            "http://ai-model-hub.example.local",
+                            experiment_dir=tmpdir,
+                        )
+
+            for patched_runner in [bootstrap, ui, functional, governance, execution, benchmarking, mobility, observer]:
+                patched_runner.assert_called_once()
+
+            self.assertEqual(result["status"], "passed")
+            self.assertEqual(result["summary"]["total"], 8)
+            self.assertIn("model_execution", result["suites"])
+            self.assertIn("connector_governance", result["phases"]["integration"]["suites"])
+            self.assertIn("model_execution", result["phases"]["integration"]["suites"])
+            self.assertIn("model_benchmarking", result["phases"]["functional"]["suites"])
+            self.assertIn("mobility_benchmarking", result["phases"]["functional"]["suites"])
+            self.assertIn("model_observer", result["phases"]["integration"]["suites"])
+            self.assertTrue(os.path.exists(result["artifacts"]["artifact_manifest_json"]))
+
+    def test_run_ai_model_hub_component_validation_can_include_connector_governance_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_result = {
                 "component": "ai-model-hub",
@@ -266,8 +348,8 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                         "validation_type": "integration",
                         "dataspace_dimension": "identity",
                         "mapping_status": "phase_3",
-                        "coverage_status": "automated_opt_in",
-                        "execution_mode": "api_opt_in",
+                        "coverage_status": "automated",
+                        "execution_mode": "api",
                         "evaluation": {"status": "passed", "assertions": []},
                     }
                 ],
@@ -298,7 +380,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                 mock.patch.dict(
                     os.environ,
                     {
-                        **AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED,
+                        **AI_MODEL_HUB_A52_SUITES_DISABLED,
                         "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "1",
                     },
                 ),
@@ -315,7 +397,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertEqual(result["catalog_alignment"]["summary"]["executed_pt5_cases"], 1)
             self.assertEqual(result["pt5_case_results"][0]["traceability"], ["MH-45"])
 
-    def test_run_ai_model_hub_component_validation_can_include_model_benchmarking_opt_in(self):
+    def test_run_ai_model_hub_component_validation_can_include_model_benchmarking_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_result = {
                 "component": "ai-model-hub",
@@ -392,7 +474,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                 mock.patch.dict(
                     os.environ,
                     {
-                        **AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED,
+                        **AI_MODEL_HUB_A52_SUITES_DISABLED,
                         "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING": "1",
                     },
                 ),
@@ -409,7 +491,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertEqual(result["catalog_alignment"]["summary"]["executed_pt5_cases"], 1)
             self.assertEqual(result["pt5_case_results"][0]["traceability"], ["MH-37"])
 
-    def test_run_ai_model_hub_component_validation_can_include_mobility_benchmarking_opt_in(self):
+    def test_run_ai_model_hub_component_validation_can_include_mobility_benchmarking_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_result = {
                 "component": "ai-model-hub",
@@ -455,7 +537,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                         "dataspace_dimension": "mobility",
                         "mapping_status": "phase_3",
                         "coverage_status": "automated_fixture",
-                        "execution_mode": "api_fixture_opt_in",
+                        "execution_mode": "api_fixture",
                         "evaluation": {"status": "passed", "assertions": []},
                     }
                 ],
@@ -486,7 +568,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                 mock.patch.dict(
                     os.environ,
                     {
-                        **AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED,
+                        **AI_MODEL_HUB_A52_SUITES_DISABLED,
                         "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING": "1",
                     },
                 ),
@@ -509,7 +591,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             )
             self.assertTrue(os.path.exists(result["artifacts"]["functional_use_case_results_json"]))
 
-    def test_run_ai_model_hub_component_validation_can_include_model_observer_opt_in(self):
+    def test_run_ai_model_hub_component_validation_can_include_model_observer_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_result = {
                 "component": "ai-model-hub",
@@ -554,8 +636,8 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                         "validation_type": "non_functional",
                         "dataspace_dimension": "governance",
                         "mapping_status": "planned_observer",
-                        "coverage_status": "automated_opt_in",
-                        "execution_mode": "api_opt_in",
+                        "coverage_status": "automated",
+                        "execution_mode": "api",
                         "evaluation": {"status": "passed", "assertions": []},
                     }
                 ],
@@ -586,7 +668,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                 mock.patch.dict(
                     os.environ,
                     {
-                        **AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED,
+                        **AI_MODEL_HUB_A52_SUITES_DISABLED,
                         "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER": "1",
                     },
                 ),

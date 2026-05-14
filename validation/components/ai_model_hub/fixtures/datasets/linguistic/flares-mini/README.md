@@ -35,7 +35,7 @@ La muestra se ha reducido para mantener:
 
 - cobertura de las dimensiones `WHO`, `WHAT`, `WHEN`, `WHERE`, `HOW` y `WHY`;
 - presencia de las clases `confiable`, `semiconfiable` y `no confiable`;
-- tamaño manejable para una suite funcional opt-in.
+- tamaño manejable para una suite funcional de `Level 6`.
 
 ## Nota operativa
 

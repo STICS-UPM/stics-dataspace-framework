@@ -299,8 +299,8 @@ test_cases:
     type: api
     validation_type: integration
     dataspace_dimension: execution
-    execution_mode: api_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: api
+    coverage_status: automated
     mapping_status: phase_3
     preconditions:
       - A valid agreement exists for the remote model
@@ -312,8 +312,8 @@ test_cases:
     traceability:
       - MH-33
     automation:
-      status: automated_opt_in
-      mode: api_opt_in
+      status: automated
+      mode: api
       runner: validation/components/ai_model_hub/connector_governance_api.py
       evidence_case: PT5-MH-09
       enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
@@ -329,8 +329,8 @@ test_cases:
     type: api
     validation_type: integration
     dataspace_dimension: execution
-    execution_mode: api_opt_in
-    coverage_status: api_smoke_opt_in
+    execution_mode: api
+    coverage_status: api_smoke
     mapping_status: partial
     preconditions:
       - A controlled executable model endpoint exists as HttpData
@@ -346,8 +346,8 @@ test_cases:
       - MH-35
     notes: A connector-side API smoke is available for controlled HttpData model endpoints; the full FLARES functional inference path remains pending.
     automation:
-      status: automated_opt_in
-      mode: api_opt_in
+      status: automated
+      mode: api
       runner: validation/components/ai_model_hub/model_execution_api.py
       latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
       latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
@@ -361,8 +361,8 @@ test_cases:
     type: api
     validation_type: integration
     dataspace_dimension: execution
-    execution_mode: api_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: api
+    coverage_status: automated
     mapping_status: phase_3
     preconditions:
       - Active agreements exist for consumable models
@@ -373,8 +373,8 @@ test_cases:
     traceability:
       - MH-36
     automation:
-      status: automated_opt_in
-      mode: api_opt_in
+      status: automated
+      mode: api
       runner: validation/components/ai_model_hub/connector_governance_api.py
       evidence_case: PT5-MH-11
       enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
@@ -388,7 +388,7 @@ test_cases:
     validation_type: functional
     dataspace_dimension: comparison
     execution_mode: api_fixture_ui_ready
-    coverage_status: automated_opt_in
+    coverage_status: automated
     mapping_status: phase_3
     preconditions:
       - Multiple comparable models exist
@@ -400,7 +400,7 @@ test_cases:
     traceability:
       - MH-37
     automation:
-      status: automated_opt_in
+      status: automated
       mode: api_fixture
       runner: validation/components/ai_model_hub/model_benchmarking_api.py
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
@@ -419,7 +419,7 @@ test_cases:
     validation_type: functional
     dataspace_dimension: comparison
     execution_mode: api_fixture
-    coverage_status: automated_opt_in
+    coverage_status: automated
     mapping_status: phase_3
     preconditions:
       - Multiple comparable and executable models exist
@@ -431,7 +431,7 @@ test_cases:
     traceability:
       - MH-38
     automation:
-      status: automated_opt_in
+      status: automated
       mode: api_fixture
       runner: validation/components/ai_model_hub/model_benchmarking_api.py
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
@@ -450,7 +450,7 @@ test_cases:
     validation_type: functional
     dataspace_dimension: comparison
     execution_mode: api_fixture
-    coverage_status: automated_opt_in
+    coverage_status: automated
     mapping_status: phase_3
     preconditions:
       - The comparison module produces aggregated metrics
@@ -461,7 +461,7 @@ test_cases:
     traceability:
       - MH-39
     automation:
-      status: automated_opt_in
+      status: automated
       mode: api_fixture
       runner: validation/components/ai_model_hub/model_benchmarking_api.py
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
@@ -493,7 +493,7 @@ test_cases:
       - MH-41
       - MH-42
     automation:
-      status: automated_opt_in
+      status: automated
       mode: api_fixture_ui_ready
       runner: validation/components/ai_model_hub/model_benchmarking_api.py
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
@@ -511,8 +511,8 @@ test_cases:
     type: api
     validation_type: integration
     dataspace_dimension: identity
-    execution_mode: api_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: api
+    coverage_status: automated
     mapping_status: phase_3
     preconditions:
       - A working OIDC/OAuth2 integration exists in the final environment
@@ -524,8 +524,8 @@ test_cases:
       - MH-45
     notes: Automated through the connector OIDC flow used by the current INESData deployment; tokens and Bearer headers are intentionally excluded from evidence.
     automation:
-      status: automated_opt_in
-      mode: api_opt_in
+      status: automated
+      mode: api
       runner: validation/components/ai_model_hub/connector_governance_api.py
       evidence_case: PT5-MH-16
       enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
@@ -537,8 +537,8 @@ test_cases:
     type: api
     validation_type: non_functional
     dataspace_dimension: governance
-    execution_mode: api_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: api
+    coverage_status: automated
     mapping_status: phase_3
     preconditions:
       - The system exposes verifiable operational traceability
@@ -549,8 +549,8 @@ test_cases:
     traceability:
       - MH-46
     automation:
-      status: automated_opt_in
-      mode: api_opt_in
+      status: automated
+      mode: api
       runner: validation/components/ai_model_hub/connector_governance_api.py
       evidence_case: PT5-MH-17
       enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
@@ -563,8 +563,8 @@ test_cases:
     type: api
     validation_type: integration
     dataspace_dimension: integration
-    execution_mode: api_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: api
+    coverage_status: automated
     mapping_status: phase_3
     preconditions:
       - The component is integrated with EDC APIs and the PT5 environment connectors
@@ -575,8 +575,8 @@ test_cases:
     traceability:
       - MH-47
     automation:
-      status: automated_opt_in
-      mode: api_opt_in
+      status: automated
+      mode: api
       runner: validation/components/ai_model_hub/connector_governance_api.py
       evidence_case: PT5-MH-18
       enable_with: AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1
@@ -593,11 +593,11 @@ observer_cases:
     type: ui
     validation_type: non_functional
     dataspace_dimension: governance
-    execution_mode: ui_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: ui
+    coverage_status: automated
     mapping_status: planned_observer
     preconditions:
-      - Edmundo's AI Model Observer UI is integrated in INESData
+      - AI Model Observer UI is integrated in INESData
       - INESData login credentials are available
     steps:
       - Sign in to the INESData connector interface
@@ -609,8 +609,8 @@ observer_cases:
       - PT5-MH-17
       - Model Clearing House
     automation:
-      status: automated_opt_in
-      mode: ui_opt_in
+      status: automated
+      mode: ui
       ui_spec: validation/ui/core/10-ai-model-observer.spec.ts
       evidence_case: MH-OBS-01
       enable_with: UI_AI_MODEL_OBSERVER_DEMO=1
@@ -624,11 +624,11 @@ observer_cases:
     type: api
     validation_type: non_functional
     dataspace_dimension: governance
-    execution_mode: api_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: api
+    coverage_status: automated
     mapping_status: planned_observer
     preconditions:
-      - Edmundo's Model Observer backend API is integrated and reachable
+      - Model Observer backend API is integrated and reachable
       - A controlled QA event batch can be written without storing sensitive payloads
     steps:
       - POST a controlled event batch to /api/model-observer/events/bulk
@@ -643,8 +643,8 @@ observer_cases:
       - MH-46
       - Model Clearing House
     automation:
-      status: automated_opt_in
-      mode: api_opt_in
+      status: automated
+      mode: api
       runner: validation/components/ai_model_hub/model_observer_api.py
       evidence_case: MH-OBS-02
       enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1
@@ -659,7 +659,7 @@ observer_cases:
     type: ui_api
     validation_type: integration
     dataspace_dimension: governance
-    execution_mode: ui_api_opt_in
+    execution_mode: ui_api
     coverage_status: planned
     mapping_status: planned_observer
     preconditions:
@@ -676,7 +676,7 @@ observer_cases:
       - PT5-MH-17
     automation:
       status: planned
-      mode: ui_api_opt_in
+      mode: ui_api
       suggested_spec: validation/components/ai_model_hub/ui/specs/mh_obs_03_browser_observer.spec.js
       enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER_UI=1
       notes: Planned after Browser-to-Observer event emission is integrated.
@@ -688,7 +688,7 @@ observer_cases:
     type: api
     validation_type: integration
     dataspace_dimension: governance
-    execution_mode: api_opt_in
+    execution_mode: api
     coverage_status: planned
     mapping_status: planned_observer
     preconditions:
@@ -705,7 +705,7 @@ observer_cases:
       - PT5-MH-17
     automation:
       status: planned
-      mode: api_opt_in
+      mode: api
       suggested_runner: validation/components/ai_model_hub/model_observer_api.py
       related_runner: validation/components/ai_model_hub/model_execution_api.py
       enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1
@@ -718,7 +718,7 @@ observer_cases:
     type: ui_api
     validation_type: integration
     dataspace_dimension: governance
-    execution_mode: ui_api_opt_in
+    execution_mode: ui_api
     coverage_status: planned
     mapping_status: planned_observer
     preconditions:
@@ -738,7 +738,7 @@ observer_cases:
       - PT5-MH-17
     automation:
       status: planned
-      mode: ui_api_opt_in
+      mode: ui_api
       suggested_spec: validation/components/ai_model_hub/ui/specs/mh_obs_05_benchmark_observer.spec.js
       related_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
       enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER_UI=1
@@ -752,7 +752,7 @@ observer_cases:
     type: api_ui
     validation_type: non_functional
     dataspace_dimension: governance
-    execution_mode: api_ui_opt_in
+    execution_mode: api_ui
     coverage_status: planned
     mapping_status: planned_observer
     preconditions:
@@ -769,7 +769,7 @@ observer_cases:
       - Model Clearing House
     automation:
       status: planned
-      mode: api_ui_opt_in
+      mode: api_ui
       suggested_runner: validation/components/ai_model_hub/model_observer_api.py
       suggested_spec: validation/components/ai_model_hub/ui/specs/mh_obs_06_participant_summary.spec.js
       enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1
@@ -783,7 +783,7 @@ functional_use_cases:
     type: api_ui
     validation_type: functional
     dataspace_dimension: linguistic
-    execution_mode: api_ui_opt_in
+    execution_mode: api_ui
     coverage_status: partial
     mapping_status: phase_3
     preconditions:
@@ -800,13 +800,13 @@ functional_use_cases:
     expected_result: FLARES-mini can populate the dataspace on demand, reach a negotiated agreement, prepare the linguistic benchmarking flow and execute a FLARES payload through the connector API without requiring global seeding
     traceability:
       - MH-LING-01
-    notes: Opt-in scaffold for Phase 3. The current automated slice covers provider publication, consumer negotiation and benchmark-ready dataset/model linkage; connector-side model execution is validated through the PT5-MH-10 runner with --flares-mini. The semantic FLARES reliability-label comparison remains pending until a FLARES-compatible model endpoint is available.
+    notes: Phase 3 scaffold executed from Level 6. The current automated slice covers provider publication, consumer negotiation and benchmark-ready dataset/model linkage; connector-side model execution is validated through the PT5-MH-10 runner with --flares-mini. The semantic FLARES reliability-label comparison remains pending until a FLARES-compatible model endpoint is available.
     automation:
       status: automated
-      mode: api_ui_opt_in
+      mode: api_ui
       ui_spec: validation/components/ai_model_hub/functional/specs/mh_ling_01_flares_reliability.spec.js
       api_runner: validation/components/ai_model_hub/model_execution_api.py --flares-mini
-      notes: Suite-specific bootstrap publishes FLARES-mini only when the linguistic functional suite is explicitly enabled, while the API runner validates connector-side execution with a FLARES-mini payload and records the remaining model-specific semantic comparison gap.
+      notes: Suite-specific bootstrap publishes FLARES-mini during Level 6, while the API runner validates connector-side execution with a FLARES-mini payload and records the remaining model-specific semantic comparison gap.
 
   - id: MH-MOB-01
     component: ai_model_hub
@@ -815,7 +815,7 @@ functional_use_cases:
     type: fixture_api
     validation_type: functional
     dataspace_dimension: mobility
-    execution_mode: api_fixture_opt_in
+    execution_mode: api_fixture
     coverage_status: automated_fixture
     mapping_status: phase_3
     preconditions:
@@ -834,7 +834,7 @@ functional_use_cases:
       - GTFS-Madrid-Bench
     notes: Safe Phase 3 slice for A5.2. The suite does not call a live mobility inference endpoint or mutate INESData; it validates the functional mobility benchmark contract with deterministic fixture evidence until the stable UI/API route is selected.
     automation:
-      status: automated_opt_in
+      status: automated
       mode: api_fixture
       runner: validation/components/ai_model_hub/mobility_benchmarking_api.py
       enable_with: AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING=1
@@ -843,4 +843,4 @@ functional_use_cases:
       suite_test: tests/test_ai_model_hub_mobility_benchmarking_api.py
       integration_runner: validation/components/ai_model_hub/virtualization_traceability.py
       integration_case: INT-VS-AMH-01
-      notes: Runner is opt-in and writes JSON evidence under experiments without changing component sources or cluster state.
+      notes: Runner writes JSON evidence under experiments without changing component sources or cluster state.

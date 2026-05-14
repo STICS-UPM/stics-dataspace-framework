@@ -29,11 +29,11 @@ support_checks:
     validation_type: support
     dataspace_dimension: official_dataset_traceability
     execution_mode: offline_source_readiness
-    coverage_status: automated_opt_in
+    coverage_status: automated
     mapping_status: mapped
     expected_result: The framework can trace Semantic Virtualization validation to the official GTFS-Madrid-Bench repository resources before running heavier generated datasets
     automation:
-      status: automated_opt_in
+      status: automated
       mode: offline_source_readiness
       runner: validation/components/semantic_virtualization/gtfs_bench_official.py
       evidence_case: SV-GTFS-BENCH-01
@@ -71,11 +71,11 @@ support_checks:
     validation_type: functional
     dataspace_dimension: official_dataset_materialization
     execution_mode: offline_fixture
-    coverage_status: automated_opt_in
+    coverage_status: automated
     mapping_status: mapped
     expected_result: The official-derived GTFS-Bench mini fixture can be linked to the adapted official CSV mapping, materialized into RDF and queried with official shape queries
     automation:
-      status: automated_opt_in
+      status: automated
       mode: offline_fixture
       runner: validation/components/semantic_virtualization/gtfs_bench_materialization.py
       evidence_case: SV-GTFS-BENCH-03
@@ -193,13 +193,13 @@ test_cases:
     type: functional
     validation_type: functional
     dataspace_dimension: mapping_editor
-    execution_mode: ui_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: ui
+    coverage_status: automated
     mapping_status: mapped
     expected_result: The editor exposes a visual mapping representation
     automation:
-      status: automated_opt_in
-      mode: ui_opt_in
+      status: automated
+      mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: PT5-VS-07
       enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
@@ -213,13 +213,13 @@ test_cases:
     type: functional
     validation_type: functional
     dataspace_dimension: mapping_editor
-    execution_mode: ui_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: ui
+    coverage_status: automated
     mapping_status: mapped
     expected_result: The editor can launch a mapping execution flow
     automation:
-      status: automated_opt_in
-      mode: ui_opt_in
+      status: automated
+      mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: PT5-VS-08
       enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
@@ -267,13 +267,13 @@ test_cases:
     type: integration
     validation_type: integration
     dataspace_dimension: connector_access
-    execution_mode: api_ui_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: api_ui
+    coverage_status: automated
     mapping_status: mapped
     expected_result: The virtualized output is exposed as HttpData and negotiable from INESData
     automation:
-      status: automated_opt_in
-      mode: api_ui_opt_in
+      status: automated
+      mode: api_ui
       runner: validation/components/semantic_virtualization/dataspace_integration.py
       ui_spec: validation/ui/core/07-semantic-virtualization-httpdata.spec.ts
       evidence_cases:
@@ -304,19 +304,19 @@ test_cases:
 integration_cases:
   - id: INT-VS-DS-01
     description: Publish Semantic Virtualization output as HttpData in INESData
-    status: automated_opt_in
+    status: automated
     runner: validation/components/semantic_virtualization/dataspace_integration.py
     latest_ui_evidence: experiments/semantic-virtualization-inesdata-ui-marked-20260506/components/semantic-virtualization/inesdata-ui/results.json
 
   - id: INT-VS-DS-02
     description: Consume authorized virtualized resource from the dataspace
-    status: automated_opt_in
+    status: automated
     runner: validation/components/semantic_virtualization/dataspace_integration.py
     latest_ui_evidence: experiments/semantic-virtualization-inesdata-ui-marked-20260506/components/semantic-virtualization/inesdata-ui/results.json
 
   - id: SV-GTFS-BENCH-04
     description: Expose the official-derived GTFS-Bench RDF output as HttpData in INESData
-    status: automated_opt_in
+    status: automated
     runner: validation/components/semantic_virtualization/dataspace_integration.py
     enable_with: python3 validation/components/semantic_virtualization/dataspace_integration.py --gtfs-bench-official-materialization
     linked_cases:
@@ -348,16 +348,16 @@ ui_demo_cases:
     type: functional_ui_demo
     validation_type: functional
     dataspace_dimension: mapping_editor_ontology_flow
-    execution_mode: ui_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: ui
+    coverage_status: automated
     mapping_status: mapped
     linked_pt5_cases:
       - PT5-VS-06
       - PT5-VS-07
     expected_result: The editor shows ontology import, exploration, viewing and custom-term panels
     automation:
-      status: automated_opt_in
-      mode: ui_opt_in
+      status: automated
+      mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: SV-UI-04
       enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
@@ -371,8 +371,8 @@ ui_demo_cases:
     type: functional_ui_demo
     validation_type: functional
     dataspace_dimension: mapping_editor_authoring_flow
-    execution_mode: ui_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: ui
+    coverage_status: automated
     mapping_status: mapped
     linked_pt5_cases:
       - PT5-VS-01
@@ -380,8 +380,8 @@ ui_demo_cases:
       - PT5-VS-06
     expected_result: The editor creates a browser-session mapping and reaches the Build Mapping flow safely
     automation:
-      status: automated_opt_in
-      mode: ui_opt_in
+      status: automated
+      mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: SV-UI-05
       enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
@@ -395,16 +395,16 @@ ui_demo_cases:
     type: functional_ui_demo
     validation_type: functional
     dataspace_dimension: mapping_editor_export_materialisation_flow
-    execution_mode: ui_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: ui
+    coverage_status: automated
     mapping_status: mapped
     linked_pt5_cases:
       - PT5-VS-08
       - PT5-VS-09
     expected_result: The editor shows mapping export controls and materialisation preconditions
     automation:
-      status: automated_opt_in
-      mode: ui_opt_in
+      status: automated
+      mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: SV-UI-06
       enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
@@ -418,16 +418,16 @@ ui_demo_cases:
     type: functional_ui_demo
     validation_type: functional
     dataspace_dimension: mapping_editor_global_configuration_flow
-    execution_mode: ui_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: ui
+    coverage_status: automated
     mapping_status: mapped
     linked_pt5_cases:
       - PT5-VS-07
       - PT5-VS-09
     expected_result: The editor creates a browser-session mapping, binds a custom namespace, exposes export controls and shows style controls
     automation:
-      status: automated_opt_in
-      mode: ui_opt_in
+      status: automated
+      mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: SV-UI-07
       enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
@@ -441,8 +441,8 @@ ui_demo_cases:
     type: functional_ui_demo
     validation_type: functional
     dataspace_dimension: mapping_editor_input_loading_flow
-    execution_mode: ui_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: ui
+    coverage_status: automated
     mapping_status: mapped
     linked_pt5_cases:
       - PT5-VS-01
@@ -450,8 +450,8 @@ ui_demo_cases:
       - PT5-VS-07
     expected_result: The editor imports an ontology fixture, uploads a CSV source fixture and exposes the loaded inputs for exploration/display
     automation:
-      status: automated_opt_in
-      mode: ui_opt_in
+      status: automated
+      mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: SV-UI-08
       enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
@@ -465,8 +465,8 @@ ui_demo_cases:
     type: functional_ui_demo
     validation_type: functional
     dataspace_dimension: mapping_editor_exploration_lens_flow
-    execution_mode: ui_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: ui
+    coverage_status: automated
     mapping_status: mapped
     linked_pt5_cases:
       - PT5-VS-01
@@ -475,8 +475,8 @@ ui_demo_cases:
       - PT5-VS-09
     expected_result: The editor imports a non-empty RML mapping, shows its network, predefined searches, preview and ontology-mapping lens panels
     automation:
-      status: automated_opt_in
-      mode: ui_opt_in
+      status: automated
+      mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: SV-UI-10
       enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1

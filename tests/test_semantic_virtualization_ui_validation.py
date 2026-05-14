@@ -52,7 +52,7 @@ def _playwright_payload():
 
 
 class SemanticVirtualizationUIValidationTests(unittest.TestCase):
-    def test_ui_runner_enables_mapping_editor_opt_in_suite(self):
+    def test_ui_runner_enables_mapping_editor_suite_by_default(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             payload = _playwright_payload()
 

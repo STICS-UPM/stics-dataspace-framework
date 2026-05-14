@@ -4,6 +4,15 @@ from datetime import datetime
 from typing import Any, Dict, List, Tuple
 from urllib import error, parse, request
 
+from validation.components.artifact_contract import attach_component_artifact_manifest
+from validation.components.semantic_virtualization.gtfs_bench_materialization import (
+    run_gtfs_bench_official_materialization_validation,
+)
+from validation.components.semantic_virtualization.gtfs_bench_mini import run_gtfs_bench_official_mini_validation
+from validation.components.semantic_virtualization.gtfs_bench_official import (
+    run_gtfs_bench_official_source_validation,
+)
+from validation.components.semantic_virtualization.mapping_validation import run_semantic_virtualization_mapping_validation
 from validation.components.semantic_virtualization.ui_runner import run_semantic_virtualization_ui_validation
 
 
@@ -241,6 +250,71 @@ def _summarize_cases(executed_cases: List[Dict[str, Any]]) -> Dict[str, int]:
     return summary
 
 
+def _suite_cases(suite_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return list(
+        suite_result.get("executed_cases")
+        or suite_result.get("test_cases")
+        or suite_result.get("pt5_case_results")
+        or suite_result.get("support_checks")
+        or []
+    )
+
+
+def _tag_suite_cases(suite_name: str, suite_result: Dict[str, Any], phase: str) -> List[Dict[str, Any]]:
+    tagged_cases: List[Dict[str, Any]] = []
+    for case in _suite_cases(suite_result):
+        tagged = dict(case)
+        tagged["source_phase"] = phase
+        tagged.setdefault("source_suite", suite_result.get("suite") or suite_name)
+        tagged_cases.append(tagged)
+    return tagged_cases
+
+
+def _suite_evidence(suite_result: Dict[str, Any], phase: str) -> List[Dict[str, Any]]:
+    return [
+        {**evidence, "source_phase": phase}
+        for evidence in list(suite_result.get("evidence_index") or [])
+    ]
+
+
+def _suite_failure_result(suite_name: str, exc: Exception) -> Dict[str, Any]:
+    failure_case = {
+        "test_case_id": f"{suite_name}-failure",
+        "description": f"{suite_name} suite failed before producing case evidence",
+        "type": "suite",
+        "case_group": "support",
+        "validation_type": "support",
+        "dataspace_dimension": "support",
+        "mapping_status": "supporting",
+        "automation_mode": "framework",
+        "execution_mode": "framework",
+        "coverage_status": "automated",
+        "evaluation": {
+            "status": "failed",
+            "assertions": [f"{type(exc).__name__}: {exc}"],
+        },
+    }
+    return {
+        "component": COMPONENT_KEY,
+        "suite": suite_name,
+        "status": "failed",
+        "summary": {"total": 1, "passed": 0, "failed": 1, "skipped": 0},
+        "executed_cases": [failure_case],
+        "test_cases": [failure_case],
+        "support_checks": [failure_case],
+        "evidence_index": [],
+        "artifacts": {},
+        "findings": [
+            {
+                "scope": suite_name,
+                "status": "failed",
+                "assertions": [f"{type(exc).__name__}: {exc}"],
+            }
+        ],
+        "error": {"type": type(exc).__name__, "message": str(exc)},
+    }
+
+
 def _evidence_index(executed_cases: List[Dict[str, Any]], artifacts: Dict[str, str]) -> List[Dict[str, Any]]:
     evidence = [
         {
@@ -325,6 +399,7 @@ def run_semantic_virtualization_validation(
     artifacts: Dict[str, str] = {}
     executed_cases: List[Dict[str, Any]] = []
     api_cases: List[Dict[str, Any]] = []
+    functional_suite_results: Dict[str, Dict[str, Any]] = {}
     api_cases_by_phase: Dict[str, List[Dict[str, Any]]] = {
         "preflight": [],
         "functional": [],
@@ -393,6 +468,23 @@ def run_semantic_virtualization_validation(
 
     run_api_phase("preflight")
     run_api_phase("functional")
+    functional_runners = [
+        ("mapping_fixtures", "mapping-fixtures", run_semantic_virtualization_mapping_validation),
+        ("gtfs_bench_source", "gtfs-bench-official-source", run_gtfs_bench_official_source_validation),
+        ("gtfs_bench_mini", "gtfs-bench-official-mini", run_gtfs_bench_official_mini_validation),
+        (
+            "gtfs_bench_materialization",
+            "gtfs-bench-official-materialization",
+            run_gtfs_bench_official_materialization_validation,
+        ),
+    ]
+    for suite_key, suite_name, runner in functional_runners:
+        try:
+            suite_result = runner(experiment_dir=experiment_dir)
+        except Exception as exc:  # pragma: no cover - defensive integration guard
+            suite_result = _suite_failure_result(suite_name, exc)
+        functional_suite_results[suite_key] = suite_result
+        executed_cases.extend(_tag_suite_cases(suite_key, suite_result, "functional"))
     ui_result = run_semantic_virtualization_ui_validation(
         normalized_base_url,
         experiment_dir=experiment_dir,
@@ -408,6 +500,16 @@ def run_semantic_virtualization_validation(
     status = "failed" if summary["failed"] or str(ui_result.get("status") or "").lower() in {"failed", "error"} else "passed"
     pt5_case_results = [case for case in executed_cases if case.get("case_group") == "pt5"]
     support_checks = [case for case in executed_cases if case.get("case_group") == "support"]
+    findings = [
+        {
+            "scope": case.get("source_phase") or case.get("case_group") or "component",
+            "test_case_id": case.get("test_case_id"),
+            "status": "failed",
+            "assertions": list((case.get("evaluation") or {}).get("assertions") or []),
+        }
+        for case in executed_cases
+        if ((case.get("evaluation") or {}).get("status") or "").lower() == "failed"
+    ]
     pt5_summary = _summarize_cases(pt5_case_results)
     support_summary = _summarize_cases(support_checks)
     phase_order = ["preflight", "functional", "integration"]
@@ -425,6 +527,7 @@ def run_semantic_virtualization_validation(
                 "executed_cases": phase_api_cases,
             }
         if phase == "functional":
+            suite_results.update(functional_suite_results)
             suite_results["ui"] = ui_result
         suite_statuses = [
             str(suite_result.get("status") or "").lower()
@@ -455,23 +558,38 @@ def run_semantic_virtualization_validation(
         "summary": summary,
         "phase_order": phase_order,
         "phases": phases,
+        "suites": {
+            "api": {
+                "status": "failed" if any(((case.get("evaluation") or {}).get("status") == "failed") for case in api_cases)
+                else "passed",
+                "summary": _summarize_cases(api_cases),
+                "executed_cases": api_cases,
+            },
+            **functional_suite_results,
+            "ui": ui_result,
+        },
         "executed_cases": executed_cases,
         "pt5_case_results": pt5_case_results,
         "pt5_cases": pt5_case_results,
         "pt5_summary": pt5_summary,
         "support_checks": support_checks,
         "support_summary": support_summary,
+        "findings": findings,
     }
 
     if component_dir:
         report_path = os.path.join(component_dir, "semantic_virtualization_component_validation.json")
         pt5_cases_path = os.path.join(component_dir, "semantic_virtualization_pt5_case_results.json")
         support_checks_path = os.path.join(component_dir, "semantic_virtualization_support_checks.json")
+        evidence_index_path = os.path.join(component_dir, "semantic_virtualization_evidence_index.json")
+        findings_path = os.path.join(component_dir, "semantic_virtualization_findings.json")
         artifacts.update(
             {
                 "report_json": report_path,
                 "pt5_case_results_json": pt5_cases_path,
                 "support_checks_json": support_checks_path,
+                "evidence_index_json": evidence_index_path,
+                "findings_json": findings_path,
                 "ui_report_json": (ui_result.get("artifacts") or {}).get("report_json", ""),
                 "ui_test_results_dir": (ui_result.get("artifacts") or {}).get("test_results_dir", ""),
                 "ui_html_report_dir": (ui_result.get("artifacts") or {}).get("html_report_dir", ""),
@@ -481,12 +599,40 @@ def run_semantic_virtualization_validation(
         )
         result["artifacts"] = artifacts
         result["evidence_index"] = _evidence_index(api_cases, artifacts) + [
+            evidence
+            for suite_result in functional_suite_results.values()
+            for evidence in _suite_evidence(suite_result, "functional")
+        ] + [
             {**evidence, "source_phase": "functional"}
             for evidence in list(ui_result.get("evidence_index") or [])
+        ] + [
+            {"scope": "component", "suite": "component", "artifact_name": "report_json", "path": report_path},
+            {
+                "scope": "component",
+                "suite": "component",
+                "artifact_name": "pt5_case_results_json",
+                "path": pt5_cases_path,
+            },
+            {
+                "scope": "component",
+                "suite": "component",
+                "artifact_name": "support_checks_json",
+                "path": support_checks_path,
+            },
+            {
+                "scope": "component",
+                "suite": "component",
+                "artifact_name": "evidence_index_json",
+                "path": evidence_index_path,
+            },
+            {"scope": "component", "suite": "component", "artifact_name": "findings_json", "path": findings_path},
         ]
+        attach_component_artifact_manifest(result, component_dir)
 
         _write_json(pt5_cases_path, {"pt5_case_results": pt5_case_results, "summary": pt5_summary})
         _write_json(support_checks_path, {"support_checks": support_checks, "summary": support_summary})
+        _write_json(findings_path, {"findings": findings})
+        _write_json(evidence_index_path, {"evidence_index": result["evidence_index"]})
         _write_json(report_path, result)
     else:
         result["artifacts"] = {

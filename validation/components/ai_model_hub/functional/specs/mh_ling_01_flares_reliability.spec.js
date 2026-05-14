@@ -24,7 +24,7 @@ test.describe("MH-LING-01 scaffold", () => {
   }) => {
     test.skip(
       (process.env[FUNCTIONAL_ENV] || "").trim().toLowerCase() !== "1",
-      "AI Model Hub functional suites remain opt-in until Phase 3 matures.",
+      "AI Model Hub functional validation was disabled explicitly for this execution.",
     );
 
     const catalogPage = new CatalogPage(page, aiModelHubRuntime);

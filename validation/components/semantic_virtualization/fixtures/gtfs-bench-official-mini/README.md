@@ -11,7 +11,7 @@ SPARQL query catalog.
 
 - validate that Semantic Virtualization can work with official GTFS-Bench shaped CSV files;
 - provide a stable mapping-editor and API fixture for A5.2 evidence;
-- keep Docker/MySQL/full benchmark generation as an opt-in activity;
+- keep Docker/MySQL/full benchmark generation as an explicit maintenance activity outside Level 6;
 - support future INESData HttpData demos without publishing the full dataset by default.
 
 ## Regeneration

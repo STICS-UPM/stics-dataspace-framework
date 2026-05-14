@@ -272,9 +272,9 @@ def _case_result(
         "validation_type": "non_functional",
         "dataspace_dimension": "governance",
         "mapping_status": "planned_observer",
-        "automation_mode": "api_opt_in",
-        "execution_mode": "api_opt_in",
-        "coverage_status": "automated_opt_in" if status != "skipped" else "blocked_by_component",
+        "automation_mode": "api",
+        "execution_mode": "api",
+        "coverage_status": "automated" if status != "skipped" else "blocked_by_component",
         "observer_base_url": observer_base_url,
         "observed": {
             "run_id": run_context.get("run_id"),

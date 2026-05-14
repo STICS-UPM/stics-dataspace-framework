@@ -72,7 +72,7 @@ class SemanticVirtualizationMappingValidationTests(unittest.TestCase):
                 path for name, path in result["artifacts"].items()
                 if name.startswith("exported-")
             ]
-            self.assertEqual(len(exported_paths), 3)
+            self.assertEqual(len(exported_paths), 4)
             for exported_path in exported_paths:
                 self.assertTrue(Path(exported_path).name.endswith(".ttl"))
                 graph = Graph()

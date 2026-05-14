@@ -298,7 +298,7 @@ def _case_result(assertions: list[str], evidence_artifact: str, observed: dict[s
         "dataspace_dimension": "mobility",
         "mapping_status": "phase_3",
         "automation_mode": "api_fixture",
-        "execution_mode": "api_fixture_opt_in",
+        "execution_mode": "api_fixture",
         "coverage_status": "automated_fixture",
         "observed": observed,
         "evaluation": {

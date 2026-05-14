@@ -203,7 +203,7 @@ def validate_gtfs_bench_official_source(
         },
         "execution_scope": (
             "Source readiness only. Dataset generation with the official Docker generator "
-            "remains opt-in to avoid making Level 6 slow or network/Docker dependent."
+            "is kept as an explicit maintenance activity outside Level 6 because it requires network/Docker-style dependencies."
         ),
     }
 
@@ -230,7 +230,7 @@ def run_gtfs_bench_official_source_validation(
         "mapping_status": "mapped",
         "automation_mode": "offline_source_readiness",
         "execution_mode": "offline_source_readiness",
-        "coverage_status": "automated_opt_in",
+        "coverage_status": "automated",
         "evaluation": {
             "status": validation["status"],
             "assertions": list(validation.get("assertions") or []),

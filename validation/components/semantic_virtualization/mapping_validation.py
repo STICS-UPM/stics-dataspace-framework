@@ -15,9 +15,15 @@ from rdflib.namespace import RDF
 COMPONENT_KEY = "semantic-virtualization"
 SUITE_NAME = "mapping-fixtures"
 DEFAULT_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
-RML = URIRef("http://semweb.mmlab.be/ns/rml#logicalSource")
+RML_LOGICAL_SOURCE = URIRef("http://semweb.mmlab.be/ns/rml#logicalSource")
 RML_SOURCE = URIRef("http://semweb.mmlab.be/ns/rml#source")
 RML_REFERENCE_FORMULATION = URIRef("http://semweb.mmlab.be/ns/rml#referenceFormulation")
+RML_TRIPLES_MAP = URIRef("http://w3id.org/rml/TriplesMap")
+RML_V1_LOGICAL_SOURCE = URIRef("http://w3id.org/rml/logicalSource")
+RML_V1_SOURCE = URIRef("http://w3id.org/rml/source")
+RML_V1_REFERENCE_FORMULATION = URIRef("http://w3id.org/rml/referenceFormulation")
+RML_V1_CLASS = URIRef("http://w3id.org/rml/class")
+RML_V1_PREDICATE = URIRef("http://w3id.org/rml/predicate")
 RR_TRIPLES_MAP = URIRef("http://www.w3.org/ns/r2rml#TriplesMap")
 RR_LOGICAL_TABLE = URIRef("http://www.w3.org/ns/r2rml#logicalTable")
 RR_TABLE_NAME = URIRef("http://www.w3.org/ns/r2rml#tableName")
@@ -119,6 +125,14 @@ def _schema_contains_table(schema_path: Path, table_name: str) -> bool:
     )
 
 
+def _objects_any(graph: Graph, subject: Any, predicates: list[URIRef]) -> list[Any]:
+    return [
+        item
+        for predicate in predicates
+        for item in graph.objects(subject, predicate)
+    ]
+
+
 def validate_mapping_artifact(
     mapping_path: str | os.PathLike[str],
     *,
@@ -149,9 +163,12 @@ def validate_mapping_artifact(
     source_references: list[dict[str, Any]] = []
     source_formats: set[str] = set()
 
-    for logical_source in graph.objects(None, RML):
-        source_value = next(graph.objects(logical_source, RML_SOURCE), None)
-        reference_formulation = next(graph.objects(logical_source, RML_REFERENCE_FORMULATION), None)
+    for logical_source in _objects_any(graph, None, [RML_LOGICAL_SOURCE, RML_V1_LOGICAL_SOURCE]):
+        source_value = next(iter(_objects_any(graph, logical_source, [RML_SOURCE, RML_V1_SOURCE])), None)
+        reference_formulation = next(
+            iter(_objects_any(graph, logical_source, [RML_REFERENCE_FORMULATION, RML_V1_REFERENCE_FORMULATION])),
+            None,
+        )
         if not isinstance(source_value, Literal):
             diagnostics.append(f"{mapping_file.name} has an RML logical source without literal rml:source")
             continue
@@ -198,7 +215,11 @@ def validate_mapping_artifact(
 
     defined_terms = _ontology_terms(ontology_graph)
     ontology_references = [
-        term for term in list(graph.objects(None, RR_CLASS)) + list(graph.objects(None, RR_PREDICATE))
+        term
+        for term in list(graph.objects(None, RR_CLASS))
+        + list(graph.objects(None, RML_V1_CLASS))
+        + list(graph.objects(None, RR_PREDICATE))
+        + list(graph.objects(None, RML_V1_PREDICATE))
         if isinstance(term, URIRef)
     ]
     missing_terms = sorted({str(term) for term in ontology_references if term not in defined_terms})
@@ -207,9 +228,9 @@ def validate_mapping_artifact(
     for term in missing_terms:
         diagnostics.append(f"{mapping_file.name} references ontology term not loaded in fixture: {term}")
 
-    triples_map_count = len(list(graph.subjects(RDF.type, RR_TRIPLES_MAP)))
+    triples_map_count = len(set(graph.subjects(RDF.type, RR_TRIPLES_MAP)) | set(graph.subjects(RDF.type, RML_TRIPLES_MAP)))
     if triples_map_count == 0:
-        diagnostics.append(f"{mapping_file.name} does not declare rr:TriplesMap")
+        diagnostics.append(f"{mapping_file.name} does not declare rr:TriplesMap or rml:TriplesMap")
 
     return {
         "mapping_path": str(mapping_file),

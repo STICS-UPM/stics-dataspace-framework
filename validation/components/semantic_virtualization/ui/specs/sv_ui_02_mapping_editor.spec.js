@@ -184,10 +184,10 @@ async function importOntologyFixture(page) {
   return importedText;
 }
 
-test.describe("Mapping editor opt-in validation", () => {
+test.describe("Mapping editor validation", () => {
   test.skip(
     process.env.SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI !== "1",
-    "Opt-in editor validation: set SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1 after deploying mapping-editor.",
+    "Mapping editor validation was disabled explicitly for this execution.",
   );
 
 test("PT5-VS-07: mapping editor graphical UI is reachable", async ({

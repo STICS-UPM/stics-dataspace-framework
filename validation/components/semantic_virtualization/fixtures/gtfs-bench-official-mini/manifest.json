@@ -49,7 +49,7 @@
     },
     "notes": [
       "The slice preserves GTFS joins across agency, route, service, trip, stop times, stops and shapes.",
-      "The full official generator remains opt-in because it requires MySQL/Docker-style runtime services.",
+      "The full official generator is kept as an explicit maintenance activity outside Level 6 because it requires MySQL/Docker-style runtime services.",
       "This fixture is intentionally small and does not replace the complete benchmark."
     ]
   },

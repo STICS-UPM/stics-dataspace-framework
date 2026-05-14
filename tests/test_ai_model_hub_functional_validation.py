@@ -49,7 +49,7 @@ def _playwright_payload():
 
 
 class AIModelHubFunctionalValidationTests(unittest.TestCase):
-    def test_functional_runner_enables_opt_in_playwright_suite(self):
+    def test_functional_runner_enables_playwright_suite_by_default(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             payload = _playwright_payload()
 

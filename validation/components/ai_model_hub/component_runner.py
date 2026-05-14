@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 import yaml
 
+from validation.components.artifact_contract import attach_component_artifact_manifest
 from validation.components.ai_model_hub.runner import run_ai_model_hub_validation
 from validation.components.ai_model_hub.functional_runner import run_ai_model_hub_functional_validation
 from validation.components.ai_model_hub.ui_runner import run_ai_model_hub_ui_validation
@@ -13,6 +14,7 @@ from validation.components.ai_model_hub.ui_runner import run_ai_model_hub_ui_val
 COMPONENT_KEY = "ai-model-hub"
 CATALOG_PATH = Path(__file__).resolve().parent / "test_cases.yaml"
 CONNECTOR_GOVERNANCE_ENV = "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE"
+MODEL_EXECUTION_ENV = "AI_MODEL_HUB_ENABLE_MODEL_EXECUTION"
 MODEL_BENCHMARKING_ENV = "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING"
 MOBILITY_BENCHMARKING_ENV = "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING"
 MODEL_OBSERVER_ENV = "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER"
@@ -258,6 +260,10 @@ def _connector_governance_enabled() -> bool:
     return _suite_enabled(CONNECTOR_GOVERNANCE_ENV)
 
 
+def _model_execution_enabled() -> bool:
+    return _suite_enabled(MODEL_EXECUTION_ENV)
+
+
 def _model_benchmarking_enabled() -> bool:
     return _suite_enabled(MODEL_BENCHMARKING_ENV)
 
@@ -311,6 +317,42 @@ def run_ai_model_hub_connector_governance_validation(experiment_dir: str | None 
         model_url=model_url,
         model_path=model_path or "/api/v1/nlp/ecommerce-sentiment",
         run_access_transfer=run_access_transfer,
+        experiment_dir=experiment_dir,
+    )
+
+
+def run_ai_model_hub_model_execution_validation(experiment_dir: str | None = None) -> Dict[str, Any]:
+    from validation.components.ai_model_hub.model_execution_api import (
+        DEFAULT_EXPECTED_MODEL,
+        build_inesdata_ai_model_hub_model_execution_suite,
+        default_model_url,
+    )
+
+    topology = os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_TOPOLOGY") or os.environ.get("INESDATA_TOPOLOGY") or "local"
+    suite, adapter = build_inesdata_ai_model_hub_model_execution_suite(topology=topology)
+    connectors = list(adapter.get_cluster_connectors() or [])
+    provider = os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER") or (connectors[0] if connectors else "")
+    if not provider:
+        return {
+            "component": COMPONENT_KEY,
+            "suite": "model-execution-api",
+            "status": "skipped",
+            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
+            "executed_cases": [],
+            "evidence_index": [],
+            "artifacts": {},
+            "skip_reason": "Provider connector is not discoverable",
+        }
+
+    model_path = os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_MODEL_PATH") or None
+    model_url = os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_MODEL_URL") or (
+        default_model_url(adapter, model_path) if model_path else default_model_url(adapter)
+    )
+    expected_model = os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_EXPECTED_MODEL", DEFAULT_EXPECTED_MODEL)
+    return suite.run(
+        provider=provider,
+        model_url=model_url,
+        expected_model=expected_model or None,
         experiment_dir=experiment_dir,
     )
 
@@ -378,6 +420,16 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
             (
                 "connector_governance",
                 run_ai_model_hub_connector_governance_validation(experiment_dir=experiment_dir),
+            )
+        )
+    if _model_execution_enabled():
+        if not integration_started:
+            print("\nComponent suite: AI Model Hub integration\n")
+            integration_started = True
+        integration_suite_results.append(
+            (
+                "model_execution",
+                run_ai_model_hub_model_execution_validation(experiment_dir=experiment_dir),
             )
         )
     if _model_benchmarking_enabled():
@@ -619,6 +671,7 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
                 "path": catalog_alignment_path,
             },
         ]
+        attach_component_artifact_manifest(component_result, component_dir)
         _write_json(evidence_index_path, {"evidence_index": component_result["evidence_index"]})
         _write_json(report_path, component_result)
 

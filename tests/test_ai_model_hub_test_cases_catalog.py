@@ -30,61 +30,57 @@ class AIModelHubTestCasesCatalogTests(unittest.TestCase):
             {f"PT5-MH-{index:02d}" for index in range(1, 19)},
         )
 
-    def test_connector_governance_cases_are_automated_opt_in(self):
+    def test_connector_governance_cases_are_automated_for_level6(self):
         catalog = self._load_catalog()
         cases = {case.get("id"): case for case in catalog.get("test_cases") or []}
 
         for case_id in ["PT5-MH-09", "PT5-MH-11", "PT5-MH-16", "PT5-MH-17", "PT5-MH-18"]:
             with self.subTest(case_id=case_id):
-                self.assertEqual(cases[case_id]["automation"]["status"], "automated_opt_in")
+                self.assertEqual(cases[case_id]["automation"]["status"], "automated")
+                self.assertEqual(cases[case_id]["automation"]["mode"], "api")
                 self.assertEqual(
                     cases[case_id]["automation"]["runner"],
                     "validation/components/ai_model_hub/connector_governance_api.py",
                 )
-                self.assertEqual(
-                    cases[case_id]["automation"]["enable_with"],
-                    "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE=1",
-                )
 
-    def test_model_benchmarking_cases_are_automated_opt_in(self):
+    def test_model_execution_case_is_automated_for_level6(self):
+        catalog = self._load_catalog()
+        cases = {case.get("id"): case for case in catalog.get("test_cases") or []}
+
+        self.assertEqual(cases["PT5-MH-10"]["automation"]["status"], "automated")
+        self.assertEqual(cases["PT5-MH-10"]["automation"]["mode"], "api")
+        self.assertEqual(
+            cases["PT5-MH-10"]["automation"]["runner"],
+            "validation/components/ai_model_hub/model_execution_api.py",
+        )
+
+    def test_model_benchmarking_cases_are_automated_for_level6(self):
         catalog = self._load_catalog()
         cases = {case.get("id"): case for case in catalog.get("test_cases") or []}
 
         for case_id in ["PT5-MH-12", "PT5-MH-13", "PT5-MH-14", "PT5-MH-15"]:
             with self.subTest(case_id=case_id):
-                self.assertEqual(cases[case_id]["automation"]["status"], "automated_opt_in")
+                self.assertEqual(cases[case_id]["automation"]["status"], "automated")
                 self.assertEqual(
                     cases[case_id]["automation"]["runner"],
                     "validation/components/ai_model_hub/model_benchmarking_api.py",
                 )
                 self.assertEqual(
-                    cases[case_id]["automation"]["enable_with"],
-                    "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1",
-                )
-                self.assertEqual(
                     cases[case_id]["automation"]["ui_spec"],
                     "validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js",
                 )
-                self.assertEqual(
-                    cases[case_id]["automation"]["ui_demo_enable_with"],
-                    "AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1",
-                )
 
-    def test_mobility_functional_case_is_automated_opt_in(self):
+    def test_mobility_functional_case_is_automated_for_level6(self):
         catalog = self._load_catalog()
         cases = {case.get("id"): case for case in catalog.get("functional_use_cases") or []}
         mobility_case = cases["MH-MOB-01"]
 
         self.assertEqual(mobility_case["coverage_status"], "automated_fixture")
-        self.assertEqual(mobility_case["automation"]["status"], "automated_opt_in")
+        self.assertEqual(mobility_case["automation"]["status"], "automated")
         self.assertEqual(mobility_case["automation"]["mode"], "api_fixture")
         self.assertEqual(
             mobility_case["automation"]["runner"],
             "validation/components/ai_model_hub/mobility_benchmarking_api.py",
-        )
-        self.assertEqual(
-            mobility_case["automation"]["enable_with"],
-            "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING=1",
         )
         self.assertEqual(
             mobility_case["automation"]["suite_test"],
@@ -101,16 +97,12 @@ class AIModelHubTestCasesCatalogTests(unittest.TestCase):
         )
 
         observer_ui_case = cases["MH-OBS-01"]
-        self.assertEqual(observer_ui_case["coverage_status"], "automated_opt_in")
-        self.assertEqual(observer_ui_case["automation"]["status"], "automated_opt_in")
-        self.assertEqual(observer_ui_case["automation"]["mode"], "ui_opt_in")
+        self.assertEqual(observer_ui_case["coverage_status"], "automated")
+        self.assertEqual(observer_ui_case["automation"]["status"], "automated")
+        self.assertEqual(observer_ui_case["automation"]["mode"], "ui")
         self.assertEqual(
             observer_ui_case["automation"]["ui_spec"],
             "validation/ui/core/10-ai-model-observer.spec.ts",
-        )
-        self.assertEqual(
-            observer_ui_case["automation"]["enable_with"],
-            "UI_AI_MODEL_OBSERVER_DEMO=1",
         )
         self.assertEqual(
             observer_ui_case["automation"]["visual_markers"],
@@ -118,16 +110,12 @@ class AIModelHubTestCasesCatalogTests(unittest.TestCase):
         )
 
         observer_api_case = cases["MH-OBS-02"]
-        self.assertEqual(observer_api_case["coverage_status"], "automated_opt_in")
-        self.assertEqual(observer_api_case["automation"]["status"], "automated_opt_in")
-        self.assertEqual(observer_api_case["automation"]["mode"], "api_opt_in")
+        self.assertEqual(observer_api_case["coverage_status"], "automated")
+        self.assertEqual(observer_api_case["automation"]["status"], "automated")
+        self.assertEqual(observer_api_case["automation"]["mode"], "api")
         self.assertEqual(
             observer_api_case["automation"]["runner"],
             "validation/components/ai_model_hub/model_observer_api.py",
-        )
-        self.assertEqual(
-            observer_api_case["automation"]["enable_with"],
-            "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1",
         )
         self.assertEqual(
             observer_api_case["automation"]["suite_test"],
