@@ -87,7 +87,7 @@ Por tanto, `Level 6` ya no debe entenderse como “solo Newman”, sino como el 
 
 `Level 5` y `Level 6` siguen teniendo responsabilidades distintas, pero ya no están aislados entre sí:
 
-- `Level 5` despliega componentes opcionales
+- `Level 5` despliega componentes configurados
 - `Level 6` valida automáticamente los componentes configurados cuando existe runner registrado
 
 En la práctica:
@@ -101,8 +101,12 @@ En la práctica:
 - `Level 5` reconstruye esa imagen en el host y la carga en minikube antes del despliegue
 - ese flujo es deliberadamente estricto: no usa overrides de `source dir` ni de imagen para `ontology-hub`
 - y hace que `Level 6` intente validarlo automáticamente
-- para `ai-model-hub`, `Level 6` ejecuta siempre el bootstrap del componente y
-  solo lanza la UI PT5 si `AI_MODEL_HUB_ENABLE_UI_VALIDATION=1`
+- para `ai-model-hub`, `Level 6` ejecuta por defecto bootstrap, UI funcional,
+  suite lingüística, benchmarking, movilidad, ejecución de modelo, gobernanza de
+  conectores y Observer API cuando el componente está configurado
+- para `semantic-virtualization`, `Level 6` ejecuta por defecto API, fixtures de
+  mappings, trazabilidad GTFS-Bench, materialización y UI funcional antes de sus
+  comprobaciones de integración
 - si el componente no tiene runner o no puede inferirse su URL, queda como `skipped` en vez de romper toda la ejecución
 
 ## Qué papel tiene cada capa de validación

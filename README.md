@@ -603,11 +603,12 @@ python3 main.py inesdata validate --topology local --validation-mode fast
 
 También puede declararse con `PIONERA_VALIDATION_MODE=fast`.
 
-En el layout `role-aligned`, `Level 5` publica componentes opcionales en
+En el layout `role-aligned`, `Level 5` publica componentes configurados en
 `components_namespace`. `Level 6` valida esos componentes después de las suites
-del dataspace. Hoy `ontology-hub` se valida por defecto cuando está
-configurado, mientras que la UI PT5 de `ai-model-hub` sigue siendo opt-in con
-`AI_MODEL_HUB_ENABLE_UI_VALIDATION=1`.
+del dataspace y ejecuta por defecto las suites automatizadas A5.2 registradas
+para `ontology-hub`, `ai-model-hub` y `semantic-virtualization`. La única suite
+de validación A5.2 desactivada por defecto es Kafka/streaming transfer, por su
+coste temporal.
 
 Colecciones Newman principales:
 

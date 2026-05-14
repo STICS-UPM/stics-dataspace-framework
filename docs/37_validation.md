@@ -26,10 +26,16 @@ Según el adapter y el perfil del deployer, el nivel 6 puede ejecutar:
 Cuando hay componentes configurados con runner registrado, `Level 6` ejecuta su
 validación después de las suites del dataspace. En el estado actual:
 
-- `ontology-hub` corre por defecto como validación de componente;
-- `ai-model-hub` corre su bootstrap por defecto;
-- la UI PT5 de `ai-model-hub` sigue siendo opt-in con
-  `AI_MODEL_HUB_ENABLE_UI_VALIDATION=1`.
+- `ontology-hub` ejecuta sus suites funcionales y de integración;
+- `ai-model-hub` ejecuta bootstrap, UI funcional, suite lingüística,
+  benchmarking, movilidad, ejecución de modelo, gobernanza de conectores y
+  Observer API;
+- `semantic-virtualization` ejecuta API, mappings, trazabilidad GTFS-Bench,
+  materialización y UI funcional antes de sus comprobaciones de integración.
+
+Kafka/streaming transfer es la única suite A5.2 que permanece desactivada por
+defecto por coste temporal. Se activa de forma explícita con
+`PIONERA_LEVEL6_RUN_KAFKA=true`.
 
 En topología `local`, antes de limpiar datos o ejecutar suites, `Level 6`
 comprueba que los hostnames públicos del entorno sean accesibles desde la
