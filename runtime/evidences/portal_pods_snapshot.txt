@@ -1,6 +1,0 @@
-NAME                                          READY   STATUS             RESTARTS         AGE
-conn-oeg-demo-f5d75598d-phb64                 1/1     Running            0                41m
-conn-oeg-demo-inteface-66865898c-n2vj4        1/1     Running            0                41m
-demo-public-portal-backend-6b5b75c847-7t5xj   0/1     CrashLoopBackOff   10 (3m10s ago)   30m
-demo-public-portal-frontend-c4bdb9d68-drjnm   0/1     Pending            0                30m
-demo-registration-service-5954f88f46-lsnp6    1/1     Running            0                51m
