@@ -119,6 +119,7 @@ operativa anteriores.
 | [42](./42_model_clearing_house_plan.md) | Plan de Model Clearing House |
 | [43](./43_model_observer_additive_backlog.md) | Backlog aditivo de Model Observer |
 | [44](./44_audit_navigation_guide.md) | Guía de navegación para auditoría |
+| [Inventario de entorno de pruebas](./test_environment_inventory.pdf) | Inventario público del entorno de pruebas |
 
 ## Diagramas
 
