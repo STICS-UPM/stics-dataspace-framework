@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADAPTER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SOURCES_DIR="$ADAPTER_DIR/sources"
 MANIFESTS_DIR="${MANIFESTS_DIR:-/tmp/inesdata-manifests}"
-DOCKERFILE_OVERRIDES_DIR="${DOCKERFILE_OVERRIDES_DIR:-$MANIFESTS_DIR/dockerfiles}"
 DRY_RUN=1
 TARGET="TODO"
 MANIFEST_FILE_OVERRIDE=""
@@ -15,6 +14,19 @@ REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE:-inesdata}"
 GRADLE_MAX_WORKERS="${GRADLE_MAX_WORKERS:-1}"
 GRADLE_COMMON_ARGS="${GRADLE_COMMON_ARGS:---no-daemon --no-parallel -Dorg.gradle.workers.max=$GRADLE_MAX_WORKERS}"
 LOCAL_DOCKERFILE_FIXUPS="${INESDATA_LOCAL_DOCKERFILE_FIXUPS:-true}"
+TEMP_DOCKERFILES=()
+EFFECTIVE_DOCKERFILE=""
+
+cleanup_temp_dockerfiles() {
+  local path
+  for path in "${TEMP_DOCKERFILES[@]}"; do
+    if [[ -n "$path" && -f "$path" ]]; then
+      rm -f "$path"
+    fi
+  done
+}
+
+trap cleanup_temp_dockerfiles EXIT
 
 usage() {
   cat <<'EOF'
@@ -201,10 +213,12 @@ dockerfile_for_build() {
   local repo_dir="$2"
   local dockerfile="$3"
   local source_dockerfile="$repo_dir/$dockerfile"
+  local dockerfile_dir
+  local override_rel
   local override_dockerfile
 
   if ! is_truthy "$LOCAL_DOCKERFILE_FIXUPS"; then
-    printf '%s\n' "$dockerfile"
+    EFFECTIVE_DOCKERFILE="$dockerfile"
     return
   fi
 
@@ -212,19 +226,22 @@ dockerfile_for_build() {
     connector|connector-interface)
       ;;
     *)
-      printf '%s\n' "$dockerfile"
+      EFFECTIVE_DOCKERFILE="$dockerfile"
       return
       ;;
   esac
 
   if [[ ! -f "$source_dockerfile" ]]; then
-    printf '%s\n' "$dockerfile"
+    EFFECTIVE_DOCKERFILE="$dockerfile"
     return
   fi
 
-  mkdir -p "$DOCKERFILE_OVERRIDES_DIR"
-  override_dockerfile="$DOCKERFILE_OVERRIDES_DIR/${component}.Dockerfile"
+  dockerfile_dir="$(dirname "$dockerfile")"
+  override_rel="$dockerfile_dir/.pionera-${component}.Dockerfile"
+  override_dockerfile="$repo_dir/$override_rel"
+  mkdir -p "$(dirname "$override_dockerfile")"
   cp "$source_dockerfile" "$override_dockerfile"
+  TEMP_DOCKERFILES+=("$override_dockerfile")
 
   case "$component" in
     connector)
@@ -235,7 +252,7 @@ dockerfile_for_build() {
       ;;
   esac
 
-  printf '%s\n' "$override_dockerfile"
+  EFFECTIVE_DOCKERFILE="$override_rel"
 }
 
 component_has_changes() {
@@ -390,7 +407,8 @@ for component in "${selected_components[@]}"; do
   fi
   full_image="$image:$tag"
 
-  effective_dockerfile="$(dockerfile_for_build "$component" "$repo_dir" "$dockerfile")"
+  dockerfile_for_build "$component" "$repo_dir" "$dockerfile"
+  effective_dockerfile="$EFFECTIVE_DOCKERFILE"
   build_cmd="docker build -f $effective_dockerfile -t $full_image $extra_args ."
   echo -e "$component\t$repo_dir\t$image\t$tag\t$full_image\t$build_cmd" >> "$MANIFEST_FILE"
 
