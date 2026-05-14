@@ -44,26 +44,27 @@ La validación automatizada comprueba:
 - carga de configuración runtime;
 - estructura esperada de `app-config.json`;
 - existencia de elementos de menú cuando aplica;
-- suite UI PT5 opt-in cuando `AI_MODEL_HUB_ENABLE_UI_VALIDATION=1`;
+- suite UI PT5 del componente;
 - persistencia de evidencias en el experimento.
 
-La validación de flujos avanzados de ejecución y comparacion de modelos debe
-activarse solo cuando el entorno tenga modelos, datasets y endpoints de
-inferencia preparados.
+La validación de flujos avanzados de ejecución, comparación de modelos,
+movilidad, gobierno de conectores y observabilidad se ejecuta desde `Level 6`
+por defecto. Para depuración puntual, cada suite puede omitirse definiendo su
+variable `AI_MODEL_HUB_ENABLE_*` en `false`, `0`, `no` o dejándola vacía.
 
-## Relacion con el Dataspace
+## Relación con el Dataspace
 
 `AI Model Hub` debe poder operar como componente del dataspace, pero no debe
 quedar acoplado a un portal concreto. En la arquitectura actual:
 
 - INESData puede desplegar el componente desde `Level 5`;
-- EDC mantiene la base arquitectonica para componentes compartidos, pero su
+- EDC mantiene la base arquitectónica para componentes compartidos, pero su
   integración completa de `Level 5` se documenta como limitación actual en
   `docs/26_edc_shared_components_integration_plan.md`;
 - las validaciones oficiales siguen ejecutándose desde `Level 6`;
-- el bootstrap del componente ya forma parte del runner comun;
-- la UI del componente sigue siendo opt-in para no introducir tiempo extra por
-  defecto en todas las ejecuciones.
+- el bootstrap del componente ya forma parte del runner común;
+- la UI y las suites funcionales/de integración del componente forman parte del
+  alcance por defecto de `Level 6`.
 
 ## Evidencias
 

@@ -132,6 +132,18 @@ El broker Kafka puede configurarse con:
 - `KAFKA_EDC_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS` cuando el runtime EDC necesita unos segundos para que el acuerdo contractual ya finalizado sea visible en proveedor y consumidor antes de iniciar `Kafka-PUSH`. El valor por defecto actual es `30` segundos y evita carreras transitorias con errores `404 Not found` al arrancar la transferencia.
 - `KAFKA_EDC_MESSAGE_SAMPLE_LIMIT`, por defecto `5`, para limitar cuántos IDs de mensajes quedan como muestra en los artefactos y pueden imprimirse en consola cuando se habilita el modo verbose.
 
+Para iteraciones rápidas de `Level 6`, Kafka puede omitirse temporalmente sin
+desactivar el resto de pruebas:
+
+```bash
+PIONERA_LEVEL6_SKIP_KAFKA=true
+```
+
+Con esa variable, el framework no prepara el broker Kafka ni ejecuta la suite
+`EDC+Kafka`, y deja `kafka_transfer_results.json` con estado `skipped`. Para
+volver a ejecutar la validación completa, elimina la variable o asígnala a
+`false`. La suite Kafka sigue formando parte del alcance final de `Level 6`.
+
 El modo `docker` sigue disponible para desarrollo avanzado mediante
 `KAFKA_PROVISIONER=docker`, pero no es el default de `Level 6`. En local, usar
 Docker como broker externo puede dejar al dataplane apuntando a
