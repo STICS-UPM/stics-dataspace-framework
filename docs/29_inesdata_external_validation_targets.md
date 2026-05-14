@@ -124,13 +124,13 @@ Resolucion recomendada:
 
 1. El framework busca las variables declaradas en `username_env`,
    `password_env` u otros campos equivalentes.
-2. Si existe un secret manager configurado, intenta resolver el secreto ahi.
-3. Si la ejecucion es interactiva y falta un secreto, lo pide por consola.
-4. Si la ejecucion no es interactiva y falta un secreto, falla antes de ejecutar
+2. Si existe un secret manager configurado, intenta resolver el secreto ahí.
+3. Si la ejecución es interactiva y falta un secreto, lo pide por consola.
+4. Si la ejecución no es interactiva y falta un secreto, falla antes de ejecutar
    pruebas.
 
 La contraseña debe pedirse en modo oculto. El valor solo debe vivir en memoria
-durante la ejecucion.
+durante la ejecución.
 
 El framework no debe escribir secretos en:
 

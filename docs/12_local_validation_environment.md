@@ -1,10 +1,10 @@
-# 12. Entorno Local de Validacion
+# 12. Entorno Local de Validación
 
-El entorno local concentra el dataspace en un unico cluster `Minikube`. Sirve
-como baseline reproducible para desarrollo, validacion API, validacion UI,
+El entorno local concentra el dataspace en un único cluster `Minikube`. Sirve
+como baseline reproducible para desarrollo, validación API, validación UI,
 componentes y experimentos.
 
-![PIONERA local validation environment](<./pionera local validation environment.png>)
+![PIONERA local validation environment](<./pionera_local_validation_environment.png>)
 
 ## Capas
 
@@ -14,8 +14,8 @@ componentes y experimentos.
 | Servicios comunes | PostgreSQL, Keycloak, MinIO, Vault |
 | Dataspace | `registration-service`, public portal INESData cuando aplica |
 | Conectores | Provider y consumer del adapter activo |
-| Componentes | `ontology-hub`, `ai-model-hub` cuando estan habilitados |
-| Validacion | Newman, Playwright, validaciones de componentes, metricas |
+| Componentes | `ontology-hub`, `ai-model-hub` cuando están habilitados |
+| Validación | Newman, Playwright, validaciones de componentes, métricas |
 
 ## Presupuesto de Recursos
 
@@ -25,7 +25,7 @@ Kafka y runners Newman/Playwright, por lo que los picos de memoria son más
 relevantes que el uso estable mostrado por Docker Desktop.
 
 La estimación canónica para Minikube local está documentada en
-[Deployers y Topologías](./deployers-and-topologies.md#dimensionamiento-local).
+[Deployers y Topologías](./35_deployers_and_topologies.md#dimensionamiento-local).
 Como baseline reproducible para validar `inesdata` y `edc` en la misma
 topología local, usa `10 CPU / 18432 MB` solo si Docker Desktop dispone de
 margen suficiente. Si Docker Desktop permanece alrededor de `14.9 GB`, el
@@ -92,7 +92,7 @@ variables `PIONERA_*` y los defaults del deployer.
 Los servicios comunes son compartidos por los adapters:
 
 - PostgreSQL para persistencia;
-- Keycloak para identidad y clientes tecnicos;
+- Keycloak para identidad y clientes técnicos;
 - MinIO para almacenamiento S3;
 - Vault para secretos y material criptografico.
 
@@ -130,7 +130,7 @@ http://conn-<connector>-<dataspace>.dev.ds.dataspaceunit.upm/edc-dashboard/
 ## Hosts Locales
 
 El framework puede planificar y aplicar entradas en `/etc/hosts` o en el fichero
-indicado por `PIONERA_HOSTS_FILE`. La sincronizacion es idempotente: las entradas
+indicado por `PIONERA_HOSTS_FILE`. La sincronización es idempotente: las entradas
 existentes se omiten y solo se agregan las faltantes.
 
 Comando de planificacion:
@@ -139,7 +139,7 @@ Comando de planificacion:
 python3 main.py edc hosts --topology local --dry-run
 ```
 
-Comando de aplicacion:
+Comando de aplicación:
 
 ```bash
 PIONERA_SYNC_HOSTS=true python3 main.py edc hosts --topology local
@@ -147,9 +147,9 @@ PIONERA_SYNC_HOSTS=true python3 main.py edc hosts --topology local
 
 ## Hostnames, Ingress y Port-forwards
 
-En topologia `local`, los accesos funcionales deben resolverse mediante
+En topología `local`, los accesos funcionales deben resolverse mediante
 hostnames locales e Ingress. Esto aplica a Keycloak, MinIO, registration
-service, conectores y componentes cuando estan habilitados.
+service, conectores y componentes cuando están habilitados.
 
 Para que esos hostnames sean accesibles desde la maquina host, normalmente debe
 mantenerse `minikube tunnel` abierto en otra terminal:
@@ -160,7 +160,7 @@ minikube tunnel
 
 Los `port-forward` no reemplazan los endpoints funcionales del dataspace. El
 framework puede usarlos como mecanismo de soporte interno para comprobaciones
-puntuales o para clientes host-side, por ejemplo durante la validacion
+puntuales o para clientes host-side, por ejemplo durante la validación
 EDC+Kafka, pero las validaciones de navegador y API deben ejercitar las rutas
 publicas por hostname siempre que sea posible.
 
@@ -190,12 +190,12 @@ deployers/<adapter>/deployments/<ENV>/<dataspace>/
 Estas carpetas pueden contener credenciales, certificados, policies, values de
 Helm y configuraciones generadas. Por eso permanecen ignoradas por Git.
 
-## Validacion
+## Validación
 
-`Level 6` ejecuta la validacion integral:
+`Level 6` ejecuta la validación integral:
 
 - Newman para flujos API;
-- validacion funcional EDC+Kafka despues de Newman cuando el adapter la soporta;
+- validación funcional EDC+Kafka después de Newman cuando el adapter la soporta;
 - Playwright del adapter activo;
 - comprobaciones MinIO/storage;
 - validaciones de componentes cuando el perfil las habilita;

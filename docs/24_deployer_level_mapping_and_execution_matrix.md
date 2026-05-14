@@ -1,7 +1,7 @@
-# 24. Matriz de Niveles y Ejecucion
+# 24. Matriz de Niveles y Ejecución
 
-El framework mantiene seis niveles. Cada adapter resuelve como ejecutarlos segun
-su deployer y topologia.
+El framework mantiene seis niveles. Cada adapter resuelve cómo ejecutarlos según
+su deployer y topología.
 
 ## Niveles
 
@@ -12,28 +12,28 @@ su deployer y topologia.
 | `3` | Deploy dataspace | `deploy_dataspace` |
 | `4` | Deploy connectors | `deploy_connectors` |
 | `5` | Deploy components | `deploy_components` |
-| `6` | Run validation tests | `validate` / perfil de validacion |
+| `6` | Run validation tests | `validate` / perfil de validación |
 
 ## Comandos
 
 | Comando | Uso |
 | --- | --- |
-| `python3 main.py menu` | menu guiado |
+| `python3 main.py menu` | menú guiado |
 | `python3 main.py <adapter> deploy --topology local` | niveles de despliegue |
 | `python3 main.py <adapter> validate --topology local` | `Level 6` |
-| `python3 main.py <adapter> run --topology local` | despliegue + validacion |
-| `python3 main.py <adapter> hosts --topology local` | plan/aplicacion de hosts |
-| `python3 main.py <adapter> metrics --topology local` | experimento de metricas |
+| `python3 main.py <adapter> run --topology local` | despliegue + validación |
+| `python3 main.py <adapter> hosts --topology local` | plan/aplicación de hosts |
+| `python3 main.py <adapter> metrics --topology local` | experimento de métricas |
 
-## Estado por Topologia
+## Estado por Topología
 
-| Topologia | Hosts | Despliegue real `1-5` | Validacion |
+| Topología | Hosts | Despliegue real `1-5` | Validación |
 | --- | --- | --- | --- |
-| `local` | habilitado | habilitado segun adapter | habilitada |
-| `vm-single` | habilitado por perfil VM | habilitado segun adapter y nivel | habilitada |
-| `vm-distributed` | planificado por perfil VM | protegido por guarda | no habilitada como ejecucion real completa |
+| `local` | habilitado | habilitado según adapter | habilitada |
+| `vm-single` | habilitado por perfil VM | habilitado según adapter y nivel | habilitada |
+| `vm-distributed` | planificado por perfil VM | protegido por guarda | no habilitada como ejecución real completa |
 
-La proteccion de VM sigue aplicando a `vm-distributed` y a rutas todavia no
+La protección de VM sigue aplicando a `vm-distributed` y a rutas todavía no
 habilitadas para un adapter concreto, como `Level 5` real de componentes en
 `edc`.
 
@@ -42,7 +42,7 @@ habilitadas para un adapter concreto, como `Level 5` real de componentes en
 | Nivel | Estado |
 | --- | --- |
 | `1` a `4` | flujo operativo en `local` y `vm-single` |
-| `5` | componentes compartidos operativos cuando estan configurados |
+| `5` | componentes compartidos operativos cuando están configurados |
 | `6` | Newman, Playwright INESData, storage, componentes y reportes |
 
 ## EDC
@@ -51,7 +51,7 @@ habilitadas para un adapter concreto, como `Level 5` real de componentes en
 | --- | --- |
 | `1` a `3` | reutiliza infraestructura y servicios compartidos en `local` y `vm-single` |
 | `4` | conectores EDC y dashboard EDC operativos en `local` y `vm-single` |
-| `5` | componentes compartidos no habilitados todavia para despliegue real EDC |
+| `5` | componentes compartidos no habilitados todavía para despliegue real EDC |
 | `6` | Newman, Playwright EDC y storage operativos |
 
 ## Recreate Dataspace

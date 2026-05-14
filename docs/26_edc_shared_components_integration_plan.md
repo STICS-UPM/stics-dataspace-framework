@@ -5,7 +5,7 @@ pertenezcan exclusivamente a INESData.
 
 ## Estado Actual
 
-| Adapter | Level 5 componentes | Validacion de componentes |
+| Adapter | Level 5 componentes | Validación de componentes |
 | --- | --- | --- |
 | `inesdata` | habilitado | habilitada si hay componentes |
 | `edc` | no habilitado para despliegue real | deshabilitada |
@@ -35,9 +35,9 @@ Antes de activar `Level 5` real en EDC, el framework debe asegurar:
 - resolucion de hosts de componentes para el dataspace EDC;
 - values runtime generados bajo `deployers/edc/deployments`;
 - imagenes locales o registry disponible para cada componente;
-- validacion smoke de componente;
+- validación smoke de componente;
 - ausencia de dependencia del portal INESData;
-- perfil de validacion EDC capaz de habilitar componentes solo cuando existan.
+- perfil de validación EDC capaz de habilitar componentes solo cuando existan.
 
 ## Relacion con el Dashboard EDC
 
@@ -50,6 +50,6 @@ separadas.
 
 ## Limite Actual
 
-El framework ya esta organizado para compartir charts, pero EDC todavia no
-despliega `Ontology Hub` ni `AI Model Hub` en `Level 5`. Esta limitacion es
-explicita y evita dar un falso verde en validaciones EDC con componentes.
+El framework ya está organizado para compartir charts, pero EDC todavía no
+despliega `Ontology Hub` ni `AI Model Hub` en `Level 5`. Esta limitación es
+explícita y evita dar un falso verde en validaciones EDC con componentes.

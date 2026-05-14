@@ -19,27 +19,27 @@ python3 main.py edc validate --topology local
 `main.py` es neutral respecto al adapter:
 
 - selecciona `inesdata` o `edc`;
-- selecciona topologia;
+- selecciona topología;
 - orquesta niveles;
-- ejecuta hosts, metricas, validacion y run completo;
-- expone menu guiado para usuarios no tecnicos;
-- mantiene una interfaz reproducible para automatizacion.
+- ejecuta hosts, métricas, validación y run completo;
+- expone menú guiado para usuarios no técnicos;
+- mantiene una interfaz reproducible para automatización.
 
-## Menu Guiado
+## Menú Guiado
 
-El menu de `main.py` conserva las acciones importantes del flujo historico:
+El menú de `main.py` conserva las acciones importantes del flujo histórico:
 
 - niveles `1` a `6`;
 - `Run All Levels`;
 - seleccion de adapter;
 - plan de despliegue;
 - hosts;
-- metricas;
+- métricas;
 - herramientas de desarrollo;
 - validaciones UI.
 
 Las opciones legacy como bootstrap, doctor, recovery, cleanup, build de imagenes
-y suites UI siguen disponibles desde submenus para no romper el flujo de trabajo
+y suites UI siguen disponibles desde submenús para no romper el flujo de trabajo
 existente.
 
 ## Organización Interna
@@ -49,9 +49,9 @@ Las operaciones compartidas viven en:
 | Modulo | Uso |
 | --- | --- |
 | `framework/local_menu_tools.py` | bootstrap, doctor, recovery, cleanup, imagenes locales |
-| `validation/ui/interactive_menu.py` | submenus de validacion UI |
-| `validation/orchestration/` | orquestacion de `Level 6` |
+| `validation/ui/interactive_menu.py` | submenús de validación UI |
+| `validation/orchestration/` | orquestación de `Level 6` |
 | `deployers/infrastructure/lib` | contratos y utilidades compartidas |
 
-El objetivo es que la ergonomia historica se mantenga, pero la arquitectura
+El objetivo es que la ergonomía histórica se mantenga, pero la arquitectura
 quede centralizada en `main.py` y en contratos reutilizables por adapter.

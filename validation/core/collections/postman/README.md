@@ -76,21 +76,21 @@ Esos ficheros son **environments importables de Postman** y contienen solo las v
 
 ```json
 {
-  "provider": "conn-citycouncil-demo",
-  "consumer": "conn-company-demo",
-  "provider_user": "user-conn-citycouncil-demo",
+  "provider": "conn-citycouncil-pionera",
+  "consumer": "conn-company-pionera",
+  "provider_user": "user-conn-citycouncil-pionera",
   "provider_password": "<copiar localmente>",
-  "consumer_user": "user-conn-company-demo",
+  "consumer_user": "user-conn-company-pionera",
   "consumer_password": "<copiar localmente>",
   "dsDomain": "dev.ds.dataspaceunit.upm",
-  "dataspace": "demo",
+  "dataspace": "pionera",
   "keycloakUrl": "http://auth.dev.ed.dataspaceunit.upm",
   "keycloakClientId": "dataspace-users",
   "adapter": "inesdata",
   "transferStartPath": "inesdatatransferprocesses",
   "transferDestinationType": "InesDataStore",
-  "providerProtocolAddress": "http://conn-citycouncil-demo:19194/protocol",
-  "consumerProtocolAddress": "http://conn-company-demo:19194/protocol"
+  "providerProtocolAddress": "http://conn-citycouncil-pionera:19194/protocol",
+  "consumerProtocolAddress": "http://conn-company-pionera:19194/protocol"
 }
 ```
 
@@ -98,29 +98,29 @@ Esos ficheros son **environments importables de Postman** y contienen solo las v
 
 ```json
 {
-  "provider": "conn-citycounciledc-demoedc",
-  "consumer": "conn-companyedc-demoedc",
-  "provider_user": "user-conn-citycounciledc-demoedc",
+  "provider": "conn-citycounciledc-pionera-edc",
+  "consumer": "conn-companyedc-pionera-edc",
+  "provider_user": "user-conn-citycounciledc-pionera-edc",
   "provider_password": "<copiar localmente>",
-  "consumer_user": "user-conn-companyedc-demoedc",
+  "consumer_user": "user-conn-companyedc-pionera-edc",
   "consumer_password": "<copiar localmente>",
   "dsDomain": "dev.ds.dataspaceunit.upm",
-  "dataspace": "demoedc",
+  "dataspace": "pionera-edc",
   "keycloakUrl": "http://auth.dev.ed.dataspaceunit.upm",
   "keycloakClientId": "dataspace-users",
   "adapter": "edc",
   "transferStartPath": "adaptertransferprocesses",
   "transferDestinationType": "AmazonS3",
-  "providerProtocolAddress": "http://conn-citycounciledc-demoedc:19194/protocol",
-  "consumerProtocolAddress": "http://conn-companyedc-demoedc:19194/protocol"
+  "providerProtocolAddress": "http://conn-citycounciledc-pionera-edc:19194/protocol",
+  "consumerProtocolAddress": "http://conn-companyedc-pionera-edc:19194/protocol"
 }
 ```
 
 Notas importantes:
 
 - `providerProtocolAddress` y `consumerProtocolAddress` **no** son endpoints pensados para ser invocados directamente desde Postman en tu máquina; son direcciones que el conector utiliza internamente cuando recibe la request de Management API.
-- Las contraseñas locales del entorno demo actual se generan bajo `deployers/inesdata/deployments/DEV/demo/credentials-connector-<connector>.json`, campo `connector_user.passwd`.
-- Para EDC, las contraseñas equivalentes se generan bajo `deployers/edc/deployments/DEV/demoedc/credentials-connector-<connector>.json`, campo `connector_user.passwd`.
+- Las contraseñas locales del entorno INESData actual se generan bajo `deployers/inesdata/deployments/DEV/pionera/credentials-connector-<connector>.json`, campo `connector_user.passwd`.
+- Para EDC, las contraseñas equivalentes se generan bajo `deployers/edc/deployments/DEV/pionera-edc/credentials-connector-<connector>.json`, campo `connector_user.passwd`.
 - La colección compacta genera dinámicamente todos los identificadores `e2e_*`, así que no hace falta precargarlos en el environment.
 
 ## Variables de colección usadas para reintentos

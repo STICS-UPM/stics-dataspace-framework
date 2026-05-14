@@ -1,8 +1,8 @@
-# 16. Contexto Linguistico FLARES
+# 16. Contexto Lingüístico FLARES
 
 `FLARES` se usa como contexto funcional para validar escenarios linguisticos en
 `AI Model Hub`. El objetivo dentro del framework es disponer de un dataset
-pequeno, reproducible y publicable como asset del dataspace.
+pequeño, reproducible y publicable como asset del dataspace.
 
 ## Uso en el Framework
 
@@ -10,7 +10,7 @@ El subconjunto de pruebas se denomina `FLARES-mini`. Debe servir para:
 
 - alimentar casos linguisticos de `AI Model Hub`;
 - publicar un recurso negociable en el dataspace;
-- comprobar discovery, negociacion y consumo;
+- comprobar discovery, negociación y consumo;
 - validar una salida esperada de forma reproducible.
 
 ## Contenido Esperado de `FLARES-mini`
@@ -20,12 +20,12 @@ El subconjunto de pruebas se denomina `FLARES-mini`. Debe servir para:
 | `README.md` | descripcion del fixture |
 | `metadata.json` | metadatos del asset |
 | `schema.json` | estructura de los ejemplos |
-| `subtask2_trial_sample.json` | muestra pequena de validacion |
-| `subtask2_test_sample.json` | muestra pequena de prueba |
+| `subtask2_trial_sample.json` | muestra pequeña de validación |
+| `subtask2_test_sample.json` | muestra pequeña de prueba |
 | `expected_outputs.json` | salidas esperadas |
 
 La seleccion inicial se centra en `Subtask 2`, porque permite construir un
-fixture mas compacto para clasificacion de fiabilidad.
+fixture más compacto para clasificación de fiabilidad.
 
 ## Metadatos del Asset
 
@@ -55,5 +55,5 @@ El flujo fiel al dataspace es:
 ## Estado
 
 El documento fija el contexto de datos y la estructura esperada del fixture. La
-automatizacion completa depende de que el entorno de `AI Model Hub` tenga los
+automatización completa depende de que el entorno de `AI Model Hub` tenga los
 modelos, datasets y endpoints necesarios para ejecutar el flujo funcional.

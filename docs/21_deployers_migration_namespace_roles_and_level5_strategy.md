@@ -28,12 +28,12 @@ deployers/
 
 | Carpeta | Responsabilidad |
 | --- | --- |
-| `deployers/infrastructure/lib` | API Python estable: contratos, hosts, topologia, orquestacion |
+| `deployers/infrastructure/lib` | API Python estable: contratos, hosts, topología, orquestación |
 | `deployers/shared` | charts y artefactos reutilizables |
 | `deployers/inesdata` | artefactos y deployer especificos de INESData |
 | `deployers/edc` | artefactos y deployer especificos de EDC |
 
-`deployers/shared/lib` se conserva como capa de compatibilidad, pero el codigo
+`deployers/shared/lib` se conserva como capa de compatibilidad, pero el código
 nuevo debe importar desde `deployers.infrastructure.lib`.
 
 ## Roles de Namespace
@@ -53,7 +53,7 @@ o namespaces distintos.
 
 ## Level 5
 
-`Level 5` despliega componentes opcionales. En INESData, el flujo esta activo y
+`Level 5` despliega componentes opcionales. En INESData, el flujo está activo y
 usa los charts compartidos de:
 
 ```text
@@ -61,11 +61,11 @@ deployers/shared/components/ontology-hub/
 deployers/shared/components/ai-model-hub/
 ```
 
-El perfil de validacion activa validaciones de componentes cuando
-`context.components` no esta vacio.
+El perfil de validación activa validaciones de componentes cuando
+`context.components` no está vacío.
 
 En EDC, la arquitectura ya permite compartir componentes, pero el despliegue
-real de `Level 5` para componentes EDC no esta habilitado todavia.
+real de `Level 5` para componentes EDC no está habilitado todavía.
 
 ## Artefactos Generados
 

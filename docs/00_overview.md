@@ -43,7 +43,7 @@ La estructura actual del repositorio se entiende bien si la miramos en cinco blo
 - `Level 6` crea un experimento y persiste artefactos en `experiments/experiment_<timestamp>/`.
 - El pipeline de métricas transforma los reportes de Newman en artefactos persistidos del experimento.
 - Kafka puede medirse como benchmark real y dejar `kafka_metrics.json`.
-- `validation/ui/` contiene suites Playwright activas; `Level 6` ejecuta un smoke estable por conector y, cuando la suite existe, la comprobacion `ops` de MinIO salvo opt-out explicito.
+- `validation/ui/` contiene suites Playwright activas; `Level 6` ejecuta un smoke estable por conector y, cuando la suite existe, la comprobación `ops` de MinIO salvo opt-out explícito.
 - `validation/components/` ya no es solo estructura: `ontology_hub` se valida automáticamente en `Level 6` cuando está configurado en `COMPONENTS`.
 
 ## Qué debe leer un desarrollador nuevo

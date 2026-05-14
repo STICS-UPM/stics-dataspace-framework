@@ -44,28 +44,28 @@ El directorio canonico para el runtime del conector es:
 adapters/edc/sources/connector/
 ```
 
-El script de sincronizacion clona o actualiza el repositorio del conector desde
+El script de sincronización clona o actualiza el repositorio del conector desde
 GitHub si el directorio no existe. El script de build construye una imagen local
 del runtime EDC y puede cargarla en Minikube.
 
-Variables habituales para ejecutar con una imagen explicita:
+Variables habituales para ejecutar con una imagen explícita:
 
 ```bash
 PIONERA_EDC_CONNECTOR_IMAGE_NAME=validation-environment/edc-connector
 PIONERA_EDC_CONNECTOR_IMAGE_TAG=adaptertransfer1
 ```
 
-La ejecucion real de `Level 4` para EDC exige indicar la imagen del conector de
-forma explicita para evitar desplegar tags ambiguos u obsoletos.
+La ejecución real de `Level 4` para EDC exige indicar la imagen del conector de
+forma explícita para evitar desplegar tags ambiguos u obsoletos.
 
 ## Management API
 
 El contrato del adapter se apoya en la Management API de EDC. Las operaciones
-usadas por la validacion incluyen:
+usadas por la validación incluyen:
 
-| Operacion | Endpoint base |
+| Operación | Endpoint base |
 | --- | --- |
-| Catalogo | `/management/v3/catalog/request` |
+| Catálogo | `/management/v3/catalog/request` |
 | Assets | `/management/v3/assets` |
 | Policies | `/management/v3/policydefinitions` |
 | Contract definitions | `/management/v3/contractdefinitions` |
@@ -73,7 +73,7 @@ usadas por la validacion incluyen:
 | Transfers | `/management/v3/adaptertransferprocesses` |
 
 `/management/v3/adaptertransferprocesses` actua como alias neutral del adapter
-para iniciar transferencias sin acoplar la validacion al nombre INESData.
+para iniciar transferencias sin acoplar la validación al nombre INESData.
 
 ## Artefactos Runtime
 
@@ -83,7 +83,7 @@ Los artefactos generados por EDC viven en:
 deployers/edc/deployments/<ENV>/<dataspace>/
 ```
 
-Incluyen certificados, credenciales, policies, values de Helm y configuracion
+Incluyen certificados, credenciales, policies, values de Helm y configuración
 del dashboard/proxy. No deben editarse manualmente ni subirse a Git.
 
 ## Aislamiento Frente a INESData
@@ -94,7 +94,7 @@ credenciales ni certificados dentro de `deployers/inesdata/deployments`.
 Los servicios comunes siguen siendo compartidos, pero los artefactos especificos
 del adapter se materializan bajo `deployers/edc`.
 
-## Validacion
+## Validación
 
 `python3 main.py edc validate --topology local` ejecuta:
 

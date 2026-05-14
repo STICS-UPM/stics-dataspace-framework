@@ -1,14 +1,14 @@
 # Validación UI Core
 
-La Fase 4 incorpora una capa de validacion UI con Playwright alineada con los flujos ya cubiertos por Newman. La suite UI no introduce logica de negocio nueva: refleja lo que el `connector-interface` ya expone para un usuario real.
+La Fase 4 incorpora una capa de validación UI con Playwright alineada con los flujos ya cubiertos por Newman. La suite UI no introduce lógica de negocio nueva: refleja lo que el `connector-interface` ya expone para un usuario real.
 
 ## Alcance
 
 La cobertura UI actual se divide en tres grupos:
 
 - `core`: flujos funcionales estables del portal del conector.
-- `extended`: flujo E2E largo para validacion visual y regresion ampliada.
-- `ops`: comprobaciones visuales opcionales de operacion, separadas del core.
+- `extended`: flujo E2E largo para validación visual y regresion ampliada.
+- `ops`: comprobaciones visuales opcionales de operación, separadas del core.
 
 Los specs activos viven bajo:
 
@@ -44,11 +44,11 @@ La suite `core` cubre actualmente:
   - autenticarse con credenciales del conector
   - esperar a que cargue el shell y aparezca `Log out`
 - Llamadas API activadas:
-  - flujo de autenticacion Keycloak
+  - flujo de autenticación Keycloak
   - bootstrap inicial de rutas protegidas
 - Resultado esperado:
   - shell autenticado cargado
-  - sin pagina de gateway `403`
+  - sin página de gateway `403`
   - sin banners visibles de error del servidor
 - Alineacion API:
   - prerrequisito de `01_environment_health`
@@ -85,7 +85,7 @@ La suite `core` cubre actualmente:
   - creacion de policy en el backend del conector
   - refresco del listado de policies
 - Resultado esperado:
-  - notificacion visible de creacion correcta
+  - notificación visible de creacion correcta
   - la policy aparece en el listado
 - Alineacion API:
   - `03_provider_setup` en su parte de policy
@@ -121,13 +121,13 @@ La suite `core` cubre actualmente:
   - `/catalog`
   - detalle del dataset
 - Acciones UI:
-  - abrir el catalogo
+  - abrir el catálogo
   - abrir el detalle de una oferta disponible
 - Llamadas API activadas:
-  - consulta del catalogo federado
+  - consulta del catálogo federado
   - carga del detalle del dataset
 - Resultado esperado:
-  - el catalogo abre sin `403` ni errores visibles del servidor
+  - el catálogo abre sin `403` ni errores visibles del servidor
   - el detalle es visible cuando existe una oferta
 - Alineacion API:
   - `04_consumer_catalog`
@@ -140,18 +140,18 @@ La suite `core` cubre actualmente:
   - pestana `Contract Offers`
 - Acciones UI:
   - preparar un asset publicable para el provider
-  - abrir el catalogo como consumer
+  - abrir el catálogo como consumer
   - localizar el asset
   - abrir el detalle
   - abrir la pestana de ofertas
-  - lanzar la negociacion
+  - lanzar la negociación
 - Llamadas API activadas:
-  - consulta del catalogo federado
+  - consulta del catálogo federado
   - inicio de `contractnegotiations`
-  - polling de estado de negociacion
+  - polling de estado de negociación
 - Resultado esperado:
-  - el asset aparece en el catalogo del consumer
-  - la negociacion termina con notificacion visible
+  - el asset aparece en el catálogo del consumer
+  - la negociación termina con notificación visible
   - no aparecen errores HTTP `>= 400` en las llamadas funcionales observadas
 - Alineacion API:
   - `05_consumer_negotiation`
@@ -164,14 +164,14 @@ La suite `core` cubre actualmente:
   - `/transfer-history`
 - Acciones UI:
   - preparar un asset publicable para el provider
-  - abrir el catalogo como consumer
+  - abrir el catálogo como consumer
   - negociar el contrato
   - abrir la vista de contratos
   - iniciar transferencia a `InesDataStore`
   - abrir el historial de transferencias
   - esperar al estado final visible
 - Llamadas API activadas:
-  - consulta del catalogo federado
+  - consulta del catálogo federado
   - `contractnegotiations`
   - `transferprocess`
   - consulta del historial de transferencias
@@ -184,7 +184,7 @@ La suite `core` cubre actualmente:
 
 ## Suite Extendida
 
-Ademas de los specs atomicos, existe un flujo E2E largo:
+Además de los specs atómicos, existe un flujo E2E largo:
 
 - `core/05-e2e-transfer-flow.spec.ts`
 
@@ -194,11 +194,11 @@ Este spec encadena:
 - creacion del asset desde UI
 - bootstrap complementario de artefactos contractuales
 - login del consumer
-- catalogo
-- negociacion
+- catálogo
+- negociación
 - transferencia
 
-Su objetivo es servir como regresion extendida y validacion visual del recorrido visible de punta a punta. No sustituye a los specs atomicos `05` y `06`.
+Su objetivo es servir como regresion extendida y validación visual del recorrido visible de punta a punta. No sustituye a los specs atómicos `05` y `06`.
 
 ## Suite Ops Opcional
 
@@ -211,12 +211,12 @@ Esta suite valida que el navegador de buckets de MinIO Console carga correctamen
 Notas importantes:
 
 - es una evidencia visual y operativa, no la fuente de verdad del flujo de intercambio
-- no debe sustituir las comprobaciones tecnicas de almacenamiento
+- no debe sustituir las comprobaciones técnicas de almacenamiento
 - los errores de endpoints administrativos como `site-replication`, `quota` o `retention` no deben tratarse como fallo funcional del dataspace
 
 ## Evidencias
 
-Cada ejecucion Playwright genera:
+Cada ejecución Playwright genera:
 
 - video
 - trace
@@ -229,7 +229,7 @@ Por defecto los artefactos se guardan en:
 - `validation/ui/playwright-report`
 - `validation/ui/blob-report`
 
-Cuando la ejecucion se redirige desde el framework, las rutas pueden sobreescribirse por variables de entorno para quedar asociadas al experimento activo.
+Cuando la ejecución se redirige desde el framework, las rutas pueden sobreescribirse por variables de entorno para quedar asociadas al experimento activo.
 
 ## Parametrizacion
 
@@ -267,20 +267,20 @@ Variables principales:
 Reglas practicas:
 
 - los specs simples pueden resolverse por `PORTAL_*` o por `UI_PORTAL_CONNECTOR` / `UI_PORTAL_ROLE`
-- los flujos de negociacion y transferencia usan `UI_PROVIDER_CONNECTOR` y `UI_CONSUMER_CONNECTOR`
+- los flujos de negociación y transferencia usan `UI_PROVIDER_CONNECTOR` y `UI_CONSUMER_CONNECTOR`
 - la resolucion de credenciales y URLs parte de `deployers/<adapter>/deployer.config` cuando existe y de los `credentials-connector-*.json` generados en `deployers/<adapter>/deployments/`
 
-## Integracion con Level 6
+## Integración con Level 6
 
 `main.py menu` Level 6 ejecuta por defecto un subconjunto estable de smoke UI por cada conector:
 
 - `core/01-login-readiness.spec.ts`
 - `core/04-consumer-catalog.spec.ts`
 
-Estos tests se consideran el minimo estable porque:
+Estos tests se consideran el mínimo estable porque:
 
 - no introducen cambios estructurales persistentes tan agresivos como la creacion de assets
-- validan autenticacion, carga del shell y acceso funcional al catalogo
+- validan autenticación, carga del shell y acceso funcional al catálogo
 
 Los flujos `03`, `03b`, `03c`, `05` y `06` existen y pueden ejecutarse manualmente o en pipelines ampliados, pero no forman parte del smoke por defecto de `Level 6`.
 
@@ -291,7 +291,7 @@ Para cada conector, `Level 6` guarda evidencias en:
 - `experiments/<experiment_id>/ui/<connector>/blob-report`
 - `experiments/<experiment_id>/ui/<connector>/results.json`
 
-## Integracion de la Suite Ops en Level 6
+## Integración de la Suite Ops en Level 6
 
 `Level 6` ejecuta la suite de MinIO Console automáticamente cuando:
 
@@ -321,7 +321,7 @@ El framework activa marcadores visuales sobre los elementos antes de las interac
 
 Se puede desactivar explícitamente con `PLAYWRIGHT_INTERACTION_MARKERS=0`. La duración del resaltado se ajusta con `PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS`; las ejecuciones integradas usan `150` ms por defecto para no penalizar el tiempo de validación, mientras que los modos `Live` y `Debug` mantienen `350` ms para facilitar el seguimiento visual.
 
-Esta ejecucion se registra en `experiment_results.json` como:
+Esta ejecución se registra en `experiment_results.json` como:
 
 - `test = ui-ops-minio-console`
 
@@ -340,14 +340,14 @@ wsl --shutdown
 
 Este paso ha resuelto en la practica el problema de visibilidad del navegador Playwright en WSL.
 
-Si el entorno sigue mostrando sintomas graficos extranos despues de varias modificaciones locales del framework, conviene probar tambien con una reinstalacion limpia del workspace de `Validation-Environment` antes de seguir depurando la suite.
+Si el entorno sigue mostrando síntomas gráficos extraños después de varias modificaciones locales del framework, conviene probar también con una reinstalación limpia del workspace de `Validation-Environment` antes de seguir depurando la suite.
 
 ## Limites Conocidos
 
-- La UI cubre el flujo visible de negociacion y transferencia, pero no sustituye las validaciones tecnicas de `EDR` o descarga raw.
-- La comprobacion del almacenamiento final sigue siendo mas fiable por API o SDK que por la consola de MinIO.
+- La UI cubre el flujo visible de negociación y transferencia, pero no sustituye las validaciones técnicas de `EDR` o descarga raw.
+- La comprobación del almacenamiento final sigue siendo más fiable por API o SDK que por la consola de MinIO.
 - La suite `ops` es opcional y no forma parte del criterio core de aceptacion del dataspace.
-- La suite `extended` es util para evidencias visuales y regresion larga, pero no debe reemplazar a los specs atomicos.
+- La suite `extended` es útil para evidencias visuales y regresion larga, pero no debe reemplazar a los specs atómicos.
 
 ## Resumen
 
@@ -358,4 +358,4 @@ La Fase 4 deja una capa UI utilizable y alineada con Newman:
 - suite E2E extendida para escenarios largos
 - suite `ops` separada para evidencia visual de MinIO Console
 
-La validacion UI queda asi como complemento funcional de la validacion API, no como reemplazo de los chequeos tecnicos de backend.
+La validación UI queda así como complemento funcional de la validación API, no como reemplazo de los chequeos técnicos de backend.

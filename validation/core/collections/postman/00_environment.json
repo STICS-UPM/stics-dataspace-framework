@@ -1,22 +1,22 @@
 {
   "id": "postman-environment-00",
-  "name": "02 Environment - INESData Demo",
+  "name": "02 Environment - INESData PIONERA",
   "values": [
     {
       "key": "provider",
-      "value": "conn-citycouncil-demo",
+      "value": "conn-citycouncil-pionera",
       "type": "text",
       "enabled": true
     },
     {
       "key": "consumer",
-      "value": "conn-company-demo",
+      "value": "conn-company-pionera",
       "type": "text",
       "enabled": true
     },
     {
       "key": "provider_user",
-      "value": "user-conn-citycouncil-demo",
+      "value": "user-conn-citycouncil-pionera",
       "type": "text",
       "enabled": true
     },
@@ -28,7 +28,7 @@
     },
     {
       "key": "consumer_user",
-      "value": "user-conn-company-demo",
+      "value": "user-conn-company-pionera",
       "type": "text",
       "enabled": true
     },
@@ -46,7 +46,7 @@
     },
     {
       "key": "dataspace",
-      "value": "demo",
+      "value": "pionera",
       "type": "text",
       "enabled": true
     },
@@ -82,13 +82,13 @@
     },
     {
       "key": "providerProtocolAddress",
-      "value": "http://conn-citycouncil-demo:19194/protocol",
+      "value": "http://conn-citycouncil-pionera:19194/protocol",
       "type": "text",
       "enabled": true
     },
     {
       "key": "consumerProtocolAddress",
-      "value": "http://conn-company-demo:19194/protocol",
+      "value": "http://conn-company-pionera:19194/protocol",
       "type": "text",
       "enabled": true
     }

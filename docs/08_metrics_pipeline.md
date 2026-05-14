@@ -1,12 +1,12 @@
-# Pipeline de Metricas
+# Pipeline de Métricas
 
 En la secuencia de evolución descrita desde [07_experiment_system.md](./07_experiment_system.md), la Fase 2 transforma los reportes exportados de Newman en artefactos estables del experimento.
 
 ## Alcance
 
-Esta fase no modifica las colecciones de validacion. Extiende el flujo de ejecucion existente para que cualquier experimento con reportes JSON exportados por Newman persista tambien ficheros de metricas normalizados.
+Esta fase no modifica las colecciones de validación. Extiende el flujo de ejecución existente para que cualquier experimento con reportes JSON exportados por Newman persista también ficheros de métricas normalizados.
 
-El pipeline de metricas se ejecuta ahora desde:
+El pipeline de métricas se ejecuta ahora desde:
 
 - `python main.py inesdata validate`
 - `python main.py inesdata run`
@@ -20,7 +20,7 @@ La entrada de esta fase es el conjunto de reportes JSON exportados bajo:
 experiments/experiment_<timestamp>/newman_reports/
 ```
 
-Los reportes pueden estar anidados por ejecucion y por par de conectores, por ejemplo:
+Los reportes pueden estar anidados por ejecución y por par de conectores, por ejemplo:
 
 ```text
 newman_reports/
@@ -33,7 +33,7 @@ newman_reports/
 
 ## Artefactos de Salida
 
-El pipeline de metricas debe producir:
+El pipeline de métricas debe producir:
 
 - `newman_results.json`
 - `raw_requests.jsonl`
@@ -45,9 +45,9 @@ El pipeline de metricas debe producir:
 
 ```text
 Reportes JSON de Newman
-  -> extraccion de requests
-  -> extraccion de resultados de test
-  -> extraccion de metricas de negociacion
+  -> extracción de requests
+  -> extracción de resultados de test
+  -> extracción de métricas de negociación
   -> agregacion
   -> persistencia como artefactos del experimento
 ```
@@ -56,27 +56,27 @@ Reportes JSON de Newman
 
 - `framework/metrics/collector.py`
   - carga los reportes exportados de Newman
-  - extrae metricas de peticiones crudas
+  - extrae métricas de peticiones crudas
   - extrae resultados de aserciones
-  - deriva indicios temporales de negociacion y transferencia
+  - deriva indicios temporales de negociación y transferencia
 
 - `framework/metrics/aggregator.py`
   - calcula conteos por endpoint
   - calcula medias y percentiles de latencia
   - resume totales de tests correctos y fallidos
-  - agrega tiempos de negociacion
+  - agrega tiempos de negociación
 
 - `framework/metrics_collector.py`
-  - orquesta la generacion de artefactos para un directorio de experimento
+  - orquesta la generación de artefactos para un directorio de experimento
   - persiste salidas normalizadas a traves de `ExperimentStorage`
 
 ## Comportamiento ante Fallos
 
-- Si la validacion termina correctamente, la extraccion de metricas debe ejecutarse automaticamente.
-- Si la validacion falla despues de exportar algunos reportes de Newman, la extraccion de metricas sigue ejecutandose sobre los reportes exportados siempre que sea posible.
-- Se espera que la extraccion de metricas produzca artefactos parciales pero validos a partir de conjuntos de reportes parciales.
+- Si la validación termina correctamente, la extracción de métricas debe ejecutarse automáticamente.
+- Si la validación falla después de exportar algunos reportes de Newman, la extracción de métricas sigue ejecutándose sobre los reportes exportados siempre que sea posible.
+- Se espera que la extracción de métricas produzca artefactos parciales pero válidos a partir de conjuntos de reportes parciales.
 
 ## Notas
 
-- `aggregated_metrics.json` almacena metricas de peticion, metricas agregadas de negociacion y el resumen de tests en un unico documento normalizado.
-- `raw_requests.jsonl` sigue siendo el artefacto fuente para la generacion posterior de graficas y para analisis mas profundos.
+- `aggregated_metrics.json` almacena métricas de petición, métricas agregadas de negociación y el resumen de tests en un único documento normalizado.
+- `raw_requests.jsonl` sigue siendo el artefacto fuente para la generación posterior de gráficas y para análisis más profundos.

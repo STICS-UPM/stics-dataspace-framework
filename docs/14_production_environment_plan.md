@@ -1,20 +1,20 @@
-# 14. Entorno Productivo de Validacion
+# 14. Entorno Productivo de Validación
 
-El entorno productivo de validacion se representa con topologias Kubernetes
+El entorno productivo de validación se representa con topologías Kubernetes
 distintas al modo local. El modo local usa `Minikube` en la maquina de
 desarrollo; `vm-single` usa un Minikube gestionado dentro de la VM para hacer
-reproducible el quickstart; y las topologias VM mantienen la misma separacion
+reproducible el quickstart; y las topologías VM mantienen la misma separación
 por niveles del framework.
 
-![PIONERA production validation environment](<./pionera production validation environment.png>)
+![PIONERA distributed validation environment](<./pionera_distributed_validation_environment.png>)
 
-## Topologias Soportadas por el Framework
+## Topologías Soportadas por el Framework
 
-| Topologia canonica | Alias visual | Estado actual |
+| Topología canonica | Alias visual | Estado actual |
 | --- | --- | --- |
 | `local` | local | despliegue real habilitado |
 | `vm-single` | vm1 | despliegue real habilitado para la ruta base de `inesdata` y `edc` |
-| `vm-distributed` | vm3 | planificacion de hosts y perfil de topologia |
+| `vm-distributed` | vm3 | planificacion de hosts y perfil de topología |
 
 `vm-distributed` sigue protegido por guardas y `edc` mantiene pendiente `Level 5`
 real de componentes. El resto de la ruta ya puede ejecutarse en `vm-single`
@@ -22,8 +22,8 @@ sin depender del perfil `local`.
 
 ## Interpretacion de `vm-distributed`
 
-Para PIONERA, `vm-distributed` se modela como un unico cluster Kubernetes con
-tres nodos/VMs y separacion de workloads por rol:
+Para PIONERA, `vm-distributed` se modela como un único cluster Kubernetes con
+tres nodos/VMs y separación de workloads por rol:
 
 | Rol | Workloads |
 | --- | --- |
@@ -31,26 +31,26 @@ tres nodos/VMs y separacion de workloads por rol:
 | `provider` | conector proveedor |
 | `consumer` | conector consumidor |
 
-La separacion se puede aplicar mediante labels, `nodeSelector`, affinity o
-mecanismos equivalentes. Esta decision mantiene un solo plano de control
+La separación se puede aplicar mediante labels, `nodeSelector`, affinity o
+mecanismos equivalentes. Esta decisión mantiene un solo plano de control
 Kubernetes y reduce la complejidad operativa inicial.
 
-## Por Que un Solo Cluster es Adecuado
+## Por Qué un Solo Cluster es Adecuado
 
-Un unico cluster con tres nodos permite validar:
+Un único cluster con tres nodos permite validar:
 
-- distribucion fisica de workloads;
+- distribucion física de workloads;
 - comunicacion entre provider, consumer y servicios comunes;
 - resolucion DNS/hosts;
 - ingress externo;
 - identidad, secretos y almacenamiento compartido;
-- politicas, contratos, catalogo, negociacion y transferencia;
+- políticas, contratos, catálogo, negociación y transferencia;
 - validaciones de `Level 6` sobre dataspace y componentes.
 
-La descentralizacion del dataspace se valida en los conectores, las politicas,
-la negociacion, la transferencia y la separacion de roles. No exige tres planos
+La descentralización del dataspace se valida en los conectores, las políticas,
+la negociación, la transferencia y la separación de roles. No exige tres planos
 de control Kubernetes independientes para el primer incremento del entorno de
-validacion.
+validación.
 
 ## Routing y Endpoints
 
@@ -60,7 +60,7 @@ servicios bajo prefijos de path.
 
 | Bloque | Ejemplo de endpoint productivo |
 | --- | --- |
-| Portal publico | `https://portal.<dominio-common>` |
+| Portal público | `https://portal.<dominio-common>` |
 | Backend del portal | `https://backend.<dominio-common>` |
 | Registration Service | `https://registration-service.<dominio-common>` |
 | Keycloak | `https://keycloak.<dominio-common>` |
@@ -74,9 +74,9 @@ servicios bajo prefijos de path.
 El routing por path queda como modo avanzado para entornos donde no sea posible
 obtener hostnames por servicio.
 
-## Variables de Topologia
+## Variables de Topología
 
-El perfil de topologia permite separar direcciones por rol:
+El perfil de topología permite separar direcciones por rol:
 
 | Variable | Uso |
 | --- | --- |
@@ -85,7 +85,7 @@ El perfil de topologia permite separar direcciones por rol:
 | `PIONERA_VM_PROVIDER_IP` | IP del nodo provider |
 | `PIONERA_VM_CONSUMER_IP` | IP del nodo consumer |
 
-Las entradas de hosts se generan segun el rol de cada servicio. En local se usa
+Las entradas de hosts se generan según el rol de cada servicio. En local se usa
 `127.0.0.1`; en VM se usan las IPs del perfil.
 
 ## Diferencias Frente a Local
@@ -94,6 +94,6 @@ Las entradas de hosts se generan segun el rol de cada servicio. En local se usa
 | --- | --- |
 | `Minikube` | Kubernetes real |
 | `minikube tunnel` | Ingress/load balancer real |
-| `/etc/hosts` local | DNS o hosts gestionados por topologia |
+| `/etc/hosts` local | DNS o hosts gestionados por topología |
 | `minikube image load` | Registry de imagenes |
 | dominio local fijo | hosts por servicio o por rol |

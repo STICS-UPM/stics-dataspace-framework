@@ -1,7 +1,7 @@
 # 20. Baseline Playwright EDC
 
 La suite Playwright de EDC valida el dashboard EDC desplegado en `Level 4` y se
-ejecuta con una configuracion separada de INESData.
+ejecuta con una configuración separada de INESData.
 
 ## Ruta
 
@@ -15,7 +15,7 @@ validation/ui/adapters/edc/
 | --- | --- |
 | `01-login-readiness.spec.ts` | login OIDC BFF y disponibilidad del portal |
 | `02-navigation-smoke.spec.ts` | navegacion provider/consumer |
-| `03-consumer-negotiation.spec.ts` | catalogo y negociacion desde consumer |
+| `03-consumer-negotiation.spec.ts` | catálogo y negociación desde consumer |
 | `03-provider-setup.spec.ts` | creacion de asset desde provider |
 | `03b-provider-policy-create.spec.ts` | creacion de policy desde provider |
 | `03c-provider-contract-definition-create.spec.ts` | creacion de contract definition |
@@ -30,7 +30,7 @@ validation/ui/adapters/edc/
 | Auth | flujo del portal INESData | `oidc-bff` |
 | Asset UI | subida de fichero del portal INESData | asset `HttpData` |
 | Transfer | flujo propio INESData | Management API EDC y destino S3 |
-| Configuracion | `playwright.config.ts` | `playwright.edc.config.ts` |
+| Configuración | `playwright.config.ts` | `playwright.edc.config.ts` |
 
 La suite EDC es analoga a INESData en intencion, pero no replica exactamente los
 mismos formularios porque el dashboard EDC expone capacidades distintas.
@@ -46,10 +46,10 @@ playwright-edc-policy-
 playwright-edc-contract-
 ```
 
-La validacion de storage usa nombres unicos por ejecucion para evitar falsos
+La validación de storage usa nombres unicos por ejecución para evitar falsos
 fallos por objetos residuales en MinIO.
 
-## Ejecucion Manual
+## Ejecución Manual
 
 ```bash
 cd validation/ui

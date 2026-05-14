@@ -119,6 +119,7 @@ Thumbs.db
 *.webm
 *.png
 !docs/*.png
+!docs/legacy_inesdata_manual/deployment_diagrams/*.png
 
 # =========================
 # PROJECT

@@ -28,7 +28,7 @@ actuales.
 ## Reglas
 
 - no crear nuevos artefactos en las carpetas raiz legacy;
-- no leer configuracion runtime desde `Validation-Environment/deployer.config`;
+- no leer configuración runtime desde `Validation-Environment/deployer.config`;
 - no versionar `deployments/`;
 - mantener `deployer.config.example` dentro de cada deployer;
 - conservar los secretos solo en ficheros ignorados por Git.
@@ -39,5 +39,5 @@ Si una maquina local conserva `inesdata-deployment/` o `edc-deployment/` como
 respaldo manual, esas carpetas deben tratarse como estado externo. No forman
 parte de la arquitectura activa.
 
-El nombre `inesdata-deployment` solo puede aparecer como referencia historica o
+El nombre `inesdata-deployment` solo puede aparecer como referencia histórica o
 como repositorio externo, no como ruta local requerida por el framework.

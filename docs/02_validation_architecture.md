@@ -67,7 +67,7 @@ La carpeta `validation/ui/` contiene suites Playwright activas para:
 - transferencia
 - comprobaciones visuales opcionales de MinIO Console
 
-`Level 6` ejecuta por defecto un smoke UI estable por conector y, cuando la suite existe, la comprobacion UI de MinIO. Esa comprobacion puede desactivarse con `LEVEL6_RUN_UI_OPS=false`.
+`Level 6` ejecuta por defecto un smoke UI estable por conector y, cuando la suite existe, la comprobación UI de MinIO. Esa comprobación puede desactivarse con `LEVEL6_RUN_UI_OPS=false`.
 
 Además, `ontology_hub` dispone de su propia suite UI dentro de `validation/components/ontology_hub/ui/`, separada de la UI del dataspace core.
 

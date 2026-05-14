@@ -1,6 +1,6 @@
 # 19. Playwright por Adapter
 
-La validacion UI esta organizada por adapter para evitar acoplar todos los
+La validación UI está organizada por adapter para evitar acoplar todos los
 portales al comportamiento de INESData.
 
 ## Estructura Actual
@@ -18,22 +18,22 @@ validation/ui/
   playwright.ops.config.ts
 ```
 
-| Configuracion | Uso |
+| Configuración | Uso |
 | --- | --- |
 | `playwright.config.ts` | suite INESData |
 | `playwright.edc.config.ts` | suite EDC |
 | `playwright.ops.config.ts` | validaciones operativas como MinIO |
 
-## Principio de Separacion
+## Principio de Separación
 
-Las piezas compartidas viven en `shared/` y en la orquestacion comun. Las rutas,
+Las piezas compartidas viven en `shared/` y en la orquestación comun. Las rutas,
 page objects y flujos especificos viven bajo el adapter correspondiente.
 
 Se reutiliza lo que es realmente comun:
 
 - evidencias, screenshots, traces y videos;
 - resolucion de runtime provider/consumer;
-- login cuando el modo de autenticacion coincide;
+- login cuando el modo de autenticación coincide;
 - checks de errores gateway y readiness;
 - persistencia de resultados en `experiments/`.
 
@@ -42,8 +42,8 @@ Los flujos propios se mantienen separados:
 - creacion de assets;
 - creacion de policies;
 - creacion de contract definitions;
-- catalogo;
-- negociacion;
+- catálogo;
+- negociación;
 - transferencia;
 - historial.
 
@@ -62,9 +62,9 @@ El runtime de UI describe:
 | `capabilities` | capacidades visuales soportadas por el portal |
 
 Esto permite que las pruebas fallen por capacidades no disponibles de forma
-explicita, no por supuestos heredados de otro portal.
+explícita, no por supuestos heredados de otro portal.
 
-## Autenticacion
+## Autenticación
 
 | Modo | Uso |
 | --- | --- |
@@ -80,7 +80,7 @@ Las suites conservan helpers para destacar elementos antes de hacer click o
 rellenar formularios. Esto facilita seguir el flujo en modo headed, debug y en
 videos del reporte.
 
-## Ejecucion
+## Ejecución
 
 ```bash
 cd validation/ui
@@ -88,5 +88,5 @@ npm run test:inesdata
 npm run test:edc
 ```
 
-Desde el framework, `Level 6` selecciona la configuracion Playwright desde el
-perfil de validacion del deployer activo.
+Desde el framework, `Level 6` selecciona la configuración Playwright desde el
+perfil de validación del deployer activo.

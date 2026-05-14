@@ -3,17 +3,17 @@
 En la secuencia de evolución descrita desde [07_experiment_system.md](./07_experiment_system.md), la Fase 3 distingue dos capas complementarias:
 
 - benchmark de broker Kafka en `kafka_metrics.json`
-- validacion funcional Kafka transfer en `kafka_transfer_results.json`
+- validación funcional Kafka transfer en `kafka_transfer_results.json`
 
 ## Alcance
 
-Esta fase mantiene el benchmark de broker Kafka como opcional, pero hace que su resultado sea explicito y repetible desde los caminos de ejecucion activos:
+Esta fase mantiene el benchmark de broker Kafka como opcional, pero hace que su resultado sea explícito y repetible desde los caminos de ejecución activos:
 
 - `python main.py inesdata metrics --kafka`
 - `python main.py inesdata run --kafka`
 - `python main.py menu` -> `M - Run metrics / benchmarks`
 
-La activacion del benchmark de broker para usuarios debe hacerse desde el CLI o el menu, no desde `deployer.config`. En el menu, la pregunta `Enable standalone Kafka broker benchmark?` se refiere solo a este benchmark independiente del broker. La suite funcional avanzada `EDC+Kafka`, inspirada en el sample oficial `Transfer06KafkaBrokerTest` de EDC, queda separada del benchmark de broker y se ejecuta automaticamente en `Level 6`, despues de Newman, para los adaptadores `inesdata` y `edc`.
+La activación del benchmark de broker para usuarios debe hacerse desde el CLI o el menú, no desde `deployer.config`. En el menú, la pregunta `Enable standalone Kafka broker benchmark?` se refiere solo a este benchmark independiente del broker. La suite funcional avanzada `EDC+Kafka`, inspirada en el sample oficial `Transfer06KafkaBrokerTest` de EDC, queda separada del benchmark de broker y se ejecuta automáticamente en `Level 6`, después de Newman, para los adaptadores `inesdata` y `edc`.
 
 En la implementación actual de `Level 6`, la preparación del broker Kafka
 arranca en segundo plano al comenzar el nivel, mientras Newman sigue en primer
@@ -21,7 +21,7 @@ plano. Esto reduce espera total sin alterar el flujo de Newman.
 
 ## Salida
 
-Toda ejecucion con Kafka habilitado debe dejar:
+Toda ejecución con Kafka habilitado debe dejar:
 
 - `kafka_metrics.json`
 
@@ -30,7 +30,7 @@ Cuando se ejecuta `Level 6`, la suite Kafka transfer deja además:
 - `kafka_transfer_results.json`
 - `kafka_transfer/<provider>__<consumer>.json`
 
-`kafka_metrics.json` debe contener siempre un estado de ejecucion:
+`kafka_metrics.json` debe contener siempre un estado de ejecución:
 
 - `completed`
 - `skipped`
@@ -79,8 +79,8 @@ Cuando Kafka no puede alcanzarse o arrancarse, el payload sigue existiendo e inc
 La resolucion del broker sigue este orden:
 
 1. variables de entorno
-2. configuracion Kafka del adapter
-3. overrides de ejecucion
+2. configuración Kafka del adapter
+3. overrides de ejecución
 4. broker Kafka gestionado por el framework dentro de Kubernetes
 
 El modo por defecto para validaciones locales integradas es `kubernetes`. En ese
@@ -100,7 +100,7 @@ framework-kafka.<namespace>.svc.cluster.local:9092
 El proceso Python del framework puede usar un `port-forward` temporal hacia
 `127.0.0.1:<puerto>` para crear topics, producir mensajes de prueba y consumir
 el topic destino desde el host. Ese `port-forward` es un detalle de soporte de
-la validacion, no el endpoint funcional que deben usar los conectores.
+la validación, no el endpoint funcional que deben usar los conectores.
 
 Antes de dar el broker por listo, el framework valida tanto el listener interno
 del cluster como el listener externo usado por el `port-forward`.
@@ -116,7 +116,7 @@ Esa variante separa `controller` y `broker` dentro del namespace Kafka y sigue
 siendo opt-in. No sustituye automáticamente al provisionador `kubernetes`
 histórico.
 
-## Configuracion del Broker
+## Configuración del Broker
 
 El broker Kafka puede configurarse con:
 
@@ -185,7 +185,7 @@ EDC desplegado exponga soporte Kafka equivalente.
 
 ## Runtime del Conector
 
-El framework ya deja activada en el codigo fuente local del conector la dependencia `data-plane-kafka`, que es la pieza EDC necesaria para un escenario de transferencia Kafka real.
+El framework ya deja activada en el código fuente local del conector la dependencia `data-plane-kafka`, que es la pieza EDC necesaria para un escenario de transferencia Kafka real.
 
 Eso significa:
 

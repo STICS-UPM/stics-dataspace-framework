@@ -34,15 +34,15 @@ El flujo actual es:
 7. Genera métricas derivadas de los reportes de Newman.
 8. Ejecuta el benchmark Kafka y persiste `kafka_metrics.json`.
 9. Ejecuta el smoke UI estable del dataspace para cada conector.
-10. Ejecuta la suite UI `ops` de MinIO cuando esta disponible, salvo que `LEVEL6_RUN_UI_OPS=false`.
+10. Ejecuta la suite UI `ops` de MinIO cuando está disponible, salvo que `LEVEL6_RUN_UI_OPS=false`.
 11. Ejecuta validaciones de componentes cuando `COMPONENTS` contiene componentes con runner registrado.
 12. Persiste `experiment_results.json` con resultados API, UI, Kafka y componentes.
 
-La validacion de componentes se ejecuta despues del smoke UI del dataspace. Esto
+La validación de componentes se ejecuta después del smoke UI del dataspace. Esto
 permite separar:
 
-- validacion del dataspace base del adapter activo;
-- validacion de componentes opcionales desplegados en `Level 5`.
+- validación del dataspace base del adapter activo;
+- validación de componentes opcionales desplegados en `Level 5`.
 
 ## Qué hace `ValidationEngine`
 

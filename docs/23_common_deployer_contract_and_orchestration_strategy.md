@@ -9,15 +9,15 @@ adapters sin conocer detalles internos de cada runtime.
 | --- | --- | --- |
 | `DeploymentContext` | `deployers/infrastructure/lib/contracts.py` | contexto efectivo de despliegue |
 | `NamespaceRoles` | `deployers/infrastructure/lib/contracts.py` | roles logicos de namespaces |
-| `TopologyProfile` | `deployers/infrastructure/lib/contracts.py` | direcciones por topologia y rol |
-| `ValidationProfile` | `deployers/infrastructure/lib/contracts.py` | configuracion de validacion |
-| `DeployerOrchestrator` | `deployers/infrastructure/lib/orchestrator.py` | ejecucion comun |
+| `TopologyProfile` | `deployers/infrastructure/lib/contracts.py` | direcciones por topología y rol |
+| `ValidationProfile` | `deployers/infrastructure/lib/contracts.py` | configuración de validación |
+| `DeployerOrchestrator` | `deployers/infrastructure/lib/orchestrator.py` | ejecución comun |
 
 ## Metodos del Deployer
 
 | Metodo | Uso |
 | --- | --- |
-| `supported_topologies()` | declara topologias aceptadas |
+| `supported_topologies()` | declara topologías aceptadas |
 | `resolve_context(topology)` | construye `DeploymentContext` |
 | `deploy_infrastructure(context)` | `Level 1` |
 | `deploy_common_services(context)` | `Level 2` |
@@ -27,18 +27,18 @@ adapters sin conocer detalles internos de cada runtime.
 | `get_validation_profile(context)` | perfil de `Level 6` |
 
 No todos los deployers tienen que ejecutar todos los niveles de forma real en
-todas las topologias. Si una capacidad no esta habilitada, debe responder de
-forma explicita.
+todas las topologías. Si una capacidad no está habilitada, debe responder de
+forma explícita.
 
 ## ValidationProfile
 
-El perfil de validacion define:
+El perfil de validación define:
 
 | Campo | Uso |
 | --- | --- |
 | `adapter` | adapter activo |
-| `newman_enabled` | ejecucion de colecciones Newman |
-| `playwright_enabled` | ejecucion de Playwright |
+| `newman_enabled` | ejecución de colecciones Newman |
+| `playwright_enabled` | ejecución de Playwright |
 | `playwright_config` | config Playwright del adapter |
 | `component_validation_enabled` | validaciones de componentes |
 
@@ -46,7 +46,7 @@ El perfil de validacion define:
 
 ## Hosts
 
-La gestion de hosts se hace desde el contexto y el perfil de topologia. El
+La gestion de hosts se hace desde el contexto y el perfil de topología. El
 manager genera bloques para:
 
 - servicios comunes;
@@ -54,4 +54,4 @@ manager genera bloques para:
 - conectores;
 - componentes.
 
-La sincronizacion omite entradas existentes y solo agrega las faltantes.
+La sincronización omite entradas existentes y solo agrega las faltantes.
