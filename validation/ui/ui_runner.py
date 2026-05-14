@@ -55,8 +55,9 @@ def _build_playwright_environment(
 ) -> dict[str, str]:
     env = dict(os.environ)
     config = dict(context.config or {})
+    adapter = profile.adapter or context.deployer or "unknown"
 
-    env["UI_ADAPTER"] = profile.adapter or context.deployer
+    env["UI_ADAPTER"] = adapter
     env["UI_DATASPACE"] = context.dataspace_name
     env["UI_ENVIRONMENT"] = context.environment
     env["UI_DS_DOMAIN"] = context.ds_domain_base
@@ -83,6 +84,16 @@ def _build_playwright_environment(
     env["PLAYWRIGHT_HTML_REPORT_DIR"] = artifact_paths["html_report_dir"]
     env["PLAYWRIGHT_BLOB_REPORT_DIR"] = artifact_paths["blob_report_dir"]
     env["PLAYWRIGHT_JSON_REPORT_FILE"] = artifact_paths["json_report_file"]
+    if adapter.lower() == "inesdata":
+        env.setdefault("PIONERA_PLAYWRIGHT_SUITE_NAME", "INESData integration")
+        env.setdefault("UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO", "1")
+        env.setdefault("UI_ONTOLOGY_HUB_INESDATA_DEMO", "1")
+        env.setdefault("UI_AI_MODEL_HUB_HTTPDATA_DEMO", "1")
+        env.setdefault("UI_AI_MODEL_OBSERVER_DEMO", "1")
+    elif adapter.lower() == "edc":
+        env.setdefault("PIONERA_PLAYWRIGHT_SUITE_NAME", "EDC Playwright")
+    else:
+        env.setdefault("PIONERA_PLAYWRIGHT_SUITE_NAME", f"{adapter} Playwright")
     env.setdefault("PLAYWRIGHT_INTERACTION_MARKERS", "1")
     env.setdefault("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "150")
 

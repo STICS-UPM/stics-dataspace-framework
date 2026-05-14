@@ -5,6 +5,10 @@ const outputDir = process.env.PLAYWRIGHT_OUTPUT_DIR || "test-results";
 const htmlReportDir = process.env.PLAYWRIGHT_HTML_REPORT_DIR || "playwright-report";
 const blobReportDir = process.env.PLAYWRIGHT_BLOB_REPORT_DIR || "blob-report";
 const jsonReportFile = process.env.PLAYWRIGHT_JSON_REPORT_FILE || path.join(outputDir, "results.json");
+const consoleReporter = path.join(
+  __dirname,
+  "../../../ui/reporters/console-test-name-reporter.cjs",
+);
 
 module.exports = defineConfig({
   testDir: "./specs",
@@ -14,7 +18,7 @@ module.exports = defineConfig({
   },
   workers: 1,
   reporter: [
-    ["list"],
+    [consoleReporter],
     ["html", { open: "never", outputFolder: htmlReportDir }],
     ["blob", { outputDir: blobReportDir }],
     ["json", { outputFile: jsonReportFile }],

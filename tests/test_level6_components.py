@@ -56,6 +56,34 @@ class Level6ComponentsTests(unittest.TestCase):
         self.assertEqual(results[1]["status"], "skipped")
         self.assertEqual(results[1]["reason"], "component_url_not_inferred")
 
+    def test_run_component_validations_ignores_auxiliary_urls_not_requested_as_groups(self):
+        run_registered = mock.Mock(
+            return_value=[
+                {
+                    "component": "semantic-virtualization",
+                    "status": "passed",
+                }
+            ]
+        )
+
+        results = components.run_component_validations(
+            ["semantic-virtualization"],
+            infer_component_urls=mock.Mock(
+                return_value={
+                    "semantic-virtualization": "http://semantic.example.local",
+                    "semantic-virtualization-editor": "http://semantic-editor.example.local",
+                }
+            ),
+            run_component_validations_fn=run_registered,
+            experiment_dir="/tmp/experiment",
+        )
+
+        run_registered.assert_called_once_with(
+            {"semantic-virtualization": "http://semantic.example.local"},
+            experiment_dir="/tmp/experiment",
+        )
+        self.assertEqual(results, [{"component": "semantic-virtualization", "status": "passed"}])
+
 
 if __name__ == "__main__":
     unittest.main()

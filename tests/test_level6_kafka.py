@@ -5,11 +5,11 @@ from validation.orchestration import kafka
 
 
 class Level6KafkaTests(unittest.TestCase):
-    def test_should_run_kafka_edc_validation_is_automatic(self):
+    def test_should_run_kafka_edc_validation_is_disabled_by_default(self):
         def flag_enabled(name, default):
             return default
 
-        self.assertTrue(kafka.should_run_kafka_edc_validation(flag_enabled=flag_enabled))
+        self.assertFalse(kafka.should_run_kafka_edc_validation(flag_enabled=flag_enabled))
 
     def test_should_run_kafka_edc_validation_can_be_temporarily_skipped(self):
         def flag_enabled(name, default):

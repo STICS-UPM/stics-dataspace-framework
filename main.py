@@ -5,6 +5,7 @@ import importlib
 import inspect
 import json
 import os
+import pty
 import shutil
 import socket
 import subprocess
@@ -132,6 +133,152 @@ LEVEL_DESCRIPTIONS = {
     5: "Deploy Components",
     6: "Run Validation Tests",
 }
+LEVEL6_CONSOLE_LOG_FILENAME = "level6_console.log"
+
+
+class _Level6ConsoleCapture:
+    """Tee Level 6 stdout/stderr to an experiment artifact without hiding console output."""
+
+    def __init__(self, experiment_dir, filename=LEVEL6_CONSOLE_LOG_FILENAME, mirror_output=True):
+        self.experiment_dir = experiment_dir
+        self.filename = filename
+        self.mirror_output = mirror_output
+        self.path = os.path.join(str(experiment_dir), filename) if experiment_dir else None
+        self._active = False
+        self._log_file = None
+        self._read_fd = None
+        self._write_fd = None
+        self._stdout_fd = None
+        self._stderr_fd = None
+        self._thread = None
+        self._force_color_was_set = False
+        self._previous_force_color = None
+
+    def __enter__(self):
+        if not self.path or not _env_flag("PIONERA_LEVEL6_CONSOLE_LOG", True):
+            return self
+
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            sys.stdout.flush()
+            sys.stderr.flush()
+
+            stdout_is_tty = os.isatty(1)
+            self._stdout_fd = os.dup(1)
+            self._stderr_fd = os.dup(2)
+            if stdout_is_tty:
+                self._read_fd, self._write_fd = pty.openpty()
+            else:
+                self._read_fd, self._write_fd = os.pipe()
+            self._log_file = open(self.path, "wb", buffering=0)
+            self._thread = threading.Thread(target=self._tee_output, daemon=True)
+            self._thread.start()
+
+            self._previous_force_color = os.environ.get("FORCE_COLOR")
+            if stdout_is_tty and "FORCE_COLOR" not in os.environ and "NO_COLOR" not in os.environ:
+                os.environ["FORCE_COLOR"] = "1"
+                self._force_color_was_set = True
+
+            os.dup2(self._write_fd, 1)
+            os.dup2(self._write_fd, 2)
+            os.close(self._write_fd)
+            self._write_fd = None
+            self._active = True
+            print(f"Level 6 console log: {self.path}")
+        except Exception:
+            self._restore_after_failed_start()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.close()
+        return False
+
+    def _tee_output(self):
+        try:
+            while True:
+                chunk = os.read(self._read_fd, 8192)
+                if not chunk:
+                    break
+                if self._log_file is not None:
+                    self._log_file.write(chunk)
+                if self.mirror_output and self._stdout_fd is not None:
+                    os.write(self._stdout_fd, chunk)
+        except OSError:
+            pass
+        finally:
+            if self._read_fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(self._read_fd)
+                self._read_fd = None
+
+    def _restore_after_failed_start(self):
+        if self._stdout_fd is not None:
+            with contextlib.suppress(OSError):
+                os.dup2(self._stdout_fd, 1)
+        if self._stderr_fd is not None:
+            with contextlib.suppress(OSError):
+                os.dup2(self._stderr_fd, 2)
+        for attribute in ("_write_fd", "_stdout_fd", "_stderr_fd"):
+            fd = getattr(self, attribute)
+            if fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+                setattr(self, attribute, None)
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+            self._thread = None
+        if self._read_fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(self._read_fd)
+            self._read_fd = None
+        if self._log_file is not None:
+            with contextlib.suppress(Exception):
+                self._log_file.close()
+            self._log_file = None
+        if self._force_color_was_set:
+            if self._previous_force_color is None:
+                os.environ.pop("FORCE_COLOR", None)
+            else:
+                os.environ["FORCE_COLOR"] = self._previous_force_color
+        self._active = False
+
+    def close(self):
+        if not self._active:
+            return
+
+        with contextlib.suppress(Exception):
+            sys.stdout.flush()
+        with contextlib.suppress(Exception):
+            sys.stderr.flush()
+        if self._stdout_fd is not None:
+            with contextlib.suppress(OSError):
+                os.dup2(self._stdout_fd, 1)
+        if self._stderr_fd is not None:
+            with contextlib.suppress(OSError):
+                os.dup2(self._stderr_fd, 2)
+        if self._stdout_fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(self._stdout_fd)
+            self._stdout_fd = None
+        if self._stderr_fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(self._stderr_fd)
+            self._stderr_fd = None
+
+        if self._force_color_was_set:
+            if self._previous_force_color is None:
+                os.environ.pop("FORCE_COLOR", None)
+            else:
+                os.environ["FORCE_COLOR"] = self._previous_force_color
+
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+            self._thread = None
+        if self._log_file is not None:
+            with contextlib.suppress(Exception):
+                self._log_file.close()
+            self._log_file = None
+        self._active = False
 
 
 def _env_flag(name, default=False):
@@ -2700,7 +2847,7 @@ def run_level6_kafka_edc_after_newman(
     kafka_manager_cls=KafkaManager,
     kafka_preparation=None,
 ):
-    """Run the functional EDC+Kafka suite automatically after Newman in Level 6."""
+    """Run the functional EDC+Kafka suite after Newman when enabled in Level 6."""
     if not _supports_level6_kafka_edc(
         adapter,
         validation_profile=validation_profile,
@@ -2711,12 +2858,16 @@ def run_level6_kafka_edc_after_newman(
         results = [
             {
                 "status": "skipped",
-                "reason": "disabled_by_pionera_level6_skip_kafka",
+                "reason": "disabled_by_level6_kafka_flags",
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             }
         ]
         _save_kafka_edc_results(results, experiment_dir, experiment_storage=experiment_storage)
-        print("\nKafka transfer validation suite skipped by PIONERA_LEVEL6_SKIP_KAFKA.")
+        print(
+            "\nKafka transfer validation suite skipped. Kafka validations are disabled by default in Level 6 "
+            "to keep routine validation faster. To run them, set PIONERA_LEVEL6_RUN_KAFKA=true. "
+            "If PIONERA_LEVEL6_SKIP_KAFKA is enabled, unset it or set PIONERA_LEVEL6_SKIP_KAFKA=false."
+        )
         return results
 
     print("\nRunning Kafka transfer validation suite...")
@@ -5631,88 +5782,269 @@ def run_validate(
             ),
         )
     experiment_storage.newman_reports_dir(experiment_dir)
-    local_capacity_preflight = _run_level6_local_capacity_preflight(
-        validation_mode_info,
-        resolved_deployer_name,
-        deployer_context,
-        experiment_dir,
-        validation_profile=validation_profile,
-    )
-    local_stability_preflight = _run_level6_local_stability_preflight(
-        validation_mode_info,
-        resolved_deployer_name,
-        deployer_context,
-        experiment_dir,
-        validation_profile=validation_profile,
-    )
-    local_stability_postflight = None
-    kafka_preparation = _start_level6_kafka_preparation(
-        adapter,
-        connectors,
-        validation_profile=validation_profile,
-        deployer_name=resolved_deployer_name,
-        kafka_manager_cls=kafka_manager_cls,
-        background=not validation_mode_info["local_stable"],
-    )
-    public_endpoint_preflight = _ensure_level6_public_endpoint_access(
-        adapter,
-        connectors,
-        deployer_context,
-    )
-    test_data_cleanup = _run_test_data_cleanup_if_enabled(
-        adapter,
-        connectors,
-        deployer_context,
-        experiment_dir,
-        validation_profile=validation_profile,
-    )
-
-    validation_engine = build_validation_engine(adapter, engine_cls=validation_engine_cls)
-    run_method = validation_engine.run
-
-    try:
-        parameters = inspect.signature(run_method).parameters
-    except (TypeError, ValueError):
-        parameters = {}
-
-    metrics_collector = build_metrics_collector(
-        adapter,
-        collector_cls=MetricsCollector,
-        experiment_storage=experiment_storage,
-    )
-    validation_result = None
-    validation_error = None
-
-    try:
-        if "experiment_dir" in parameters:
-            validation_result = run_method(connectors, experiment_dir=experiment_dir)
-        else:
-            validation_result = run_method(connectors)
-    except Exception as exc:
-        validation_error = exc
-
-    newman_request_metrics = None
-    try:
-        collect_newman_metrics = getattr(metrics_collector, "collect_experiment_newman_metrics", None)
-        if callable(collect_newman_metrics):
-            newman_request_metrics = collect_newman_metrics(experiment_dir)
-        else:
-            newman_request_metrics = metrics_collector.collect_newman_request_metrics(
-                experiment_storage.newman_reports_dir(experiment_dir),
-                experiment_dir=experiment_dir,
-            )
-    except Exception:
-        if validation_error is None:
-            raise
-        print("[WARNING] Newman metrics collection failed after validation error")
-        newman_request_metrics = []
-
-    if validation_error is not None:
-        _finalize_level6_kafka_preparation(
-            kafka_preparation,
+    with _Level6ConsoleCapture(experiment_dir):
+        local_capacity_preflight = _run_level6_local_capacity_preflight(
+            validation_mode_info,
+            resolved_deployer_name,
+            deployer_context,
             experiment_dir,
-            cleanup=True,
+            validation_profile=validation_profile,
         )
+        local_stability_preflight = _run_level6_local_stability_preflight(
+            validation_mode_info,
+            resolved_deployer_name,
+            deployer_context,
+            experiment_dir,
+            validation_profile=validation_profile,
+        )
+        local_stability_postflight = None
+        kafka_preparation = _start_level6_kafka_preparation(
+            adapter,
+            connectors,
+            validation_profile=validation_profile,
+            deployer_name=resolved_deployer_name,
+            kafka_manager_cls=kafka_manager_cls,
+            background=not validation_mode_info["local_stable"],
+        )
+        public_endpoint_preflight = _ensure_level6_public_endpoint_access(
+            adapter,
+            connectors,
+            deployer_context,
+        )
+        test_data_cleanup = _run_test_data_cleanup_if_enabled(
+            adapter,
+            connectors,
+            deployer_context,
+            experiment_dir,
+            validation_profile=validation_profile,
+        )
+
+        validation_engine = build_validation_engine(adapter, engine_cls=validation_engine_cls)
+        run_method = validation_engine.run
+
+        try:
+            parameters = inspect.signature(run_method).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+
+        metrics_collector = build_metrics_collector(
+            adapter,
+            collector_cls=MetricsCollector,
+            experiment_storage=experiment_storage,
+        )
+        validation_result = None
+        validation_error = None
+
+        try:
+            if "experiment_dir" in parameters:
+                validation_result = run_method(connectors, experiment_dir=experiment_dir)
+            else:
+                validation_result = run_method(connectors)
+        except Exception as exc:
+            validation_error = exc
+
+        newman_request_metrics = None
+        try:
+            collect_newman_metrics = getattr(metrics_collector, "collect_experiment_newman_metrics", None)
+            if callable(collect_newman_metrics):
+                newman_request_metrics = collect_newman_metrics(experiment_dir)
+            else:
+                newman_request_metrics = metrics_collector.collect_newman_request_metrics(
+                    experiment_storage.newman_reports_dir(experiment_dir),
+                    experiment_dir=experiment_dir,
+                )
+        except Exception:
+            if validation_error is None:
+                raise
+            print("[WARNING] Newman metrics collection failed after validation error")
+            newman_request_metrics = []
+
+        if validation_error is not None:
+            _finalize_level6_kafka_preparation(
+                kafka_preparation,
+                experiment_dir,
+                cleanup=True,
+            )
+            local_stability_postflight = _run_level6_local_stability_postflight(
+                validation_mode_info,
+                resolved_deployer_name,
+                deployer_context,
+                experiment_dir,
+                local_stability_preflight,
+                validation_profile=validation_profile,
+            )
+            raise validation_error
+
+        kafka_edc_results = run_level6_kafka_edc_after_newman(
+            adapter,
+            connectors,
+            experiment_dir,
+            validation_profile=validation_profile,
+            deployer_name=resolved_deployer_name,
+            experiment_storage=experiment_storage,
+            suite_cls=kafka_edc_validation_suite_cls,
+            kafka_manager_cls=kafka_manager_cls,
+            kafka_preparation=kafka_preparation,
+        )
+
+        playwright_result = None
+        playwright_failure = None
+        component_results = []
+        component_validation_summary = None
+        if validation_profile is not None:
+            if not getattr(validation_profile, "playwright_enabled", False):
+                playwright_result = {
+                    "status": "skipped",
+                    "reason": "disabled-in-profile",
+                }
+            elif deployer_context is None:
+                playwright_result = {
+                    "status": "skipped",
+                    "reason": "missing-deployer-context",
+                }
+            elif not _should_run_deployer_playwright(force=force_playwright, validation_profile=validation_profile):
+                playwright_result = {
+                    "status": "skipped",
+                    "reason": "disabled",
+                }
+            else:
+                adapter_name = getattr(validation_profile, "adapter", "").strip().lower()
+                is_edc_playwright = adapter_name == "edc"
+                is_inesdata_playwright = adapter_name == "inesdata"
+                dashboard_runtime_present = _edc_dashboard_runtime_present(deployer_context) if is_edc_playwright else False
+                if (
+                    is_edc_playwright
+                    and not (
+                        _mapping_flag(getattr(deployer_context, "config", {}), "EDC_DASHBOARD_ENABLED", default=False)
+                        or dashboard_runtime_present
+                    )
+                ):
+                    raise RuntimeError(
+                        "Playwright validation for 'edc' requires EDC_DASHBOARD_ENABLED=true and a deployed dashboard runtime"
+                    )
+                edc_dashboard_auth_mode = str(
+                    getattr(deployer_context, "config", {}).get(
+                        "EDC_DASHBOARD_PROXY_AUTH_MODE",
+                        "",
+                    )
+                ).strip().lower()
+                if (
+                    is_edc_playwright
+                    and edc_dashboard_auth_mode != "oidc-bff"
+                ):
+                    runtime_auth_mode = _edc_dashboard_runtime_auth_mode(deployer_context)
+                    if runtime_auth_mode:
+                        edc_dashboard_auth_mode = runtime_auth_mode
+                    if edc_dashboard_auth_mode != "oidc-bff":
+                        raise RuntimeError(
+                            "Playwright validation for 'edc' requires EDC_DASHBOARD_PROXY_AUTH_MODE=oidc-bff"
+                        )
+                if not getattr(validation_profile, "playwright_config", None):
+                    raise RuntimeError(
+                        "Validation profile enables Playwright but does not define a playwright_config"
+                    )
+                if is_edc_playwright:
+                    readiness = _wait_for_edc_dashboard_readiness(
+                        deployer_context,
+                        experiment_dir=experiment_dir,
+                    )
+                    if readiness.get("status") != "passed":
+                        raise RuntimeError(_edc_dashboard_readiness_failure_message(readiness))
+                elif is_inesdata_playwright:
+                    readiness = _wait_for_inesdata_portal_readiness(
+                        deployer_context,
+                        experiment_dir=experiment_dir,
+                    )
+                    if readiness.get("status") != "passed":
+                        raise RuntimeError(_inesdata_portal_readiness_failure_message(readiness))
+                playwright_result = run_playwright_validation(
+                    profile=validation_profile,
+                    context=deployer_context,
+                    experiment_dir=experiment_dir,
+                )
+                if playwright_result.get("status") != "passed":
+                    playwright_failure = playwright_result.get("status")
+
+            component_groups = list(getattr(validation_profile, "component_groups", []) or [])
+            infer_component_urls = _resolve_adapter_callable(adapter, "components.infer_component_urls")
+            if getattr(validation_profile, "component_validation_enabled", False):
+                if deployer_context is None:
+                    component_results = [
+                        {
+                            "component": component,
+                            "status": "skipped",
+                            "reason": "missing-deployer-context",
+                        }
+                        for component in component_groups
+                    ]
+                elif not callable(infer_component_urls):
+                    component_results = [
+                        {
+                            "component": component,
+                            "status": "skipped",
+                            "reason": "component_url_inference_unavailable",
+                        }
+                        for component in component_groups
+                    ]
+                elif not should_run_level6_component_validation(
+                    component_groups,
+                    env=os.environ,
+                    env_flag_enabled=_env_flag,
+                ):
+                    component_results = [
+                        {
+                            "component": component,
+                            "status": "skipped",
+                            "reason": "disabled",
+                        }
+                        for component in component_groups
+                    ]
+                else:
+                    print("\nRunning component validation suite...")
+                    try:
+                        component_results = run_level6_component_validations(
+                            component_groups,
+                            infer_component_urls=infer_component_urls,
+                            run_component_validations_fn=run_registered_component_validations,
+                            experiment_dir=experiment_dir,
+                        ) or []
+                    except Exception as exc:
+                        component_results = [
+                            {
+                                "component": "_component-validation",
+                                "status": "failed",
+                                "error": {
+                                    "type": type(exc).__name__,
+                                    "message": str(exc),
+                                },
+                            }
+                        ]
+
+                    for result in component_results:
+                        component = result.get("component", "unknown-component")
+                        status = result.get("status", "unknown")
+                        if status == "passed":
+                            print(f"  Component validation passed for {component}")
+                        elif status == "failed":
+                            print(f"  Warning: component validation failed for {component}")
+                        else:
+                            reason = result.get("reason") or (result.get("error") or {}).get("message", "unknown reason")
+                            print(f"  Component validation skipped for {component} ({reason})")
+                if component_results:
+                    component_validation_summary = summarize_component_results(component_results)
+                if playwright_failure is not None:
+                    local_stability_postflight = _run_level6_local_stability_postflight(
+                        validation_mode_info,
+                        resolved_deployer_name,
+                        deployer_context,
+                        experiment_dir,
+                        local_stability_preflight,
+                        validation_profile=validation_profile,
+                    )
+                    raise RuntimeError(
+                        f"Playwright validation failed with status '{playwright_failure}'"
+                    )
+
         local_stability_postflight = _run_level6_local_stability_postflight(
             validation_mode_info,
             resolved_deployer_name,
@@ -5721,218 +6053,38 @@ def run_validate(
             local_stability_preflight,
             validation_profile=validation_profile,
         )
-        raise validation_error
 
-    kafka_edc_results = run_level6_kafka_edc_after_newman(
-        adapter,
-        connectors,
-        experiment_dir,
-        validation_profile=validation_profile,
-        deployer_name=resolved_deployer_name,
-        experiment_storage=experiment_storage,
-        suite_cls=kafka_edc_validation_suite_cls,
-        kafka_manager_cls=kafka_manager_cls,
-        kafka_preparation=kafka_preparation,
-    )
-
-    playwright_result = None
-    playwright_failure = None
-    component_results = []
-    component_validation_summary = None
-    if validation_profile is not None:
-        if not getattr(validation_profile, "playwright_enabled", False):
-            playwright_result = {
-                "status": "skipped",
-                "reason": "disabled-in-profile",
-            }
-        elif deployer_context is None:
-            playwright_result = {
-                "status": "skipped",
-                "reason": "missing-deployer-context",
-            }
-        elif not _should_run_deployer_playwright(force=force_playwright, validation_profile=validation_profile):
-            playwright_result = {
-                "status": "skipped",
-                "reason": "disabled",
-            }
-        else:
-            adapter_name = getattr(validation_profile, "adapter", "").strip().lower()
-            is_edc_playwright = adapter_name == "edc"
-            is_inesdata_playwright = adapter_name == "inesdata"
-            dashboard_runtime_present = _edc_dashboard_runtime_present(deployer_context) if is_edc_playwright else False
-            if (
-                is_edc_playwright
-                and not (
-                    _mapping_flag(getattr(deployer_context, "config", {}), "EDC_DASHBOARD_ENABLED", default=False)
-                    or dashboard_runtime_present
-                )
-            ):
-                raise RuntimeError(
-                    "Playwright validation for 'edc' requires EDC_DASHBOARD_ENABLED=true and a deployed dashboard runtime"
-                )
-            edc_dashboard_auth_mode = str(
-                getattr(deployer_context, "config", {}).get(
-                    "EDC_DASHBOARD_PROXY_AUTH_MODE",
-                    "",
-                )
-            ).strip().lower()
-            if (
-                is_edc_playwright
-                and edc_dashboard_auth_mode != "oidc-bff"
-            ):
-                runtime_auth_mode = _edc_dashboard_runtime_auth_mode(deployer_context)
-                if runtime_auth_mode:
-                    edc_dashboard_auth_mode = runtime_auth_mode
-                if edc_dashboard_auth_mode != "oidc-bff":
-                    raise RuntimeError(
-                        "Playwright validation for 'edc' requires EDC_DASHBOARD_PROXY_AUTH_MODE=oidc-bff"
-                    )
-            if not getattr(validation_profile, "playwright_config", None):
-                raise RuntimeError(
-                    "Validation profile enables Playwright but does not define a playwright_config"
-                )
-            if is_edc_playwright:
-                readiness = _wait_for_edc_dashboard_readiness(
-                    deployer_context,
-                    experiment_dir=experiment_dir,
-                )
-                if readiness.get("status") != "passed":
-                    raise RuntimeError(_edc_dashboard_readiness_failure_message(readiness))
-            elif is_inesdata_playwright:
-                readiness = _wait_for_inesdata_portal_readiness(
-                    deployer_context,
-                    experiment_dir=experiment_dir,
-                )
-                if readiness.get("status") != "passed":
-                    raise RuntimeError(_inesdata_portal_readiness_failure_message(readiness))
-            playwright_result = run_playwright_validation(
-                profile=validation_profile,
-                context=deployer_context,
-                experiment_dir=experiment_dir,
-            )
-            if playwright_result.get("status") != "passed":
-                playwright_failure = playwright_result.get("status")
-
-        component_groups = list(getattr(validation_profile, "component_groups", []) or [])
-        infer_component_urls = _resolve_adapter_callable(adapter, "components.infer_component_urls")
-        if getattr(validation_profile, "component_validation_enabled", False):
-            if deployer_context is None:
-                component_results = [
-                    {
-                        "component": component,
-                        "status": "skipped",
-                        "reason": "missing-deployer-context",
-                    }
-                    for component in component_groups
-                ]
-            elif not callable(infer_component_urls):
-                component_results = [
-                    {
-                        "component": component,
-                        "status": "skipped",
-                        "reason": "component_url_inference_unavailable",
-                    }
-                    for component in component_groups
-                ]
-            elif not should_run_level6_component_validation(
-                component_groups,
-                env=os.environ,
-                env_flag_enabled=_env_flag,
-            ):
-                component_results = [
-                    {
-                        "component": component,
-                        "status": "skipped",
-                        "reason": "disabled",
-                    }
-                    for component in component_groups
-                ]
-            else:
-                print("\nRunning component validation suite...")
-                try:
-                    component_results = run_level6_component_validations(
-                        component_groups,
-                        infer_component_urls=infer_component_urls,
-                        run_component_validations_fn=run_registered_component_validations,
-                        experiment_dir=experiment_dir,
-                    ) or []
-                except Exception as exc:
-                    component_results = [
-                        {
-                            "component": "_component-validation",
-                            "status": "failed",
-                            "error": {
-                                "type": type(exc).__name__,
-                                "message": str(exc),
-                            },
-                        }
-                    ]
-
-                for result in component_results:
-                    component = result.get("component", "unknown-component")
-                    status = result.get("status", "unknown")
-                    if status == "passed":
-                        print(f"  Component validation passed for {component}")
-                    elif status == "failed":
-                        print(f"  Warning: component validation failed for {component}")
-                    else:
-                        reason = result.get("reason") or (result.get("error") or {}).get("message", "unknown reason")
-                        print(f"  Component validation skipped for {component} ({reason})")
-            if component_results:
-                component_validation_summary = summarize_component_results(component_results)
-            if playwright_failure is not None:
-                local_stability_postflight = _run_level6_local_stability_postflight(
-                    validation_mode_info,
-                    resolved_deployer_name,
-                    deployer_context,
-                    experiment_dir,
-                    local_stability_preflight,
-                    validation_profile=validation_profile,
-                )
-                raise RuntimeError(
-                    f"Playwright validation failed with status '{playwright_failure}'"
-                )
-
-    local_stability_postflight = _run_level6_local_stability_postflight(
-        validation_mode_info,
-        resolved_deployer_name,
-        deployer_context,
-        experiment_dir,
-        local_stability_preflight,
-        validation_profile=validation_profile,
-    )
-
-    return {
-        "experiment_dir": experiment_dir,
-        "validation": validation_result,
-        "newman_request_metrics": newman_request_metrics,
-        "kafka_edc_results": kafka_edc_results,
-        "storage_checks": list(getattr(validation_engine, "last_storage_checks", []) or []),
-        "playwright": playwright_result,
-        "component_results": component_results,
-        "component_validation_summary": component_validation_summary,
-        "test_data_cleanup": test_data_cleanup,
-        "public_endpoint_preflight": public_endpoint_preflight,
-        "hosts_sync": hosts_sync,
-        "local_capacity": {
-            "preflight": local_capacity_preflight,
-        },
-        "local_stability": {
-            "preflight": local_stability_preflight,
-            "postflight": local_stability_postflight,
-        },
-        "validation_mode": validation_mode_info,
-        "validation_profile": (
-            validation_profile.as_dict()
-            if validation_profile is not None
-            else None
-        ),
-        "deployer_context": (
-            _sanitize_preview_data(deployer_context.as_dict())
-            if deployer_context is not None
-            else None
-        ),
-    }
+        return {
+            "experiment_dir": experiment_dir,
+            "validation": validation_result,
+            "newman_request_metrics": newman_request_metrics,
+            "kafka_edc_results": kafka_edc_results,
+            "storage_checks": list(getattr(validation_engine, "last_storage_checks", []) or []),
+            "playwright": playwright_result,
+            "component_results": component_results,
+            "component_validation_summary": component_validation_summary,
+            "test_data_cleanup": test_data_cleanup,
+            "public_endpoint_preflight": public_endpoint_preflight,
+            "hosts_sync": hosts_sync,
+            "local_capacity": {
+                "preflight": local_capacity_preflight,
+            },
+            "local_stability": {
+                "preflight": local_stability_preflight,
+                "postflight": local_stability_postflight,
+            },
+            "validation_mode": validation_mode_info,
+            "validation_profile": (
+                validation_profile.as_dict()
+                if validation_profile is not None
+                else None
+            ),
+            "deployer_context": (
+                _sanitize_preview_data(deployer_context.as_dict())
+                if deployer_context is not None
+                else None
+            ),
+        }
 
 
 def run_metrics(
@@ -6879,7 +7031,7 @@ def _print_interactive_help():
     print("    It lists experiments, summarizes long JSON artifacts, and serves reports only on 127.0.0.1.")
     print(
         "M - Use when you only need metrics or standalone benchmarks. "
-        "It does not replace Level 6 validation; Kafka E2E validation runs automatically in Level 6."
+        "It does not replace Level 6 validation; Kafka E2E validation is opt-in in Level 6."
     )
     print("X - Use only when you intentionally want to destroy and recreate the selected dataspace.")
     print()

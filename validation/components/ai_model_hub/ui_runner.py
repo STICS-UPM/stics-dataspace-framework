@@ -15,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_EXPERIMENTS_DIR = Path(__file__).resolve().parents[3] / "experiments" / "_standalone"
 PLAYWRIGHT_COMMAND = [os.path.join(".", "node_modules", ".bin", "playwright"), "test", "--config", PLAYWRIGHT_CONFIG_RELATIVE]
 UI_VALIDATION_ENV = "AI_MODEL_HUB_ENABLE_UI_VALIDATION"
+BENCHMARKING_UI_DEMO_ENV = "AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO"
 
 UI_CASE_METADATA: Dict[str, Dict[str, Any]] = {
     "PT5-MH-01": {
@@ -401,10 +402,12 @@ def run_ai_model_hub_ui_validation(base_url: str, experiment_dir: str | None = N
     env = {
         **os.environ,
         "AI_MODEL_HUB_BASE_URL": normalized_base_url,
+        BENCHMARKING_UI_DEMO_ENV: os.environ.get(BENCHMARKING_UI_DEMO_ENV, "1"),
         "PLAYWRIGHT_OUTPUT_DIR": artifact_paths["output_dir"],
         "PLAYWRIGHT_HTML_REPORT_DIR": artifact_paths["html_report_dir"],
         "PLAYWRIGHT_BLOB_REPORT_DIR": artifact_paths["blob_report_dir"],
         "PLAYWRIGHT_JSON_REPORT_FILE": artifact_paths["json_report_file"],
+        "PIONERA_PLAYWRIGHT_SUITE_NAME": "AI Model Hub functional",
         "PLAYWRIGHT_INTERACTION_MARKERS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKERS", "1"),
         "PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "350"),
     }

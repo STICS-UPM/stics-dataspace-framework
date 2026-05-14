@@ -16,6 +16,7 @@ from validation.components.runner import (
 
 AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED = {
     "AI_MODEL_HUB_ENABLE_UI_VALIDATION": "",
+    "AI_MODEL_HUB_ENABLE_FUNCTIONAL_VALIDATION": "",
     "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "",
     "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING": "",
     "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING": "",
@@ -101,6 +102,45 @@ class ComponentValidationRunnerTests(unittest.TestCase):
         self.assertEqual(results[0]["component"], "ontology-hub")
         self.assertEqual(results[0]["status"], "passed")
         self.assertIn("suites", results[0])
+
+    def test_registered_components_follow_auditor_execution_order(self):
+        calls = []
+
+        def fake_runner(component):
+            def _run(base_url, experiment_dir=None):
+                calls.append(component)
+                return {
+                    "component": component,
+                    "base_url": base_url,
+                    "status": "passed",
+                    "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+                }
+
+            return _run
+
+        with mock.patch.dict(
+            "validation.components.runner.COMPONENT_RUNNERS",
+            {
+                "ai-model-hub": fake_runner("ai-model-hub"),
+                "ontology-hub": fake_runner("ontology-hub"),
+                "semantic-virtualization": fake_runner("semantic-virtualization"),
+            },
+            clear=False,
+        ):
+            results = run_component_validations(
+                {
+                    "semantic-virtualization": "http://semantic.example.local",
+                    "ai-model-hub": "http://ai.example.local",
+                    "ontology-hub": "http://ontology.example.local",
+                },
+                experiment_dir="/tmp/fake-experiment",
+            )
+
+        self.assertEqual(calls, ["ontology-hub", "ai-model-hub", "semantic-virtualization"])
+        self.assertEqual(
+            [result["component"] for result in results],
+            ["ontology-hub", "ai-model-hub", "semantic-virtualization"],
+        )
 
     def test_summary_counts_statuses(self):
         summary = summarize_component_results(

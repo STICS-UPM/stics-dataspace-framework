@@ -7,6 +7,10 @@ const htmlReportDir = process.env.PLAYWRIGHT_HTML_REPORT_DIR || "playwright-repo
 const blobReportDir = process.env.PLAYWRIGHT_BLOB_REPORT_DIR || "blob-report";
 const jsonReportFile =
   process.env.PLAYWRIGHT_JSON_REPORT_FILE || path.join(outputDir, "results.json");
+const consoleReporter = path.join(
+  __dirname,
+  "../../../ui/reporters/console-test-name-reporter.cjs",
+);
 const configuredWorkers = Number.parseInt(
   process.env.ONTOLOGY_HUB_UI_WORKERS || process.env.PLAYWRIGHT_WORKERS || "1",
   10,
@@ -58,7 +62,7 @@ module.exports = defineConfig({
     },
   ],
   reporter: [
-    ["list"],
+    [consoleReporter],
     ["html", { open: "never", outputFolder: htmlReportDir }],
     ["blob", { outputDir: blobReportDir }],
     ["json", { outputFile: jsonReportFile }],

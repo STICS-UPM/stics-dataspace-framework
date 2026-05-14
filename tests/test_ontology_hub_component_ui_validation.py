@@ -191,6 +191,7 @@ class OntologyHubComponentUIValidationTests(unittest.TestCase):
                 self.assertIn("PLAYWRIGHT_JSON_REPORT_FILE", env)
                 self.assertEqual(env["ONTOLOGY_HUB_BASE_URL"], "http://ontology-hub-demo.dev.ds.dataspaceunit.upm")
                 self.assertEqual(env["ONTOLOGY_HUB_UI_WORKERS"], "1")
+                self.assertEqual(env["PIONERA_PLAYWRIGHT_SUITE_NAME"], "Ontology Hub integration")
                 with open(env["ONTOLOGY_HUB_RUNTIME_FILE"], "r", encoding="utf-8") as handle:
                     runtime = json.load(handle)
                 self.assertEqual(runtime["baseUrl"], env["ONTOLOGY_HUB_BASE_URL"])

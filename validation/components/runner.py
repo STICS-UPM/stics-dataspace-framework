@@ -10,11 +10,24 @@ from validation.components.registry import (
 
 
 COMPONENT_RUNNERS: Dict[str, ComponentRunner] = registered_component_runners()
+COMPONENT_EXECUTION_ORDER = [
+    "ontology-hub",
+    "ai-model-hub",
+    "semantic-virtualization",
+]
+
+
+def _component_sort_key(item: tuple[str, str]) -> tuple[int, str]:
+    component, _base_url = item
+    try:
+        return (COMPONENT_EXECUTION_ORDER.index(component), component)
+    except ValueError:
+        return (len(COMPONENT_EXECUTION_ORDER), component)
 
 
 def run_component_validations(component_urls: Dict[str, str], experiment_dir: str | None = None) -> List[dict]:
     results: List[dict] = []
-    for component, base_url in sorted((component_urls or {}).items()):
+    for component, base_url in sorted((component_urls or {}).items(), key=_component_sort_key):
         registration = get_component_registration(component)
         runner = COMPONENT_RUNNERS.get(component)
         if runner is None:

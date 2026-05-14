@@ -141,6 +141,7 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
         ("integration", run_ontology_hub_integration_component_validation),
     ]
     for phase, runner in phase_runners:
+        print(f"\nComponent suite: Ontology Hub {phase}\n")
         try:
             phases[phase] = runner(normalized_base_url, experiment_dir=experiment_dir)
         except Exception as exc:  # pragma: no cover - defensive integration guard

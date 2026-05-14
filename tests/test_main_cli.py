@@ -112,6 +112,31 @@ class FakeAdapterWithInfrastructure(FakeAdapter):
 
 
 class KafkaTransferConsoleOutputTests(unittest.TestCase):
+    def test_level6_kafka_disabled_message_explains_how_to_enable(self):
+        class KafkaReadyAdapter(FakeAdapter):
+            def get_kafka_config(self):
+                return {"bootstrap_servers": "localhost:9092"}
+
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(main, "_env_flag", side_effect=lambda name, default=False: default),
+            mock.patch.object(main, "_save_kafka_edc_results") as save_results,
+            contextlib.redirect_stdout(stdout),
+        ):
+            results = main.run_level6_kafka_edc_after_newman(
+                KafkaReadyAdapter(),
+                ["conn-a", "conn-b"],
+                "/tmp/experiment",
+                deployer_name="inesdata",
+            )
+
+        self.assertEqual(results[0]["status"], "skipped")
+        save_results.assert_called_once()
+        output = stdout.getvalue()
+        self.assertIn("disabled by default in Level 6", output)
+        self.assertIn("PIONERA_LEVEL6_RUN_KAFKA=true", output)
+        self.assertIn("unset it or set PIONERA_LEVEL6_SKIP_KAFKA=false", output)
+
     def test_action_result_prints_compact_level_summary_instead_of_raw_json(self):
         payload = {
             "status": "completed",
@@ -4131,6 +4156,13 @@ class MainCliTests(unittest.TestCase):
             "fake": "fake_deployer_module:InesdataValidationDeployer",
         }
 
+        def kafka_enabled_env_flag(name, default=False):
+            if name == "PIONERA_LEVEL6_RUN_KAFKA":
+                return True
+            if name == "PIONERA_LEVEL6_SKIP_KAFKA":
+                return False
+            return default
+
         with mock.patch.object(
             main,
             "build_metrics_collector",
@@ -4143,6 +4175,10 @@ class MainCliTests(unittest.TestCase):
             main,
             "run_kafka_edc_validation",
             side_effect=run_kafka,
+        ), mock.patch.object(
+            main,
+            "_env_flag",
+            side_effect=kafka_enabled_env_flag,
         ):
             result = main.main(
                 ["fake", "validate"],
@@ -4660,6 +4696,13 @@ class MainCliTests(unittest.TestCase):
         adapter = KafkaReadyAdapter()
         self.fake_deployer_module.InesdataValidationDeployer = InesdataValidationDeployer
 
+        def kafka_enabled_env_flag(name, default=False):
+            if name == "PIONERA_LEVEL6_RUN_KAFKA":
+                return True
+            if name == "PIONERA_LEVEL6_SKIP_KAFKA":
+                return False
+            return default
+
         with mock.patch.object(
             main,
             "build_metrics_collector",
@@ -4672,6 +4715,10 @@ class MainCliTests(unittest.TestCase):
             main,
             "run_kafka_edc_validation",
             side_effect=run_kafka,
+        ), mock.patch.object(
+            main,
+            "_env_flag",
+            side_effect=kafka_enabled_env_flag,
         ):
             result = main.run_validate(
                 adapter,

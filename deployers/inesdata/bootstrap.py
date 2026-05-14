@@ -1025,20 +1025,42 @@ def create_role(keycloak_admin, role_name):
                 keycloak_admin.create_realm_role(payload={"name": role_name, "attributes": attributes})
             click.echo(f"    + Role {role_name} created.")
 
-def create_group(keycloak_admin, group_name):
+def _ensure_group_realm_roles(keycloak_admin, group_id, role_names):
     try:
-        keycloak_admin.get_group_by_path(f'/{group_name}')
+        current_roles = keycloak_admin.get_group_realm_roles(group_id)
+    except Exception:
+        current_roles = []
+    current_role_names = {role.get("name") for role in current_roles or []}
+    roles_to_assign = []
+
+    for role_name in role_names:
+        if role_name in current_role_names:
+            continue
+        roles_to_assign.append(keycloak_admin.get_realm_role(role_name))
+
+    if roles_to_assign:
+        keycloak_admin.assign_group_realm_roles(group_id=group_id, roles=roles_to_assign)
+        click.echo(
+            "    + Realm roles mapped to group "
+            f"{group_id}: "
+            + ", ".join(role["name"] for role in roles_to_assign)
+        )
+
+
+def create_group(keycloak_admin, group_name):
+    group_id = None
+    try:
+        group = keycloak_admin.get_group_by_path(f'/{group_name}')
+        group_id = group.get("id")
         click.echo(f"    + Group {group_name} already exists.")
     except KeycloakGetError as e:
         if e.response_code == 404:
             group_id = keycloak_admin.create_group(payload={"name": group_name})
             click.echo(f"    + Group {group_name} created successfully.")
-            role_id = keycloak_admin.get_realm_role(group_name).get('id')
-            keycloak_admin.assign_group_realm_roles(group_id=group_id, roles=[{"id": role_id, "name": group_name}])
-            click.echo(f"    + Role {group_name} mapped to group {group_name}.")
-            connector_user_role_id = keycloak_admin.get_realm_role('connector-user').get('id')
-            keycloak_admin.assign_group_realm_roles(group_id=group_id, roles=[{"id": connector_user_role_id, "name": "connector-user"}])
-            click.echo(f"    + Role connector-user mapped to group {group_name}.")
+        else:
+            raise
+    if group_id:
+        _ensure_group_realm_roles(keycloak_admin, group_id, [group_name, "connector-user"])
 
 def create_manager_group(keycloak_admin, realm_name):
     try:

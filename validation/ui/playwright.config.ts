@@ -9,6 +9,7 @@ const htmlReportDir = process.env.PLAYWRIGHT_HTML_REPORT_DIR || "playwright-repo
 const blobReportDir = process.env.PLAYWRIGHT_BLOB_REPORT_DIR || "blob-report";
 const jsonReportFile =
   process.env.PLAYWRIGHT_JSON_REPORT_FILE || path.join(outputDir, "results.json");
+const consoleReporter = path.join(__dirname, "reporters", "console-test-name-reporter.cjs");
 const headedGpuFix = process.env.PLAYWRIGHT_HEADED_GPU_FIX === "1";
 const hostResolverRules = (process.env.PLAYWRIGHT_HOST_RESOLVER_RULES || "").trim();
 const semanticVirtualizationHttpDataDemo =
@@ -51,7 +52,7 @@ export default defineConfig({
   // These UI flows share portal state and external services; keep them sequential by default.
   workers: 1,
   reporter: [
-    ["list"],
+    [consoleReporter],
     ["html", { open: "never", outputFolder: htmlReportDir }],
     ["blob", { outputDir: blobReportDir }],
     ["json", { outputFile: jsonReportFile }],

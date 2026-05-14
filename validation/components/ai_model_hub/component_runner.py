@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 import yaml
 
 from validation.components.ai_model_hub.runner import run_ai_model_hub_validation
+from validation.components.ai_model_hub.functional_runner import run_ai_model_hub_functional_validation
 from validation.components.ai_model_hub.ui_runner import run_ai_model_hub_ui_validation
 
 
@@ -357,15 +358,22 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
     normalized_base_url = (base_url or "").rstrip("/")
 
     bootstrap_result = run_ai_model_hub_validation(normalized_base_url, experiment_dir=experiment_dir)
+    print("\nComponent suite: AI Model Hub functional\n")
     ui_result = run_ai_model_hub_ui_validation(normalized_base_url, experiment_dir=experiment_dir)
+    functional_result = run_ai_model_hub_functional_validation(normalized_base_url, experiment_dir=experiment_dir)
     preflight_suite_results = [
         ("bootstrap", bootstrap_result),
     ]
     functional_suite_results = [
         ("ui", ui_result),
+        ("linguistic_functional", functional_result),
     ]
     integration_suite_results: List[tuple[str, Dict[str, Any]]] = []
+    integration_started = False
     if _connector_governance_enabled():
+        if not integration_started:
+            print("\nComponent suite: AI Model Hub integration\n")
+            integration_started = True
         integration_suite_results.append(
             (
                 "connector_governance",
@@ -387,6 +395,9 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
             )
         )
     if _model_observer_enabled():
+        if not integration_started:
+            print("\nComponent suite: AI Model Hub integration\n")
+            integration_started = True
         integration_suite_results.append(
             (
                 "model_observer",
@@ -545,6 +556,11 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
             "ui_html_report_dir": (ui_result.get("artifacts") or {}).get("html_report_dir"),
             "ui_blob_report_dir": (ui_result.get("artifacts") or {}).get("blob_report_dir"),
             "ui_json_report_file": (ui_result.get("artifacts") or {}).get("json_report_file"),
+            "functional_report_json": (functional_result.get("artifacts") or {}).get("report_json"),
+            "functional_test_results_dir": (functional_result.get("artifacts") or {}).get("test_results_dir"),
+            "functional_html_report_dir": (functional_result.get("artifacts") or {}).get("html_report_dir"),
+            "functional_blob_report_dir": (functional_result.get("artifacts") or {}).get("blob_report_dir"),
+            "functional_json_report_file": (functional_result.get("artifacts") or {}).get("json_report_file"),
             "pt5_case_results_json": pt5_cases_path,
             "functional_use_case_results_json": functional_use_case_results_path,
             "observer_case_results_json": observer_case_results_path,

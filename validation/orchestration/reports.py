@@ -4,6 +4,7 @@ import atexit
 import html
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -14,6 +15,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from validation.orchestration.suite_taxonomy import (
+    classify_playwright_spec,
+    classify_suite_artifact,
+    suite_sort_key,
+    summarize_group_taxonomy,
+)
+
 
 EXPERIMENT_PREFIX = "experiment_"
 FRAMEWORK_REPORT_DIR = "framework-report"
@@ -22,6 +30,45 @@ WINDOWS_CMD_EXE = Path("/mnt/c/Windows/System32/cmd.exe")
 WINDOWS_EXPLORER_EXE = Path("/mnt/c/Windows/explorer.exe")
 WINDOWS_POWERSHELL_EXE = Path("/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
 _REPORT_SERVER_PROCESSES: list[subprocess.Popen] = []
+LEVEL6_CONSOLE_LOG_FILENAME = "level6_console.log"
+ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+ANSI_SGR_RE = re.compile(r"\x1B\[([0-9;]*)m")
+ANSI_FG_CLASSES = {
+    30: "ansi-fg-black",
+    31: "ansi-fg-red",
+    32: "ansi-fg-green",
+    33: "ansi-fg-yellow",
+    34: "ansi-fg-blue",
+    35: "ansi-fg-magenta",
+    36: "ansi-fg-cyan",
+    37: "ansi-fg-white",
+    90: "ansi-fg-bright-black",
+    91: "ansi-fg-bright-red",
+    92: "ansi-fg-bright-green",
+    93: "ansi-fg-bright-yellow",
+    94: "ansi-fg-bright-blue",
+    95: "ansi-fg-bright-magenta",
+    96: "ansi-fg-bright-cyan",
+    97: "ansi-fg-bright-white",
+}
+ANSI_BG_CLASSES = {
+    40: "ansi-bg-black",
+    41: "ansi-bg-red",
+    42: "ansi-bg-green",
+    43: "ansi-bg-yellow",
+    44: "ansi-bg-blue",
+    45: "ansi-bg-magenta",
+    46: "ansi-bg-cyan",
+    47: "ansi-bg-white",
+    100: "ansi-bg-bright-black",
+    101: "ansi-bg-bright-red",
+    102: "ansi-bg-bright-green",
+    103: "ansi-bg-bright-yellow",
+    104: "ansi-bg-bright-blue",
+    105: "ansi-bg-bright-magenta",
+    106: "ansi-bg-bright-cyan",
+    107: "ansi-bg-bright-white",
+}
 
 
 def project_root() -> Path:
@@ -116,6 +163,17 @@ def _summarize_status_items(items: list[dict[str, Any]], status_key: str = "stat
         else:
             summary["other"] += 1
     return summary
+
+
+def _with_suite_taxonomy(suite: dict[str, Any]) -> dict[str, Any]:
+    if suite.get("audit_suite") and suite.get("audit_group"):
+        return suite
+    taxonomy = classify_suite_artifact(
+        kind=suite.get("kind"),
+        title=suite.get("title"),
+        artifacts=list(suite.get("artifacts") or []),
+    )
+    return {**suite, **taxonomy}
 
 
 def _summarize_newman(experiment_path: Path) -> dict[str, Any] | None:
@@ -350,46 +408,77 @@ def _summarize_playwright_json(experiment_path: Path) -> list[dict[str, Any]]:
         payload = _read_json(path)
         if not isinstance(payload, dict):
             continue
-        stats = _playwright_stats(payload)
+        relative_parent = _relative(path.parent, experiment_path)
+        stats = _playwright_stats(payload, source_path=relative_parent)
+        taxonomy = summarize_group_taxonomy(list(stats.get("groups") or []))
         summaries.append(
             {
                 "kind": "playwright-json",
-                "title": _display_name_from_path(_relative(path.parent, experiment_path)),
+                "title": _display_name_from_path(relative_parent),
                 "status": "failed" if stats["failed"] else "passed",
                 "summary": stats,
                 "artifacts": [_relative(path, experiment_path)],
+                **taxonomy,
             }
         )
     return summaries
 
 
-def _playwright_stats(payload: dict[str, Any]) -> dict[str, int]:
-    stats = {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "other": 0}
+def _playwright_status_bucket(status: str) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized in {"expected", "passed"}:
+        return "passed"
+    if normalized in {"unexpected", "failed", "timedout", "interrupted"}:
+        return "failed"
+    if normalized in {"skipped"}:
+        return "skipped"
+    return "other"
 
-    def walk_suite(suite: dict[str, Any]) -> None:
+
+def _increment_playwright_stats(stats: dict[str, int], status: str) -> None:
+    stats["total"] += 1
+    stats[_playwright_status_bucket(status)] += 1
+
+
+def _playwright_stats(payload: dict[str, Any], *, source_path: str = "") -> dict[str, Any]:
+    stats = {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "other": 0}
+    group_stats: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def group_for_spec(spec: dict[str, Any], suite_file: str | None) -> dict[str, Any]:
+        spec_file = spec.get("file") or suite_file or spec.get("title") or source_path
+        taxonomy = classify_playwright_spec(spec_file, source_path=source_path)
+        key = (taxonomy["audit_suite"], taxonomy["audit_group"])
+        if key not in group_stats:
+            group_stats[key] = {
+                **taxonomy,
+                "total": 0,
+                "passed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "other": 0,
+            }
+        return group_stats[key]
+
+    def walk_suite(suite: dict[str, Any], suite_file: str | None = None) -> None:
+        current_suite_file = suite.get("file") or suite_file or suite.get("title")
         for spec in suite.get("specs") or []:
             if not isinstance(spec, dict):
                 continue
+            spec_group = group_for_spec(spec, current_suite_file)
             for test in spec.get("tests") or []:
                 if not isinstance(test, dict):
                     continue
                 status = str(test.get("status") or "").strip().lower()
-                stats["total"] += 1
-                if status in {"expected", "passed"}:
-                    stats["passed"] += 1
-                elif status in {"unexpected", "failed", "timedout", "interrupted"}:
-                    stats["failed"] += 1
-                elif status in {"skipped"}:
-                    stats["skipped"] += 1
-                else:
-                    stats["other"] += 1
+                _increment_playwright_stats(stats, status)
+                _increment_playwright_stats(spec_group, status)
         for child in suite.get("suites") or []:
             if isinstance(child, dict):
-                walk_suite(child)
+                walk_suite(child, current_suite_file)
 
     for suite in payload.get("suites") or []:
         if isinstance(suite, dict):
             walk_suite(suite)
+    stats["groups"] = sorted(group_stats.values(), key=suite_sort_key)
     return stats
 
 
@@ -411,6 +500,7 @@ def _discover_playwright_reports(experiment_path: Path) -> list[dict[str, str]]:
 def _artifact_links(experiment_path: Path) -> list[dict[str, str]]:
     names = [
         "metadata.json",
+        LEVEL6_CONSOLE_LOG_FILENAME,
         "local_capacity_preflight.json",
         "local_stability_preflight.json",
         "local_stability_postflight.json",
@@ -438,6 +528,7 @@ def _artifact_links(experiment_path: Path) -> list[dict[str, str]]:
 
 def _has_report_artifacts(experiment_path: Path) -> bool:
     standard_artifacts = {
+        LEVEL6_CONSOLE_LOG_FILENAME,
         "local_capacity_preflight.json",
         "local_stability_preflight.json",
         "local_stability_postflight.json",
@@ -460,6 +551,127 @@ def _has_report_artifacts(experiment_path: Path) -> bool:
     if any(experiment_path.glob("**/playwright-report/index.html")):
         return True
     return False
+
+
+def _strip_ansi_sequences(value: str) -> str:
+    return ANSI_ESCAPE_RE.sub("", value)
+
+
+def _ansi_style_classes(style: dict[str, Any]) -> list[str]:
+    classes = []
+    if style.get("bold"):
+        classes.append("ansi-bold")
+    if style.get("dim"):
+        classes.append("ansi-dim")
+    if style.get("underline"):
+        classes.append("ansi-underline")
+    fg_class = style.get("fg")
+    bg_class = style.get("bg")
+    if fg_class:
+        classes.append(fg_class)
+    if bg_class:
+        classes.append(bg_class)
+    return classes
+
+
+def _apply_ansi_sgr(style: dict[str, Any], params: list[int]) -> None:
+    if not params:
+        params = [0]
+    index = 0
+    while index < len(params):
+        code = params[index]
+        if code == 0:
+            style.clear()
+        elif code == 1:
+            style["bold"] = True
+        elif code == 2:
+            style["dim"] = True
+        elif code == 4:
+            style["underline"] = True
+        elif code in {22, 21}:
+            style.pop("bold", None)
+            style.pop("dim", None)
+        elif code == 24:
+            style.pop("underline", None)
+        elif code == 39:
+            style.pop("fg", None)
+        elif code == 49:
+            style.pop("bg", None)
+        elif code in ANSI_FG_CLASSES:
+            style["fg"] = ANSI_FG_CLASSES[code]
+        elif code in ANSI_BG_CLASSES:
+            style["bg"] = ANSI_BG_CLASSES[code]
+        elif code in {38, 48}:
+            # Skip extended color parameters. The dashboard preserves the text
+            # safely even when a terminal emits unsupported color modes.
+            if index + 1 < len(params) and params[index + 1] == 5:
+                index += 2
+            elif index + 1 < len(params) and params[index + 1] == 2:
+                index += 4
+        index += 1
+
+
+def _ansi_to_html(value: str) -> str:
+    if not value:
+        return ""
+    parts: list[str] = []
+    style: dict[str, Any] = {}
+    span_open = False
+    cursor = 0
+
+    def close_span() -> None:
+        nonlocal span_open
+        if span_open:
+            parts.append("</span>")
+            span_open = False
+
+    def open_span() -> None:
+        nonlocal span_open
+        classes = _ansi_style_classes(style)
+        if classes:
+            parts.append(f"<span class='{' '.join(classes)}'>")
+            span_open = True
+
+    for match in ANSI_ESCAPE_RE.finditer(value):
+        parts.append(html.escape(value[cursor : match.start()]))
+        sequence = match.group(0)
+        sgr_match = ANSI_SGR_RE.fullmatch(sequence)
+        if sgr_match:
+            close_span()
+            params = [int(item) for item in sgr_match.group(1).split(";") if item != ""]
+            _apply_ansi_sgr(style, params)
+            open_span()
+        cursor = match.end()
+
+    parts.append(html.escape(value[cursor:]))
+    close_span()
+    return "".join(parts)
+
+
+def _line_count(value: str) -> int:
+    if not value:
+        return 0
+    return value.count("\n") + (0 if value.endswith("\n") else 1)
+
+
+def _console_log_summary(experiment_path: Path) -> dict[str, Any] | None:
+    path = experiment_path / LEVEL6_CONSOLE_LOG_FILENAME
+    if not path.is_file():
+        return None
+    try:
+        raw_content = path.read_text(encoding="utf-8", errors="replace")
+        size_bytes = path.stat().st_size
+    except OSError:
+        return None
+    content = _strip_ansi_sequences(raw_content)
+    return {
+        "title": "Level 6 console log",
+        "path": LEVEL6_CONSOLE_LOG_FILENAME,
+        "content": content,
+        "ansi_content": raw_content,
+        "line_count": _line_count(content),
+        "size_bytes": size_bytes,
+    }
 
 
 def _is_reportable_experiment_path(path: Path) -> bool:
@@ -489,6 +701,7 @@ def inspect_experiment(path: str | Path) -> dict[str, Any]:
     suites.extend(_summarize_components(experiment_path))
     suites.extend(_summarize_component_report_json(experiment_path))
     suites.extend(_summarize_playwright_json(experiment_path))
+    suites = [_with_suite_taxonomy(suite) for suite in suites]
 
     playwright_reports = _discover_playwright_reports(experiment_path)
     report_kinds = []
@@ -504,6 +717,9 @@ def inspect_experiment(path: str | Path) -> dict[str, Any]:
         report_kinds.append("Stability")
     if any(suite.get("kind") == "une-0087" for suite in suites):
         report_kinds.append("UNE 0087")
+    console_log = _console_log_summary(experiment_path)
+    if console_log:
+        report_kinds.append("Console")
 
     result = "No failed suites detected"
     if any(str(suite.get("status")).lower() in {"failed", "error"} for suite in suites):
@@ -525,6 +741,7 @@ def inspect_experiment(path: str | Path) -> dict[str, Any]:
         "reports": report_kinds,
         "playwright_reports": playwright_reports,
         "suites": suites,
+        "console_log": console_log,
         "artifacts": _artifact_links(experiment_path),
     }
 
@@ -591,6 +808,7 @@ def _render_dashboard_html(experiment: dict[str, Any]) -> str:
     )
     playwright_html = _render_playwright_links(experiment)
     suites_html = _render_suite_summaries(experiment)
+    console_log_html = _render_console_log(experiment)
     artifacts_html = _render_artifact_links(experiment)
     return f"""<!doctype html>
 <html lang="en">
@@ -649,6 +867,56 @@ def _render_dashboard_html(experiment: dict[str, Any]) -> str:
     .link-card {{ background: #ffffffb8; border: 1px solid var(--line); border-radius: 14px; padding: 13px 14px; }}
     .small {{ color: var(--muted); font-size: 0.87rem; }}
     code {{ background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 2px 6px; }}
+    .console-meta {{ align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; margin-bottom: 12px; }}
+    .console-log {{
+      background: #101318;
+      border: 1px solid #252c36;
+      border-radius: 10px;
+      color: #d7dde8;
+      font: 0.86rem/1.5 "Cascadia Mono", "Consolas", "Menlo", monospace;
+      margin: 0;
+      min-height: 96px;
+      overflow: visible;
+      overflow-wrap: anywhere;
+      padding: 16px;
+      tab-size: 2;
+      white-space: pre-wrap;
+    }}
+    .ansi-bold {{ font-weight: 800; }}
+    .ansi-dim {{ opacity: 0.72; }}
+    .ansi-underline {{ text-decoration: underline; }}
+    .ansi-fg-black {{ color: #101318; }}
+    .ansi-fg-red {{ color: #ff6b6b; }}
+    .ansi-fg-green {{ color: #6ee7a8; }}
+    .ansi-fg-yellow {{ color: #f8d66d; }}
+    .ansi-fg-blue {{ color: #7fb4ff; }}
+    .ansi-fg-magenta {{ color: #f0a6ff; }}
+    .ansi-fg-cyan {{ color: #67e8f9; }}
+    .ansi-fg-white {{ color: #f2f4f7; }}
+    .ansi-fg-bright-black {{ color: #98a2b3; }}
+    .ansi-fg-bright-red {{ color: #ff8787; }}
+    .ansi-fg-bright-green {{ color: #86efac; }}
+    .ansi-fg-bright-yellow {{ color: #fde68a; }}
+    .ansi-fg-bright-blue {{ color: #93c5fd; }}
+    .ansi-fg-bright-magenta {{ color: #f5b8ff; }}
+    .ansi-fg-bright-cyan {{ color: #a5f3fc; }}
+    .ansi-fg-bright-white {{ color: #ffffff; }}
+    .ansi-bg-black {{ background: #101318; }}
+    .ansi-bg-red {{ background: #7f1d1d; }}
+    .ansi-bg-green {{ background: #14532d; }}
+    .ansi-bg-yellow {{ background: #713f12; }}
+    .ansi-bg-blue {{ background: #1e3a8a; }}
+    .ansi-bg-magenta {{ background: #581c87; }}
+    .ansi-bg-cyan {{ background: #164e63; }}
+    .ansi-bg-white {{ background: #f2f4f7; color: #101318; }}
+    .ansi-bg-bright-black {{ background: #344054; }}
+    .ansi-bg-bright-red {{ background: #b42318; }}
+    .ansi-bg-bright-green {{ background: #027a48; }}
+    .ansi-bg-bright-yellow {{ background: #b54708; }}
+    .ansi-bg-bright-blue {{ background: #175cd3; }}
+    .ansi-bg-bright-magenta {{ background: #9e77ed; }}
+    .ansi-bg-bright-cyan {{ background: #0891b2; }}
+    .ansi-bg-bright-white {{ background: #ffffff; color: #101318; }}
   </style>
 </head>
 <body>
@@ -665,6 +933,10 @@ def _render_dashboard_html(experiment: dict[str, Any]) -> str:
   <section class="section">
     <h2>Suite summaries</h2>
     {suites_html}
+  </section>
+  <section class="section">
+    <h2>Level 6 console log</h2>
+    {console_log_html}
   </section>
   <section class="section">
     <h2>Raw artifacts</h2>
@@ -686,7 +958,16 @@ def _render_playwright_links(experiment: dict[str, Any]) -> str:
         href = "../" + _safe_link(str(report.get("index") or ""))
         title = html.escape(str(report.get("title") or "Playwright report"))
         path = html.escape(str(report.get("path") or ""))
-        items.append(f"<div class='link-card'><a href='{href}'>Open {title}</a><div class='small'>{path}</div></div>")
+        taxonomy = classify_suite_artifact(
+            kind="playwright-report",
+            title=report.get("title"),
+            artifacts=[report.get("index") or report.get("path") or ""],
+        )
+        audit_context = html.escape(f"{taxonomy['audit_suite']} / {taxonomy['audit_group']}")
+        items.append(
+            f"<div class='link-card'><a href='{href}'>Open {title}</a>"
+            f"<div class='small'>{audit_context} · {path}</div></div>"
+        )
     return "<div class='links'>" + "\n".join(items) + "</div>"
 
 
@@ -695,7 +976,9 @@ def _render_suite_summaries(experiment: dict[str, Any]) -> str:
     if not suites:
         return "<p>No suite summaries were detected. Raw artifacts may still be available below.</p>"
     rows = []
-    for suite in suites:
+    for suite in sorted(suites, key=suite_sort_key):
+        audit_suite = html.escape(str(suite.get("audit_suite") or "Unclassified"))
+        audit_group = html.escape(str(suite.get("audit_group") or "Review"))
         title = html.escape(str(suite.get("title") or suite.get("kind") or "suite"))
         status = _badge(suite.get("status"))
         details = html.escape(_suite_details(suite))
@@ -703,8 +986,16 @@ def _render_suite_summaries(experiment: dict[str, Any]) -> str:
             f"<a href='../{_safe_link(str(path))}'>{html.escape(Path(str(path)).name)}</a>"
             for path in suite.get("artifacts") or []
         )
-        rows.append(f"<tr><td>{title}</td><td>{status}</td><td>{details}</td><td>{artifact_links}</td></tr>")
-    return "<table><thead><tr><th>Suite</th><th>Status</th><th>Summary</th><th>Artifacts</th></tr></thead><tbody>" + "\n".join(rows) + "</tbody></table>"
+        rows.append(
+            f"<tr><td>{audit_suite}</td><td>{audit_group}</td><td>{title}</td>"
+            f"<td>{status}</td><td>{details}</td><td>{artifact_links}</td></tr>"
+        )
+    return (
+        "<table><thead><tr><th>Audit suite</th><th>Group</th><th>Artifact suite</th>"
+        "<th>Status</th><th>Summary</th><th>Artifacts</th></tr></thead><tbody>"
+        + "\n".join(rows)
+        + "</tbody></table>"
+    )
 
 
 def _suite_details(suite: dict[str, Any]) -> str:
@@ -730,10 +1021,18 @@ def _suite_details(suite: dict[str, Any]) -> str:
         return f"Transfers: {summary.get('passed', 0)} passed, {summary.get('failed', 0)} failed{suffix}."
     if kind in {"component", "component-report", "playwright-json"}:
         summary = suite.get("summary") or {}
-        return (
+        details = (
             f"Total: {summary.get('total', 0)}, passed: {summary.get('passed', 0)}, "
             f"failed: {summary.get('failed', 0)}, skipped: {summary.get('skipped', 0)}."
         )
+        groups = list(summary.get("groups") or [])
+        if kind == "playwright-json" and groups:
+            group_labels = [
+                f"{group.get('audit_group')}: {group.get('passed', 0)}/{group.get('total', 0)} passed"
+                for group in groups
+            ]
+            details += f" Groups: {'; '.join(group_labels)}."
+        return details
     if kind == "stability":
         snapshot_warnings = suite.get("snapshot_warnings", 0)
         return (
@@ -751,6 +1050,28 @@ def _suite_details(suite: dict[str, Any]) -> str:
             f"Formal certification claim: {claim}."
         )
     return "Summary available in linked artifact."
+
+
+def _render_console_log(experiment: dict[str, Any]) -> str:
+    console_log = experiment.get("console_log")
+    if not console_log:
+        return "<p>No Level 6 console log was detected for this experiment.</p>"
+    content = str(console_log.get("content") or "")
+    if not content:
+        content = "(empty console log)"
+    ansi_content = str(console_log.get("ansi_content") or content)
+    path = str(console_log.get("path") or LEVEL6_CONSOLE_LOG_FILENAME)
+    line_count = int(console_log.get("line_count") or 0)
+    size_bytes = int(console_log.get("size_bytes") or 0)
+    meta = f"{line_count} lines, {size_bytes} bytes"
+    rendered_content = _ansi_to_html(ansi_content)
+    return (
+        "<div class='console-meta'>"
+        f"<span class='small'>{html.escape(meta)}</span>"
+        f"<a href='../{_safe_link(path)}'>Open raw console log</a>"
+        "</div>"
+        f"<pre class='console-log'>{rendered_content}</pre>"
+    )
 
 
 def _render_artifact_links(experiment: dict[str, Any]) -> str:

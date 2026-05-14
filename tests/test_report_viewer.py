@@ -87,6 +87,12 @@ class ReportViewerTests(unittest.TestCase):
                 }
             ],
         )
+        (experiment / "level6_console.log").write_text(
+            "Suite: INESData integration\n"
+            "\x1b[31mProvider Management API Health failed\x1b[0m\n"
+            "<console line must be escaped>\n",
+            encoding="utf-8",
+        )
         self._write_json(
             experiment / "local_stability_postflight.json",
             {
@@ -126,6 +132,7 @@ class ReportViewerTests(unittest.TestCase):
         self.assertIn("Kafka", experiment["reports"])
         self.assertIn("Components", experiment["reports"])
         self.assertIn("Stability", experiment["reports"])
+        self.assertIn("Console", experiment["reports"])
 
     def test_discovers_marked_opt_in_demo_evidence_without_debug_runs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -180,9 +187,71 @@ class ReportViewerTests(unittest.TestCase):
         self.assertIn("Dashboard status", content)
         self.assertIn("Cluster runtime", content)
         self.assertIn("Open ui / inesdata", content)
+        self.assertIn("Audit suite", content)
+        self.assertIn("INESData integration", content)
+        self.assertIn("Combined Playwright", content)
         self.assertIn("Newman", content)
         self.assertIn("Kafka transfer", content)
+        self.assertIn("Level 6 console log", content)
+        self.assertIn("Provider Management API Health failed", content)
+        self.assertIn("<span class='ansi-fg-red'>Provider Management API Health failed</span>", content)
+        self.assertIn("&lt;console line must be escaped&gt;", content)
+        self.assertIn("level6_console.log", content)
+        self.assertNotIn("\x1b", content)
         self.assertNotIn("must-not-appear-in-dashboard", content)
+
+    def test_console_log_renderer_converts_ansi_to_safe_html(self):
+        rendered = reports._ansi_to_html("\x1b[36;1mSuite: INESData\x1b[0m <unsafe>\n")
+
+        self.assertIn("<span class='ansi-bold ansi-fg-cyan'>Suite: INESData</span>", rendered)
+        self.assertIn("&lt;unsafe&gt;", rendered)
+        self.assertNotIn("\x1b", rendered)
+
+    def test_inesdata_playwright_results_are_grouped_for_audit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_10-45-00"
+            self._write_json(experiment / "metadata.json", {"adapter": "InesdataAdapter"})
+            self._write_json(
+                experiment / "ui" / "inesdata" / "results.json",
+                {
+                    "suites": [
+                        {
+                            "specs": [
+                                {
+                                    "file": "validation/ui/core/01-login-readiness.spec.ts",
+                                    "tests": [{"status": "expected"}],
+                                },
+                                {
+                                    "file": "validation/ui/core/08-ontology-hub-inesdata-readonly.spec.ts",
+                                    "tests": [{"status": "expected"}],
+                                },
+                                {
+                                    "file": "validation/ui/core/09-ai-model-hub-httpdata.spec.ts",
+                                    "tests": [{"status": "unexpected"}],
+                                },
+                                {
+                                    "file": "validation/ui/core/07-semantic-virtualization-httpdata.spec.ts",
+                                    "tests": [{"status": "skipped"}],
+                                },
+                            ]
+                        }
+                    ]
+                },
+            )
+
+            inspected = reports.inspect_experiment(experiment)
+
+        suite = next(item for item in inspected["suites"] if item["kind"] == "playwright-json")
+        self.assertEqual(suite["audit_suite"], "INESData integration")
+        self.assertEqual(suite["audit_group"], "4 groups")
+        groups = {
+            group["audit_group"]: group
+            for group in suite["summary"]["groups"]
+        }
+        self.assertEqual(groups["Core"]["passed"], 1)
+        self.assertEqual(groups["Ontology Hub"]["passed"], 1)
+        self.assertEqual(groups["AI Model Hub"]["failed"], 1)
+        self.assertEqual(groups["Semantic Virtualization"]["skipped"], 1)
 
     def test_dashboard_includes_optional_une_0087_alignment(self):
         with tempfile.TemporaryDirectory() as tmp:

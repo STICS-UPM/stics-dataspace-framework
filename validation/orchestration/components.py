@@ -42,7 +42,11 @@ def run_component_validations(
     if not components:
         return []
 
-    component_urls = infer_component_urls(components)
+    component_urls = {
+        component: url
+        for component, url in (infer_component_urls(components) or {}).items()
+        if component in set(components)
+    }
     results = run_component_validations_fn(component_urls, experiment_dir=experiment_dir)
     results = list(results or [])
     resolved_components = {result.get("component") for result in results}

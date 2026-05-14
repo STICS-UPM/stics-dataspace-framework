@@ -41,6 +41,11 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
             env = subprocess_run.call_args.kwargs["env"]
             self.assertEqual(env["PLAYWRIGHT_INTERACTION_MARKERS"], "1")
             self.assertEqual(env["PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS"], "150")
+            self.assertEqual(env["PIONERA_PLAYWRIGHT_SUITE_NAME"], "INESData integration")
+            self.assertEqual(env["UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO"], "1")
+            self.assertEqual(env["UI_ONTOLOGY_HUB_INESDATA_DEMO"], "1")
+            self.assertEqual(env["UI_AI_MODEL_HUB_HTTPDATA_DEMO"], "1")
+            self.assertEqual(env["UI_AI_MODEL_OBSERVER_DEMO"], "1")
 
     def test_playwright_validation_respects_explicit_marker_override(self):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(

@@ -614,6 +614,7 @@ def run_ontology_hub_ui_validation(base_url: str, experiment_dir: str | None = N
         "PLAYWRIGHT_HTML_REPORT_DIR": artifact_paths["html_report_dir"],
         "PLAYWRIGHT_BLOB_REPORT_DIR": artifact_paths["blob_report_dir"],
         "PLAYWRIGHT_JSON_REPORT_FILE": artifact_paths["json_report_file"],
+        "PIONERA_PLAYWRIGHT_SUITE_NAME": "Ontology Hub integration",
     }
 
     error = None

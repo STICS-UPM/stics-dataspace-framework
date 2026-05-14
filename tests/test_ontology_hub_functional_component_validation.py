@@ -40,18 +40,25 @@ class OntologyHubFunctionalComponentValidationTests(unittest.TestCase):
 
     def test_functional_ui_runner_prunes_empty_playwright_dirs(self):
         experiments_root = PROJECT_ROOT / "experiments"
+        captured_env = {}
+
+        def fake_run(command, cwd=None, env=None):
+            captured_env.update(env or {})
+            raise FileNotFoundError("playwright missing")
+
         with tempfile.TemporaryDirectory(dir=str(experiments_root)) as tmpdir, mock.patch(
             "validation.components.ontology_hub.functional.ui_runner._prepare_functional_runtime",
             return_value=(True, None),
         ), mock.patch(
             "validation.components.ontology_hub.functional.ui_runner.subprocess.run",
-            side_effect=FileNotFoundError("playwright missing"),
+            side_effect=fake_run,
         ):
             result = run_ontology_hub_functional_validation(
                 "http://ontology-hub-demo.dev.ds.dataspaceunit.upm",
                 experiment_dir=tmpdir,
             )
 
+            self.assertEqual(captured_env["PIONERA_PLAYWRIGHT_SUITE_NAME"], "Ontology Hub functional")
             self.assertEqual(result["status"], "failed")
             self.assertTrue(os.path.exists(result["artifacts"]["report_json"]))
             self.assertFalse(os.path.exists(result["artifacts"]["test_results_dir"]))

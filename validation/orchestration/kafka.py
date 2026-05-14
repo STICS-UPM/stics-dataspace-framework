@@ -13,11 +13,11 @@ def should_run_kafka_edc_validation(
     *,
     flag_enabled: Callable[[str, bool], bool] | None = None,
 ) -> bool:
-    """Kafka transfer validation is standard in Level 6 unless explicitly skipped."""
+    """Kafka transfer validation is opt-in in Level 6 because it is slow."""
     flag_enabled = flag_enabled or (lambda _name, default=False: default)
     if flag_enabled(KAFKA_LEVEL6_SKIP_FLAG, False):
         return False
-    return flag_enabled(KAFKA_LEVEL6_RUN_FLAG, True)
+    return flag_enabled(KAFKA_LEVEL6_RUN_FLAG, False)
 
 
 def run_kafka_edc_validation(

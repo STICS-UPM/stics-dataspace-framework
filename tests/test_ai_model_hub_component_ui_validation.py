@@ -84,6 +84,8 @@ class AIModelHubComponentUIValidationTests(unittest.TestCase):
 
             def fake_subprocess_run(command, cwd=None, env=None):
                 self.assertEqual(env["AI_MODEL_HUB_ENABLE_UI_VALIDATION"], "1")
+                self.assertEqual(env["AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO"], "1")
+                self.assertEqual(env["PIONERA_PLAYWRIGHT_SUITE_NAME"], "AI Model Hub functional")
                 self.assertIn("PLAYWRIGHT_JSON_REPORT_FILE", env)
                 with open(env["PLAYWRIGHT_JSON_REPORT_FILE"], "w", encoding="utf-8") as handle:
                     json.dump(payload, handle)
