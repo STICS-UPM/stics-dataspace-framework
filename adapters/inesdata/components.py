@@ -1,4 +1,5 @@
 import os
+import shutil
 import shlex
 import tempfile
 import time
@@ -34,8 +35,8 @@ class INESDataComponentsAdapter:
     _ONTOLOGY_HUB_REPO_DIRNAME = "Ontology-Hub"
     _AI_MODEL_HUB_REPO_URL = "https://github.com/ProyectoPIONERA/AIModelHub.git"
     _AI_MODEL_HUB_REPO_DIRNAME = "AIModelHub"
-    _RDFLIB_VIRT_REPO_URL = "https://github.com/ProyectoPIONERA/rdflib-virt.git"
-    _RDFLIB_VIRT_REPO_DIRNAME = "rdflib-virt"
+    _MORPH_KGV_REPO_URL = "https://github.com/ProyectoPIONERA/morph-kgv.git"
+    _MORPH_KGV_REPO_DIRNAME = "morph-kgv"
     _MAPPING_EDITOR_REPO_URL = "https://github.com/ProyectoPIONERA/mapping-editor.git"
     _MAPPING_EDITOR_REPO_DIRNAME = "mapping-editor"
 
@@ -567,48 +568,50 @@ class INESDataComponentsAdapter:
             ),
         )
 
-    def _resolve_rdflib_virt_source_dir(self, deployer_config: dict) -> str:
+    def _resolve_morph_kgv_source_dir(self, deployer_config: dict) -> str:
         sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")
-        rdflib_virt_dir = os.path.join(sources_dir, self._RDFLIB_VIRT_REPO_DIRNAME)
-        pyproject_path = os.path.join(rdflib_virt_dir, "pyproject.toml")
-        package_path = os.path.join(rdflib_virt_dir, "src", "pycottas", "__init__.py")
-        if os.path.isfile(pyproject_path) and os.path.isfile(package_path):
-            return rdflib_virt_dir
+        morph_kgv_dir = os.path.join(sources_dir, self._MORPH_KGV_REPO_DIRNAME)
+        pyproject_path = os.path.join(morph_kgv_dir, "pyproject.toml")
+        package_path = os.path.join(morph_kgv_dir, "src", "morph_kgc", "__init__.py")
+        virt_store_path = os.path.join(morph_kgv_dir, "src", "morph_kgc", "sparql", "virt_store.py")
+        if os.path.isfile(pyproject_path) and os.path.isfile(package_path) and os.path.isfile(virt_store_path):
+            return morph_kgv_dir
 
-        should_clone = not os.path.isdir(rdflib_virt_dir)
+        should_clone = not os.path.isdir(morph_kgv_dir)
         if not should_clone:
             try:
-                remaining_entries = os.listdir(rdflib_virt_dir)
+                remaining_entries = os.listdir(morph_kgv_dir)
             except OSError:
                 remaining_entries = []
             should_clone = len(remaining_entries) == 0
 
         if should_clone:
             os.makedirs(sources_dir, exist_ok=True)
-            if os.path.isdir(rdflib_virt_dir):
+            if os.path.isdir(morph_kgv_dir):
                 try:
-                    os.rmdir(rdflib_virt_dir)
+                    os.rmdir(morph_kgv_dir)
                 except OSError:
                     pass
-            print(f"Cloning rdflib-virt into {rdflib_virt_dir} ...")
+            print(f"Cloning morph-kgv into {morph_kgv_dir} ...")
             import subprocess
             try:
-                subprocess.run(["git", "clone", self._RDFLIB_VIRT_REPO_URL, rdflib_virt_dir], check=True)
+                subprocess.run(["git", "clone", self._MORPH_KGV_REPO_URL, morph_kgv_dir], check=True)
             except Exception as exc:
                 self._fail(
-                    "Could not clone rdflib-virt repository",
+                    "Could not clone morph-kgv repository",
                     root_cause=str(exc),
                 )
 
-        if os.path.isfile(pyproject_path) and os.path.isfile(package_path):
-            return rdflib_virt_dir
+        if os.path.isfile(pyproject_path) and os.path.isfile(package_path) and os.path.isfile(virt_store_path):
+            return morph_kgv_dir
 
         self._fail(
-            "rdflib-virt source directory is not usable",
+            "morph-kgv source directory is not usable",
             root_cause=(
-                f"Expected pyproject.toml at: {pyproject_path} and package at: {package_path}. "
+                f"Expected pyproject.toml at: {pyproject_path}, package at: {package_path} "
+                f"and SPARQL store at: {virt_store_path}. "
                 "Level 5 expects the canonical checkout at "
-                "adapters/inesdata/sources/rdflib-virt."
+                "adapters/inesdata/sources/morph-kgv."
             ),
         )
 
@@ -663,6 +666,14 @@ class INESDataComponentsAdapter:
             "containers",
             "semantic-virtualization-api",
             "Dockerfile",
+        )
+
+    def _semantic_virtualization_api_server_file(self) -> str:
+        return os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "containers",
+            "semantic-virtualization-api",
+            "morph_kgv_http_server.py",
         )
 
     def _mapping_editor_dockerfile(self) -> str:
@@ -778,27 +789,54 @@ class INESDataComponentsAdapter:
         if self.run(cmd, check=False, cwd=dashboard_dir) is None:
             self._fail("Failed to build AI Model Hub image on host", root_cause=image_ref)
 
+    def _prepare_semantic_virtualization_api_build_context(self, morph_kgv_dir: str) -> str:
+        build_context = tempfile.mkdtemp(prefix="pionera-morph-kgv-build-")
+        source_target = os.path.join(build_context, "morph-kgv")
+        shutil.copytree(
+            morph_kgv_dir,
+            source_target,
+            ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", ".venv"),
+        )
+        shutil.copy2(
+            self._semantic_virtualization_api_server_file(),
+            os.path.join(build_context, "morph_kgv_http_server.py"),
+        )
+        return build_context
+
     def _build_semantic_virtualization_image_on_host(self, image_ref: str, deployer_config: dict):
-        rdflib_virt_dir = self._resolve_rdflib_virt_source_dir(deployer_config)
+        morph_kgv_dir = self._resolve_morph_kgv_source_dir(deployer_config)
         # Keep the UI/editor source available as part of the component bundle,
-        # while the A5.2 API image is built from rdflib-virt.
+        # while the A5.2 API image is built from morph-kgv.
         self._resolve_mapping_editor_source_dir(deployer_config)
         dockerfile_path = self._semantic_virtualization_api_dockerfile()
+        server_file = self._semantic_virtualization_api_server_file()
         if not os.path.isfile(dockerfile_path):
             self._fail(
                 "Semantic Virtualization API Dockerfile not found",
                 root_cause=(
                     f"Expected Dockerfile at: {dockerfile_path}. "
-                    "The framework wraps rdflib-virt as a local SPARQL API for A5.2 validation."
+                    "The framework wraps morph-kgv as a local SPARQL API for A5.2 validation."
+                ),
+            )
+        if not os.path.isfile(server_file):
+            self._fail(
+                "Semantic Virtualization API server wrapper not found",
+                root_cause=(
+                    f"Expected wrapper at: {server_file}. "
+                    "Level 5 needs it to expose morph-kgv through HTTP for Level 6."
                 ),
             )
 
         image_q = shlex.quote(image_ref)
         dockerfile_q = shlex.quote(dockerfile_path)
-        print(f"\nBuilding local image on host: {image_ref}")
-        cmd = f"docker build -t {image_q} -f {dockerfile_q} ."
-        if self.run(cmd, check=False, cwd=rdflib_virt_dir) is None:
-            self._fail("Failed to build Semantic Virtualization image on host", root_cause=image_ref)
+        build_context = self._prepare_semantic_virtualization_api_build_context(morph_kgv_dir)
+        try:
+            print(f"\nBuilding local image on host: {image_ref}")
+            cmd = f"docker build -t {image_q} -f {dockerfile_q} ."
+            if self.run(cmd, check=False, cwd=build_context) is None:
+                self._fail("Failed to build Semantic Virtualization image on host", root_cause=image_ref)
+        finally:
+            shutil.rmtree(build_context, ignore_errors=True)
 
     def _build_mapping_editor_image_on_host(self, image_ref: str, deployer_config: dict):
         mapping_editor_dir = self._resolve_mapping_editor_source_dir(deployer_config)

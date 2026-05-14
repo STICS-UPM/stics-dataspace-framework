@@ -2,20 +2,19 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PORT=8000 \
-    COTTAS_FILE=/data/sample.cottas
+    MORPH_KGV_CONFIG=/opt/morph-kgv/examples/csv/config.ini
 
 WORKDIR /app
 
-COPY . /app
+COPY morph-kgv /opt/morph-kgv
+COPY morph_kgv_http_server.py /app/morph_kgv_http_server.py
 
-RUN python -m pip install --no-cache-dir --upgrade pip \
-    && python -m pip install --no-cache-dir "pycottas==1.0.0" "pycottas-endpoint[cli,web]>=0.5.3,<1.0.0" \
-    && mkdir -p /data \
-    && python -m pycottas rdf2cottas \
-        --rdf_file /app/src/pycottas/prueba.ttl \
-        --cottas_file /data/sample.cottas \
-        --index SPO
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y build-essential curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir /opt/morph-kgv
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "pycottas-endpoint serve \"${COTTAS_FILE:-/data/sample.cottas}\" --host 0.0.0.0 --port \"${PORT:-8000}\""]
+CMD ["python", "/app/morph_kgv_http_server.py"]

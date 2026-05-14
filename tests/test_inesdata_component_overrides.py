@@ -500,36 +500,37 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Ontology-Hub source directory is not usable"):
                 adapter._resolve_ontology_hub_source_dir({})
 
-    def test_resolve_rdflib_virt_source_dir_clones_when_sources_dir_exists_but_is_empty(self):
+    def test_resolve_morph_kgv_source_dir_clones_when_sources_dir_exists_but_is_empty(self):
         adapter = self._make_adapter()
         sources_dir = os.path.join(
             os.path.dirname(os.path.abspath(components_module.__file__)),
             "sources",
         )
-        rdflib_virt_dir = os.path.join(sources_dir, "rdflib-virt")
-        pyproject_path = os.path.join(rdflib_virt_dir, "pyproject.toml")
-        package_path = os.path.join(rdflib_virt_dir, "src", "pycottas", "__init__.py")
+        morph_kgv_dir = os.path.join(sources_dir, "morph-kgv")
+        pyproject_path = os.path.join(morph_kgv_dir, "pyproject.toml")
+        package_path = os.path.join(morph_kgv_dir, "src", "morph_kgc", "__init__.py")
+        virt_store_path = os.path.join(morph_kgv_dir, "src", "morph_kgc", "sparql", "virt_store.py")
 
         clone_calls = []
 
         def fake_isfile(path):
-            return path in {pyproject_path, package_path} and len(clone_calls) > 0
+            return path in {pyproject_path, package_path, virt_store_path} and len(clone_calls) > 0
 
         def fake_run(args, check):
             clone_calls.append((tuple(args), check))
             return None
 
         with (
-            mock.patch("adapters.inesdata.components.os.path.isdir", side_effect=lambda path: path == rdflib_virt_dir),
+            mock.patch("adapters.inesdata.components.os.path.isdir", side_effect=lambda path: path == morph_kgv_dir),
             mock.patch("adapters.inesdata.components.os.listdir", return_value=[]),
             mock.patch("adapters.inesdata.components.os.makedirs"),
             mock.patch("adapters.inesdata.components.os.rmdir"),
             mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=fake_isfile),
             mock.patch("subprocess.run", side_effect=fake_run),
         ):
-            resolved = adapter._resolve_rdflib_virt_source_dir({})
+            resolved = adapter._resolve_morph_kgv_source_dir({})
 
-        self.assertEqual(resolved, rdflib_virt_dir)
+        self.assertEqual(resolved, morph_kgv_dir)
         self.assertEqual(
             clone_calls,
             [
@@ -537,8 +538,8 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                     (
                         "git",
                         "clone",
-                        "https://github.com/ProyectoPIONERA/rdflib-virt.git",
-                        rdflib_virt_dir,
+                        "https://github.com/ProyectoPIONERA/morph-kgv.git",
+                        morph_kgv_dir,
                     ),
                     True,
                 )
@@ -594,23 +595,36 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         adapter = self._make_adapter()
 
         with (
-            mock.patch.object(adapter, "_resolve_rdflib_virt_source_dir", return_value="/tmp/rdflib-virt"),
+            mock.patch.object(adapter, "_resolve_morph_kgv_source_dir", return_value="/tmp/morph-kgv"),
             mock.patch.object(adapter, "_resolve_mapping_editor_source_dir", return_value="/tmp/mapping-editor") as mapping_mock,
             mock.patch.object(
                 adapter,
                 "_semantic_virtualization_api_dockerfile",
                 return_value="/tmp/semantic-api/Dockerfile",
             ),
+            mock.patch.object(
+                adapter,
+                "_semantic_virtualization_api_server_file",
+                return_value="/tmp/semantic-api/morph_kgv_http_server.py",
+            ),
+            mock.patch.object(
+                adapter,
+                "_prepare_semantic_virtualization_api_build_context",
+                return_value="/tmp/morph-kgv-build-context",
+            ) as build_context_mock,
             mock.patch("adapters.inesdata.components.os.path.isfile", return_value=True),
+            mock.patch("adapters.inesdata.components.shutil.rmtree") as rmtree_mock,
         ):
-            adapter._build_semantic_virtualization_image_on_host("rdflib-virt:local", {})
+            adapter._build_semantic_virtualization_image_on_host("morph-kgv:local", {})
 
         adapter.run.assert_called_once_with(
-            "docker build -t rdflib-virt:local -f /tmp/semantic-api/Dockerfile .",
+            "docker build -t morph-kgv:local -f /tmp/semantic-api/Dockerfile .",
             check=False,
-            cwd="/tmp/rdflib-virt",
+            cwd="/tmp/morph-kgv-build-context",
         )
         mapping_mock.assert_called_once_with({})
+        build_context_mock.assert_called_once_with("/tmp/morph-kgv")
+        rmtree_mock.assert_called_once_with("/tmp/morph-kgv-build-context", ignore_errors=True)
 
     def test_build_mapping_editor_image_uses_framework_dockerfile(self):
         adapter = self._make_adapter()
@@ -747,7 +761,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             mock.patch.object(
                 adapter,
                 "_safe_load_yaml_file",
-                return_value={"image": {"repository": "rdflib-virt", "tag": "local"}},
+                return_value={"image": {"repository": "morph-kgv", "tag": "local"}},
             ),
             mock.patch.object(adapter, "_minikube_is_available", return_value=True),
             mock.patch.object(adapter, "_minikube_has_image", return_value=True) as has_image_mock,
@@ -762,8 +776,8 @@ class InesdataComponentOverridesTests(unittest.TestCase):
 
         self.assertTrue(result)
         has_image_mock.assert_not_called()
-        build_mock.assert_called_once_with("rdflib-virt:local", deployer_config)
-        load_mock.assert_called_once_with("minikube", "rdflib-virt:local")
+        build_mock.assert_called_once_with("morph-kgv:local", deployer_config)
+        load_mock.assert_called_once_with("minikube", "morph-kgv:local")
 
     def test_prepare_level6_local_image_builds_mapping_editor_when_opted_in(self):
         adapter = self._make_adapter()
@@ -777,7 +791,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 adapter,
                 "_safe_load_yaml_file",
                 return_value={
-                    "image": {"repository": "rdflib-virt", "tag": "local"},
+                    "image": {"repository": "morph-kgv", "tag": "local"},
                     "mappingEditor": {
                         "image": {"repository": "mapping-editor", "tag": "local"},
                     },
@@ -795,12 +809,12 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             )
 
         self.assertTrue(result)
-        build_api_mock.assert_called_once_with("rdflib-virt:local", deployer_config)
+        build_api_mock.assert_called_once_with("morph-kgv:local", deployer_config)
         build_editor_mock.assert_called_once_with("mapping-editor:local", deployer_config)
         self.assertEqual(
             load_mock.mock_calls,
             [
-                mock.call("minikube", "rdflib-virt:local"),
+                mock.call("minikube", "morph-kgv:local"),
                 mock.call("minikube", "mapping-editor:local"),
             ],
         )

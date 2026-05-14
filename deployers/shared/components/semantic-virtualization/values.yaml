@@ -5,7 +5,7 @@
 replicaCount: 1
 
 image:
-  repository: rdflib-virt
+  repository: morph-kgv
   tag: local
   pullPolicy: IfNotPresent
 
@@ -37,6 +37,7 @@ env:
   SEMANTIC_VIRTUALIZATION_HEALTH_PATH: /
   SEMANTIC_VIRTUALIZATION_CAPABILITIES_PATH: /openapi.json
   SEMANTIC_VIRTUALIZATION_QUERY_PATH: "/?query=SELECT%20*%20WHERE%20%7B%20%3Fs%20%3Fp%20%3Fo%20.%20%7D%20LIMIT%201"
+  MORPH_KGV_CONFIG: /opt/morph-kgv/examples/csv/config.ini
 
 mappingEditor:
   # Disabled by default so existing Level 5/6 Semantic Virtualization API
