@@ -4,8 +4,9 @@ class ConsoleTestNameReporter {
     this.interactive = Boolean(process.stdout.isTTY);
     this.colors = this._supportsColor();
     this.groupCounts = new Map();
+    this.groupHeadersByTest = new WeakMap();
     this.printGroupHeaders = false;
-    this.printedGroups = new Set();
+    this.printedGroupHeaderTests = new WeakSet();
   }
 
   _supportsColor() {
@@ -110,31 +111,48 @@ class ConsoleTestNameReporter {
 
   _prepareGroupCounts(suite) {
     this.groupCounts = new Map();
+    this.groupHeadersByTest = new WeakMap();
     this.printGroupHeaders = false;
-    this.printedGroups = new Set();
+    this.printedGroupHeaderTests = new WeakSet();
     const tests = suite && typeof suite.allTests === "function" ? suite.allTests() : [];
     if (!Array.isArray(tests)) {
       return;
     }
-    for (const test of tests) {
-      const group = this._testGroup(test);
-      if (group) {
-        this.groupCounts.set(group, (this.groupCounts.get(group) || 0) + 1);
-      }
+    const groups = tests.map((test) => this._testGroup(test));
+    const uniqueGroups = new Set(groups.filter(Boolean));
+    this.printGroupHeaders = uniqueGroups.size > 1;
+    if (!this.printGroupHeaders) {
+      return;
     }
-    this.printGroupHeaders = this.groupCounts.size > 1;
+
+    let index = 0;
+    while (index < tests.length) {
+      const group = groups[index] || "";
+      let nextIndex = index + 1;
+      while (nextIndex < tests.length && (groups[nextIndex] || "") === group) {
+        nextIndex += 1;
+      }
+
+      if (group) {
+        const count = nextIndex - index;
+        this.groupCounts.set(group, (this.groupCounts.get(group) || 0) + count);
+        this.groupHeadersByTest.set(tests[index], { group, count });
+      }
+
+      index = nextIndex;
+    }
   }
 
   _printGroupHeader(test) {
     if (!this.printGroupHeaders) {
       return;
     }
-    const group = this._testGroup(test);
-    if (!group || this.printedGroups.has(group)) {
+    const header = this.groupHeadersByTest.get(test);
+    if (!header || this.printedGroupHeaderTests.has(test)) {
       return;
     }
-    this.printedGroups.add(group);
-    const count = this.groupCounts.get(group);
+    this.printedGroupHeaderTests.add(test);
+    const { group, count } = header;
     const suffix = count === 1 ? "test" : "tests";
     const label = Number.isInteger(count) ? `${group} (${count} ${suffix})` : group;
     console.log(this._color(`Group: ${label}`, "36"));
