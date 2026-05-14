@@ -6,10 +6,26 @@ from validation.orchestration import kafka
 
 class Level6KafkaTests(unittest.TestCase):
     def test_should_run_kafka_edc_validation_is_automatic(self):
-        flag_enabled = mock.Mock(return_value=True)
+        def flag_enabled(name, default):
+            return default
 
         self.assertTrue(kafka.should_run_kafka_edc_validation(flag_enabled=flag_enabled))
-        flag_enabled.assert_not_called()
+
+    def test_should_run_kafka_edc_validation_can_be_temporarily_skipped(self):
+        def flag_enabled(name, default):
+            return name == "PIONERA_LEVEL6_SKIP_KAFKA" or default
+
+        self.assertFalse(kafka.should_run_kafka_edc_validation(flag_enabled=flag_enabled))
+
+    def test_should_run_kafka_edc_validation_can_be_reenabled_with_run_flag(self):
+        def flag_enabled(name, default):
+            values = {
+                "PIONERA_LEVEL6_SKIP_KAFKA": False,
+                "PIONERA_LEVEL6_RUN_KAFKA": True,
+            }
+            return values.get(name, default)
+
+        self.assertTrue(kafka.should_run_kafka_edc_validation(flag_enabled=flag_enabled))
 
     def test_run_kafka_edc_validation_skips_when_not_enough_connectors(self):
         experiment_storage = mock.Mock()

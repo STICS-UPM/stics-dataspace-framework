@@ -5,13 +5,19 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Callable
 
+KAFKA_LEVEL6_RUN_FLAG = "PIONERA_LEVEL6_RUN_KAFKA"
+KAFKA_LEVEL6_SKIP_FLAG = "PIONERA_LEVEL6_SKIP_KAFKA"
+
 
 def should_run_kafka_edc_validation(
     *,
     flag_enabled: Callable[[str, bool], bool] | None = None,
 ) -> bool:
-    """Kafka transfer validation is a standard Level 6 step after Newman."""
-    return True
+    """Kafka transfer validation is standard in Level 6 unless explicitly skipped."""
+    flag_enabled = flag_enabled or (lambda _name, default=False: default)
+    if flag_enabled(KAFKA_LEVEL6_SKIP_FLAG, False):
+        return False
+    return flag_enabled(KAFKA_LEVEL6_RUN_FLAG, True)
 
 
 def run_kafka_edc_validation(

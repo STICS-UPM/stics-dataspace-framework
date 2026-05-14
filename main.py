@@ -87,7 +87,7 @@ from validation.orchestration.components import (
     run_component_validations as run_level6_component_validations,
     should_run_component_validation as should_run_level6_component_validation,
 )
-from validation.orchestration.kafka import run_kafka_edc_validation
+from validation.orchestration.kafka import run_kafka_edc_validation, should_run_kafka_edc_validation
 from validation.orchestration.reports import (
     build_experiment_dashboard,
     discover_report_experiments,
@@ -2372,6 +2372,8 @@ def _start_level6_kafka_preparation(
     kafka_manager_cls=KafkaManager,
     background=True,
 ):
+    if not should_run_kafka_edc_validation(flag_enabled=_env_flag):
+        return None
     if len(list(connectors or [])) < 2:
         return None
     if not _supports_level6_kafka_edc(
@@ -2705,6 +2707,17 @@ def run_level6_kafka_edc_after_newman(
         deployer_name=deployer_name,
     ):
         return []
+    if not should_run_kafka_edc_validation(flag_enabled=_env_flag):
+        results = [
+            {
+                "status": "skipped",
+                "reason": "disabled_by_pionera_level6_skip_kafka",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+        ]
+        _save_kafka_edc_results(results, experiment_dir, experiment_storage=experiment_storage)
+        print("\nKafka transfer validation suite skipped by PIONERA_LEVEL6_SKIP_KAFKA.")
+        return results
 
     print("\nRunning Kafka transfer validation suite...")
     kafka_preparation_result = _finalize_level6_kafka_preparation(
