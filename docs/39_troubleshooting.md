@@ -453,10 +453,10 @@ negociación y transferencia.
 
 ## EDC+Kafka Queda en STARTED o No Consume Mensajes
 
-`Level 6` ejecuta la validación funcional EDC+Kafka después de Newman cuando el
-adapter tiene soporte Kafka. En local, el broker gestionado por defecto se crea
-dentro de Kubernetes para que el dataplane de los conectores lo alcance por DNS
-de cluster:
+Cuando Kafka se activa con `PIONERA_LEVEL6_RUN_KAFKA=true`, `Level 6` ejecuta
+la validación funcional EDC+Kafka después de Newman si el adapter tiene soporte
+Kafka. En local, el broker gestionado por defecto se crea dentro de Kubernetes
+para que el dataplane de los conectores lo alcance por DNS de cluster:
 
 ```text
 framework-kafka.<namespace>.svc.cluster.local:9092

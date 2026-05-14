@@ -194,7 +194,7 @@ Más detalle en [Visor de reportes de experimentos](./40_report_viewer.md).
 
 `M - Run metrics / benchmarks`
 
-Ejecuta métricas o benchmarks independientes sobre el adapter elegido para esa operación. El benchmark Kafka mide el broker de forma standalone y guarda resultados en `experiments/`, pero no reemplaza la validación funcional de `Level 6`. La validación Kafka E2E del dataspace se ejecuta automáticamente dentro de `Level 6` cuando el adapter es compatible.
+Ejecuta métricas o benchmarks independientes sobre el adapter elegido para esa operación. El benchmark Kafka mide el broker de forma standalone y guarda resultados en `experiments/`, pero no reemplaza la validación funcional de `Level 6`. La validación Kafka E2E del dataspace es opt-in dentro de `Level 6`; actívala con `PIONERA_LEVEL6_RUN_KAFKA=true` cuando quieras incluirla.
 
 `X - Recreate dataspace`
 
