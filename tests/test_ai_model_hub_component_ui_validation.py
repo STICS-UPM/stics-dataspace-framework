@@ -62,10 +62,9 @@ def _build_playwright_results_payload():
 
 
 class AIModelHubComponentUIValidationTests(unittest.TestCase):
-    def test_run_ai_model_hub_ui_validation_is_disabled_by_default(self):
+    def test_run_ai_model_hub_ui_validation_can_be_disabled_explicitly(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch.dict(os.environ, {}, clear=False):
-                os.environ.pop("AI_MODEL_HUB_ENABLE_UI_VALIDATION", None)
+            with mock.patch.dict(os.environ, {"AI_MODEL_HUB_ENABLE_UI_VALIDATION": ""}, clear=False):
                 result = run_ai_model_hub_ui_validation(
                     "http://ai-model-hub.example.local",
                     experiment_dir=tmpdir,

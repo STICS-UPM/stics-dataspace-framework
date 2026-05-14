@@ -13,8 +13,8 @@ from deployers.shared.lib.components import (
 from validation.components.ai_model_hub.component_runner import (
     run_ai_model_hub_component_validation,
 )
-from validation.components.ontology_hub.functional.component_runner import (
-    run_ontology_hub_component_validation as run_ontology_hub_functional_component_validation,
+from validation.components.ontology_hub.component_runner import (
+    run_ontology_hub_component_validation,
 )
 from validation.components.semantic_virtualization.component_runner import (
     run_semantic_virtualization_component_validation,
@@ -52,7 +52,7 @@ def _validation_registration(
 COMPONENT_REGISTRY: dict[str, ComponentValidationRegistration] = {
     "ontology-hub": _validation_registration(
         COMPONENT_CONTRACTS["ontology-hub"],
-        runner=run_ontology_hub_functional_component_validation,
+        runner=run_ontology_hub_component_validation,
     ),
     "ai-model-hub": _validation_registration(
         COMPONENT_CONTRACTS["ai-model-hub"],

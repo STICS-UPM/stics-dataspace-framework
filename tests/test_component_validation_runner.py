@@ -4,8 +4,8 @@ from unittest import mock
 from validation.components.ai_model_hub.component_runner import (
     run_ai_model_hub_component_validation,
 )
-from validation.components.ontology_hub.functional.component_runner import (
-    run_ontology_hub_component_validation as run_ontology_hub_functional_component_validation,
+from validation.components.ontology_hub.component_runner import (
+    run_ontology_hub_component_validation,
 )
 from validation.components.registry import COMPONENT_REGISTRY, get_component_registration
 from validation.components.runner import (
@@ -14,12 +14,20 @@ from validation.components.runner import (
     summarize_component_results,
 )
 
+AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED = {
+    "AI_MODEL_HUB_ENABLE_UI_VALIDATION": "",
+    "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "",
+    "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING": "",
+    "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING": "",
+    "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER": "",
+}
+
 
 class ComponentValidationRunnerTests(unittest.TestCase):
-    def test_ontology_hub_uses_functional_runner_by_default(self):
+    def test_ontology_hub_uses_phased_runner_by_default(self):
         self.assertIs(
             COMPONENT_RUNNERS["ontology-hub"],
-            run_ontology_hub_functional_component_validation,
+            run_ontology_hub_component_validation,
         )
 
     def test_ai_model_hub_uses_component_runner_by_default(self):
@@ -51,11 +59,12 @@ class ComponentValidationRunnerTests(unittest.TestCase):
         self.assertEqual(results[0]["supported_adapters"], [])
 
     def test_ai_model_hub_runs_when_registered_in_common_runner(self):
-        results = run_component_validations(
-            {
-                "ai-model-hub": "http://ai-model-hub.example.local",
-            }
-        )
+        with mock.patch.dict("os.environ", AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED, clear=False):
+            results = run_component_validations(
+                {
+                    "ai-model-hub": "http://ai-model-hub.example.local",
+                }
+            )
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["component"], "ai-model-hub")

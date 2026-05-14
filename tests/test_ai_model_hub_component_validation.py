@@ -12,6 +12,14 @@ from validation.components.ai_model_hub.runner import (
 )
 from validation.components.ai_model_hub.ui_runner import run_ai_model_hub_ui_validation
 
+AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED = {
+    "AI_MODEL_HUB_ENABLE_UI_VALIDATION": "",
+    "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "",
+    "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING": "",
+    "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING": "",
+    "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER": "",
+}
+
 
 class AIModelHubComponentValidationTests(unittest.TestCase):
     def test_evaluate_html_shell_response_passes_on_expected_markers(self):
@@ -102,9 +110,8 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
 
             with (
                 mock.patch("validation.components.ai_model_hub.runner._http_get", side_effect=fake_http_get),
-                mock.patch.dict(os.environ, {}, clear=False),
+                mock.patch.dict(os.environ, AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED, clear=False),
             ):
-                os.environ.pop("AI_MODEL_HUB_ENABLE_UI_VALIDATION", None)
                 result = run_ai_model_hub_component_validation(
                     "http://ai-model-hub.example.local",
                     experiment_dir=tmpdir,
@@ -190,6 +197,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                     "validation.components.ai_model_hub.component_runner.run_ai_model_hub_ui_validation",
                     return_value=ui_result,
                 ),
+                mock.patch.dict(os.environ, AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED, clear=False),
             ):
                 result = run_ai_model_hub_component_validation(
                     "http://ai-model-hub.example.local",
@@ -200,6 +208,9 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertEqual(result["status"], "passed")
             self.assertEqual(result["summary"]["total"], 6)
             self.assertEqual(result["summary"]["passed"], 6)
+            self.assertEqual(result["phase_order"], ["preflight", "functional", "integration"])
+            self.assertIn("bootstrap", result["phases"]["preflight"]["suites"])
+            self.assertIn("ui", result["phases"]["functional"]["suites"])
             self.assertEqual(result["pt5_summary"]["total"], 1)
             self.assertEqual(result["pt5_summary"]["passed"], 1)
             self.assertEqual(result["support_summary"]["total"], 1)
@@ -283,7 +294,13 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                     "validation.components.ai_model_hub.component_runner.run_ai_model_hub_connector_governance_validation",
                     return_value=governance_result,
                 ),
-                mock.patch.dict(os.environ, {"AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "1"}),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        **AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED,
+                        "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "1",
+                    },
+                ),
             ):
                 result = run_ai_model_hub_component_validation(
                     "http://ai-model-hub.example.local",
@@ -293,6 +310,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertEqual(result["summary"]["total"], 6)
             self.assertEqual(result["summary"]["passed"], 6)
             self.assertIn("connector_governance", result["suites"])
+            self.assertIn("connector_governance", result["phases"]["integration"]["suites"])
             self.assertEqual(result["catalog_alignment"]["summary"]["executed_pt5_cases"], 1)
             self.assertEqual(result["pt5_case_results"][0]["traceability"], ["MH-45"])
 
@@ -373,7 +391,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                 mock.patch.dict(
                     os.environ,
                     {
-                        "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "",
+                        **AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED,
                         "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING": "1",
                     },
                 ),
@@ -386,6 +404,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertEqual(result["summary"]["total"], 5)
             self.assertEqual(result["summary"]["passed"], 5)
             self.assertIn("model_benchmarking", result["suites"])
+            self.assertIn("model_benchmarking", result["phases"]["functional"]["suites"])
             self.assertEqual(result["catalog_alignment"]["summary"]["executed_pt5_cases"], 1)
             self.assertEqual(result["pt5_case_results"][0]["traceability"], ["MH-37"])
 
@@ -466,8 +485,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                 mock.patch.dict(
                     os.environ,
                     {
-                        "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "",
-                        "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING": "",
+                        **AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED,
                         "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING": "1",
                     },
                 ),
@@ -567,9 +585,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                 mock.patch.dict(
                     os.environ,
                     {
-                        "AI_MODEL_HUB_ENABLE_CONNECTOR_GOVERNANCE": "",
-                        "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING": "",
-                        "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING": "",
+                        **AI_MODEL_HUB_OPTIONAL_SUITES_DISABLED,
                         "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER": "1",
                     },
                 ),

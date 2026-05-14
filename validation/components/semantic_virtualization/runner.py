@@ -274,6 +274,7 @@ def run_semantic_virtualization_validation(
     checks = [
         (
             "SV-BOOTSTRAP-01",
+            "preflight",
             "Service root availability",
             ROOT_PATH,
             False,
@@ -281,7 +282,17 @@ def run_semantic_virtualization_validation(
             "success",
         ),
         (
+            "SV-API-04",
+            "functional",
+            "Invalid SPARQL query returns a controlled error",
+            CONTROLLED_ERROR_QUERY_PATH,
+            False,
+            {"Accept": "application/sparql-results+json"},
+            "controlled_error",
+        ),
+        (
             "SV-API-01",
+            "integration",
             "API health endpoint availability",
             HEALTH_PATH,
             False,
@@ -290,6 +301,7 @@ def run_semantic_virtualization_validation(
         ),
         (
             "SV-API-02",
+            "integration",
             "API capabilities endpoint availability",
             CAPABILITIES_PATH,
             True,
@@ -298,19 +310,12 @@ def run_semantic_virtualization_validation(
         ),
         (
             "SV-API-03",
+            "integration",
             "SPARQL query endpoint returns results",
             QUERY_PATH,
             False,
             {"Accept": "application/sparql-results+json"},
             "success",
-        ),
-        (
-            "SV-API-04",
-            "Invalid SPARQL query returns a controlled error",
-            CONTROLLED_ERROR_QUERY_PATH,
-            False,
-            {"Accept": "application/sparql-results+json"},
-            "controlled_error",
         ),
     ]
 
@@ -318,7 +323,7 @@ def run_semantic_virtualization_validation(
     artifacts: Dict[str, str] = {}
     executed_cases: List[Dict[str, Any]] = []
 
-    for case_id, description, relative_path, require_json, request_headers, expectation in checks:
+    for case_id, phase, description, relative_path, require_json, request_headers, expectation in checks:
         url = _build_url(normalized_base_url, relative_path)
         http_status, content_type, body_text = _http_get(url, headers=request_headers)
         if expectation == "controlled_error":
@@ -358,6 +363,7 @@ def run_semantic_virtualization_validation(
             response_payload=response_payload,
             assertions=list(evaluation.get("assertions") or []),
         )
+        case_result["source_phase"] = phase
         executed_cases.append(case_result)
 
         if component_dir:
@@ -372,6 +378,16 @@ def run_semantic_virtualization_validation(
     support_checks = [case for case in executed_cases if case.get("case_group") == "support"]
     pt5_summary = _summarize_cases(pt5_case_results)
     support_summary = _summarize_cases(support_checks)
+    phase_order = ["preflight", "functional", "integration"]
+    phases = {}
+    for phase in phase_order:
+        phase_cases = [case for case in executed_cases if case.get("source_phase") == phase]
+        phases[phase] = {
+            "status": "failed" if any(((case.get("evaluation") or {}).get("status") == "failed") for case in phase_cases)
+            else ("passed" if phase_cases else "skipped"),
+            "summary": _summarize_cases(phase_cases),
+            "suites": {"api": {"executed_cases": phase_cases}},
+        }
 
     result: Dict[str, Any] = {
         "component": COMPONENT_KEY,
@@ -380,6 +396,8 @@ def run_semantic_virtualization_validation(
         "timestamp": started_at,
         "status": status,
         "summary": summary,
+        "phase_order": phase_order,
+        "phases": phases,
         "executed_cases": executed_cases,
         "pt5_case_results": pt5_case_results,
         "pt5_cases": pt5_case_results,

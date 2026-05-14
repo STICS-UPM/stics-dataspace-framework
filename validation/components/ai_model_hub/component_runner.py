@@ -229,20 +229,44 @@ def _collect_suite_evidence(suite_result: Dict[str, Any]) -> List[Dict[str, Any]
     return evidence_index
 
 
+def _phase_summary(named_suite_results: List[tuple[str, Dict[str, Any]]]) -> Dict[str, Any]:
+    suite_results = [suite_result for _, suite_result in named_suite_results]
+    combined_status = "skipped"
+    for suite_result in suite_results:
+        combined_status = _combine_status(combined_status, suite_result.get("status", "skipped"))
+    return {
+        "status": combined_status,
+        "summary": {
+            "total": sum(int(suite.get("summary", {}).get("total", 0)) for suite in suite_results),
+            "passed": sum(int(suite.get("summary", {}).get("passed", 0)) for suite in suite_results),
+            "failed": sum(int(suite.get("summary", {}).get("failed", 0)) for suite in suite_results),
+            "skipped": sum(int(suite.get("summary", {}).get("skipped", 0)) for suite in suite_results),
+        },
+        "suites": {name: suite_result for name, suite_result in named_suite_results},
+    }
+
+
+def _suite_enabled(env_name: str, *, default: bool = True) -> bool:
+    raw_value = os.environ.get(env_name)
+    if raw_value is None:
+        return default
+    return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _connector_governance_enabled() -> bool:
-    return (os.environ.get(CONNECTOR_GOVERNANCE_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+    return _suite_enabled(CONNECTOR_GOVERNANCE_ENV)
 
 
 def _model_benchmarking_enabled() -> bool:
-    return (os.environ.get(MODEL_BENCHMARKING_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+    return _suite_enabled(MODEL_BENCHMARKING_ENV)
 
 
 def _mobility_benchmarking_enabled() -> bool:
-    return (os.environ.get(MOBILITY_BENCHMARKING_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+    return _suite_enabled(MOBILITY_BENCHMARKING_ENV)
 
 
 def _model_observer_enabled() -> bool:
-    return (os.environ.get(MODEL_OBSERVER_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+    return _suite_enabled(MODEL_OBSERVER_ENV)
 
 
 def run_ai_model_hub_connector_governance_validation(experiment_dir: str | None = None) -> Dict[str, Any]:
@@ -334,33 +358,36 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
 
     bootstrap_result = run_ai_model_hub_validation(normalized_base_url, experiment_dir=experiment_dir)
     ui_result = run_ai_model_hub_ui_validation(normalized_base_url, experiment_dir=experiment_dir)
-    named_suite_results = [
+    preflight_suite_results = [
         ("bootstrap", bootstrap_result),
+    ]
+    functional_suite_results = [
         ("ui", ui_result),
     ]
+    integration_suite_results: List[tuple[str, Dict[str, Any]]] = []
     if _connector_governance_enabled():
-        named_suite_results.append(
+        integration_suite_results.append(
             (
                 "connector_governance",
                 run_ai_model_hub_connector_governance_validation(experiment_dir=experiment_dir),
             )
         )
     if _model_benchmarking_enabled():
-        named_suite_results.append(
+        functional_suite_results.append(
             (
                 "model_benchmarking",
                 run_ai_model_hub_model_benchmarking_validation(experiment_dir=experiment_dir),
             )
         )
     if _mobility_benchmarking_enabled():
-        named_suite_results.append(
+        functional_suite_results.append(
             (
                 "mobility_benchmarking",
                 run_ai_model_hub_mobility_benchmarking_validation(experiment_dir=experiment_dir),
             )
         )
     if _model_observer_enabled():
-        named_suite_results.append(
+        integration_suite_results.append(
             (
                 "model_observer",
                 run_ai_model_hub_model_observer_validation(
@@ -369,6 +396,7 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
                 ),
             )
         )
+    named_suite_results = preflight_suite_results + functional_suite_results + integration_suite_results
     suite_results = [suite_result for _, suite_result in named_suite_results]
     catalog = _load_catalog()
     catalog_cases_by_id = {
@@ -437,6 +465,11 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
     }
 
     suites = {name: suite_result for name, suite_result in named_suite_results}
+    phases = {
+        "preflight": _phase_summary(preflight_suite_results),
+        "functional": _phase_summary(functional_suite_results),
+        "integration": _phase_summary(integration_suite_results),
+    }
 
     combined_status = "skipped"
     for suite_result in suite_results:
@@ -448,6 +481,8 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
         "timestamp": started_at,
         "status": combined_status,
         "summary": summary,
+        "phase_order": ["preflight", "functional", "integration"],
+        "phases": phases,
         "suites": suites,
         "executed_cases": executed_cases,
         "pt5_case_results": pt5_case_results,

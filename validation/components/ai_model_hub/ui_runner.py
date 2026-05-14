@@ -153,7 +153,10 @@ UI_CASE_METADATA: Dict[str, Dict[str, Any]] = {
 
 
 def _ui_validation_enabled() -> bool:
-    return (os.environ.get(UI_VALIDATION_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+    raw_value = os.environ.get(UI_VALIDATION_ENV)
+    if raw_value is None:
+        return True
+    return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _component_dir(experiment_dir: str | None) -> str | None:

@@ -539,12 +539,12 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
 
     component_dir = _component_dir(experiment_dir)
     if component_dir:
-        report_path = os.path.join(component_dir, "ontology_hub_component_validation.json")
-        pt5_cases_path = os.path.join(component_dir, "ontology_hub_pt5_case_results.json")
-        support_checks_path = os.path.join(component_dir, "ontology_hub_support_checks.json")
-        evidence_index_path = os.path.join(component_dir, "ontology_hub_evidence_index.json")
-        findings_path = os.path.join(component_dir, "ontology_hub_findings.json")
-        catalog_alignment_path = os.path.join(component_dir, "ontology_hub_catalog_alignment.json")
+        report_path = os.path.join(component_dir, "ontology_hub_integration_component_validation.json")
+        pt5_cases_path = os.path.join(component_dir, "ontology_hub_integration_pt5_case_results.json")
+        support_checks_path = os.path.join(component_dir, "ontology_hub_integration_support_checks.json")
+        evidence_index_path = os.path.join(component_dir, "ontology_hub_integration_evidence_index.json")
+        findings_path = os.path.join(component_dir, "ontology_hub_integration_findings.json")
+        catalog_alignment_path = os.path.join(component_dir, "ontology_hub_integration_catalog_alignment.json")
 
         _write_json(pt5_cases_path, {"pt5_case_results": pt5_case_results, "summary": pt5_summary})
         _write_json(support_checks_path, {"support_checks": support_checks, "summary": support_summary})
