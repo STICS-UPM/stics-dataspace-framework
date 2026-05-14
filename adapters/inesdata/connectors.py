@@ -401,16 +401,44 @@ class INESDataConnectorsAdapter:
             return True
         return bool({"create", "update"}.intersection(capability_set)) and "deny" not in capability_set
 
-    def _verify_vault_management_token(self, ds_name=None):
-        deployer_config = self.config_adapter.load_deployer_config() or {}
-        vault_url = str(
-            deployer_config.get("VT_URL") or deployer_config.get("VAULT_URL") or ""
-        ).strip().rstrip("/")
-        vault_token = str(deployer_config.get("VT_TOKEN") or "").strip()
-        if not vault_url or not vault_token:
-            print("Vault token validation failed: VT_URL/VT_TOKEN are not defined in deployer.config")
-            return False
+    @staticmethod
+    def _vault_cluster_service_reference(vault_url):
+        try:
+            parsed = urlparse(vault_url if "://" in vault_url else f"http://{vault_url}")
+            port = parsed.port
+        except ValueError:
+            return None
 
+        hostname = (parsed.hostname or "").strip().lower()
+        parts = hostname.split(".")
+        if len(parts) < 3 or parts[2] != "svc" or not parts[0] or not parts[1]:
+            return None
+
+        if port is None:
+            port = 443 if parsed.scheme == "https" else 80
+
+        return {
+            "scheme": parsed.scheme or "http",
+            "service": parts[0],
+            "namespace": parts[1],
+            "port": port,
+        }
+
+    @staticmethod
+    def _vault_management_token_paths(ds_name):
+        return [
+            "sys/policy/inesdata-preflight-secrets-policy",
+            "auth/token/create",
+            f"secret/data/{ds_name}/inesdata-preflight/public-key",
+        ]
+
+    @staticmethod
+    def _vault_network_failure_message(stage, exc):
+        if stage == "capabilities":
+            return f"Vault token capabilities check failed: Vault is not reachable ({exc})"
+        return f"Vault token validation failed: Vault is not reachable ({exc})"
+
+    def _verify_vault_management_token_over_http(self, vault_url, vault_token, paths):
         headers = {"X-Vault-Token": vault_token}
         try:
             response = requests.get(
@@ -420,8 +448,7 @@ class INESDataConnectorsAdapter:
                 verify=False,
             )
         except requests.RequestException as exc:
-            print(f"Vault token validation failed: Vault is not reachable ({exc})")
-            return False
+            return False, {"stage": "lookup", "exception": exc}
 
         if response.status_code != 200:
             print(
@@ -430,14 +457,8 @@ class INESDataConnectorsAdapter:
                 "for the running Vault. Recreate Level 2 common services or restore the "
                 "current Vault root token before deploying INESData connectors."
             )
-            return False
+            return False, None
 
-        ds_name = ds_name or self._dataspace_name()
-        paths = [
-            "sys/policy/inesdata-preflight-secrets-policy",
-            "auth/token/create",
-            f"secret/data/{ds_name}/inesdata-preflight/public-key",
-        ]
         try:
             response = requests.post(
                 f"{vault_url}/v1/sys/capabilities-self",
@@ -447,8 +468,7 @@ class INESDataConnectorsAdapter:
                 verify=False,
             )
         except requests.RequestException as exc:
-            print(f"Vault token capabilities check failed: Vault is not reachable ({exc})")
-            return False
+            return False, {"stage": "capabilities", "exception": exc}
 
         if response.status_code != 200:
             print(
@@ -456,13 +476,13 @@ class INESDataConnectorsAdapter:
                 f"HTTP {response.status_code}. INESData connector bootstrap requires policy, "
                 "token and secret creation permissions."
             )
-            return False
+            return False, None
 
         try:
             capabilities_payload = response.json()
         except ValueError:
             print("Vault token capabilities check failed: Vault returned an invalid JSON response")
-            return False
+            return False, None
 
         for path in paths:
             capabilities = capabilities_payload.get(path)
@@ -474,9 +494,85 @@ class INESDataConnectorsAdapter:
                     f"permissions for '{path}'. Recreate Level 2 common services or restore "
                     "the current Vault root token before deploying INESData connectors."
                 )
-                return False
+                return False, None
 
-        return True
+        return True, None
+
+    def _verify_vault_management_token_via_port_forward(self, vault_url, vault_token, paths):
+        service_ref = self._vault_cluster_service_reference(vault_url)
+        if not service_ref:
+            return False
+
+        port_forward = self._open_temporary_port_forward(
+            service_ref["namespace"],
+            service_ref["service"],
+            remote_port=service_ref["port"],
+        )
+        if not port_forward:
+            print(
+                "Vault token validation fallback failed: could not open a temporary "
+                f"port-forward to {service_ref['service']} in namespace {service_ref['namespace']}."
+            )
+            return False
+
+        local_url = f"{service_ref['scheme']}://127.0.0.1:{port_forward['local_port']}"
+        print(
+            "Vault is exposed through Kubernetes DNS; retrying token validation through "
+            "a temporary local port-forward."
+        )
+        try:
+            validated, network_failure = self._verify_vault_management_token_over_http(
+                local_url,
+                vault_token,
+                paths,
+            )
+            if network_failure:
+                print(
+                    self._vault_network_failure_message(
+                        network_failure["stage"],
+                        network_failure["exception"],
+                    )
+                )
+            return validated
+        finally:
+            self._close_temporary_port_forward(port_forward)
+
+    def _verify_vault_management_token(self, ds_name=None):
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        vault_url = str(
+            deployer_config.get("VT_URL") or deployer_config.get("VAULT_URL") or ""
+        ).strip().rstrip("/")
+        vault_token = str(deployer_config.get("VT_TOKEN") or "").strip()
+        if not vault_url or not vault_token:
+            print("Vault token validation failed: VT_URL/VT_TOKEN are not defined in deployer.config")
+            return False
+
+        ds_name = ds_name or self._dataspace_name()
+        paths = self._vault_management_token_paths(ds_name)
+        validated, network_failure = self._verify_vault_management_token_over_http(
+            vault_url,
+            vault_token,
+            paths,
+        )
+        if validated:
+            return True
+
+        if network_failure:
+            if (
+                self._should_attempt_local_fallback(network_failure["exception"])
+                and self._vault_cluster_service_reference(vault_url)
+                and self._verify_vault_management_token_via_port_forward(vault_url, vault_token, paths)
+            ):
+                return True
+            print(
+                self._vault_network_failure_message(
+                    network_failure["stage"],
+                    network_failure["exception"],
+                )
+            )
+            return False
+
+        return False
 
     def _prepare_vault_management_access(self, ds_name=None):
         if self._vault_management_token_verified:

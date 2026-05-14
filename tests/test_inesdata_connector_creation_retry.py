@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+import requests
 import yaml
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -1234,6 +1235,95 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                 return_value=mock.Mock(status_code=200, json=lambda: capabilities),
             ):
                 self.assertTrue(adapter._verify_vault_management_token(ds_name="demo"))
+
+    def test_vault_management_preflight_uses_port_forward_for_cluster_service_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+
+            class ConfigAdapterWithVault(ConnectorRetryConfigAdapter):
+                def __init__(self, root):
+                    super().__init__(root)
+                    self.topology = "vm-single"
+
+                def load_deployer_config(self):
+                    values = super().load_deployer_config()
+                    values.update(
+                        {
+                            "VT_URL": "http://common-srvs-vault.common-srvs.svc:8200",
+                            "VT_TOKEN": "root-token",
+                        }
+                    )
+                    return values
+
+            class Infra:
+                def __init__(self):
+                    self.calls = []
+                    self.stops = []
+
+                def port_forward_service(self, *args, **kwargs):
+                    self.calls.append((args, kwargs))
+                    return True
+
+                def stop_port_forward_service(self, *args, **kwargs):
+                    self.stops.append((args, kwargs))
+                    return True
+
+            infra = Infra()
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "common-srvs-vault-0 1/1 Running 0 1m",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=infra,
+                config_adapter=ConfigAdapterWithVault(tmpdir),
+                config_cls=config,
+            )
+
+            capabilities = {
+                "sys/policy/inesdata-preflight-secrets-policy": ["root"],
+                "auth/token/create": ["root"],
+                "secret/data/demo/inesdata-preflight/public-key": ["root"],
+            }
+            get_responses = iter(
+                [
+                    requests.ConnectionError("Name or service not known"),
+                    mock.Mock(status_code=200),
+                ]
+            )
+
+            def fake_get(*_args, **_kwargs):
+                response = next(get_responses)
+                if isinstance(response, Exception):
+                    raise response
+                return response
+
+            with (
+                mock.patch.object(adapter, "_reserve_local_port", return_value=19082),
+                mock.patch("adapters.inesdata.connectors.requests.get", side_effect=fake_get),
+                mock.patch(
+                    "adapters.inesdata.connectors.requests.post",
+                    return_value=mock.Mock(status_code=200, json=lambda: capabilities),
+                ),
+            ):
+                self.assertTrue(adapter._verify_vault_management_token(ds_name="demo"))
+
+            self.assertEqual(
+                infra.calls,
+                [
+                    (
+                        ("common-srvs", "common-srvs-vault", 19082, 8200),
+                        {"quiet": True},
+                    )
+                ],
+            )
+            self.assertEqual(
+                infra.stops,
+                [
+                    (
+                        ("common-srvs", "common-srvs-vault"),
+                        {"quiet": True},
+                    )
+                ],
+            )
 
     def test_prepare_vault_management_access_skips_local_infra_check_outside_local_topology(self):
         with tempfile.TemporaryDirectory() as tmpdir:
