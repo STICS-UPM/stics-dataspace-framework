@@ -1396,6 +1396,125 @@ minio:
             include_public_portal=True,
         )
 
+    def test_deploy_dataspace_for_vm_single_k3s_prepulls_level3_images_before_helm(self):
+        config = LevelOutputPublicPortalConfig(self.tmpdir.name)
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "CLUSTER_TYPE": "k3s",
+                "VM_SINGLE_IP": "192.168.122.134",
+                "DS_1_NAME": "demo",
+                "DS_1_CONNECTORS": "citycouncil",
+            }
+        )
+        infrastructure = INESDataInfrastructureAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            config_adapter=self.config_adapter,
+            config_cls=config,
+        )
+        deployment = INESDataDeploymentAdapter(
+            run=mock.Mock(return_value=object()),
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=infrastructure,
+            config_adapter=self.config_adapter,
+            config_cls=config,
+        )
+        deployment.connectors_adapter = FakeConnectorsAdapter()
+        infrastructure.ensure_local_infra_access = mock.Mock(return_value=True)
+        infrastructure.ensure_vault_unsealed = lambda: True
+        infrastructure.reconcile_vault_state_for_local_runtime = mock.Mock(return_value=True)
+        infrastructure.sync_common_credentials_from_kubernetes = mock.Mock(return_value=True)
+        infrastructure.wait_for_dataspace_level3_pods = mock.Mock(return_value=True)
+        infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
+        deployment.wait_for_keycloak_admin_ready = lambda *_args, **_kwargs: True
+        deployment.restart_registration_service = lambda: None
+        deployment.update_helm_values_with_host_aliases = mock.Mock()
+
+        with open(config.registration_values_file(), "w", encoding="utf-8") as handle:
+            handle.write(
+                "registration:\n"
+                "  image:\n"
+                "    name: ghcr.io/example/registration-service\n"
+                "    tag: 1.0.0\n"
+            )
+        with open(config.public_portal_values_file(), "w", encoding="utf-8") as handle:
+            handle.write(
+                "dataspace:\n"
+                "  name: demo\n"
+                "backend:\n"
+                "  image:\n"
+                "    name: ghcr.io/example/public-portal-backend\n"
+                "    tag: 2.0.0\n"
+                "  catalog:\n"
+                "    connector: http://CHANGEME-conn-NAME-demo:19193\n"
+                "  vocabularies:\n"
+                "    connector: http://CHANGEME-conn-NAME-demo:19196\n"
+                "frontend:\n"
+                "  image:\n"
+                "    name: ghcr.io/example/public-portal-frontend\n"
+                "    tag: 3.0.0\n"
+            )
+
+        pulled_images = []
+
+        def subprocess_run(command, *_args, **kwargs):
+            if command[:5] == ["sudo", "-n", "k3s", "crictl", "pull"]:
+                pulled_images.append((command[5], kwargs.get("timeout")))
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        def deploy_helm_release(release, *_args, **_kwargs):
+            if release == "registration-service":
+                self.assertIn(("ghcr.io/example/registration-service:1.0.0", 123), pulled_images)
+            if release == "public-portal":
+                self.assertIn(("ghcr.io/example/public-portal-backend:2.0.0", 123), pulled_images)
+                self.assertIn(("ghcr.io/example/public-portal-frontend:3.0.0", 123), pulled_images)
+            return True
+
+        infrastructure.deploy_helm_release = mock.Mock(side_effect=deploy_helm_release)
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), mock.patch.dict(
+            os.environ,
+            {"PIONERA_K3S_IMAGE_PULL_TIMEOUT": "123"},
+        ), mock.patch(
+            "adapters.inesdata.deployment.ensure_python_requirements",
+            lambda *_args, **_kwargs: None,
+        ), mock.patch(
+            "adapters.inesdata.deployment.requests.get",
+            return_value=mock.Mock(status_code=200),
+        ), mock.patch(
+            "adapters.shared.deployment.subprocess.run",
+            side_effect=subprocess_run,
+        ):
+            deployment.deploy_dataspace_for_topology("vm-single")
+
+        self.assertEqual(
+            pulled_images,
+            [
+                ("ghcr.io/example/registration-service:1.0.0", 123),
+                ("ghcr.io/example/public-portal-backend:2.0.0", 123),
+                ("ghcr.io/example/public-portal-frontend:3.0.0", 123),
+            ],
+        )
+        self.assertIn("Preparing Level 3 container images for k3s before Helm deployment", output.getvalue())
+        infrastructure.deploy_helm_release.assert_has_calls([
+            mock.call(
+                "registration-service",
+                "demo-core-ns",
+                config.registration_values_file(),
+                cwd=config.registration_service_dir(),
+            ),
+            mock.call(
+                "public-portal",
+                "demo-core-ns",
+                config.public_portal_values_file(),
+                cwd=config.public_portal_dir(),
+                timeout_seconds=300,
+            ),
+        ])
+
     def test_update_registration_host_aliases_uses_vm_single_k3s_ingress_ip(self):
         self.config_adapter = LevelOutputConfigAdapter(
             {

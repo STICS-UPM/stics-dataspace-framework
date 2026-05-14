@@ -7,4 +7,4 @@ DS_1_CONSUMER_NAMESPACE=consumer
 COMMON_SERVICES_NAMESPACE=common-srvs
 COMPONENTS_NAMESPACE=components
 DS_1_CONNECTORS=citycouncil,company
-COMPONENTS=ontology-hub,ai-model-hub
+COMPONENTS=ontology-hub,ai-model-hub,semantic-virtualization

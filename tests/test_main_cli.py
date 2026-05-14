@@ -928,7 +928,7 @@ class InesdataPortalReadinessTests(unittest.TestCase):
             "http://auth.dev.ed.dataspaceunit.upm/realms/demo/protocol/openid-connect/token",
         )
 
-    def test_probe_inesdata_portal_readiness_uses_planned_role_namespaces_in_role_aligned(self):
+    def test_probe_inesdata_portal_readiness_uses_runtime_role_namespaces_in_role_aligned(self):
         context = self._role_aligned_context()
 
         def fake_http_get(url, **kwargs):
@@ -964,15 +964,15 @@ class InesdataPortalReadinessTests(unittest.TestCase):
         self.assertEqual(
             readiness["connector_namespaces"],
             {
-                "conn-citycouncil-demo": "demo-provider",
-                "conn-company-demo": "demo-consumer",
+                "conn-citycouncil-demo": "demo",
+                "conn-company-demo": "demo",
             },
         )
         self.assertEqual(
             endpoint_calls,
             [
-                ("demo-provider", "conn-citycouncil-demo-interface"),
-                ("demo-consumer", "conn-company-demo-interface"),
+                ("demo", "conn-citycouncil-demo-interface"),
+                ("demo", "conn-company-demo-interface"),
             ],
         )
 
@@ -1665,6 +1665,45 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(updates["K3S_INGRESS_SERVICE_TYPE"], "LoadBalancer")
         self.assertEqual(updates["K3S_SERVICE_NAME"], "k3s")
 
+    def test_vm_single_runtime_switch_plan_deletes_active_minikube_before_k3s(self):
+        with mock.patch.object(main, "_vm_single_minikube_active", return_value=True):
+            plan = main._build_vm_single_cluster_runtime_switch_plan("k3s", previous_runtime="minikube")
+
+        self.assertEqual(plan["status"], "planned")
+        self.assertEqual(plan["detected_runtime"], "minikube")
+        self.assertEqual(plan["cleanup_command"], ["minikube", "delete", "-p", "minikube"])
+        self.assertEqual(plan["confirmation_token"], "SWITCH VM-SINGLE TO K3S")
+
+    def test_vm_single_runtime_switch_plan_stops_active_k3s_before_minikube(self):
+        with mock.patch.object(main, "_vm_single_k3s_active", return_value=True):
+            plan = main._build_vm_single_cluster_runtime_switch_plan("minikube", previous_runtime="k3s")
+
+        self.assertEqual(plan["status"], "planned")
+        self.assertEqual(plan["detected_runtime"], "k3s")
+        self.assertEqual(plan["cleanup_command"], ["sudo", "-n", "systemctl", "stop", "k3s"])
+        self.assertEqual(plan["manual_cleanup"], "sudo systemctl stop k3s")
+
+    def test_vm_single_runtime_switch_decline_blocks_menu_switch(self):
+        plan = {
+            "status": "planned",
+            "target_runtime": "k3s",
+            "detected_runtime": "minikube",
+            "cleanup_command": ["minikube", "delete", "-p", "minikube"],
+            "confirmation_token": "SWITCH VM-SINGLE TO K3S",
+        }
+
+        stdout = io.StringIO()
+        with mock.patch.object(main, "_build_vm_single_cluster_runtime_switch_plan", return_value=plan), mock.patch.object(
+            sys.stdin,
+            "isatty",
+            return_value=False,
+        ), contextlib.redirect_stdout(stdout):
+            result = main._try_vm_single_cluster_runtime_switch("k3s", previous_runtime="minikube")
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["status"], "declined")
+        self.assertIn("Cluster runtime switch cancelled", stdout.getvalue())
+
     def test_vm_single_k3s_persist_replaces_generic_user_kubeconfig(self):
         updates = main._cluster_runtime_config_updates(
             "k3s",
@@ -1893,6 +1932,10 @@ class MainCliTests(unittest.TestCase):
     def test_menu_can_preselect_topology_with_shortcut_t(self):
         stdout = io.StringIO()
         with mock.patch("builtins.input", side_effect=["T", "2", "1", "N", "Q"]), mock.patch.object(
+            main,
+            "_try_vm_single_cluster_runtime_switch",
+            return_value={"allowed": True, "status": "skipped"},
+        ), mock.patch.object(
             main,
             "_interactive_offer_vm_single_address_configuration",
             return_value=True,
@@ -4846,6 +4889,36 @@ class MainCliTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "completed")
         adapter.infrastructure.ensure_local_infra_access.assert_not_called()
+        cleanup_runner.assert_called_once()
+
+    def test_test_data_cleanup_requires_local_infra_access_for_vm_single_loopback_endpoints(self):
+        adapter = FakeAdapterWithInfrastructure()
+        adapter.infrastructure = types.SimpleNamespace(
+            ensure_local_infra_access=mock.Mock(return_value=True)
+        )
+
+        with mock.patch.object(
+            main,
+            "run_pre_validation_cleanup",
+            return_value={"status": "completed", "summary": {"deleted_total": 1}},
+        ) as cleanup_runner, mock.patch.dict(
+            os.environ,
+            {"PIONERA_TEST_DATA_CLEANUP": "true"},
+            clear=False,
+        ):
+            result = main._run_test_data_cleanup_if_enabled(
+                adapter,
+                ["conn-a", "conn-b"],
+                {
+                    "topology": "vm-single",
+                    "dataspace_name": "fake-ds",
+                    "config": {"MINIO_ENDPOINT": "http://127.0.0.1:9000"},
+                },
+                "/tmp/cleanup-vm-single",
+            )
+
+        self.assertEqual(result["status"], "completed")
+        adapter.infrastructure.ensure_local_infra_access.assert_called_once()
         cleanup_runner.assert_called_once()
 
     def test_level6_public_endpoint_preflight_builds_dataspace_and_connector_urls(self):

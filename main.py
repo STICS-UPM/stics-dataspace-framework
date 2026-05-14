@@ -626,6 +626,112 @@ def _try_local_adapter_switch(payload, target_adapter):
     return _execute_local_adapter_switch_plan(plan)
 
 
+def _vm_single_cluster_switch_confirmation_token(target_runtime):
+    normalized = str(target_runtime or "").strip().upper()
+    return f"SWITCH VM-SINGLE TO {normalized}" if normalized else "SWITCH VM-SINGLE RUNTIME"
+
+
+def _vm_single_minikube_active(profile="minikube"):
+    result = _run_switch_command(["minikube", "status", "-p", str(profile or "minikube")])
+    output = f"{result.stdout}\n{result.stderr}".lower()
+    return result.returncode == 0 and (
+        "host: running" in output
+        or "kubelet: running" in output
+        or "apiserver: running" in output
+    )
+
+
+def _vm_single_k3s_active(service_name="k3s"):
+    result = _run_switch_command(["systemctl", "is-active", str(service_name or "k3s")])
+    return result.returncode == 0 and str(result.stdout or "").strip() == "active"
+
+
+def _build_vm_single_cluster_runtime_switch_plan(target_runtime, previous_runtime=None):
+    target = normalize_cluster_type(target_runtime, topology="vm-single")
+    previous = normalize_cluster_type(previous_runtime, topology="vm-single") if previous_runtime else None
+    if previous == target:
+        return {"status": "skipped", "reason": "runtime-unchanged", "target_runtime": target}
+
+    if target == "k3s" and _vm_single_minikube_active():
+        return {
+            "status": "planned",
+            "target_runtime": target,
+            "detected_runtime": "minikube",
+            "cleanup_action": "delete-minikube-profile",
+            "cleanup_command": ["minikube", "delete", "-p", "minikube"],
+            "confirmation_token": _vm_single_cluster_switch_confirmation_token(target),
+        }
+
+    if target == "minikube" and _vm_single_k3s_active():
+        return {
+            "status": "planned",
+            "target_runtime": target,
+            "detected_runtime": "k3s",
+            "cleanup_action": "stop-k3s-service",
+            "cleanup_command": ["sudo", "-n", "systemctl", "stop", "k3s"],
+            "manual_cleanup": "sudo systemctl stop k3s",
+            "confirmation_token": _vm_single_cluster_switch_confirmation_token(target),
+        }
+
+    return {"status": "skipped", "reason": "no-active-other-runtime", "target_runtime": target}
+
+
+def _print_vm_single_cluster_runtime_switch_plan(plan):
+    print()
+    print("VM-SINGLE CLUSTER RUNTIME SWITCH REQUIRED")
+    print(f"Target runtime: {plan.get('target_runtime')}")
+    print(f"Detected active runtime: {plan.get('detected_runtime')}")
+    command = " ".join(plan.get("cleanup_command") or [])
+    if command:
+        print(f"Cleanup command: {command}")
+    manual_cleanup = str(plan.get("manual_cleanup") or "").strip()
+    if manual_cleanup:
+        print(f"Manual cleanup if sudo is unavailable: {manual_cleanup}")
+    print("Only one vm-single cluster runtime should be active on this VM.")
+    print("This avoids resource contention and accidental kubectl/KUBECONFIG drift.")
+
+
+def _vm_single_cluster_runtime_switch_approved(plan, env=None):
+    env = env if env is not None else os.environ
+    token = str(plan.get("confirmation_token") or "").strip()
+    provided = str(env.get("PIONERA_VM_SINGLE_CLUSTER_SWITCH_CONFIRM") or "").strip()
+    if token and provided == token:
+        return True
+
+    if not bool(getattr(sys.stdin, "isatty", lambda: False)()):
+        return False
+
+    _print_vm_single_cluster_runtime_switch_plan(plan)
+    print()
+    print("This will stop or remove the previously active vm-single cluster runtime.")
+    answer = _interactive_read(f"Type {token} to continue: ")
+    return bool(token and answer == token)
+
+
+def _execute_vm_single_cluster_runtime_switch_plan(plan):
+    command = list(plan.get("cleanup_command") or [])
+    if not command:
+        return {**plan, "status": "skipped", "reason": "missing-cleanup-command"}
+
+    result = _run_switch_command(command)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip() or f"command exited with {result.returncode}"
+        raise RuntimeError(f"Could not switch vm-single cluster runtime. Root cause: {detail}")
+    return {**plan, "status": "completed"}
+
+
+def _try_vm_single_cluster_runtime_switch(target_runtime, previous_runtime=None):
+    plan = _build_vm_single_cluster_runtime_switch_plan(target_runtime, previous_runtime=previous_runtime)
+    if plan.get("status") != "planned":
+        return {**plan, "allowed": True}
+    if not _vm_single_cluster_runtime_switch_approved(plan):
+        _print_vm_single_cluster_runtime_switch_plan(plan)
+        print("Cluster runtime switch cancelled. Cleanup the previous runtime before switching.")
+        return {**plan, "status": "declined", "allowed": False}
+    result = _execute_vm_single_cluster_runtime_switch_plan(plan)
+    return {**result, "allowed": True}
+
+
 def _local_capacity_install_failure_message(payload, deployer_name, level_id):
     issues = list(payload.get("blocking_issues") or []) if isinstance(payload, dict) else []
     details = []
@@ -1049,19 +1155,6 @@ def _inesdata_interface_connector_namespaces(deployer_context):
         "consumer_namespace",
         provider_namespace,
     ) or provider_namespace
-
-    if _context_namespace_profile(deployer_context) == "role-aligned":
-        planned_roles = getattr(deployer_context, "planned_namespace_roles", None)
-        provider_namespace = _namespace_role_value(
-            planned_roles,
-            "provider_namespace",
-            provider_namespace,
-        ) or provider_namespace
-        consumer_namespace = _namespace_role_value(
-            planned_roles,
-            "consumer_namespace",
-            consumer_namespace,
-        ) or consumer_namespace
 
     connector_namespaces = {connectors[0]: provider_namespace}
     if len(connectors) >= 2:
@@ -3168,6 +3261,40 @@ def _should_write_test_data_cleanup_report():
     return _env_flag("PIONERA_TEST_DATA_CLEANUP_REPORT", default=True)
 
 
+def _is_loopback_endpoint(value):
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return False
+    if raw_value in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    parsed = urllib.parse.urlparse(raw_value if "://" in raw_value else f"//{raw_value}")
+    host = str(parsed.hostname or raw_value).strip().lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def _test_data_cleanup_requires_local_infra_access(deployer_context):
+    context_topology = normalize_topology(
+        deployer_context.get("topology") if isinstance(deployer_context, dict) else getattr(deployer_context, "topology", None)
+    )
+    if context_topology == LOCAL_TOPOLOGY:
+        return True
+
+    config = (
+        deployer_context.get("config", {}) if isinstance(deployer_context, dict)
+        else getattr(deployer_context, "config", {})
+    )
+    if not isinstance(config, dict):
+        return False
+
+    endpoint_values = [
+        config.get("PG_HOST"),
+        config.get("MINIO_ENDPOINT"),
+        config.get("VT_URL"),
+        config.get("VAULT_URL"),
+    ]
+    return any(_is_loopback_endpoint(value) for value in endpoint_values)
+
+
 def _append_public_endpoint(endpoints, seen, label, url):
     normalized_url = normalize_public_endpoint_url(url)
     if not normalized_url or normalized_url in seen:
@@ -3336,12 +3463,13 @@ def _run_test_data_cleanup_if_enabled(adapter, connectors, deployer_context, exp
             "reason": "missing-deployer-context",
         }
 
-    context_topology = normalize_topology(
-        deployer_context.get("topology") if isinstance(deployer_context, dict) else getattr(deployer_context, "topology", None)
-    )
     infrastructure = getattr(adapter, "infrastructure", None)
     ensure_local_access = getattr(infrastructure, "ensure_local_infra_access", None)
-    if context_topology == LOCAL_TOPOLOGY and callable(ensure_local_access) and not ensure_local_access():
+    if (
+        callable(ensure_local_access)
+        and _test_data_cleanup_requires_local_infra_access(deployer_context)
+        and not ensure_local_access()
+    ):
         raise RuntimeError(
             "Pre-validation test data cleanup failed. Local infrastructure access is not ready."
         )
@@ -7955,6 +8083,12 @@ def run_interactive_menu(
                 if normalize_topology(topology) == "vm-single":
                     previous_runtime = _interactive_cluster_runtime_label(topology)
                     selected_runtime = _select_cluster_runtime_interactive(topology=topology)
+                    switch_result = _try_vm_single_cluster_runtime_switch(
+                        selected_runtime,
+                        previous_runtime=previous_runtime,
+                    )
+                    if not switch_result.get("allowed"):
+                        return {"status": "exited", "adapter": current_adapter, "topology": topology}
                     _set_session_cluster_runtime_override(selected_runtime)
                     _offer_persist_vm_single_cluster_runtime(selected_runtime, previous_runtime=previous_runtime)
                     _interactive_offer_vm_single_address_configuration(required=False)
@@ -7993,6 +8127,12 @@ def run_interactive_menu(
                         if normalize_topology(topology) == "vm-single":
                             previous_runtime = _interactive_cluster_runtime_label(topology)
                             selected_runtime = _select_cluster_runtime_interactive(topology=topology)
+                            switch_result = _try_vm_single_cluster_runtime_switch(
+                                selected_runtime,
+                                previous_runtime=previous_runtime,
+                            )
+                            if not switch_result.get("allowed"):
+                                continue
                             _set_session_cluster_runtime_override(selected_runtime)
                             _offer_persist_vm_single_cluster_runtime(selected_runtime, previous_runtime=previous_runtime)
                             _interactive_offer_vm_single_address_configuration(required=False)
@@ -8004,6 +8144,12 @@ def run_interactive_menu(
                         topology=topology,
                     )
                     if normalize_topology(topology) == "vm-single":
+                        switch_result = _try_vm_single_cluster_runtime_switch(
+                            selected_runtime,
+                            previous_runtime=previous_runtime,
+                        )
+                        if not switch_result.get("allowed"):
+                            continue
                         _set_session_cluster_runtime_override(selected_runtime)
                         _offer_persist_vm_single_cluster_runtime(selected_runtime, previous_runtime=previous_runtime)
                     continue

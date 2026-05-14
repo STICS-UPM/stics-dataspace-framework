@@ -263,6 +263,119 @@ class SharedDataspaceDeploymentAdapter:
                 return runtime
         return build_cluster_runtime(self._deployer_config(), topology=topology)
 
+    @staticmethod
+    def _env_flag_enabled(name, default=True):
+        raw_value = str(os.environ.get(name, "")).strip().lower()
+        if not raw_value:
+            return default
+        return raw_value not in {"0", "false", "no", "off", "disabled"}
+
+    @staticmethod
+    def _k3s_image_pull_timeout_seconds():
+        raw_value = str(os.environ.get("PIONERA_K3S_IMAGE_PULL_TIMEOUT", "1800")).strip()
+        try:
+            timeout = int(raw_value)
+        except ValueError:
+            timeout = 1800
+        return max(timeout, 60)
+
+    def _should_prepull_level3_images(self, topology):
+        normalized_topology = normalize_topology(topology)
+        if normalized_topology != VM_SINGLE_TOPOLOGY:
+            return False
+        if not self._env_flag_enabled("PIONERA_K3S_LEVEL3_IMAGE_PREPULL", default=True):
+            return False
+        cluster_type = str(
+            self._cluster_runtime(normalized_topology).get("cluster_type") or "minikube"
+        ).strip().lower()
+        return cluster_type == "k3s"
+
+    @staticmethod
+    def _nested_dict_value(values, path):
+        current = values
+        for key in path:
+            if not isinstance(current, dict):
+                return None
+            current = current.get(key)
+        return current
+
+    @classmethod
+    def _image_reference_from_values(cls, values, image_path):
+        image_values = cls._nested_dict_value(values, image_path)
+        if not isinstance(image_values, dict):
+            return ""
+        image_name = str(image_values.get("name") or "").strip()
+        image_tag = str(image_values.get("tag") or "").strip()
+        if not image_name:
+            return ""
+        if not image_tag:
+            return image_name
+        return f"{image_name}:{image_tag}"
+
+    @classmethod
+    def _level3_image_references_from_values_file(cls, values_file):
+        try:
+            with open(values_file, encoding="utf-8") as handle:
+                values = yaml.safe_load(handle) or {}
+        except OSError as exc:
+            raise RuntimeError(f"Could not read Level 3 values file '{values_file}': {exc}") from exc
+        except yaml.YAMLError as exc:
+            raise RuntimeError(f"Could not parse Level 3 values file '{values_file}': {exc}") from exc
+
+        image_paths = [
+            ("registration", "image"),
+            ("backend", "image"),
+            ("frontend", "image"),
+        ]
+        images = []
+        for image_path in image_paths:
+            image = cls._image_reference_from_values(values, image_path)
+            if image and image not in images:
+                images.append(image)
+        return images
+
+    def _prepull_k3s_image(self, image, timeout_seconds):
+        print(f"Pre-pulling Level 3 image into k3s: {image}")
+        try:
+            result = subprocess.run(
+                ["sudo", "-n", "k3s", "crictl", "pull", image],
+                text=True,
+                capture_output=True,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Timed out after {timeout_seconds}s while pre-pulling Level 3 image '{image}' into k3s. "
+                "Check registry connectivity, image availability, and node disk space."
+            ) from exc
+
+        if result.returncode != 0:
+            root_cause = (result.stderr or result.stdout or "").strip() or f"crictl exited with code {result.returncode}"
+            self._fail(
+                f"Could not pre-pull Level 3 image '{image}' into k3s",
+                root_cause=root_cause,
+            )
+
+    def _prepull_level3_k3s_images_if_needed(self, topology, values_files):
+        if not self._should_prepull_level3_images(topology):
+            return
+
+        images = []
+        for values_file in values_files:
+            for image in self._level3_image_references_from_values_file(values_file):
+                if image not in images:
+                    images.append(image)
+
+        if not images:
+            print("No Level 3 images were found in Helm values; skipping k3s image pre-pull.")
+            return
+
+        timeout_seconds = self._k3s_image_pull_timeout_seconds()
+        print("\nPreparing Level 3 container images for k3s before Helm deployment...")
+        for image in images:
+            self._prepull_k3s_image(image, timeout_seconds)
+        print("Level 3 k3s image pre-pull completed.")
+
     def _host_alias_ip_for_topology(self, topology):
         normalized_topology = normalize_topology(topology)
         cluster_type = str(self._cluster_runtime(normalized_topology).get("cluster_type") or "minikube").strip().lower()
@@ -478,6 +591,8 @@ class SharedDataspaceDeploymentAdapter:
         chart_dir = chart_dir_getter()
         if not os.path.exists(chart_dir):
             self._fail("Public portal chart directory not found", root_cause=chart_dir)
+
+        self._prepull_level3_k3s_images_if_needed(topology, [values_file])
 
         print("\nDeploying public portal...")
         if not self.infrastructure.deploy_helm_release(
@@ -824,6 +939,8 @@ class SharedDataspaceDeploymentAdapter:
 
         if update_minikube_host_aliases:
             self.update_helm_values_with_host_aliases(values_file, topology=normalized_topology)
+
+        self._prepull_level3_k3s_images_if_needed(normalized_topology, [values_file])
 
         print("\nDeploying registration-service...")
         if not self.infrastructure.deploy_helm_release(
