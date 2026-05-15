@@ -658,7 +658,9 @@ El benchmark standalone puede generar `kafka_metrics.json` y mide el broker
 Kafka, no el flujo E2E del dataspace. Además, `Level 6` puede ejecutar la
 validación funcional EDC+Kafka después de Newman para adapters compatibles y
 generar `kafka_transfer_results.json`. Esa suite está desactivada por defecto
-para ahorrar tiempo; actívala con `PIONERA_LEVEL6_RUN_KAFKA=true`.
+para ahorrar tiempo. En ejecuciones interactivas, `Level 6` pregunta
+`Run Kafka validation suites too?`; en ejecuciones no interactivas, usa
+`PIONERA_LEVEL6_RUN_KAFKA=true`.
 
 En local, esa validación usa por defecto un broker Kafka temporal dentro de
 Kubernetes. Los conectores acceden al broker por DNS de cluster y el proceso

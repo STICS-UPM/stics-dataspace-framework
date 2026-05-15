@@ -139,10 +139,13 @@ La limpieza debe ser segura por defecto y reportar qué eliminó o qué omitió.
 
 La validación funcional EDC+Kafka no es el mismo flujo que el benchmark opcional
 de broker. En `Level 6`, está desactivada por defecto para ahorrar tiempo en
-validaciones rutinarias. Cuando se activa con `PIONERA_LEVEL6_RUN_KAFKA=true`,
-se ejecuta después de Newman para los adapters compatibles y valida el recorrido
-`asset -> catálogo -> negociación -> transferencia Kafka -> consumo del topic
-destino`.
+validaciones rutinarias. En ejecuciones interactivas, `Level 6` pregunta
+`Run Kafka validation suites too?` como primera acción visible antes de lanzar
+Newman, para poder preparar Kafka en paralelo cuando el modo lo permite.
+En ejecuciones no interactivas, se activa con `PIONERA_LEVEL6_RUN_KAFKA=true`.
+Cuando está activa, se ejecuta después de Newman para los adapters compatibles
+y valida el recorrido `asset -> catálogo -> negociación -> transferencia Kafka
+-> consumo del topic destino`.
 
 En modo `fast`, la preparación del broker Kafka puede empezar al inicio de
 `Level 6` mientras Newman sigue ejecutándose en primer plano. En modo `stable`

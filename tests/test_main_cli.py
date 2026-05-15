@@ -134,8 +134,79 @@ class KafkaTransferConsoleOutputTests(unittest.TestCase):
         save_results.assert_called_once()
         output = stdout.getvalue()
         self.assertIn("disabled by default in Level 6", output)
+        self.assertIn("answer yes when prompted", output)
         self.assertIn("PIONERA_LEVEL6_RUN_KAFKA=true", output)
         self.assertIn("unset it or set PIONERA_LEVEL6_SKIP_KAFKA=false", output)
+
+    def test_level6_kafka_prompt_enables_suite_when_user_confirms(self):
+        class KafkaReadyAdapter(FakeAdapter):
+            def get_kafka_config(self):
+                return {"bootstrap_servers": "localhost:9092"}
+
+        stdout = io.StringIO()
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            sys.stdin,
+            "isatty",
+            return_value=True,
+        ), mock.patch.object(
+            main,
+            "_interactive_confirm",
+            return_value=True,
+        ) as confirm, contextlib.redirect_stdout(stdout):
+            enabled = main._resolve_level6_kafka_enabled_for_run(
+                KafkaReadyAdapter(),
+                deployer_name="inesdata",
+            )
+
+        self.assertTrue(enabled)
+        self.assertIn("Kafka transfer validation is available", stdout.getvalue())
+        confirm.assert_called_once_with("Run Kafka validation suites too?", default=False)
+
+    def test_level6_kafka_prompt_defaults_to_disabled_for_non_interactive_runs(self):
+        class KafkaReadyAdapter(FakeAdapter):
+            def get_kafka_config(self):
+                return {"bootstrap_servers": "localhost:9092"}
+
+        stdout = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(sys.stdin, "isatty", return_value=False),
+            mock.patch("builtins.input", side_effect=AssertionError("prompt should not run")),
+            contextlib.redirect_stdout(stdout),
+        ):
+            enabled = main._resolve_level6_kafka_enabled_for_run(
+                KafkaReadyAdapter(),
+                deployer_name="inesdata",
+            )
+
+        self.assertFalse(enabled)
+        self.assertIn("non-interactive", stdout.getvalue())
+        self.assertIn("PIONERA_LEVEL6_RUN_KAFKA=true", stdout.getvalue())
+
+    def test_level6_kafka_skip_flag_suppresses_prompt(self):
+        class KafkaReadyAdapter(FakeAdapter):
+            def get_kafka_config(self):
+                return {"bootstrap_servers": "localhost:9092"}
+
+        def kafka_skip_env_flag(name, default=False):
+            if name == "PIONERA_LEVEL6_SKIP_KAFKA":
+                return True
+            if name == "PIONERA_LEVEL6_RUN_KAFKA":
+                return False
+            return default
+
+        with mock.patch.object(main, "_env_flag", side_effect=kafka_skip_env_flag), mock.patch.object(
+            sys.stdin,
+            "isatty",
+            return_value=True,
+        ), mock.patch("builtins.input", side_effect=AssertionError("prompt should not run")):
+            enabled = main._resolve_level6_kafka_enabled_for_run(
+                KafkaReadyAdapter(),
+                deployer_name="inesdata",
+                flag_enabled=main._env_flag,
+            )
+
+        self.assertFalse(enabled)
 
     def test_action_result_prints_compact_level_summary_instead_of_raw_json(self):
         payload = {
@@ -4588,6 +4659,78 @@ class MainCliTests(unittest.TestCase):
         self.assertIs(result["local_capacity"]["preflight"], capacity_mock.return_value)
         self.assertIs(result["local_stability"]["preflight"], preflight)
         self.assertIs(result["local_stability"]["postflight"], postflight)
+
+    def test_level6_kafka_prompt_is_first_visible_level6_action(self):
+        events = []
+
+        class InesdataValidationDeployer(FakeDeployer):
+            def get_validation_profile(self, context):
+                return {
+                    "adapter": "inesdata",
+                    "newman_enabled": True,
+                    "test_data_cleanup_enabled": False,
+                    "playwright_enabled": False,
+                }
+
+        self.fake_deployer_module.InesdataValidationDeployer = InesdataValidationDeployer
+
+        def resolve_kafka(*args, **kwargs):
+            events.append("kafka_prompt")
+            return False
+
+        def sync_hosts(context):
+            events.append("hosts_sync")
+            return {"status": "skipped"}
+
+        def save_metadata(*args, **kwargs):
+            events.append("metadata")
+
+        with mock.patch.object(
+            main,
+            "_resolve_level6_kafka_enabled_for_run",
+            side_effect=resolve_kafka,
+        ), mock.patch.object(
+            main,
+            "_sync_deployer_hosts_if_enabled",
+            side_effect=sync_hosts,
+        ), mock.patch.object(
+            main,
+            "_save_experiment_metadata",
+            side_effect=save_metadata,
+        ), mock.patch.object(
+            main,
+            "_run_level6_local_capacity_preflight",
+            return_value={"status": "skipped"},
+        ), mock.patch.object(
+            main,
+            "_run_level6_local_stability_preflight",
+            return_value={"status": "skipped"},
+        ), mock.patch.object(
+            main,
+            "_run_level6_local_stability_postflight",
+            return_value={"status": "skipped"},
+        ), mock.patch.object(
+            main,
+            "_ensure_level6_public_endpoint_access",
+            return_value={"status": "skipped"},
+        ), mock.patch.object(
+            main,
+            "build_metrics_collector",
+            return_value=mock.Mock(collect_experiment_newman_metrics=lambda experiment_dir: []),
+        ):
+            main.run_validate(
+                FakeAdapter(),
+                deployer_name="fake",
+                deployer_registry={
+                    **self.deployer_registry,
+                    "fake": "fake_deployer_module:InesdataValidationDeployer",
+                },
+                validation_engine_cls=FakeValidationEngine,
+                experiment_storage=FakeStorage,
+                topology="local",
+            )
+
+        self.assertEqual(events[:3], ["kafka_prompt", "hosts_sync", "metadata"])
 
     def test_run_validate_local_stable_defers_background_kafka_preparation(self):
         class KafkaReadyAdapter(FakeAdapter):

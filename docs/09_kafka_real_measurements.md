@@ -139,6 +139,11 @@ resto de pruebas, usa:
 PIONERA_LEVEL6_RUN_KAFKA=true
 ```
 
+En una ejecución interactiva de `Level 6`, el framework pregunta
+`Run Kafka validation suites too?` como primera acción visible para activar
+esta suite. La variable anterior queda como mecanismo explícito para
+automatización, CI o ejecuciones no interactivas.
+
 Para asegurar que Kafka se omite temporalmente aunque exista una configuración
 previa de ejecución, usa:
 

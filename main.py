@@ -88,7 +88,12 @@ from validation.orchestration.components import (
     run_component_validations as run_level6_component_validations,
     should_run_component_validation as should_run_level6_component_validation,
 )
-from validation.orchestration.kafka import run_kafka_edc_validation, should_run_kafka_edc_validation
+from validation.orchestration.kafka import (
+    KAFKA_LEVEL6_RUN_FLAG,
+    KAFKA_LEVEL6_SKIP_FLAG,
+    run_kafka_edc_validation,
+    should_run_kafka_edc_validation,
+)
 from validation.orchestration.reports import (
     build_experiment_dashboard,
     discover_report_experiments,
@@ -2518,8 +2523,11 @@ def _start_level6_kafka_preparation(
     deployer_name=None,
     kafka_manager_cls=KafkaManager,
     background=True,
+    kafka_enabled=None,
 ):
-    if not should_run_kafka_edc_validation(flag_enabled=_env_flag):
+    if kafka_enabled is None:
+        kafka_enabled = should_run_kafka_edc_validation(flag_enabled=_env_flag)
+    if not kafka_enabled:
         return None
     if len(list(connectors or [])) < 2:
         return None
@@ -2586,6 +2594,68 @@ def _supports_level6_kafka_edc(adapter, validation_profile=None, deployer_name=N
         return False
 
     return callable(_resolve_adapter_callable(adapter, "get_kafka_config"))
+
+
+def _level6_kafka_flag_decision(flag_enabled=None, env=None):
+    flag_enabled = flag_enabled or _env_flag
+    env = env if env is not None else os.environ
+
+    if flag_enabled(KAFKA_LEVEL6_SKIP_FLAG, False):
+        return False
+    if flag_enabled(KAFKA_LEVEL6_RUN_FLAG, False):
+        return True
+
+    if env.get(KAFKA_LEVEL6_SKIP_FLAG) is not None or env.get(KAFKA_LEVEL6_RUN_FLAG) is not None:
+        return False
+    return None
+
+
+def _adapter_auto_mode_enabled(adapter):
+    auto_mode_getter = getattr(adapter, "auto_mode_getter", None)
+    if not callable(auto_mode_getter):
+        return False
+    try:
+        return bool(auto_mode_getter())
+    except TypeError:
+        return False
+
+
+def _resolve_level6_kafka_enabled_for_run(
+    adapter,
+    *,
+    validation_profile=None,
+    deployer_name=None,
+    flag_enabled=None,
+    prompt=True,
+):
+    if not _supports_level6_kafka_edc(
+        adapter,
+        validation_profile=validation_profile,
+        deployer_name=deployer_name,
+    ):
+        return False
+
+    flag_decision = _level6_kafka_flag_decision(flag_enabled=flag_enabled)
+    if flag_decision is not None:
+        return flag_decision
+
+    if not prompt:
+        return False
+    if _adapter_auto_mode_enabled(adapter):
+        print()
+        print("Kafka transfer validation is available but this Level 6 run is in auto mode.")
+        print(f"To enable it explicitly, rerun with {KAFKA_LEVEL6_RUN_FLAG}=true.")
+        return False
+    if not bool(getattr(sys.stdin, "isatty", lambda: False)()):
+        print()
+        print("Kafka transfer validation is available but this Level 6 run is non-interactive.")
+        print(f"To enable it explicitly, rerun with {KAFKA_LEVEL6_RUN_FLAG}=true.")
+        return False
+
+    print()
+    print("Kafka transfer validation is available for this Level 6 run.")
+    print("It is disabled by default because it can take significantly longer than the rest of the suites.")
+    return _interactive_confirm("Run Kafka validation suites too?", default=False)
 
 
 def _dataspace_name_loader(adapter):
@@ -2846,6 +2916,7 @@ def run_level6_kafka_edc_after_newman(
     suite_cls=KafkaEdcValidationSuite,
     kafka_manager_cls=KafkaManager,
     kafka_preparation=None,
+    kafka_enabled=None,
 ):
     """Run the functional EDC+Kafka suite after Newman when enabled in Level 6."""
     if not _supports_level6_kafka_edc(
@@ -2854,7 +2925,9 @@ def run_level6_kafka_edc_after_newman(
         deployer_name=deployer_name,
     ):
         return []
-    if not should_run_kafka_edc_validation(flag_enabled=_env_flag):
+    if kafka_enabled is None:
+        kafka_enabled = should_run_kafka_edc_validation(flag_enabled=_env_flag)
+    if not kafka_enabled:
         results = [
             {
                 "status": "skipped",
@@ -2865,8 +2938,9 @@ def run_level6_kafka_edc_after_newman(
         _save_kafka_edc_results(results, experiment_dir, experiment_storage=experiment_storage)
         print(
             "\nKafka transfer validation suite skipped. Kafka validations are disabled by default in Level 6 "
-            "to keep routine validation faster. To run them, set PIONERA_LEVEL6_RUN_KAFKA=true. "
-            "If PIONERA_LEVEL6_SKIP_KAFKA is enabled, unset it or set PIONERA_LEVEL6_SKIP_KAFKA=false."
+            "to keep routine validation faster. In an interactive Level 6 run, answer yes when prompted. "
+            "For non-interactive runs, set PIONERA_LEVEL6_RUN_KAFKA=true. If PIONERA_LEVEL6_SKIP_KAFKA "
+            "is enabled, unset it or set PIONERA_LEVEL6_SKIP_KAFKA=false."
         )
         return results
 
@@ -5762,26 +5836,31 @@ def run_validate(
     validation_profile = validation_runtime["validation_profile"]
     deployer_context = validation_runtime["deployer_context"]
     resolved_deployer_name = validation_runtime.get("deployer_name") or deployer_name
-    hosts_sync = (
-        _sync_deployer_hosts_if_enabled(deployer_context)
-        if deployer_context is not None
-        else {"status": "skipped", "reason": "missing-deployer-context"}
-    )
     experiment_dir = experiment_dir or experiment_storage.create_experiment_directory()
-    if save_metadata:
-        _save_experiment_metadata(
-            experiment_storage,
-            experiment_dir,
-            connectors,
-            **_experiment_metadata_context(
-                adapter_name=resolved_deployer_name,
-                topology=topology,
-                adapter=type(adapter).__name__,
-                baseline=baseline,
-            ),
-        )
-    experiment_storage.newman_reports_dir(experiment_dir)
     with _Level6ConsoleCapture(experiment_dir):
+        kafka_level6_enabled = _resolve_level6_kafka_enabled_for_run(
+            adapter,
+            validation_profile=validation_profile,
+            deployer_name=resolved_deployer_name,
+        )
+        hosts_sync = (
+            _sync_deployer_hosts_if_enabled(deployer_context)
+            if deployer_context is not None
+            else {"status": "skipped", "reason": "missing-deployer-context"}
+        )
+        if save_metadata:
+            _save_experiment_metadata(
+                experiment_storage,
+                experiment_dir,
+                connectors,
+                **_experiment_metadata_context(
+                    adapter_name=resolved_deployer_name,
+                    topology=topology,
+                    adapter=type(adapter).__name__,
+                    baseline=baseline,
+                ),
+            )
+        experiment_storage.newman_reports_dir(experiment_dir)
         local_capacity_preflight = _run_level6_local_capacity_preflight(
             validation_mode_info,
             resolved_deployer_name,
@@ -5804,6 +5883,7 @@ def run_validate(
             deployer_name=resolved_deployer_name,
             kafka_manager_cls=kafka_manager_cls,
             background=not validation_mode_info["local_stable"],
+            kafka_enabled=kafka_level6_enabled,
         )
         public_endpoint_preflight = _ensure_level6_public_endpoint_access(
             adapter,
@@ -5884,6 +5964,7 @@ def run_validate(
             suite_cls=kafka_edc_validation_suite_cls,
             kafka_manager_cls=kafka_manager_cls,
             kafka_preparation=kafka_preparation,
+            kafka_enabled=kafka_level6_enabled,
         )
 
         playwright_result = None
