@@ -113,6 +113,7 @@ from validation.components.runner import (
     run_component_validations as run_registered_component_validations,
     summarize_component_results,
 )
+from validation.datasets.manager import sync_level5_dataset_sources
 from validation.ui import interactive_menu as ui_interactive_menu
 from validation.ui.ui_runner import run_playwright_validation
 import requests
@@ -139,15 +140,24 @@ LEVEL_DESCRIPTIONS = {
     6: "Run Validation Tests",
 }
 LEVEL6_CONSOLE_LOG_FILENAME = "level6_console.log"
+NEWMAN_CONSOLE_LOG_FILENAME = "newman_console.log"
+KAFKA_CONSOLE_LOG_FILENAME = "kafka_console.log"
 
 
 class _Level6ConsoleCapture:
     """Tee Level 6 stdout/stderr to an experiment artifact without hiding console output."""
 
-    def __init__(self, experiment_dir, filename=LEVEL6_CONSOLE_LOG_FILENAME, mirror_output=True):
+    def __init__(
+        self,
+        experiment_dir,
+        filename=LEVEL6_CONSOLE_LOG_FILENAME,
+        mirror_output=True,
+        label="Level 6 console log",
+    ):
         self.experiment_dir = experiment_dir
         self.filename = filename
         self.mirror_output = mirror_output
+        self.label = label
         self.path = os.path.join(str(experiment_dir), filename) if experiment_dir else None
         self._active = False
         self._log_file = None
@@ -189,7 +199,7 @@ class _Level6ConsoleCapture:
             os.close(self._write_fd)
             self._write_fd = None
             self._active = True
-            print(f"Level 6 console log: {self.path}")
+            print(f"{self.label}: {self.path}")
         except Exception:
             self._restore_after_failed_start()
         return self
@@ -441,15 +451,23 @@ def _adapter_default_namespace(adapter_name):
     return defaults.get(str(adapter_name or "").strip().lower(), "")
 
 
-def _adapter_config_namespace(adapter_name):
+def _adapter_config_values(adapter_name):
     normalized = str(adapter_name or "").strip().lower()
     if not normalized:
-        return ""
+        return {}
     root_dir = os.path.dirname(__file__)
     config = {}
     for filename in ("deployer.config.example", "deployer.config"):
         config_path = os.path.join(root_dir, "deployers", normalized, filename)
         config.update(load_raw_deployer_config(config_path))
+    return config
+
+
+def _adapter_config_namespace(adapter_name):
+    normalized = str(adapter_name or "").strip().lower()
+    if not normalized:
+        return ""
+    config = _adapter_config_values(normalized)
     return (
         str(
             config.get("DS_1_NAMESPACE")
@@ -459,6 +477,92 @@ def _adapter_config_namespace(adapter_name):
             or _adapter_default_namespace(normalized)
         ).strip()
     )
+
+
+def _local_adapter_managed_namespaces(adapter_name):
+    normalized = str(adapter_name or "").strip().lower()
+    if normalized not in {"inesdata", "edc"}:
+        return []
+    config = _adapter_config_values(normalized)
+    namespaces = _unique_non_empty(
+        [
+            config.get("DS_1_NAMESPACE"),
+            config.get("DS_1_REGISTRATION_NAMESPACE"),
+            config.get("DS_1_PROVIDER_NAMESPACE"),
+            config.get("DS_1_CONSUMER_NAMESPACE"),
+            config.get("NAMESPACE"),
+        ]
+    )
+    if namespaces:
+        return namespaces
+    return _unique_non_empty(
+        [
+            config.get("DS_1_NAME"),
+            config.get("DS_NAME"),
+            _adapter_default_namespace(normalized),
+        ]
+    )
+
+
+def _local_adapter_component_namespaces(adapter_name):
+    normalized = str(adapter_name or "").strip().lower()
+    if normalized not in {"inesdata", "edc"}:
+        return []
+    config = _adapter_config_values(normalized)
+    return _unique_non_empty([config.get("COMPONENTS_NAMESPACE")])
+
+
+def _local_adapter_dataspace_name(adapter_name):
+    normalized = str(adapter_name or "").strip().lower()
+    config = _adapter_config_values(normalized)
+    return str(
+        config.get("DS_1_NAME")
+        or config.get("DS_NAME")
+        or _adapter_default_namespace(normalized)
+    ).strip()
+
+
+def _local_adapter_connector_full_names(adapter_name):
+    normalized = str(adapter_name or "").strip().lower()
+    config = _adapter_config_values(normalized)
+    dataspace = _local_adapter_dataspace_name(normalized)
+    connectors = []
+    for raw_connector in str(config.get("DS_1_CONNECTORS") or "").split(","):
+        connector = raw_connector.strip()
+        if not connector:
+            continue
+        if connector.startswith("conn-"):
+            connectors.append(connector)
+        elif dataspace:
+            connectors.append(f"conn-{connector}-{dataspace}")
+    return _unique_non_empty(connectors)
+
+
+def _local_adapter_component_release_names(adapter_name):
+    dataspace = _local_adapter_dataspace_name(adapter_name)
+    if not dataspace:
+        return []
+    config = _adapter_config_values(adapter_name)
+    components = [
+        component.strip().lower().replace("_", "-")
+        for component in str(config.get("COMPONENTS") or "").split(",")
+        if component.strip()
+    ]
+    return _unique_non_empty([f"{dataspace}-{component}" for component in components])
+
+
+def _local_adapter_expected_release_names(adapter_name, *, include_components=False):
+    dataspace = _local_adapter_dataspace_name(adapter_name)
+    release_names = []
+    if dataspace:
+        release_names.append(f"{dataspace}-dataspace-rs")
+        release_names.extend(
+            f"{connector}-{dataspace}"
+            for connector in _local_adapter_connector_full_names(adapter_name)
+        )
+    if include_components:
+        release_names.extend(_local_adapter_component_release_names(adapter_name))
+    return _unique_non_empty(release_names)
 
 
 def _local_capacity_guard_mode(env=None):
@@ -522,14 +626,14 @@ def _local_capacity_probe(adapter_namespaces):
 
 def _local_capacity_adapter_namespaces(deployer_name=None, deployer_context=None):
     adapter_namespaces = {
-        "inesdata": _adapter_config_namespace("inesdata"),
-        "edc": _adapter_config_namespace("edc"),
+        "inesdata": _local_adapter_managed_namespaces("inesdata") or _adapter_config_namespace("inesdata"),
+        "edc": _local_adapter_managed_namespaces("edc") or _adapter_config_namespace("edc"),
     }
     current_roles = _context_namespace_roles_dict(deployer_context)
-    current_namespace = str(current_roles.get("registration_service_namespace") or "").strip()
     current_adapter = str(deployer_name or "").strip().lower()
-    if current_adapter in adapter_namespaces and current_namespace:
-        adapter_namespaces[current_adapter] = current_namespace
+    current_namespaces = _unique_non_empty(current_roles.values())
+    if current_adapter in adapter_namespaces and current_namespaces:
+        adapter_namespaces[current_adapter] = current_namespaces
     return adapter_namespaces
 
 
@@ -545,6 +649,12 @@ def _unique_non_empty(values):
         if normalized and normalized not in unique:
             unique.append(normalized)
     return unique
+
+
+def _namespace_list(value):
+    if isinstance(value, (list, tuple, set)):
+        return _unique_non_empty(value)
+    return _unique_non_empty([value])
 
 
 def _local_switch_protected_namespaces():
@@ -607,25 +717,41 @@ def _build_local_adapter_switch_plan(payload, target_adapter):
 
     namespace_actions = []
     for adapter_name in adapters_to_remove:
-        namespace = str(adapter_namespaces.get(adapter_name) or _adapter_config_namespace(adapter_name) or "").strip()
-        if namespace:
+        namespaces = _unique_non_empty(
+            _namespace_list(adapter_namespaces.get(adapter_name))
+            + _local_adapter_managed_namespaces(adapter_name)
+        )
+        if not namespaces:
+            namespaces = _namespace_list(_adapter_config_namespace(adapter_name))
+        for namespace in namespaces:
             namespace_actions.append(
                 {
                     "namespace": namespace,
                     "reason": f"{adapter_name}-adapter",
                     "adapter": adapter_name,
                     "allow_components_namespace": False,
+                    "expected_releases": _local_adapter_expected_release_names(adapter_name),
                 }
             )
 
     if "inesdata" in adapters_to_remove or target == "edc":
-        for namespace in active_component_namespaces:
+        component_namespaces = active_component_namespaces
+        if not component_namespaces:
+            for adapter_name in adapters_to_remove or [target]:
+                component_namespaces.extend(_local_adapter_component_namespaces(adapter_name))
+        component_expected_releases = []
+        for adapter_name in adapters_to_remove:
+            component_expected_releases.extend(
+                _local_adapter_expected_release_names(adapter_name, include_components=True)
+            )
+        for namespace in component_namespaces:
             namespace_actions.append(
                 {
                     "namespace": namespace,
                     "reason": "components",
                     "adapter": "inesdata",
                     "allow_components_namespace": True,
+                    "expected_releases": _unique_non_empty(component_expected_releases),
                 }
             )
 
@@ -707,6 +833,50 @@ def _run_switch_command(args):
         return types.SimpleNamespace(returncode=127, stdout="", stderr=str(exc))
 
 
+def _local_switch_namespace_exists(namespace):
+    result = _run_switch_command(["kubectl", "get", "namespace", namespace])
+    return result.returncode == 0
+
+
+def _local_switch_namespace_helm_releases(namespace):
+    result = _run_switch_command(["helm", "list", "-n", namespace, "-q"])
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip() or f"helm exited with {result.returncode}"
+        raise RuntimeError(f"Could not inspect Helm releases in namespace '{namespace}'. Root cause: {detail}")
+    return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+
+
+def _local_switch_namespace_cleanup_readiness(action):
+    namespace = str(action.get("namespace") or "").strip()
+    if not namespace:
+        return {"status": "skipped", "reason": "missing-namespace", "namespace": namespace}
+    if not _local_switch_namespace_exists(namespace):
+        return {"status": "skipped", "reason": "namespace-not-found", "namespace": namespace}
+
+    helm_releases = _local_switch_namespace_helm_releases(namespace)
+    expected_releases = _unique_non_empty(action.get("expected_releases") or [])
+    matching_releases = [
+        release
+        for release in helm_releases
+        if not expected_releases or release in expected_releases
+    ]
+    if not matching_releases:
+        return {
+            "status": "skipped",
+            "reason": "no-matching-helm-releases",
+            "namespace": namespace,
+            "helm_releases": helm_releases,
+            "expected_releases": expected_releases,
+        }
+    return {
+        "status": "ready",
+        "namespace": namespace,
+        "helm_releases": helm_releases,
+        "matching_releases": matching_releases,
+        "expected_releases": expected_releases,
+    }
+
+
 def _wait_for_local_switch_namespace_deleted(namespace, timeout=120, poll_interval=3):
     deadline = time.time() + timeout
     while time.time() <= deadline:
@@ -742,6 +912,21 @@ def _execute_local_adapter_switch_plan(plan):
     namespace_results = []
     for action in plan.get("namespace_actions") or []:
         namespace = action["namespace"]
+        readiness = _local_switch_namespace_cleanup_readiness(action)
+        if readiness.get("status") != "ready":
+            reason = readiness.get("reason", "not-ready")
+            print(f"- Skipping namespace {namespace} ({reason})")
+            namespace_results.append(
+                {
+                    "namespace": namespace,
+                    "status": "skipped",
+                    "reason": reason,
+                    "adapter": action.get("adapter"),
+                    "helm_releases": readiness.get("helm_releases", []),
+                    "expected_releases": readiness.get("expected_releases", []),
+                }
+            )
+            continue
         print(f"- Deleting namespace {namespace}")
         result = _run_switch_command(
             ["kubectl", "delete", "namespace", namespace, "--ignore-not-found=true"]
@@ -751,7 +936,15 @@ def _execute_local_adapter_switch_plan(plan):
             raise RuntimeError(f"Could not delete namespace '{namespace}'. Root cause: {detail}")
         if not _wait_for_local_switch_namespace_deleted(namespace):
             raise RuntimeError(f"Timed out waiting for namespace '{namespace}' to be deleted")
-        namespace_results.append({"namespace": namespace, "status": "deleted", "reason": action.get("reason")})
+        namespace_results.append(
+            {
+                "namespace": namespace,
+                "status": "deleted",
+                "reason": action.get("reason"),
+                "adapter": action.get("adapter"),
+                "matching_releases": readiness.get("matching_releases", []),
+            }
+        )
 
     runtime_results = []
     for entry in plan.get("runtime_dirs") or []:
@@ -763,7 +956,11 @@ def _execute_local_adapter_switch_plan(plan):
     return {
         **plan,
         "status": "completed",
-        "deleted_namespaces": [result["namespace"] for result in namespace_results],
+        "deleted_namespaces": [
+            result["namespace"]
+            for result in namespace_results
+            if result.get("status") == "deleted"
+        ],
         "namespace_results": namespace_results,
         "runtime_results": runtime_results,
     }
@@ -906,6 +1103,24 @@ def _local_capacity_install_failure_message(payload, deployer_name, level_id):
     )
 
 
+def _prepare_local_install_capacity_summary(summary, current_adapter):
+    prepared = dict(summary or {})
+    normalized_adapter = str(current_adapter or "").strip().lower()
+    active_adapters = set(prepared.get("active_adapters") or [])
+    other_active_adapters = sorted(active_adapters - {normalized_adapter})
+    components_active_without_adapter = bool(prepared.get("active_component_namespaces")) and not active_adapters
+    will_create_or_extend_coexistence = (
+        bool(other_active_adapters)
+        or bool(prepared.get("coexistence_detected"))
+        or components_active_without_adapter
+    )
+    prepared["installing_adapter"] = normalized_adapter
+    prepared["other_active_adapters"] = other_active_adapters
+    prepared["components_active_without_adapter"] = components_active_without_adapter
+    prepared["coexistence_detected"] = bool(will_create_or_extend_coexistence)
+    return prepared
+
+
 def _run_local_adapter_install_capacity_preflight(
     deployer_name,
     topology,
@@ -923,15 +1138,7 @@ def _run_local_adapter_install_capacity_preflight(
         deployer_context=deployer_context,
     )
     summary, node_memory_mb, docker_memory_mb, configured_memory_mb = _local_capacity_probe(adapter_namespaces)
-    active_adapters = set(summary.get("active_adapters") or [])
-    other_active_adapters = sorted(active_adapters - {current_adapter})
-    component_namespaces_active = bool(summary.get("active_component_namespaces"))
-    will_create_or_extend_coexistence = bool(other_active_adapters) or bool(summary.get("coexistence_detected"))
-    if current_adapter == "edc" and component_namespaces_active:
-        will_create_or_extend_coexistence = True
-    summary["installing_adapter"] = current_adapter
-    summary["other_active_adapters"] = other_active_adapters
-    summary["coexistence_detected"] = bool(will_create_or_extend_coexistence)
+    summary = _prepare_local_install_capacity_summary(summary, current_adapter)
 
     payload = evaluate_local_coexistence_capacity(
         summary,
@@ -945,8 +1152,7 @@ def _run_local_adapter_install_capacity_preflight(
         switch_result = _try_local_adapter_switch(payload, current_adapter)
         if switch_result.get("status") == "completed":
             summary, node_memory_mb, docker_memory_mb, configured_memory_mb = _local_capacity_probe(adapter_namespaces)
-            summary["installing_adapter"] = current_adapter
-            summary["other_active_adapters"] = sorted(set(summary.get("active_adapters") or []) - {current_adapter})
+            summary = _prepare_local_install_capacity_summary(summary, current_adapter)
             payload = evaluate_local_coexistence_capacity(
                 summary,
                 node_memory_mb=node_memory_mb,
@@ -2598,15 +2804,12 @@ def _supports_level6_kafka_edc(adapter, validation_profile=None, deployer_name=N
 
 def _level6_kafka_flag_decision(flag_enabled=None, env=None):
     flag_enabled = flag_enabled or _env_flag
-    env = env if env is not None else os.environ
 
     if flag_enabled(KAFKA_LEVEL6_SKIP_FLAG, False):
         return False
     if flag_enabled(KAFKA_LEVEL6_RUN_FLAG, False):
         return True
 
-    if env.get(KAFKA_LEVEL6_SKIP_FLAG) is not None or env.get(KAFKA_LEVEL6_RUN_FLAG) is not None:
-        return False
     return None
 
 
@@ -2637,6 +2840,13 @@ def _resolve_level6_kafka_enabled_for_run(
 
     flag_decision = _level6_kafka_flag_decision(flag_enabled=flag_enabled)
     if flag_decision is not None:
+        if flag_decision:
+            print()
+            print(f"Kafka transfer validation enabled by {KAFKA_LEVEL6_RUN_FLAG}=true.")
+        else:
+            print()
+            print(f"Kafka transfer validation skipped by {KAFKA_LEVEL6_SKIP_FLAG}=true.")
+            print(f"Unset it or set {KAFKA_LEVEL6_SKIP_FLAG}=false to allow the interactive prompt.")
         return flag_decision
 
     if not prompt:
@@ -3011,6 +3221,209 @@ def run_level6_kafka_edc_after_newman(
         include_summary=True,
     )
     return list(results or [])
+
+
+def _status_from_kafka_results(results):
+    normalized_statuses = {
+        str(item.get("status", "")).strip().lower()
+        for item in list(results or [])
+        if isinstance(item, dict)
+    }
+    if not normalized_statuses:
+        return "skipped"
+    if "failed" in normalized_statuses or "error" in normalized_statuses:
+        return "failed"
+    if normalized_statuses == {"skipped"}:
+        return "skipped"
+    if "passed" in normalized_statuses:
+        return "passed"
+    return "completed"
+
+
+def run_interoperability_newman_tests(
+    adapter,
+    *,
+    deployer_name=None,
+    deployer_registry=None,
+    topology="local",
+    validation_engine_cls=ValidationEngine,
+    metrics_collector_cls=MetricsCollector,
+    experiment_storage=ExperimentStorage,
+):
+    """Run only the Newman connector interoperability collections."""
+    validation_runtime = _resolve_validation_runtime(
+        adapter,
+        deployer_name=deployer_name,
+        deployer_registry=deployer_registry,
+        topology=topology,
+    )
+    connectors = validation_runtime["connectors"]
+    validation_profile = validation_runtime["validation_profile"]
+    deployer_context = validation_runtime["deployer_context"]
+    resolved_deployer_name = validation_runtime.get("deployer_name") or deployer_name
+    experiment_dir = experiment_storage.create_experiment_directory()
+
+    with _Level6ConsoleCapture(
+        experiment_dir,
+        filename=NEWMAN_CONSOLE_LOG_FILENAME,
+        label="Newman interoperability console log",
+    ):
+        _save_experiment_metadata(
+            experiment_storage,
+            experiment_dir,
+            connectors,
+            **_experiment_metadata_context(
+                adapter_name=resolved_deployer_name,
+                topology=topology,
+                adapter=type(adapter).__name__,
+                baseline=False,
+            ),
+        )
+        experiment_storage.newman_reports_dir(experiment_dir)
+        hosts_sync = (
+            _sync_deployer_hosts_if_enabled(deployer_context)
+            if deployer_context is not None
+            else {"status": "skipped", "reason": "missing-deployer-context"}
+        )
+        public_endpoint_preflight = _ensure_level6_public_endpoint_access(
+            adapter,
+            connectors,
+            deployer_context,
+        )
+        test_data_cleanup = _run_test_data_cleanup_if_enabled(
+            adapter,
+            connectors,
+            deployer_context,
+            experiment_dir,
+            validation_profile=validation_profile,
+        )
+
+        validation_engine = build_validation_engine(adapter, engine_cls=validation_engine_cls)
+        run_method = validation_engine.run
+        try:
+            parameters = inspect.signature(run_method).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if "experiment_dir" in parameters:
+            validation_result = run_method(connectors, experiment_dir=experiment_dir)
+        else:
+            validation_result = run_method(connectors)
+
+        metrics_collector = build_metrics_collector(
+            adapter,
+            collector_cls=metrics_collector_cls,
+            experiment_storage=experiment_storage,
+        )
+        collect_newman_metrics = getattr(metrics_collector, "collect_experiment_newman_metrics", None)
+        if callable(collect_newman_metrics):
+            newman_request_metrics = collect_newman_metrics(experiment_dir)
+        else:
+            newman_request_metrics = metrics_collector.collect_newman_request_metrics(
+                experiment_storage.newman_reports_dir(experiment_dir),
+                experiment_dir=experiment_dir,
+            )
+
+    return {
+        "status": "completed",
+        "experiment_dir": experiment_dir,
+        "adapter": resolved_deployer_name,
+        "topology": topology,
+        "connectors": list(connectors or []),
+        "validation": validation_result,
+        "newman_request_metrics": newman_request_metrics,
+        "storage_checks": list(getattr(validation_engine, "last_storage_checks", []) or []),
+        "test_data_cleanup": test_data_cleanup,
+        "public_endpoint_preflight": public_endpoint_preflight,
+        "hosts_sync": hosts_sync,
+        "validation_profile": (
+            validation_profile.as_dict()
+            if validation_profile is not None and hasattr(validation_profile, "as_dict")
+            else validation_profile
+        ),
+    }
+
+
+def run_interoperability_kafka_tests(
+    adapter,
+    *,
+    deployer_name=None,
+    deployer_registry=None,
+    topology="local",
+    experiment_storage=ExperimentStorage,
+    kafka_manager_cls=KafkaManager,
+    kafka_edc_validation_suite_cls=KafkaEdcValidationSuite,
+):
+    """Run only the Kafka transfer interoperability suite."""
+    validation_runtime = _resolve_validation_runtime(
+        adapter,
+        deployer_name=deployer_name,
+        deployer_registry=deployer_registry,
+        topology=topology,
+    )
+    connectors = validation_runtime["connectors"]
+    validation_profile = validation_runtime["validation_profile"]
+    resolved_deployer_name = validation_runtime.get("deployer_name") or deployer_name
+    if not _supports_level6_kafka_edc(
+        adapter,
+        validation_profile=validation_profile,
+        deployer_name=resolved_deployer_name,
+    ):
+        raise RuntimeError(
+            f"Adapter '{resolved_deployer_name}' does not support Kafka transfer interoperability tests."
+        )
+
+    experiment_dir = experiment_storage.create_experiment_directory()
+    with _Level6ConsoleCapture(
+        experiment_dir,
+        filename=KAFKA_CONSOLE_LOG_FILENAME,
+        label="Kafka interoperability console log",
+    ):
+        _save_experiment_metadata(
+            experiment_storage,
+            experiment_dir,
+            connectors,
+            **_experiment_metadata_context(
+                adapter_name=resolved_deployer_name,
+                topology=topology,
+                adapter=type(adapter).__name__,
+                baseline=False,
+            ),
+        )
+        kafka_preparation = _start_level6_kafka_preparation(
+            adapter,
+            connectors,
+            validation_profile=validation_profile,
+            deployer_name=resolved_deployer_name,
+            kafka_manager_cls=kafka_manager_cls,
+            background=False,
+            kafka_enabled=True,
+        )
+        kafka_edc_results = run_level6_kafka_edc_after_newman(
+            adapter,
+            connectors,
+            experiment_dir,
+            validation_profile=validation_profile,
+            deployer_name=resolved_deployer_name,
+            experiment_storage=experiment_storage,
+            suite_cls=kafka_edc_validation_suite_cls,
+            kafka_manager_cls=kafka_manager_cls,
+            kafka_preparation=kafka_preparation,
+            kafka_enabled=True,
+        )
+
+    return {
+        "status": _status_from_kafka_results(kafka_edc_results),
+        "experiment_dir": experiment_dir,
+        "adapter": resolved_deployer_name,
+        "topology": topology,
+        "connectors": list(connectors or []),
+        "kafka_edc_results": kafka_edc_results,
+        "validation_profile": (
+            validation_profile.as_dict()
+            if validation_profile is not None and hasattr(validation_profile, "as_dict")
+            else validation_profile
+        ),
+    }
 
 
 def build_metrics_collector(
@@ -3591,6 +4004,82 @@ def _level6_public_endpoint_candidates(adapter, connectors, deployer_context):
         _append_public_endpoint(endpoints, seen, f"Connector {connector}", url)
 
     return endpoints
+
+
+@contextlib.contextmanager
+def _temporary_environment(overrides):
+    previous = {}
+    sentinel = object()
+    try:
+        for key, value in (overrides or {}).items():
+            if value is None:
+                continue
+            previous[key] = os.environ.get(key, sentinel)
+            os.environ[key] = str(value)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is sentinel:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _level6_component_validation_environment(deployer_context, deployer_name):
+    if deployer_context is None:
+        return {}
+    adapter_name = str(deployer_name or "").strip().lower()
+    connectors = list(getattr(deployer_context, "connectors", []) or [])
+    dataspace = str(getattr(deployer_context, "dataspace_name", "") or "").strip()
+    ds_domain = str(getattr(deployer_context, "ds_domain_base", "") or "").strip()
+    topology = str(getattr(deployer_context, "topology", "") or "").strip()
+    keycloak_url = _public_keycloak_base_url(deployer_context)
+    provider = connectors[0] if connectors else ""
+    consumer = connectors[1] if len(connectors) > 1 else ""
+
+    env = {
+        "PIONERA_ADAPTER": adapter_name,
+        "UI_ADAPTER": adapter_name,
+        "AI_MODEL_HUB_COMPONENT_ADAPTER": adapter_name,
+        "PIONERA_TOPOLOGY": topology,
+        "INESDATA_TOPOLOGY": topology,
+        "UI_DATASPACE": dataspace,
+        "UI_DS_DOMAIN": ds_domain,
+        "AI_MODEL_HUB_KEYCLOAK_URL": keycloak_url,
+    }
+    if provider:
+        provider_base_url = f"http://{provider}.{ds_domain}" if ds_domain else ""
+        env.update(
+            {
+                "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID": provider,
+                "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER": provider,
+                "AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER": provider,
+                "AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL": (
+                    f"{provider_base_url}/management" if provider_base_url else ""
+                ),
+                "AI_MODEL_HUB_PROVIDER_PROTOCOL_URL": (
+                    f"{provider_base_url}/protocol" if provider_base_url else ""
+                ),
+                "AI_MODEL_HUB_PROVIDER_DEFAULT_URL": (
+                    f"{provider_base_url}/api" if provider_base_url else ""
+                ),
+            }
+        )
+    if consumer:
+        consumer_base_url = f"http://{consumer}.{ds_domain}" if ds_domain else ""
+        env.update(
+            {
+                "AI_MODEL_HUB_CONSUMER_CONNECTOR_ID": consumer,
+                "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER": consumer,
+                "AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL": (
+                    f"{consumer_base_url}/management" if consumer_base_url else ""
+                ),
+                "AI_MODEL_HUB_CONSUMER_DEFAULT_URL": (
+                    f"{consumer_base_url}/api" if consumer_base_url else ""
+                ),
+            }
+        )
+    return {key: value for key, value in env.items() if str(value or "").strip()}
 
 
 def _run_public_endpoint_preflight(
@@ -5613,7 +6102,11 @@ def run_available_access_urls(adapter, deployer_name=None, deployer_registry=Non
 
         infer_component_urls = _resolve_adapter_callable(adapter, "components.infer_component_urls")
         if callable(infer_component_urls) and components:
-            component_urls = infer_component_urls(components)
+            component_urls = infer_component_urls(
+                components,
+                ds_name=dataspace_name,
+                deployer_config=config,
+            )
             if component_urls:
                 urls["components"] = component_urls
 
@@ -5668,6 +6161,16 @@ def run_available_access_urls(adapter, deployer_name=None, deployer_registry=Non
                 connector_urls[connector] = selected
         if connector_urls:
             urls["connectors"] = connector_urls
+
+        infer_component_urls = _resolve_adapter_callable(adapter, "components.infer_component_urls")
+        if callable(infer_component_urls) and components:
+            component_urls = infer_component_urls(
+                components,
+                ds_name=dataspace_name,
+                deployer_config=config,
+            )
+            if component_urls:
+                urls["components"] = component_urls
 
     result = {
         "status": "available",
@@ -6082,12 +6585,17 @@ def run_validate(
                 else:
                     print("\nRunning component validation suite...")
                     try:
-                        component_results = run_level6_component_validations(
-                            component_groups,
-                            infer_component_urls=infer_component_urls,
-                            run_component_validations_fn=run_registered_component_validations,
-                            experiment_dir=experiment_dir,
-                        ) or []
+                        component_env = _level6_component_validation_environment(
+                            deployer_context,
+                            resolved_deployer_name,
+                        )
+                        with _temporary_environment(component_env):
+                            component_results = run_level6_component_validations(
+                                component_groups,
+                                infer_component_urls=infer_component_urls,
+                                run_component_validations_fn=run_registered_component_validations,
+                                experiment_dir=experiment_dir,
+                            ) or []
                     except Exception as exc:
                         component_results = [
                             {
@@ -6485,6 +6993,56 @@ def _topology_runtime_environment_overrides(topology="local"):
     return {"KUBECONFIG": kubeconfig}
 
 
+def _context_components(context):
+    if isinstance(context, dict):
+        return list(context.get("components") or [])
+    return list(getattr(context, "components", []) or [])
+
+
+def _print_level5_dataset_sync(dataset_sync):
+    status = str((dataset_sync or {}).get("status") or "not-applicable")
+    datasets = list((dataset_sync or {}).get("datasets") or [])
+    if status == "not-applicable":
+        return
+
+    print("\nSynchronizing Level 5 validation dataset sources...")
+    for dataset in datasets:
+        marker = "OK" if dataset.get("status") == "passed" else "WARN"
+        location = dataset.get("relative_path") or dataset.get("path") or ""
+        mode = dataset.get("source_mode") or "source"
+        cloned = " cloned" if dataset.get("cloned") else ""
+        print(f"  {marker} {dataset.get('name') or dataset.get('key')} ({mode}{cloned}): {location}")
+        for note in list(dataset.get("notes") or [])[:2]:
+            print(f"    - {note}")
+        if dataset.get("error"):
+            print(f"    - {dataset['error']}")
+
+    if status == "warning":
+        print("  Warning: dataset source synchronization completed with warnings.")
+    elif status == "failed":
+        print("  Error: dataset source synchronization failed.")
+
+
+def _run_level5_dataset_sync(context):
+    components = _context_components(context)
+    dataset_sync = sync_level5_dataset_sources(
+        components,
+        strict=_env_flag("PIONERA_LEVEL5_DATASET_SYNC_STRICT", default=False),
+    )
+    _print_level5_dataset_sync(dataset_sync)
+    if dataset_sync.get("status") == "failed":
+        failed = [
+            dataset.get("key") or dataset.get("name")
+            for dataset in dataset_sync.get("datasets", [])
+            if dataset.get("status") == "failed"
+        ]
+        raise RuntimeError(
+            "Level 5 validation dataset synchronization failed"
+            + (f": {', '.join(failed)}" if failed else "")
+        )
+    return dataset_sync
+
+
 def run_level(
     adapter,
     level,
@@ -6627,7 +7185,10 @@ def run_level(
         deploy_components = getattr(orchestrator.deployer, "deploy_components", None)
         if not callable(deploy_components):
             raise RuntimeError(f"Deployer '{resolved_deployer_name}' does not expose Level 5 deploy_components()")
+        dataset_sync = _run_level5_dataset_sync(context)
         result = deploy_components(context)
+        if isinstance(result, dict):
+            result.setdefault("datasets", dataset_sync)
     else:
         result = run_validate(
             adapter,
@@ -6933,6 +7494,76 @@ def _run_local_repair_interactive(
     )
 
 
+def _run_interoperability_tests_menu_interactive(
+    current_adapter,
+    *,
+    adapter_registry=None,
+    deployer_registry=None,
+    topology="local",
+    validation_engine_cls=ValidationEngine,
+    metrics_collector_cls=MetricsCollector,
+    experiment_storage=ExperimentStorage,
+    kafka_manager_cls=KafkaManager,
+):
+    selected_adapter = _interactive_require_adapter_selection(
+        current_adapter,
+        adapter_registry=adapter_registry,
+    )
+    if not selected_adapter:
+        return None
+
+    print()
+    print("INTEROPERABILITY TESTS")
+    print("1 - Newman connector interoperability tests")
+    print("2 - Kafka transfer interoperability tests")
+    print("B - Back")
+    choice = _interactive_read("Selection: ").strip().upper()
+    if choice in {"", "B", "BACK"}:
+        return {"status": "cancelled", "adapter": selected_adapter, "topology": topology}
+
+    adapter = build_adapter(
+        selected_adapter,
+        adapter_registry=adapter_registry,
+        topology=topology,
+    )
+    execution_context = _interactive_execution_context(topology, selected_adapter)
+    if choice == "1":
+        if not _interactive_confirm(
+            f"Run Newman interoperability tests ({execution_context})?",
+            default=False,
+        ):
+            print("Newman interoperability tests cancelled.")
+            return {"status": "cancelled", "adapter": selected_adapter, "topology": topology}
+        return run_interoperability_newman_tests(
+            adapter,
+            deployer_name=selected_adapter,
+            deployer_registry=deployer_registry,
+            topology=topology,
+            validation_engine_cls=validation_engine_cls,
+            metrics_collector_cls=metrics_collector_cls,
+            experiment_storage=experiment_storage,
+        )
+
+    if choice == "2":
+        if not _interactive_confirm(
+            f"Run Kafka transfer interoperability tests ({execution_context})?",
+            default=False,
+        ):
+            print("Kafka transfer interoperability tests cancelled.")
+            return {"status": "cancelled", "adapter": selected_adapter, "topology": topology}
+        return run_interoperability_kafka_tests(
+            adapter,
+            deployer_name=selected_adapter,
+            deployer_registry=deployer_registry,
+            topology=topology,
+            experiment_storage=experiment_storage,
+            kafka_manager_cls=kafka_manager_cls,
+        )
+
+    print("Invalid interoperability test selection.")
+    return {"status": "cancelled", "adapter": selected_adapter, "topology": topology}
+
+
 def _run_interactive_full_levels(
     adapter_name,
     adapter_registry=None,
@@ -7066,11 +7697,12 @@ def _print_interactive_menu(adapter_name, adapter_registry=None, topology="local
     print("C - Cleanup Workspace")
     print("L - Build and Deploy Local Images")
     print()
-    print("[UI Validation]")
-    print("I - INESData Tests (Normal/Live/Debug)")
-    print("O - Ontology Hub Tests (Normal/Live/Debug)")
-    print("A - AI Model Hub Tests (Normal/Live/Debug)")
-    print("V - Semantic Virtualization Tests (Normal/Live/Debug)")
+    print("[Validation]")
+    print("I - INESData UI Tests (Normal/Live/Debug)")
+    print("O - Ontology Hub UI Tests (Normal/Live/Debug)")
+    print("A - AI Model Hub UI Tests (Normal/Live/Debug)")
+    print("V - Semantic Virtualization UI Tests (Normal/Live/Debug)")
+    print("F - Dataspace Interoperability Tests (Newman/Kafka)")
     print()
     print("[Control]")
     print("? - Help")
@@ -7125,7 +7757,7 @@ def _print_interactive_help():
     print("    In the image submenu, options 1-3 keep the INESData developer redeploy shortcuts.")
     print("    Advanced options use explicit image recipes for the active adapter.")
     print()
-    print("[UI Validation]")
+    print("[Validation]")
     print("I - Use to validate the INESData portal experience and component integrations through INESData.")
     print("O - Use when Ontology Hub UI changed or after deploying ontology-related components.")
     print("    This runs Ontology Hub component suites, not the INESData integration validation.")
@@ -7133,6 +7765,9 @@ def _print_interactive_help():
     print("    This runs AI Model Hub component suites, not the INESData integration validation.")
     print("V - Use when Semantic Virtualization UI/API browser reachability changed or after deploying the virtualizer.")
     print("    This runs Semantic Virtualization component/editor suites, not the INESData integration validation.")
+    print("F - Use to run interoperability suites independently of full Level 6.")
+    print("    The sub-menu separates Newman connector tests from Kafka transfer tests.")
+    print("    Kafka still requires explicit confirmation because it can take significantly longer.")
     print()
     print("[Compatibility]")
     print("Levels 1-2 belong to the shared local foundation; the menu asks for an adapter only when an operation needs Levels 3-6, unless you preselect one with S.")
@@ -8436,6 +9071,22 @@ def run_interactive_menu(
                         continue
                     current_adapter = selected_adapter
                     _run_legacy_menu_action("local_images", current_adapter=current_adapter)
+                    continue
+
+                if choice == "F":
+                    result = _run_interoperability_tests_menu_interactive(
+                        current_adapter,
+                        adapter_registry=registry,
+                        deployer_registry=deployer_registry,
+                        topology=topology,
+                        validation_engine_cls=validation_engine_cls,
+                        metrics_collector_cls=metrics_collector_cls,
+                        experiment_storage=experiment_storage,
+                        kafka_manager_cls=kafka_manager_cls,
+                    )
+                    if result is not None:
+                        current_adapter = result.get("adapter") or current_adapter
+                        _print_action_result(result)
                     continue
 
                 if choice == "I":

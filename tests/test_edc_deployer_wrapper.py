@@ -62,11 +62,34 @@ class FakeConnectors:
         ]
 
 
+class FakeComponents:
+    def __init__(self):
+        self.deploy_calls = []
+
+    def deploy_components(self, components, *, ds_name=None, namespace=None, deployer_config=None):
+        self.deploy_calls.append(
+            {
+                "components": list(components),
+                "ds_name": ds_name,
+                "namespace": namespace,
+                "deployer_config": dict(deployer_config or {}),
+            }
+        )
+        return {
+            "deployed": list(components),
+            "urls": {
+                component: f"http://{component}.example.local"
+                for component in components
+            },
+        }
+
+
 class FakeAdapter:
     def __init__(self):
         self.config = FakeConfig
         self.config_adapter = FakeConfigAdapter()
         self.connectors = FakeConnectors()
+        self.components = FakeComponents()
         self.calls = []
 
     def deploy_infrastructure(self):
@@ -113,7 +136,7 @@ class EdcDeployerWrapperTests(unittest.TestCase):
             context.connectors,
             ["conn-citycounciledc-demoedc", "conn-companyedc-demoedc"],
         )
-        self.assertEqual(context.components, [])
+        self.assertEqual(context.components, ["ontology-hub", "ai-model-hub"])
         self.assertEqual(context.namespace_roles.registration_service_namespace, "demoedc")
         self.assertTrue(context.runtime_dir.endswith("/tmp/deployers/edc/deployments/DEV/demoedc"))
 
@@ -143,17 +166,40 @@ class EdcDeployerWrapperTests(unittest.TestCase):
         self.assertIn("EDC connector deployment finished without deployed connectors", str(ctx.exception))
         self.assertIn("conn-citycounciledc-demoedc", str(ctx.exception))
 
-    def test_deploy_components_is_clean_noop_in_current_phase(self):
-        deployer = EdcDeployer(adapter=FakeAdapter(), config_cls=FakeConfig, topology="local")
+    def test_deploy_components_delegates_to_shared_adapter_when_extensions_are_available(self):
+        adapter = FakeAdapter()
+        deployer = EdcDeployer(adapter=adapter, config_cls=FakeConfig, topology="local")
+        deployer._ensure_component_connector_extensions = lambda components: None
         context = deployer.resolve_context(topology="local")
 
         result = deployer.deploy_components(context)
 
-        self.assertEqual(result["deployed"], [])
-        self.assertEqual(result["urls"], {})
+        self.assertEqual(result["deployed"], ["ontology-hub", "ai-model-hub"])
+        self.assertEqual(
+            result["urls"],
+            {
+                "ontology-hub": "http://ontology-hub.example.local",
+                "ai-model-hub": "http://ai-model-hub.example.local",
+            },
+        )
         self.assertEqual(result["configured"], ["ontology-hub", "ai-model-hub"])
-        self.assertEqual(result["deployable"], [])
-        self.assertEqual(result["pending_support"], ["ontology-hub", "ai-model-hub"])
+        self.assertEqual(result["deployable"], ["ontology-hub", "ai-model-hub"])
+        self.assertEqual(result["pending_support"], [])
+        self.assertEqual(adapter.components.deploy_calls[0]["components"], ["ontology-hub", "ai-model-hub"])
+        self.assertEqual(adapter.components.deploy_calls[0]["ds_name"], "demoedc")
+        self.assertEqual(adapter.components.deploy_calls[0]["namespace"], "components")
+
+    def test_deploy_components_fails_when_required_connector_extensions_are_missing(self):
+        deployer = EdcDeployer(adapter=FakeAdapter(), config_cls=FakeConfig, topology="local")
+        deployer._registered_connector_extensions = lambda: []
+        context = deployer.resolve_context(topology="local")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            deployer.deploy_components(context)
+
+        message = str(ctx.exception)
+        self.assertIn("does not register the required component extensions", message)
+        self.assertIn("com.pionera.assetfilter.filter.AssetFilterExtension", message)
 
     def test_resolve_context_can_plan_role_aligned_namespaces_without_changing_execution_roles(self):
         adapter = FakeAdapter()
@@ -179,8 +225,8 @@ class EdcDeployerWrapperTests(unittest.TestCase):
         self.assertTrue(profile.test_data_cleanup_enabled)
         self.assertTrue(profile.playwright_enabled)
         self.assertEqual(profile.playwright_config, "validation/ui/playwright.edc.config.ts")
-        self.assertFalse(profile.component_validation_enabled)
-        self.assertEqual(profile.component_groups, [])
+        self.assertTrue(profile.component_validation_enabled)
+        self.assertEqual(profile.component_groups, ["ontology-hub", "ai-model-hub"])
 
 
 if __name__ == "__main__":

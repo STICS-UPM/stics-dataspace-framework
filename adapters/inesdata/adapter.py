@@ -10,7 +10,6 @@ from .config import INESDataConfigAdapter, InesdataConfig
 from .connectors import INESDataConnectorsAdapter
 from .deployment import INESDataDeploymentAdapter
 from deployers.shared.lib.components import build_component_preview
-from adapters.shared import SharedComponentsAdapter, SharedFoundationInfrastructureAdapter
 
 
 class InesdataAdapter:
@@ -65,6 +64,9 @@ class InesdataAdapter:
         self.topology = str(topology or "local").strip().lower() or "local"
         self.config = config_cls or InesdataConfig
         self.config_adapter = INESDataConfigAdapter(self.config, topology=self.topology)
+        from adapters.shared.components import SharedComponentsAdapter
+        from adapters.shared.infrastructure import SharedFoundationInfrastructureAdapter
+
         self.infrastructure = SharedFoundationInfrastructureAdapter(
             run=run,
             run_silent=run_silent,
@@ -356,11 +358,11 @@ class InesdataAdapter:
         }
 
     def _preview_components(self):
+        config = self.config_adapter.load_deployer_config() or {}
         summary_getter = getattr(self.components, "configured_components_summary", None)
         if callable(summary_getter):
             summary = dict(summary_getter() or {})
         else:
-            config = self.config_adapter.load_deployer_config() or {}
             configured = [token.strip() for token in str(config.get("COMPONENTS", "") or "").split(",") if token.strip()]
             summary = {
                 "configured": configured,
@@ -379,8 +381,18 @@ class InesdataAdapter:
                 "issues": [],
             }
 
+        dataspace_getter = getattr(self.config_adapter, "primary_dataspace_name", None)
+        if callable(dataspace_getter):
+            ds_name = dataspace_getter()
+        else:
+            ds_name = config.get("DS_1_NAME") or getattr(self.config, "DS_NAME", "")
+
         try:
-            inferred_urls = self.components.infer_component_urls(summary.get("deployable") or [])
+            inferred_urls = self.components.infer_component_urls(
+                summary.get("deployable") or [],
+                ds_name=ds_name,
+                deployer_config=config,
+            )
         except Exception as exc:
             inferred_urls = {}
             issues = [str(exc)]

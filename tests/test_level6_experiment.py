@@ -161,12 +161,12 @@ def _build_level6_ui_results_payload():
         },
         "suites": [
             {
-                "title": "core/01-login-readiness.spec.ts",
-                "file": "core/01-login-readiness.spec.ts",
+                "title": "adapters/inesdata/specs/01-login-readiness.spec.ts",
+                "file": "adapters/inesdata/specs/01-login-readiness.spec.ts",
                 "specs": [
                     {
                         "title": "01 login readiness: authentication and shell loaded",
-                        "file": "core/01-login-readiness.spec.ts",
+                        "file": "adapters/inesdata/specs/01-login-readiness.spec.ts",
                         "tests": [
                             {
                                 "results": [
@@ -188,12 +188,12 @@ def _build_level6_ui_results_payload():
                 ],
             },
             {
-                "title": "core/04-consumer-catalog.spec.ts",
-                "file": "core/04-consumer-catalog.spec.ts",
+                "title": "adapters/inesdata/specs/04-consumer-catalog.spec.ts",
+                "file": "adapters/inesdata/specs/04-consumer-catalog.spec.ts",
                 "specs": [
                     {
                         "title": "04 consumer catalog: listing and detail without access errors",
-                        "file": "core/04-consumer-catalog.spec.ts",
+                        "file": "adapters/inesdata/specs/04-consumer-catalog.spec.ts",
                         "tests": [
                             {
                                 "results": [
@@ -228,56 +228,56 @@ def _build_level6_ui_dataspace_results_payload():
         },
         "suites": [
             {
-                "title": "core/03-provider-setup.spec.ts",
-                "file": "core/03-provider-setup.spec.ts",
+                "title": "adapters/inesdata/specs/03-provider-setup.spec.ts",
+                "file": "adapters/inesdata/specs/03-provider-setup.spec.ts",
                 "specs": [
                     {
                         "title": "03 provider setup: asset creation with file upload",
-                        "file": "core/03-provider-setup.spec.ts",
+                        "file": "adapters/inesdata/specs/03-provider-setup.spec.ts",
                         "tests": [{"results": [{"status": "passed", "errors": [], "attachments": []}]}],
                     }
                 ],
             },
             {
-                "title": "core/03b-provider-policy-create.spec.ts",
-                "file": "core/03b-provider-policy-create.spec.ts",
+                "title": "adapters/inesdata/specs/03b-provider-policy-create.spec.ts",
+                "file": "adapters/inesdata/specs/03b-provider-policy-create.spec.ts",
                 "specs": [
                     {
                         "title": "03b provider setup: policy creation from the UI",
-                        "file": "core/03b-provider-policy-create.spec.ts",
+                        "file": "adapters/inesdata/specs/03b-provider-policy-create.spec.ts",
                         "tests": [{"results": [{"status": "passed", "errors": [], "attachments": []}]}],
                     }
                 ],
             },
             {
-                "title": "core/03c-provider-contract-definition-create.spec.ts",
-                "file": "core/03c-provider-contract-definition-create.spec.ts",
+                "title": "adapters/inesdata/specs/03c-provider-contract-definition-create.spec.ts",
+                "file": "adapters/inesdata/specs/03c-provider-contract-definition-create.spec.ts",
                 "specs": [
                     {
                         "title": "03c provider setup: contract definition creation from the UI",
-                        "file": "core/03c-provider-contract-definition-create.spec.ts",
+                        "file": "adapters/inesdata/specs/03c-provider-contract-definition-create.spec.ts",
                         "tests": [{"results": [{"status": "passed", "errors": [], "attachments": []}]}],
                     }
                 ],
             },
             {
-                "title": "core/05-consumer-negotiation.spec.ts",
-                "file": "core/05-consumer-negotiation.spec.ts",
+                "title": "adapters/inesdata/specs/05-consumer-negotiation.spec.ts",
+                "file": "adapters/inesdata/specs/05-consumer-negotiation.spec.ts",
                 "specs": [
                     {
                         "title": "05 consumer negotiation: visible negotiation from catalog",
-                        "file": "core/05-consumer-negotiation.spec.ts",
+                        "file": "adapters/inesdata/specs/05-consumer-negotiation.spec.ts",
                         "tests": [{"results": [{"status": "passed", "errors": [], "attachments": []}]}],
                     }
                 ],
             },
             {
-                "title": "core/06-consumer-transfer.spec.ts",
-                "file": "core/06-consumer-transfer.spec.ts",
+                "title": "adapters/inesdata/specs/06-consumer-transfer.spec.ts",
+                "file": "adapters/inesdata/specs/06-consumer-transfer.spec.ts",
                 "specs": [
                     {
                         "title": "06 consumer transfer: visible transfer from contracts and history",
-                        "file": "core/06-consumer-transfer.spec.ts",
+                        "file": "adapters/inesdata/specs/06-consumer-transfer.spec.ts",
                         "tests": [{"results": [{"status": "passed", "errors": [], "attachments": []}]}],
                     }
                 ],
@@ -643,7 +643,8 @@ class Level6ExperimentTests(unittest.TestCase):
             ui_test_dir = os.path.join(script_root.name, "validation", "ui")
 
             self.assertEqual(first_command[:3], ["npx", "playwright", "test"])
-            self.assertEqual(first_command[3:], list(level6_ui.LEVEL6_UI_SMOKE_SPECS))
+            self.assertEqual(first_command[3:5], ["--config", level6_ui.LEVEL6_UI_INESDATA_CONFIG])
+            self.assertEqual(first_command[5:], list(level6_ui.LEVEL6_UI_SMOKE_SPECS))
             self.assertEqual(first_call.kwargs["cwd"], ui_test_dir)
             self.assertEqual(first_env["PORTAL_BASE_URL"], "https://conn-a.example.local")
             self.assertEqual(first_env["PORTAL_USER"], "portal-user")
@@ -699,12 +700,19 @@ class Level6ExperimentTests(unittest.TestCase):
                     self.assertEqual(env["UI_PROVIDER_CONNECTOR"], "conn-a")
                     self.assertEqual(env["UI_CONSUMER_CONNECTOR"], "conn-b")
                     return mock.Mock(returncode=0)
-                if command[3:] == list(level6_ui.LEVEL6_UI_SMOKE_SPECS):
+                if (
+                    command[3:5] == ["--config", level6_ui.LEVEL6_UI_INESDATA_CONFIG]
+                    and command[5:] == list(level6_ui.LEVEL6_UI_SMOKE_SPECS)
+                ):
                     output_path = env["PLAYWRIGHT_JSON_REPORT_FILE"]
                     with open(output_path, "w", encoding="utf-8") as handle:
                         json.dump(_build_level6_ui_results_payload(), handle)
                     return mock.Mock(returncode=0)
-                if command[3] == "--workers=1" and command[4:] == list(level6_ui.LEVEL6_UI_DATASPACE_SPECS):
+                if (
+                    command[3:5] == ["--config", level6_ui.LEVEL6_UI_INESDATA_CONFIG]
+                    and command[5] == "--workers=1"
+                    and command[6:] == list(level6_ui.LEVEL6_UI_DATASPACE_SPECS)
+                ):
                     output_path = env["PLAYWRIGHT_JSON_REPORT_FILE"]
                     with open(output_path, "w", encoding="utf-8") as handle:
                         json.dump(_build_level6_ui_dataspace_results_payload(), handle)

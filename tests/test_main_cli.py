@@ -68,7 +68,7 @@ class FakeAdapter:
         self.config_adapter = FakeConfigAdapter()
         self.connectors = FakeConnectors()
         self.components = types.SimpleNamespace(
-            infer_component_urls=lambda components: {
+            infer_component_urls=lambda components, **_: {
                 component: f"http://{component}.example.local"
                 for component in components
             }
@@ -195,11 +195,12 @@ class KafkaTransferConsoleOutputTests(unittest.TestCase):
                 return False
             return default
 
+        stdout = io.StringIO()
         with mock.patch.object(main, "_env_flag", side_effect=kafka_skip_env_flag), mock.patch.object(
             sys.stdin,
             "isatty",
             return_value=True,
-        ), mock.patch("builtins.input", side_effect=AssertionError("prompt should not run")):
+        ), mock.patch("builtins.input", side_effect=AssertionError("prompt should not run")), contextlib.redirect_stdout(stdout):
             enabled = main._resolve_level6_kafka_enabled_for_run(
                 KafkaReadyAdapter(),
                 deployer_name="inesdata",
@@ -207,6 +208,36 @@ class KafkaTransferConsoleOutputTests(unittest.TestCase):
             )
 
         self.assertFalse(enabled)
+        self.assertIn("PIONERA_LEVEL6_SKIP_KAFKA=true", stdout.getvalue())
+
+    def test_level6_kafka_false_flags_do_not_suppress_interactive_prompt(self):
+        class KafkaReadyAdapter(FakeAdapter):
+            def get_kafka_config(self):
+                return {"bootstrap_servers": "localhost:9092"}
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_LEVEL6_SKIP_KAFKA": "false",
+                "PIONERA_LEVEL6_RUN_KAFKA": "false",
+            },
+            clear=True,
+        ), mock.patch.object(
+            sys.stdin,
+            "isatty",
+            return_value=True,
+        ), mock.patch.object(
+            main,
+            "_interactive_confirm",
+            return_value=True,
+        ) as confirm:
+            enabled = main._resolve_level6_kafka_enabled_for_run(
+                KafkaReadyAdapter(),
+                deployer_name="inesdata",
+            )
+
+        self.assertTrue(enabled)
+        confirm.assert_called_once_with("Run Kafka validation suites too?", default=False)
 
     def test_action_result_prints_compact_level_summary_instead_of_raw_json(self):
         payload = {
@@ -1295,7 +1326,7 @@ class InesdataPortalReadinessTests(unittest.TestCase):
             dataspace_name="demoedc",
             environment="DEV",
             connectors=["conn-citycounciledc-demoedc"],
-            components=[],
+            components=["ontology-hub"],
         )
 
         def fake_command_stdout(command):
@@ -1700,7 +1731,11 @@ class MainCliTests(unittest.TestCase):
             main,
             "_interactive_offer_vm_single_address_configuration",
             return_value=True,
-        ) as vm_single_prompt, contextlib.redirect_stdout(stdout):
+        ) as vm_single_prompt, mock.patch.object(
+            main,
+            "_try_vm_single_cluster_runtime_switch",
+            return_value={"allowed": True, "status": "skipped"},
+        ), contextlib.redirect_stdout(stdout):
             result = main.main(
                 None,
                 adapter_registry=self.registry,
@@ -1730,6 +1765,10 @@ class MainCliTests(unittest.TestCase):
             main,
             "_interactive_offer_vm_single_address_configuration",
             return_value=True,
+        ), mock.patch.object(
+            main,
+            "_try_vm_single_cluster_runtime_switch",
+            return_value={"allowed": True, "status": "skipped"},
         ), contextlib.redirect_stdout(stdout):
             result = main.run_interactive_menu(
                 adapter_registry=self.registry,
@@ -1898,9 +1937,12 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("X - Recreate dataspace", stdout.getvalue())
         self.assertIn("[Developer]", stdout.getvalue())
         self.assertIn("L - Build and Deploy Local Images", stdout.getvalue())
-        self.assertIn("[UI Validation]", stdout.getvalue())
-        self.assertIn("I - INESData Tests", stdout.getvalue())
-        self.assertIn("V - Semantic Virtualization Tests", stdout.getvalue())
+        self.assertIn("[Validation]", stdout.getvalue())
+        self.assertIn("F - Dataspace Interoperability Tests", stdout.getvalue())
+        self.assertIn("I - INESData UI Tests", stdout.getvalue())
+        self.assertIn("O - Ontology Hub UI Tests", stdout.getvalue())
+        self.assertIn("A - AI Model Hub UI Tests", stdout.getvalue())
+        self.assertIn("V - Semantic Virtualization UI Tests", stdout.getvalue())
         self.assertIn("? - Help", stdout.getvalue())
 
     def test_menu_help_explains_available_options(self):
@@ -1929,11 +1971,68 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("[Developer]", stdout.getvalue())
         self.assertIn("B - Use on a clean machine or after dependency issues", stdout.getvalue())
         self.assertIn("L - Use during development after changing local images", stdout.getvalue())
-        self.assertIn("[UI Validation]", stdout.getvalue())
+        self.assertIn("[Validation]", stdout.getvalue())
+        self.assertIn("Newman connector tests from Kafka transfer tests", stdout.getvalue())
         self.assertIn("I - Use to validate the INESData portal experience", stdout.getvalue())
         self.assertIn("A - Use when AI Model Hub UI changed", stdout.getvalue())
         self.assertIn("V - Use when Semantic Virtualization UI/API browser reachability changed", stdout.getvalue())
         self.assertIn("shortcuts are available directly", stdout.getvalue())
+
+    def test_menu_runs_newman_interoperability_submenu(self):
+        stdout = io.StringIO()
+        expected = {
+            "status": "completed",
+            "adapter": "fake",
+            "topology": "local",
+            "validation": {"validated": ["conn-a", "conn-b"]},
+        }
+        with mock.patch("builtins.input", side_effect=["F", "1", "y", "Q"]), mock.patch.object(
+            main,
+            "run_interoperability_newman_tests",
+            return_value=expected,
+        ) as run_newman, contextlib.redirect_stdout(stdout):
+            result = main.main(
+                ["menu"],
+                adapter_registry=self.registry,
+                deployer_registry=self.deployer_registry,
+                validation_engine_cls=FakeValidationEngine,
+                metrics_collector_cls=FakeMetricsCollector,
+                experiment_storage=FakeStorage,
+            )
+
+        self.assertEqual(result["status"], "exited")
+        self.assertIn("INTEROPERABILITY TESTS", stdout.getvalue())
+        self.assertIn("Newman connector interoperability tests", stdout.getvalue())
+        self.assertIn("Validation: Succeeded", stdout.getvalue())
+        run_newman.assert_called_once()
+
+    def test_menu_runs_kafka_interoperability_submenu(self):
+        stdout = io.StringIO()
+        expected = {
+            "status": "passed",
+            "adapter": "fake",
+            "topology": "local",
+            "kafka_edc_results": [{"status": "passed"}],
+        }
+        with mock.patch("builtins.input", side_effect=["F", "2", "y", "Q"]), mock.patch.object(
+            main,
+            "run_interoperability_kafka_tests",
+            return_value=expected,
+        ) as run_kafka, contextlib.redirect_stdout(stdout):
+            result = main.main(
+                ["menu"],
+                adapter_registry=self.registry,
+                deployer_registry=self.deployer_registry,
+                validation_engine_cls=FakeValidationEngine,
+                metrics_collector_cls=FakeMetricsCollector,
+                experiment_storage=FakeStorage,
+            )
+
+        self.assertEqual(result["status"], "exited")
+        self.assertIn("INTEROPERABILITY TESTS", stdout.getvalue())
+        self.assertIn("Kafka transfer interoperability tests", stdout.getvalue())
+        self.assertIn("Kafka: Passed", stdout.getvalue())
+        run_kafka.assert_called_once()
 
     def test_menu_level3_adapter_prompt_does_not_print_generic_hosts_hint(self):
         registry = {
@@ -3236,7 +3335,7 @@ class MainCliTests(unittest.TestCase):
             dataspace_name="demoedc",
             environment="DEV",
             connectors=["conn-citycounciledc-demoedc"],
-            components=[],
+            components=["ontology-hub"],
         )
 
         with mock.patch.object(
@@ -3269,6 +3368,10 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(
             result["urls"]["connectors"]["conn-citycounciledc-demoedc"]["connector_management_api_v3"],
             "http://conn-citycounciledc-demoedc.dev.ds.dataspaceunit.upm/management/v3",
+        )
+        self.assertEqual(
+            result["urls"]["components"]["ontology-hub"],
+            "http://ontology-hub.example.local",
         )
         self.assertEqual(result["urls"]["minio_api"], "http://minio.dev.ed.dataspaceunit.upm")
         self.assertEqual(
@@ -4484,9 +4587,81 @@ class MainCliTests(unittest.TestCase):
 
         self.assertEqual(plan["target_adapter"], "edc")
         self.assertEqual(plan["adapters_to_remove"], ["inesdata"])
-        self.assertEqual(plan["namespaces_to_delete"], ["core-control", "components"])
+        self.assertEqual(plan["namespaces_to_delete"], ["core-control", "provider", "consumer", "components"])
         self.assertEqual(plan["confirmation_token"], "SWITCH TO EDC")
         self.assertEqual(plan["preserved_namespaces"], ["common-srvs"])
+        provider_action = next(
+            action for action in plan["namespace_actions"] if action["namespace"] == "provider"
+        )
+        self.assertIn("conn-citycouncil-pionera-pionera", provider_action["expected_releases"])
+
+    def test_local_adapter_switch_cleanup_readiness_requires_matching_helm_release(self):
+        def fake_switch_command(command):
+            if command[:3] == ["kubectl", "get", "namespace"]:
+                return types.SimpleNamespace(returncode=0, stdout="namespace/provider", stderr="")
+            if command[:3] == ["helm", "list", "-n"]:
+                return types.SimpleNamespace(returncode=0, stdout="other-release\n", stderr="")
+            raise AssertionError(f"Unexpected command: {command}")
+
+        with mock.patch.object(main, "_run_switch_command", side_effect=fake_switch_command):
+            result = main._local_switch_namespace_cleanup_readiness(
+                {
+                    "namespace": "provider",
+                    "expected_releases": ["conn-citycouncil-pionera-pionera"],
+                }
+            )
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "no-matching-helm-releases")
+
+    def test_local_adapter_switch_cleanup_readiness_allows_matching_helm_release(self):
+        def fake_switch_command(command):
+            if command[:3] == ["kubectl", "get", "namespace"]:
+                return types.SimpleNamespace(returncode=0, stdout="namespace/provider", stderr="")
+            if command[:3] == ["helm", "list", "-n"]:
+                return types.SimpleNamespace(
+                    returncode=0,
+                    stdout="conn-citycouncil-pionera-pionera\n",
+                    stderr="",
+                )
+            raise AssertionError(f"Unexpected command: {command}")
+
+        with mock.patch.object(main, "_run_switch_command", side_effect=fake_switch_command):
+            result = main._local_switch_namespace_cleanup_readiness(
+                {
+                    "namespace": "provider",
+                    "expected_releases": ["conn-citycouncil-pionera-pionera"],
+                }
+            )
+
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["matching_releases"], ["conn-citycouncil-pionera-pionera"])
+
+    def test_level6_component_validation_environment_uses_edc_context(self):
+        context = DeploymentContext.from_mapping(
+            {
+                "deployer": "edc",
+                "topology": "local",
+                "environment": "DEV",
+                "dataspace_name": "pionera-edc",
+                "ds_domain_base": "dev.ds.dataspaceunit.upm",
+                "connectors": [
+                    "conn-citycounciledc-pionera-edc",
+                    "conn-companyedc-pionera-edc",
+                ],
+                "config": {"KC_URL": "http://keycloak.dev.ed.dataspaceunit.upm"},
+            }
+        )
+
+        env = main._level6_component_validation_environment(context, "edc")
+
+        self.assertEqual(env["PIONERA_ADAPTER"], "edc")
+        self.assertEqual(env["UI_ADAPTER"], "edc")
+        self.assertEqual(env["AI_MODEL_HUB_COMPONENT_ADAPTER"], "edc")
+        self.assertEqual(env["UI_DATASPACE"], "pionera-edc")
+        self.assertEqual(env["AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER"], "conn-citycounciledc-pionera-edc")
+        self.assertEqual(env["AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER"], "conn-companyedc-pionera-edc")
+        self.assertEqual(env["AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER"], "conn-citycounciledc-pionera-edc")
 
     def test_local_adapter_install_capacity_preflight_switches_when_explicitly_confirmed(self):
         nodes_payload = {
@@ -4576,6 +4751,43 @@ class MainCliTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "passed")
         self.assertFalse(result["coexistence_detected"])
+
+    def test_local_adapter_install_capacity_preflight_allows_target_adapter_components(self):
+        pods_payload = {
+            "items": [
+                {"metadata": {"namespace": "edc-control"}, "status": {"phase": "Running"}},
+                {"metadata": {"namespace": "components"}, "status": {"phase": "Running"}},
+            ]
+        }
+        nodes_payload = {
+            "items": [
+                {"status": {"allocatable": {"memory": "15996068Ki"}}},
+            ]
+        }
+
+        with mock.patch.object(
+            main,
+            "_run_json_command",
+            side_effect=[nodes_payload, pods_payload],
+        ), mock.patch.object(
+            main,
+            "_docker_memory_total_mb",
+            return_value=15621,
+        ), mock.patch.object(
+            main,
+            "load_layered_deployer_config",
+            return_value={"MINIKUBE_MEMORY": "14336"},
+        ):
+            result = main._run_local_adapter_install_capacity_preflight(
+                "edc",
+                "local",
+                3,
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertFalse(result["coexistence_detected"])
+        self.assertEqual(result["workloads"]["active_adapters"], ["edc"])
+        self.assertEqual(result["workloads"]["active_component_namespaces"], ["components"])
 
     def test_local_adapter_install_capacity_preflight_blocks_edc_when_components_remain(self):
         pods_payload = {
@@ -5571,7 +5783,7 @@ class MainCliTests(unittest.TestCase):
                 "adapter": "inesdata",
                 "newman_enabled": True,
                 "playwright_enabled": True,
-                "playwright_config": "validation/ui/playwright.config.ts",
+                "playwright_config": "validation/ui/playwright.inesdata.config.ts",
             },
         ), mock.patch.object(
             main,
@@ -5629,7 +5841,7 @@ class MainCliTests(unittest.TestCase):
                 "adapter": "fake",
                 "newman_enabled": True,
                 "playwright_enabled": True,
-                "playwright_config": "validation/ui/playwright.config.ts",
+                "playwright_config": "validation/ui/playwright.inesdata.config.ts",
                 "component_validation_enabled": True,
                 "component_groups": ["ontology-hub"],
             },
@@ -5666,7 +5878,7 @@ class MainCliTests(unittest.TestCase):
                 "adapter": "fake",
                 "newman_enabled": True,
                 "playwright_enabled": True,
-                "playwright_config": "validation/ui/playwright.config.ts",
+                "playwright_config": "validation/ui/playwright.inesdata.config.ts",
                 "component_validation_enabled": True,
                 "component_groups": ["ontology-hub"],
             },
@@ -5729,7 +5941,7 @@ class MainCliTests(unittest.TestCase):
                 "adapter": "fake",
                 "newman_enabled": True,
                 "playwright_enabled": True,
-                "playwright_config": "validation/ui/playwright.config.ts",
+                "playwright_config": "validation/ui/playwright.inesdata.config.ts",
                 "component_validation_enabled": True,
                 "component_groups": ["ontology-hub"],
             },
@@ -5764,7 +5976,7 @@ class MainCliTests(unittest.TestCase):
                 "adapter": "inesdata",
                 "newman_enabled": True,
                 "playwright_enabled": True,
-                "playwright_config": "validation/ui/playwright.config.ts",
+                "playwright_config": "validation/ui/playwright.inesdata.config.ts",
             },
         ), mock.patch.object(
             main,

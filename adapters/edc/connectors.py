@@ -1259,8 +1259,8 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                     "publickey": f"{ds_name}/{connector_name}/public-key",
                 },
                 "transfer": {
-                    "privatekey": "private-key",
-                    "publickey": "public-key",
+                    "privatekey": f"{ds_name}/{connector_name}/private-key",
+                    "publickey": f"{ds_name}/{connector_name}/public-key",
                 },
                 "keys": {
                     "createSecret": False,

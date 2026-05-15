@@ -11,6 +11,7 @@ class ComponentContract:
     deployable_adapters: tuple[str, ...]
     deployment_strategy: str
     validation_groups: tuple[str, ...]
+    edc_required_connector_extensions: tuple[str, ...] = ()
 
 
 _COMPONENT_ALIASES = {
@@ -22,27 +23,49 @@ _COMPONENT_ALIASES = {
 }
 
 
+EDC_EXTENSION_ASSET_FILTER = "com.pionera.assetfilter.filter.AssetFilterExtension"
+EDC_EXTENSION_CONTRACT_SEQUENCE = "com.pionera.assetfilter.contracts.ContractSequenceExtension"
+EDC_EXTENSION_INFERENCE = "com.pionera.assetfilter.infer.InferenceExtension"
+EDC_EXTENSION_OBSERVABILITY = "com.pionera.assetfilter.observability.ObservabilityExtension"
+EDC_EXTENSION_PROXY = "com.pionera.assetfilter.proxy.CustomProxyDataPlaneExtension"
+
+
 COMPONENT_CONTRACTS: dict[str, ComponentContract] = {
     "ontology-hub": ComponentContract(
         component="ontology-hub",
         supported_adapters=("inesdata", "edc"),
-        deployable_adapters=("inesdata",),
+        deployable_adapters=("inesdata", "edc"),
         deployment_strategy="shared-chart-active-adapter",
         validation_groups=("ontology-hub",),
+        edc_required_connector_extensions=(
+            EDC_EXTENSION_ASSET_FILTER,
+            EDC_EXTENSION_OBSERVABILITY,
+        ),
     ),
     "ai-model-hub": ComponentContract(
         component="ai-model-hub",
         supported_adapters=("inesdata", "edc"),
-        deployable_adapters=("inesdata",),
+        deployable_adapters=("inesdata", "edc"),
         deployment_strategy="shared-chart-active-adapter",
         validation_groups=("ai-model-hub",),
+        edc_required_connector_extensions=(
+            EDC_EXTENSION_ASSET_FILTER,
+            EDC_EXTENSION_INFERENCE,
+            EDC_EXTENSION_OBSERVABILITY,
+            EDC_EXTENSION_CONTRACT_SEQUENCE,
+        ),
     ),
     "semantic-virtualization": ComponentContract(
         component="semantic-virtualization",
         supported_adapters=("inesdata", "edc"),
-        deployable_adapters=("inesdata",),
+        deployable_adapters=("inesdata", "edc"),
         deployment_strategy="shared-chart-active-adapter",
         validation_groups=("semantic-virtualization",),
+        edc_required_connector_extensions=(
+            EDC_EXTENSION_CONTRACT_SEQUENCE,
+            EDC_EXTENSION_PROXY,
+            EDC_EXTENSION_OBSERVABILITY,
+        ),
     ),
 }
 
@@ -214,6 +237,26 @@ def component_validation_groups(components: list[str] | tuple[str, ...] | None) 
             seen.add(group)
             groups.append(group)
     return groups
+
+
+def required_connector_extensions_for_adapter(
+    components: list[str] | tuple[str, ...] | None,
+    adapter: str,
+) -> list[str]:
+    adapter_name = str(adapter or "").strip().lower()
+    required: list[str] = []
+    seen: set[str] = set()
+    for component in list(components or []):
+        contract = get_component_contract(component)
+        if contract is None:
+            continue
+        extensions = contract.edc_required_connector_extensions if adapter_name == "edc" else ()
+        for extension in extensions:
+            if extension in seen:
+                continue
+            seen.add(extension)
+            required.append(extension)
+    return required
 
 
 def summarize_components_for_adapter(config: dict[str, Any] | None, adapter: str) -> dict[str, list[str]]:

@@ -223,7 +223,7 @@ class InesdataDeployerWrapperTests(unittest.TestCase):
         self.assertTrue(profile.newman_enabled)
         self.assertTrue(profile.test_data_cleanup_enabled)
         self.assertTrue(profile.playwright_enabled)
-        self.assertEqual(profile.playwright_config, "validation/ui/playwright.config.ts")
+        self.assertEqual(profile.playwright_config, "validation/ui/playwright.inesdata.config.ts")
         self.assertTrue(profile.component_validation_enabled)
         self.assertEqual(profile.component_groups, ["ontology-hub", "ai-model-hub"])
 

@@ -26,8 +26,8 @@ connector:
     privatekey: {{ keys.dataspace_name }}/{{ keys.connector_name }}/private-key
     publickey: {{ keys.dataspace_name }}/{{ keys.connector_name }}/public-key
   transfer:
-    privatekey: private-key
-    publickey: public-key
+    privatekey: {{ keys.dataspace_name }}/{{ keys.connector_name }}/private-key
+    publickey: {{ keys.dataspace_name }}/{{ keys.connector_name }}/public-key
   keys:
     createSecret: false
     existingSecret: ""

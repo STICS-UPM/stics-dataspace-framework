@@ -46,6 +46,48 @@ class LocalCapacityTests(unittest.TestCase):
         self.assertEqual(summary["active_adapters"], ["edc", "inesdata"])
         self.assertEqual(summary["active_component_namespaces"], ["components"])
 
+    def test_summarize_local_workloads_accepts_adapter_namespace_lists(self):
+        pods = {
+            "items": [
+                {"metadata": {"namespace": "provider"}, "status": {"phase": "Running"}},
+                {"metadata": {"namespace": "consumer"}, "status": {"phase": "Running"}},
+                {"metadata": {"namespace": "edc-control"}, "status": {"phase": "Running"}},
+            ]
+        }
+
+        summary = summarize_local_workloads(
+            pods,
+            adapter_namespaces={
+                "inesdata": ["core-control", "provider", "consumer"],
+                "edc": ["edc-control", "edc-provider", "edc-consumer"],
+            },
+            component_namespaces=["components"],
+        )
+
+        self.assertTrue(summary["coexistence_detected"])
+        self.assertEqual(summary["active_adapters"], ["edc", "inesdata"])
+
+    def test_summarize_local_workloads_does_not_treat_target_components_as_coexistence(self):
+        pods = {
+            "items": [
+                {"metadata": {"namespace": "edc-control"}, "status": {"phase": "Running"}},
+                {"metadata": {"namespace": "components"}, "status": {"phase": "Running"}},
+            ]
+        }
+
+        summary = summarize_local_workloads(
+            pods,
+            adapter_namespaces={
+                "inesdata": ["core-control", "provider", "consumer"],
+                "edc": ["edc-control", "edc-provider", "edc-consumer"],
+            },
+            component_namespaces=["components"],
+        )
+
+        self.assertFalse(summary["coexistence_detected"])
+        self.assertEqual(summary["active_adapters"], ["edc"])
+        self.assertEqual(summary["active_component_namespaces"], ["components"])
+
     def test_evaluate_local_coexistence_capacity_fails_when_memory_is_below_baseline(self):
         summary = {"coexistence_detected": True, "active_adapters": ["edc", "inesdata"]}
 

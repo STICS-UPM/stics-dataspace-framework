@@ -412,29 +412,33 @@ class EdcConnectorTopologyTests(unittest.TestCase):
         connector_mock.assert_not_called()
         dashboard_mock.assert_not_called()
 
-    def test_edc_preview_components_marks_pending_support_without_deployable_urls(self):
+    def test_edc_preview_components_marks_deployable_components_with_urls(self):
         adapter = EdcAdapter(dry_run=True)
         adapter.config_adapter.load_deployer_config = lambda: {
             "ENVIRONMENT": "DEV",
             "DS_1_NAME": "demoedc",
             "DS_1_NAMESPACE": "demoedc",
+            "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
             "COMPONENTS": "ontology-hub,ai-model-hub",
         }
 
         preview = adapter._preview_components()
 
-        self.assertEqual(preview["status"], "pending-support")
-        self.assertEqual(preview["action"], "skip")
+        self.assertEqual(preview["status"], "planned")
+        self.assertEqual(preview["action"], "deploy_components")
         self.assertEqual(preview["configured"], ["ontology-hub", "ai-model-hub"])
-        self.assertEqual(preview["deployable"], [])
-        self.assertEqual(preview["pending_support"], ["ontology-hub", "ai-model-hub"])
+        self.assertEqual(preview["deployable"], ["ontology-hub", "ai-model-hub"])
+        self.assertEqual(preview["pending_support"], [])
         self.assertEqual(
             [component["status"] for component in preview["components"]],
-            ["pending-support", "pending-support"],
+            ["planned", "planned"],
         )
         self.assertEqual(
             [component["url"] for component in preview["components"]],
-            [None, None],
+            [
+                "http://ontology-hub-demoedc.dev.ds.dataspaceunit.upm",
+                "http://ai-model-hub-demoedc.dev.ds.dataspaceunit.upm",
+            ],
         )
 
     def test_edc_adapter_reuses_common_services_when_ready(self):
@@ -1280,8 +1284,14 @@ class EdcConnectorAdapterTests(unittest.TestCase):
             payload["connector"]["minio"]["secretkey"],
             "demoedc/conn-citycounciledc-demoedc/aws-secret-key",
         )
-        self.assertEqual(payload["connector"]["transfer"]["privatekey"], "private-key")
-        self.assertEqual(payload["connector"]["transfer"]["publickey"], "public-key")
+        self.assertEqual(
+            payload["connector"]["transfer"]["privatekey"],
+            "demoedc/conn-citycounciledc-demoedc/private-key",
+        )
+        self.assertEqual(
+            payload["connector"]["transfer"]["publickey"],
+            "demoedc/conn-citycounciledc-demoedc/public-key",
+        )
         self.assertEqual(payload["services"]["keycloak"]["hostname"], "keycloak.dev.ed.dataspaceunit.upm")
         self.assertEqual(payload["services"]["minio"]["bucket"], "demoedc-conn-citycounciledc-demoedc")
         self.assertEqual(payload["services"]["vault"]["path"], "demoedc/conn-citycounciledc-demoedc/")

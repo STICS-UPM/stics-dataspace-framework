@@ -6,7 +6,11 @@ import time
 import requests
 
 from adapters.inesdata.components import INESDataComponentsAdapter
-from deployers.shared.lib.components import summarize_components_for_adapter
+from deployers.shared.lib.components import (
+    infer_component_hostname,
+    resolve_component_release_name,
+    summarize_components_for_adapter,
+)
 
 
 class SharedComponentsAdapter(INESDataComponentsAdapter):
@@ -54,9 +58,37 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             "namespace": resolved_namespace,
             "chart_dir": chart_dir,
             "values_file": values_file,
-            "host": self._infer_component_hostname(normalized, values_file, resolved_config),
-            "release_name": self._resolve_component_release_name(normalized),
+            "host": self._infer_component_hostname_for_dataspace(
+                normalized,
+                values_file,
+                resolved_config,
+                dataspace_name=resolved_ds_name,
+            ),
+            "release_name": resolve_component_release_name(
+                normalized,
+                dataspace_name=resolved_ds_name,
+            ),
         }
+
+    def _infer_component_hostname_for_dataspace(
+        self,
+        normalized_component,
+        values_file,
+        deployer_config,
+        *,
+        dataspace_name,
+    ):
+        try:
+            values = self._safe_load_yaml_file(values_file)
+        except Exception:
+            return None
+
+        return infer_component_hostname(
+            normalized_component,
+            values,
+            deployer_config,
+            dataspace_name=dataspace_name,
+        )
 
     def prepare_component_runtime_metadata(
         self,

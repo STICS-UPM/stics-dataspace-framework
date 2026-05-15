@@ -14,6 +14,7 @@ from deployers.shared.lib.components import (
     configured_optional_components,
     get_component_contract,
     infer_component_hostname,
+    required_connector_extensions_for_adapter,
     resolve_component_release_name,
     summarize_components_for_adapter,
 )
@@ -37,12 +38,12 @@ class SharedComponentsContractTests(unittest.TestCase):
         ai_model_hub = get_component_contract("ai_model_hub")
 
         self.assertEqual(ontology.supported_adapters, ("inesdata", "edc"))
-        self.assertEqual(ontology.deployable_adapters, ("inesdata",))
+        self.assertEqual(ontology.deployable_adapters, ("inesdata", "edc"))
         self.assertEqual(ai_model_hub.supported_adapters, ("inesdata", "edc"))
-        self.assertEqual(ai_model_hub.deployable_adapters, ("inesdata",))
+        self.assertEqual(ai_model_hub.deployable_adapters, ("inesdata", "edc"))
         semantic_virtualization = get_component_contract("semantic_virtualization")
         self.assertEqual(semantic_virtualization.supported_adapters, ("inesdata", "edc"))
-        self.assertEqual(semantic_virtualization.deployable_adapters, ("inesdata",))
+        self.assertEqual(semantic_virtualization.deployable_adapters, ("inesdata", "edc"))
         self.assertIn("semantic-virtualization", COMPONENT_CONTRACTS)
 
     def test_components_for_adapter_filters_by_current_deployable_runtime(self):
@@ -56,7 +57,7 @@ class SharedComponentsContractTests(unittest.TestCase):
         )
         self.assertEqual(
             components_for_adapter(config, "edc", deployable_only=True),
-            [],
+            ["ontology-hub", "ai-model-hub", "semantic-virtualization"],
         )
         self.assertEqual(
             components_for_adapter(config, "edc", deployable_only=False),
@@ -77,10 +78,31 @@ class SharedComponentsContractTests(unittest.TestCase):
         )
 
         self.assertEqual(summary["configured"], ["ontology-hub", "ai-model-hub", "semantic-virtualization"])
-        self.assertEqual(summary["deployable"], [])
-        self.assertEqual(summary["pending_support"], ["ontology-hub", "ai-model-hub", "semantic-virtualization"])
+        self.assertEqual(summary["deployable"], ["ontology-hub", "ai-model-hub", "semantic-virtualization"])
+        self.assertEqual(summary["pending_support"], [])
         self.assertEqual(summary["unsupported"], [])
         self.assertEqual(summary["unknown"], [])
+
+    def test_required_connector_extensions_for_edc_are_component_specific(self):
+        required = required_connector_extensions_for_adapter(
+            ["ontology-hub", "ai-model-hub", "semantic-virtualization"],
+            "edc",
+        )
+
+        self.assertEqual(
+            required,
+            [
+                "com.pionera.assetfilter.filter.AssetFilterExtension",
+                "com.pionera.assetfilter.observability.ObservabilityExtension",
+                "com.pionera.assetfilter.infer.InferenceExtension",
+                "com.pionera.assetfilter.contracts.ContractSequenceExtension",
+                "com.pionera.assetfilter.proxy.CustomProxyDataPlaneExtension",
+            ],
+        )
+        self.assertEqual(
+            required_connector_extensions_for_adapter(["ai-model-hub"], "inesdata"),
+            [],
+        )
 
     def test_component_values_file_candidates_follow_expected_precedence(self):
         candidates = component_values_file_candidates("/tmp/chart", "demo", "demo-provider")

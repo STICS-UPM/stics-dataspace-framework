@@ -153,7 +153,7 @@ class InesdataDeployer:
             newman_enabled=True,
             test_data_cleanup_enabled=True,
             playwright_enabled=True,
-            playwright_config="validation/ui/playwright.config.ts",
+            playwright_config="validation/ui/playwright.inesdata.config.ts",
             component_validation_enabled=bool(component_groups),
             component_groups=component_groups,
         )

@@ -58,15 +58,23 @@ def node_capacity_memory_mb(nodes_payload: dict[str, Any] | None) -> int | None:
 def summarize_local_workloads(
     pods_payload: dict[str, Any] | None,
     *,
-    adapter_namespaces: dict[str, str],
+    adapter_namespaces: dict[str, Any],
     component_namespaces: list[str] | tuple[str, ...] = ("components",),
 ) -> dict[str, Any]:
     """Summarize local adapter workloads currently present in the cluster."""
-    namespace_to_adapter = {
-        str(namespace or "").strip(): str(adapter or "").strip().lower()
-        for adapter, namespace in (adapter_namespaces or {}).items()
-        if str(namespace or "").strip() and str(adapter or "").strip()
-    }
+    namespace_to_adapter = {}
+    for adapter, raw_namespaces in (adapter_namespaces or {}).items():
+        adapter_name = str(adapter or "").strip().lower()
+        if not adapter_name:
+            continue
+        if isinstance(raw_namespaces, (list, tuple, set)):
+            candidate_namespaces = raw_namespaces
+        else:
+            candidate_namespaces = [raw_namespaces]
+        for namespace in candidate_namespaces:
+            normalized_namespace = str(namespace or "").strip()
+            if normalized_namespace:
+                namespace_to_adapter[normalized_namespace] = adapter_name
     component_namespace_set = {
         str(namespace or "").strip()
         for namespace in component_namespaces
@@ -93,9 +101,7 @@ def summarize_local_workloads(
         if namespace in component_namespace_set:
             active_component_namespaces.add(namespace)
 
-    coexistence_detected = len(active_adapters) >= 2 or (
-        "edc" in active_adapters and bool(active_component_namespaces)
-    )
+    coexistence_detected = len(active_adapters) >= 2
     return {
         "active_adapters": sorted(active_adapters),
         "active_component_namespaces": sorted(active_component_namespaces),
