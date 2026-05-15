@@ -55,7 +55,7 @@ ejecutar toda la suite. Para el conector INESData, el flujo E2E recomendado es:
 
 ```bash
 cd validation/ui
-UI_ADAPTER=inesdata npx playwright test core/05-e2e-transfer-flow.spec.ts --config=playwright.config.ts --workers=1
+UI_ADAPTER=inesdata npx playwright test adapters/inesdata/specs/05-e2e-transfer-flow.spec.ts --config=playwright.inesdata.config.ts --workers=1
 ```
 
 ## Extender Deployers

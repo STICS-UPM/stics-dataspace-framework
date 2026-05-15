@@ -447,7 +447,7 @@ uploads con folder, la key esperada es:
 <folder>/<file>
 ```
 
-El flujo E2E `core/05-e2e-transfer-flow.spec.ts` cubre este caso porque crea un
+El flujo E2E `adapters/inesdata/specs/05-e2e-transfer-flow.spec.ts` cubre este caso porque crea un
 asset con folder, lo publica, lo descubre desde el consumidor y ejecuta
 negociación y transferencia.
 

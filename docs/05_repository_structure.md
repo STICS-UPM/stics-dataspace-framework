@@ -64,14 +64,18 @@ Los adapters construyen el `Level6Runtime` específico del despliegue activo y d
 
 ### `validation/ui/`
 
-Contiene la validación UI del dataspace core con Playwright:
+Contiene la validación UI del dataspace con Playwright, separada por adapter:
 
 - `package.json`
-- `playwright.config.ts`
+- `playwright.inesdata.config.ts`
+- `playwright.edc.config.ts`
 - `README.md`
-- `core/`
+- `adapters/inesdata/specs/`
+- `adapters/inesdata/components/`
+- `adapters/edc/specs/`
+- `adapters/edc/components/`
 - `ops/`
-- `components/`
+- `shared/components/`
 - `shared/`
 
 Sí forma parte del framework actual:
@@ -79,6 +83,18 @@ Sí forma parte del framework actual:
 - `Level 6` ejecuta un smoke UI estable por conector
 - ejecuta la suite `ops` de MinIO Console cuando existe, salvo opt-out explícito
 - guarda sus artefactos dentro del experimento activo
+
+### `validation/datasets/`
+
+Contiene la capa neutral de fuentes de datasets usadas por las validaciones de
+componentes.
+
+- `manager.py`: catálogo y sincronización de repositorios públicos de datasets.
+- `sources/`: clones locales generados por `Level 5`; está ignorada por git.
+
+El objetivo es que `Level 6` pueda trazar cada validación al repositorio fuente,
+commit y licencia correspondientes, sin acoplar esos datasets a un adapter
+concreto ni versionar copias reducidas dentro de los componentes.
 
 ## `framework/`
 

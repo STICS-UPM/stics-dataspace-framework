@@ -6,23 +6,27 @@ La Fase 4 incorpora una capa de validación UI con Playwright alineada con los f
 
 La cobertura UI actual se divide en tres grupos:
 
-- `core`: flujos funcionales estables del portal del conector.
-- `extended`: flujo E2E largo para validación visual y regresion ampliada.
-- `ops`: comprobaciones visuales opcionales de operación, separadas del core.
+- `adapters/inesdata/specs`: flujos funcionales estables del portal INESData.
+- `adapters/edc/specs`: flujos funcionales estables del dashboard EDC.
+- `extended`: flujo E2E largo para validación visual y regresión ampliada.
+- `ops`: comprobaciones visuales opcionales de operación.
 
 Los specs activos viven bajo:
 
-- `validation/ui/core/`
+- `validation/ui/adapters/inesdata/specs/`
+- `validation/ui/adapters/edc/specs/`
 - `validation/ui/ops/`
 
 Y reutilizan page objects y fixtures en:
 
-- `validation/ui/components/`
+- `validation/ui/adapters/inesdata/components/`
+- `validation/ui/adapters/edc/components/`
+- `validation/ui/shared/components/`
 - `validation/ui/shared/`
 
 ## Flujos Core
 
-La suite `core` cubre actualmente:
+La suite INESData cubre actualmente:
 
 - `01 login readiness`
 - `03 provider setup`
@@ -186,12 +190,12 @@ La suite `core` cubre actualmente:
 
 Además de los specs atómicos, existe un flujo E2E largo:
 
-- `core/05-e2e-transfer-flow.spec.ts`
+- `adapters/inesdata/specs/05-e2e-transfer-flow.spec.ts`
 
 Este spec encadena:
 
 - login del provider
-- creacion del asset desde UI
+- creación del asset desde UI
 - bootstrap complementario de artefactos contractuales
 - login del consumer
 - catálogo
@@ -202,7 +206,7 @@ Su objetivo es servir como regresion extendida y validación visual del recorrid
 
 ## Suite Ops Opcional
 
-La suite `ops` contiene comprobaciones visuales separadas del flujo funcional core:
+La suite `ops` contiene comprobaciones visuales separadas del flujo funcional del adapter:
 
 - `ops/minio-bucket-visibility.spec.ts`
 
@@ -274,8 +278,8 @@ Reglas practicas:
 
 `main.py menu` Level 6 ejecuta por defecto un subconjunto estable de smoke UI por cada conector:
 
-- `core/01-login-readiness.spec.ts`
-- `core/04-consumer-catalog.spec.ts`
+- `adapters/inesdata/specs/01-login-readiness.spec.ts`
+- `adapters/inesdata/specs/04-consumer-catalog.spec.ts`
 
 Estos tests se consideran el mínimo estable porque:
 
@@ -346,7 +350,7 @@ Si el entorno sigue mostrando síntomas gráficos extraños después de varias m
 
 - La UI cubre el flujo visible de negociación y transferencia, pero no sustituye las validaciones técnicas de `EDR` o descarga raw.
 - La comprobación del almacenamiento final sigue siendo más fiable por API o SDK que por la consola de MinIO.
-- La suite `ops` es opcional y no forma parte del criterio core de aceptacion del dataspace.
+- La suite `ops` es opcional y no forma parte del criterio funcional principal de aceptación del dataspace.
 - La suite `extended` es útil para evidencias visuales y regresion larga, pero no debe reemplazar a los specs atómicos.
 
 ## Resumen

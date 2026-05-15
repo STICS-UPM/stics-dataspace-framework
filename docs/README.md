@@ -1,13 +1,13 @@
 # Documentación del Validation Environment
 
-Esta carpeta contiene la documentación pública y estable del framework de
-validación. Está organizada para que una persona auditora, integradora o
+Esta carpeta contiene la documentación estable del framework de validación.
+Está organizada para que una persona auditora, integradora o
 desarrolladora pueda entender qué hace el framework, cómo se ejecuta y dónde
 encontrar la evidencia técnica.
 
 La documentación evita incluir notas personales, contraseñas, tokens, rutas
 privadas o información sensible. Los artefactos generados por ejecución viven
-en `experiments/` y no forman parte de esta documentación pública.
+en `experiments/` y no forman parte de la documentación estable de `docs/`.
 
 ## Ruta Para Auditoría
 

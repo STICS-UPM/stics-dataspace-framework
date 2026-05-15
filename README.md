@@ -5,6 +5,10 @@ validación de espacios de datos PIONERA. Se utiliza para desplegar dataspaces,
 validar conectores, ejecutar pruebas funcionales, recoger métricas y generar
 evidencias experimentales de forma trazable.
 
+![PIONERA local validation environment](./docs/pionera_local_validation_environment.png)
+
+_Referencia inicial de la topología `local` del framework._
+
 El punto de entrada principal es `main.py`. El framework está organizado para
 trabajar con distintos adapters y topologías sin duplicar la lógica común de
 validación.
@@ -624,7 +628,7 @@ Colecciones Newman principales:
 Playwright se resuelve por adapter:
 
 ```text
-validation/ui/playwright.config.ts
+validation/ui/playwright.inesdata.config.ts
 validation/ui/playwright.edc.config.ts
 ```
 
@@ -783,7 +787,7 @@ ejecutan desde `Level 6`.
 | `deployers/shared/` | Charts y artefactos reutilizables. |
 | `validation/` | Suites Newman, Playwright y validaciones de componentes. |
 | `tests/` | Pruebas unitarias del framework. |
-| `docs/` | Documentación pública estable. |
+| `docs/` | Documentación estable del framework. |
 
 ## Tests
 
@@ -808,7 +812,7 @@ Ontology, métricas o componentes que dependan del entorno local disponible.
 
 ## Documentación
 
-La documentación pública está en [docs/](./docs/README.md).
+La documentación está en [docs/](./docs/README.md).
 
 Orden recomendado:
 

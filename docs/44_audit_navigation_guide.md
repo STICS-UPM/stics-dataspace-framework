@@ -18,9 +18,9 @@ INESData y EDC. La documentación vigente cubre:
 - evidencias generadas por ejecución bajo `experiments/`;
 - colecciones importables de Postman y ejecución automatizada con Newman.
 
-## Fuera de Alcance Público
+## Fuera de Alcance
 
-La documentación pública no debe contener contraseñas reales, tokens, claves de
+La documentación no debe contener contraseñas reales, tokens, claves de
 API, rutas privadas de una máquina, IP privadas de una instalación concreta ni
 exports de entornos con credenciales. Los ejemplos usan placeholders o nombres
 de variables.
@@ -30,7 +30,7 @@ cada experimento y no forman parte del contenido estable de `docs/`.
 
 ## Orden de Lectura Sugerido
 
-1. [README](./README.md): índice principal de la documentación pública.
+1. [README](./README.md): índice principal de la documentación.
 2. [30 Estado actual del framework](./30_framework_current_state.md): resumen
    vigente de niveles, topologías, adapters y namespaces.
 3. [34 Arquitectura](./34_architecture.md): componentes del repositorio y

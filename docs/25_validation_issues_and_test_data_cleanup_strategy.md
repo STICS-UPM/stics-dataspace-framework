@@ -18,7 +18,7 @@ Los issues de validación se documentan con este formato:
 | Resolucion | cambio aplicado |
 | Evidencia | tests, experimento o comando |
 
-La documentación publica conserva el patron y las conclusiones técnicas. Los
+La documentación conserva el patron y las conclusiones técnicas. Los
 logs con secretos o rutas locales sensibles no deben publicarse.
 
 ## Limpieza Antes de Validar

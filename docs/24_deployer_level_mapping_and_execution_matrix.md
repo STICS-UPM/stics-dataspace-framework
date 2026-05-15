@@ -51,8 +51,8 @@ habilitadas para un adapter concreto, como `Level 5` real de componentes en
 | --- | --- |
 | `1` a `3` | reutiliza infraestructura y servicios compartidos en `local` y `vm-single` |
 | `4` | conectores EDC y dashboard EDC operativos en `local` y `vm-single` |
-| `5` | componentes compartidos no habilitados todavía para despliegue real EDC |
-| `6` | Newman, Playwright EDC y storage operativos |
+| `5` | componentes compartidos operativos cuando están configurados y el conector registra sus extensiones requeridas |
+| `6` | Newman, Playwright EDC, storage, componentes y reportes |
 
 ## Recreate Dataspace
 

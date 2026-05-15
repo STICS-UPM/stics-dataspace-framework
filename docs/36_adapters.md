@@ -154,4 +154,4 @@ Para añadir otro adapter:
 4. Registrar adapter y deployer en `main.py`.
 5. Definir el perfil de validación por defecto.
 6. Añadir pruebas unitarias focalizadas.
-7. Añadir documentación pública solo cuando el comportamiento sea estable.
+7. Añadir documentación solo cuando el comportamiento sea estable.

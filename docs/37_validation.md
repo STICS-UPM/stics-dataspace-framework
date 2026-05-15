@@ -1,5 +1,35 @@
 # Validación
 
+## Nivel 5 y Datasets
+
+`Level 5` prepara los componentes configurados y también sincroniza las fuentes
+de datasets que esos componentes necesitan para sus validaciones. Los
+clones se ubican en una ruta neutral del framework:
+
+```text
+validation/datasets/sources/
+```
+
+Actualmente se registran estas fuentes:
+
+| Dataset | Componentes que lo usan | Repositorio |
+| --- | --- | --- |
+| `FLARES` | `ai-model-hub` | `https://github.com/rsepulveda911112/Flares-dataset` |
+| `GTFS-Madrid-Bench` | `ai-model-hub`, `semantic-virtualization` | `https://github.com/oeg-upm/gtfs-bench` |
+
+Si el entorno no tiene acceso a GitHub, `Level 5` deja warning por defecto y no
+rompe despliegues existentes. Para exigir que la sincronización falle de forma
+estricta, usa:
+
+```bash
+PIONERA_LEVEL5_DATASET_SYNC_STRICT=true python3 main.py inesdata run --topology local
+```
+
+`Level 6` no clona repositorios: valida y consume las fuentes ya preparadas por
+`Level 5`. Cuando una suite necesita una muestra controlada, la deriva durante
+la ejecución y la guarda como evidencia del experimento, no como dataset
+reducido versionado.
+
 ## Nivel 6
 
 El nivel 6 es el nivel de validación. Debe validar el dataspace desplegado y los componentes habilitados sin requerir un nivel adicional de validación de servicios.

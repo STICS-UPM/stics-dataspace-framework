@@ -14,11 +14,12 @@ por niveles del framework.
 | --- | --- | --- |
 | `local` | local | despliegue real habilitado |
 | `vm-single` | vm1 | despliegue real habilitado para la ruta base de `inesdata` y `edc` |
-| `vm-distributed` | vm3 | planificacion de hosts y perfil de topología |
+| `vm-distributed` | vm3 | planificación de hosts y perfil de topología |
 
-`vm-distributed` sigue protegido por guardas y `edc` mantiene pendiente `Level 5`
-real de componentes. El resto de la ruta ya puede ejecutarse en `vm-single`
-sin depender del perfil `local`.
+`vm-distributed` sigue protegido por guardas. El resto de la ruta ya puede
+ejecutarse en `vm-single` sin depender del perfil `local`, incluyendo
+componentes compartidos cuando el conector EDC registre las extensiones
+requeridas.
 
 ## Interpretacion de `vm-distributed`
 
@@ -39,9 +40,9 @@ Kubernetes y reduce la complejidad operativa inicial.
 
 Un único cluster con tres nodos permite validar:
 
-- distribucion física de workloads;
-- comunicacion entre provider, consumer y servicios comunes;
-- resolucion DNS/hosts;
+- distribución física de workloads;
+- comunicación entre provider, consumer y servicios comunes;
+- resolución DNS/hosts;
 - ingress externo;
 - identidad, secretos y almacenamiento compartido;
 - políticas, contratos, catálogo, negociación y transferencia;
@@ -55,7 +56,7 @@ validación.
 ## Routing y Endpoints
 
 El modo preferente es `routing_mode=host`: cada servicio relevante tiene su
-hostname. Es menos intrusivo para charts y aplicaciones que publicar multiples
+hostname. Es menos intrusivo para charts y aplicaciones que publicar múltiples
 servicios bajo prefijos de path.
 
 | Bloque | Ejemplo de endpoint productivo |
@@ -80,7 +81,7 @@ El perfil de topología permite separar direcciones por rol:
 
 | Variable | Uso |
 | --- | --- |
-| `PIONERA_VM_EXTERNAL_IP` | IP comun para `vm-single` |
+| `PIONERA_VM_EXTERNAL_IP` | IP común para `vm-single` |
 | `PIONERA_VM_COMMON_IP` | IP del nodo de servicios comunes |
 | `PIONERA_VM_PROVIDER_IP` | IP del nodo provider |
 | `PIONERA_VM_CONSUMER_IP` | IP del nodo consumer |
@@ -95,5 +96,5 @@ Las entradas de hosts se generan según el rol de cada servicio. En local se usa
 | `Minikube` | Kubernetes real |
 | `minikube tunnel` | Ingress/load balancer real |
 | `/etc/hosts` local | DNS o hosts gestionados por topología |
-| `minikube image load` | Registry de imagenes |
+| `minikube image load` | Registry de imágenes |
 | dominio local fijo | hosts por servicio o por rol |

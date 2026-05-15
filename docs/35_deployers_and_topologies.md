@@ -280,8 +280,7 @@ checks de acceso, ingress, storage y permisos.
 Estado actual del framework:
 
 - `inesdata`: `Level 1` a `Level 6` operativos, con `Level 5` compartido para componentes configurados
-- `edc`: `Level 1` a `Level 4` y `Level 6` operativos
-- `edc Level 5`: pendiente de soporte real de componentes
+- `edc`: `Level 1` a `Level 6` operativos, con `Level 5` compartido para componentes configurados y guarda de extensiones del conector
 
 La topología necesita una dirección externa, suministrada mediante una de estas variables:
 

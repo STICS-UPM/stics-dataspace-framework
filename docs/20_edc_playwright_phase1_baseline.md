@@ -30,7 +30,7 @@ validation/ui/adapters/edc/
 | Auth | flujo del portal INESData | `oidc-bff` |
 | Asset UI | subida de fichero del portal INESData | asset `HttpData` |
 | Transfer | flujo propio INESData | Management API EDC y destino S3 |
-| Configuración | `playwright.config.ts` | `playwright.edc.config.ts` |
+| Configuración | `playwright.inesdata.config.ts` | `playwright.edc.config.ts` |
 
 La suite EDC es analoga a INESData en intencion, pero no replica exactamente los
 mismos formularios porque el dashboard EDC expone capacidades distintas.

@@ -93,10 +93,19 @@ Por tanto, `Level 6` ya no debe entenderse como “solo Newman”, sino como el 
 En la práctica:
 
 - `COMPONENTS=ontology-hub` hace que `Level 5` lo despliegue
-- `COMPONENTS=ai-model-hub` hace que `Level 5` lo despliegue para `inesdata`
-  cuando el adapter tiene soporte real
+- `COMPONENTS=ai-model-hub` hace que `Level 5` lo despliegue cuando el adapter
+  tiene soporte real
+- en `edc`, `Level 5` valida primero que el conector registre las extensiones
+  requeridas por los componentes configurados
 - en el layout `role-aligned`, los componentes se publican en
   `components_namespace`, no en el namespace compacto del dataspace
+- `Level 5` sincroniza las fuentes oficiales de datasets requeridas por los
+  componentes configurados bajo `validation/datasets/sources/`. Por ejemplo,
+  `ai-model-hub` prepara FLARES y GTFS-Bench, y `semantic-virtualization`
+  prepara GTFS-Bench.
+- si la sincronización de datasets no puede completarse por falta de red,
+  `Level 5` lo reporta como warning por defecto para no romper despliegues
+  existentes; puede hacerse estricta con `PIONERA_LEVEL5_DATASET_SYNC_STRICT=true`
 - para `ontology-hub`, `Level 5` usa un checkout local en `adapters/inesdata/sources/Ontology-Hub`; si no existe, lo clona automáticamente
 - `Level 5` reconstruye esa imagen en el host y la carga en minikube antes del despliegue
 - ese flujo es deliberadamente estricto: no usa overrides de `source dir` ni de imagen para `ontology-hub`

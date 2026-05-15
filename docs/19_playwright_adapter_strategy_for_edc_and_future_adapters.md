@@ -8,19 +8,22 @@ portales al comportamiento de INESData.
 ```text
 validation/ui/
   shared/
-  core/
+    components/
   adapters/
+    inesdata/
+      components/
+      specs/
     edc/
       components/
       specs/
-  playwright.config.ts
+  playwright.inesdata.config.ts
   playwright.edc.config.ts
   playwright.ops.config.ts
 ```
 
 | Configuración | Uso |
 | --- | --- |
-| `playwright.config.ts` | suite INESData |
+| `playwright.inesdata.config.ts` | suite INESData |
 | `playwright.edc.config.ts` | suite EDC |
 | `playwright.ops.config.ts` | validaciones operativas como MinIO |
 

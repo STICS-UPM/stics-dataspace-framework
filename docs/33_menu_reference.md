@@ -253,9 +253,9 @@ reinicia para que tome la imagen local cargada en Minikube. Si no existe, la
 opción solo prepara la imagen; después ejecuta `Level 5` para desplegar el
 componente.
 
-## UI Validation
+## Validation
 
-`I - INESData Tests (Normal/Live/Debug)`
+`I - INESData UI Tests (Normal/Live/Debug)`
 
 Ejecuta validaciones UI del portal INESData de forma independiente del nivel 6
 completo. El submenú separa `Core` de las integraciones de componentes vistas
@@ -265,23 +265,38 @@ desde INESData:
 - `AI Model Hub Integration with INESData`: ejecuta `DS-UI-AMH-01`.
 - `Semantic Virtualization Integration with INESData`: ejecuta `DS-UI-SV-01`.
 
-`O - Ontology Hub Tests (Normal/Live/Debug)`
+`O - Ontology Hub UI Tests (Normal/Live/Debug)`
 
 Ejecuta validaciones UI propias de Ontology Hub, es decir, sobre la aplicación
 del componente y sus suites técnicas/funcionales, no sobre INESData.
 
-`A - AI Model Hub Tests (Normal/Live/Debug)`
+`A - AI Model Hub UI Tests (Normal/Live/Debug)`
 
 Ejecuta validaciones UI propias de AI Model Hub, no la validación de integración
 desde INESData.
 
-`V - Semantic Virtualization Tests (Normal/Live/Debug)`
+`V - Semantic Virtualization UI Tests (Normal/Live/Debug)`
 
 Ejecuta validaciones UI/read-only del virtualizador semántico. La suite abre el
 endpoint público desde Playwright, valida el documento OpenAPI y comprueba que
 el endpoint de consulta responde desde el contexto del navegador. También cubre
 la UI/editor del virtualizador cuando está habilitada; la validación desde INESData se
 ejecuta desde `I`.
+
+`F - Dataspace Interoperability Tests (Newman/Kafka)`
+
+Abre un submenú para ejecutar pruebas de interoperabilidad sin lanzar todo el
+nivel 6:
+
+- `1 - Newman connector interoperability tests`: ejecuta las colecciones Newman
+  de interoperabilidad entre conectores y guarda sus artefactos en un nuevo
+  experimento.
+- `2 - Kafka transfer interoperability tests`: ejecuta únicamente la validación
+  de transferencias Kafka entre conectores. Requiere confirmación explícita
+  porque puede tardar más que las validaciones Newman.
+
+Estas opciones reutilizan la misma lógica de validación que usa el nivel 6, pero
+permiten repetir solo la parte de interoperabilidad que interese revisar.
 
 ## Control
 

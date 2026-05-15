@@ -57,10 +57,9 @@ variable `AI_MODEL_HUB_ENABLE_*` en `false`, `0`, `no` o dejándola vacía.
 `AI Model Hub` debe poder operar como componente del dataspace, pero no debe
 quedar acoplado a un portal concreto. En la arquitectura actual:
 
-- INESData puede desplegar el componente desde `Level 5`;
-- EDC mantiene la base arquitectónica para componentes compartidos, pero su
-  integración completa de `Level 5` se documenta como limitación actual en
-  `docs/26_edc_shared_components_integration_plan.md`;
+- INESData y EDC pueden desplegar el componente desde `Level 5`;
+- en EDC, el despliegue exige que el conector registre las extensiones
+  requeridas para integrar el componente;
 - las validaciones oficiales siguen ejecutándose desde `Level 6`;
 - el bootstrap del componente ya forma parte del runner común;
 - la UI y las suites funcionales/de integración del componente forman parte del

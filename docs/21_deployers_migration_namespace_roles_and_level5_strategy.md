@@ -59,13 +59,16 @@ usa los charts compartidos de:
 ```text
 deployers/shared/components/ontology-hub/
 deployers/shared/components/ai-model-hub/
+deployers/shared/components/semantic-virtualization/
 ```
 
 El perfil de validación activa validaciones de componentes cuando
 `context.components` no está vacío.
 
-En EDC, la arquitectura ya permite compartir componentes, pero el despliegue
-real de `Level 5` para componentes EDC no está habilitado todavía.
+En EDC, `Level 5` reutiliza los mismos charts compartidos y valida antes que el
+conector registre las extensiones requeridas por los componentes configurados.
+Esto permite mantener la analogía con INESData sin asumir que todos los
+componentes usan exactamente el mismo conector.
 
 ## Artefactos Generados
 
