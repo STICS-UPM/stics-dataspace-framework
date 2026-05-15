@@ -143,6 +143,17 @@ class EdcConfigPathTests(unittest.TestCase):
             )
         )
 
+    def test_edc_level3_database_names_use_bootstrap_sql_normalization(self):
+        previous = self._clear_pionera_overrides()
+        try:
+            self.assertEqual(EdcConfig.sql_dataspace_name(), "pionera_edc")
+            self.assertEqual(EdcConfig.registration_db_name(), "pionera_edc_rs")
+            self.assertEqual(EdcConfig.registration_db_user(), "pionera_edc_rsusr")
+            self.assertEqual(EdcConfig.webportal_db_name(), "pionera_edc_wp")
+            self.assertEqual(EdcConfig.webportal_db_user(), "pionera_edc_wpusr")
+        finally:
+            self._restore_environment(previous)
+
     def test_edc_bootstrap_uses_edc_deployment_and_current_python_by_default(self):
         previous = self._clear_pionera_overrides()
         try:

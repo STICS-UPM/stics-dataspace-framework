@@ -275,20 +275,24 @@ class InesdataConfig:
         return values_file
 
     @classmethod
+    def sql_dataspace_name(cls):
+        return cls.dataspace_name().replace("-", "_")
+
+    @classmethod
     def registration_db_name(cls):
-        return f"{cls.dataspace_name()}_rs"
+        return f"{cls.sql_dataspace_name()}_rs"
 
     @classmethod
     def registration_db_user(cls):
-        return f"{cls.dataspace_name()}_rsusr"
+        return f"{cls.sql_dataspace_name()}_rsusr"
 
     @classmethod
     def webportal_db_name(cls):
-        return f"{cls.dataspace_name()}_wp"
+        return f"{cls.sql_dataspace_name()}_wp"
 
     @classmethod
     def webportal_db_user(cls):
-        return f"{cls.dataspace_name()}_wpusr"
+        return f"{cls.sql_dataspace_name()}_wpusr"
 
     @classmethod
     def connector_dir(cls):

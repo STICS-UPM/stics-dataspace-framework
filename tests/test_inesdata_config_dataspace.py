@@ -83,6 +83,27 @@ class InesdataConfigDataspaceTests(unittest.TestCase):
         self.assertEqual(config["DS_DOMAIN_BASE"], "dev.ds.dataspaceunit.upm")
         self.assertEqual(config["DS_1_NAME"], "demo")
 
+    def test_dataspace_database_names_match_bootstrap_normalization(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "deployers", "inesdata"), exist_ok=True)
+            with open(
+                os.path.join(tmpdir, "deployers", "inesdata", "deployer.config"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write("DS_1_NAME=pionera-edc\nDS_1_NAMESPACE=edc-control\n")
+
+            class TempConfig(InesdataConfig):
+                @classmethod
+                def script_dir(cls):
+                    return tmpdir
+
+            self.assertEqual(TempConfig.sql_dataspace_name(), "pionera_edc")
+            self.assertEqual(TempConfig.registration_db_name(), "pionera_edc_rs")
+            self.assertEqual(TempConfig.registration_db_user(), "pionera_edc_rsusr")
+            self.assertEqual(TempConfig.webportal_db_name(), "pionera_edc_wp")
+            self.assertEqual(TempConfig.webportal_db_user(), "pionera_edc_wpusr")
+
     def test_load_deployer_config_includes_topology_overlays_when_present(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, "deployers", "infrastructure", "topologies"), exist_ok=True)
