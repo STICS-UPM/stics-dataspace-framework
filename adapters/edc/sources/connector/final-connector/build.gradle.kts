@@ -16,6 +16,7 @@ dependencies {
     implementation(libs.edc.http)
     implementation(libs.edc.configuration.filesystem)
     implementation(libs.edc.iam.mock)
+    implementation(libs.edc.vault.hashicorp)
     implementation(libs.edc.management.api)
     implementation(libs.edc.transfer.data.plane.signaling)
     implementation(libs.edc.validator.data.address.http.data)
@@ -31,6 +32,8 @@ dependencies {
     implementation(libs.edc.data.plane.signaling.api)
     implementation(libs.edc.data.plane.core)
     implementation(libs.edc.data.plane.http)
+    implementation(libs.edc.data.plane.aws.s3)
+    implementation(libs.edc.data.plane.kafka)
     implementation(libs.edc.data.plane.iam)
 
     implementation(libs.edc.data.plane.spi)

@@ -111,6 +111,21 @@ function filteredHeaders(route: Route, bearerToken?: string): Record<string, str
   return headers;
 }
 
+async function fulfillRoute(
+  route: Route,
+  response: Parameters<Route["fulfill"]>[0],
+): Promise<void> {
+  try {
+    await route.fulfill(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/Route is already handled/i.test(message)) {
+      return;
+    }
+    throw error;
+  }
+}
+
 export async function installEdcDashboardRouteBridge(
   page: Page,
   runtime: DataspacePortalRuntime,
@@ -129,7 +144,7 @@ export async function installEdcDashboardRouteBridge(
     const [connectorName, serviceName, ...restSegments] = segments;
 
     if (!connectorName || !serviceName) {
-      await route.fulfill({
+      await fulfillRoute(route, {
         status: 404,
         contentType: "application/json",
         body: JSON.stringify({ message: "Connector or service segment missing" }),
@@ -139,7 +154,7 @@ export async function installEdcDashboardRouteBridge(
 
     const remainingPath = restSegments.join("/");
     if (serviceName === "api" && /^check\/health\/?$/i.test(remainingPath)) {
-      await route.fulfill({
+      await fulfillRoute(route, {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
@@ -154,7 +169,7 @@ export async function installEdcDashboardRouteBridge(
     const connector = resolveConnectorRuntime(runtime, connectorName);
     const targetUrl = targetUrlFor(connector, serviceName, remainingPath);
     if (!targetUrl) {
-      await route.fulfill({
+      await fulfillRoute(route, {
         status: 404,
         contentType: "application/json",
         body: JSON.stringify({ message: `Unsupported dashboard bridge path: ${requestUrl.pathname}` }),
@@ -176,7 +191,7 @@ export async function installEdcDashboardRouteBridge(
       data: route.request().postDataBuffer() ?? undefined,
     });
 
-    await route.fulfill({
+    await fulfillRoute(route, {
       status: upstreamResponse.status(),
       headers: upstreamResponse.headers(),
       body: await upstreamResponse.body(),

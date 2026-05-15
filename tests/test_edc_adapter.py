@@ -1,3 +1,4 @@
+import base64
 import contextlib
 import io
 import json
@@ -257,9 +258,28 @@ class EdcAdapterTests(unittest.TestCase):
         adapter = EdcAdapter(dry_run=True)
         self.assertIsInstance(adapter.components, SharedComponentsAdapter)
 
-    def test_edc_adapter_disables_kafka_transfer_validation_by_default(self):
+    def test_edc_adapter_advertises_kafka_transfer_capability(self):
         adapter = EdcAdapter(dry_run=True)
-        self.assertFalse(adapter.supports_kafka_transfer_validation())
+        self.assertTrue(adapter.supports_kafka_transfer_validation())
+
+    def test_edc_connector_runtime_includes_s3_and_kafka_data_planes(self):
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        build_file = os.path.join(
+            root_dir,
+            "adapters",
+            "edc",
+            "sources",
+            "connector",
+            "final-connector",
+            "build.gradle.kts",
+        )
+
+        with open(build_file, "r", encoding="utf-8") as handle:
+            content = handle.read()
+
+        self.assertIn("implementation(libs.edc.data.plane.aws.s3)", content)
+        self.assertIn("implementation(libs.edc.data.plane.kafka)", content)
+        self.assertIn("implementation(libs.edc.vault.hashicorp)", content)
 
 
 class EdcConnectorTopologyTests(unittest.TestCase):
@@ -551,6 +571,30 @@ class EdcConnectorTopologyTests(unittest.TestCase):
         self.assertEqual(adapter.connectors.calls, 1)
         adapter.infrastructure.reset_local_shared_common_services.assert_not_called()
         adapter.infrastructure.reset_common_services_for_level4_repair.assert_not_called()
+
+    def test_deploy_connectors_does_not_run_level3_when_edc_dataspace_realm_is_missing(self):
+        class Connectors:
+            _last_runtime_prerequisite_code = "keycloak_realm_missing"
+
+            def __init__(self):
+                self.calls = 0
+
+            def deploy_connectors(self):
+                self.calls += 1
+                raise RuntimeError(
+                    "EDC Level 4 cannot continue because Keycloak realm 'demoedc' does not exist."
+                )
+
+        adapter = EdcAdapter.__new__(EdcAdapter)
+        adapter.topology = "local"
+        adapter.connectors = Connectors()
+        adapter.deploy_dataspace = mock.Mock(return_value=None)
+
+        with self.assertRaisesRegex(RuntimeError, "Keycloak realm"):
+            adapter.deploy_connectors()
+
+        self.assertEqual(adapter.connectors.calls, 1)
+        adapter.deploy_dataspace.assert_not_called()
 
 
 class EdcDeploymentTests(unittest.TestCase):
@@ -1190,6 +1234,28 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         infrastructure.ensure_local_infra_access.assert_not_called()
         infrastructure.ensure_vault_unsealed.assert_called_once()
 
+    def test_keycloak_realm_preflight_reports_missing_dataspace_realm(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter._last_runtime_prerequisite_error = None
+        adapter._last_runtime_prerequisite_code = None
+        adapter.config_adapter = type(
+            "ConfigAdapter",
+            (),
+            {
+                "load_deployer_config": staticmethod(lambda: {"KC_INTERNAL_URL": "http://keycloak.local"}),
+            },
+        )()
+
+        response = mock.Mock(status_code=404, text='{"error":"Realm not found."}')
+        output = io.StringIO()
+        with mock.patch("adapters.edc.connectors.requests.get", return_value=response):
+            with contextlib.redirect_stdout(output):
+                result = adapter._ensure_keycloak_realm_available("demoedc")
+
+        self.assertFalse(result)
+        self.assertEqual(adapter._last_runtime_prerequisite_code, "keycloak_realm_missing")
+        self.assertIn("Run Level 3 for the EDC adapter", output.getvalue())
+
     def test_connector_values_payload_maps_edc_runtime_and_shared_services(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             adapter = self._make_adapter(tmpdir)
@@ -1206,8 +1272,14 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         self.assertEqual(payload["connector"]["image"]["name"], "ghcr.io/proyectopionera/edc-connector")
         self.assertEqual(payload["connector"]["configuration"]["configFilePath"], "/opt/connector/config/connector-configuration.properties")
         self.assertEqual(payload["connector"]["ingress"]["hostname"], "conn-citycounciledc-demoedc.dev.ds.dataspaceunit.upm")
-        self.assertEqual(payload["connector"]["minio"]["accesskey"], "minio-access-key")
-        self.assertEqual(payload["connector"]["minio"]["secretkey"], "minio-secret-key")
+        self.assertEqual(
+            payload["connector"]["minio"]["accesskey"],
+            "demoedc/conn-citycounciledc-demoedc/aws-access-key",
+        )
+        self.assertEqual(
+            payload["connector"]["minio"]["secretkey"],
+            "demoedc/conn-citycounciledc-demoedc/aws-secret-key",
+        )
         self.assertEqual(payload["connector"]["transfer"]["privatekey"], "private-key")
         self.assertEqual(payload["connector"]["transfer"]["publickey"], "public-key")
         self.assertEqual(payload["services"]["keycloak"]["hostname"], "keycloak.dev.ed.dataspaceunit.upm")
@@ -1241,6 +1313,129 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 "minio.dev.ed.dataspaceunit.upm",
                 "conn-citycounciledc-demoedc.dev.ds.dataspaceunit.upm",
                 "conn-companyedc-demoedc.dev.ds.dataspaceunit.upm",
+            ],
+        )
+
+    def test_reconcile_connector_vault_secrets_refreshes_token_and_s3_aliases(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = self._make_adapter(tmpdir)
+            connector = "conn-citycounciledc-demoedc"
+            credentials_path = os.path.join(tmpdir, "credentials.json")
+            certs_dir = os.path.join(tmpdir, "certs")
+            os.makedirs(certs_dir, exist_ok=True)
+            for suffix, content in {
+                "public.crt": "public-cert",
+                "private.key": "private-key",
+            }.items():
+                with open(os.path.join(certs_dir, f"{connector}-{suffix}"), "w", encoding="utf-8") as handle:
+                    handle.write(content)
+
+            credentials = {
+                "minio": {
+                    "access_key": "access-value",
+                    "secret_key": "secret-value",
+                },
+                "vault": {
+                    "token": "stale-token",
+                },
+                "certificates": {
+                    "path": certs_dir,
+                },
+            }
+            with open(credentials_path, "w", encoding="utf-8") as handle:
+                json.dump(credentials, handle)
+
+            adapter.config_adapter.load_deployer_config = lambda: {
+                "VT_URL": "http://vault.local",
+                "VT_TOKEN": "management-token",
+            }
+            adapter.config_adapter.edc_connector_credentials_path = lambda connector_name, ds_name=None: credentials_path
+            adapter.load_connector_credentials = lambda connector_name: credentials
+
+            def response(status_code=200, payload=None):
+                item = mock.Mock(status_code=status_code)
+                item.raise_for_status = mock.Mock()
+                item.json.return_value = payload or {}
+                if status_code >= 400:
+                    item.raise_for_status.side_effect = RuntimeError("failed")
+                return item
+
+            posted_secret_urls = []
+
+            def fake_get(url, **_kwargs):
+                if url.endswith("/v1/auth/token/lookup-self"):
+                    return response(status_code=403)
+                return response(status_code=404)
+
+            def fake_post(url, **kwargs):
+                if url.endswith("/v1/auth/token/create"):
+                    return response(payload={"auth": {"client_token": "fresh-token"}})
+                posted_secret_urls.append((url, kwargs["json"]))
+                return response()
+
+            with mock.patch("adapters.edc.connectors.requests.get", side_effect=fake_get), mock.patch(
+                "adapters.edc.connectors.requests.put",
+                return_value=response(),
+            ), mock.patch("adapters.edc.connectors.requests.post", side_effect=fake_post):
+                reconciled = adapter._reconcile_connector_vault_secrets(
+                    connector,
+                    "demoedc",
+                    credentials=credentials,
+                )
+
+            self.assertTrue(reconciled)
+            with open(credentials_path, "r", encoding="utf-8") as handle:
+                updated_credentials = json.load(handle)
+            self.assertEqual(updated_credentials["vault"]["token"], "fresh-token")
+            posted_paths = {url.rsplit("/v1/secret/data/", 1)[1] for url, _payload in posted_secret_urls}
+            self.assertEqual(
+                posted_paths,
+                {
+                    f"demoedc/{connector}/aws-access-key",
+                    f"demoedc/{connector}/aws-secret-key",
+                    f"demoedc/{connector}/public-key",
+                    f"demoedc/{connector}/private-key",
+                },
+            )
+
+    def test_edc_minio_dataspace_transfer_policy_allows_peer_buckets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = self._make_adapter(tmpdir)
+            connector = "conn-citycounciledc-demoedc"
+            policy_name = f"policy-demoedc-{connector}-dataspace-transfer"
+            setattr(adapter.config, "service_minio", staticmethod(lambda: "minio"))
+            adapter.infrastructure = mock.Mock()
+            adapter.infrastructure.get_pod_by_name.return_value = "minio-pod"
+            adapter.config_adapter.load_deployer_config = lambda: {
+                "MINIO_ENDPOINT": "http://minio.local:9000",
+                "MINIO_ADMIN_USER": "admin",
+                "MINIO_ADMIN_PASS": "admin-password",
+            }
+
+            run_commands = []
+
+            def fake_run(command, **_kwargs):
+                run_commands.append(command)
+                return "ok"
+
+            adapter.run = fake_run
+            adapter.run_silent = mock.Mock(side_effect=["", f"PolicyName: {policy_name}"])
+
+            result = adapter.ensure_minio_dataspace_transfer_policy_attached(
+                connector,
+                ds_name="demoedc",
+            )
+
+        self.assertTrue(result)
+        self.assertTrue(any(f"mc admin policy attach minio {policy_name} --user {connector}" in command for command in run_commands))
+        write_command = next(command for command in run_commands if "base64 -d" in command)
+        encoded_policy = write_command.split("echo '", 1)[1].split("'", 1)[0]
+        policy = json.loads(base64.b64decode(encoded_policy).decode("utf-8"))
+        self.assertEqual(
+            policy["Statement"][0]["Resource"],
+            [
+                "arn:aws:s3:::demoedc-*",
+                "arn:aws:s3:::demoedc-*/*",
             ],
         )
 
@@ -1527,6 +1722,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 "connectors": ["conn-citycouncil-demo"],
             }
         ]
+        adapter._ensure_keycloak_realm_available = lambda ds_name: True
         adapter._discover_existing_connectors = lambda ds_name, namespace, include_runtime_artifacts=True: set()
         adapter._conflicting_runtime_resources = lambda connector, namespace: [
             "deployment/conn-citycouncil-demo"
@@ -1547,6 +1743,37 @@ class EdcConnectorAdapterTests(unittest.TestCase):
             adapter.deploy_connectors()
 
         self.assertIn("Vault token is stale", str(ctx.exception))
+
+    def test_deploy_connectors_stops_before_cleanup_or_image_build_when_dataspace_realm_is_missing(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter._prepare_runtime_prerequisites = lambda: ("/tmp/repo", "/tmp/python")
+        adapter.load_dataspace_connectors = lambda: [
+            {
+                "name": "demoedc",
+                "namespace": "demoedc",
+                "connectors": ["conn-citycounciledc-demoedc"],
+            }
+        ]
+
+        def missing_realm(ds_name):
+            adapter._last_runtime_prerequisite_error = (
+                f"EDC Level 4 cannot continue because Keycloak realm '{ds_name}' does not exist. "
+                "Run Level 3 for the EDC adapter before deploying connectors."
+            )
+            adapter._last_runtime_prerequisite_code = "keycloak_realm_missing"
+            return False
+
+        adapter._ensure_keycloak_realm_available = missing_realm
+        adapter._discover_existing_connectors = mock.Mock(side_effect=AssertionError("cleanup discovery should not run"))
+        adapter._maybe_prepare_level4_local_edc_images = mock.Mock(
+            side_effect=AssertionError("image build should not run")
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Run Level 3 for the EDC adapter"):
+            adapter.deploy_connectors()
+
+        adapter._discover_existing_connectors.assert_not_called()
+        adapter._maybe_prepare_level4_local_edc_images.assert_not_called()
 
     def test_deploy_connectors_prepares_local_edc_images_before_runtime_deploy(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1615,6 +1842,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                     "connectors": ["conn-citycounciledc-demoedc"],
                 }
             ]
+            adapter._ensure_keycloak_realm_available = lambda ds_name: True
             adapter._discover_existing_connectors = lambda ds_name, namespace, include_runtime_artifacts=True: set()
             adapter._conflicting_runtime_resources = lambda connector, namespace: []
             adapter._prepare_connector_prerequisites = lambda connector, ds_name, namespace, repo_dir, python_exec: (
@@ -1684,6 +1912,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 ],
             }
         ]
+        adapter._ensure_keycloak_realm_available = lambda ds_name: True
         adapter._discover_existing_connectors = lambda ds_name, namespace, include_runtime_artifacts=True: set()
         adapter._conflicting_runtime_resources = lambda connector, namespace: []
         adapter._maybe_prepare_level4_local_edc_images = lambda: True
@@ -1757,6 +1986,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 ],
             }
         ]
+        adapter._ensure_keycloak_realm_available = lambda ds_name: True
         adapter._conflicting_runtime_resources = lambda connector, namespace: []
         adapter._level4_role_aligned_connector_namespaces_requested = lambda: True
         adapter._maybe_prepare_level4_local_edc_images = lambda: True
@@ -2056,6 +2286,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         adapter.load_connector_credentials = lambda connector: {"database": {"name": "db", "user": "user", "passwd": "pw"}}
         adapter._edc_runtime_present = lambda connector, namespace: False
         adapter.wait_for_keycloak_admin_ready = lambda: True
+        adapter._ensure_keycloak_realm_available = lambda ds_name: True
         adapter.config_adapter = EdcConnectorConfigAdapter("/tmp")
         adapter._remove_edc_values_file = lambda connector, ds_name=None: None
         cleanup_calls = []
@@ -2074,6 +2305,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         )
         adapter.setup_minio_bucket = lambda namespace, ds_name, connector, credentials_path: True
         adapter.ensure_minio_policy_attached = lambda connector, ds_name=None: True
+        adapter._reconcile_connector_vault_secrets = lambda connector, ds_name, credentials=None: True
 
         result = adapter._prepare_connector_prerequisites(
             "conn-citycounciledc-demoedc",

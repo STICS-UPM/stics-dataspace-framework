@@ -1,5 +1,6 @@
 """Connector lifecycle helpers for the generic EDC adapter."""
 
+import base64
 import json
 import os
 import shutil
@@ -474,6 +475,269 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
 
         return True
 
+    def _vault_management_runtime(self):
+        config_loader = getattr(self.config_adapter, "load_deployer_config", None)
+        if not callable(config_loader):
+            return None, None
+        deployer_config = config_loader() or {}
+        vault_url = str(
+            deployer_config.get("VT_URL") or deployer_config.get("VAULT_URL") or ""
+        ).strip().rstrip("/")
+        vault_token = str(deployer_config.get("VT_TOKEN") or "").strip()
+        return vault_url, vault_token
+
+    def _connector_credentials_file_path(self, connector_name, ds_name):
+        resolver = getattr(self.config_adapter, "edc_connector_credentials_path", None)
+        if callable(resolver):
+            return resolver(connector_name, ds_name=ds_name)
+        return self.config.connector_credentials_path(connector_name)
+
+    def _connector_certificates_dir_from_credentials(self, credentials, ds_name):
+        certificates = (credentials or {}).get("certificates") or {}
+        certs_path = str(certificates.get("path") or "").strip()
+        if certs_path:
+            if os.path.isabs(certs_path):
+                return certs_path
+            return os.path.join(self.config.script_dir(), certs_path)
+        resolver = getattr(self.config_adapter, "edc_connector_certs_dir", None)
+        if callable(resolver):
+            return resolver(ds_name=ds_name)
+        return self.config.connector_certificates_dir()
+
+    def _connector_vault_secret_payload(self, connector_name, ds_name, credentials):
+        minio = (credentials or {}).get("minio") or {}
+        access_key = str(minio.get("access_key") or "").strip()
+        secret_key = str(minio.get("secret_key") or "").strip()
+        if not access_key or not secret_key:
+            print(f"Cannot reconcile Vault S3 secrets for {connector_name}: MinIO credentials are missing.")
+            return None
+
+        secrets = {
+            f"{ds_name}/{connector_name}/aws-access-key": access_key,
+            f"{ds_name}/{connector_name}/aws-secret-key": secret_key,
+        }
+        certs_dir = self._connector_certificates_dir_from_credentials(credentials, ds_name)
+        cert_files = {
+            f"{ds_name}/{connector_name}/public-key": os.path.join(
+                certs_dir,
+                f"{connector_name}-public.crt",
+            ),
+            f"{ds_name}/{connector_name}/private-key": os.path.join(
+                certs_dir,
+                f"{connector_name}-private.key",
+            ),
+        }
+        for secret_path, file_path in cert_files.items():
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as handle:
+                    secrets[secret_path] = handle.read()
+        return secrets
+
+    @staticmethod
+    def _vault_headers(token):
+        return {"X-Vault-Token": token}
+
+    def _vault_secret_exists(self, vault_url, vault_token, secret_path):
+        try:
+            response = requests.get(
+                f"{vault_url}/v1/secret/data/{secret_path}",
+                headers=self._vault_headers(vault_token),
+                timeout=5,
+                verify=False,
+            )
+        except requests.RequestException:
+            return False
+        return response.status_code == 200
+
+    def _vault_token_is_valid(self, vault_url, vault_token):
+        if not vault_token:
+            return False
+        try:
+            response = requests.get(
+                f"{vault_url}/v1/auth/token/lookup-self",
+                headers=self._vault_headers(vault_token),
+                timeout=5,
+                verify=False,
+            )
+        except requests.RequestException:
+            return False
+        return response.status_code == 200
+
+    def _write_connector_credentials_file(self, credentials_path, credentials):
+        os.makedirs(os.path.dirname(credentials_path), exist_ok=True)
+        with open(credentials_path, "w", encoding="utf-8") as handle:
+            json.dump(credentials, handle, indent=2)
+
+    def _reconcile_connector_vault_secrets(self, connector_name, ds_name, credentials=None):
+        credentials_path = self._connector_credentials_file_path(connector_name, ds_name)
+        credentials = credentials or self.load_connector_credentials(connector_name)
+        if not credentials:
+            print(f"Cannot reconcile Vault secrets for {connector_name}: credentials file is missing.")
+            return False
+
+        vault_url, management_token = self._vault_management_runtime()
+        if not vault_url or not management_token:
+            print("Cannot reconcile EDC Vault secrets: VT_URL/VT_TOKEN are not defined in deployer.config")
+            return False
+
+        required_secret_paths = (
+            f"{ds_name}/{connector_name}/aws-access-key",
+            f"{ds_name}/{connector_name}/aws-secret-key",
+        )
+        current_connector_token = str((credentials.get("vault") or {}).get("token") or "").strip()
+        needs_reconcile = not self._vault_token_is_valid(vault_url, current_connector_token)
+        if not needs_reconcile:
+            needs_reconcile = not all(
+                self._vault_secret_exists(vault_url, management_token, secret_path)
+                for secret_path in required_secret_paths
+            )
+        if not needs_reconcile:
+            return True
+
+        secrets_payload = self._connector_vault_secret_payload(connector_name, ds_name, credentials)
+        if not secrets_payload:
+            return False
+
+        print(f"Reconciling Vault secrets for EDC connector {connector_name}...")
+        headers = self._vault_headers(management_token)
+        policy_name = f"{connector_name}-secrets-policy"
+        policy = f"""
+path "secret/data/{ds_name}/{connector_name}/*" {{
+    capabilities = ["create", "read", "update", "list", "delete"]
+}}
+"""
+        try:
+            response = requests.put(
+                f"{vault_url}/v1/sys/policies/acl/{policy_name}",
+                headers=headers,
+                json={"policy": policy},
+                timeout=30,
+                verify=False,
+            )
+            response.raise_for_status()
+            response = requests.post(
+                f"{vault_url}/v1/auth/token/create",
+                headers=headers,
+                json={"period": "768h", "policies": [policy_name], "renewable": True},
+                timeout=30,
+                verify=False,
+            )
+            response.raise_for_status()
+            connector_token = response.json()["auth"]["client_token"]
+            for secret_path, content in secrets_payload.items():
+                response = requests.post(
+                    f"{vault_url}/v1/secret/data/{secret_path}",
+                    headers=headers,
+                    json={"data": {"content": content}},
+                    timeout=30,
+                    verify=False,
+                )
+                response.raise_for_status()
+        except (KeyError, requests.RequestException) as exc:
+            print(f"Could not reconcile Vault secrets for {connector_name}: {exc}")
+            return False
+
+        credentials.setdefault("vault", {})
+        credentials["vault"].update(
+            {
+                "token": connector_token,
+                "path": f"secret/data/{ds_name}/{connector_name}/",
+            }
+        )
+        self._write_connector_credentials_file(credentials_path, credentials)
+        return True
+
+    def _edc_dataspace_transfer_policy_name(self, connector_name, ds_name):
+        return f"policy-{ds_name}-{connector_name}-dataspace-transfer"
+
+    def _edc_dataspace_transfer_policy_payload(self, ds_name):
+        return {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": ["s3:*"],
+                    "Resource": [
+                        f"arn:aws:s3:::{ds_name}-*",
+                        f"arn:aws:s3:::{ds_name}-*/*",
+                    ],
+                }
+            ],
+        }
+
+    def ensure_minio_dataspace_transfer_policy_attached(self, connector_name, ds_name=None):
+        ds_name = ds_name or self._dataspace_name()
+        namespace = self.config.NS_COMMON
+        policy_name = self._edc_dataspace_transfer_policy_name(connector_name, ds_name)
+
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        minio_endpoint = deployer_config.get("MINIO_ENDPOINT") or "http://127.0.0.1:9000"
+        minio_admin_user, minio_admin_pass = self._minio_admin_credentials(deployer_config)
+
+        minio_pod = self.infrastructure.get_pod_by_name(namespace, self.config.service_minio())
+        if not minio_pod:
+            print(f"  MinIO pod not found — skipping EDC dataspace transfer policy for {connector_name}")
+            return False
+
+        mc = f"kubectl exec -n {namespace} {minio_pod} --"
+        alias_result = self.run(
+            f"{mc} mc alias set minio {shlex.quote(minio_endpoint)} "
+            f"{shlex.quote(minio_admin_user)} {shlex.quote(minio_admin_pass)}",
+            check=False,
+            silent=True,
+        )
+        if alias_result is None:
+            print(f"  MinIO admin alias could not be configured for {connector_name}")
+            return False
+
+        user_info = self.run_silent(f"{mc} mc admin user info minio {shlex.quote(connector_name)}")
+        if user_info and policy_name in user_info:
+            print(f"  MinIO policy '{policy_name}' already attached to '{connector_name}'")
+            return True
+
+        policy_path_pod = f"/tmp/{policy_name}.json"
+        policy_b64 = base64.b64encode(
+            json.dumps(self._edc_dataspace_transfer_policy_payload(ds_name)).encode("utf-8")
+        ).decode("ascii")
+        write_policy_result = self.run(
+            f"{mc} sh -c \"echo '{policy_b64}' | base64 -d > {policy_path_pod}\"",
+            check=False,
+            silent=True,
+        )
+        if write_policy_result is None:
+            print(f"  Warning: could not write EDC dataspace transfer policy inside pod for {connector_name}")
+            return False
+
+        self.run(
+            f"{mc} mc admin policy create minio {shlex.quote(policy_name)} {shlex.quote(policy_path_pod)}",
+            capture=True,
+            check=False,
+            silent=True,
+        )
+        self.run(
+            f"{mc} mc admin policy attach minio {shlex.quote(policy_name)} "
+            f"--user {shlex.quote(connector_name)}",
+            capture=True,
+            check=False,
+            silent=True,
+        )
+
+        user_info = self.run_silent(f"{mc} mc admin user info minio {shlex.quote(connector_name)}")
+        if user_info and policy_name in user_info:
+            print(f"  MinIO policy '{policy_name}' attached to '{connector_name}'")
+            return True
+
+        print(f"  Warning: EDC dataspace transfer policy attach could not be verified for '{connector_name}'")
+        return False
+
+    def ensure_minio_policy_attached(self, connector_name, ds_name=None):
+        base_policy_ok = super().ensure_minio_policy_attached(connector_name, ds_name=ds_name)
+        transfer_policy_ok = self.ensure_minio_dataspace_transfer_policy_attached(
+            connector_name,
+            ds_name=ds_name,
+        )
+        return bool(base_policy_ok and transfer_policy_ok)
+
     def _ensure_edc_runtime_dir(self, ds_name=None):
         runtime_dir = self._edc_runtime_dir(ds_name=ds_name)
         os.makedirs(runtime_dir, exist_ok=True)
@@ -663,6 +927,51 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         if not keycloak_url.startswith("http"):
             keycloak_url = f"http://{keycloak_url}"
         return keycloak_url.rstrip("/")
+
+    def _keycloak_realm_status(self, ds_name):
+        keycloak_url = self._keycloak_base_url()
+        if not keycloak_url:
+            return "unknown", "KC_INTERNAL_URL/KC_URL is not configured"
+
+        try:
+            response = requests.get(
+                f"{keycloak_url}/realms/{ds_name}",
+                timeout=5,
+                verify=False,
+            )
+        except requests.RequestException as exc:
+            return "unknown", str(exc)
+
+        if response.status_code in {200, 302}:
+            return "ready", ""
+        if response.status_code == 404:
+            return "missing", "Keycloak returned HTTP 404 for the dataspace realm"
+        return "unknown", f"Keycloak returned HTTP {response.status_code}: {response.text}"
+
+    def _ensure_keycloak_realm_available(self, ds_name):
+        status, detail = self._keycloak_realm_status(ds_name)
+        if status == "ready":
+            return True
+
+        if status == "missing":
+            message = (
+                f"EDC Level 4 cannot continue because Keycloak realm '{ds_name}' does not exist. "
+                "Run Level 3 for the EDC adapter to create the dataspace realm, "
+                "registration-service state and shared dataspace credentials before deploying connectors."
+            )
+            self._last_runtime_prerequisite_error = message
+            self._last_runtime_prerequisite_code = "keycloak_realm_missing"
+            print(message)
+            return False
+
+        message = (
+            f"EDC Level 4 cannot verify Keycloak realm '{ds_name}' before connector bootstrap. "
+            f"Detail: {detail}"
+        )
+        self._last_runtime_prerequisite_error = message
+        self._last_runtime_prerequisite_code = "keycloak_realm_unverified"
+        print(message)
+        return False
 
     def _keycloak_token_url_for_dataspace(self, ds_name):
         keycloak_url = self._keycloak_base_url()
@@ -938,8 +1247,8 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                     "protocol": "https" if environment == "pro" else "http",
                 },
                 "minio": {
-                    "accesskey": credentials.get("minio", {}).get("access_key", ""),
-                    "secretkey": credentials.get("minio", {}).get("secret_key", ""),
+                    "accesskey": f"{ds_name}/{connector_name}/aws-access-key",
+                    "secretkey": f"{ds_name}/{connector_name}/aws-secret-key",
                 },
                 "oauth2": {
                     "allowedRole1": "connector-admin",
@@ -1265,11 +1574,15 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
             credentials = self.load_connector_credentials(connector_name)
 
         if credentials and runtime_present:
+            if not self._reconcile_connector_vault_secrets(connector_name, ds_name, credentials=credentials):
+                return False
             self.ensure_minio_policy_attached(connector_name, ds_name=ds_name)
             return True
 
         if not self.wait_for_keycloak_admin_ready():
             print("Keycloak admin API not ready for connector provisioning")
+            return False
+        if not self._ensure_keycloak_realm_available(ds_name):
             return False
 
         self._remove_edc_values_file(connector_name, ds_name=ds_name)
@@ -1315,6 +1628,8 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         credentials_path = self.config.connector_credentials_path(connector_name)
         if os.path.exists(credentials_path):
             self.setup_minio_bucket(self.config.NS_COMMON, ds_name, connector_name, credentials_path)
+        if not self._reconcile_connector_vault_secrets(connector_name, ds_name):
+            return False
         self.ensure_minio_policy_attached(connector_name, ds_name=ds_name)
         return True
 
@@ -1448,6 +1763,12 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                 print(f"Target connector namespaces: {target_namespaces}")
             print(f"Connectors defined: {connectors}\n")
 
+            if not self._ensure_keycloak_realm_available(ds_name):
+                raise RuntimeError(
+                    self._last_runtime_prerequisite_error
+                    or "EDC Level 4 dataspace prerequisites are not ready."
+                )
+
             desired = set(connectors or [])
             existing_namespaces = {}
             for target_namespace in target_namespaces:
@@ -1501,6 +1822,14 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                     repo_dir,
                     python_exec,
                 ):
+                    if self._last_runtime_prerequisite_code in {
+                        "keycloak_realm_missing",
+                        "keycloak_realm_unverified",
+                    }:
+                        raise RuntimeError(
+                            self._last_runtime_prerequisite_error
+                            or "EDC Level 4 dataspace prerequisites are not ready."
+                        )
                     return []
 
             for connector in connectors:

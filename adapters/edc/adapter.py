@@ -170,8 +170,13 @@ class EdcAdapter(InesdataAdapter):
             return result
 
     def supports_kafka_transfer_validation(self):
-        """The generic EDC dashboard connector currently exposes HTTP data flows only."""
-        return False
+        """The generic EDC connector includes the Kafka data-plane extension.
+
+        Level 6 still keeps Kafka transfer validation opt-in because the suite is
+        comparatively slow; this hook only advertises that EDC can run it when
+        explicitly enabled.
+        """
+        return True
 
     def _preview_common_services(self):
         namespace = self.config.NS_COMMON
