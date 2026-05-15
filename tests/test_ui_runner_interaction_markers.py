@@ -23,7 +23,7 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
         return ValidationProfile(
             adapter="inesdata",
             playwright_enabled=True,
-            playwright_config="validation/ui/playwright.config.ts",
+            playwright_config="validation/ui/playwright.inesdata.config.ts",
         )
 
     def test_playwright_validation_enables_interaction_markers_by_default(self):

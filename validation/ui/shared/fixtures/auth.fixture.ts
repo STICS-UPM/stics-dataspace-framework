@@ -1,7 +1,7 @@
 import { Page } from "@playwright/test";
 
-import { KeycloakLoginPage } from "../../components/auth/keycloak-login.page";
-import { ConnectorShellPage } from "../../components/shell/connector-shell.page";
+import { ConnectorShellPage } from "../../adapters/inesdata/components/shell/connector-shell.page";
+import { KeycloakLoginPage } from "../components/auth/keycloak-login.page";
 import { test as evidenceTest, expect } from "./evidence.fixture";
 
 type AuthFixtures = {

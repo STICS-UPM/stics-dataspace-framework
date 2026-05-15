@@ -35,6 +35,10 @@ def _normalize_spec_path(spec_path: str | None) -> str:
         value = value[2:]
     if value.startswith("validation/ui/"):
         value = value[len("validation/ui/"):]
+    if value.startswith("ui/"):
+        value = value[len("ui/"):]
+    if value.startswith("core/"):
+        value = f"adapters/inesdata/specs/{value[len('core/'):]}"
     return value
 
 

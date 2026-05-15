@@ -10,16 +10,17 @@ from validation.components.artifact_cleanup import cleanup_empty_experiment_arti
 
 
 LEVEL6_UI_SMOKE_SPECS = (
-    os.path.join("core", "01-login-readiness.spec.ts"),
-    os.path.join("core", "04-consumer-catalog.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "01-login-readiness.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "04-consumer-catalog.spec.ts"),
 )
 LEVEL6_UI_DATASPACE_SPECS = (
-    os.path.join("core", "03-provider-setup.spec.ts"),
-    os.path.join("core", "03b-provider-policy-create.spec.ts"),
-    os.path.join("core", "03c-provider-contract-definition-create.spec.ts"),
-    os.path.join("core", "05-consumer-negotiation.spec.ts"),
-    os.path.join("core", "06-consumer-transfer.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "03-provider-setup.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "03b-provider-policy-create.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "03c-provider-contract-definition-create.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "05-consumer-negotiation.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "06-consumer-transfer.spec.ts"),
 )
+LEVEL6_UI_INESDATA_CONFIG = "playwright.inesdata.config.ts"
 LEVEL6_UI_OPS_SPEC = os.path.join("ops", "minio-bucket-visibility.spec.ts")
 LEVEL6_UI_OPS_CONFIG = "playwright.ops.config.ts"
 DEFAULT_INTERACTION_MARKER_DELAY_MS = "150"
@@ -115,7 +116,7 @@ def run_ui_smoke(
     _enable_interaction_markers_by_default(env)
     specs = list(LEVEL6_UI_SMOKE_SPECS)
     print(f"  Level 6 UI smoke profile for {connector}: {', '.join(specs)}")
-    command = ["npx", "playwright", "test", *specs]
+    command = ["npx", "playwright", "test", "--config", LEVEL6_UI_INESDATA_CONFIG, *specs]
     if extra_args:
         command.extend(extra_args)
 
@@ -177,7 +178,7 @@ def run_ui_dataspace(
         f"  Level 6 UI dataspace profile for {provider_connector} -> "
         f"{consumer_connector}: {', '.join(specs)}"
     )
-    command = ["npx", "playwright", "test", "--workers=1", *specs]
+    command = ["npx", "playwright", "test", "--config", LEVEL6_UI_INESDATA_CONFIG, "--workers=1", *specs]
     if extra_args:
         command.extend(extra_args)
 

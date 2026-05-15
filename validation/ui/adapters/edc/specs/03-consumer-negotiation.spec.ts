@@ -1,4 +1,4 @@
-import { KeycloakLoginPage } from "../../../components/auth/keycloak-login.page";
+import { KeycloakLoginPage } from "../../../shared/components/auth/keycloak-login.page";
 import {
   bootstrapProviderNegotiationArtifacts,
   bootstrapConsumerNegotiation,

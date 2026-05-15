@@ -64,11 +64,11 @@ reporter.interactive = false;
 process.env.PIONERA_PLAYWRIGHT_SUITE_NAME = 'INESData integration';
 const coreTest = {
   title: '01 login readiness: authentication and shell loaded',
-  location: { file: 'validation/ui/core/01-login-readiness.spec.ts' },
+  location: { file: 'validation/ui/adapters/inesdata/specs/01-login-readiness.spec.ts' },
 };
 const ontologyTest = {
   title: '08 ontology hub: read-only INESData UI integration surfaces vocabularies and ontologies',
-  location: { file: 'validation/ui/core/08-ontology-hub-inesdata-readonly.spec.ts' },
+  location: { file: 'validation/ui/adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts' },
 };
 reporter.onBegin(null, { allTests: () => [coreTest, ontologyTest] });
 reporter.onTestEnd(coreTest, { status: 'passed' });
@@ -162,27 +162,27 @@ process.env.PIONERA_PLAYWRIGHT_SUITE_NAME = 'INESData integration';
 const tests = [
   {
     title: '01 login readiness: authentication and shell loaded',
-    location: { file: 'validation/ui/core/01-login-readiness.spec.ts' },
+    location: { file: 'validation/ui/adapters/inesdata/specs/01-login-readiness.spec.ts' },
   },
   {
     title: '04 consumer catalog: published asset is discoverable',
-    location: { file: 'validation/ui/core/04-consumer-catalog.spec.ts' },
+    location: { file: 'validation/ui/adapters/inesdata/specs/04-consumer-catalog.spec.ts' },
   },
   {
     title: '07 semantic virtualization: HTTP data is queryable',
-    location: { file: 'validation/ui/core/07-semantic-virtualization-httpdata.spec.ts' },
+    location: { file: 'validation/ui/adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts' },
   },
   {
     title: '08 ontology hub: read-only INESData UI integration surfaces vocabularies and ontologies',
-    location: { file: 'validation/ui/core/08-ontology-hub-inesdata-readonly.spec.ts' },
+    location: { file: 'validation/ui/adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts' },
   },
   {
     title: '09 AI Model Hub: HTTP data publication is discoverable',
-    location: { file: 'validation/ui/core/09-ai-model-hub-httpdata.spec.ts' },
+    location: { file: 'validation/ui/adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts' },
   },
   {
     title: '10 AI model observer: transfer events are visible',
-    location: { file: 'validation/ui/core/10-ai-model-observer.spec.ts' },
+    location: { file: 'validation/ui/adapters/inesdata/specs/10-ai-model-observer.spec.ts' },
   },
 ];
 reporter.onBegin(null, { allTests: () => tests });

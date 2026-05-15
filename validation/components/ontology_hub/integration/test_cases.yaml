@@ -499,7 +499,7 @@ test_cases:
     automation:
       status: automated_opt_in
       mode: ui_readonly_opt_in
-      ui_spec: validation/ui/core/08-ontology-hub-inesdata-readonly.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts
       evidence_case: DS-UI-OH-01
       enable_with: UI_ONTOLOGY_HUB_INESDATA_DEMO=1
     notes: This is a conservative read-only integration check. It validates the connector UI and shared vocabulary/Ontology Hub APIs without creating assets, contracts, vocabularies or policies.

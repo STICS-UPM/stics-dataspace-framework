@@ -218,19 +218,19 @@ class ReportViewerTests(unittest.TestCase):
                         {
                             "specs": [
                                 {
-                                    "file": "validation/ui/core/01-login-readiness.spec.ts",
+                                    "file": "validation/ui/adapters/inesdata/specs/01-login-readiness.spec.ts",
                                     "tests": [{"status": "expected"}],
                                 },
                                 {
-                                    "file": "validation/ui/core/08-ontology-hub-inesdata-readonly.spec.ts",
+                                    "file": "validation/ui/adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts",
                                     "tests": [{"status": "expected"}],
                                 },
                                 {
-                                    "file": "validation/ui/core/09-ai-model-hub-httpdata.spec.ts",
+                                    "file": "validation/ui/adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts",
                                     "tests": [{"status": "unexpected"}],
                                 },
                                 {
-                                    "file": "validation/ui/core/07-semantic-virtualization-httpdata.spec.ts",
+                                    "file": "validation/ui/adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts",
                                     "tests": [{"status": "skipped"}],
                                 },
                             ]

@@ -1,1 +1,1 @@
-import "../core/03-provider-setup.spec";
+import "../adapters/inesdata/specs/03-provider-setup.spec";

@@ -73,16 +73,22 @@ class ConsoleTestNameReporter {
     if (!file) {
       return "";
     }
-    if (file.includes("core/08-ontology-hub-inesdata-readonly.spec")) {
+    if (file.includes("08-ontology-hub-inesdata-readonly.spec")) {
       return "Ontology Hub";
     }
-    if (file.includes("core/09-ai-model-hub-httpdata.spec") || file.includes("core/10-ai-model-observer.spec")) {
+    if (file.includes("09-ai-model-hub-httpdata.spec") || file.includes("10-ai-model-observer.spec")) {
       return "AI Model Hub";
     }
-    if (file.includes("core/07-semantic-virtualization-httpdata.spec")) {
+    if (file.includes("07-semantic-virtualization-httpdata.spec")) {
       return "Semantic Virtualization";
     }
-    if (file.includes("/ui/inesdata/") || file.includes("validation/ui/core/") || file.startsWith("core/")) {
+    if (
+      file.includes("/ui/inesdata/") ||
+      file.includes("validation/ui/adapters/inesdata/specs/") ||
+      file.includes("validation/ui/core/") ||
+      file.startsWith("core/") ||
+      file.startsWith("adapters/inesdata/specs/")
+    ) {
       return "Core";
     }
     if (file.includes("components/ontology-hub/functional/")) {

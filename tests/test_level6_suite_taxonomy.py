@@ -10,15 +10,15 @@ from validation.orchestration.suite_taxonomy import (
 class Level6SuiteTaxonomyTests(unittest.TestCase):
     def test_classifies_inesdata_component_integration_specs(self):
         self.assertEqual(
-            classify_playwright_spec("core/08-ontology-hub-inesdata-readonly.spec.ts"),
+            classify_playwright_spec("adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts"),
             {"audit_suite": "INESData integration", "audit_group": "Ontology Hub"},
         )
         self.assertEqual(
-            classify_playwright_spec("core/09-ai-model-hub-httpdata.spec.ts"),
+            classify_playwright_spec("adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts"),
             {"audit_suite": "INESData integration", "audit_group": "AI Model Hub"},
         )
         self.assertEqual(
-            classify_playwright_spec("core/07-semantic-virtualization-httpdata.spec.ts"),
+            classify_playwright_spec("adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts"),
             {"audit_suite": "INESData integration", "audit_group": "Semantic Virtualization"},
         )
 

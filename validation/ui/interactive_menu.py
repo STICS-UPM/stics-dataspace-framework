@@ -339,8 +339,8 @@ def _run_ontology_hub_ui_integration_with_inesdata(mode):
         "./node_modules/.bin/playwright",
         "test",
         "--config",
-        "playwright.config.ts",
-        "core/08-ontology-hub-inesdata-readonly.spec.ts",
+        "playwright.inesdata.config.ts",
+        "adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts",
         "--workers=1",
     ]
     cmd.extend(mode.get("args") or [])
@@ -523,8 +523,8 @@ def _run_semantic_virtualization_ui_integration_with_inesdata(mode):
         "./node_modules/.bin/playwright",
         "test",
         "--config",
-        "playwright.config.ts",
-        "core/07-semantic-virtualization-httpdata.spec.ts",
+        "playwright.inesdata.config.ts",
+        "adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts",
         "--workers=1",
     ]
     cmd.extend(mode.get("args") or [])
@@ -609,8 +609,8 @@ def _run_ai_model_hub_ui_integration(mode):
         "./node_modules/.bin/playwright",
         "test",
         "--config",
-        "playwright.config.ts",
-        "core/09-ai-model-hub-httpdata.spec.ts",
+        "playwright.inesdata.config.ts",
+        "adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts",
         "--workers=1",
     ]
     cmd.extend(mode.get("args") or [])
@@ -651,8 +651,8 @@ def _run_ai_model_observer_ui_integration(mode):
         "./node_modules/.bin/playwright",
         "test",
         "--config",
-        "playwright.config.ts",
-        "core/10-ai-model-observer.spec.ts",
+        "playwright.inesdata.config.ts",
+        "adapters/inesdata/specs/10-ai-model-observer.spec.ts",
         "--workers=1",
     ]
     cmd.extend(mode.get("args") or [])

@@ -1,6 +1,6 @@
 source_documents:
   - INESData Level 6 UI validation design
-  - Stable Playwright flows in validation/ui/core
+  - Stable INESData Playwright flows in validation/ui/adapters/inesdata/specs
   - Operational MinIO validation in validation/ui/ops
 
 support_checks:
@@ -28,7 +28,7 @@ support_checks:
     automation:
       status: automated
       mode: ui_support
-      ui_spec: validation/ui/core/01-login-readiness.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/01-login-readiness.spec.ts
 
 test_cases:
   - id: DS-UI-03
@@ -56,7 +56,7 @@ test_cases:
     automation:
       status: automated
       mode: ui
-      ui_spec: validation/ui/core/03-provider-setup.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/03-provider-setup.spec.ts
 
   - id: DS-UI-03B
     scope: dataspace_ui
@@ -81,7 +81,7 @@ test_cases:
     automation:
       status: automated
       mode: ui
-      ui_spec: validation/ui/core/03b-provider-policy-create.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/03b-provider-policy-create.spec.ts
 
   - id: DS-UI-03C
     scope: dataspace_ui
@@ -108,7 +108,7 @@ test_cases:
     automation:
       status: automated
       mode: ui
-      ui_spec: validation/ui/core/03c-provider-contract-definition-create.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/03c-provider-contract-definition-create.spec.ts
 
   - id: DS-UI-04
     scope: dataspace_ui
@@ -135,7 +135,7 @@ test_cases:
     automation:
       status: automated
       mode: ui
-      ui_spec: validation/ui/core/04-consumer-catalog.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/04-consumer-catalog.spec.ts
 
   - id: DS-UI-05
     scope: dataspace_ui
@@ -161,7 +161,7 @@ test_cases:
     automation:
       status: automated
       mode: ui_api
-      ui_spec: validation/ui/core/05-consumer-negotiation.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/05-consumer-negotiation.spec.ts
 
   - id: DS-UI-06
     scope: dataspace_ui
@@ -190,7 +190,7 @@ test_cases:
     automation:
       status: automated
       mode: ui_api
-      ui_spec: validation/ui/core/06-consumer-transfer.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/06-consumer-transfer.spec.ts
 
   - id: DS-UI-SV-01
     scope: dataspace_ui
@@ -220,7 +220,7 @@ test_cases:
     automation:
       status: automated_opt_in
       mode: ui_api_opt_in
-      ui_spec: validation/ui/core/07-semantic-virtualization-httpdata.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts
       enable_with: UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO=1
 
   - id: DS-UI-OH-01
@@ -253,7 +253,7 @@ test_cases:
     automation:
       status: automated_opt_in
       mode: ui_readonly_opt_in
-      ui_spec: validation/ui/core/08-ontology-hub-inesdata-readonly.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts
       enable_with: UI_ONTOLOGY_HUB_INESDATA_DEMO=1
       linked_cases:
         - PT5-OH-16
@@ -287,7 +287,7 @@ test_cases:
     automation:
       status: automated_opt_in
       mode: ui_api_opt_in
-      ui_spec: validation/ui/core/09-ai-model-hub-httpdata.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts
       enable_with: UI_AI_MODEL_HUB_HTTPDATA_DEMO=1
       linked_cases:
         - PT5-MH-03
@@ -328,7 +328,7 @@ test_cases:
     automation:
       status: automated_opt_in
       mode: ui_opt_in
-      ui_spec: validation/ui/core/10-ai-model-observer.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/10-ai-model-observer.spec.ts
       enable_with: UI_AI_MODEL_OBSERVER_DEMO=1
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
       linked_cases:

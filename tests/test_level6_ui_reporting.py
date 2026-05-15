@@ -20,12 +20,12 @@ def _build_core_playwright_payload():
         },
         "suites": [
             {
-                "title": "core/01-login-readiness.spec.ts",
-                "file": "core/01-login-readiness.spec.ts",
+                "title": "adapters/inesdata/specs/01-login-readiness.spec.ts",
+                "file": "adapters/inesdata/specs/01-login-readiness.spec.ts",
                 "specs": [
                     {
                         "title": "01 login readiness: authentication and shell loaded",
-                        "file": "core/01-login-readiness.spec.ts",
+                        "file": "adapters/inesdata/specs/01-login-readiness.spec.ts",
                         "tests": [
                             {
                                 "results": [
@@ -47,12 +47,12 @@ def _build_core_playwright_payload():
                 ],
             },
             {
-                "title": "core/04-consumer-catalog.spec.ts",
-                "file": "core/04-consumer-catalog.spec.ts",
+                "title": "adapters/inesdata/specs/04-consumer-catalog.spec.ts",
+                "file": "adapters/inesdata/specs/04-consumer-catalog.spec.ts",
                 "specs": [
                     {
                         "title": "04 consumer catalog: listing and detail without access errors",
-                        "file": "core/04-consumer-catalog.spec.ts",
+                        "file": "adapters/inesdata/specs/04-consumer-catalog.spec.ts",
                         "tests": [
                             {
                                 "results": [
@@ -87,56 +87,56 @@ def _build_dataspace_playwright_payload():
         },
         "suites": [
             {
-                "title": "core/03-provider-setup.spec.ts",
-                "file": "core/03-provider-setup.spec.ts",
+                "title": "adapters/inesdata/specs/03-provider-setup.spec.ts",
+                "file": "adapters/inesdata/specs/03-provider-setup.spec.ts",
                 "specs": [
                     {
                         "title": "03 provider setup: asset creation with file upload",
-                        "file": "core/03-provider-setup.spec.ts",
+                        "file": "adapters/inesdata/specs/03-provider-setup.spec.ts",
                         "tests": [{"results": [{"status": "passed", "errors": [], "attachments": []}]}],
                     }
                 ],
             },
             {
-                "title": "core/03b-provider-policy-create.spec.ts",
-                "file": "core/03b-provider-policy-create.spec.ts",
+                "title": "adapters/inesdata/specs/03b-provider-policy-create.spec.ts",
+                "file": "adapters/inesdata/specs/03b-provider-policy-create.spec.ts",
                 "specs": [
                     {
                         "title": "03b provider setup: policy creation from the UI",
-                        "file": "core/03b-provider-policy-create.spec.ts",
+                        "file": "adapters/inesdata/specs/03b-provider-policy-create.spec.ts",
                         "tests": [{"results": [{"status": "passed", "errors": [], "attachments": []}]}],
                     }
                 ],
             },
             {
-                "title": "core/03c-provider-contract-definition-create.spec.ts",
-                "file": "core/03c-provider-contract-definition-create.spec.ts",
+                "title": "adapters/inesdata/specs/03c-provider-contract-definition-create.spec.ts",
+                "file": "adapters/inesdata/specs/03c-provider-contract-definition-create.spec.ts",
                 "specs": [
                     {
                         "title": "03c provider setup: contract definition creation from the UI",
-                        "file": "core/03c-provider-contract-definition-create.spec.ts",
+                        "file": "adapters/inesdata/specs/03c-provider-contract-definition-create.spec.ts",
                         "tests": [{"results": [{"status": "passed", "errors": [], "attachments": []}]}],
                     }
                 ],
             },
             {
-                "title": "core/05-consumer-negotiation.spec.ts",
-                "file": "core/05-consumer-negotiation.spec.ts",
+                "title": "adapters/inesdata/specs/05-consumer-negotiation.spec.ts",
+                "file": "adapters/inesdata/specs/05-consumer-negotiation.spec.ts",
                 "specs": [
                     {
                         "title": "05 consumer negotiation: visible negotiation from catalog",
-                        "file": "core/05-consumer-negotiation.spec.ts",
+                        "file": "adapters/inesdata/specs/05-consumer-negotiation.spec.ts",
                         "tests": [{"results": [{"status": "passed", "errors": [], "attachments": []}]}],
                     }
                 ],
             },
             {
-                "title": "core/06-consumer-transfer.spec.ts",
-                "file": "core/06-consumer-transfer.spec.ts",
+                "title": "adapters/inesdata/specs/06-consumer-transfer.spec.ts",
+                "file": "adapters/inesdata/specs/06-consumer-transfer.spec.ts",
                 "specs": [
                     {
                         "title": "06 consumer transfer: visible transfer from contracts and history",
-                        "file": "core/06-consumer-transfer.spec.ts",
+                        "file": "adapters/inesdata/specs/06-consumer-transfer.spec.ts",
                         "tests": [{"results": [{"status": "passed", "errors": [], "attachments": []}]}],
                     }
                 ],

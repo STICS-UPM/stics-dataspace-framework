@@ -1,4 +1,4 @@
-import { KeycloakLoginPage } from "../../../components/auth/keycloak-login.page";
+import { KeycloakLoginPage } from "../../../shared/components/auth/keycloak-login.page";
 import { test, expect } from "../../../shared/fixtures/dataspace.fixture";
 import { EdcDashboardPage } from "../components/edc-dashboard.page";
 

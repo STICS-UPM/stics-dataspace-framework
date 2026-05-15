@@ -15,6 +15,8 @@ export type ConnectorPortalRuntime = {
     bucketName: string;
     region: string;
     endpointOverride: string;
+    accessKeyId: string;
+    secretAccessKey: string;
   };
 };
 
@@ -242,6 +244,14 @@ function resolveConnectorRuntime(
           endpointOverride:
             process.env[`UI_${envPrefix}_TRANSFER_ENDPOINT`] ||
             endpointOverride,
+          accessKeyId:
+            process.env[`UI_${envPrefix}_TRANSFER_ACCESS_KEY_ID`] ||
+            process.env.UI_TRANSFER_ACCESS_KEY_ID ||
+            requiredString(credentials?.minio?.user, `${connectorName} MinIO access key`),
+          secretAccessKey:
+            process.env[`UI_${envPrefix}_TRANSFER_SECRET_ACCESS_KEY`] ||
+            process.env.UI_TRANSFER_SECRET_ACCESS_KEY ||
+            requiredString(credentials?.minio?.passwd, `${connectorName} MinIO secret key`),
         }
       : undefined,
   };

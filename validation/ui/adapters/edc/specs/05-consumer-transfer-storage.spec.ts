@@ -1,6 +1,6 @@
-import { KeycloakLoginPage } from "../../../components/auth/keycloak-login.page";
-import { MinioBucketBrowserPage } from "../../../components/ops/minio-bucket-browser.page";
-import { MinioConsoleLoginPage } from "../../../components/ops/minio-console-login.page";
+import { KeycloakLoginPage } from "../../../shared/components/auth/keycloak-login.page";
+import { MinioBucketBrowserPage } from "../../../shared/components/ops/minio-bucket-browser.page";
+import { MinioConsoleLoginPage } from "../../../shared/components/ops/minio-console-login.page";
 import {
   bootstrapProviderNegotiationArtifacts,
   bootstrapConsumerNegotiation,

@@ -222,7 +222,7 @@ class UiInteractiveMenuTests(unittest.TestCase):
             command = mock_subprocess_run.call_args.args[0]
             env = mock_subprocess_run.call_args.kwargs["env"]
 
-            self.assertIn("core/08-ontology-hub-inesdata-readonly.spec.ts", command)
+            self.assertIn("adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts", command)
             self.assertEqual(env["UI_ONTOLOGY_HUB_INESDATA_DEMO"], "1")
             self.assertEqual(env["PLAYWRIGHT_INTERACTION_MARKERS"], "1")
             self.assertTrue(env["PLAYWRIGHT_OUTPUT_DIR"].startswith(os.path.join(tmpdir, "experiments")))
@@ -251,7 +251,7 @@ class UiInteractiveMenuTests(unittest.TestCase):
             command = mock_subprocess_run.call_args.args[0]
             env = mock_subprocess_run.call_args.kwargs["env"]
 
-            self.assertIn("core/07-semantic-virtualization-httpdata.spec.ts", command)
+            self.assertIn("adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts", command)
             self.assertEqual(env["UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO"], "1")
             self.assertEqual(env["PLAYWRIGHT_INTERACTION_MARKERS"], "1")
             self.assertTrue(env["PLAYWRIGHT_OUTPUT_DIR"].startswith(os.path.join(tmpdir, "experiments")))
@@ -283,7 +283,7 @@ class UiInteractiveMenuTests(unittest.TestCase):
             command = mock_subprocess_run.call_args.args[0]
             env = mock_subprocess_run.call_args.kwargs["env"]
 
-            self.assertIn("core/10-ai-model-observer.spec.ts", command)
+            self.assertIn("adapters/inesdata/specs/10-ai-model-observer.spec.ts", command)
             self.assertEqual(env["UI_AI_MODEL_OBSERVER_DEMO"], "1")
             self.assertEqual(env["PLAYWRIGHT_INTERACTION_MARKERS"], "1")
             self.assertTrue(env["PLAYWRIGHT_OUTPUT_DIR"].startswith(os.path.join(tmpdir, "experiments")))

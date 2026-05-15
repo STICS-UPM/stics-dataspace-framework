@@ -43,13 +43,19 @@ def classify_playwright_spec(spec_file: Any, *, source_path: Any = "") -> dict[s
     source = _canonical(source_path)
     blob = f"{source} {spec}"
 
-    if "core/08-ontology-hub-inesdata-readonly.spec" in blob:
+    if "08-ontology-hub-inesdata-readonly.spec" in blob:
         return _taxonomy(INTEGRATION_SUITE, "Ontology Hub")
-    if "core/09-ai-model-hub-httpdata.spec" in blob or "core/10-ai-model-observer.spec" in blob:
+    if "09-ai-model-hub-httpdata.spec" in blob or "10-ai-model-observer.spec" in blob:
         return _taxonomy(INTEGRATION_SUITE, "AI Model Hub")
-    if "core/07-semantic-virtualization-httpdata.spec" in blob:
+    if "07-semantic-virtualization-httpdata.spec" in blob:
         return _taxonomy(INTEGRATION_SUITE, "Semantic Virtualization")
-    if "/ui/inesdata/" in f"/{source}/" or "validation/ui/core/" in blob or blob.startswith("core/"):
+    if (
+        "/ui/inesdata/" in f"/{source}/"
+        or "validation/ui/adapters/inesdata/specs/" in blob
+        or "validation/ui/core/" in blob
+        or blob.startswith("core/")
+        or blob.startswith("adapters/inesdata/specs/")
+    ):
         return _taxonomy(INTEGRATION_SUITE, "Core")
 
     if "components/ontology-hub/functional/" in blob:

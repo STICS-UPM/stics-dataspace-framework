@@ -1,8 +1,8 @@
 import { test, expect } from "../shared/fixtures/minio-console.fixture";
 
 import type { MinioBucketTarget } from "../shared/utils/minio-console-runtime";
-import { MinioConsoleLoginPage } from "../components/ops/minio-console-login.page";
-import { MinioBucketBrowserPage } from "../components/ops/minio-bucket-browser.page";
+import { MinioConsoleLoginPage } from "../shared/components/ops/minio-console-login.page";
+import { MinioBucketBrowserPage } from "../shared/components/ops/minio-bucket-browser.page";
 
 async function validateBucketVisibility(args: {
   page: Parameters<Parameters<typeof test>[1]>[0]["page"];
