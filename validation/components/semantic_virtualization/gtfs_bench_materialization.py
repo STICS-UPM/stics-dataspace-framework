@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -18,11 +19,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from validation.components.semantic_virtualization.gtfs_bench_mini import (  # noqa: E402
-    DEFAULT_FIXTURE_DIR,
+from validation.components.semantic_virtualization.gtfs_bench_dataset import (  # noqa: E402
     EXPECTED_CSV_FILES,
     GTFS_HEADERS,
-    validate_gtfs_bench_official_mini_fixture,
+    build_gtfs_bench_official_sample,
+    validate_gtfs_bench_official_dataset_sample,
+    write_gtfs_bench_runtime_sample_csvs,
 )
 
 
@@ -135,11 +137,23 @@ def _feed_uri(feed_publisher_name: str) -> URIRef:
 
 def adapt_official_csv_mapping(
     *,
-    fixture_dir: str | os.PathLike[str] | None = None,
+    source_dir: str | os.PathLike[str] | None = None,
+    sample_csv_dir: str | os.PathLike[str] | None = None,
     output_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
-    fixture_root = Path(fixture_dir or DEFAULT_FIXTURE_DIR)
-    mapping_path = fixture_root / "references" / "gtfs-csv.rml.ttl"
+    try:
+        sample = build_gtfs_bench_official_sample(source_dir)
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "assertions": [str(exc)],
+            "mapping_path": "",
+            "adapted_mapping_path": str(output_path) if output_path else "",
+            "source_rewrites": {},
+        }
+
+    mapping_path = Path(sample["required_paths"]["mapping"])
+    csv_root = Path(sample_csv_dir) if sample_csv_dir else None
     assertions: list[str] = []
     adapted_text = ""
 
@@ -156,11 +170,11 @@ def adapt_official_csv_mapping(
     source_rewrites: dict[str, str] = {}
     for csv_file in EXPECTED_CSV_FILES:
         original = f"/data/{csv_file}"
-        adapted = f"csv/{csv_file}"
+        adapted = f"{csv_root.name}/{csv_file}" if csv_root else f"runtime-sample-csv/{csv_file}"
         source_rewrites[original] = adapted
         adapted_text = adapted_text.replace(original, adapted)
-        if not (fixture_root / adapted).is_file():
-            assertions.append(f"Adapted mapping source does not resolve in fixture: {adapted}")
+        if csv_root and not (csv_root / csv_file).is_file():
+            assertions.append(f"Adapted mapping source does not resolve in runtime sample: {adapted}")
 
     graph = Graph()
     try:
@@ -184,13 +198,19 @@ def adapt_official_csv_mapping(
     }
 
 
-def materialize_gtfs_bench_official_mini_graph(
+def materialize_gtfs_bench_official_graph(
     *,
-    fixture_dir: str | os.PathLike[str] | None = None,
+    source_dir: str | os.PathLike[str] | None = None,
+    sample: dict[str, Any] | None = None,
 ) -> tuple[Graph, dict[str, Any]]:
-    fixture_root = Path(fixture_dir or DEFAULT_FIXTURE_DIR)
-    csv_dir = fixture_root / "csv"
-    rows = {table: _read_csv_dicts(csv_dir / f"{table}.csv") for table in GTFS_HEADERS}
+    resolved_sample = sample or build_gtfs_bench_official_sample(source_dir)
+    rows = {
+        table: [
+            {key: "" if value is None else str(value) for key, value in row.items()}
+            for row in list((resolved_sample.get("tables") or {}).get(table) or [])
+        ]
+        for table in GTFS_HEADERS
+    }
     graph = Graph()
     graph.bind("gtfs", GTFS)
     graph.bind("geo", GEO)
@@ -371,71 +391,98 @@ LIMIT 12
 
 def validate_gtfs_bench_official_materialization(
     *,
-    fixture_dir: str | os.PathLike[str] | None = None,
+    source_dir: str | os.PathLike[str] | None = None,
     output_graph_path: str | os.PathLike[str] | None = None,
     adapted_mapping_path: str | os.PathLike[str] | None = None,
+    sample_csv_dir: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
-    fixture_root = Path(fixture_dir or DEFAULT_FIXTURE_DIR)
     assertions: list[str] = []
+    temp_dir: tempfile.TemporaryDirectory[str] | None = None
 
-    fixture_validation = validate_gtfs_bench_official_mini_fixture(fixture_root)
-    if fixture_validation["status"] != "passed":
-        assertions.extend(fixture_validation.get("assertions") or [])
+    dataset_validation = validate_gtfs_bench_official_dataset_sample(source_dir)
+    if dataset_validation["status"] != "passed":
+        assertions.extend(dataset_validation.get("assertions") or [])
 
-    mapping_validation = adapt_official_csv_mapping(
-        fixture_dir=fixture_root,
-        output_path=adapted_mapping_path,
-    )
-    if mapping_validation["status"] != "passed":
-        assertions.extend(mapping_validation.get("assertions") or [])
-
-    graph, materialization_summary = materialize_gtfs_bench_official_mini_graph(fixture_dir=fixture_root)
-    serialized_graph = graph.serialize(format="turtle")
-    graph_path = Path(output_graph_path) if output_graph_path else None
-    if graph_path is not None:
-        graph_path.parent.mkdir(parents=True, exist_ok=True)
-        graph_path.write_text(serialized_graph, encoding="utf-8")
-
-    graph_roundtrip = Graph()
     try:
-        graph_roundtrip.parse(data=serialized_graph, format="turtle")
+        sample = build_gtfs_bench_official_sample(source_dir)
+        if sample_csv_dir:
+            resolved_sample_csv_dir = Path(sample_csv_dir)
+        else:
+            temp_dir = tempfile.TemporaryDirectory()
+            resolved_sample_csv_dir = Path(temp_dir.name) / "runtime-sample-csv"
+        csv_artifacts = write_gtfs_bench_runtime_sample_csvs(sample, resolved_sample_csv_dir)
+
+        mapping_validation = adapt_official_csv_mapping(
+            source_dir=source_dir,
+            sample_csv_dir=resolved_sample_csv_dir,
+            output_path=adapted_mapping_path,
+        )
+        if mapping_validation["status"] != "passed":
+            assertions.extend(mapping_validation.get("assertions") or [])
+
+        graph, materialization_summary = materialize_gtfs_bench_official_graph(source_dir=source_dir, sample=sample)
+        serialized_graph = graph.serialize(format="turtle")
+        graph_path = Path(output_graph_path) if output_graph_path else None
+        if graph_path is not None:
+            graph_path.parent.mkdir(parents=True, exist_ok=True)
+            graph_path.write_text(serialized_graph, encoding="utf-8")
+
+        graph_roundtrip = Graph()
+        try:
+            graph_roundtrip.parse(data=serialized_graph, format="turtle")
+        except Exception as exc:
+            assertions.append(f"Materialized graph is not parseable Turtle/RDF: {exc}")
+
+        simple_q1_result = _query_graph(graph, Path(sample["required_paths"]["simple_query_q1"]))
+        full_q1_result = _query_graph(graph, Path(sample["required_paths"]["full_query_q1"]))
+        join_probe_result = _run_join_probe(graph)
+
+        for label, result in (
+            ("simple q1", simple_q1_result),
+            ("full q1", full_q1_result),
+            ("route-trip-stop join probe", join_probe_result),
+        ):
+            if result["status"] != "passed":
+                assertions.extend(f"{label}: {assertion}" for assertion in result.get("assertions") or [])
+
+        expected_shape_points = materialization_summary["table_row_counts"].get("SHAPES", 0)
+        if simple_q1_result.get("row_count") != expected_shape_points:
+            assertions.append(
+                f"Simple q1 row count must equal SHAPES rows: {simple_q1_result.get('row_count')} != {expected_shape_points}"
+            )
+        if full_q1_result.get("row_count") != expected_shape_points:
+            assertions.append(
+                f"Full q1 row count must equal SHAPES rows: {full_q1_result.get('row_count')} != {expected_shape_points}"
+            )
+        if materialization_summary["triple_count"] <= expected_shape_points:
+            assertions.append("Materialized graph should contain more triples than raw SHAPES rows")
     except Exception as exc:
-        assertions.append(f"Materialized graph is not parseable Turtle/RDF: {exc}")
-
-    simple_q1_result = _query_graph(graph, fixture_root / "references" / "simple-q1.rq")
-    full_q1_result = _query_graph(graph, fixture_root / "references" / "full-q1.rq")
-    join_probe_result = _run_join_probe(graph)
-
-    for label, result in (
-        ("simple q1", simple_q1_result),
-        ("full q1", full_q1_result),
-        ("route-trip-stop join probe", join_probe_result),
-    ):
-        if result["status"] != "passed":
-            assertions.extend(f"{label}: {assertion}" for assertion in result.get("assertions") or [])
-
-    expected_shape_points = materialization_summary["table_row_counts"].get("SHAPES", 0)
-    if simple_q1_result.get("row_count") != expected_shape_points:
-        assertions.append(
-            f"Simple q1 row count must equal SHAPES rows: {simple_q1_result.get('row_count')} != {expected_shape_points}"
-        )
-    if full_q1_result.get("row_count") != expected_shape_points:
-        assertions.append(
-            f"Full q1 row count must equal SHAPES rows: {full_q1_result.get('row_count')} != {expected_shape_points}"
-        )
-    if materialization_summary["triple_count"] <= expected_shape_points:
-        assertions.append("Materialized graph should contain more triples than raw SHAPES rows")
+        assertions.append(str(exc))
+        sample = {}
+        csv_artifacts = {}
+        mapping_validation = {"status": "failed", "assertions": [str(exc)]}
+        materialization_summary = {}
+        graph_path = Path(output_graph_path) if output_graph_path else None
+        serialized_graph = ""
+        simple_q1_result = {"status": "failed", "assertions": [str(exc)], "row_count": 0}
+        full_q1_result = {"status": "failed", "assertions": [str(exc)], "row_count": 0}
+        join_probe_result = {"status": "failed", "assertions": [str(exc)], "row_count": 0}
+    finally:
+        if temp_dir is not None:
+            temp_dir.cleanup()
 
     return {
         "status": "failed" if assertions else "passed",
         "assertions": assertions,
-        "fixture_dir": str(fixture_root),
-        "fixture_validation": fixture_validation,
+        "source_dir": sample.get("source_dir") or str(source_dir or ""),
+        "sample_csv_dir": str(sample_csv_dir or ""),
+        "dataset_validation": dataset_validation,
         "mapping_validation": mapping_validation,
         "materialization": {
             **materialization_summary,
             "graph_path": str(graph_path) if graph_path else "",
             "graph_sha256": _hash_file(graph_path) if graph_path and graph_path.is_file() else _hash_text(serialized_graph),
+            "runtime_sample_csvs": csv_artifacts,
         },
         "queries": {
             "simple_q1": simple_q1_result,
@@ -448,16 +495,18 @@ def validate_gtfs_bench_official_materialization(
 def run_gtfs_bench_official_materialization_validation(
     experiment_dir: str | os.PathLike[str] | None = None,
     *,
-    fixture_dir: str | os.PathLike[str] | None = None,
+    source_dir: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
     started_at = datetime.now()
     component_dir = _component_dir(experiment_dir)
-    graph_path = component_dir / "gtfs_bench_official_mini_materialized.ttl" if component_dir else None
+    graph_path = component_dir / "gtfs_bench_official_materialized.ttl" if component_dir else None
     adapted_mapping_path = component_dir / "gtfs-csv.adapted.rml.ttl" if component_dir else None
+    sample_csv_dir = component_dir / "runtime-sample-csv" if component_dir else None
     validation = validate_gtfs_bench_official_materialization(
-        fixture_dir=fixture_dir,
+        source_dir=source_dir,
         output_graph_path=graph_path,
         adapted_mapping_path=adapted_mapping_path,
+        sample_csv_dir=sample_csv_dir,
     )
     completed_at = datetime.now()
     if completed_at < started_at:
@@ -465,7 +514,7 @@ def run_gtfs_bench_official_materialization_validation(
 
     case = {
         "test_case_id": "SV-GTFS-BENCH-03",
-        "description": "Materialize and query the official-derived GTFS-Bench mini fixture",
+        "description": "Materialize and query a runtime sample derived from the official GTFS-Bench source",
         "type": "support",
         "case_group": "support",
         "validation_type": "functional",
@@ -480,7 +529,7 @@ def run_gtfs_bench_official_materialization_validation(
         },
         "evidence": validation,
         "expected_result": (
-            "The official-derived GTFS-Bench mini fixture can be linked to the adapted official "
+            "The source-derived GTFS-Bench runtime sample can be linked to the adapted official "
             "CSV mapping, materialized into RDF and queried with official shape queries."
         ),
     }
@@ -510,6 +559,8 @@ def run_gtfs_bench_official_materialization_validation(
             report["artifacts"]["materialized_graph"] = str(graph_path)
         if adapted_mapping_path:
             report["artifacts"]["adapted_mapping"] = str(adapted_mapping_path)
+        if sample_csv_dir:
+            report["artifacts"]["runtime_sample_csv_dir"] = str(sample_csv_dir)
         report["evidence_index"] = [
             {
                 "scope": "suite",
@@ -526,15 +577,15 @@ def run_gtfs_bench_official_materialization_validation(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Materialize and query the official-derived GTFS-Bench mini fixture",
+        description="Materialize and query a runtime sample derived from the official GTFS-Bench source",
     )
     parser.add_argument("--experiment-dir", help="Experiment directory where evidence artifacts will be written")
-    parser.add_argument("--fixture-dir", default="", help="Fixture directory to validate")
+    parser.add_argument("--source-dir", default="", help="Local clone of https://github.com/oeg-upm/gtfs-bench")
     args = parser.parse_args()
 
     report = run_gtfs_bench_official_materialization_validation(
         experiment_dir=args.experiment_dir,
-        fixture_dir=args.fixture_dir or None,
+        source_dir=args.source_dir or None,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0 if report.get("status") == "passed" else 1

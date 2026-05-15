@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 from validation.components.semantic_virtualization.dataspace_integration import (
-    load_gtfs_madrid_bench_mini_context,
+    load_gtfs_madrid_bench_context,
 )
 
 
@@ -19,7 +19,7 @@ COMPONENT_KEY = "ai-model-hub"
 TRACEABILITY_CASE_ID = "INT-VS-AMH-01"
 SEMANTIC_DATASPACE_CASE_ID = "INT-VS-DS-01"
 AI_MODEL_HUB_MOBILITY_CASE_ID = "MH-MOB-01"
-GTFS_FIXTURE_NAME = "GTFS-Madrid-Bench-mini"
+GTFS_DATASET_NAME = "GTFS-Madrid-Bench"
 CATALOG_PATH = Path(__file__).resolve().parent / "test_cases.yaml"
 DEFAULT_SEMANTIC_REPORT = (
     Path("experiments")
@@ -86,7 +86,7 @@ def build_vs_ai_model_hub_traceability(
     *,
     semantic_report_path: str | Path,
     experiment_dir: str | None = None,
-    fixture_dir: str | None = None,
+    source_dir: str | None = None,
     catalog_path: str | Path = CATALOG_PATH,
 ) -> dict[str, Any]:
     started_at = datetime.now().isoformat()
@@ -97,14 +97,15 @@ def build_vs_ai_model_hub_traceability(
 
     try:
         semantic_report = _read_json(semantic_path)
-        gtfs_context = load_gtfs_madrid_bench_mini_context(fixture_dir)
+        gtfs_context = load_gtfs_madrid_bench_context(source_dir)
         ai_model_hub_case = _load_ai_model_hub_case(catalog_file)
 
         semantic_context = semantic_report.get("integration_context") or {}
         asset_payload = semantic_report.get("asset_payload") or {}
         asset_properties = asset_payload.get("properties") or {}
-        local_expected_outputs = Path(gtfs_context["expected_outputs_source"])
-        local_digest = _sha256_file(local_expected_outputs)
+        local_digest = hashlib.sha256(
+            json.dumps(gtfs_context.get("record_counts") or {}, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
 
         if semantic_report.get("status") == "passed" and semantic_report.get("test_case_id") == SEMANTIC_DATASPACE_CASE_ID:
             checks.append(
@@ -126,22 +127,22 @@ def build_vs_ai_model_hub_traceability(
 
         if (
             semantic_context.get("case_id") == AI_MODEL_HUB_MOBILITY_CASE_ID
-            and semantic_context.get("fixture_name") == GTFS_FIXTURE_NAME
+            and semantic_context.get("dataset_name") == GTFS_DATASET_NAME
         ):
             checks.append(
                 _passed_check(
                     "semantic_report_contains_gtfs_mobility_context",
                     case_id=semantic_context.get("case_id"),
-                    fixture_name=semantic_context.get("fixture_name"),
+                    dataset_name=semantic_context.get("dataset_name"),
                 )
             )
         else:
             checks.append(
                 _failed_check(
                     "semantic_report_contains_gtfs_mobility_context",
-                    "Semantic report is not linked to MH-MOB-01 / GTFS-Madrid-Bench-mini",
+                    "Semantic report is not linked to MH-MOB-01 / GTFS-Madrid-Bench",
                     case_id=semantic_context.get("case_id"),
-                    fixture_name=semantic_context.get("fixture_name"),
+                    dataset_name=semantic_context.get("dataset_name"),
                 )
             )
 
@@ -149,7 +150,7 @@ def build_vs_ai_model_hub_traceability(
         if semantic_digest == local_digest:
             checks.append(
                 _passed_check(
-                    "expected_outputs_digest_matches_ai_model_hub_fixture",
+                    "expected_outputs_digest_matches_ai_model_hub_dataset",
                     digest=local_digest,
                     expected_outputs_source=gtfs_context.get("expected_outputs_source"),
                 )
@@ -157,8 +158,8 @@ def build_vs_ai_model_hub_traceability(
         else:
             checks.append(
                 _failed_check(
-                    "expected_outputs_digest_matches_ai_model_hub_fixture",
-                    "HttpData asset digest does not match local AI Model Hub fixture expected_outputs.json",
+                    "expected_outputs_digest_matches_ai_model_hub_dataset",
+                    "HttpData asset digest does not match AI Model Hub dataset-derived expectations",
                     semantic_digest=semantic_digest,
                     local_digest=local_digest,
                 )
@@ -172,7 +173,7 @@ def build_vs_ai_model_hub_traceability(
             checks.append(
                 _failed_check(
                     "record_counts_match",
-                    "Semantic report record counts differ from the AI Model Hub mobility fixture",
+                    "Semantic report record counts differ from the AI Model Hub mobility dataset",
                     semantic_counts=semantic_counts,
                     local_counts=local_counts,
                 )
@@ -186,7 +187,7 @@ def build_vs_ai_model_hub_traceability(
             checks.append(
                 _failed_check(
                     "join_keys_match",
-                    "Semantic report join keys differ from the AI Model Hub mobility fixture",
+                    "Semantic report join keys differ from the AI Model Hub mobility dataset",
                     semantic_join_keys=semantic_join_keys,
                     local_join_keys=local_join_keys,
                 )
@@ -194,7 +195,7 @@ def build_vs_ai_model_hub_traceability(
 
         if (
             asset_properties.get("assetType") == "semantic-virtualization-mobility-output"
-            and asset_properties.get("daimo:sourceDataset") == GTFS_FIXTURE_NAME
+            and asset_properties.get("daimo:sourceDataset") == GTFS_DATASET_NAME
             and AI_MODEL_HUB_MOBILITY_CASE_ID in (asset_properties.get("dcat:keyword") or [])
         ):
             checks.append(
@@ -221,7 +222,7 @@ def build_vs_ai_model_hub_traceability(
                     case_id=ai_model_hub_case.get("id"),
                     catalog_group=ai_model_hub_case.get("catalog_group"),
                     automation_status=automation.get("status"),
-                    fixture=automation.get("fixture"),
+                    dataset_source=automation.get("dataset_source") or automation.get("fixture"),
                 )
             )
         else:
@@ -275,8 +276,8 @@ def build_vs_ai_model_hub_traceability(
         "integration_strategy": "traceability_bridge",
         "semantic_report_path": str(semantic_path),
         "catalog_path": str(catalog_file),
-        "fixture": {
-            "name": (gtfs_context or {}).get("fixture_name"),
+        "dataset": {
+            "name": (gtfs_context or {}).get("dataset_name"),
             "expected_outputs_source": (gtfs_context or {}).get("expected_outputs_source"),
             "record_counts": (gtfs_context or {}).get("record_counts"),
             "join_keys": (gtfs_context or {}).get("join_keys"),
@@ -292,7 +293,7 @@ def build_vs_ai_model_hub_traceability(
         "limitations": [
             "No AI Model Hub UI or backend extension was introduced for this closure slice.",
             "The negotiated HttpData asset is not yet consumed directly by Model Benchmarking.",
-            "The integration is closed as reproducible evidence that Semantic Virtualization output and AI Model Hub mobility fixture refer to the same GTFS-Madrid-Bench-mini contract.",
+            "The integration is closed as reproducible evidence that Semantic Virtualization output and AI Model Hub mobility validation refer to the same GTFS-Madrid-Bench source.",
         ],
         "error": error_payload,
     }
@@ -319,14 +320,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--semantic-report", default=str(DEFAULT_SEMANTIC_REPORT))
     parser.add_argument("--experiment-dir", default="")
-    parser.add_argument("--fixture-dir", default="")
+    parser.add_argument("--source-dir", default="")
     parser.add_argument("--catalog-path", default=str(CATALOG_PATH))
     args = parser.parse_args(argv)
 
     result = build_vs_ai_model_hub_traceability(
         semantic_report_path=args.semantic_report,
         experiment_dir=args.experiment_dir or _default_experiment_dir(),
-        fixture_dir=args.fixture_dir or None,
+        source_dir=args.source_dir or None,
         catalog_path=args.catalog_path,
     )
     print(

@@ -8,7 +8,7 @@ from validation.components.artifact_contract import attach_component_artifact_ma
 from validation.components.semantic_virtualization.gtfs_bench_materialization import (
     run_gtfs_bench_official_materialization_validation,
 )
-from validation.components.semantic_virtualization.gtfs_bench_mini import run_gtfs_bench_official_mini_validation
+from validation.components.semantic_virtualization.gtfs_bench_dataset import run_gtfs_bench_official_dataset_validation
 from validation.components.semantic_virtualization.gtfs_bench_official import (
     run_gtfs_bench_official_source_validation,
 )
@@ -471,7 +471,7 @@ def run_semantic_virtualization_validation(
     functional_runners = [
         ("mapping_fixtures", "mapping-fixtures", run_semantic_virtualization_mapping_validation),
         ("gtfs_bench_source", "gtfs-bench-official-source", run_gtfs_bench_official_source_validation),
-        ("gtfs_bench_mini", "gtfs-bench-official-mini", run_gtfs_bench_official_mini_validation),
+        ("gtfs_bench_dataset", "gtfs-bench-official-dataset", run_gtfs_bench_official_dataset_validation),
         (
             "gtfs_bench_materialization",
             "gtfs-bench-official-materialization",

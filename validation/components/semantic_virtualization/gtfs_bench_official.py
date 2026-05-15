@@ -11,11 +11,14 @@ from typing import Any
 from rdflib import Graph, URIRef
 from rdflib.namespace import RDF
 
+from validation.datasets.manager import dataset_source_candidates, dataset_source_dir
+
 
 COMPONENT_KEY = "semantic-virtualization"
 SUITE_NAME = "gtfs-bench-official-source"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_SOURCE_DIR = PROJECT_ROOT / "adapters" / "inesdata" / "sources" / "gtfs-bench"
+CANONICAL_SOURCE_DIR = dataset_source_dir("gtfs-bench")
+DEFAULT_SOURCE_DIR = CANONICAL_SOURCE_DIR
 GTFS_BENCH_REPOSITORY = "https://github.com/oeg-upm/gtfs-bench"
 RML_LOGICAL_SOURCE = URIRef("http://semweb.mmlab.be/ns/rml#LogicalSource")
 RML_SOURCE = URIRef("http://semweb.mmlab.be/ns/rml#source")
@@ -46,6 +49,15 @@ EXPECTED_CSV_SOURCES = {
     "/data/STOP_TIMES.csv",
     "/data/TRIPS.csv",
 }
+
+
+def resolve_gtfs_bench_source_dir(source_dir: str | os.PathLike[str] | None = None) -> Path:
+    if source_dir:
+        return Path(source_dir).resolve()
+    for candidate in dataset_source_candidates("gtfs-bench"):
+        if candidate.is_dir():
+            return candidate.resolve()
+    return CANONICAL_SOURCE_DIR.resolve()
 
 
 def _component_dir(experiment_dir: str | os.PathLike[str] | None) -> Path | None:
@@ -96,7 +108,7 @@ def validate_gtfs_bench_official_source(
     *,
     auto_clone: bool = False,
 ) -> dict[str, Any]:
-    resolved_source_dir = Path(source_dir or DEFAULT_SOURCE_DIR).resolve()
+    resolved_source_dir = resolve_gtfs_bench_source_dir(source_dir)
     assertions: list[str] = []
     required_paths: dict[str, str] = {}
 

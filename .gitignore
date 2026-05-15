@@ -138,6 +138,7 @@ adapters/inesdata/sources/inesdata-connector/extensions/vocabulary-shared-retrie
 adapters/inesdata/sources/AIModelHub
 validation/components/ontology_hub/functional/generated
 validation/components/ontology_hub/functional/state/
+validation/datasets/sources/
 docs/INVENTARIO DE ENTORNO.docx
 
 

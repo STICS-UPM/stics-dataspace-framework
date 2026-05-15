@@ -28,7 +28,7 @@ FUNCTIONAL_CASE_METADATA: Dict[str, Dict[str, Any]] = {
         "execution_mode": "api_ui",
         "coverage_status": "partial",
         "expected_result": (
-            "FLARES-mini can populate the dataspace on demand, reach a negotiated agreement, "
+            "FLARES can populate the dataspace on demand, reach a negotiated agreement, "
             "prepare the linguistic benchmarking flow and execute a FLARES payload through the connector API."
         ),
         "spec": "mh_ling_01_flares_reliability.spec.js",

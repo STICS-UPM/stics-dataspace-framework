@@ -3,19 +3,19 @@ const { attachManagementAuthorizationRoutes } = require("../../ui/auth");
 const { CatalogPage } = require("../../ui/pages/catalog.page");
 const { ModelBenchmarkingPage } = require("../../ui/pages/model_benchmarking.page");
 const {
-  ensureFlaresMiniPublished,
+  ensureFlaresDatasetPublished,
   ensureFlaresLinguisticModelsPublished,
   ensureLocalFlaresBenchmarkDatasetPublished,
-  loadFlaresMiniFixture,
+  loadFlaresDataset,
   probeConsumerInferEndpoint,
-  waitForFlaresMiniAgreement,
-  waitForFlaresMiniCatalogVisibility,
+  waitForFlaresDatasetAgreement,
+  waitForFlaresDatasetCatalogVisibility,
 } = require("../linguistic/bootstrap");
 
 const FUNCTIONAL_ENV = "AI_MODEL_HUB_ENABLE_FUNCTIONAL_VALIDATION";
 
 test.describe("MH-LING-01 scaffold", () => {
-  test("MH-LING-01: FLARES-mini is published, discovered and negotiated on demand for the linguistic validation flow", async ({
+  test("MH-LING-01: FLARES is published, discovered and negotiated on demand for the linguistic validation flow", async ({
     page,
     request,
     aiModelHubRuntime,
@@ -29,9 +29,9 @@ test.describe("MH-LING-01 scaffold", () => {
 
     const catalogPage = new CatalogPage(page, aiModelHubRuntime);
     const benchmarkingPage = new ModelBenchmarkingPage(page, aiModelHubRuntime);
-    const fixture = loadFlaresMiniFixture();
-    const publication = await ensureFlaresMiniPublished(request, aiModelHubRuntime);
-    const catalogVisibility = await waitForFlaresMiniCatalogVisibility(
+    const fixture = loadFlaresDataset();
+    const publication = await ensureFlaresDatasetPublished(request, aiModelHubRuntime);
+    const catalogVisibility = await waitForFlaresDatasetCatalogVisibility(
       request,
       aiModelHubRuntime,
       publication.assetId,
@@ -71,7 +71,7 @@ test.describe("MH-LING-01 scaffold", () => {
     await expect(catalogPage.goToContractsButton).toBeVisible({ timeout: 30000 });
     await captureStep(page, "mh-ling-01-flares-negotiation-finalized");
 
-    const agreementState = await waitForFlaresMiniAgreement(
+    const agreementState = await waitForFlaresDatasetAgreement(
       request,
       aiModelHubRuntime,
       publication.assetId,
@@ -103,9 +103,9 @@ test.describe("MH-LING-01 scaffold", () => {
 
     const inferProbe = await probeConsumerInferEndpoint(request, aiModelHubRuntime);
 
-    await attachJson("flares-mini-metadata", fixture.metadata);
-    await attachJson("flares-mini-expected-outputs", fixture.expectedOutputs);
-    await attachJson("flares-mini-publication", {
+    await attachJson("flares-metadata", fixture.metadata);
+    await attachJson("flares-expected-outputs", fixture.expectedOutputs);
+    await attachJson("flares-publication", {
       assetId: publication.assetId,
       created: publication.created,
       existing: publication.existing,
@@ -113,7 +113,7 @@ test.describe("MH-LING-01 scaffold", () => {
       contractDefinitionId:
         publication.contractDefinitionId || fixture.metadata.assetPublication.contractDefinitionId,
     });
-    await attachJson("flares-mini-local-benchmark-dataset", localBenchmarkDataset);
+    await attachJson("flares-local-benchmark-dataset", localBenchmarkDataset);
     await attachJson("mh-ling-01-linguistic-bootstrap", {
       route: aiModelHubRuntime.catalogPath,
       contractsRoute: aiModelHubRuntime.contractsPath,
@@ -134,15 +134,15 @@ test.describe("MH-LING-01 scaffold", () => {
       localBenchmarkDataset,
     });
 
-    expect(fixture.metadata.datasetName).toBe("FLARES-mini");
+    expect(fixture.metadata.datasetName).toBe("FLARES");
     expect(fixture.subtask2TrialSample.length).toBeGreaterThan(0);
-    expect(publication.assetId).toMatch(/^dataset-flares-mini-subtask2/);
+    expect(publication.assetId).toMatch(/^dataset-flares-subtask2/);
     expect(publication.created || publication.existing).toBeTruthy();
     expect(agreementState.assetId).toBe(publication.assetId);
     expect(linguisticModels.models).toHaveLength(2);
     expect(linguisticModels.benchmarkRows).toHaveLength(
       fixture.expectedOutputs.subtask2_trial_sample.recordCount,
     );
-    expect(localBenchmarkDataset.assetId).toBe("dataset-flares-mini-local-benchmark");
+    expect(localBenchmarkDataset.assetId).toBe("dataset-flares-local-benchmark");
   });
 });

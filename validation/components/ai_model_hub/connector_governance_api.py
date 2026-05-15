@@ -996,10 +996,19 @@ def _dataspace_name_loader(adapter):
     return lambda: "demo"
 
 
-def build_inesdata_ai_model_hub_connector_governance_suite(topology: str = "local"):
+def _build_adapter(adapter_name: str, topology: str):
+    normalized = str(adapter_name or "inesdata").strip().lower()
+    if normalized == "edc":
+        from adapters.edc.adapter import EdcAdapter
+
+        return EdcAdapter(topology=topology)
     from adapters.inesdata.adapter import InesdataAdapter
 
-    adapter = InesdataAdapter(topology=topology)
+    return InesdataAdapter(topology=topology)
+
+
+def build_ai_model_hub_connector_governance_suite(adapter_name: str = "inesdata", topology: str = "local"):
+    adapter = _build_adapter(adapter_name, topology)
     return AIModelHubConnectorGovernanceApiSuite(
         load_connector_credentials=adapter.load_connector_credentials,
         load_deployer_config=adapter.load_deployer_config,
@@ -1007,6 +1016,10 @@ def build_inesdata_ai_model_hub_connector_governance_suite(topology: str = "loca
         ds_name_loader=_dataspace_name_loader(adapter),
         protocol_address_resolver=getattr(adapter.connectors, "build_internal_protocol_address", None),
     ), adapter
+
+
+def build_inesdata_ai_model_hub_connector_governance_suite(topology: str = "local"):
+    return build_ai_model_hub_connector_governance_suite("inesdata", topology=topology)
 
 
 def _default_experiment_dir() -> str:

@@ -9,8 +9,8 @@ const {
 } = require("../../functional/linguistic/bootstrap");
 
 const DEMO_ENV = "AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO";
-const BASELINE_A = "model-flares-mini-reliability-baseline-a";
-const BASELINE_B = "model-flares-mini-reliability-baseline-b";
+const BASELINE_A = "model-flares-reliability-baseline-a";
+const BASELINE_B = "model-flares-reliability-baseline-b";
 
 function demoEnabled() {
   return (process.env[DEMO_ENV] || "").trim().toLowerCase() === "1";
@@ -73,7 +73,7 @@ async function installBenchmarkInferDemoRoute(page, runtime, rows) {
         status: 422,
         headers: corsHeaders,
         body: JSON.stringify({
-          error: "Unknown FLARES-mini demo payload",
+          error: "Unknown FLARES demo payload",
           assetId,
         }),
       });
@@ -187,7 +187,7 @@ test.describe("AI Model Hub benchmarking visual demo", () => {
     test.skip(!demoEnabled(), `Set ${DEMO_ENV}=1 to run the auditor-facing benchmarking UI demo.`);
   });
 
-  test("PT5-MH-12: benchmarking UI selects multiple FLARES-mini models", async ({
+  test("PT5-MH-12: benchmarking UI selects multiple FLARES models", async ({
     page,
     request,
     aiModelHubRuntime,

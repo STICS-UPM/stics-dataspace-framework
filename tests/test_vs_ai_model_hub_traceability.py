@@ -4,17 +4,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.dataset_test_helpers import create_gtfs_source
 from validation.components.ai_model_hub.virtualization_traceability import (
     build_vs_ai_model_hub_traceability,
 )
 from validation.components.semantic_virtualization.dataspace_integration import (
-    load_gtfs_madrid_bench_mini_context,
+    load_gtfs_madrid_bench_context,
 )
 
 
 class VSAIModelHubTraceabilityTests(unittest.TestCase):
-    def _semantic_report(self, digest=None, status="passed"):
-        context = load_gtfs_madrid_bench_mini_context()
+    def _semantic_report(self, source_dir, digest=None, status="passed"):
+        context = load_gtfs_madrid_bench_context(str(source_dir))
         expected_digest = digest or context["asset_summary"]["expected_outputs_digest"]
         return {
             "component": "semantic-virtualization",
@@ -36,25 +37,27 @@ class VSAIModelHubTraceabilityTests(unittest.TestCase):
                         "semantic-virtualization",
                         "HttpData",
                         "A5.2",
-                        "GTFS-Madrid-Bench-mini",
+                        "GTFS-Madrid-Bench",
                         "mobility",
                         "gtfs",
                         "MH-MOB-01",
                     ],
-                    "daimo:sourceDataset": "GTFS-Madrid-Bench-mini",
+                    "daimo:sourceDataset": "GTFS-Madrid-Bench",
                     "daimo:expectedOutputsDigest": expected_digest,
                 }
             },
         }
 
-    def test_traceability_passes_when_semantic_report_matches_ai_model_hub_fixture(self):
+    def test_traceability_passes_when_semantic_report_matches_ai_model_hub_dataset(self):
         with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = create_gtfs_source(tmpdir)
             semantic_report_path = Path(tmpdir) / "semantic_report.json"
-            semantic_report_path.write_text(json.dumps(self._semantic_report()), encoding="utf-8")
+            semantic_report_path.write_text(json.dumps(self._semantic_report(source_dir)), encoding="utf-8")
 
             result = build_vs_ai_model_hub_traceability(
                 semantic_report_path=semantic_report_path,
                 experiment_dir=tmpdir,
+                source_dir=str(source_dir),
             )
 
             self.assertEqual(result["status"], "passed")
@@ -62,28 +65,30 @@ class VSAIModelHubTraceabilityTests(unittest.TestCase):
             self.assertIn("MH-MOB-01", result["linked_cases"])
             self.assertEqual(result["summary"]["failed"], 0)
             self.assertTrue(os.path.exists(result["artifacts"]["report_json"]))
-            self.assertEqual(result["fixture"]["name"], "GTFS-Madrid-Bench-mini")
+            self.assertEqual(result["dataset"]["name"], "GTFS-Madrid-Bench")
             self.assertEqual(
                 result["semantic_virtualization_evidence"]["asset_properties"]["daimo:sourceDataset"],
-                "GTFS-Madrid-Bench-mini",
+                "GTFS-Madrid-Bench",
             )
 
     def test_traceability_fails_when_expected_outputs_digest_differs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = create_gtfs_source(tmpdir)
             semantic_report_path = Path(tmpdir) / "semantic_report.json"
             semantic_report_path.write_text(
-                json.dumps(self._semantic_report(digest="0" * 64)),
+                json.dumps(self._semantic_report(source_dir, digest="0" * 64)),
                 encoding="utf-8",
             )
 
             result = build_vs_ai_model_hub_traceability(
                 semantic_report_path=semantic_report_path,
                 experiment_dir=tmpdir,
+                source_dir=str(source_dir),
             )
 
             self.assertEqual(result["status"], "failed")
             failed_checks = [check["name"] for check in result["checks"] if check["status"] == "failed"]
-            self.assertIn("expected_outputs_digest_matches_ai_model_hub_fixture", failed_checks)
+            self.assertIn("expected_outputs_digest_matches_ai_model_hub_dataset", failed_checks)
 
 
 if __name__ == "__main__":

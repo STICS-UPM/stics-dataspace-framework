@@ -8,10 +8,12 @@ const {
   waitForConsumerCatalogAsset,
 } = require("../../ui/bootstrap");
 
-const FLARES_FIXTURE_DIR = path.resolve(
+const FLARES_DATASET_DIR = path.resolve(
   __dirname,
-  "../../fixtures/datasets/linguistic/flares-mini",
+  "../../../../../validation/datasets/sources/flares-dataset",
 );
+const FLARES_TRIAL_FILE = "5w1h_subtask_2_trial.json";
+const FLARES_TEST_FILE = "5w1h_subtarea_2_test.json";
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -19,33 +21,89 @@ function readJson(filePath) {
 
 function ensureFile(filePath) {
   if (!fs.existsSync(filePath)) {
-    throw new Error(`Required FLARES fixture file is missing: ${filePath}`);
+    throw new Error(`Required FLARES source file is missing: ${filePath}`);
   }
 }
 
-function loadFlaresMiniFixture() {
-  const metadataPath = path.join(FLARES_FIXTURE_DIR, "metadata.json");
-  const schemaPath = path.join(FLARES_FIXTURE_DIR, "schema.json");
-  const trialSamplePath = path.join(FLARES_FIXTURE_DIR, "subtask2_trial_sample.json");
-  const testSamplePath = path.join(FLARES_FIXTURE_DIR, "subtask2_test_sample.json");
-  const expectedOutputsPath = path.join(FLARES_FIXTURE_DIR, "expected_outputs.json");
+function buildFlaresExpectedOutputs(trialSample, testSample) {
+  const records = trialSample
+    .filter((record) => Object.prototype.hasOwnProperty.call(record, "Reliability_Label"))
+    .map((record) => ({
+      Id: record.Id,
+      "5W1H_Label": record["5W1H_Label"],
+      expectedReliability: record.Reliability_Label,
+    }));
+  const classDistribution = {};
+  for (const record of records) {
+    const label = record.expectedReliability;
+    classDistribution[label] = (classDistribution[label] || 0) + 1;
+  }
+  return {
+    subtask2_trial_sample: {
+      recordCount: records.length,
+      classDistribution,
+      records,
+    },
+    subtask2_test_sample: {
+      recordCount: testSample.length,
+      unlabeled: !testSample.some((record) => Object.prototype.hasOwnProperty.call(record, "Reliability_Label")),
+      requiredFields: ["Id", "Text", "5W1H_Label", "Tag_Text", "Tag_Start", "Tag_End"],
+      records: testSample
+        .filter((record) => Object.prototype.hasOwnProperty.call(record, "Id"))
+        .map((record) => ({
+          Id: record.Id,
+          "5W1H_Label": record["5W1H_Label"],
+        })),
+    },
+  };
+}
 
-  [metadataPath, schemaPath, trialSamplePath, testSamplePath, expectedOutputsPath].forEach(ensureFile);
+function buildFlaresMetadata(sourceDir) {
+  return {
+    datasetName: "FLARES",
+    domain: "linguistic",
+    language: "es",
+    task: "5w1h-reliability-classification",
+    version: "source-runtime",
+    keywords: ["flares", "5w1h", "reliability", "linguistic", "mh-ling-01"],
+    source: {
+      name: "FLARES",
+      repository: "https://github.com/rsepulveda911112/Flares-dataset",
+      localPath: sourceDir,
+      license: "Review upstream dataset terms before external publication.",
+    },
+    assetPublication: {
+      assetId: "dataset-flares-subtask2",
+      policyId: "policy-flares-subtask2",
+      contractDefinitionId: "contractdef-flares-subtask2",
+      storeFolder: "linguistic-flares",
+      publicationMode: "on_demand",
+      uploadFile: FLARES_TRIAL_FILE,
+      fileName: "flares-subtask2-trial.json",
+      uploadMediaType: "application/json",
+      description: "FLARES source records used by the MH-LING-01 linguistic validation flow.",
+    },
+  };
+}
 
-  const metadata = readJson(metadataPath);
-  const schema = readJson(schemaPath);
+function loadFlaresDataset(sourceDir = FLARES_DATASET_DIR) {
+  const trialSamplePath = path.join(sourceDir, FLARES_TRIAL_FILE);
+  const testSamplePath = path.join(sourceDir, FLARES_TEST_FILE);
+
+  [trialSamplePath, testSamplePath].forEach(ensureFile);
+
   const subtask2TrialSample = readJson(trialSamplePath);
   const subtask2TestSample = readJson(testSamplePath);
-  const expectedOutputs = readJson(expectedOutputsPath);
+  const expectedOutputs = buildFlaresExpectedOutputs(subtask2TrialSample, subtask2TestSample);
 
   return {
-    fixtureDir: FLARES_FIXTURE_DIR,
-    metadata,
-    schema,
+    sourceDir,
+    metadata: buildFlaresMetadata(sourceDir),
+    schema: {},
     subtask2TrialSample,
     subtask2TestSample,
     expectedOutputs,
-    uploadFilePath: path.join(FLARES_FIXTURE_DIR, metadata.assetPublication.uploadFile),
+    uploadFilePath: trialSamplePath,
   };
 }
 
@@ -163,7 +221,7 @@ async function findProviderAssetById(request, runtime, assetId) {
       limit: 1000,
     },
   });
-  await ensureOk(response, "Query provider assets for FLARES-mini");
+  await ensureOk(response, "Query provider assets for FLARES");
 
   const assets = await response.json();
   const normalized = Array.isArray(assets) ? assets : [];
@@ -175,7 +233,7 @@ async function findProviderAssetById(request, runtime, assetId) {
   );
 }
 
-function buildFlaresMiniAssetDocument(fixture, runtime, overrides = {}) {
+function buildFlaresDatasetAssetDocument(fixture, runtime, overrides = {}) {
   const publication = fixture.metadata.assetPublication || {};
   const assetId = overrides.assetId || publication.assetId;
   const displayName = overrides.assetName || fixture.metadata.datasetName;
@@ -184,7 +242,7 @@ function buildFlaresMiniAssetDocument(fixture, runtime, overrides = {}) {
   const keywords = Array.from(
     new Set([
       ...(fixture.metadata.keywords || []),
-      "flares-mini",
+      "flares",
       "mh-ling-01",
       "benchmark",
       "benchmark-dataset",
@@ -275,7 +333,7 @@ async function deleteProviderResource(request, runtime, resourcePath, action) {
   throw new Error(`${action} failed with HTTP ${response.status()}: ${body.slice(0, 500)}`);
 }
 
-async function repairFlaresMiniPublishedAsset(request, runtime, fixture, overrides = {}) {
+async function repairFlaresDatasetPublishedAsset(request, runtime, fixture, overrides = {}) {
   const publication = fixture.metadata.assetPublication || {};
   const policyId = overrides.policyId || publication.policyId;
   const contractDefinitionId = overrides.contractDefinitionId || publication.contractDefinitionId;
@@ -284,19 +342,19 @@ async function repairFlaresMiniPublishedAsset(request, runtime, fixture, overrid
     request,
     runtime,
     `/v3/contractdefinitions/${encodeURIComponent(contractDefinitionId)}`,
-    "Delete stale FLARES-mini contract definition",
+    "Delete stale FLARES contract definition",
   );
   await deleteProviderResource(
     request,
     runtime,
     `/v3/policydefinitions/${encodeURIComponent(policyId)}`,
-    "Delete stale FLARES-mini policy definition",
+    "Delete stale FLARES policy definition",
   );
   await deleteProviderResource(
     request,
     runtime,
     `/v3/assets/${encodeURIComponent(assetId)}`,
-    "Delete stale FLARES-mini asset",
+    "Delete stale FLARES asset",
   );
 }
 
@@ -306,7 +364,7 @@ function buildBenchmarkReadyPublicationOverrides(fixture) {
     assetId: `${publication.assetId}-benchmark`,
     assetName: `${fixture.metadata.datasetName} Benchmark`,
     description:
-      "Benchmark-ready FLARES-mini provider dataset prepared for MH-LING-01 with inline rows and mapping metadata.",
+      "Benchmark-ready FLARES provider dataset prepared for MH-LING-01 with inline rows and mapping metadata.",
     policyId: `${publication.policyId}-benchmark`,
     contractDefinitionId: `${publication.contractDefinitionId}-benchmark`,
   };
@@ -358,10 +416,9 @@ async function deleteConsumerResource(request, runtime, resourcePath, action) {
 function buildLocalFlaresBenchmarkDatasetDocument(fixture, runtime) {
   const benchmarkRows = buildFlaresBenchmarkRows(fixture);
   const benchmarkMapping = buildFlaresBenchmarkMapping();
-  const assetId = "dataset-flares-mini-local-benchmark";
+  const assetId = "dataset-flares-local-benchmark";
   const keywords = [
     "flares",
-    "flares-mini",
     "dataset",
     "benchmark",
     "benchmark-dataset",
@@ -372,10 +429,10 @@ function buildLocalFlaresBenchmarkDatasetDocument(fixture, runtime) {
 
   return {
     assetId,
-    assetName: "FLARES-mini Local Benchmark Dataset",
+    assetName: "FLARES Local Benchmark Dataset",
     baseUrl: `${runtime.consumerDefaultUrl}/datasets/${assetId}`,
     description:
-      "Local consumer-side FLARES benchmark mirror used to exercise Model Benchmarking while the external dataset slice stays focused on negotiation.",
+      "Local consumer-side FLARES benchmark mirror used to exercise Model Benchmarking while the provider dataset stays focused on negotiation.",
     version: fixture.metadata.version,
     task: fixture.metadata.task,
     library: "flares-dataset",
@@ -392,7 +449,7 @@ function buildLocalFlaresBenchmarkDatasetDocument(fixture, runtime) {
   };
 }
 
-async function ensureLocalFlaresBenchmarkDatasetPublished(request, runtime, fixture = loadFlaresMiniFixture()) {
+async function ensureLocalFlaresBenchmarkDatasetPublished(request, runtime, fixture = loadFlaresDataset()) {
   const assetDocument = buildLocalFlaresBenchmarkDatasetDocument(fixture, runtime);
   const existingAsset = await findConsumerAssetById(request, runtime, assetDocument.assetId);
 
@@ -455,7 +512,7 @@ function buildFlaresLinguisticModelPayload(fixture, runtime, spec) {
       "daimo:task": ["nlp", "text-classification", "reliability-classification"],
       "daimo:subtask": ["5w1h-reliability-classification"],
       "daimo:language": ["es"],
-      "daimo:framework": ["flares-mini"],
+      "daimo:framework": ["flares"],
       "daimo:inference_path": "/infer",
       "daimo:input_schema": JSON.stringify(inputSchema),
       "daimo:input_schema_draft": "https://json-schema.org/draft/2020-12/schema",
@@ -467,10 +524,10 @@ function buildFlaresLinguisticModelPayload(fixture, runtime, spec) {
   };
 }
 
-async function ensureFlaresLinguisticModelsPublished(request, runtime, fixture = loadFlaresMiniFixture()) {
+async function ensureFlaresLinguisticModelsPublished(request, runtime, fixture = loadFlaresDataset()) {
   const modelSpecs = [
     {
-      assetId: "model-flares-mini-reliability-baseline-a",
+      assetId: "model-flares-reliability-baseline-a",
       assetName: "FLARES Reliability Baseline A",
       description:
         "Local linguistic baseline prepared for MH-LING-01. It exposes FLARES-compatible input metadata for benchmark readiness checks.",
@@ -478,7 +535,7 @@ async function ensureFlaresLinguisticModelsPublished(request, runtime, fixture =
       variant: "baseline-a",
     },
     {
-      assetId: "model-flares-mini-reliability-baseline-b",
+      assetId: "model-flares-reliability-baseline-b",
       assetName: "FLARES Reliability Baseline B",
       description:
         "Second local linguistic baseline prepared for MH-LING-01. It shares the same FLARES-compatible input contract for comparison readiness.",
@@ -539,7 +596,7 @@ async function probeConsumerInferEndpoint(request, runtime) {
   };
 }
 
-async function uploadFlaresMiniToProvider(request, runtime, fixture, assetDocument) {
+async function uploadFlaresDatasetToProvider(request, runtime, fixture, assetDocument) {
   const providerToken = await requestConnectorManagementToken(runtime, runtime.providerConnectorId);
   const publication = fixture.metadata.assetPublication || {};
   const uploadFilePath = fixture.uploadFilePath;
@@ -570,7 +627,7 @@ async function uploadFlaresMiniToProvider(request, runtime, fixture, assetDocume
       },
     },
   });
-  await ensureOk(uploadResponse, "Upload FLARES-mini chunk");
+  await ensureOk(uploadResponse, "Upload FLARES chunk");
 
   const finalizeResponse = await request.post(`${runtime.providerManagementUrl}/s3assets/finalize-upload`, {
     headers: {
@@ -585,7 +642,7 @@ async function uploadFlaresMiniToProvider(request, runtime, fixture, assetDocume
       fileName: uploadFileName,
     },
   });
-  await ensureOk(finalizeResponse, "Finalize FLARES-mini upload");
+  await ensureOk(finalizeResponse, "Finalize FLARES upload");
 
   return {
     uploadFileName,
@@ -619,7 +676,7 @@ async function ensureProviderPolicyAndContract(request, runtime, fixture, assetD
       },
     },
   });
-  await ensureOk(policyResponse, "Create FLARES-mini policy definition");
+  await ensureOk(policyResponse, "Create FLARES policy definition");
 
   const contractDefinitionResponse = await request.post(`${runtime.providerManagementUrl}/v3/contractdefinitions`, {
     headers: {
@@ -642,7 +699,7 @@ async function ensureProviderPolicyAndContract(request, runtime, fixture, assetD
       ],
     },
   });
-  await ensureOk(contractDefinitionResponse, "Create FLARES-mini contract definition");
+  await ensureOk(contractDefinitionResponse, "Create FLARES contract definition");
 
   return {
     policyId,
@@ -650,8 +707,8 @@ async function ensureProviderPolicyAndContract(request, runtime, fixture, assetD
   };
 }
 
-async function ensureFlaresMiniPublished(request, runtime, overrides = {}) {
-  const fixture = loadFlaresMiniFixture();
+async function ensureFlaresDatasetPublished(request, runtime, overrides = {}) {
+  const fixture = loadFlaresDataset();
   const publication = fixture.metadata.assetPublication || {};
   const assetId = overrides.assetId || publication.assetId;
   const existingAsset = await findProviderAssetById(request, runtime, assetId);
@@ -676,7 +733,7 @@ async function ensureFlaresMiniPublished(request, runtime, overrides = {}) {
     const benchmarkAsset = await findProviderAssetById(request, runtime, benchmarkOverrides.assetId);
     if (benchmarkAsset) {
       if (!providerAssetSupportsBenchmarkMetadata(benchmarkAsset)) {
-        await repairFlaresMiniPublishedAsset(request, runtime, fixture, benchmarkOverrides);
+        await repairFlaresDatasetPublishedAsset(request, runtime, fixture, benchmarkOverrides);
       } else {
         return {
           fixture,
@@ -692,8 +749,8 @@ async function ensureFlaresMiniPublished(request, runtime, overrides = {}) {
       }
     }
 
-    const benchmarkAssetDocument = buildFlaresMiniAssetDocument(fixture, runtime, benchmarkOverrides);
-    const uploadResult = await uploadFlaresMiniToProvider(request, runtime, fixture, benchmarkAssetDocument);
+    const benchmarkAssetDocument = buildFlaresDatasetAssetDocument(fixture, runtime, benchmarkOverrides);
+    const uploadResult = await uploadFlaresDatasetToProvider(request, runtime, fixture, benchmarkAssetDocument);
     const contractResources = await ensureProviderPolicyAndContract(
       request,
       runtime,
@@ -715,8 +772,8 @@ async function ensureFlaresMiniPublished(request, runtime, overrides = {}) {
     };
   }
 
-  const assetDocument = buildFlaresMiniAssetDocument(fixture, runtime, overrides);
-  const uploadResult = await uploadFlaresMiniToProvider(request, runtime, fixture, assetDocument);
+  const assetDocument = buildFlaresDatasetAssetDocument(fixture, runtime, overrides);
+  const uploadResult = await uploadFlaresDatasetToProvider(request, runtime, fixture, assetDocument);
   const contractResources = await ensureProviderPolicyAndContract(request, runtime, fixture, assetDocument, overrides);
 
   return {
@@ -731,42 +788,42 @@ async function ensureFlaresMiniPublished(request, runtime, overrides = {}) {
   };
 }
 
-async function waitForFlaresMiniCatalogVisibility(request, runtime, fixtureOrAssetId, attempts = 15, delayMs = 1000) {
+async function waitForFlaresDatasetCatalogVisibility(request, runtime, fixtureOrAssetId, attempts = 15, delayMs = 1000) {
   const assetId =
     typeof fixtureOrAssetId === "string"
       ? fixtureOrAssetId
       : fixtureOrAssetId?.metadata?.assetPublication?.assetId || fixtureOrAssetId?.assetId;
   if (!assetId) {
-    throw new Error("FLARES-mini asset id could not be resolved for catalog visibility polling");
+    throw new Error("FLARES asset id could not be resolved for catalog visibility polling");
   }
 
   return waitForConsumerCatalogAsset(request, runtime, assetId, runtime.providerProtocolUrl, attempts, delayMs);
 }
 
-async function waitForFlaresMiniAgreement(request, runtime, fixtureOrAssetId, attempts = 20, delayMs = 1000) {
+async function waitForFlaresDatasetAgreement(request, runtime, fixtureOrAssetId, attempts = 20, delayMs = 1000) {
   const assetId =
     typeof fixtureOrAssetId === "string"
       ? fixtureOrAssetId
       : fixtureOrAssetId?.metadata?.assetPublication?.assetId || fixtureOrAssetId?.assetId;
   if (!assetId) {
-    throw new Error("FLARES-mini asset id could not be resolved for agreement polling");
+    throw new Error("FLARES asset id could not be resolved for agreement polling");
   }
 
   return waitForConsumerAgreement(request, runtime, assetId, attempts, delayMs);
 }
 
 module.exports = {
-  FLARES_FIXTURE_DIR,
+  FLARES_DATASET_DIR,
   buildFlaresBenchmarkMapping,
   buildFlaresBenchmarkRows,
-  buildFlaresMiniAssetDocument,
-  ensureFlaresMiniPublished,
+  buildFlaresDatasetAssetDocument,
+  ensureFlaresDatasetPublished,
   ensureFlaresLinguisticModelsPublished,
   ensureLocalFlaresBenchmarkDatasetPublished,
   findConsumerAssetById,
   findProviderAssetById,
-  loadFlaresMiniFixture,
+  loadFlaresDataset,
   probeConsumerInferEndpoint,
-  waitForFlaresMiniAgreement,
-  waitForFlaresMiniCatalogVisibility,
+  waitForFlaresDatasetAgreement,
+  waitForFlaresDatasetCatalogVisibility,
 };

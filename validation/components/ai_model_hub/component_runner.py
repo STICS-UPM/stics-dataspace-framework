@@ -276,14 +276,30 @@ def _model_observer_enabled() -> bool:
     return _suite_enabled(MODEL_OBSERVER_ENV)
 
 
+def _component_adapter_name() -> str:
+    return (
+        os.environ.get("AI_MODEL_HUB_COMPONENT_ADAPTER")
+        or os.environ.get("PIONERA_ADAPTER")
+        or "inesdata"
+    ).strip().lower() or "inesdata"
+
+
 def run_ai_model_hub_connector_governance_validation(experiment_dir: str | None = None) -> Dict[str, Any]:
     from validation.components.ai_model_hub.connector_governance_api import (
-        build_inesdata_ai_model_hub_connector_governance_suite,
+        build_ai_model_hub_connector_governance_suite,
         default_model_url,
     )
 
-    topology = os.environ.get("AI_MODEL_HUB_CONNECTOR_GOVERNANCE_TOPOLOGY") or os.environ.get("INESDATA_TOPOLOGY") or "local"
-    suite, adapter = build_inesdata_ai_model_hub_connector_governance_suite(topology=topology)
+    topology = (
+        os.environ.get("AI_MODEL_HUB_CONNECTOR_GOVERNANCE_TOPOLOGY")
+        or os.environ.get("PIONERA_TOPOLOGY")
+        or os.environ.get("INESDATA_TOPOLOGY")
+        or "local"
+    )
+    suite, adapter = build_ai_model_hub_connector_governance_suite(
+        adapter_name=_component_adapter_name(),
+        topology=topology,
+    )
     connectors = list(adapter.get_cluster_connectors() or [])
     provider = os.environ.get("AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER") or (connectors[0] if connectors else "")
     consumer = os.environ.get("AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER") or (
@@ -324,12 +340,20 @@ def run_ai_model_hub_connector_governance_validation(experiment_dir: str | None 
 def run_ai_model_hub_model_execution_validation(experiment_dir: str | None = None) -> Dict[str, Any]:
     from validation.components.ai_model_hub.model_execution_api import (
         DEFAULT_EXPECTED_MODEL,
-        build_inesdata_ai_model_hub_model_execution_suite,
+        build_ai_model_hub_model_execution_suite,
         default_model_url,
     )
 
-    topology = os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_TOPOLOGY") or os.environ.get("INESDATA_TOPOLOGY") or "local"
-    suite, adapter = build_inesdata_ai_model_hub_model_execution_suite(topology=topology)
+    topology = (
+        os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_TOPOLOGY")
+        or os.environ.get("PIONERA_TOPOLOGY")
+        or os.environ.get("INESDATA_TOPOLOGY")
+        or "local"
+    )
+    suite, adapter = build_ai_model_hub_model_execution_suite(
+        adapter_name=_component_adapter_name(),
+        topology=topology,
+    )
     connectors = list(adapter.get_cluster_connectors() or [])
     provider = os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER") or (connectors[0] if connectors else "")
     if not provider:
@@ -362,9 +386,9 @@ def run_ai_model_hub_model_benchmarking_validation(experiment_dir: str | None = 
         run_ai_model_hub_model_benchmarking_validation as run_benchmarking_suite,
     )
 
-    fixture_dir = os.environ.get("AI_MODEL_HUB_BENCHMARKING_FIXTURE_DIR") or None
+    source_dir = os.environ.get("AI_MODEL_HUB_BENCHMARKING_SOURCE_DIR") or None
     return run_benchmarking_suite(
-        fixture_dir=fixture_dir,
+        source_dir=source_dir,
         experiment_dir=experiment_dir,
     )
 
@@ -374,9 +398,9 @@ def run_ai_model_hub_mobility_benchmarking_validation(experiment_dir: str | None
         run_ai_model_hub_mobility_benchmarking_validation as run_mobility_suite,
     )
 
-    fixture_dir = os.environ.get("AI_MODEL_HUB_MOBILITY_FIXTURE_DIR") or None
+    source_dir = os.environ.get("AI_MODEL_HUB_MOBILITY_SOURCE_DIR") or None
     return run_mobility_suite(
-        fixture_dir=fixture_dir,
+        source_dir=source_dir,
         experiment_dir=experiment_dir,
     )
 

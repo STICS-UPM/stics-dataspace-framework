@@ -62,7 +62,10 @@ console.log(JSON.stringify({ trace: config.use.trace }));
 
 class AIModelHubUiRuntimeTests(unittest.TestCase):
     def test_runtime_uses_shared_infrastructure_keycloak_and_domain_defaults(self):
-        inesdata_config = parse_key_value_file(PROJECT_ROOT / "deployers" / "inesdata" / "deployer.config")
+        inesdata_config = {
+            **parse_key_value_file(PROJECT_ROOT / "deployers" / "inesdata" / "deployer.config.example"),
+            **parse_key_value_file(PROJECT_ROOT / "deployers" / "inesdata" / "deployer.config"),
+        }
         infrastructure_config = parse_key_value_file(
             PROJECT_ROOT / "deployers" / "infrastructure" / "deployer.config"
         )
@@ -90,6 +93,15 @@ class AIModelHubUiRuntimeTests(unittest.TestCase):
         )
 
         self.assertEqual(runtime["keycloakBaseUrl"], "http://override.example.local")
+
+    def test_runtime_uses_edc_connector_defaults_when_adapter_is_edc(self):
+        runtime = resolve_runtime_with_node({"PIONERA_ADAPTER": "edc"})
+
+        self.assertEqual(runtime["adapterName"], "edc")
+        self.assertEqual(runtime["dataspace"], "pionera-edc")
+        self.assertEqual(runtime["providerConnectorId"], "conn-citycounciledc-pionera-edc")
+        self.assertEqual(runtime["consumerConnectorId"], "conn-companyedc-pionera-edc")
+        self.assertIn("conn-citycounciledc-pionera-edc", runtime["providerManagementUrl"])
 
     def test_ui_playwright_trace_is_off_by_default(self):
         self.assertEqual(resolve_ui_trace_mode_with_node(), "off")

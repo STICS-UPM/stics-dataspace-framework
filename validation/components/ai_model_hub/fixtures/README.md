@@ -1,6 +1,14 @@
 # Fixtures de AI Model Hub
 
-Esta carpeta agrupa fixtures locales y estables usados por las suites de validación de `AI Model Hub`.
+Esta carpeta queda reservada para fixtures auxiliares de `AI Model Hub` que no
+sean datasets fuente.
 
-- `datasets/linguistic/flares-mini/`: primer fixture del dominio lingüístico basado en `FLARES`.
-- `datasets/mobility/gtfs-madrid-bench-mini/`: primer fixture sintetico del dominio movilidad basado en estructura GTFS para `MH-MOB-01`.
+Los datasets de validación se sincronizan en `Level 5` bajo:
+
+```text
+validation/datasets/sources/
+```
+
+Las suites pueden derivar muestras o estructuras de benchmark durante la
+ejecución, pero esas salidas se guardan como evidencias en `experiments/` y no
+como datasets reducidos versionados dentro de `validation/components/`.

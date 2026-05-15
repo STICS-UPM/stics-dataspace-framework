@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 
+from tests.dataset_test_helpers import create_gtfs_source
 from validation.components.ai_model_hub.mobility_benchmarking_api import (
     CASE_ID,
     DEFAULT_MODELS,
@@ -13,7 +14,11 @@ from validation.components.ai_model_hub.mobility_benchmarking_api import (
 class AIModelHubMobilityBenchmarkingApiTests(unittest.TestCase):
     def test_run_generates_mobility_use_case_and_artifacts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = run_ai_model_hub_mobility_benchmarking_validation(experiment_dir=tmpdir)
+            source_dir = create_gtfs_source(tmpdir)
+            result = run_ai_model_hub_mobility_benchmarking_validation(
+                source_dir=str(source_dir),
+                experiment_dir=tmpdir,
+            )
             report_path = result["artifacts"]["report_json"]
             fixture_path = result["artifacts"]["mh-mob-01-mobility-fixture-validation.json"]
             benchmark_path = result["artifacts"]["mh-mob-01-mobility-benchmark-results.json"]
@@ -28,7 +33,7 @@ class AIModelHubMobilityBenchmarkingApiTests(unittest.TestCase):
         self.assertEqual(result["suite"], "mobility-benchmarking-api")
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["summary"], {"total": 1, "passed": 1, "failed": 0, "skipped": 0})
-        self.assertEqual(result["dataset"]["name"], "GTFS-Madrid-Bench-mini")
+        self.assertEqual(result["dataset"]["name"], "GTFS-Madrid-Bench")
         self.assertEqual(result["dataset"]["domain"], "mobility")
         self.assertEqual(result["dataset"]["join_keys"], ["route_id", "trip_id", "stop_id"])
         self.assertEqual(result["executed_cases"][0]["test_case_id"], CASE_ID)
@@ -40,17 +45,24 @@ class AIModelHubMobilityBenchmarkingApiTests(unittest.TestCase):
         self.assertNotIn("access_token", report_text)
         self.assertNotIn("Bearer ", report_text)
 
-    def test_fixture_loader_uses_gtfs_madrid_bench_mini_context(self):
-        fixture = load_gtfs_mobility_fixture()
+    def test_fixture_loader_uses_gtfs_madrid_bench_context(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = create_gtfs_source(tmpdir)
+            fixture = load_gtfs_mobility_fixture(str(source_dir))
 
-        self.assertEqual(fixture["metadata"]["datasetName"], "GTFS-Madrid-Bench-mini")
-        self.assertEqual(fixture["context"]["fixture_name"], "GTFS-Madrid-Bench-mini")
+        self.assertEqual(fixture["metadata"]["datasetName"], "GTFS-Madrid-Bench")
+        self.assertEqual(fixture["context"]["dataset_name"], "GTFS-Madrid-Bench")
         self.assertEqual(fixture["context"]["join_keys"], ["route_id", "trip_id", "stop_id"])
         self.assertIn("transfer_benchmark_cases", fixture["sample"])
         self.assertIn("transferCases", fixture["expected_outputs"]["benchmark_sample"])
 
     def test_mobility_case_fails_when_less_than_two_models_are_selected(self):
-        result = run_ai_model_hub_mobility_benchmarking_validation(models=[DEFAULT_MODELS[0]])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = create_gtfs_source(tmpdir)
+            result = run_ai_model_hub_mobility_benchmarking_validation(
+                source_dir=str(source_dir),
+                models=[DEFAULT_MODELS[0]],
+            )
         mobility_case = result["executed_cases"][0]
 
         self.assertEqual(result["status"], "failed")

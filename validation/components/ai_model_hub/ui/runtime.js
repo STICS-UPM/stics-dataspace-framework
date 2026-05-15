@@ -25,32 +25,70 @@ function parseKeyValueFile(filePath) {
   return values;
 }
 
+function resolveAdapterName() {
+  const adapter = (process.env.AI_MODEL_HUB_COMPONENT_ADAPTER || process.env.PIONERA_ADAPTER || "inesdata")
+    .trim()
+    .toLowerCase();
+  return ["inesdata", "edc"].includes(adapter) ? adapter : "inesdata";
+}
+
+function connectorFullName(connector, dataspace) {
+  const normalized = (connector || "").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.startsWith("conn-")) {
+    return normalized;
+  }
+  return `conn-${normalized}-${dataspace}`;
+}
+
 function resolveAIModelHubRuntime() {
+  const adapterName = resolveAdapterName();
   const deployerConfig = parseKeyValueFile(
-    path.join(projectRoot(), "deployers", "inesdata", "deployer.config"),
+    path.join(projectRoot(), "deployers", adapterName, "deployer.config"),
   );
+  const deployerExampleConfig = parseKeyValueFile(
+    path.join(projectRoot(), "deployers", adapterName, "deployer.config.example"),
+  );
+  const adapterConfig = { ...deployerExampleConfig, ...deployerConfig };
   const infrastructureConfig = parseKeyValueFile(
     path.join(projectRoot(), "deployers", "infrastructure", "deployer.config"),
   );
-  const dataspace = (process.env.UI_DATASPACE || deployerConfig.DS_1_NAME || "demo").trim();
+  const dataspace = (process.env.UI_DATASPACE || adapterConfig.DS_1_NAME || "demo").trim();
   const dsDomain = (
     process.env.UI_DS_DOMAIN ||
-    deployerConfig.DS_DOMAIN_BASE ||
+    adapterConfig.DS_DOMAIN_BASE ||
     infrastructureConfig.DS_DOMAIN_BASE ||
     "dev.ds.dataspaceunit.upm"
   ).trim();
   const keycloakBaseUrl = (
     process.env.AI_MODEL_HUB_KEYCLOAK_URL ||
-    deployerConfig.KC_INTERNAL_URL ||
+    adapterConfig.KC_INTERNAL_URL ||
     infrastructureConfig.KC_INTERNAL_URL ||
-    deployerConfig.KC_URL ||
+    adapterConfig.KC_URL ||
     infrastructureConfig.KC_URL ||
     "http://keycloak.dev.ed.dataspaceunit.upm"
   )
     .trim()
     .replace(/\/$/, "");
+  const configuredConnectors = (adapterConfig.DS_1_CONNECTORS || "")
+    .split(",")
+    .map(value => value.trim())
+    .filter(Boolean);
+  const defaultProvider = adapterName === "edc" ? "citycounciledc" : "citycouncil";
+  const defaultConsumer = adapterName === "edc" ? "companyedc" : "company";
+  const providerConnectorId = (
+    process.env.AI_MODEL_HUB_PROVIDER_CONNECTOR_ID ||
+    connectorFullName(configuredConnectors[0] || defaultProvider, dataspace)
+  ).trim();
+  const consumerConnectorId = (
+    process.env.AI_MODEL_HUB_CONSUMER_CONNECTOR_ID ||
+    connectorFullName(configuredConnectors[1] || defaultConsumer, dataspace)
+  ).trim();
 
   return {
+    adapterName,
     dataspace,
     dsDomain,
     keycloakBaseUrl,
@@ -70,24 +108,24 @@ function resolveAIModelHubRuntime() {
     searchTerm: process.env.AI_MODEL_HUB_SEARCH_TERM || "model",
     requestButtonLabel: process.env.AI_MODEL_HUB_REQUEST_BUTTON_LABEL || "Request Manually",
     providerConnectorName: process.env.AI_MODEL_HUB_PROVIDER_CONNECTOR_NAME || "Provider",
-    providerConnectorId: process.env.AI_MODEL_HUB_PROVIDER_CONNECTOR_ID || `conn-citycouncil-${dataspace}`,
+    providerConnectorId,
     providerManagementUrl:
       process.env.AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL ||
-      `http://conn-citycouncil-${dataspace}.${dsDomain}/management`,
+      `http://${providerConnectorId}.${dsDomain}/management`,
     providerProtocolUrl:
       process.env.AI_MODEL_HUB_PROVIDER_PROTOCOL_URL ||
-      `http://conn-citycouncil-${dataspace}.${dsDomain}/protocol`,
+      `http://${providerConnectorId}.${dsDomain}/protocol`,
     consumerConnectorName: process.env.AI_MODEL_HUB_CONSUMER_CONNECTOR_NAME || "Consumer",
-    consumerConnectorId: process.env.AI_MODEL_HUB_CONSUMER_CONNECTOR_ID || `conn-company-${dataspace}`,
+    consumerConnectorId,
     consumerManagementUrl:
       process.env.AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL ||
-      `http://conn-company-${dataspace}.${dsDomain}/management`,
+      `http://${consumerConnectorId}.${dsDomain}/management`,
     providerDefaultUrl:
       process.env.AI_MODEL_HUB_PROVIDER_DEFAULT_URL ||
-      `http://conn-citycouncil-${dataspace}.${dsDomain}/api`,
+      `http://${providerConnectorId}.${dsDomain}/api`,
     consumerDefaultUrl:
       process.env.AI_MODEL_HUB_CONSUMER_DEFAULT_URL ||
-      `http://conn-company-${dataspace}.${dsDomain}/api`,
+      `http://${consumerConnectorId}.${dsDomain}/api`,
     modelContentType: process.env.AI_MODEL_HUB_MODEL_CONTENT_TYPE || "application/json",
     modelVersion: process.env.AI_MODEL_HUB_MODEL_VERSION || "v1.0.0",
     modelDescription:

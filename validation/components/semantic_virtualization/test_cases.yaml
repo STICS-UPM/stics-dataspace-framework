@@ -38,48 +38,49 @@ support_checks:
       runner: validation/components/semantic_virtualization/gtfs_bench_official.py
       evidence_case: SV-GTFS-BENCH-01
       source_repository: https://github.com/oeg-upm/gtfs-bench
-      local_source_dir: adapters/inesdata/sources/gtfs-bench
+      local_source_dir: validation/datasets/sources/gtfs-bench
+      level5_sync: automatic when semantic-virtualization or ai-model-hub is configured
       optional_auto_clone: python3 validation/components/semantic_virtualization/gtfs_bench_official.py --auto-clone
       latest_evidence: experiments/semantic-virtualization-gtfs-bench-official-source-20260507/components/semantic-virtualization/gtfs-bench-official-source/semantic_virtualization_gtfs_bench_official_source.json
 
   - id: SV-GTFS-BENCH-02
     scope: semantic_virtualization
     case_group: support
-    description: Validate a mini fixture derived from official GTFS-Madrid-Bench resources
+    description: Validate a runtime sample derived from official GTFS-Madrid-Bench resources
     type: support
     validation_type: support
     dataspace_dimension: official_dataset_traceability
-    execution_mode: offline_fixture
+    execution_mode: offline_source_sample
     coverage_status: automated
     mapping_status: mapped
-    expected_result: The framework has a small reproducible GTFS-Bench CSV fixture derived from official resources, with manifest, hashes and join-preserving GTFS tables
+    expected_result: The framework derives a reproducible GTFS-Bench runtime sample from official resources without versioning a reduced dataset fixture
     automation:
       status: automated
-      mode: offline_fixture
-      runner: validation/components/semantic_virtualization/gtfs_bench_mini.py
+      mode: offline_source_sample
+      runner: validation/components/semantic_virtualization/gtfs_bench_dataset.py
       evidence_case: SV-GTFS-BENCH-02
-      fixture_dir: validation/components/semantic_virtualization/fixtures/gtfs-bench-official-mini
+      source_dir: validation/datasets/sources/gtfs-bench
       source_repository: https://github.com/oeg-upm/gtfs-bench
-      regeneration_command: python3 validation/components/semantic_virtualization/gtfs_bench_mini.py --regenerate
-      latest_evidence: experiments/semantic-virtualization-gtfs-bench-official-mini-20260507/components/semantic-virtualization/gtfs-bench-official-mini/semantic_virtualization_gtfs_bench_official_mini.json
+      runtime_sample: derived during validation from validation/datasets/sources/gtfs-bench
+      latest_evidence: experiments/semantic-virtualization-gtfs-bench-official-dataset-20260507/components/semantic-virtualization/gtfs-bench-official-dataset/semantic_virtualization_gtfs_bench_official_dataset.json
 
   - id: SV-GTFS-BENCH-03
     scope: semantic_virtualization
     case_group: support
-    description: Materialize and query the official-derived GTFS-Bench mini fixture
+    description: Materialize and query a runtime sample derived from official GTFS-Bench resources
     type: support
     validation_type: functional
     dataspace_dimension: official_dataset_materialization
-    execution_mode: offline_fixture
+    execution_mode: offline_source_sample
     coverage_status: automated
     mapping_status: mapped
-    expected_result: The official-derived GTFS-Bench mini fixture can be linked to the adapted official CSV mapping, materialized into RDF and queried with official shape queries
+    expected_result: The source-derived GTFS-Bench runtime sample can be linked to the adapted official CSV mapping, materialized into RDF and queried with official shape queries
     automation:
       status: automated
-      mode: offline_fixture
+      mode: offline_source_sample
       runner: validation/components/semantic_virtualization/gtfs_bench_materialization.py
       evidence_case: SV-GTFS-BENCH-03
-      fixture_dir: validation/components/semantic_virtualization/fixtures/gtfs-bench-official-mini
+      source_dir: validation/datasets/sources/gtfs-bench
       source_repository: https://github.com/oeg-upm/gtfs-bench
       latest_evidence: experiments/semantic-virtualization-gtfs-bench-official-materialization-20260507/components/semantic-virtualization/gtfs-bench-official-materialization/semantic_virtualization_gtfs_bench_official_materialization.json
 
@@ -275,7 +276,7 @@ test_cases:
       status: automated
       mode: api_ui
       runner: validation/components/semantic_virtualization/dataspace_integration.py
-      ui_spec: validation/ui/core/07-semantic-virtualization-httpdata.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts
       evidence_cases:
         - INT-VS-DS-01
         - DS-UI-SV-01

@@ -9,8 +9,8 @@ from datetime import datetime
 from typing import Any
 
 from validation.components.ai_model_hub.model_execution_api import (
-    FLARES_FIXTURE_DIR,
-    load_flares_mini_fixture,
+    FLARES_DATASET_DIR,
+    load_flares_dataset,
 )
 
 
@@ -25,22 +25,22 @@ BENCHMARK_MAPPING = {
 
 DEFAULT_MODELS = [
     {
-        "asset_id": "model-flares-mini-reliability-baseline-a",
+        "asset_id": "model-flares-reliability-baseline-a",
         "name": "FLARES Reliability Baseline A",
         "variant": "baseline-a",
         "task": "text-classification",
-        "framework": "flares-mini",
+        "framework": "flares",
         "base_latency_ms": 42,
         "latency_step_ms": 4,
         "mispredict_record_ids": [],
         "description": "Controlled benchmark baseline that mirrors the expected FLARES label.",
     },
     {
-        "asset_id": "model-flares-mini-reliability-baseline-b",
+        "asset_id": "model-flares-reliability-baseline-b",
         "name": "FLARES Reliability Baseline B",
         "variant": "baseline-b",
         "task": "text-classification",
-        "framework": "flares-mini",
+        "framework": "flares",
         "base_latency_ms": 30,
         "latency_step_ms": 3,
         "mispredict_record_ids": [106, 534],
@@ -223,7 +223,7 @@ def _build_visualization_data(ranked_metrics: list[dict[str, Any]]) -> dict[str,
         },
     ]
     return {
-        "title": "AI Model Hub FLARES-mini benchmark comparison",
+        "title": "AI Model Hub FLARES benchmark comparison",
         "best_model": table_rows[0]["model"] if table_rows else None,
         "table_rows": table_rows,
         "chart_series": chart_series,
@@ -264,13 +264,13 @@ def _case_result(
 
 def run_ai_model_hub_model_benchmarking_validation(
     *,
-    fixture_dir: str | None = None,
+    source_dir: str | None = None,
     experiment_dir: str | None = None,
     models: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     started_at = datetime.now().isoformat()
-    fixture = load_flares_mini_fixture(fixture_dir or FLARES_FIXTURE_DIR)
-    benchmark_rows = build_flares_benchmark_rows(fixture)
+    dataset = load_flares_dataset(source_dir or FLARES_DATASET_DIR)
+    benchmark_rows = build_flares_benchmark_rows(dataset)
     selected_models = [dict(model) for model in (models or DEFAULT_MODELS)]
     executions_by_model = {
         str(model["asset_id"]): [
@@ -286,12 +286,12 @@ def run_ai_model_hub_model_benchmarking_validation(
     ranked_metrics = _rank_metrics(raw_metrics)
     visualization_data = _build_visualization_data(ranked_metrics)
     dataset_summary = {
-        "name": (fixture.get("metadata") or {}).get("datasetName") or "FLARES-mini",
-        "domain": (fixture.get("metadata") or {}).get("domain") or "linguistic",
+        "name": (dataset.get("metadata") or {}).get("datasetName") or "FLARES",
+        "domain": (dataset.get("metadata") or {}).get("domain") or "linguistic",
         "row_count": len(benchmark_rows),
         "mapping": BENCHMARK_MAPPING,
-        "expected_outputs_source": fixture.get("expected_outputs_source"),
-        "class_distribution": ((fixture.get("expected_outputs") or {}).get("subtask2_trial_sample") or {}).get(
+        "expected_outputs_source": dataset.get("expected_outputs_source"),
+        "class_distribution": ((dataset.get("expected_outputs") or {}).get("subtask2_trial_sample") or {}).get(
             "classDistribution"
         ),
     }
@@ -361,7 +361,7 @@ def run_ai_model_hub_model_benchmarking_validation(
         ),
         _case_result(
             case_id="PT5-MH-13",
-            description="Execute selected models with the same FLARES-mini benchmark inputs",
+            description="Execute selected models with the same FLARES benchmark inputs",
             validation_type="functional",
             dataspace_dimension="comparison",
             execution_mode="api_fixture",
@@ -423,7 +423,7 @@ def run_ai_model_hub_model_benchmarking_validation(
         "artifacts": {},
         "limitations": [
             "This deterministic suite validates the benchmarking logic and evidence shape without mutating AIModelHub sources.",
-            "The final auditor-facing UI demo can reuse the same FLARES-mini models and dataset through the Playwright functional flow.",
+            "The final auditor-facing UI demo can reuse the same FLARES models and dataset through the Playwright functional flow.",
         ],
     }
 
@@ -498,12 +498,12 @@ def run_ai_model_hub_model_benchmarking_validation(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run PT5-MH-12..15 AI Model Hub model benchmarking validation.")
-    parser.add_argument("--fixture-dir", default="")
+    parser.add_argument("--source-dir", default="")
     parser.add_argument("--experiment-dir", default="")
     args = parser.parse_args(argv)
 
     result = run_ai_model_hub_model_benchmarking_validation(
-        fixture_dir=args.fixture_dir or None,
+        source_dir=args.source_dir or None,
         experiment_dir=args.experiment_dir or _default_experiment_dir(),
     )
     print(

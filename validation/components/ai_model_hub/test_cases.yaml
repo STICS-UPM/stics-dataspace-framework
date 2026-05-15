@@ -409,7 +409,7 @@ test_cases:
       ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
       latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner selects two controlled FLARES-mini compatible model assets and records the benchmark-ready dataset mapping. The Playwright UI demo reuses the same fixture and controlled infer route without touching AIModelHub sources.
+      notes: The runner selects two controlled FLARES compatible model assets and records the benchmark-ready dataset mapping. The Playwright UI demo reuses the same fixture and controlled infer route without touching AIModelHub sources.
 
   - id: PT5-MH-13
     component: ai_model_hub
@@ -440,7 +440,7 @@ test_cases:
       ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
       latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner executes both controlled models over the same FLARES-mini input fingerprints and stores per-model execution evidence. The Playwright demo clicks Run Benchmark and shows those executions in the UI.
+      notes: The runner executes both controlled models over the same FLARES input fingerprints and stores per-model execution evidence. The Playwright demo clicks Run Benchmark and shows those executions in the UI.
 
   - id: PT5-MH-14
     component: ai_model_hub
@@ -611,7 +611,7 @@ observer_cases:
     automation:
       status: automated
       mode: ui
-      ui_spec: validation/ui/core/10-ai-model-observer.spec.ts
+      ui_spec: validation/ui/adapters/inesdata/specs/10-ai-model-observer.spec.ts
       evidence_case: MH-OBS-01
       enable_with: UI_AI_MODEL_OBSERVER_DEMO=1
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
@@ -779,7 +779,7 @@ functional_use_cases:
   - id: MH-LING-01
     component: ai_model_hub
     case_group: functional
-    description: Linguistic domain use case with FLARES-mini
+    description: Linguistic domain use case with FLARES
     type: api_ui
     validation_type: functional
     dataspace_dimension: linguistic
@@ -788,58 +788,58 @@ functional_use_cases:
     mapping_status: phase_3
     preconditions:
       - AI Model Hub, provider connector and consumer connector are deployed
-      - FLARES-mini fixture is available in the framework
+      - FLARES source repository was synchronized by Level 5
     steps:
-      - Publish FLARES-mini on demand as a provider dataset asset
+      - Publish FLARES on demand as a provider dataset asset
       - Discover the published dataset from the consumer catalog
       - Negotiate the corresponding contract agreement from the consumer side
       - Bootstrap benchmark-ready linguistic models in the consumer
       - Load the FLARES benchmark dataset inside Model Benchmarking
-      - Execute a FLARES-mini record through the connector-side model execution API
-      - Link the execution evidence to expected_outputs.json for the future reliability-label assertion
-    expected_result: FLARES-mini can populate the dataspace on demand, reach a negotiated agreement, prepare the linguistic benchmarking flow and execute a FLARES payload through the connector API without requiring global seeding
+      - Execute a FLARES record through the connector-side model execution API
+      - Link the execution evidence to expected labels derived from the source dataset
+    expected_result: FLARES can populate the dataspace on demand, reach a negotiated agreement, prepare the linguistic benchmarking flow and execute a FLARES payload through the connector API without requiring global seeding
     traceability:
       - MH-LING-01
-    notes: Phase 3 scaffold executed from Level 6. The current automated slice covers provider publication, consumer negotiation and benchmark-ready dataset/model linkage; connector-side model execution is validated through the PT5-MH-10 runner with --flares-mini. The semantic FLARES reliability-label comparison remains pending until a FLARES-compatible model endpoint is available.
+    notes: Phase 3 scaffold executed from Level 6. The current automated slice covers provider publication, consumer negotiation and benchmark-ready dataset/model linkage; connector-side model execution is validated through the PT5-MH-10 runner with --flares-dataset. The semantic FLARES reliability-label comparison remains pending until a FLARES-compatible model endpoint is available.
     automation:
       status: automated
       mode: api_ui
       ui_spec: validation/components/ai_model_hub/functional/specs/mh_ling_01_flares_reliability.spec.js
-      api_runner: validation/components/ai_model_hub/model_execution_api.py --flares-mini
-      notes: Suite-specific bootstrap publishes FLARES-mini during Level 6, while the API runner validates connector-side execution with a FLARES-mini payload and records the remaining model-specific semantic comparison gap.
+      api_runner: validation/components/ai_model_hub/model_execution_api.py --flares-dataset
+      notes: Suite-specific bootstrap publishes FLARES during Level 6, while the API runner validates connector-side execution with a FLARES payload and records the remaining model-specific semantic comparison gap.
 
   - id: MH-MOB-01
     component: ai_model_hub
     case_group: functional
-    description: Mobility domain use case with GTFS-Madrid-Bench-mini
-    type: fixture_api
+    description: Mobility domain use case with GTFS-Madrid-Bench
+    type: source_api
     validation_type: functional
     dataspace_dimension: mobility
-    execution_mode: api_fixture
-    coverage_status: automated_fixture
+    execution_mode: api_source
+    coverage_status: automated_source
     mapping_status: phase_3
     preconditions:
-      - GTFS-Madrid-Bench-mini fixture is available in the framework
+      - GTFS-Madrid-Bench source repository was synchronized by Level 5
       - At least two controlled mobility benchmark models are selected by the suite
     steps:
-      - Load GTFS-Madrid-Bench-mini metadata, schema, sample and expected outputs
+      - Load GTFS-Madrid-Bench source metadata and derive runtime benchmark rows
       - Validate GTFS-like join keys for stops, routes, trips and stop times
       - Build deterministic mobility benchmark rows from transfer_benchmark_cases
       - Execute controlled mobility route-estimation models against the benchmark rows
-      - Compare route sequence and travel-time outputs against expected_outputs.json
+      - Compare route sequence and travel-time outputs against dataset-derived expectations
       - Generate UI-ready ranking, table and chart data for a future Model Benchmarking demo
-    expected_result: GTFS-Madrid-Bench-mini produces a reproducible mobility benchmark evidence package with validated GTFS-like joins, expected route/duration outputs and ranked model metrics
+    expected_result: GTFS-Madrid-Bench produces a reproducible mobility benchmark evidence package with validated GTFS-like joins, expected route/duration outputs and ranked model metrics
     traceability:
       - MH-MOB-01
       - GTFS-Madrid-Bench
-    notes: Safe Phase 3 slice for A5.2. The suite does not call a live mobility inference endpoint or mutate INESData; it validates the functional mobility benchmark contract with deterministic fixture evidence until the stable UI/API route is selected.
+    notes: Safe Phase 3 slice for A5.2. The suite does not call a live mobility inference endpoint or mutate INESData; it validates the functional mobility benchmark contract with dataset-derived evidence until the stable UI/API route is selected.
     automation:
       status: automated
-      mode: api_fixture
+      mode: api_source
       runner: validation/components/ai_model_hub/mobility_benchmarking_api.py
       enable_with: AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING=1
-      fixture: validation/components/ai_model_hub/fixtures/datasets/mobility/gtfs-madrid-bench-mini
-      unit_test: tests/test_ai_model_hub_gtfs_fixture.py
+      dataset_source: validation/datasets/sources/gtfs-bench
+      unit_test: tests/test_ai_model_hub_gtfs_dataset.py
       suite_test: tests/test_ai_model_hub_mobility_benchmarking_api.py
       integration_runner: validation/components/ai_model_hub/virtualization_traceability.py
       integration_case: INT-VS-AMH-01

@@ -114,7 +114,7 @@ UI_CASE_METADATA: Dict[str, Dict[str, Any]] = {
         "automation_mode": "ui_demo",
         "execution_mode": "ui_demo",
         "coverage_status": "automated",
-        "expected_result": "Multiple comparable FLARES-mini models can be selected for benchmarking",
+        "expected_result": "Multiple comparable FLARES models can be selected for benchmarking",
         "spec": "pt5_mh_12_15_model_benchmarking_demo.spec.js",
     },
     "PT5-MH-13": {

@@ -22,7 +22,7 @@ def _playwright_payload():
                 "specs": [
                     {
                         "title": (
-                            "MH-LING-01: FLARES-mini is published, discovered and negotiated on demand "
+                            "MH-LING-01: FLARES is published, discovered and negotiated on demand "
                             "for the linguistic validation flow"
                         ),
                         "tests": [

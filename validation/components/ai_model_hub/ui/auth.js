@@ -6,7 +6,12 @@ function projectRoot() {
 }
 
 function findConnectorCredentialsFile(dataspace, connectorId) {
-  const adapter = (process.env.UI_ADAPTER || "inesdata").trim().toLowerCase() || "inesdata";
+  const adapter = (
+    process.env.UI_ADAPTER ||
+    process.env.AI_MODEL_HUB_COMPONENT_ADAPTER ||
+    process.env.PIONERA_ADAPTER ||
+    "inesdata"
+  ).trim().toLowerCase() || "inesdata";
   const deploymentsRoot = path.join(projectRoot(), "deployers", adapter, "deployments");
   if (!fs.existsSync(deploymentsRoot)) {
     throw new Error(`Deployments directory not found: ${deploymentsRoot}`);

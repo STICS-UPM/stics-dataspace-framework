@@ -10,6 +10,8 @@ from typing import Any, Callable
 
 import requests
 
+from validation.datasets.manager import dataset_source_dir
+
 
 COMPONENT_KEY = "ai-model-hub"
 SUITE_NAME = "model-execution-api"
@@ -19,13 +21,10 @@ EDC_NAMESPACE = "https://w3id.org/edc/v0.0.1/ns/"
 DEFAULT_MODEL_PATH = "/api/v1/nlp/ecommerce-sentiment"
 DEFAULT_PAYLOAD = {"text": "This product is excellent and very useful"}
 DEFAULT_EXPECTED_MODEL = "E-commerce Sentiment Analyzer"
-FLARES_FIXTURE_DIR = os.path.join(
-    os.path.dirname(__file__),
-    "fixtures",
-    "datasets",
-    "linguistic",
-    "flares-mini",
-)
+FLARES_DATASET_DIR = str(dataset_source_dir("flares-dataset"))
+FLARES_TRIAL_FILE = "5w1h_subtask_2_trial.json"
+FLARES_TEST_FILE = "5w1h_subtarea_2_test.json"
+FLARES_DATASET_NAME = "FLARES"
 
 
 class AIModelHubModelExecutionApiSuite:
@@ -78,6 +77,14 @@ class AIModelHubModelExecutionApiSuite:
             "dataspace": str(self.ds_name_loader() or "demo").strip() or "demo",
             "ds_domain": str(self.ds_domain_resolver() or "").strip(),
             "keycloak_url": "",
+            "adapter": str(
+                os.environ.get("AI_MODEL_HUB_COMPONENT_ADAPTER")
+                or os.environ.get("PIONERA_ADAPTER")
+                or config.get("PIONERA_ADAPTER")
+                or config.get("ADAPTER_NAME")
+                or "inesdata"
+            ).strip().lower(),
+            "inference_api_path": str(config.get("AI_MODEL_HUB_INFERENCE_API_PATH") or "/api/infer"),
         }
         if callable(self.keycloak_url_resolver):
             runtime["keycloak_url"] = str(self.keycloak_url_resolver() or "").strip()
@@ -217,15 +224,27 @@ class AIModelHubModelExecutionApiSuite:
         provider_jwt: str,
         asset_id: str,
         payload: dict[str, Any],
+        runtime: dict[str, Any],
     ) -> tuple[int, Any, str]:
-        url = self._management_url(provider, "/management/v3/modelexecutions/execute")
+        if runtime.get("adapter") == "edc":
+            path = f"/{str(runtime.get('inference_api_path') or '/api/infer').lstrip('/')}"
+            url = self._management_url(provider, path)
+            request_payload = {
+                "assetId": asset_id,
+                "method": "POST",
+                "headers": {"Content-Type": "application/json"},
+                "payload": payload,
+            }
+        else:
+            url = self._management_url(provider, "/management/v3/modelexecutions/execute")
+            request_payload = {
+                "assetId": asset_id,
+                "payload": payload,
+            }
         status_code, body = self._post_json(
             url,
             provider_jwt,
-            {
-                "assetId": asset_id,
-                "payload": payload,
-            },
+            request_payload,
             "AI Model Hub model execution",
         )
         return status_code, body, url
@@ -300,7 +319,7 @@ class AIModelHubModelExecutionApiSuite:
         expected_output = dict(functional_context.get("expected_output") or {})
         return {
             "test_case_id": FUNCTIONAL_CASE_ID,
-            "description": "Execute a FLARES-mini linguistic sample through the connector-side model execution API",
+            "description": "Execute a FLARES linguistic record through the connector-side model execution API",
             "type": "api",
             "case_group": "functional",
             "validation_type": "functional",
@@ -314,12 +333,12 @@ class AIModelHubModelExecutionApiSuite:
             "evaluation": {
                 "status": status,
                 "assertions": assertions,
-                "comparison_scope": "transport_and_fixture_alignment",
+                "comparison_scope": "transport_and_dataset_alignment",
                 "semantic_comparison_status": "pending_flares_model_endpoint",
             },
             "expected_result": (
-                "A FLARES-mini record is executable through the connector API and linked to "
-                "expected_outputs.json for the future reliability-label assertion"
+                "A FLARES source record is executable through the connector API and linked to "
+                "dataset-derived expected labels for the future reliability assertion"
             ),
             "traceability": [FUNCTIONAL_CASE_ID],
             "fixture": {
@@ -396,6 +415,7 @@ class AIModelHubModelExecutionApiSuite:
                 provider_jwt,
                 asset_id,
                 inference_payload,
+                runtime,
             )
             evaluation = self.evaluate_execution_response(
                 execution_status,
@@ -443,7 +463,14 @@ class AIModelHubModelExecutionApiSuite:
             step("suite_error", status="failed", error_type=type(exc).__name__, message=message)
             failed_request = {
                 "method": "POST",
-                "url": self._management_url(provider, "/management/v3/modelexecutions/execute"),
+                "url": (
+                    self._management_url(
+                        provider,
+                        f"/{str(runtime.get('inference_api_path') or '/api/infer').lstrip('/')}",
+                    )
+                    if runtime.get("adapter") == "edc"
+                    else self._management_url(provider, "/management/v3/modelexecutions/execute")
+                ),
                 "asset_id": asset_id,
                 "payload": inference_payload,
             }
@@ -502,6 +529,7 @@ class AIModelHubModelExecutionApiSuite:
             "runtime": {
                 "dataspace": runtime.get("dataspace"),
                 "ds_domain": runtime.get("ds_domain"),
+                "adapter": runtime.get("adapter"),
             },
             "created_entities": {
                 "asset_id": asset_id,
@@ -586,16 +614,29 @@ def _dataspace_name_loader(adapter):
     return lambda: "demo"
 
 
-def build_inesdata_ai_model_hub_model_execution_suite(topology: str = "local"):
+def _build_adapter(adapter_name: str, topology: str):
+    normalized = str(adapter_name or "inesdata").strip().lower()
+    if normalized == "edc":
+        from adapters.edc.adapter import EdcAdapter
+
+        return EdcAdapter(topology=topology)
     from adapters.inesdata.adapter import InesdataAdapter
 
-    adapter = InesdataAdapter(topology=topology)
+    return InesdataAdapter(topology=topology)
+
+
+def build_ai_model_hub_model_execution_suite(adapter_name: str = "inesdata", topology: str = "local"):
+    adapter = _build_adapter(adapter_name, topology)
     return AIModelHubModelExecutionApiSuite(
         load_connector_credentials=adapter.load_connector_credentials,
         load_deployer_config=adapter.load_deployer_config,
         ds_domain_resolver=adapter.config.ds_domain_base,
         ds_name_loader=_dataspace_name_loader(adapter),
     ), adapter
+
+
+def build_inesdata_ai_model_hub_model_execution_suite(topology: str = "local"):
+    return build_ai_model_hub_model_execution_suite("inesdata", topology=topology)
 
 
 def default_model_url(adapter, model_path: str = DEFAULT_MODEL_PATH) -> str:
@@ -609,78 +650,166 @@ def _read_json(path: str) -> Any:
         return json.load(handle)
 
 
-def load_flares_mini_fixture(fixture_dir: str | None = None) -> dict[str, Any]:
-    resolved_dir = os.path.abspath(fixture_dir or FLARES_FIXTURE_DIR)
+def _build_flares_metadata(source_dir: str) -> dict[str, Any]:
+    return {
+        "datasetName": FLARES_DATASET_NAME,
+        "domain": "linguistic",
+        "language": "es",
+        "task": "5w1h-reliability-classification",
+        "version": "source-runtime",
+        "keywords": ["flares", "5w1h", "reliability", "linguistic", "mh-ling-01"],
+        "source": {
+            "name": "FLARES",
+            "repository": "https://github.com/rsepulveda911112/Flares-dataset",
+            "localPath": source_dir,
+            "license": "Review upstream dataset terms before external publication.",
+        },
+        "assetPublication": {
+            "assetId": "dataset-flares-subtask2",
+            "policyId": "policy-flares-subtask2",
+            "contractDefinitionId": "contractdef-flares-subtask2",
+            "storeFolder": "linguistic-flares",
+            "publicationMode": "on_demand",
+            "uploadFile": FLARES_TRIAL_FILE,
+            "fileName": "flares-subtask2-trial.json",
+            "uploadMediaType": "application/json",
+            "description": "FLARES source records used by the MH-LING-01 linguistic validation flow.",
+        },
+    }
+
+
+def _build_flares_schema() -> dict[str, Any]:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "FLARES records",
+        "type": "array",
+        "items": {
+            "type": "object",
+            "required": ["Id", "Text", "5W1H_Label", "Tag_Text", "Tag_Start", "Tag_End"],
+            "properties": {
+                "Id": {"type": "integer"},
+                "Text": {"type": "string"},
+                "Reliability_Label": {"type": "string"},
+                "5W1H_Label": {"type": "string"},
+                "Tag_Text": {"type": "string"},
+                "Tag_Start": {"type": "integer"},
+                "Tag_End": {"type": "integer"},
+            },
+        },
+    }
+
+
+def _flares_expected_outputs(trial_sample: list[dict[str, Any]], test_sample: list[dict[str, Any]]) -> dict[str, Any]:
+    records = [
+        {
+            "Id": int(record["Id"]),
+            "5W1H_Label": record.get("5W1H_Label"),
+            "expectedReliability": record.get("Reliability_Label"),
+        }
+        for record in trial_sample
+        if "Id" in record and record.get("Reliability_Label") is not None
+    ]
+    distribution: dict[str, int] = {}
+    for record in records:
+        label = str(record.get("expectedReliability") or "")
+        distribution[label] = distribution.get(label, 0) + 1
+    return {
+        "subtask2_trial_sample": {
+            "recordCount": len(records),
+            "classDistribution": distribution,
+            "records": records,
+        },
+        "subtask2_test_sample": {
+            "recordCount": len(test_sample),
+            "unlabeled": not any("Reliability_Label" in record for record in test_sample),
+            "requiredFields": ["Id", "Text", "5W1H_Label", "Tag_Text", "Tag_Start", "Tag_End"],
+            "records": [
+                {
+                    "Id": int(record["Id"]),
+                    "5W1H_Label": record.get("5W1H_Label"),
+                }
+                for record in test_sample
+                if "Id" in record
+            ],
+        },
+    }
+
+
+def load_flares_dataset(source_dir: str | None = None) -> dict[str, Any]:
+    resolved_dir = os.path.abspath(source_dir or FLARES_DATASET_DIR)
     expected_files = {
-        "metadata": "metadata.json",
-        "schema": "schema.json",
-        "trial_sample": "subtask2_trial_sample.json",
-        "test_sample": "subtask2_test_sample.json",
-        "expected_outputs": "expected_outputs.json",
+        "trial_sample": FLARES_TRIAL_FILE,
+        "test_sample": FLARES_TEST_FILE,
     }
     missing = [
         file_name for file_name in expected_files.values() if not os.path.exists(os.path.join(resolved_dir, file_name))
     ]
     if missing:
-        raise RuntimeError(f"FLARES-mini fixture is missing required files: {', '.join(missing)}")
+        raise RuntimeError(
+            "FLARES source dataset is missing required files. "
+            f"Expected Level 5 clone at {resolved_dir}; missing: {', '.join(missing)}"
+        )
+    trial_sample = _read_json(os.path.join(resolved_dir, expected_files["trial_sample"]))
+    test_sample = _read_json(os.path.join(resolved_dir, expected_files["test_sample"]))
     return {
-        "fixture_dir": resolved_dir,
-        "metadata": _read_json(os.path.join(resolved_dir, expected_files["metadata"])),
-        "schema": _read_json(os.path.join(resolved_dir, expected_files["schema"])),
-        "trial_sample": _read_json(os.path.join(resolved_dir, expected_files["trial_sample"])),
-        "test_sample": _read_json(os.path.join(resolved_dir, expected_files["test_sample"])),
-        "expected_outputs": _read_json(os.path.join(resolved_dir, expected_files["expected_outputs"])),
-        "expected_outputs_source": os.path.join(resolved_dir, expected_files["expected_outputs"]),
+        "source_dir": resolved_dir,
+        "metadata": _build_flares_metadata(resolved_dir),
+        "schema": _build_flares_schema(),
+        "trial_sample": trial_sample,
+        "test_sample": test_sample,
+        "expected_outputs": _flares_expected_outputs(trial_sample, test_sample),
+        "expected_outputs_source": os.path.join(resolved_dir, expected_files["trial_sample"]),
+        "upload_file_path": os.path.join(resolved_dir, expected_files["trial_sample"]),
     }
 
 
-def _select_flares_trial_record(fixture: dict[str, Any], record_id: int | None = None) -> dict[str, Any]:
-    records = list(fixture.get("trial_sample") or [])
+def _select_flares_trial_record(dataset: dict[str, Any], record_id: int | None = None) -> dict[str, Any]:
+    records = list(dataset.get("trial_sample") or [])
     if not records:
-        raise RuntimeError("FLARES-mini trial sample is empty")
+        raise RuntimeError("FLARES trial sample is empty")
     if record_id is None:
         return dict(records[0])
     for record in records:
         if int(record.get("Id")) == int(record_id):
             return dict(record)
-    raise RuntimeError(f"FLARES-mini trial record {record_id} was not found")
+    raise RuntimeError(f"FLARES trial record {record_id} was not found")
 
 
-def _expected_flares_output(fixture: dict[str, Any], record_id: int) -> dict[str, Any]:
-    outputs = ((fixture.get("expected_outputs") or {}).get("subtask2_trial_sample") or {}).get("records") or []
+def _expected_flares_output(dataset: dict[str, Any], record_id: int) -> dict[str, Any]:
+    outputs = ((dataset.get("expected_outputs") or {}).get("subtask2_trial_sample") or {}).get("records") or []
     for output in outputs:
         if int(output.get("Id")) == int(record_id):
             return dict(output)
-    raise RuntimeError(f"FLARES-mini expected output for record {record_id} was not found")
+    raise RuntimeError(f"FLARES expected output for record {record_id} was not found")
 
 
-def build_flares_mini_execution_context(
+def build_flares_execution_context(
     *,
-    fixture_dir: str | None = None,
+    source_dir: str | None = None,
     record_id: int | None = None,
 ) -> dict[str, Any]:
-    fixture = load_flares_mini_fixture(fixture_dir)
-    metadata = dict(fixture.get("metadata") or {})
-    record = _select_flares_trial_record(fixture, record_id)
+    dataset = load_flares_dataset(source_dir)
+    metadata = dict(dataset.get("metadata") or {})
+    record = _select_flares_trial_record(dataset, record_id)
     resolved_record_id = int(record["Id"])
-    expected_output = _expected_flares_output(fixture, resolved_record_id)
+    expected_output = _expected_flares_output(dataset, resolved_record_id)
     payload = {
         "text": record.get("Text"),
         "w1h_label": record.get("5W1H_Label"),
         "tag_text": record.get("Tag_Text"),
         "tag_start": record.get("Tag_Start"),
         "tag_end": record.get("Tag_End"),
-        "dataset": metadata.get("datasetName") or "FLARES-mini",
+        "dataset": metadata.get("datasetName") or FLARES_DATASET_NAME,
         "record_id": resolved_record_id,
     }
     return {
         "use_case_id": FUNCTIONAL_CASE_ID,
-        "dataset_name": metadata.get("datasetName") or "FLARES-mini",
+        "dataset_name": metadata.get("datasetName") or FLARES_DATASET_NAME,
         "domain": metadata.get("domain") or "linguistic",
         "record_id": resolved_record_id,
         "w1h_label": record.get("5W1H_Label"),
         "expected_output": expected_output,
-        "expected_outputs_source": fixture.get("expected_outputs_source"),
+        "expected_outputs_source": dataset.get("expected_outputs_source"),
         "payload": payload,
         "sample": {
             "text_excerpt": str(record.get("Text") or "")[:240],
@@ -688,10 +817,10 @@ def build_flares_mini_execution_context(
             "original_reliability_label": record.get("Reliability_Label"),
         },
         "expected_outputs_summary": {
-            "record_count": ((fixture.get("expected_outputs") or {}).get("subtask2_trial_sample") or {}).get(
+            "record_count": ((dataset.get("expected_outputs") or {}).get("subtask2_trial_sample") or {}).get(
                 "recordCount"
             ),
-            "class_distribution": ((fixture.get("expected_outputs") or {}).get("subtask2_trial_sample") or {}).get(
+            "class_distribution": ((dataset.get("expected_outputs") or {}).get("subtask2_trial_sample") or {}).get(
                 "classDistribution"
             ),
         },
@@ -720,16 +849,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model-path", default=DEFAULT_MODEL_PATH)
     parser.add_argument("--payload-json", default=json.dumps(DEFAULT_PAYLOAD))
     parser.add_argument("--expected-model", default=DEFAULT_EXPECTED_MODEL)
-    parser.add_argument("--flares-mini", action="store_true")
-    parser.add_argument("--flares-fixture-dir", default="")
+    parser.add_argument("--flares-dataset", action="store_true")
+    parser.add_argument("--flares-source-dir", default="")
     parser.add_argument("--flares-record-id", type=int, default=0)
     parser.add_argument("--experiment-dir", default="")
     args = parser.parse_args(argv)
 
     functional_context = None
-    if args.flares_mini:
-        functional_context = build_flares_mini_execution_context(
-            fixture_dir=args.flares_fixture_dir or None,
+    if args.flares_dataset:
+        functional_context = build_flares_execution_context(
+            source_dir=args.flares_source_dir or None,
             record_id=args.flares_record_id or None,
         )
         payload = dict(functional_context["payload"])

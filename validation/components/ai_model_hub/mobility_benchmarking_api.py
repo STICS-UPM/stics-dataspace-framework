@@ -6,13 +6,13 @@ import json
 import math
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from validation.components.semantic_virtualization.dataspace_integration import (
-    GTFS_MADRID_BENCH_MINI_DIR,
-    load_gtfs_madrid_bench_mini_context,
+    GTFS_BENCH_SOURCE_DIR,
+    load_gtfs_madrid_bench_context,
 )
+from validation.components.semantic_virtualization.gtfs_bench_dataset import build_gtfs_bench_official_sample
 
 
 COMPONENT_KEY = "ai-model-hub"
@@ -28,7 +28,7 @@ DEFAULT_MODELS = [
         "base_latency_ms": 36,
         "latency_step_ms": 4,
         "mispredict_case_ids": [],
-        "description": "Controlled mobility baseline that mirrors GTFS-Madrid-Bench-mini expected route and duration outputs.",
+        "description": "Controlled mobility baseline that mirrors GTFS-Madrid-Bench expected route and duration outputs.",
     },
     {
         "asset_id": "model-gtfs-mobility-eta-baseline-b",
@@ -55,11 +55,6 @@ def _component_dir(experiment_dir: str | None) -> str | None:
 def _write_json(path: str, payload: dict[str, Any]) -> None:
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False)
-
-
-def _read_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
 
 
 def _sha256_payload(payload: dict[str, Any]) -> str:
@@ -92,15 +87,120 @@ def _round_metric(value: float) -> float:
     return round(float(value), 2)
 
 
-def load_gtfs_mobility_fixture(fixture_dir: str | None = None) -> dict[str, Any]:
-    fixture_root = Path(fixture_dir or GTFS_MADRID_BENCH_MINI_DIR)
-    context = load_gtfs_madrid_bench_mini_context(str(fixture_root))
+def load_gtfs_mobility_fixture(source_dir: str | None = None) -> dict[str, Any]:
+    source_sample = build_gtfs_bench_official_sample(source_dir or GTFS_BENCH_SOURCE_DIR)
+    context = load_gtfs_madrid_bench_context(source_dir or GTFS_BENCH_SOURCE_DIR)
+    tables = source_sample.get("tables") or {}
+    sample = {
+        "stops": [
+            {
+                "stop_id": row["stop_id"],
+                "stop_name": row["stop_name"],
+                "stop_lat": row["stop_lat"],
+                "stop_lon": row["stop_lon"],
+                "zone_id": row["zone_id"],
+            }
+            for row in tables.get("STOPS", [])
+        ],
+        "routes": [
+            {
+                "route_id": row["route_id"],
+                "agency_id": row["agency_id"],
+                "route_short_name": row["route_short_name"],
+                "route_long_name": row["route_long_name"],
+                "route_type": row["route_type"],
+            }
+            for row in tables.get("ROUTES", [])
+        ],
+        "trips": [
+            {
+                "route_id": row["route_id"],
+                "service_id": row["service_id"],
+                "trip_id": row["trip_id"],
+                "direction_id": row["direction_id"],
+                "shape_id": row["shape_id"],
+            }
+            for row in tables.get("TRIPS", [])
+        ],
+        "stop_times": [
+            {
+                "trip_id": row["trip_id"],
+                "arrival_time": row["arrival_time"],
+                "departure_time": row["departure_time"],
+                "stop_id": row["stop_id"],
+                "stop_sequence": int(float(row["stop_sequence"])),
+            }
+            for row in tables.get("STOP_TIMES", [])
+        ],
+    }
+    stop_times_by_trip: dict[str, list[dict[str, Any]]] = {}
+    for stop_time in sample["stop_times"]:
+        stop_times_by_trip.setdefault(stop_time["trip_id"], []).append(stop_time)
+    for rows in stop_times_by_trip.values():
+        rows.sort(key=lambda row: row["stop_sequence"])
+
+    transfer_cases = []
+    for index, trip in enumerate(sample["trips"], start=1):
+        trip_stop_times = stop_times_by_trip.get(trip["trip_id"]) or []
+        if len(trip_stop_times) < 2:
+            continue
+        origin = trip_stop_times[0]
+        destination = trip_stop_times[-1]
+        transfer_cases.append(
+            {
+                "case_id": f"mob-case-{index:03d}",
+                "origin_stop_id": origin["stop_id"],
+                "destination_stop_id": destination["stop_id"],
+                "query_time": origin["departure_time"],
+                "expected_route_id": trip["route_id"],
+                "expected_trip_id": trip["trip_id"],
+                "expected_duration_minutes": _duration_minutes(
+                    trip_stop_times,
+                    origin["stop_id"],
+                    destination["stop_id"],
+                ),
+            }
+        )
+    sample["transfer_benchmark_cases"] = transfer_cases
+    expected_outputs = {
+        "benchmark_sample": {
+            "recordCounts": {key: len(value) for key, value in sample.items()},
+            "routeStopSequences": [
+                {
+                    "route_id": trip["route_id"],
+                    "trip_id": trip["trip_id"],
+                    "stop_ids": [row["stop_id"] for row in stop_times_by_trip.get(trip["trip_id"], [])],
+                }
+                for trip in sample["trips"]
+            ],
+            "transferCases": [
+                {
+                    "case_id": case["case_id"],
+                    "expected_route_id": case["expected_route_id"],
+                    "expected_trip_id": case["expected_trip_id"],
+                    "expected_duration_minutes": case["expected_duration_minutes"],
+                }
+                for case in transfer_cases
+            ],
+        },
+        "integrationExpectations": {
+            "joinKeys": ["route_id", "trip_id", "stop_id"],
+            "minimumQueryableEntities": ["stops", "routes", "trips", "stop_times"],
+            "semanticVirtualizationReady": True,
+            "mobilityModelReady": False,
+        },
+    }
     return {
         "context": context,
-        "metadata": _read_json(fixture_root / "metadata.json"),
-        "schema": _read_json(fixture_root / "schema.json"),
-        "sample": _read_json(fixture_root / "benchmark_sample.json"),
-        "expected_outputs": _read_json(fixture_root / "expected_outputs.json"),
+        "metadata": {
+            "datasetName": "GTFS-Madrid-Bench",
+            "domain": "mobility",
+            "task": "mobility-route-estimation",
+            "version": (source_sample.get("source") or {}).get("commit") or "source-runtime",
+        },
+        "schema": {"title": "GTFS-Madrid-Bench source-derived mobility benchmark"},
+        "sample": sample,
+        "expected_outputs": expected_outputs,
     }
 
 
@@ -148,8 +248,8 @@ def _validate_fixture(fixture: dict[str, Any], benchmark_rows: list[dict[str, An
     sample = fixture["sample"]
     expected_outputs = fixture["expected_outputs"]
 
-    if metadata.get("datasetName") != "GTFS-Madrid-Bench-mini":
-        assertions.append("metadata.datasetName must be GTFS-Madrid-Bench-mini")
+    if metadata.get("datasetName") != "GTFS-Madrid-Bench":
+        assertions.append("metadata.datasetName must be GTFS-Madrid-Bench")
     if metadata.get("domain") != "mobility":
         assertions.append("metadata.domain must be mobility")
 
@@ -264,7 +364,7 @@ def _build_visualization_data(ranked_metrics: list[dict[str, Any]], benchmark_ro
         for metric in ranked_metrics
     ]
     return {
-        "title": "AI Model Hub GTFS-Madrid-Bench-mini mobility benchmark",
+        "title": "AI Model Hub GTFS-Madrid-Bench mobility benchmark",
         "best_model": table_rows[0]["model"] if table_rows else None,
         "benchmark_case_ids": [row.get("case_id") for row in benchmark_rows],
         "table_rows": table_rows,
@@ -291,7 +391,7 @@ def _build_visualization_data(ranked_metrics: list[dict[str, Any]], benchmark_ro
 def _case_result(assertions: list[str], evidence_artifact: str, observed: dict[str, Any]) -> dict[str, Any]:
     return {
         "test_case_id": CASE_ID,
-        "description": "Validate GTFS-Madrid-Bench-mini mobility use case as executable AI Model Hub benchmark fixture",
+        "description": "Validate GTFS-Madrid-Bench mobility use case as executable AI Model Hub benchmark source",
         "type": "api",
         "case_group": "functional_use_case",
         "validation_type": "functional",
@@ -311,12 +411,12 @@ def _case_result(assertions: list[str], evidence_artifact: str, observed: dict[s
 
 def run_ai_model_hub_mobility_benchmarking_validation(
     *,
-    fixture_dir: str | None = None,
+    source_dir: str | None = None,
     experiment_dir: str | None = None,
     models: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     started_at = datetime.now().isoformat()
-    fixture = load_gtfs_mobility_fixture(fixture_dir)
+    fixture = load_gtfs_mobility_fixture(source_dir)
     benchmark_rows = _build_benchmark_rows(fixture)
     fixture_assertions = _validate_fixture(fixture, benchmark_rows)
     selected_models = [dict(model) for model in (models or DEFAULT_MODELS)]
@@ -355,7 +455,7 @@ def run_ai_model_hub_mobility_benchmarking_validation(
             assertions,
             "mh-mob-01-mobility-benchmark-results.json",
             {
-                "fixture": fixture["context"],
+                "dataset": fixture["context"],
                 "benchmark_case_count": len(benchmark_rows),
                 "selected_models": model_ids,
                 "execution_count": actual_execution_count,
@@ -371,7 +471,7 @@ def run_ai_model_hub_mobility_benchmarking_validation(
     }
     status = "failed" if summary["failed"] else "passed"
     dataset_summary = {
-        "name": fixture["context"].get("fixture_name"),
+        "name": fixture["context"].get("dataset_name"),
         "domain": fixture["metadata"].get("domain"),
         "task": fixture["metadata"].get("task"),
         "version": fixture["metadata"].get("version"),
@@ -395,7 +495,7 @@ def run_ai_model_hub_mobility_benchmarking_validation(
         "evidence_index": [],
         "artifacts": {},
         "limitations": [
-            "This suite validates MH-MOB-01 with a deterministic GTFS fixture and controlled model outputs.",
+            "This suite validates MH-MOB-01 with GTFS source data and controlled model outputs.",
             "It does not call a live AI Model Hub mobility inference endpoint because that endpoint is not yet selected as a stable component contract.",
             "The generated data is UI-ready for a future Model Benchmarking mobility demo.",
         ],
@@ -462,13 +562,13 @@ def run_ai_model_hub_mobility_benchmarking_validation(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run MH-MOB-01 AI Model Hub mobility benchmark fixture validation.")
-    parser.add_argument("--fixture-dir", default="")
+    parser = argparse.ArgumentParser(description="Run MH-MOB-01 AI Model Hub mobility benchmark validation.")
+    parser.add_argument("--source-dir", default="")
     parser.add_argument("--experiment-dir", default="")
     args = parser.parse_args(argv)
 
     result = run_ai_model_hub_mobility_benchmarking_validation(
-        fixture_dir=args.fixture_dir or None,
+        source_dir=args.source_dir or None,
         experiment_dir=args.experiment_dir or _default_experiment_dir(),
     )
     print(

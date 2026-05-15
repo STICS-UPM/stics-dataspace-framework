@@ -2,19 +2,24 @@ import os
 import tempfile
 import unittest
 
+from tests.dataset_test_helpers import create_flares_source
 from validation.components.ai_model_hub.model_benchmarking_api import (
     CASE_IDS,
     DEFAULT_MODELS,
     build_flares_benchmark_rows,
     run_ai_model_hub_model_benchmarking_validation,
 )
-from validation.components.ai_model_hub.model_execution_api import load_flares_mini_fixture
+from validation.components.ai_model_hub.model_execution_api import load_flares_dataset
 
 
 class AIModelHubModelBenchmarkingApiTests(unittest.TestCase):
     def test_run_generates_four_benchmarking_cases_and_artifacts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = run_ai_model_hub_model_benchmarking_validation(experiment_dir=tmpdir)
+            source_dir = create_flares_source(tmpdir)
+            result = run_ai_model_hub_model_benchmarking_validation(
+                source_dir=str(source_dir),
+                experiment_dir=tmpdir,
+            )
             report_path = result["artifacts"]["report_json"]
             self.assertTrue(os.path.exists(report_path))
             self.assertTrue(os.path.exists(result["artifacts"]["pt5-mh-12-model-selection.json"]))
@@ -35,11 +40,13 @@ class AIModelHubModelBenchmarkingApiTests(unittest.TestCase):
         self.assertNotIn("Bearer ", report_text)
 
     def test_benchmark_rows_use_flares_expected_outputs(self):
-        fixture = load_flares_mini_fixture()
-        rows = build_flares_benchmark_rows(fixture)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = create_flares_source(tmpdir)
+            dataset = load_flares_dataset(str(source_dir))
+        rows = build_flares_benchmark_rows(dataset)
         rows_by_id = {row["record_id"]: row for row in rows}
 
-        self.assertEqual(len(rows), 9)
+        self.assertEqual(len(rows), 3)
         self.assertEqual(rows_by_id[463]["expected_label"], "confiable")
         self.assertEqual(rows_by_id[106]["expected_label"], "no confiable")
         self.assertEqual(rows_by_id[113]["expected_label"], "semiconfiable")
@@ -47,7 +54,12 @@ class AIModelHubModelBenchmarkingApiTests(unittest.TestCase):
         self.assertIn("tag_text", rows_by_id[463]["input"])
 
     def test_selection_case_fails_when_less_than_two_models_are_selected(self):
-        result = run_ai_model_hub_model_benchmarking_validation(models=[DEFAULT_MODELS[0]])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = create_flares_source(tmpdir)
+            result = run_ai_model_hub_model_benchmarking_validation(
+                source_dir=str(source_dir),
+                models=[DEFAULT_MODELS[0]],
+            )
         selection_case = result["executed_cases"][0]
 
         self.assertEqual(result["status"], "failed")

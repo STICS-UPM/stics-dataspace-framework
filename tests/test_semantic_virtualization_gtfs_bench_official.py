@@ -9,7 +9,7 @@ from validation.components.semantic_virtualization.gtfs_bench_official import (
 
 @unittest.skipUnless(
     DEFAULT_SOURCE_DIR.is_dir(),
-    "Official gtfs-bench source clone is not available in adapters/inesdata/sources/gtfs-bench",
+    "Official gtfs-bench source clone is not available in validation/datasets/sources/gtfs-bench",
 )
 class SemanticVirtualizationGtfsBenchOfficialTests(unittest.TestCase):
     def test_official_gtfs_bench_source_resources_are_ready(self):

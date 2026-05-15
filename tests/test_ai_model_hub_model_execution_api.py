@@ -3,12 +3,13 @@ import os
 import tempfile
 import unittest
 
+from tests.dataset_test_helpers import create_flares_source
 from validation.components.ai_model_hub.model_execution_api import (
     AIModelHubModelExecutionApiSuite,
     COMPONENT_KEY,
     DEFAULT_EXPECTED_MODEL,
     FUNCTIONAL_CASE_ID,
-    build_flares_mini_execution_context,
+    build_flares_execution_context,
     default_model_url,
 )
 
@@ -117,9 +118,10 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
 
     def test_run_with_flares_context_adds_functional_case_and_artifact(self):
         session = FakeSession()
-        context = build_flares_mini_execution_context(record_id=463)
-        suite = self._suite(session)
         with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = create_flares_source(tmpdir)
+            context = build_flares_execution_context(source_dir=str(source_dir), record_id=463)
+            suite = self._suite(session)
             result = suite.run(
                 provider="conn-provider",
                 model_url="http://model-server.demo.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
@@ -136,18 +138,20 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         self.assertEqual([case["test_case_id"] for case in result["executed_cases"]], ["PT5-MH-10", FUNCTIONAL_CASE_ID])
 
         functional_case = result["executed_cases"][1]
-        self.assertEqual(functional_case["fixture"]["dataset"], "FLARES-mini")
+        self.assertEqual(functional_case["fixture"]["dataset"], "FLARES")
         self.assertEqual(functional_case["fixture"]["record_id"], 463)
         self.assertEqual(functional_case["fixture"]["expected_reliability"], "confiable")
         self.assertEqual(functional_case["evaluation"]["semantic_comparison_status"], "pending_flares_model_endpoint")
         self.assertIn("text", session.posts[-1]["json"]["payload"])
         self.assertEqual(session.posts[-1]["json"]["payload"]["record_id"], 463)
 
-    def test_flares_execution_context_uses_fixture_expected_outputs(self):
-        context = build_flares_mini_execution_context(record_id=106)
+    def test_flares_execution_context_uses_dataset_expected_outputs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = create_flares_source(tmpdir)
+            context = build_flares_execution_context(source_dir=str(source_dir), record_id=106)
 
         self.assertEqual(context["use_case_id"], FUNCTIONAL_CASE_ID)
-        self.assertEqual(context["dataset_name"], "FLARES-mini")
+        self.assertEqual(context["dataset_name"], "FLARES")
         self.assertEqual(context["expected_output"]["expectedReliability"], "no confiable")
         self.assertEqual(context["payload"]["w1h_label"], "WHAT")
         self.assertEqual(context["sample"]["original_reliability_label"], "no confiable")

@@ -104,8 +104,8 @@ class SemanticVirtualizationComponentValidationTests(unittest.TestCase):
                 "validation.components.semantic_virtualization.runner.run_gtfs_bench_official_source_validation",
                 return_value=self._suite_result("gtfs-bench-official-source", "SV-GTFS-BENCH-01", "support"),
             ), mock.patch(
-                "validation.components.semantic_virtualization.runner.run_gtfs_bench_official_mini_validation",
-                return_value=self._suite_result("gtfs-bench-official-mini", "SV-GTFS-BENCH-02", "support"),
+                "validation.components.semantic_virtualization.runner.run_gtfs_bench_official_dataset_validation",
+                return_value=self._suite_result("gtfs-bench-official-dataset", "SV-GTFS-BENCH-02", "support"),
             ), mock.patch(
                 "validation.components.semantic_virtualization.runner.run_gtfs_bench_official_materialization_validation",
                 return_value=self._suite_result("gtfs-bench-official-materialization", "SV-GTFS-BENCH-03", "support"),
@@ -129,7 +129,7 @@ class SemanticVirtualizationComponentValidationTests(unittest.TestCase):
             self.assertGreaterEqual(len(result["evidence_index"]), 12)
             self.assertIn("mapping_fixtures", result["phases"]["functional"]["suites"])
             self.assertIn("gtfs_bench_source", result["phases"]["functional"]["suites"])
-            self.assertIn("gtfs_bench_mini", result["phases"]["functional"]["suites"])
+            self.assertIn("gtfs_bench_dataset", result["phases"]["functional"]["suites"])
             self.assertIn("gtfs_bench_materialization", result["phases"]["functional"]["suites"])
             self.assertTrue(result["artifacts"]["report_json"].endswith("semantic_virtualization_component_validation.json"))
             self.assertTrue(os.path.exists(result["artifacts"]["report_json"]))
@@ -196,8 +196,8 @@ class SemanticVirtualizationComponentValidationTests(unittest.TestCase):
                 side_effect=fake_functional_suite("functional-gtfs-source", "SV-GTFS-BENCH-01"),
             ),
             mock.patch(
-                "validation.components.semantic_virtualization.runner.run_gtfs_bench_official_mini_validation",
-                side_effect=fake_functional_suite("functional-gtfs-mini", "SV-GTFS-BENCH-02"),
+                "validation.components.semantic_virtualization.runner.run_gtfs_bench_official_dataset_validation",
+                side_effect=fake_functional_suite("functional-gtfs-dataset", "SV-GTFS-BENCH-02"),
             ),
             mock.patch(
                 "validation.components.semantic_virtualization.runner.run_gtfs_bench_official_materialization_validation",

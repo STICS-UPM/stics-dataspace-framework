@@ -102,7 +102,7 @@ class AIModelHubTestCasesCatalogTests(unittest.TestCase):
         self.assertEqual(observer_ui_case["automation"]["mode"], "ui")
         self.assertEqual(
             observer_ui_case["automation"]["ui_spec"],
-            "validation/ui/core/10-ai-model-observer.spec.ts",
+            "validation/ui/adapters/inesdata/specs/10-ai-model-observer.spec.ts",
         )
         self.assertEqual(
             observer_ui_case["automation"]["visual_markers"],

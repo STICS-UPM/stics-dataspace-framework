@@ -17,6 +17,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from deployers.shared.lib.components import resolve_component_release_name
+from validation.components.semantic_virtualization.gtfs_bench_dataset import build_gtfs_bench_official_sample
 from validation.components.semantic_virtualization.runner import QUERY_PATH
 
 
@@ -24,23 +25,12 @@ COMPONENT_KEY = "semantic-virtualization"
 INTEGRATION_CASE_ID = "INT-VS-DS-01"
 EDC_NAMESPACE = "https://w3id.org/edc/v0.0.1/ns/"
 SUCCESS_TRANSFER_STATES = {"STARTED", "COMPLETED", "FINALIZED", "ENDED", "DEPROVISIONED"}
-GTFS_MADRID_BENCH_MINI_DIR = os.path.join(
+GTFS_BENCH_SOURCE_DIR = os.path.join(
     PROJECT_ROOT,
     "validation",
-    "components",
-    "ai_model_hub",
-    "fixtures",
     "datasets",
-    "mobility",
-    "gtfs-madrid-bench-mini",
-)
-GTFS_BENCH_OFFICIAL_MINI_DIR = os.path.join(
-    PROJECT_ROOT,
-    "validation",
-    "components",
-    "semantic_virtualization",
-    "fixtures",
-    "gtfs-bench-official-mini",
+    "sources",
+    "gtfs-bench",
 )
 
 
@@ -720,68 +710,54 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def load_gtfs_madrid_bench_mini_context(fixture_dir: str | None = None) -> dict[str, Any]:
-    resolved_dir = os.path.abspath(fixture_dir or GTFS_MADRID_BENCH_MINI_DIR)
-    expected_files = {
-        "metadata": "metadata.json",
-        "schema": "schema.json",
-        "sample": "benchmark_sample.json",
-        "expected_outputs": "expected_outputs.json",
-    }
-    missing = [name for name in expected_files.values() if not os.path.exists(os.path.join(resolved_dir, name))]
-    if missing:
-        raise RuntimeError(f"GTFS-Madrid-Bench-mini fixture is missing required files: {', '.join(missing)}")
-
-    metadata = _read_json(os.path.join(resolved_dir, expected_files["metadata"]))
-    sample = _read_json(os.path.join(resolved_dir, expected_files["sample"]))
-    expected_outputs_path = os.path.join(resolved_dir, expected_files["expected_outputs"])
-    expected_outputs = _read_json(expected_outputs_path)
-    record_counts = expected_outputs.get("benchmark_sample", {}).get("recordCounts") or {}
-    transfer_cases = expected_outputs.get("benchmark_sample", {}).get("transferCases") or []
+def load_gtfs_madrid_bench_context(source_dir: str | None = None) -> dict[str, Any]:
+    source_sample = build_gtfs_bench_official_sample(source_dir)
+    resolved_dir = os.path.abspath(source_sample["source_dir"])
+    record_counts = (source_sample.get("selection") or {}).get("recordCounts") or {}
+    source = source_sample.get("source") or {}
 
     return {
         "case_id": "MH-MOB-01",
-        "fixture_name": metadata.get("datasetName") or "GTFS-Madrid-Bench-mini",
-        "fixture_dir": resolved_dir,
-        "metadata_source": os.path.join(resolved_dir, expected_files["metadata"]),
-        "schema_source": os.path.join(resolved_dir, expected_files["schema"]),
-        "sample_source": os.path.join(resolved_dir, expected_files["sample"]),
-        "expected_outputs_source": expected_outputs_path,
+        "dataset_name": "GTFS-Madrid-Bench",
+        "source_dir": resolved_dir,
+        "source_repository": source.get("repository"),
+        "source_commit": source.get("commit"),
+        "sample_source": (source_sample.get("required_paths") or {}).get("dump"),
+        "expected_outputs_source": (source_sample.get("required_paths") or {}).get("dump"),
         "record_counts": record_counts,
-        "transfer_case_count": len(transfer_cases),
-        "join_keys": expected_outputs.get("integrationExpectations", {}).get("joinKeys") or [],
-        "semantic_virtualization_ready": bool(
-            expected_outputs.get("integrationExpectations", {}).get("semanticVirtualizationReady")
-        ),
-        "mobility_model_ready": bool(expected_outputs.get("integrationExpectations", {}).get("mobilityModelReady")),
+        "transfer_case_count": len(source_sample.get("tables", {}).get("TRIPS") or []),
+        "join_keys": ["route_id", "trip_id", "stop_id"],
+        "semantic_virtualization_ready": True,
+        "mobility_model_ready": False,
         "asset_summary": {
-            "name": f"{metadata.get('datasetName') or 'GTFS-Madrid-Bench-mini'} via Semantic Virtualization",
-            "version": metadata.get("version") or "mini-v1",
-            "short_description": "Semantic Virtualization HttpData asset linked to GTFS-Madrid-Bench-mini",
+            "name": "GTFS-Madrid-Bench via Semantic Virtualization",
+            "version": source.get("commit") or "source-runtime",
+            "short_description": "Semantic Virtualization HttpData asset linked to GTFS-Madrid-Bench",
             "description": (
                 "Semantic Virtualization output exposed as HttpData and traced to the "
-                "GTFS-Madrid-Bench-mini mobility fixture for MH-MOB-01."
+                "GTFS-Madrid-Bench source repository for MH-MOB-01."
             ),
             "asset_type": "semantic-virtualization-mobility-output",
-            "dataset_name": metadata.get("datasetName") or "GTFS-Madrid-Bench-mini",
-            "domain": metadata.get("domain") or "mobility",
-            "task": metadata.get("task"),
-            "keywords": ["GTFS-Madrid-Bench-mini", "mobility", "gtfs", "MH-MOB-01"],
-            "source_object_name": metadata.get("assetPublication", {}).get("fileName")
-            or "gtfs-madrid-bench-mini.json",
-            "expected_outputs_digest": _sha256_file(expected_outputs_path),
+            "dataset_name": "GTFS-Madrid-Bench",
+            "domain": "mobility",
+            "task": "mobility-route-estimation",
+            "keywords": ["GTFS-Madrid-Bench", "mobility", "gtfs", "MH-MOB-01"],
+            "source_object_name": "gtfs-bench-source.json",
+            "expected_outputs_digest": hashlib.sha256(
+                json.dumps(record_counts, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ).hexdigest(),
         },
         "notes": [
-            "This context only adds traceability between INT-VS-DS-01 and the mobility fixture.",
+            "This context only adds traceability between INT-VS-DS-01 and the synchronized mobility dataset source.",
             "It does not imply that a mobility inference model has been executed.",
             "The HttpData resource remains the Semantic Virtualization endpoint selected for the run.",
         ],
         "sample_summary": {
-            "stops": len(sample.get("stops") or []),
-            "routes": len(sample.get("routes") or []),
-            "trips": len(sample.get("trips") or []),
-            "stop_times": len(sample.get("stop_times") or []),
-            "transfer_benchmark_cases": len(sample.get("transfer_benchmark_cases") or []),
+            "stops": record_counts.get("STOPS", 0),
+            "routes": record_counts.get("ROUTES", 0),
+            "trips": record_counts.get("TRIPS", 0),
+            "stop_times": record_counts.get("STOP_TIMES", 0),
+            "transfer_benchmark_cases": len(source_sample.get("tables", {}).get("TRIPS") or []),
         },
     }
 
@@ -813,7 +789,7 @@ def load_gtfs_bench_official_materialization_context(
     report_path: str = "",
     experiment_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Build INESData asset metadata for the official-derived GTFS-Bench RDF output."""
+    """Build INESData asset metadata for the source-derived GTFS-Bench RDF output."""
 
     materialization_report_path = _resolve_materialization_report_path(report_path, experiment_dir)
     materialization_report = _read_json(materialization_report_path)
@@ -824,22 +800,19 @@ def load_gtfs_bench_official_materialization_context(
 
     artifacts = materialization_report.get("artifacts") or {}
     evidence = ((materialization_report.get("test_cases") or [{}])[0] or {}).get("evidence") or {}
-    fixture_dir = evidence.get("fixture_dir") or GTFS_BENCH_OFFICIAL_MINI_DIR
-    manifest_path = os.path.join(fixture_dir, "manifest.json")
-    manifest = _read_json(manifest_path)
+    dataset_validation = evidence.get("dataset_validation") or {}
     materialization = evidence.get("materialization") or {}
     mapping_validation = evidence.get("mapping_validation") or {}
     queries = evidence.get("queries") or {}
-    source = manifest.get("source") or {}
-    record_counts = ((manifest.get("selection") or {}).get("recordCounts")) or {}
+    source = dataset_validation.get("source") or {}
+    record_counts = ((dataset_validation.get("selection") or {}).get("recordCounts")) or {}
     graph_path = artifacts.get("materialized_graph") or materialization.get("graph_path") or ""
     graph_sha256 = materialization.get("graph_sha256") or (_sha256_file(graph_path) if graph_path else "")
 
     return {
         "case_id": "SV-GTFS-BENCH-04",
-        "fixture_name": manifest.get("datasetName") or "GTFS-Bench-official-mini",
-        "fixture_dir": os.path.abspath(fixture_dir),
-        "manifest_source": manifest_path,
+        "dataset_name": dataset_validation.get("dataset_name") or "GTFS-Madrid-Bench",
+        "source_dir": os.path.abspath(evidence.get("source_dir") or GTFS_BENCH_SOURCE_DIR),
         "materialization_report": materialization_report_path,
         "materialized_graph_path": graph_path,
         "record_counts": record_counts,
@@ -853,27 +826,27 @@ def load_gtfs_bench_official_materialization_context(
             "route_trip_stop_join_rows": (queries.get("route_trip_stop_join_probe") or {}).get("row_count"),
         },
         "asset_summary": {
-            "name": "GTFS-Bench official mini RDF via Semantic Virtualization",
-            "version": manifest.get("version") or "official-mini-v1",
-            "short_description": "Official-derived GTFS-Bench RDF output exposed as HttpData",
+            "name": "GTFS-Bench RDF via Semantic Virtualization",
+            "version": source.get("commit") or "source-runtime",
+            "short_description": "Source-derived GTFS-Bench RDF output exposed as HttpData",
             "description": (
-                "RDF/Turtle output generated from the official-derived GTFS-Bench mini fixture, "
+                "RDF/Turtle output generated from the synchronized GTFS-Bench source repository, "
                 "linked to the adapted official CSV mapping and exposed through INESData as HttpData."
             ),
             "asset_type": "semantic-virtualization-gtfs-bench-rdf-output",
-            "dataset_name": manifest.get("datasetName") or "GTFS-Bench-official-mini",
-            "domain": manifest.get("domain") or "mobility",
+            "dataset_name": dataset_validation.get("dataset_name") or "GTFS-Madrid-Bench",
+            "domain": "mobility",
             "task": "semantic-virtualization-gtfs-bench-official-materialization",
             "keywords": [
                 "GTFS-Madrid-Bench",
                 "gtfs-bench",
-                "official-derived",
+                "source-derived",
                 "semantic-virtualization",
                 "rdf",
                 "mobility",
                 "SV-GTFS-BENCH-04",
             ],
-            "source_object_name": os.path.basename(graph_path) or "gtfs_bench_official_mini_materialized.ttl",
+            "source_object_name": os.path.basename(graph_path) or "gtfs_bench_official_materialized.ttl",
             "expected_outputs_digest": graph_sha256,
             "extra_properties": {
                 "daimo:sourceRepository": source.get("repository"),
@@ -890,7 +863,7 @@ def load_gtfs_bench_official_materialization_context(
             },
         },
         "notes": [
-            "This context exposes the official-derived RDF artifact as INESData HttpData metadata.",
+            "This context exposes the source-derived RDF artifact as INESData HttpData metadata.",
             "The default dataAddress still points to the deployed Semantic Virtualization endpoint unless overridden.",
             "The complete official benchmark/generator is kept as an explicit maintenance activity outside Level 6 to avoid destabilizing validation runs.",
         ],
@@ -911,11 +884,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--experiment-dir", default="")
     parser.add_argument("--skip-transfer", action="store_true")
     parser.add_argument(
-        "--gtfs-madrid-bench-mini",
+        "--gtfs-madrid-bench",
         action="store_true",
-        help="Attach GTFS-Madrid-Bench-mini traceability metadata to the HttpData asset/report.",
+        help="Attach GTFS-Madrid-Bench source traceability metadata to the HttpData asset/report.",
     )
-    parser.add_argument("--gtfs-fixture-dir", default="")
+    parser.add_argument("--gtfs-source-dir", default="")
     parser.add_argument(
         "--gtfs-bench-official-materialization",
         action="store_true",
@@ -928,7 +901,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.gtfs_madrid_bench_mini and args.gtfs_bench_official_materialization:
+    if args.gtfs_madrid_bench and args.gtfs_bench_official_materialization:
         raise RuntimeError("Use only one GTFS context flag per run")
 
     suite, adapter = build_inesdata_semantic_virtualization_suite(topology=args.topology)
@@ -942,8 +915,8 @@ def main(argv: list[str] | None = None) -> int:
     semantic_data_url = args.semantic_data_url or default_semantic_data_url(adapter)
     experiment_dir = args.experiment_dir or _default_experiment_dir()
     integration_context = None
-    if args.gtfs_madrid_bench_mini:
-        integration_context = load_gtfs_madrid_bench_mini_context(args.gtfs_fixture_dir or None)
+    if args.gtfs_madrid_bench:
+        integration_context = load_gtfs_madrid_bench_context(args.gtfs_source_dir or None)
     if args.gtfs_bench_official_materialization:
         integration_context = load_gtfs_bench_official_materialization_context(
             report_path=args.gtfs_materialization_report,
