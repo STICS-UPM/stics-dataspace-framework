@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADAPTER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SYNC_SCRIPT="$ADAPTER_DIR/scripts/sync_sources.sh"
 
-DEFAULT_SOURCE_DIR="$ADAPTER_DIR/sources/dashboard/asset-filter-template"
+DEFAULT_SOURCE_DIR="$ADAPTER_DIR/sources/connector"
 SOURCE_DIR="$DEFAULT_SOURCE_DIR"
 DOCKERFILE="$ADAPTER_DIR/build/docker/connector.Dockerfile"
 IMAGE_NAME="validation-environment/edc-connector"
@@ -298,8 +298,11 @@ else
 fi
 
 if [[ ! -f "$ABSOLUTE_CONNECTOR_JAR" ]]; then
-  echo "Connector jar not found after preparation: $ABSOLUTE_CONNECTOR_JAR" >&2
-  exit 1
+  if [[ "$APPLY" -eq 1 ]]; then
+    echo "Connector jar not found after preparation: $ABSOLUTE_CONNECTOR_JAR" >&2
+    exit 1
+  fi
+  echo "Dry run: connector jar would be created at $ABSOLUTE_CONNECTOR_JAR"
 fi
 
 DOCKER_BUILD_CONTEXT="$SOURCE_DIR"

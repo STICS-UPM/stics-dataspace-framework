@@ -20,8 +20,7 @@ LOCAL_EDC_SERVICE_EXTENSIONS_PATH = os.path.join(
     "adapters",
     "edc",
     "sources",
-    "dashboard",
-    "asset-filter-template",
+    "connector",
     "final-connector",
     "src",
     "main",
@@ -164,6 +163,36 @@ class EdcBuildImageScriptTests(unittest.TestCase):
         self.assertIn("Connector jar is outdated and will be rebuilt", completed.stdout)
         self.assertIn("source changed: final-connector/build.gradle.kts", completed.stdout)
         self.assertIn("GradleWrapperMain", completed.stdout)
+
+    def test_build_image_dry_run_allows_missing_connector_jar(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_fake_source_tree(tmpdir)
+            jar_path = os.path.join(
+                tmpdir,
+                "final-connector",
+                "build",
+                "libs",
+                "connector.jar",
+            )
+            os.remove(jar_path)
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    SCRIPT_PATH,
+                    "--source-dir",
+                    tmpdir,
+                    "--skip-minikube-load",
+                ],
+                text=True,
+                capture_output=True,
+                cwd=PROJECT_ROOT,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("Dry run: connector jar would be created", completed.stdout)
+        self.assertIn("docker build", completed.stdout)
 
     def test_build_image_refuses_custom_source_sync_when_source_is_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:

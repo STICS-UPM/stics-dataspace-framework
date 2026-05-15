@@ -1,0 +1,111 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "daimo": "https://pionera.ai/edc/daimo#"
+  },
+  "@id": "provider~benchmark-dataset-text-positive-v1",
+  "properties": {
+    "name": "Benchmark Dataset Text Positive v1",
+    "description": "Benchmark dataset slice with positive text-classification samples.",
+    "contenttype": "application/json",
+    "daimo:pipeline_tag": "text-classification",
+    "daimo:license": "Apache-2.0",
+    "daimo:tags": [
+      "dataset",
+      "benchmark",
+      "text",
+      "classification",
+      "positive"
+    ],
+    "daimo:library_name": "synthetic",
+    "daimo:datasets": [
+      "text-benchmark-v1"
+    ],
+    "daimo:benchmark_dataset_format": "json",
+    "daimo:benchmark_dataset_source": "resources/benchmark-datasets/text-benchmark-v1.json",
+    "daimo:benchmark_dataset_mapping": {
+      "inputPath": "input",
+      "expectedPath": "expected_label",
+      "predictionPath": "result.label"
+    },
+    "daimo:benchmark_dataset": {
+      "rows": [
+        {
+          "id": "txt-001",
+          "input": {
+            "text": "excellent fast and helpful support"
+          },
+          "expected_label": "POSITIVE"
+        },
+        {
+          "id": "txt-002",
+          "input": {
+            "text": "great clean and good interface"
+          },
+          "expected_label": "POSITIVE"
+        },
+        {
+          "id": "txt-003",
+          "input": {
+            "text": "good fast and clean service"
+          },
+          "expected_label": "POSITIVE"
+        },
+        {
+          "id": "txt-004",
+          "input": {
+            "text": "helpful good and excellent results"
+          },
+          "expected_label": "POSITIVE"
+        },
+        {
+          "id": "txt-005",
+          "input": {
+            "text": "clean fast and excellent workflow"
+          },
+          "expected_label": "POSITIVE"
+        },
+        {
+          "id": "txt-006",
+          "input": {
+            "text": "great helpful clean service"
+          },
+          "expected_label": "POSITIVE"
+        },
+        {
+          "id": "txt-007",
+          "input": {
+            "text": "good fast response and helpful staff"
+          },
+          "expected_label": "POSITIVE"
+        },
+        {
+          "id": "txt-008",
+          "input": {
+            "text": "excellent clean and great product"
+          },
+          "expected_label": "POSITIVE"
+        },
+        {
+          "id": "txt-009",
+          "input": {
+            "text": "good clean helpful and fast"
+          },
+          "expected_label": "POSITIVE"
+        },
+        {
+          "id": "txt-010",
+          "input": {
+            "text": "great and excellent support"
+          },
+          "expected_label": "POSITIVE"
+        }
+      ]
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "baseUrl": "http://localhost:19193/datasets/benchmark/text-positive-v1.json",
+    "proxyPath": "true"
+  }
+}

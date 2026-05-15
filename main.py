@@ -4609,8 +4609,7 @@ def _prepare_edc_local_connector_image_override(adapter):
         "adapters",
         "edc",
         "sources",
-        "dashboard",
-        "asset-filter-template",
+        "connector",
     )
     repo_url = repo_url_getter() if callable(repo_url_getter) else "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
     repo_subdir = repo_subdir_getter() if callable(repo_subdir_getter) else "asset-filter-template"

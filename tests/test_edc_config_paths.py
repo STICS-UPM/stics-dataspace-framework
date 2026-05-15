@@ -39,7 +39,7 @@ class EdcConfigPathTests(unittest.TestCase):
         self.assertEqual(adapter.edc_reference_repo_subdir(), "asset-filter-template")
         self.assertTrue(
             adapter.edc_connector_source_dir().endswith(
-                "Validation-Environment/adapters/edc/sources/dashboard/asset-filter-template"
+                "Validation-Environment/adapters/edc/sources/connector"
             )
         )
         self.assertTrue(adapter.edc_dashboard_source_dir().endswith("Validation-Environment/adapters/edc/sources/dashboard"))

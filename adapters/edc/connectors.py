@@ -113,8 +113,7 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
             "adapters",
             "edc",
             "sources",
-            "dashboard",
-            "asset-filter-template",
+            "connector",
         )
 
     def _edc_runtime_dir(self, ds_name=None):

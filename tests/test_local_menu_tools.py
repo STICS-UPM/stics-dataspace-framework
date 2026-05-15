@@ -128,7 +128,7 @@ class LocalMenuToolsTests(unittest.TestCase):
                 exist_ok=True,
             )
             os.makedirs(
-                os.path.join(tmpdir, "adapters", "edc", "sources", "dashboard", "asset-filter-template"),
+                os.path.join(tmpdir, "adapters", "edc", "sources", "connector"),
                 exist_ok=True,
             )
 
@@ -359,7 +359,7 @@ class LocalMenuToolsTests(unittest.TestCase):
             key="edc/connector",
             adapter="edc",
             label="EDC connector",
-            source_rel_path=os.path.join("adapters", "edc", "sources", "dashboard", "asset-filter-template"),
+            source_rel_path=os.path.join("adapters", "edc", "sources", "connector"),
             image_ref="validation-environment/edc-connector:local",
         )
 
@@ -424,7 +424,7 @@ class LocalMenuToolsTests(unittest.TestCase):
             key="edc/connector",
             adapter="edc",
             label="EDC connector",
-            source_rel_path=os.path.join("adapters", "edc", "sources", "dashboard", "asset-filter-template"),
+            source_rel_path=os.path.join("adapters", "edc", "sources", "connector"),
             image_ref="validation-environment/edc-connector:local",
         )
 
@@ -453,7 +453,7 @@ class LocalMenuToolsTests(unittest.TestCase):
             key="edc/connector",
             adapter="edc",
             label="EDC connector",
-            source_rel_path=os.path.join("adapters", "edc", "sources", "dashboard", "asset-filter-template"),
+            source_rel_path=os.path.join("adapters", "edc", "sources", "connector"),
             image_ref="validation-environment/edc-connector:local",
         )
 
@@ -505,7 +505,7 @@ class LocalMenuToolsTests(unittest.TestCase):
                 key="edc/connector",
                 adapter="edc",
                 label="EDC connector",
-                source_rel_path=os.path.join("adapters", "edc", "sources", "dashboard", "asset-filter-template"),
+                source_rel_path=os.path.join("adapters", "edc", "sources", "connector"),
                 image_ref="validation-environment/edc-connector:local",
                 script_rel_path=os.path.join("adapters", "edc", "scripts", "build_image.sh"),
             )

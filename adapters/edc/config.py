@@ -206,7 +206,7 @@ class EDCConfigAdapter(INESDataConfigAdapter):
         return os.path.join(self.edc_adapter_dir(), "sources")
 
     def edc_connector_source_dir(self):
-        return os.path.join(self.edc_dashboard_source_dir(), self.edc_reference_repo_subdir())
+        return os.path.join(self.edc_sources_dir(), "connector")
 
     def edc_dashboard_source_dir(self):
         return os.path.join(self.edc_sources_dir(), "dashboard")

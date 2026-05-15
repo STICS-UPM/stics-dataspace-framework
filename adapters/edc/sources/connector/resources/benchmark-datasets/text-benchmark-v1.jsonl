@@ -1,0 +1,30 @@
+{"id":"txt-001","input":{"text":"excellent fast and helpful support"},"expected_label":"POSITIVE"}
+{"id":"txt-002","input":{"text":"great clean and good interface"},"expected_label":"POSITIVE"}
+{"id":"txt-003","input":{"text":"good fast and clean service"},"expected_label":"POSITIVE"}
+{"id":"txt-004","input":{"text":"helpful good and excellent results"},"expected_label":"POSITIVE"}
+{"id":"txt-005","input":{"text":"clean fast and excellent workflow"},"expected_label":"POSITIVE"}
+{"id":"txt-006","input":{"text":"great helpful clean service"},"expected_label":"POSITIVE"}
+{"id":"txt-007","input":{"text":"good fast response and helpful staff"},"expected_label":"POSITIVE"}
+{"id":"txt-008","input":{"text":"excellent clean and great product"},"expected_label":"POSITIVE"}
+{"id":"txt-009","input":{"text":"good clean helpful and fast"},"expected_label":"POSITIVE"}
+{"id":"txt-010","input":{"text":"great and excellent support"},"expected_label":"POSITIVE"}
+{"id":"txt-011","input":{"text":"terrible slow and broken service"},"expected_label":"NEGATIVE"}
+{"id":"txt-012","input":{"text":"bad poor and rude support"},"expected_label":"NEGATIVE"}
+{"id":"txt-013","input":{"text":"bad slow and terrible release"},"expected_label":"NEGATIVE"}
+{"id":"txt-014","input":{"text":"broken slow and bad response"},"expected_label":"NEGATIVE"}
+{"id":"txt-015","input":{"text":"terrible and awful quality"},"expected_label":"NEGATIVE"}
+{"id":"txt-016","input":{"text":"rude slow poor and dirty"},"expected_label":"NEGATIVE"}
+{"id":"txt-017","input":{"text":"worst bad broken process"},"expected_label":"NEGATIVE"}
+{"id":"txt-018","input":{"text":"hate this terrible experience"},"expected_label":"NEGATIVE"}
+{"id":"txt-019","input":{"text":"poor slow and bad output"},"expected_label":"NEGATIVE"}
+{"id":"txt-020","input":{"text":"awful rude and broken workflow"},"expected_label":"NEGATIVE"}
+{"id":"txt-021","input":{"text":"package arrived yesterday without issues"},"expected_label":"NEUTRAL"}
+{"id":"txt-022","input":{"text":"dashboard opened and rendered the report"},"expected_label":"NEUTRAL"}
+{"id":"txt-023","input":{"text":"meeting scheduled for next monday"},"expected_label":"NEUTRAL"}
+{"id":"txt-024","input":{"text":"data was exported to a csv file"},"expected_label":"NEUTRAL"}
+{"id":"txt-025","input":{"text":"user submitted the form at noon"},"expected_label":"NEUTRAL"}
+{"id":"txt-026","input":{"text":"model execution started after upload"},"expected_label":"NEUTRAL"}
+{"id":"txt-027","input":{"text":"system processed twenty records today"},"expected_label":"NEUTRAL"}
+{"id":"txt-028","input":{"text":"response was logged in the audit trail"},"expected_label":"NEUTRAL"}
+{"id":"txt-029","input":{"text":"connector negotiated the contract successfully"},"expected_label":"NEUTRAL"}
+{"id":"txt-030","input":{"text":"benchmark run completed in the browser"},"expected_label":"NEUTRAL"}

@@ -711,7 +711,7 @@ def _local_image_recipe_catalog() -> list[LocalImageRecipe]:
             key="edc/connector",
             adapter="edc",
             label="Generic EDC connector",
-            source_rel_path=os.path.join("adapters", "edc", "sources", "dashboard", "asset-filter-template"),
+            source_rel_path=os.path.join("adapters", "edc", "sources", "connector"),
             image_ref="validation-environment/edc-connector:local",
             script_rel_path=os.path.join("adapters", "edc", "scripts", "build_image.sh"),
             loads_minikube=True,

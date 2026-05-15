@@ -1,0 +1,44 @@
+services:
+  provider-connector:
+    image: eclipse-temurin:21-jre
+    container_name: provider-connector
+    working_dir: /workspace
+    command:
+      - java
+      - -Dedc.fs.config=/workspace/resources/configuration/provider-configuration-docker.properties
+      - -jar
+      - /workspace/final-connector/build/libs/connector.jar
+    volumes:
+      - ./:/workspace
+    ports:
+      - "19191:19191"
+      - "19193:19193"
+      - "19194:19194"
+      - "19291:19291"
+    networks:
+      - connectors-net
+    restart: unless-stopped
+
+  consumer-connector:
+    image: eclipse-temurin:21-jre
+    container_name: consumer-connector
+    working_dir: /workspace
+    command:
+      - java
+      - -Dedc.fs.config=/workspace/resources/configuration/consumer-configuration-docker.properties
+      - -jar
+      - /workspace/final-connector/build/libs/connector.jar
+    volumes:
+      - ./:/workspace
+    ports:
+      - "29191:29191"
+      - "29193:29193"
+      - "29194:29194"
+      - "29291:29291"
+    networks:
+      - connectors-net
+    restart: unless-stopped
+
+networks:
+  connectors-net:
+    name: asset-filter-connectors-net

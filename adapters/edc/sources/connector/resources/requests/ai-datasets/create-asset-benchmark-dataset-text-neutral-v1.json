@@ -1,0 +1,111 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "daimo": "https://pionera.ai/edc/daimo#"
+  },
+  "@id": "provider~benchmark-dataset-text-neutral-v1",
+  "properties": {
+    "name": "Benchmark Dataset Text Neutral v1",
+    "description": "Benchmark dataset slice with neutral text-classification samples.",
+    "contenttype": "application/json",
+    "daimo:pipeline_tag": "text-classification",
+    "daimo:license": "Apache-2.0",
+    "daimo:tags": [
+      "dataset",
+      "benchmark",
+      "text",
+      "classification",
+      "neutral"
+    ],
+    "daimo:library_name": "synthetic",
+    "daimo:datasets": [
+      "text-benchmark-v1"
+    ],
+    "daimo:benchmark_dataset_format": "json",
+    "daimo:benchmark_dataset_source": "resources/benchmark-datasets/text-benchmark-v1.json",
+    "daimo:benchmark_dataset_mapping": {
+      "inputPath": "input",
+      "expectedPath": "expected_label",
+      "predictionPath": "result.label"
+    },
+    "daimo:benchmark_dataset": {
+      "rows": [
+        {
+          "id": "txt-021",
+          "input": {
+            "text": "package arrived yesterday without issues"
+          },
+          "expected_label": "NEUTRAL"
+        },
+        {
+          "id": "txt-022",
+          "input": {
+            "text": "dashboard opened and rendered the report"
+          },
+          "expected_label": "NEUTRAL"
+        },
+        {
+          "id": "txt-023",
+          "input": {
+            "text": "meeting scheduled for next monday"
+          },
+          "expected_label": "NEUTRAL"
+        },
+        {
+          "id": "txt-024",
+          "input": {
+            "text": "data was exported to a csv file"
+          },
+          "expected_label": "NEUTRAL"
+        },
+        {
+          "id": "txt-025",
+          "input": {
+            "text": "user submitted the form at noon"
+          },
+          "expected_label": "NEUTRAL"
+        },
+        {
+          "id": "txt-026",
+          "input": {
+            "text": "model execution started after upload"
+          },
+          "expected_label": "NEUTRAL"
+        },
+        {
+          "id": "txt-027",
+          "input": {
+            "text": "system processed twenty records today"
+          },
+          "expected_label": "NEUTRAL"
+        },
+        {
+          "id": "txt-028",
+          "input": {
+            "text": "response was logged in the audit trail"
+          },
+          "expected_label": "NEUTRAL"
+        },
+        {
+          "id": "txt-029",
+          "input": {
+            "text": "connector negotiated the contract successfully"
+          },
+          "expected_label": "NEUTRAL"
+        },
+        {
+          "id": "txt-030",
+          "input": {
+            "text": "benchmark run completed in the browser"
+          },
+          "expected_label": "NEUTRAL"
+        }
+      ]
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "baseUrl": "http://localhost:19193/datasets/benchmark/text-neutral-v1.json",
+    "proxyPath": "true"
+  }
+}

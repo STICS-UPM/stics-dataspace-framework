@@ -1,0 +1,63 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "daimo": "https://pionera.ai/edc/daimo#"
+  },
+  "@id": "provider~benchmark-text-bayes-v1",
+  "properties": {
+    "name": "Benchmark Text Bayes v1",
+    "description": "Naive Bayes inference service for short-form sentiment benchmarking.",
+    "version": "1.0.0",
+    "contenttype": "application/json",
+    "daimo:pipeline_tag": "text-classification",
+    "daimo:task": ["text-classification"],
+    "daimo:subtask": ["sentiment-analysis"],
+    "daimo:algorithm": ["Multinomial Naive Bayes"],
+    "daimo:license": "Apache-2.0",
+    "daimo:tags": ["inference", "benchmark", "text", "classification"],
+    "daimo:library_name": "custom-python",
+    "daimo:library": ["custom-python", "scikit-learn"],
+    "daimo:framework": ["FastAPI"],
+    "daimo:software": ["Python 3.10"],
+    "daimo:format": "json-api",
+    "daimo:datasets": ["benchmark-synthetic"],
+    "daimo:language": ["en"],
+    "daimo:base_model": "naive-bayes-demo",
+    "daimo:model_version": "1.0.0",
+    "daimo:inference_path": "/infer",
+    "daimo:input_schema_draft": "https://json-schema.org/draft/2020-12/schema",
+    "daimo:input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "urn:pionera:schema:text-classification:v1",
+      "title": "Text Classification Input",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Input text to classify."
+        }
+      },
+      "required": ["text"],
+      "additionalProperties": false
+    },
+    "daimo:input_features": [
+      {
+        "path": "text",
+        "name": "text",
+        "type": "string",
+        "required": true,
+        "description": "Input text to classify.",
+        "example": "Service was slow and the support was rude"
+      }
+    ],
+    "daimo:input_example": {
+      "text": "Service was slow and the support was rude"
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "baseUrl": "http://localhost:9202",
+    "proxyPath": "true"
+  }
+}

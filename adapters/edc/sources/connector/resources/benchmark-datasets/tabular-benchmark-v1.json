@@ -1,0 +1,35 @@
+{
+  "rows": [
+    { "id": "tab-001", "input": { "age": 22, "income": 32000, "tenure_months": 2 } },
+    { "id": "tab-002", "input": { "age": 25, "income": 41000, "tenure_months": 5 } },
+    { "id": "tab-003", "input": { "age": 28, "income": 52000, "tenure_months": 9 } },
+    { "id": "tab-004", "input": { "age": 31, "income": 58000, "tenure_months": 12 } },
+    { "id": "tab-005", "input": { "age": 34, "income": 62000, "tenure_months": 15 } },
+    { "id": "tab-006", "input": { "age": 37, "income": 68000, "tenure_months": 18 } },
+    { "id": "tab-007", "input": { "age": 40, "income": 73000, "tenure_months": 22 } },
+    { "id": "tab-008", "input": { "age": 43, "income": 79000, "tenure_months": 26 } },
+    { "id": "tab-009", "input": { "age": 46, "income": 85000, "tenure_months": 30 } },
+    { "id": "tab-010", "input": { "age": 49, "income": 91000, "tenure_months": 34 } },
+    { "id": "tab-011", "input": { "age": 52, "income": 98000, "tenure_months": 40 } },
+    { "id": "tab-012", "input": { "age": 55, "income": 105000, "tenure_months": 46 } },
+    { "id": "tab-013", "input": { "age": 58, "income": 112000, "tenure_months": 52 } },
+    { "id": "tab-014", "input": { "age": 61, "income": 118000, "tenure_months": 60 } },
+    { "id": "tab-015", "input": { "age": 64, "income": 125000, "tenure_months": 72 } },
+
+    { "id": "tab-016", "input": { "age": 24, "income": 45000, "tenure_months": 1 } },
+    { "id": "tab-017", "input": { "age": 27, "income": 49000, "tenure_months": 3 } },
+    { "id": "tab-018", "input": { "age": 30, "income": 54000, "tenure_months": 6 } },
+    { "id": "tab-019", "input": { "age": 33, "income": 59000, "tenure_months": 8 } },
+    { "id": "tab-020", "input": { "age": 36, "income": 64000, "tenure_months": 11 } },
+    { "id": "tab-021", "input": { "age": 39, "income": 70000, "tenure_months": 14 } },
+    { "id": "tab-022", "input": { "age": 42, "income": 76000, "tenure_months": 17 } },
+    { "id": "tab-023", "input": { "age": 45, "income": 82000, "tenure_months": 21 } },
+    { "id": "tab-024", "input": { "age": 48, "income": 88000, "tenure_months": 25 } },
+    { "id": "tab-025", "input": { "age": 51, "income": 94000, "tenure_months": 29 } },
+    { "id": "tab-026", "input": { "age": 54, "income": 101000, "tenure_months": 35 } },
+    { "id": "tab-027", "input": { "age": 57, "income": 108000, "tenure_months": 42 } },
+    { "id": "tab-028", "input": { "age": 60, "income": 114000, "tenure_months": 50 } },
+    { "id": "tab-029", "input": { "age": 63, "income": 120000, "tenure_months": 58 } },
+    { "id": "tab-030", "input": { "age": 66, "income": 128000, "tenure_months": 80 } }
+  ]
+}
