@@ -1059,6 +1059,8 @@ class NewmanMetricsTests(unittest.TestCase):
                 "KC_URL": "http://keycloak-admin.local",
                 "KC_INTERNAL_URL": "http://keycloak.local",
                 "PIONERA_ADAPTER": "edc",
+                "ENVIRONMENT": "DEV",
+                "MINIO_HOSTNAME": "minio.example.local",
             },
             ds_domain_resolver=lambda: "example.local",
             ds_name="demoedc",
@@ -1069,8 +1071,58 @@ class NewmanMetricsTests(unittest.TestCase):
         self.assertEqual(env_vars["adapter"], "edc")
         self.assertEqual(env_vars["transferStartPath"], "transferprocesses")
         self.assertEqual(env_vars["transferRequestType"], "TransferRequestDto")
+        self.assertEqual(env_vars["transferType"], "AmazonS3-PUSH")
+        self.assertEqual(env_vars["transferDestinationType"], "AmazonS3")
+        self.assertEqual(env_vars["transferDestinationBucket"], "demoedc-conn-companyedc-demoedc")
+        self.assertEqual(env_vars["transferDestinationRegion"], "eu-central-1")
+        self.assertEqual(env_vars["transferDestinationEndpointOverride"], "http://minio.example.local")
+
+    def test_validation_engine_keeps_edc_http_pull_fallback_when_configured(self):
+        engine = ValidationEngine(
+            load_connector_credentials=lambda name: {"connector_user": {"user": name, "passwd": "secret"}},
+            load_deployer_config=lambda: {
+                "KC_URL": "http://keycloak-admin.local",
+                "KC_INTERNAL_URL": "http://keycloak.local",
+                "PIONERA_ADAPTER": "edc",
+                "EDC_LEVEL6_TRANSFER_MODE": "http-pull",
+            },
+            ds_domain_resolver=lambda: "example.local",
+            ds_name="demoedc",
+        )
+
+        env_vars = engine.build_newman_env("conn-citycounciledc-demoedc", "conn-companyedc-demoedc")
+
         self.assertEqual(env_vars["transferType"], "HttpData-PULL")
         self.assertEqual(env_vars["transferDestinationType"], "HttpData")
+        self.assertNotIn("transferDestinationBucket", env_vars)
+
+    def test_postman_compact_collection_builds_adapter_aware_transfer_body(self):
+        with open("validation/core/collections/postman/03_e2e_compact.json", "r", encoding="utf-8") as handle:
+            collection = json.load(handle)
+
+        start_transfer = next(item for item in collection["item"] if item["name"] == "Start Transfer Process")
+        start_prerequest = "\n".join(
+            line
+            for event in start_transfer["event"]
+            if event["listen"] == "prerequest"
+            for line in event["script"]["exec"]
+        )
+        self.assertEqual(start_transfer["request"]["body"]["raw"], "{{transferRequestBody}}")
+        self.assertIn('if (adapter === "edc")', start_prerequest)
+        self.assertIn('getVar("transferRequestType", "TransferRequestDto")', start_prerequest)
+        self.assertIn('bucketName: nonEmptyVar("transferDestinationBucket")', start_prerequest)
+
+        resolve_destination = next(
+            item for item in collection["item"] if item["name"] == "Resolve Current Transfer Destination"
+        )
+        resolve_tests = "\n".join(
+            line
+            for event in resolve_destination["event"]
+            if event["listen"] == "test"
+            for line in event["script"]["exec"]
+        )
+        self.assertIn('parseStoredJson("e2e_transfer_request_destination")', resolve_tests)
+        self.assertIn('String(requestedDestinationType).toLowerCase() === "inesdatastore"', resolve_tests)
 
     def test_validation_engine_uses_protocol_address_resolver_when_available(self):
         engine = ValidationEngine(

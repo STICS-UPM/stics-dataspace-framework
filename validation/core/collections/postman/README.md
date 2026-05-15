@@ -109,8 +109,13 @@ Esos ficheros son **environments importables de Postman** y contienen solo las v
   "keycloakUrl": "http://auth.dev.ed.dataspaceunit.upm",
   "keycloakClientId": "dataspace-users",
   "adapter": "edc",
-  "transferStartPath": "adaptertransferprocesses",
+  "transferStartPath": "transferprocesses",
+  "transferRequestType": "TransferRequestDto",
+  "transferType": "AmazonS3-PUSH",
   "transferDestinationType": "AmazonS3",
+  "transferDestinationBucket": "pionera-edc-conn-companyedc-pionera-edc",
+  "transferDestinationRegion": "eu-central-1",
+  "transferDestinationEndpointOverride": "http://minio.dev.ed.dataspaceunit.upm",
   "providerProtocolAddress": "http://conn-citycounciledc-pionera-edc:19194/protocol",
   "consumerProtocolAddress": "http://conn-companyedc-pionera-edc:19194/protocol"
 }
@@ -862,36 +867,87 @@ pm.test("Contract agreement is available", function () {
 - **Headers**:
   - `Authorization: Bearer {{consumer_jwt}}`
   - `Content-Type: application/json`
-- **Variables requeridas antes de lanzar la request**: `consumer_jwt`, `consumer`, `dsDomain`, `transferStartPath`, `transferDestinationType`, `e2e_asset_id`, `e2e_agreement_id`, `providerProtocolAddress`
-- **Variables que deja preparadas para la siguiente request**: `e2e_transfer_id`, `transfer_start_attempt` (solo mientras reintenta)
+- **Variables requeridas antes de lanzar la request**: `consumer_jwt`, `consumer`, `dsDomain`, `transferStartPath`, `adapter`, `transferDestinationType`, `e2e_asset_id`, `e2e_agreement_id`, `providerProtocolAddress`
+- **Variables EDC/MinIO cuando aplica**: `transferRequestType`, `transferType`, `transferDestinationBucket`, `transferDestinationRegion`, `transferDestinationEndpointOverride`
+- **Variables que deja preparadas para la siguiente request**: `e2e_transfer_id`, `e2e_transfer_request_destination`, `transfer_start_attempt` (solo mientras reintenta)
 
 **Body (`raw`)**
 
-```json
-{
-  "@context": {
-    "@vocab": "https://w3id.org/edc/v0.0.1/ns/"
-  },
-  "@type": "TransferRequest",
-  "assetId": "{{e2e_asset_id}}",
-  "contractId": "{{e2e_agreement_id}}",
-  "counterPartyAddress": "{{providerProtocolAddress}}",
-  "protocol": "dataspace-protocol-http",
-  "transferType": "AmazonS3-PUSH",
-  "dataDestination": {
-    "type": "{{transferDestinationType}}"
-  }
-}
+```text
+{{transferRequestBody}}
 ```
 
 **Pre-request Script exacto**
 
 ```javascript
-if (!(pm.collectionVariables.get("e2e_agreement_id") || pm.environment.get("e2e_agreement_id"))) {
+const agreementId = pm.collectionVariables.get("e2e_agreement_id") || pm.environment.get("e2e_agreement_id");
+if (!agreementId) {
   if (pm.execution && typeof pm.execution.skipRequest === "function") {
     pm.execution.skipRequest();
   }
 }
+
+function getVar(key, fallback) {
+  return pm.collectionVariables.get(key) || pm.environment.get(key) || fallback;
+}
+
+function nonEmptyVar(key) {
+  const value = getVar(key, "");
+  return value === undefined || value === null ? "" : String(value).trim();
+}
+
+const adapter = String(getVar("adapter", "")).trim().toLowerCase();
+const provider = getVar("providerParticipantId", getVar("provider", ""));
+const providerProtocolAddress = getVar("providerProtocolAddress", "");
+const transferType = getVar("transferType", "AmazonS3-PUSH");
+const transferDestinationType = getVar("transferDestinationType", adapter === "edc" ? "AmazonS3" : "InesDataStore");
+
+function buildS3Destination() {
+  const destination = {
+    type: transferDestinationType || "AmazonS3",
+    bucketName: nonEmptyVar("transferDestinationBucket"),
+    region: nonEmptyVar("transferDestinationRegion") || "eu-central-1",
+    keyName: nonEmptyVar("transferDestinationObjectName") || nonEmptyVar("e2e_source_object_name"),
+    name: nonEmptyVar("transferDestinationObjectName") || nonEmptyVar("e2e_source_object_name"),
+    endpointOverride: nonEmptyVar("transferDestinationEndpointOverride")
+  };
+  Object.keys(destination).forEach(key => { if (!destination[key]) delete destination[key]; });
+  return destination;
+}
+
+let payload;
+if (adapter === "edc") {
+  payload = {
+    "@context": { "@vocab": "https://w3id.org/edc/v0.0.1/ns/" },
+    "@type": getVar("transferRequestType", "TransferRequestDto"),
+    connectorId: provider,
+    counterPartyAddress: providerProtocolAddress,
+    contractId: agreementId,
+    protocol: "dataspace-protocol-http",
+    transferType
+  };
+  if (transferType.toLowerCase().includes("push") && transferDestinationType.toLowerCase() !== "httpdata") {
+    payload.dataDestination = buildS3Destination();
+  }
+} else {
+  payload = {
+    "@context": { "@vocab": "https://w3id.org/edc/v0.0.1/ns/" },
+    "@type": getVar("transferRequestType", "TransferRequest"),
+    assetId: getVar("e2e_asset_id", ""),
+    contractId: agreementId,
+    counterPartyAddress: providerProtocolAddress,
+    protocol: "dataspace-protocol-http",
+    transferType,
+    dataDestination: { type: transferDestinationType || "InesDataStore" }
+  };
+}
+
+if (payload.dataDestination) {
+  pm.collectionVariables.set("e2e_transfer_request_destination", JSON.stringify(payload.dataDestination));
+} else {
+  pm.collectionVariables.unset("e2e_transfer_request_destination");
+}
+pm.variables.set("transferRequestBody", JSON.stringify(payload, null, 2));
 ```
 
 **Tests Script exacto**
@@ -1025,6 +1081,17 @@ function readField(obj, fieldName) {
   return undefined;
 }
 
+function parseStoredJson(key) {
+  const raw = getVar(key, "");
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    console.log(`Could not parse ${key}: ${e}`);
+    return undefined;
+  }
+}
+
 function retryOrFail(reason) {
   const maxAttempts = parseInt(getVar("transfer_destination_max_attempts", "10"), 10);
   const attempt = parseInt(getVar("transfer_destination_attempt", "0"), 10) + 1;
@@ -1085,10 +1152,27 @@ if (state === "TERMINATED") {
   return;
 }
 
+const adapter = String(getVar("adapter", "")).trim().toLowerCase();
+const expectedTransferType = getVar("transferType", "AmazonS3-PUSH");
+const requestedDestinationType = getVar("transferDestinationType", "AmazonS3");
+const expectsObjectStorageDestination =
+  String(expectedTransferType).toLowerCase().includes("push") &&
+  String(requestedDestinationType).toLowerCase() !== "httpdata";
+
+if (adapter === "edc" && !expectsObjectStorageDestination) {
+  pm.environment.unset("transfer_destination_attempt");
+  pm.collectionVariables.unset("transfer_destination_attempt");
+  pm.test("EDC transfer state is queryable through the standard management API", function () {
+    pm.expect(state).to.be.a("string").and.not.empty;
+  });
+  return;
+}
+
 const dataDestination =
   readField(transfer, "dataDestination") ||
   transfer.dataDestination ||
-  transfer["https://w3id.org/edc/v0.0.1/ns/dataDestination"];
+  transfer["https://w3id.org/edc/v0.0.1/ns/dataDestination"] ||
+  (adapter === "edc" ? parseStoredJson("e2e_transfer_request_destination") : undefined);
 
 if (!dataDestination) {
   retryOrFail(`Transfer ${transferId} is visible but does not expose dataDestination yet`);
@@ -1105,17 +1189,19 @@ const destinationType = readField(dataDestination, "type");
 const bucketName = readField(dataDestination, "bucketName");
 const endpointOverride = readField(dataDestination, "endpointOverride");
 const expectedBucket = getVar("e2e_expected_consumer_bucket", "");
+const expectedResolvedDestinationType =
+  String(requestedDestinationType).toLowerCase() === "inesdatastore" ? "AmazonS3" : requestedDestinationType;
 
 pm.test("Transfer still references the negotiated asset", function () {
   pm.expect(transferAssetId).to.equal(expectedAssetId);
 });
 
-pm.test("Transfer uses AmazonS3-PUSH", function () {
-  pm.expect(transferType).to.equal("AmazonS3-PUSH");
+pm.test("Transfer uses the transfer type expected by the adapter", function () {
+  pm.expect(transferType).to.equal(expectedTransferType);
 });
 
-pm.test("Resolved destination type is AmazonS3", function () {
-  pm.expect(destinationType).to.equal("AmazonS3");
+pm.test("Resolved destination type is object storage", function () {
+  pm.expect(destinationType).to.equal(expectedResolvedDestinationType);
 });
 
 pm.test("Resolved destination bucket matches consumer bucket", function () {

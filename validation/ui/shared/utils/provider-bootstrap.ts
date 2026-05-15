@@ -1018,12 +1018,40 @@ export async function bootstrapConsumerTransfer(
   assetId: string,
   agreementId: string,
   counterPartyAddress: string,
+  objectName?: string,
 ): Promise<ConsumerTransferArtifacts> {
   const consumerToken = await issueConsumerToken(request, runtime);
   const transferStartPath = runtime.consumer.transferStartPath || "inesdatatransferprocesses";
   const transferDestinationType = runtime.consumer.transferDestinationType || "InesDataStore";
   const isEdcAdapter = runtime.adapter === "edc" || runtime.consumer.adapter === "edc";
-  const transferType = isEdcAdapter ? "HttpData-PULL" : "AmazonS3-PUSH";
+  const usesObjectStorageDestination = transferDestinationType.toLowerCase() !== "httpdata";
+  const transferType = isEdcAdapter
+    ? usesObjectStorageDestination
+      ? "AmazonS3-PUSH"
+      : "HttpData-PULL"
+    : "AmazonS3-PUSH";
+  const transferObjectName = objectName || `${assetId}.json`;
+
+  const buildDataDestination = (): Record<string, string> => {
+    if (!isEdcAdapter) {
+      return { type: transferDestinationType };
+    }
+    if (!usesObjectStorageDestination) {
+      return { type: transferDestinationType };
+    }
+    const destination = runtime.consumer.transferDestination;
+    if (!destination) {
+      throw new Error("Consumer runtime does not expose an S3 transfer destination");
+    }
+    return {
+      type: transferDestinationType,
+      bucketName: destination.bucketName,
+      region: destination.region,
+      keyName: transferObjectName,
+      name: transferObjectName,
+      endpointOverride: destination.endpointOverride,
+    };
+  };
   const transferPayload = isEdcAdapter
     ? {
         "@context": {
@@ -1035,6 +1063,7 @@ export async function bootstrapConsumerTransfer(
         counterPartyAddress,
         protocol: "dataspace-protocol-http",
         transferType,
+        ...(usesObjectStorageDestination ? { dataDestination: buildDataDestination() } : {}),
       }
     : {
         "@context": {
@@ -1046,9 +1075,7 @@ export async function bootstrapConsumerTransfer(
         counterPartyAddress,
         protocol: "dataspace-protocol-http",
         transferType,
-        dataDestination: {
-          type: transferDestinationType,
-        },
+        dataDestination: buildDataDestination(),
       };
   const response = await request.post(`${runtime.consumer.managementBaseUrl}/${transferStartPath}`, {
     headers: {

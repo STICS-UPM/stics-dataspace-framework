@@ -127,6 +127,7 @@ test("05 edc transfer storage: validates object storage only for push transfers"
       assetId,
       report.consumerNegotiation.agreementId,
       dataspaceRuntime.provider.protocolBaseUrl,
+      objectName,
     );
     report.selectedTransferType = transferBootstrap.transferType;
     report.finalTransferState = transferBootstrap.finalState;

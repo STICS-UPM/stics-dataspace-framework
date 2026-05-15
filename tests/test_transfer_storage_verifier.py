@@ -84,6 +84,42 @@ def _build_transfer_report_without_cursor(report_path, *, created_at):
         json.dump(payload, handle)
 
 
+def _build_transfer_report_with_request_destination_only(report_path):
+    payload = {
+        "collection": {"info": {"name": "06_consumer_transfer"}},
+        "run": {
+            "executions": [
+                {
+                    "item": {"name": "Start Transfer Process"},
+                    "cursor": {"started": "2026-03-22T18:00:00.000Z"},
+                    "request": {
+                        "body": {
+                            "raw": json.dumps(
+                                {
+                                    "@id": "transfer-request",
+                                    "dataDestination": {
+                                        "type": "AmazonS3",
+                                        "bucketName": "demo-conn-consumer",
+                                        "keyName": "todos-request-fallback.json",
+                                    },
+                                }
+                            )
+                        }
+                    },
+                    "response": _buffer_payload({"@id": "tp-123"}),
+                },
+                {
+                    "item": {"name": "Resolve Current Transfer Destination"},
+                    "response": _buffer_payload({"@id": "tp-123", "state": "STARTED"}),
+                },
+            ],
+            "failures": [],
+        },
+    }
+    with open(report_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+
+
 def _build_provider_setup_report(report_path, *, object_name):
     payload = {
         "collection": {"info": {"name": "03_provider_setup"}},
@@ -293,6 +329,35 @@ class TransferStorageVerifierTests(unittest.TestCase):
         self.assertEqual(result["expected_object_name"], "todos-experiment-123.json")
         self.assertEqual(result["matched_objects"][0]["object_name"], "todos-experiment-123.json")
         self.assertEqual(result["attempts"], 2)
+
+    def test_verify_consumer_transfer_persistence_falls_back_to_start_request_destination(self):
+        verifier = TransferStorageVerifier(poll_attempts=1, poll_interval_seconds=0)
+        verifier.capture_consumer_bucket_snapshot = lambda connector, bucket: {
+            "todos-request-fallback.json": {
+                "etag": "new-etag",
+                "size": 128,
+                "last_modified": "2026-03-22T18:00:03+00:00",
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_dir = os.path.join(tmpdir, "reports")
+            os.makedirs(report_dir, exist_ok=True)
+            _build_transfer_report_with_request_destination_only(
+                os.path.join(report_dir, "06_consumer_transfer.json")
+            )
+
+            result = verifier.verify_consumer_transfer_persistence(
+                "conn-provider",
+                "conn-consumer",
+                report_dir,
+                before_snapshot={},
+                experiment_dir=tmpdir,
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["bucket_name"], "demo-conn-consumer")
+        self.assertEqual(result["matched_objects"][0]["object_name"], "todos-request-fallback.json")
 
     def test_verify_consumer_transfer_persistence_fails_when_expected_object_is_not_updated(self):
         verifier = TransferStorageVerifier(poll_attempts=1, poll_interval_seconds=0)

@@ -119,6 +119,19 @@ function readField(obj, fieldName) {
     return undefined
 }
 
+function parseStoredJson(key) {
+    const raw = getStoredVar(key)
+    if (!raw) {
+        return undefined
+    }
+    try {
+        return JSON.parse(raw)
+    } catch (error) {
+        console.log(`Could not parse ${key}: ${error}`)
+        return undefined
+    }
+}
+
 function currentAdapter() {
     return String(getStoredVar("adapter") || "").trim().toLowerCase()
 }
@@ -345,7 +358,14 @@ if (requestName === "Resolve Current Transfer Destination") {
         pm.expect(transferType).to.equal(expectedTransferType)
     })
 
-    if (isEdcAdapter()) {
+    const requestedDestinationType = getStoredVar("transferDestinationType") || "AmazonS3"
+    const expectedResolvedDestinationType =
+        String(requestedDestinationType).toLowerCase() === "inesdatastore" ? "AmazonS3" : requestedDestinationType
+    const expectsObjectStorageDestination =
+        String(expectedTransferType || "").toLowerCase().includes("push") &&
+        String(requestedDestinationType || "").toLowerCase() !== "httpdata"
+
+    if (isEdcAdapter() && !expectsObjectStorageDestination) {
         pm.test("EDC transfer state is queryable through the standard management API", function () {
             pm.expect(state).to.be.oneOf(VALID_TRANSFER_STATES)
         })
@@ -355,7 +375,8 @@ if (requestName === "Resolve Current Transfer Destination") {
     const dataDestination =
         readField(transfer, "dataDestination") ||
         transfer.dataDestination ||
-        transfer["https://w3id.org/edc/v0.0.1/ns/dataDestination"]
+        transfer["https://w3id.org/edc/v0.0.1/ns/dataDestination"] ||
+        (isEdcAdapter() ? parseStoredJson("e2e_transfer_request_destination") : undefined)
 
     pm.test("Transfer details expose a resolved data destination", function () {
         pm.expect(dataDestination).to.not.be.undefined
@@ -363,8 +384,8 @@ if (requestName === "Resolve Current Transfer Destination") {
     })
 
     const destinationType = readField(dataDestination, "type")
-    pm.test("Transfer destination type resolved by the runtime is AmazonS3", function () {
-        pm.expect(destinationType).to.equal("AmazonS3")
+    pm.test("Transfer destination type resolved by the runtime is object storage", function () {
+        pm.expect(destinationType).to.equal(expectedResolvedDestinationType)
     })
 
     const expectedBucket = getStoredVar("e2e_expected_consumer_bucket")

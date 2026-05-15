@@ -82,13 +82,31 @@
     },
     {
       "key": "transferType",
-      "value": "HttpData-PULL",
+      "value": "AmazonS3-PUSH",
       "type": "text",
       "enabled": true
     },
     {
       "key": "transferDestinationType",
-      "value": "HttpData",
+      "value": "AmazonS3",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "transferDestinationBucket",
+      "value": "pionera-edc-conn-companyedc-pionera-edc",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "transferDestinationRegion",
+      "value": "eu-central-1",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "transferDestinationEndpointOverride",
+      "value": "http://minio.dev.ed.dataspaceunit.upm",
       "type": "text",
       "enabled": true
     },

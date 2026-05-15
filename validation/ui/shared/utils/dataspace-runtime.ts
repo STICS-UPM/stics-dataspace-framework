@@ -15,8 +15,6 @@ export type ConnectorPortalRuntime = {
     bucketName: string;
     region: string;
     endpointOverride: string;
-    accessKeyId: string;
-    secretAccessKey: string;
   };
 };
 
@@ -114,6 +112,15 @@ function deploymentRoot(adapter: string): string {
   return path.join(projectRootPath, "deployers", adapter, "deployments");
 }
 
+function deployerConfigPath(adapter: string): string {
+  const root = projectRoot();
+  const adapterPath = path.join(root, "deployers", adapter, "deployer.config");
+  if (fs.existsSync(adapterPath)) {
+    return adapterPath;
+  }
+  return path.join(root, "deployers", "inesdata", "deployer.config");
+}
+
 function defaultPortalPath(adapter: string): string {
   return adapter === "edc" ? "/edc-dashboard/" : "/inesdata-connector-interface";
 }
@@ -190,15 +197,23 @@ function resolveConnectorRuntime(
   const password = requiredString(credentials?.connector_user?.passwd, `${connectorName} password`);
   const host = `${connectorName}.${dsDomain}`;
   const baseUrl = ingressBaseUrl(host);
-  const deployerConfigPath = path.join(projectRoot(), "deployers", "inesdata", "deployer.config");
-  const deployerConfig = parseKeyValueFile(deployerConfigPath);
+  const deployerConfig = parseKeyValueFile(deployerConfigPath(adapter));
   const minioHost = process.env.UI_MINIO_HOST || deployerConfig.MINIO_HOSTNAME || `minio.${deployerConfig.DOMAIN_BASE || "dev.ed.dataspaceunit.upm"}`;
   const minioProtocol = process.env.UI_MINIO_PROTOCOL || "http";
-  const transferRegion = process.env.UI_TRANSFER_REGION || "us-east-1";
+  const transferRegion =
+    process.env.UI_TRANSFER_REGION ||
+    deployerConfig.PIONERA_LEVEL6_TRANSFER_REGION ||
+    deployerConfig.EDC_AWS_REGION ||
+    deployerConfig.AWS_REGION ||
+    "eu-central-1";
   const endpointOverride = `${minioProtocol}://${minioHost}`;
-  const minioAccessKey = credentials?.minio?.access_key;
-  const minioSecretKey = credentials?.minio?.secret_key;
   const envPrefix = connectorEnvPrefix(connectorName);
+  const transferDestinationType =
+    process.env[`UI_${envPrefix}_TRANSFER_DESTINATION_TYPE`] ||
+    process.env.UI_TRANSFER_DESTINATION_TYPE ||
+    (adapter === "edc" ? "AmazonS3" : "InesDataStore");
+  const usesObjectStorageDestination =
+    adapter === "edc" && transferDestinationType.toLowerCase() !== "httpdata";
 
   return {
     adapter,
@@ -213,25 +228,22 @@ function resolveConnectorRuntime(
       process.env[`UI_${envPrefix}_PROTOCOL_URL`] ||
       `${baseUrl}/protocol`,
     transferStartPath: adapter === "edc" ? "transferprocesses" : "inesdatatransferprocesses",
-    transferDestinationType: adapter === "edc" ? "HttpData" : "InesDataStore",
+    transferDestinationType,
     username,
     password,
-    transferDestination:
-      minioAccessKey && minioSecretKey
-        ? {
-            bucketName:
-              process.env[`UI_${envPrefix}_TRANSFER_BUCKET`] ||
-              `${dataspace}-${connectorName}`,
-            region:
-              process.env[`UI_${envPrefix}_TRANSFER_REGION`] ||
-              transferRegion,
-            endpointOverride:
-              process.env[`UI_${envPrefix}_TRANSFER_ENDPOINT`] ||
-              endpointOverride,
-            accessKeyId: String(minioAccessKey),
-            secretAccessKey: String(minioSecretKey),
-          }
-        : undefined,
+    transferDestination: usesObjectStorageDestination
+      ? {
+          bucketName:
+            process.env[`UI_${envPrefix}_TRANSFER_BUCKET`] ||
+            `${dataspace}-${connectorName}`,
+          region:
+            process.env[`UI_${envPrefix}_TRANSFER_REGION`] ||
+            transferRegion,
+          endpointOverride:
+            process.env[`UI_${envPrefix}_TRANSFER_ENDPOINT`] ||
+            endpointOverride,
+        }
+      : undefined,
   };
 }
 

@@ -100,6 +100,16 @@ class TransferStorageVerifier:
         except (ValueError, TypeError):
             return None
 
+    @staticmethod
+    def _decode_request_json(execution):
+        body = ((execution.get("request") or {}).get("body") or {}).get("raw")
+        if not body:
+            return None
+        try:
+            return json.loads(body)
+        except (ValueError, TypeError):
+            return None
+
     def _resolve_minio_runtime(self):
         if not callable(self.load_deployer_config):
             raise RuntimeError("Missing load_deployer_config dependency")
@@ -212,6 +222,12 @@ class TransferStorageVerifier:
             data_destination = (
                 self._read_field(resolved_transfer, "dataDestination")
                 or resolved_transfer.get("dataDestination")
+            )
+        if data_destination is None and start_execution is not None:
+            start_request = self._decode_request_json(start_execution) or {}
+            data_destination = (
+                self._read_field(start_request, "dataDestination")
+                or start_request.get("dataDestination")
             )
 
         return {

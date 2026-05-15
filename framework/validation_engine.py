@@ -63,6 +63,55 @@ class ValidationEngine:
                 return resolved
         return f"http://{connector_name}:19194/protocol"
 
+    @staticmethod
+    def _truthy(value):
+        return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    @classmethod
+    def _edc_level6_uses_http_pull(cls, config):
+        explicit_mode = (
+            os.environ.get("PIONERA_EDC_LEVEL6_TRANSFER_MODE")
+            or os.environ.get("EDC_LEVEL6_TRANSFER_MODE")
+            or config.get("PIONERA_EDC_LEVEL6_TRANSFER_MODE")
+            or config.get("EDC_LEVEL6_TRANSFER_MODE")
+            or ""
+        )
+        mode = str(explicit_mode or "").strip().lower()
+        if mode in {"http", "http-pull", "httpdata", "httpdata-pull"}:
+            return True
+        if mode in {"s3", "s3-push", "amazon-s3", "amazons3", "amazons3-push", "minio", "minio-push"}:
+            return False
+        return cls._truthy(config.get("EDC_LEVEL6_HTTP_PULL") or os.environ.get("EDC_LEVEL6_HTTP_PULL"))
+
+    @staticmethod
+    def _edc_minio_endpoint_override(config):
+        explicit = (
+            os.environ.get("PIONERA_LEVEL6_MINIO_ENDPOINT")
+            or os.environ.get("EDC_LEVEL6_MINIO_ENDPOINT")
+            or config.get("PIONERA_LEVEL6_MINIO_ENDPOINT")
+            or config.get("EDC_LEVEL6_MINIO_ENDPOINT")
+        )
+        if explicit:
+            raw = str(explicit).strip().rstrip("/")
+            return raw if "://" in raw else f"http://{raw}"
+
+        hostname = str(config.get("MINIO_HOSTNAME") or "").strip().rstrip("/")
+        if hostname:
+            if "://" in hostname:
+                return hostname
+            protocol = "https" if str(config.get("ENVIRONMENT", "DEV")).strip().upper() == "PRO" else "http"
+            return f"{protocol}://{hostname}"
+
+        domain_base = str(config.get("DOMAIN_BASE") or "").strip().strip(".")
+        if domain_base:
+            return f"http://minio.{domain_base}"
+
+        endpoint = str(config.get("MINIO_ENDPOINT") or "").strip().rstrip("/")
+        if endpoint:
+            return endpoint if "://" in endpoint else f"http://{endpoint}"
+
+        return ""
+
     def build_newman_env(self, provider, consumer):
         """Build Newman environment variables for dataspace validation."""
         load_connector_credentials = self._require_dependency(
@@ -99,7 +148,15 @@ class ValidationEngine:
         if not keycloak_url.startswith("http"):
             keycloak_url = f"http://{keycloak_url}"
 
-        return {
+        edc_http_pull = adapter_name == "edc" and self._edc_level6_uses_http_pull(config)
+        transfer_type = "HttpData-PULL" if edc_http_pull else "AmazonS3-PUSH"
+        transfer_destination_type = (
+            "HttpData"
+            if edc_http_pull
+            else ("AmazonS3" if adapter_name == "edc" else "InesDataStore")
+        )
+
+        env = {
             "provider": provider,
             "consumer": consumer,
             "provider_user": provider_creds["connector_user"]["user"],
@@ -134,17 +191,24 @@ class ValidationEngine:
                 if adapter_name == "edc"
                 else "TransferRequest"
             ),
-            "transferType": (
-                "HttpData-PULL"
-                if adapter_name == "edc"
-                else "AmazonS3-PUSH"
-            ),
-            "transferDestinationType": (
-                "HttpData"
-                if adapter_name == "edc"
-                else "InesDataStore"
-            ),
+            "transferType": transfer_type,
+            "transferDestinationType": transfer_destination_type,
         }
+        if adapter_name == "edc" and not edc_http_pull:
+            env.update(
+                {
+                    "transferDestinationBucket": f"{dataspace}-{consumer}",
+                    "transferDestinationRegion": (
+                        os.environ.get("PIONERA_LEVEL6_TRANSFER_REGION")
+                        or config.get("PIONERA_LEVEL6_TRANSFER_REGION")
+                        or config.get("EDC_AWS_REGION")
+                        or config.get("AWS_REGION")
+                        or "eu-central-1"
+                    ),
+                    "transferDestinationEndpointOverride": self._edc_minio_endpoint_override(config),
+                }
+            )
+        return env
 
     @staticmethod
     def _safe_scope_part(value):
