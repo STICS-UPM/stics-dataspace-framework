@@ -1,0 +1,319 @@
+source_documents:
+  - INESData integration flows for A5.2/E5.2
+  - Stable INESData Playwright flows in validation/ui/adapters/inesdata/specs
+  - Component integration evidence linked from Ontology Hub, AI Model Hub and Semantic Virtualization catalogs
+
+integration_cases:
+  - id: DS-UI-03
+    scope: inesdata_integration
+    case_group: dataspace
+    description: Provider asset creation and upload
+    type: ui
+    validation_type: functional
+    dataspace_dimension: publication
+    execution_mode: ui
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - Provider connector portal is reachable
+      - Provider credentials are available
+      - Upload storage is configured for the connector
+    steps:
+      - Create an asset through the provider portal
+      - Upload a file into the configured storage destination
+      - Verify that the creation flow finishes successfully
+    operations:
+      - create_asset
+      - upload_asset_file
+    expected_result: The asset is created successfully and the upload completes without HTTP errors
+    automation:
+      status: automated
+      mode: ui
+      ui_spec: validation/ui/adapters/inesdata/specs/03-provider-setup.spec.ts
+
+  - id: DS-UI-03B
+    scope: inesdata_integration
+    case_group: dataspace
+    description: Provider policy creation
+    type: ui
+    validation_type: functional
+    dataspace_dimension: governance
+    execution_mode: ui
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - Provider connector portal is reachable
+      - Provider credentials are available
+    steps:
+      - Open the policy creation view
+      - Define a participant constraint
+      - Persist the policy through the UI
+    operations:
+      - create_policy
+    expected_result: The policy is created and visible in the provider portal
+    automation:
+      status: automated
+      mode: ui
+      ui_spec: validation/ui/adapters/inesdata/specs/03b-provider-policy-create.spec.ts
+
+  - id: DS-UI-03C
+    scope: inesdata_integration
+    case_group: dataspace
+    description: Provider contract definition creation
+    type: ui
+    validation_type: functional
+    dataspace_dimension: contracts
+    execution_mode: ui
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - Provider connector portal is reachable
+      - Provider credentials are available
+      - A compatible asset and policy can be created during the flow
+    steps:
+      - Create the prerequisite asset and policy
+      - Open the contract definition view
+      - Create a contract definition that links the asset and policy
+    operations:
+      - create_contract_definition
+      - link_asset_policy
+    expected_result: The contract definition is created and listed successfully
+    automation:
+      status: automated
+      mode: ui
+      ui_spec: validation/ui/adapters/inesdata/specs/03c-provider-contract-definition-create.spec.ts
+
+  - id: DS-UI-04
+    scope: inesdata_integration
+    case_group: dataspace
+    description: Consumer catalog listing and detail
+    type: ui
+    validation_type: functional
+    dataspace_dimension: discovery
+    execution_mode: ui
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - Consumer connector portal is reachable
+      - Consumer credentials are available
+      - The catalog view is exposed by the portal
+    steps:
+      - Open the catalog section
+      - Verify that the list renders without access errors
+      - Open a catalog detail view when available
+    operations:
+      - list_catalog
+      - open_catalog_detail
+    expected_result: The consumer catalog loads and its detail surface is reachable without API errors
+    automation:
+      status: automated
+      mode: ui
+      ui_spec: validation/ui/adapters/inesdata/specs/04-consumer-catalog.spec.ts
+
+  - id: DS-UI-05
+    scope: inesdata_integration
+    case_group: dataspace
+    description: Consumer negotiation from catalog
+    type: ui
+    validation_type: integration
+    dataspace_dimension: contracts
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - Provider and consumer connectors are reachable
+      - Provider bootstrap data can be created through the management APIs
+    steps:
+      - Bootstrap a provider asset for negotiation
+      - Open the consumer catalog and locate the asset
+      - Negotiate the first available contract offer
+    operations:
+      - discover_asset
+      - negotiate_contract
+    expected_result: A contract negotiation completes successfully from the consumer UI
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/05-consumer-negotiation.spec.ts
+
+  - id: DS-UI-06
+    scope: inesdata_integration
+    case_group: dataspace
+    description: Consumer transfer from contracts and history
+    type: ui
+    validation_type: integration
+    dataspace_dimension: transfer
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - Provider and consumer connectors are reachable
+      - Provider bootstrap data can be created through the management APIs
+      - Contract negotiation can complete successfully
+    steps:
+      - Bootstrap a provider asset and negotiate it from the consumer UI
+      - Start an INESDataStore transfer from the contracts view
+      - Confirm the successful transfer in the transfer history view
+    operations:
+      - discover_asset
+      - negotiate_contract
+      - start_transfer
+      - check_transfer_history
+    expected_result: The transfer is initiated successfully and reaches a successful final state in the UI
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/06-consumer-transfer.spec.ts
+
+  - id: DS-UI-SV-01
+    scope: inesdata_integration
+    case_group: semantic_virtualization
+    description: Semantic Virtualization HttpData discovery and negotiation from INESData UI
+    type: ui
+    validation_type: integration
+    dataspace_dimension: semantic_interoperability
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - INESData provider and consumer connectors are reachable
+      - The Semantic Virtualization service is deployed in Level 5
+      - The Semantic Virtualization internal HttpData URL is reachable from connector pods
+    steps:
+      - Bootstrap a provider asset whose HttpData address points to the Semantic Virtualization query endpoint
+      - Open the consumer catalog from the INESData UI
+      - Locate and open the Semantic Virtualization asset
+      - Open contract offers and negotiate access from the UI
+    operations:
+      - publish_semantic_virtualization_httpdata
+      - discover_asset
+      - open_catalog_detail
+      - negotiate_contract
+    expected_result: The Semantic Virtualization HttpData asset is visible from the consumer UI and can be negotiated successfully
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts
+      runtime_env:
+        UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO: "1"
+      linked_cases:
+        - PT5-VS-11
+        - INT-VS-DS-01
+        - SV-GTFS-BENCH-04
+
+  - id: DS-UI-OH-01
+    scope: inesdata_integration
+    case_group: ontology_hub
+    description: Ontology Hub read-only integration from the INESData UI
+    type: ui
+    validation_type: integration
+    dataspace_dimension: semantic_interoperability
+    execution_mode: ui_readonly
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - INESData consumer connector portal is reachable
+      - Ontology Hub public API is reachable from the browser context
+      - The connector UI runtime config exposes ontologyUrl
+      - The connector shared vocabulary API is deployed
+    steps:
+      - Open the INESData connector UI and authenticate
+      - Verify that the Vocabularies route calls the shared connector vocabulary API
+      - Verify that the Ontologies route calls the Ontology Hub vocabulary list API
+      - Capture screenshots and JSON evidence without creating or deleting resources
+    operations:
+      - login
+      - open_vocabularies_route
+      - request_shared_vocabularies
+      - open_ontologies_route
+      - request_ontology_hub_vocabulary_list
+    expected_result: INESData exposes the Ontology Hub integration points and both read-only calls return HTTP 200
+    automation:
+      status: automated
+      mode: ui_readonly
+      ui_spec: validation/ui/adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts
+      runtime_env:
+        UI_ONTOLOGY_HUB_INESDATA_DEMO: "1"
+      linked_cases:
+        - PT5-OH-16
+        - INT-OH-DS-03
+
+  - id: DS-UI-AMH-01
+    scope: inesdata_integration
+    case_group: ai_model_hub
+    description: AI Model Hub HttpData model discovery and negotiation from INESData UI
+    type: ui
+    validation_type: integration
+    dataspace_dimension: model_governance
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - INESData provider and consumer connectors are reachable
+      - A controlled model endpoint can be represented as an HttpData asset
+      - The connector contract cycle is operational
+    steps:
+      - Bootstrap a provider asset whose HttpData address represents an AI Model Hub model endpoint
+      - Open the consumer catalog from the INESData UI
+      - Locate and open the AI Model Hub model asset
+      - Open contract offers and negotiate access from the UI
+    operations:
+      - publish_ai_model_httpdata
+      - discover_asset
+      - open_catalog_detail
+      - negotiate_contract
+    expected_result: The AI Model Hub HttpData model asset is visible from the consumer UI and can be negotiated successfully
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts
+      runtime_env:
+        UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
+      linked_cases:
+        - PT5-MH-03
+        - PT5-MH-08
+        - PT5-MH-09
+        - PT5-MH-10
+        - PT5-MH-18
+
+  - id: DS-UI-AMH-OBS-01
+    scope: inesdata_integration
+    case_group: ai_model_hub
+    description: AI Model Observer home and evidence navigation from INESData UI
+    type: ui
+    validation_type: non_functional
+    dataspace_dimension: model_governance
+    execution_mode: ui_contract
+    coverage_status: blocked_by_component
+    mapping_status: partial
+    preconditions:
+      - AI Model Observer UI is integrated in the INESData connector interface
+      - INESData consumer connector portal is reachable
+      - Playwright interaction markers are enabled for audit-ready evidence
+    steps:
+      - Open the INESData connector UI and authenticate
+      - Open AI Model Observer
+      - Verify the Asset timeline, Agreement evidence, Benchmark evidence and Participant summary cards
+      - Enter controlled identifiers and navigate to each evidence route
+      - Capture screenshots and JSON evidence without mutating contracts or assets
+    operations:
+      - login
+      - open_ai_model_observer
+      - verify_observer_cards
+      - navigate_asset_timeline
+      - navigate_agreement_evidence
+      - navigate_benchmark_evidence
+      - navigate_participant_summary
+    expected_result: The AI Model Observer UI is available from INESData and its main evidence navigation routes are demonstrable for auditors
+    automation:
+      status: automated_blocked
+      mode: ui_contract
+      ui_spec: validation/ui/adapters/inesdata/specs/10-ai-model-observer.spec.ts
+      runtime_env:
+        UI_AI_MODEL_OBSERVER_DEMO: "1"
+        PLAYWRIGHT_INTERACTION_MARKERS: "1"
+      linked_cases:
+        - MH-OBS-01
+        - PT5-MH-17
+        - Model Clearing House
+      notes: The validation contract is versioned, but the current environment reports a controlled skip until the Observer UI/API is integrated.

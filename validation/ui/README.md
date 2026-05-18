@@ -26,7 +26,8 @@ La suite `inesdata` sigue siendo la referencia principal y actualmente cubre:
 - `shared/components/`: page objects compartidos entre adapters, como Keycloak y MinIO.
 - `shared/fixtures/`: resolución de runtime, autenticación y evidencias.
 - `tests/`: referencias legacy; la ejecución activa se hace desde `adapters/<adapter>/specs/`.
-- `test_cases.yaml`: catálogo estable para los checks `support`, los casos de evidencia del dataspace y la suite ops.
+- `test_cases.yaml`: catálogo técnico para checks `support` y `ops`.
+- `../projects/inesdata/integration/test_cases.yaml`: catálogo canónico de los flujos de integración INESData `DS-UI-*`.
 - `reporting.py`: agregador que transforma el `results.json` de Playwright en un reporte enriquecido para `Level 6`.
 - `playwright.inesdata.config.ts`: configuración de ejecución y reporters.
 - `playwright.edc.config.ts`: configuración separada para la suite inicial del portal EDC.
@@ -219,7 +220,7 @@ Ademas, tanto `Level 6` como la opcion interactiva `I > Core` guardan un JSON en
 - `ui_validation_summary.json` en la raiz del experimento
 - `experiment_results.json` en la raiz del experimento
 
-Estos artefactos separan `support_checks`, `dataspace_cases`, `ops_checks`, `evidence_index` y `catalog_alignment` sin cambiar la ejecucion nativa de Playwright.
+Estos artefactos separan `support_checks`, `dataspace_cases`, `ops_checks`, `evidence_index` y `catalog_alignment` sin cambiar la ejecucion nativa de Playwright. Los `dataspace_cases` se enriquecen desde `validation/projects/inesdata/integration/test_cases.yaml`.
 
 ## Variables de entorno
 

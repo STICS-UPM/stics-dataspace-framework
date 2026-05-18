@@ -7,6 +7,13 @@ import yaml
 
 
 CATALOG_PATH = Path(__file__).resolve().parent / "test_cases.yaml"
+INESDATA_INTEGRATION_CATALOG_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "projects"
+    / "inesdata"
+    / "integration"
+    / "test_cases.yaml"
+)
 
 SUITE_METADATA = {
     "ui-core-smoke": {
@@ -67,9 +74,34 @@ def _normalize_catalog_entry(entry: Dict[str, Any], default_case_group: str) -> 
     return normalized
 
 
+def _load_yaml_payload(path: Path) -> Dict[str, Any]:
+    if not path.is_file():
+        return {}
+    with open(path, "r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle) or {}
+
+
+def _unique_strings(values: Sequence[str]) -> List[str]:
+    seen = set()
+    result: List[str] = []
+    for value in values:
+        normalized = str(value or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
 def load_ui_catalog() -> Dict[str, Any]:
-    with open(CATALOG_PATH, "r", encoding="utf-8") as handle:
-        payload = yaml.safe_load(handle) or {}
+    payload = _load_yaml_payload(CATALOG_PATH)
+    inesdata_payload = _load_yaml_payload(INESDATA_INTEGRATION_CATALOG_PATH)
+    integration_entries = list(
+        inesdata_payload.get("integration_cases")
+        or inesdata_payload.get("test_cases")
+        or payload.get("test_cases")
+        or []
+    )
 
     support_checks = [
         _normalize_catalog_entry(entry, "support")
@@ -77,7 +109,7 @@ def load_ui_catalog() -> Dict[str, Any]:
     ]
     dataspace_cases = [
         _normalize_catalog_entry(entry, "dataspace")
-        for entry in list(payload.get("test_cases") or [])
+        for entry in integration_entries
     ]
     ops_checks = [
         _normalize_catalog_entry(entry, "ops")
@@ -86,9 +118,17 @@ def load_ui_catalog() -> Dict[str, Any]:
 
     return {
         "source_file": str(CATALOG_PATH),
-        "source_documents": list(payload.get("source_documents") or []),
+        "source_files": {
+            "ui": str(CATALOG_PATH),
+            "inesdata_integration": str(INESDATA_INTEGRATION_CATALOG_PATH),
+        },
+        "source_documents": _unique_strings(
+            list(payload.get("source_documents") or [])
+            + list(inesdata_payload.get("source_documents") or [])
+        ),
         "support_checks": support_checks,
         "dataspace_cases": dataspace_cases,
+        "integration_cases": dataspace_cases,
         "ops_checks": ops_checks,
     }
 
@@ -225,6 +265,14 @@ def _summarize_cases(executed_cases: List[Dict[str, Any]]) -> Dict[str, int]:
 
 def _filter_case_group(executed_cases: List[Dict[str, Any]], case_group: str) -> List[Dict[str, Any]]:
     return [case for case in executed_cases if case.get("case_group") == case_group]
+
+
+def _filter_dataspace_cases(executed_cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        case
+        for case in executed_cases
+        if case.get("case_group") not in {"support", "ops"}
+    ]
 
 
 def _build_evidence_index(
@@ -521,6 +569,7 @@ def _build_catalog_alignment(
 
     return {
         "source_file": catalog.get("source_file"),
+        "source_files": dict(catalog.get("source_files") or {}),
         "source_documents": list(catalog.get("source_documents") or []),
         "summary": {
             "declared_dataspace_cases": len(declared_dataspace),
@@ -654,7 +703,7 @@ def enrich_level6_ui_result(result: Dict[str, Any]) -> Dict[str, Any]:
     else:
         executed_cases = _extract_cases_from_payload(payload, enriched, catalog_cases_by_spec)
 
-    dataspace_cases = _filter_case_group(executed_cases, "dataspace")
+    dataspace_cases = _filter_dataspace_cases(executed_cases)
     support_checks = _filter_case_group(executed_cases, "support")
     ops_checks = _filter_case_group(executed_cases, "ops")
 

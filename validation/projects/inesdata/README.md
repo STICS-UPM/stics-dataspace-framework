@@ -1,6 +1,7 @@
-# Suites extendidas de INESData
+# Suites INESData
 
-Esta carpeta define la estructura base para añadir validaciones propias a INESData en modo producción sin tocar las pruebas base usadas por PIONERA.
+Esta carpeta organiza las validaciones propias de INESData y la trazabilidad de
+sus flujos de integración A5.2/E5.2.
 
 ## Qué se reutiliza
 
@@ -11,10 +12,22 @@ Esta carpeta define la estructura base para añadir validaciones propias a INESD
 
 ## Qué se añade aquí
 
-Las pruebas particulares de INESData externo o productivo viven aquí:
+El catálogo canónico de integración INESData vive aquí:
+
+```text
+validation/projects/inesdata/integration/test_cases.yaml
+```
+
+Ese catálogo declara los casos `DS-UI-*`, su alcance de validación, trazabilidad
+y specs Playwright. Level 6 lo usa para enriquecer los reportes UI y construir
+`catalog_alignment`.
+
+Las pruebas particulares de INESData externo o productivo viven en dominios
+separados:
 
 ```text
 validation/projects/inesdata/
+  integration/
   linguistic/
   mobility/
   shared/
@@ -28,7 +41,9 @@ Cada dominio debe tener:
 
 ## Reglas
 
-- Las suites de proyecto son opt-in mediante `project_suites` en el target.
+- `integration/` forma parte de la validación A5.2 del framework.
+- `linguistic/` y `mobility/` siguen siendo suites de proyecto para targets
+  externos o productivos y se habilitan mediante `project_suites` en el target.
 - Producción debe empezar en perfil `read-only`.
 - No se deben versionar secretos, tokens, usuarios reales ni datos sensibles.
 - No se deben modificar fuentes de producto ni suites base para cubrir

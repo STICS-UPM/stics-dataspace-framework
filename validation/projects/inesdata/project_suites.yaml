@@ -1,6 +1,13 @@
 project: inesdata
-description: Suites extendidas opt-in para INESData externo.
+description: Suites INESData para integración A5.2 y validaciones externas.
 suites:
+  integration:
+    default_profile: level6
+    test_cases: integration/test_cases.yaml
+    specs_dir: ../../ui/adapters/inesdata/specs
+    fixtures_dir: shared/fixtures
+    status: active
+    execution: level6_default
   linguistic:
     default_profile: read-only
     test_cases: linguistic/test_cases.yaml

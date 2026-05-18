@@ -29,7 +29,8 @@ class Level6UiTests(unittest.TestCase):
             command = subprocess_module.run.call_args.args[0]
             env = subprocess_module.run.call_args.kwargs["env"]
             self.assertEqual(command[:3], ["npx", "playwright", "test"])
-            self.assertEqual(command[3:5], list(ui.LEVEL6_UI_SMOKE_SPECS))
+            self.assertEqual(command[3:5], ["--config", ui.LEVEL6_UI_INESDATA_CONFIG])
+            self.assertEqual(command[5:-1], list(ui.LEVEL6_UI_SMOKE_SPECS))
             self.assertEqual(command[-1], "--headed")
             self.assertEqual(env["PORTAL_BASE_URL"], "https://conn-a.example.local")
             self.assertEqual(env["PORTAL_USER"], "portal-user")
@@ -61,8 +62,9 @@ class Level6UiTests(unittest.TestCase):
 
             command = subprocess_module.run.call_args.args[0]
             env = subprocess_module.run.call_args.kwargs["env"]
-            self.assertEqual(command[3], "--workers=1")
-            self.assertEqual(command[4:], list(ui.LEVEL6_UI_DATASPACE_SPECS))
+            self.assertEqual(command[3:5], ["--config", ui.LEVEL6_UI_INESDATA_CONFIG])
+            self.assertEqual(command[5], "--workers=1")
+            self.assertEqual(command[6:], list(ui.LEVEL6_UI_DATASPACE_SPECS))
             self.assertEqual(env["UI_PROVIDER_CONNECTOR"], "conn-a")
             self.assertEqual(env["UI_CONSUMER_CONNECTOR"], "conn-b")
             self.assertEqual(env["PORTAL_TEST_FILE_MB"], "10")
