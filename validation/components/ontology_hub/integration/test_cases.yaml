@@ -132,12 +132,12 @@ test_cases:
     component: ontology_hub
     case_group: pt5
     description: Delete vocabulary entry
-    type: api
+    type: ui
     validation_type: functional
     dataspace_dimension: publication
-    execution_mode: manual
-    coverage_status: manual
-    mapping_status: supporting
+    execution_mode: ui_functional_traceability
+    coverage_status: automated_via_oh_app
+    mapping_status: mapped
     preconditions:
       - A registered ontology already exists
       - A user with delete permissions is available
@@ -147,6 +147,14 @@ test_cases:
     expected_result: The ontology is no longer available
     traceability:
       - OntHub-3
+    automation:
+      status: automated_via_oh_app
+      mode: ui_functional_traceability
+      source_suite: validation/components/ontology_hub/functional/specs/oh_app_10_vocab_management.spec.js
+      evidence_cases:
+        - OH-APP-14
+      traceability_builder: validation/components/ontology_hub/functional/pt5_traceability.py
+      notes: The functional OH-APP suite deletes the run-scoped vocabulary and maps that evidence to the official PT5 case without mutating shared seeded resources.
 
   - id: PT5-OH-04
     component: ontology_hub
@@ -155,9 +163,9 @@ test_cases:
     type: ui
     validation_type: functional
     dataspace_dimension: curation
-    execution_mode: manual
-    coverage_status: manual
-    mapping_status: supporting
+    execution_mode: ui_functional_traceability
+    coverage_status: automated_via_oh_app
+    mapping_status: mapped
     preconditions:
       - A registered ontology already exists
       - The system exposes tag management
@@ -170,6 +178,16 @@ test_cases:
       - OntHub-8
       - OntHub-9
       - OntHub-10
+    automation:
+      status: automated_via_oh_app
+      mode: ui_functional_traceability
+      source_suite: validation/components/ontology_hub/functional/specs/oh_app_19_tags.spec.js
+      evidence_cases:
+        - OH-APP-19
+        - OH-APP-20
+        - OH-APP-21
+      traceability_builder: validation/components/ontology_hub/functional/pt5_traceability.py
+      notes: The OH-APP tag-management flows create, edit and delete tags through the real Ontology Hub UI.
 
   - id: PT5-OH-05
     component: ontology_hub
@@ -178,8 +196,8 @@ test_cases:
     type: ui
     validation_type: functional
     dataspace_dimension: access_control
-    execution_mode: not_currently_executable
-    coverage_status: not_currently_executable
+    execution_mode: ui_functional_traceability
+    coverage_status: partial
     mapping_status: partial
     preconditions:
       - The system exposes user and role management
@@ -191,7 +209,20 @@ test_cases:
     expected_result: Visible options match the assigned role
     traceability:
       - OntHub-11-14
-    notes: Automation is postponed until the deployed environment provides a stable role and permission surface.
+    automation:
+      status: automated_partial
+      mode: ui_functional_traceability
+      source_suite: validation/components/ontology_hub/functional/specs/oh_app_15_agents_users.spec.js
+      evidence_cases:
+        - OH-APP-15
+        - OH-APP-16
+        - OH-APP-17
+        - OH-APP-18
+      known_component_issue_cases:
+        - OH-APP-17
+      traceability_builder: validation/components/ontology_hub/functional/pt5_traceability.py
+      notes: The suite automates the user lifecycle and role promotion path, but role-surface validation remains partial because OH-APP-17 is tracked as a component issue.
+    notes: Partial automated coverage exists through OH-APP user-management flows; complete closure depends on a stable role and permission surface in the deployed component.
 
   - id: PT5-OH-06
     component: ontology_hub
@@ -200,8 +231,8 @@ test_cases:
     type: api
     validation_type: non_functional
     dataspace_dimension: governance
-    execution_mode: not_currently_executable
-    coverage_status: not_currently_executable
+    execution_mode: ui_functional_traceability
+    coverage_status: partial
     mapping_status: partial
     preconditions:
       - The system exposes a functional auditing or logging mechanism
@@ -211,7 +242,19 @@ test_cases:
     expected_result: Actions are recorded for auditing
     traceability:
       - OntHub-15
-    notes: The framework does not yet provide stable audit evidence that can be used as an automated PT5 case.
+    automation:
+      status: automated_partial
+      mode: ui_functional_traceability
+      source_suite: validation/components/ontology_hub/functional/specs/oh_app_22_services.spec.js
+      evidence_cases:
+        - OH-APP-22
+        - OH-APP-23
+        - OH-APP-24
+      known_component_issue_cases:
+        - OH-APP-22
+      traceability_builder: validation/components/ontology_hub/functional/pt5_traceability.py
+      notes: The current automated evidence exercises real service actions that imply operational logging, but the component does not expose a stable audit trail that can be asserted directly.
+    notes: Kept as partial because the framework can execute related operations but still lacks stable audit evidence for a complete non-functional logging assertion.
 
   - id: PT5-OH-07
     component: ontology_hub
@@ -220,9 +263,9 @@ test_cases:
     type: api
     validation_type: interoperability
     dataspace_dimension: interoperability
-    execution_mode: manual
-    coverage_status: manual
-    mapping_status: supporting
+    execution_mode: ui_functional_traceability
+    coverage_status: automated_via_oh_app
+    mapping_status: mapped
     preconditions:
       - An RDF or OWL ontology is available to register
     steps:
@@ -232,6 +275,15 @@ test_cases:
     traceability:
       - OntHub-6
       - OntHub-7
+    automation:
+      status: automated_via_oh_app
+      mode: ui_functional_traceability
+      source_suite: validation/components/ontology_hub/functional/specs/oh_app_03_vocab_management.spec.js
+      evidence_cases:
+        - OH-APP-03
+        - OH-APP-04
+      traceability_builder: validation/components/ontology_hub/functional/pt5_traceability.py
+      notes: The functional suite registers ontology resources through URI/repository flows and maps them to RDF/OWL compatibility evidence.
 
   - id: PT5-OH-08
     component: ontology_hub
@@ -328,7 +380,7 @@ test_cases:
       real_flow:
         method: GET
         path: /dataset/vocabs/s4grid
-      notes: The UI exposes version history and versioned resources, but the functional selection remains only a partial PT5 coverage.
+      notes: The UI exposes version history and versioned resources, but the functional selection remains only a partial PT5 coverage. Related OH-APP version flows are tracked through functional traceability and historical failures point to component behavior rather than a missing framework runner.
 
   - id: PT5-OH-11
     component: ontology_hub
@@ -439,6 +491,8 @@ test_cases:
         path: /dataset/patterns
         query:
           q: s4grid
+      known_component_issue_cases:
+        - OH-APP-22
       notes: The check validates the public patterns page with a real vocabulary query; internal pattern generation operations still have no stable public contract in the framework.
 
   - id: PT5-OH-15

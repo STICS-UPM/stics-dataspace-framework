@@ -75,9 +75,13 @@ class AIModelHubTestCasesCatalogTests(unittest.TestCase):
         cases = {case.get("id"): case for case in catalog.get("functional_use_cases") or []}
         mobility_case = cases["MH-MOB-01"]
 
-        self.assertEqual(mobility_case["coverage_status"], "automated_fixture")
+        self.assertEqual(mobility_case["coverage_status"], "automated_source")
         self.assertEqual(mobility_case["automation"]["status"], "automated")
-        self.assertEqual(mobility_case["automation"]["mode"], "api_fixture")
+        self.assertEqual(mobility_case["automation"]["mode"], "api_source")
+        self.assertEqual(
+            mobility_case["automation"]["dataset_source"],
+            "validation/datasets/sources/gtfs-bench",
+        )
         self.assertEqual(
             mobility_case["automation"]["runner"],
             "validation/components/ai_model_hub/mobility_benchmarking_api.py",

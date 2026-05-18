@@ -66,7 +66,7 @@ test_cases:
     validation_type: functional
     dataspace_dimension: access
     execution_mode: ui
-    coverage_status: partial
+    coverage_status: automated_partial_ui
     mapping_status: partial
     preconditions:
       - AI Model Hub is deployed and reachable
@@ -77,7 +77,7 @@ test_cases:
     expected_result: The catalog loads correctly
     traceability:
       - MH-01
-    notes: Priority candidate for the first UI automation wave in the framework.
+    notes: Automated UI validation slice for QA evidence. It validates component access and catalog shell readiness; deeper catalog semantics remain covered by integration and governance flows.
     automation:
       status: automated
       mode: ui_partial
@@ -92,7 +92,7 @@ test_cases:
     validation_type: functional
     dataspace_dimension: publication
     execution_mode: ui
-    coverage_status: partial
+    coverage_status: automated_partial_ui
     mapping_status: partial
     preconditions:
       - A provider user with adequate permissions is available
@@ -112,7 +112,7 @@ test_cases:
       - MH-11
       - MH-12
       - MH-13
-    notes: The AIModelHub repository already provides a clear UI baseline for this flow, but it is not yet integrated into Validation-Environment.
+    notes: Automated UI validation slice for local model registration. It validates component-side publication behavior; federated publication is tracked separately in PT5-MH-03.
     automation:
       status: automated
       mode: ui_partial
@@ -127,8 +127,8 @@ test_cases:
     validation_type: integration
     dataspace_dimension: publication
     execution_mode: api_ui
-    coverage_status: partial
-    mapping_status: partial
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - A local model has already been registered
       - The connector federated catalog is available
@@ -139,7 +139,7 @@ test_cases:
     traceability:
       - MH-14
       - MH-15
-    notes: Key case to validate the alignment between the component UI and the connector APIs.
+    notes: Automated integration flow validating alignment between the component UI and connector APIs. It has INESData evidence with visual markers.
     automation:
       status: automated
       mode: api_ui
@@ -157,7 +157,7 @@ test_cases:
     validation_type: functional
     dataspace_dimension: discovery
     execution_mode: ui
-    coverage_status: partial
+    coverage_status: automated_partial_ui
     mapping_status: partial
     preconditions:
       - Published or visible models exist in the catalog
@@ -167,7 +167,7 @@ test_cases:
     expected_result: Models are listed correctly
     traceability:
       - MH-16
-    notes: Priority candidate for the first framework UI suite.
+    notes: Automated UI validation slice for listing readiness. It verifies the discovery shell and guards against application error states.
     automation:
       status: automated
       mode: ui_partial
@@ -182,7 +182,7 @@ test_cases:
     validation_type: functional
     dataspace_dimension: discovery
     execution_mode: ui
-    coverage_status: partial
+    coverage_status: automated_partial_ui
     mapping_status: partial
     preconditions:
       - Models are indexed in the catalog
@@ -193,7 +193,7 @@ test_cases:
     expected_result: Search results are coherent with the query
     traceability:
       - MH-17
-    notes: Priority candidate for UI automation because the flow is well defined in the E4.1 user manual.
+    notes: Automated UI validation slice for search readiness. It verifies that the discovery search surface accepts user input.
     automation:
       status: automated
       mode: ui_partial
@@ -208,7 +208,7 @@ test_cases:
     validation_type: functional
     dataspace_dimension: discovery
     execution_mode: ui
-    coverage_status: partial
+    coverage_status: automated_partial_ui
     mapping_status: partial
     preconditions:
       - The catalog shows a filter panel
@@ -225,7 +225,7 @@ test_cases:
       - MH-22
       - MH-23
       - MH-24
-    notes: Priority candidate for UI automation; it should rely on controlled demo data and stable filters.
+    notes: Automated UI validation slice for filter readiness. It verifies filter-shell availability and controlled interaction when dynamic filters exist.
     automation:
       status: automated
       mode: ui_partial
@@ -240,7 +240,7 @@ test_cases:
     validation_type: functional
     dataspace_dimension: visualization
     execution_mode: ui
-    coverage_status: partial
+    coverage_status: automated_partial_ui
     mapping_status: partial
     preconditions:
       - At least one model is visible in the catalog
@@ -251,7 +251,7 @@ test_cases:
     traceability:
       - MH-25
       - MH-26
-    notes: Priority case to complete the first discovery coverage slice.
+    notes: Automated UI/API validation slice for model details. It bootstraps controlled metadata and validates the details view.
     automation:
       status: automated
       mode: api_ui
@@ -266,8 +266,8 @@ test_cases:
     validation_type: integration
     dataspace_dimension: contracts
     execution_mode: api_ui
-    coverage_status: manual
-    mapping_status: partial
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - A model with an available contract offer exists
       - The connector contract cycle is operational
@@ -282,7 +282,7 @@ test_cases:
       - MH-30
       - MH-31
       - MH-32
-    notes: Last recommended case in the first wave. It already requires a minimal integration with EDC APIs in the environment.
+    notes: Automated integration flow. It publishes a controlled provider asset, negotiates it from the consumer catalog UI and verifies the resulting agreement.
     automation:
       status: automated
       mode: api_ui
