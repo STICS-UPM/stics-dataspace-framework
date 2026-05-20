@@ -205,6 +205,38 @@ class ReportViewerTests(unittest.TestCase):
         self.assertNotIn("\x1b", content)
         self.assertNotIn("must-not-appear-in-dashboard", content)
 
+    def test_dashboard_renders_standalone_newman_console_log_with_ansi_colors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_10-15-00"
+            self._write_json(
+                experiment / "metadata.json",
+                {
+                    "timestamp": "2026-05-03T10:15:00",
+                    "adapter": "InesdataAdapter",
+                    "topology": "local",
+                },
+            )
+            (experiment / "newman_console.log").write_text(
+                "Newman interoperability console log: /tmp/newman_console.log\n"
+                "\x1b[32m✓\x1b[0m Provider Management API Health\n"
+                "\x1b[31m✗\x1b[0m Consumer Management API Health\n"
+                "Done.\n",
+                encoding="utf-8",
+            )
+
+            inspected = reports.inspect_experiment(experiment)
+            dashboard = reports.build_experiment_dashboard(inspected)
+            content = dashboard.read_text(encoding="utf-8")
+
+        self.assertIn("Console", inspected["reports"])
+        self.assertEqual(inspected["console_logs"][0]["path"], "newman_console.log")
+        self.assertIn("Newman interoperability console log", content)
+        self.assertIn("Open raw newman_console.log", content)
+        self.assertIn("<span class='ansi-fg-green'>✓</span> Provider Management API Health", content)
+        self.assertIn("<span class='ansi-fg-red'>✗</span> Consumer Management API Health", content)
+        self.assertIn("newman_console.log", [artifact["path"] for artifact in inspected["artifacts"]])
+        self.assertNotIn("\x1b", content)
+
     def test_console_log_renderer_converts_ansi_to_safe_html(self):
         rendered = reports._ansi_to_html("\x1b[36;1mSuite: INESData\x1b[0m <unsafe>\n")
 

@@ -31,6 +31,22 @@ WINDOWS_EXPLORER_EXE = Path("/mnt/c/Windows/explorer.exe")
 WINDOWS_POWERSHELL_EXE = Path("/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
 _REPORT_SERVER_PROCESSES: list[subprocess.Popen] = []
 LEVEL6_CONSOLE_LOG_FILENAME = "level6_console.log"
+NEWMAN_CONSOLE_LOG_FILENAME = "newman_console.log"
+KAFKA_CONSOLE_LOG_FILENAME = "kafka_console.log"
+CONSOLE_LOG_ARTIFACTS = (
+    {
+        "filename": LEVEL6_CONSOLE_LOG_FILENAME,
+        "title": "Level 6 console log",
+    },
+    {
+        "filename": NEWMAN_CONSOLE_LOG_FILENAME,
+        "title": "Newman interoperability console log",
+    },
+    {
+        "filename": KAFKA_CONSOLE_LOG_FILENAME,
+        "title": "Kafka interoperability console log",
+    },
+)
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 ANSI_SGR_RE = re.compile(r"\x1B\[([0-9;]*)m")
 PLAYWRIGHT_TEST_BEGIN_RE = re.compile(r"^\s*›\s+(?P<title>.+?)\s*$")
@@ -502,7 +518,7 @@ def _discover_playwright_reports(experiment_path: Path) -> list[dict[str, str]]:
 def _artifact_links(experiment_path: Path) -> list[dict[str, str]]:
     names = [
         "metadata.json",
-        LEVEL6_CONSOLE_LOG_FILENAME,
+        *[artifact["filename"] for artifact in CONSOLE_LOG_ARTIFACTS],
         "local_capacity_preflight.json",
         "local_stability_preflight.json",
         "local_stability_postflight.json",
@@ -530,7 +546,7 @@ def _artifact_links(experiment_path: Path) -> list[dict[str, str]]:
 
 def _has_report_artifacts(experiment_path: Path) -> bool:
     standard_artifacts = {
-        LEVEL6_CONSOLE_LOG_FILENAME,
+        *[artifact["filename"] for artifact in CONSOLE_LOG_ARTIFACTS],
         "local_capacity_preflight.json",
         "local_stability_preflight.json",
         "local_stability_postflight.json",
@@ -687,8 +703,8 @@ def _line_count(value: str) -> int:
     return value.count("\n") + (0 if value.endswith("\n") else 1)
 
 
-def _console_log_summary(experiment_path: Path) -> dict[str, Any] | None:
-    path = experiment_path / LEVEL6_CONSOLE_LOG_FILENAME
+def _read_console_log_summary(experiment_path: Path, filename: str, title: str) -> dict[str, Any] | None:
+    path = experiment_path / filename
     if not path.is_file():
         return None
     try:
@@ -698,13 +714,31 @@ def _console_log_summary(experiment_path: Path) -> dict[str, Any] | None:
         return None
     content = _strip_ansi_sequences(raw_content)
     return {
-        "title": "Level 6 console log",
-        "path": LEVEL6_CONSOLE_LOG_FILENAME,
+        "title": title,
+        "path": filename,
         "content": content,
         "ansi_content": raw_content,
         "line_count": _line_count(content),
         "size_bytes": size_bytes,
     }
+
+
+def _console_log_summaries(experiment_path: Path) -> list[dict[str, Any]]:
+    logs = []
+    for artifact in CONSOLE_LOG_ARTIFACTS:
+        summary = _read_console_log_summary(
+            experiment_path,
+            artifact["filename"],
+            artifact["title"],
+        )
+        if summary:
+            logs.append(summary)
+    return logs
+
+
+def _console_log_summary(experiment_path: Path) -> dict[str, Any] | None:
+    logs = _console_log_summaries(experiment_path)
+    return logs[0] if logs else None
 
 
 def _is_reportable_experiment_path(path: Path) -> bool:
@@ -750,8 +784,8 @@ def inspect_experiment(path: str | Path) -> dict[str, Any]:
         report_kinds.append("Stability")
     if any(suite.get("kind") == "une-0087" for suite in suites):
         report_kinds.append("UNE 0087")
-    console_log = _console_log_summary(experiment_path)
-    if console_log:
+    console_logs = _console_log_summaries(experiment_path)
+    if console_logs:
         report_kinds.append("Console")
 
     result = "No failed suites detected"
@@ -774,7 +808,8 @@ def inspect_experiment(path: str | Path) -> dict[str, Any]:
         "reports": report_kinds,
         "playwright_reports": playwright_reports,
         "suites": suites,
-        "console_log": console_log,
+        "console_log": console_logs[0] if console_logs else None,
+        "console_logs": console_logs,
         "artifacts": _artifact_links(experiment_path),
     }
 
@@ -874,6 +909,7 @@ def _render_dashboard_html(experiment: dict[str, Any]) -> str:
     header {{ margin-bottom: 28px; }}
     h1 {{ margin: 0 0 8px; font-size: clamp(2rem, 4vw, 3.4rem); letter-spacing: -0.04em; }}
     h2 {{ margin: 32px 0 14px; font-size: 1.35rem; }}
+    h3 {{ margin: 18px 0 10px; font-size: 1.02rem; }}
     p {{ color: var(--muted); margin: 0; }}
     a {{ color: var(--accent); font-weight: 700; text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
@@ -968,7 +1004,7 @@ def _render_dashboard_html(experiment: dict[str, Any]) -> str:
     {suites_html}
   </section>
   <section class="section">
-    <h2>Level 6 console log</h2>
+    <h2>Console logs</h2>
     {console_log_html}
   </section>
   <section class="section">
@@ -1085,10 +1121,8 @@ def _suite_details(suite: dict[str, Any]) -> str:
     return "Summary available in linked artifact."
 
 
-def _render_console_log(experiment: dict[str, Any]) -> str:
-    console_log = experiment.get("console_log")
-    if not console_log:
-        return "<p>No Level 6 console log was detected for this experiment.</p>"
+def _render_single_console_log(console_log: dict[str, Any]) -> str:
+    title = str(console_log.get("title") or "Console log")
     content = str(console_log.get("content") or "")
     if not content:
         content = "(empty console log)"
@@ -1104,12 +1138,22 @@ def _render_console_log(experiment: dict[str, Any]) -> str:
         meta += f"; hidden {hidden_progress_lines} transient Playwright start {suffix}"
     rendered_content = _ansi_to_html(dashboard_content)
     return (
+        f"<h3>{html.escape(title)}</h3>"
         "<div class='console-meta'>"
         f"<span class='small'>{html.escape(meta)}</span>"
-        f"<a href='../{_safe_link(path)}'>Open raw console log</a>"
+        f"<a href='../{_safe_link(path)}'>Open raw {html.escape(Path(path).name)}</a>"
         "</div>"
         f"<pre class='console-log'>{rendered_content}</pre>"
     )
+
+
+def _render_console_log(experiment: dict[str, Any]) -> str:
+    console_logs = list(experiment.get("console_logs") or [])
+    if not console_logs and experiment.get("console_log"):
+        console_logs = [experiment["console_log"]]
+    if not console_logs:
+        return "<p>No console log was detected for this experiment.</p>"
+    return "\n".join(_render_single_console_log(console_log) for console_log in console_logs)
 
 
 def _render_artifact_links(experiment: dict[str, Any]) -> str:
