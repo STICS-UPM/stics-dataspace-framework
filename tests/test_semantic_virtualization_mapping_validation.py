@@ -9,6 +9,7 @@ from validation.components.semantic_virtualization.mapping_validation import (
     DEFAULT_FIXTURE_DIR,
     execute_sparql_fixture_query,
     evaluate_mapping_generation_methods,
+    evaluate_ontology_hub_mapping_reuse,
     run_semantic_virtualization_mapping_validation,
     validate_mapping_artifact,
 )
@@ -58,6 +59,18 @@ class SemanticVirtualizationMappingValidationTests(unittest.TestCase):
         )
         self.assertTrue(all(method["score"] >= method["expected_min_score"] for method in result["methods"]))
 
+    def test_ontology_hub_mapping_reuse_links_governed_ontology_to_mappings(self):
+        result = evaluate_ontology_hub_mapping_reuse()
+
+        self.assertEqual(result["status"], "passed")
+        self.assertTrue(result["ontology_artifacts"]["turtle_parseable"])
+        self.assertTrue(result["ontology_artifacts"]["rdfxml_parseable"])
+        self.assertGreaterEqual(result["ontology_profile"]["class_count"], 2)
+        self.assertGreaterEqual(result["ontology_profile"]["datatype_property_count"], 1)
+        self.assertIn("PT5-OH-07", result["linked_cases"])
+        self.assertIn("PT5-VS-06", result["linked_cases"])
+        self.assertTrue(any(term.endswith("#Stop") for term in result["referenced_ontology_terms"]))
+
     def test_run_mapping_validation_persists_report_and_standard_exports(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = run_semantic_virtualization_mapping_validation(experiment_dir=tmpdir)
@@ -65,7 +78,7 @@ class SemanticVirtualizationMappingValidationTests(unittest.TestCase):
             self.assertEqual(result["component"], "semantic-virtualization")
             self.assertEqual(result["suite"], "mapping-fixtures")
             self.assertEqual(result["status"], "passed")
-            self.assertEqual(result["summary"], {"total": 7, "passed": 7, "failed": 0, "skipped": 0})
+            self.assertEqual(result["summary"], {"total": 8, "passed": 8, "failed": 0, "skipped": 0})
             self.assertTrue(os.path.exists(result["artifacts"]["report_json"]))
 
             exported_paths = [
@@ -88,6 +101,7 @@ class SemanticVirtualizationMappingValidationTests(unittest.TestCase):
                     "PT5-VS-04",
                     "PT5-VS-05",
                     "PT5-VS-06",
+                    "INT-VS-OH-01",
                     "PT5-VS-09",
                     "PT5-VS-10",
                 },

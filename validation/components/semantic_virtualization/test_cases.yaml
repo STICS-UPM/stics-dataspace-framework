@@ -388,15 +388,15 @@ integration_cases:
     type: integration
     validation_type: integration
     dataspace_dimension: semantic_reuse
-    execution_mode: planned_traceability
-    status: pending
-    coverage_status: pending
-    mapping_status: partial
-    planned_runner: validation/components/semantic_virtualization/mapping_validation.py
+    execution_mode: offline_traceability
+    status: automated
+    coverage_status: automated
+    mapping_status: mapped
+    runner: validation/components/semantic_virtualization/mapping_validation.py
     linked_cases:
       - PT5-VS-06
       - PT5-OH-07
-    expected_result: Mapping validation should be able to reference ontology artifacts published or governed through Ontology Hub once a stable cross-component fixture is available.
+    expected_result: Mapping validation references ontology artifacts that are parseable as RDF/OWL, expose governance/catalog metadata and provide the classes and properties reused by Semantic Virtualization mappings.
 
 ui_demo_cases:
   - id: SV-UI-04

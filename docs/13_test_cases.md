@@ -43,6 +43,12 @@ porque ahí está el flujo operativo detallado.
 La suite de integración se mapea primero contra los casos PT5 normalizados,
 porque ahí está la referencia estable de evaluación.
 
+Las suites de trazabilidad cruzada se usan cuando una evidencia conecta dos o
+más componentes. Por ejemplo, `INT-VS-OH-01` valida que los mappings del
+Virtualizador reutilizan términos de una ontología RDF/OWL gobernable desde
+Ontology Hub, sin convertir esa prueba en un flujo funcional exclusivo de uno
+de los dos componentes.
+
 ## Ejemplo Aplicado a Ontology Hub
 
 | Referencia | Rango |

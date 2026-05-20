@@ -493,7 +493,7 @@ test_cases:
           q: saref4grid
       known_component_issue_cases:
         - OH-APP-22
-      notes: The check validates the public patterns page with a real vocabulary query; internal pattern generation operations still have no stable public contract in the framework.
+      notes: The API check validates the public patterns page with a real vocabulary query. The functional suite also attempts the ZIP generation flow through OH-APP-22 after refreshing the Ontology Hub index, but the current component returns HTTP 500 in /dataset/patterns because Elasticsearch reports a missing prefix.keyword mapping. The case remains partial as a component/service issue, not as a missing framework runner.
 
   - id: PT5-OH-15
     component: ontology_hub

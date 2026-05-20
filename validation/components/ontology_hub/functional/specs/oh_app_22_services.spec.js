@@ -15,6 +15,7 @@ const {
   resolveThemisTestFile,
   runtimeFromCreatedVocabulary,
   resolveThemisSource,
+  runIndexAllFromEdition,
   signInToEdition,
   signOut,
   URI_VOCAB_STATE_KEY,
@@ -78,6 +79,7 @@ test("OH-APP-22: patterns page generates a zip", async ({
 }, testInfo) => {
   test.setTimeout(360000);
   await signInToEdition(page, ontologyHubRuntime);
+  await runIndexAllFromEdition(page, ontologyHubRuntime);
   await gotoHealthyPage(page, `${ontologyHubRuntime.baseUrl}/dataset/patterns`, "Patterns");
 
   const selectAllButton = page.locator("button, input[type='submit'], input[type='button']").filter({

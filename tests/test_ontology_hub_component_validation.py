@@ -45,6 +45,17 @@ class OntologyHubComponentValidationTests(unittest.TestCase):
         self.assertEqual(case["automation"]["runtime_env"]["UI_ONTOLOGY_HUB_INESDATA_DEMO"], "1")
         self.assertNotIn("enable_with", case["automation"])
 
+    def test_pt5_oh14_remains_partial_with_patterns_component_issue(self):
+        catalog = self._load_catalog()
+        cases = {case.get("id"): case for case in catalog.get("test_cases") or []}
+        case = cases["PT5-OH-14"]
+
+        self.assertEqual(case["coverage_status"], "partial")
+        self.assertEqual(case["mapping_status"], "partial")
+        self.assertEqual(case["automation"]["runner_case"], "pt5_oh_14_patterns_access")
+        self.assertEqual(case["automation"]["known_component_issue_cases"], ["OH-APP-22"])
+        self.assertIn("missing prefix.keyword mapping", case["automation"]["notes"])
+
     def test_evaluate_term_search_response_passes_on_valid_json_payload(self):
         payload = {
             "results": [],

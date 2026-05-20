@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from rdflib import Graph, Literal, URIRef
-from rdflib.namespace import RDF
+from rdflib.namespace import OWL, RDF, RDFS
 
 
 COMPONENT_KEY = "semantic-virtualization"
@@ -58,6 +58,15 @@ CASE_METADATA: dict[str, dict[str, str]] = {
         "dataspace_dimension": "semantic_mapping",
         "expected_result": "Mappings reference existing source data and ontology terms",
     },
+    "INT-VS-OH-01": {
+        "description": "Reuse Ontology Hub governed ontology artifacts as mapping support",
+        "case_group": "cross_component_traceability",
+        "validation_type": "integration",
+        "dataspace_dimension": "semantic_reuse",
+        "automation_mode": "offline_traceability",
+        "execution_mode": "offline_traceability",
+        "expected_result": "Semantic Virtualization mappings reference ontology terms that can be governed or published through Ontology Hub",
+    },
     "PT5-VS-09": {
         "description": "Export mappings in standard formats",
         "dataspace_dimension": "mapping_export",
@@ -93,13 +102,17 @@ def _hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _parse_turtle(path: Path) -> tuple[Graph | None, list[str]]:
+def _parse_rdf(path: Path, *, rdf_format: str | None = None) -> tuple[Graph | None, list[str]]:
     graph = Graph()
     try:
-        graph.parse(path, format="turtle")
+        graph.parse(path, format=rdf_format)
     except Exception as exc:  # rdflib raises several parser-specific exceptions.
         return None, [f"{path.name} is not valid Turtle/RDF: {exc}"]
     return graph, []
+
+
+def _parse_turtle(path: Path) -> tuple[Graph | None, list[str]]:
+    return _parse_rdf(path, rdf_format="turtle")
 
 
 def _ontology_terms(ontology_graph: Graph) -> set[URIRef]:
@@ -250,12 +263,12 @@ def _case_result(case_id: str, status: str, assertions: list[str], evidence: dic
         "test_case_id": case_id,
         "description": metadata["description"],
         "type": "offline_fixture",
-        "case_group": "pt5",
-        "validation_type": "functional",
+        "case_group": metadata.get("case_group", "pt5"),
+        "validation_type": metadata.get("validation_type", "functional"),
         "dataspace_dimension": metadata["dataspace_dimension"],
         "mapping_status": "mapped",
-        "automation_mode": "offline_fixture",
-        "execution_mode": "offline_fixture",
+        "automation_mode": metadata.get("automation_mode", "offline_fixture"),
+        "execution_mode": metadata.get("execution_mode", "offline_fixture"),
         "coverage_status": "automated",
         "evaluation": {
             "status": status,
@@ -365,6 +378,114 @@ def execute_sparql_fixture_query(
         "row_count": len(rows),
         "query_sha256": hashlib.sha256(query_text.encode("utf-8")).hexdigest(),
         "graph_sha256": _hash_file(graph_file),
+    }
+
+
+def evaluate_ontology_hub_mapping_reuse(
+    *,
+    fixture_dir: str | os.PathLike[str] = DEFAULT_FIXTURE_DIR,
+) -> dict[str, Any]:
+    fixture_root = Path(fixture_dir)
+    turtle_ontology = fixture_root / "ontology" / "mobility-mini.ttl"
+    rdfxml_ontology = fixture_root / "ontology" / "mobility-mini.owl"
+    assertions: list[str] = []
+
+    turtle_graph, turtle_errors = _parse_turtle(turtle_ontology)
+    rdfxml_graph, rdfxml_errors = _parse_rdf(rdfxml_ontology, rdf_format="xml")
+    assertions.extend(turtle_errors)
+    assertions.extend(rdfxml_errors)
+
+    ontology_subjects: list[URIRef] = []
+    classes: list[URIRef] = []
+    datatype_properties: list[URIRef] = []
+    object_properties: list[URIRef] = []
+    ontology_labels: list[str] = []
+
+    if turtle_graph is not None:
+        ontology_subjects = [
+            subject
+            for subject in turtle_graph.subjects(RDF.type, OWL.Ontology)
+            if isinstance(subject, URIRef)
+        ]
+        classes = [
+            subject
+            for subject in turtle_graph.subjects(RDF.type, OWL.Class)
+            if isinstance(subject, URIRef)
+        ]
+        datatype_properties = [
+            subject
+            for subject in turtle_graph.subjects(RDF.type, OWL.DatatypeProperty)
+            if isinstance(subject, URIRef)
+        ]
+        object_properties = [
+            subject
+            for subject in turtle_graph.subjects(RDF.type, OWL.ObjectProperty)
+            if isinstance(subject, URIRef)
+        ]
+        ontology_labels = [
+            str(label)
+            for subject in ontology_subjects
+            for label in turtle_graph.objects(subject, RDFS.label)
+        ]
+
+    if not ontology_subjects:
+        assertions.append("Expected an owl:Ontology declaration in the reusable ontology artifact")
+    if not classes:
+        assertions.append("Expected ontology classes to support mapping authoring")
+    if not (datatype_properties or object_properties):
+        assertions.append("Expected ontology properties to support predicate/object maps")
+    if not ontology_labels:
+        assertions.append("Expected a human-readable ontology label for governance/catalog evidence")
+
+    valid_mapping_paths = sorted(
+        path for path in (fixture_root / "mappings").glob("*.ttl")
+        if not path.name.startswith("invalid_")
+    )
+    mapping_validations = [
+        validate_mapping_artifact(path, fixture_dir=fixture_root, ontology_path=turtle_ontology)
+        for path in valid_mapping_paths
+    ]
+    assertions.extend(
+        assertion
+        for result in mapping_validations
+        for assertion in result.get("assertions", [])
+    )
+
+    if not mapping_validations:
+        assertions.append("Expected at least one mapping fixture to validate ontology reuse")
+    if any(not result.get("ontology_terms") for result in mapping_validations):
+        assertions.append("Expected every valid mapping fixture to reference reusable ontology terms")
+
+    referenced_terms = sorted(
+        {
+            term
+            for result in mapping_validations
+            for term in result.get("ontology_terms", [])
+        }
+    )
+    if len(referenced_terms) < 2:
+        assertions.append("Expected mappings to reuse at least two ontology terms")
+
+    return {
+        "status": "failed" if assertions else "passed",
+        "assertions": assertions,
+        "ontology_artifacts": {
+            "turtle": str(turtle_ontology),
+            "rdfxml": str(rdfxml_ontology),
+            "turtle_parseable": turtle_graph is not None,
+            "rdfxml_parseable": rdfxml_graph is not None,
+        },
+        "ontology_profile": {
+            "ontology_iris": sorted(str(subject) for subject in ontology_subjects),
+            "labels": ontology_labels,
+            "class_count": len(classes),
+            "datatype_property_count": len(datatype_properties),
+            "object_property_count": len(object_properties),
+        },
+        "mapping_count": len(mapping_validations),
+        "referenced_ontology_terms": referenced_terms,
+        "mapping_validations": mapping_validations,
+        "linked_cases": ["PT5-VS-06", "PT5-OH-07"],
     }
 
 
@@ -559,6 +680,7 @@ def run_semantic_virtualization_mapping_validation(
         complex_query_result,
         expected_pairs=expected_route_stop_pairs,
     )
+    ontology_hub_reuse = evaluate_ontology_hub_mapping_reuse(fixture_dir=fixture_root)
     generation_evaluation = evaluate_mapping_generation_methods(fixture_dir=fixture_root)
 
     cases = [
@@ -618,6 +740,14 @@ def run_semantic_virtualization_mapping_validation(
             {
                 "ontology_path": str(fixture_root / "ontology" / "mobility-mini.ttl"),
                 "valid_mappings": valid_results,
+            },
+        ),
+        _case_result(
+            "INT-VS-OH-01",
+            "passed" if ontology_hub_reuse.get("status") == "passed" else "failed",
+            list(ontology_hub_reuse.get("assertions") or []),
+            {
+                "ontology_hub_reuse": ontology_hub_reuse,
             },
         ),
     ]

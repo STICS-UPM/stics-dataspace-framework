@@ -27,11 +27,13 @@ No está pensada para un componente concreto. Está pensada para responder a una
 
 La carpeta `validation/components/` separa validaciones específicas por componente.
 
-Hoy conviven dos situaciones:
+Hoy conviven estas validaciones registradas:
 
-- `ontology_hub/` ya actúa como implementación de referencia y sí puede ejecutarse automáticamente desde `Level 6`.
-- `ai_model_hub/` ya dispone de estructura base y catálogo PT5, pero todavía no tiene runner registrado ni se ejecuta automáticamente.
-- `semantic_virtualization/` sigue siendo estructura reservada para futuras implementaciones.
+- `ontology_hub/` ejecuta validaciones funcionales e integración desde `Level 6`.
+- `ai_model_hub/` ejecuta bootstrap, UI funcional, ejecución, benchmarking,
+  movilidad, gobernanza de conectores y Observer/Clearing House.
+- `semantic_virtualization/` ejecuta API, mappings, GTFS-Bench, materialización,
+  UI funcional y trazabilidad cruzada con INESData, AI Model Hub y Ontology Hub.
 
 La ejecución automática de una validación de componente depende de dos condiciones:
 
@@ -58,18 +60,24 @@ Además de la validación core, algunos componentes pueden tener también prueba
 
 ### Pruebas UI
 
-La carpeta `validation/ui/` contiene suites Playwright activas para:
+La carpeta `validation/ui/` contiene suites Playwright adapter-aware activas para:
 
 - login y shell del conector
 - flujo provider
 - flujo consumer
 - negociación
 - transferencia
-- comprobaciones visuales opcionales de MinIO Console
+- integraciones UI de INESData con Ontology Hub, AI Model Hub y Semantic
+  Virtualization cuando el adapter lo soporta
+- comprobaciones visuales de soporte operativo, como MinIO Console
 
-`Level 6` ejecuta por defecto un smoke UI estable por conector y, cuando la suite existe, la comprobación UI de MinIO. Esa comprobación puede desactivarse con `LEVEL6_RUN_UI_OPS=false`.
+`Level 6` ejecuta las suites UI registradas para el adapter activo y separa las
+pruebas funcionales de componente de las pruebas de integración a través de
+INESData o EDC. Las comprobaciones operativas de MinIO pueden desactivarse con
+`LEVEL6_RUN_UI_OPS=false`.
 
-Además, `ontology_hub` dispone de su propia suite UI dentro de `validation/components/ontology_hub/ui/`, separada de la UI del dataspace core.
+Además, los componentes pueden tener suites UI propias bajo
+`validation/components/<component>/ui/`, separadas de la UI del dataspace core.
 
 ## Qué debe saber un desarrollador de componentes
 

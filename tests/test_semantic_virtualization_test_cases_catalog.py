@@ -118,6 +118,19 @@ class SemanticVirtualizationTestCasesCatalogTests(unittest.TestCase):
                 self.assertTrue(case.get("mapping_status"))
                 self.assertTrue(case.get("expected_result"))
 
+    def test_catalog_declares_ontology_hub_cross_component_traceability_as_automated(self):
+        catalog = self._load_catalog()
+        cases = {case.get("id"): case for case in catalog.get("integration_cases") or []}
+
+        self.assertEqual(cases["INT-VS-OH-01"]["status"], "automated")
+        self.assertEqual(cases["INT-VS-OH-01"]["coverage_status"], "automated")
+        self.assertEqual(cases["INT-VS-OH-01"]["mapping_status"], "mapped")
+        self.assertEqual(
+            cases["INT-VS-OH-01"]["runner"],
+            "validation/components/semantic_virtualization/mapping_validation.py",
+        )
+        self.assertIn("PT5-OH-07", cases["INT-VS-OH-01"]["linked_cases"])
+
 
 if __name__ == "__main__":
     unittest.main()
