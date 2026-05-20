@@ -100,9 +100,9 @@ sudo apt-get update
 sudo apt-get install -y nodejs npm openjdk-17-jdk
 ```
 
-El bootstrap también crea automáticamente los ficheros locales
-`deployer.config` a partir de sus `.example` cuando aún no existen. No los
-sobrescribe si ya estaban creados.
+El bootstrap también crea automáticamente los ficheros locales `deployer.config`
+y los overlays `deployers/infrastructure/topologies/*.config` a partir de sus
+`.example` cuando aún no existen. No los sobrescribe si ya estaban creados.
 
 3. Activa el entorno Python raíz:
 
@@ -116,6 +116,9 @@ credenciales, dominios, dataspaces o componentes:
 
 ```text
 deployers/infrastructure/deployer.config
+deployers/infrastructure/topologies/local.config
+deployers/infrastructure/topologies/vm-single.config
+deployers/infrastructure/topologies/vm-distributed.config
 deployers/inesdata/deployer.config
 deployers/edc/deployer.config
 ```
@@ -181,15 +184,13 @@ separación explícita:
 
 ```bash
 cd ~/Validation-Environment
-cp deployers/infrastructure/deployer.config.example deployers/infrastructure/deployer.config
-cp deployers/infrastructure/topologies/vm-single.config.example \
-  deployers/infrastructure/topologies/vm-single.config
+bash scripts/bootstrap_framework.sh --skip-root-node --skip-ui-node --skip-playwright
 nano deployers/infrastructure/deployer.config
 nano deployers/infrastructure/topologies/vm-single.config
 ```
 
-Si el fichero local ya existe, omite el `cp` y edítalo directamente. Para el
-overlay `vm-single`, el bloque mínimo esperado es:
+Si el fichero local ya existe, el bootstrap lo reutiliza y no lo sobrescribe.
+Para el overlay `vm-single`, el bloque mínimo esperado es:
 
 ```ini
 VM_EXTERNAL_IP=192.0.2.10

@@ -90,6 +90,11 @@ Regla práctica:
   dependientes de la topología activa
 - las variables `PIONERA_*` siguen teniendo prioridad máxima
 
+El bootstrap crea automáticamente los `.config` locales desde sus
+`.config.example` cuando aún no existen y no sobrescribe ficheros locales ya
+ajustados. Los `.config.example` son las plantillas versionables; los `.config`
+locales no deben subirse al repositorio.
+
 Durante la migración, el framework sigue tolerando claves de topología en la
 base común para no romper entornos existentes. Aun así, la CLI ya emite
 warnings cuando detecta ese drift y te indica el overlay correcto, por ejemplo

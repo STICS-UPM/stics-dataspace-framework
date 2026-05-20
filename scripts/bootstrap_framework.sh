@@ -11,6 +11,7 @@ UI_PACKAGE_JSON="$UI_DIR/package.json"
 INFRASTRUCTURE_CONFIG_DIR="$ROOT_DIR/deployers/infrastructure"
 INFRASTRUCTURE_CONFIG="$INFRASTRUCTURE_CONFIG_DIR/deployer.config"
 INFRASTRUCTURE_CONFIG_EXAMPLE="$INFRASTRUCTURE_CONFIG_DIR/deployer.config.example"
+INFRASTRUCTURE_TOPOLOGIES_DIR="$INFRASTRUCTURE_CONFIG_DIR/topologies"
 INESDATA_CONFIG_DIR="$ROOT_DIR/deployers/inesdata"
 INESDATA_CONFIG="$INESDATA_CONFIG_DIR/deployer.config"
 INESDATA_CONFIG_EXAMPLE="$INESDATA_CONFIG_DIR/deployer.config.example"
@@ -228,9 +229,27 @@ Options:
   --skip-playwright         Skip Playwright browser installation
   --skip-root-node          Skip 'npm install' in the repo root
   --skip-ui-node            Skip 'npm install' in validation/ui
-  --skip-deployer-config    Do not create deployer.config files from the example files
+  --skip-deployer-config    Do not create local config files from the example files
   -h, --help                Show this help
 EOF
+}
+
+initialize_config_from_example() {
+  local config_dir="$1"
+  local config_path="$2"
+  local example_path="$3"
+  local label="$4"
+  local example_label="$5"
+
+  mkdir -p "$config_dir"
+  if [[ ! -f "$config_path" && -f "$example_path" ]]; then
+    log "Creating $label from $example_label"
+    cp "$example_path" "$config_path"
+  elif [[ -f "$config_path" ]]; then
+    log "Reusing existing $label"
+  else
+    log "$example_label not found; skipping $label initialization"
+  fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -352,22 +371,22 @@ if [[ "$SKIP_DEPLOYER_CONFIG_INIT" == false ]]; then
     "$EDC_CONFIG_DIR|$EDC_CONFIG|$EDC_CONFIG_EXAMPLE|deployers/edc/deployer.config|deployers/edc/deployer.config.example"
   do
     IFS='|' read -r config_dir config_path example_path label example_label <<<"$config_pair"
-    mkdir -p "$config_dir"
-    if [[ ! -f "$config_path" && -f "$example_path" ]]; then
-      log "Creating $label from $example_label"
-      cp "$example_path" "$config_path"
-    elif [[ -f "$config_path" ]]; then
-      log "Reusing existing $label"
-    else
-      log "$example_label not found; skipping $label initialization"
-    fi
+    initialize_config_from_example "$config_dir" "$config_path" "$example_path" "$label" "$example_label"
+  done
+  for topology_name in local vm-single vm-distributed; do
+    initialize_config_from_example \
+      "$INFRASTRUCTURE_TOPOLOGIES_DIR" \
+      "$INFRASTRUCTURE_TOPOLOGIES_DIR/$topology_name.config" \
+      "$INFRASTRUCTURE_TOPOLOGIES_DIR/$topology_name.config.example" \
+      "deployers/infrastructure/topologies/$topology_name.config" \
+      "deployers/infrastructure/topologies/$topology_name.config.example"
   done
 else
-  log "Skipping deployer.config initialization"
+  log "Skipping local config initialization"
 fi
 
 log "Bootstrap completed"
 log "Next steps:"
 log "  1. Activate the root environment: source .venv/bin/activate"
-log "  2. Review deployers/infrastructure/deployer.config, deployers/inesdata/deployer.config and deployers/edc/deployer.config if needed"
+log "  2. Review generated deployer.config and topology .config files if needed"
 log "  3. Run: python3 main.py menu"

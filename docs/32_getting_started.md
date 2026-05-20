@@ -62,9 +62,10 @@ para evitar que las validaciones UI fallen al arrancar el navegador. En
 entornos donde no se puedan instalar paquetes del sistema, usa
 `bash scripts/bootstrap_framework.sh --without-system-deps`.
 
-El bootstrap también crea automáticamente los `deployer.config` locales desde
-sus ficheros `.example` cuando aún no existen. Si ya existen, los reutiliza y no
-los sobrescribe.
+El bootstrap también crea automáticamente los `deployer.config` locales y los
+overlays `deployers/infrastructure/topologies/*.config` desde sus ficheros
+`.example` cuando aún no existen. Si ya existen, los reutiliza y no los
+sobrescribe.
 
 Después activa el entorno Python raíz:
 
@@ -78,6 +79,9 @@ dominios, dataspaces o componentes:
 
 ```text
 deployers/infrastructure/deployer.config
+deployers/infrastructure/topologies/local.config
+deployers/infrastructure/topologies/vm-single.config
+deployers/infrastructure/topologies/vm-distributed.config
 deployers/inesdata/deployer.config
 deployers/edc/deployer.config
 ```
@@ -103,7 +107,10 @@ deployers/inesdata/deployer.config
 deployers/edc/deployer.config
 ```
 
-Usa los ficheros `.example` como plantilla cuando existan. Los ficheros locales `deployer.config` pueden contener credenciales y no deben subirse al repositorio.
+Usa los ficheros `.example` como plantilla cuando existan. Los ficheros locales
+`deployer.config` y `deployers/infrastructure/topologies/*.config` pueden
+contener credenciales, rutas o direcciones específicas del entorno y no deben
+subirse al repositorio.
 
 La topología local tiene un overlay propio en:
 
@@ -111,11 +118,10 @@ La topología local tiene un overlay propio en:
 deployers/infrastructure/topologies/local.config
 ```
 
-Este fichero puede versionarse si solo contiene valores locales no sensibles.
-La configuración local de referencia no incluye credenciales, tokens, rutas de
-usuario ni IP privadas: usa `localhost`, hostnames de desarrollo, driver Docker
-y recursos de Minikube. No confundas este fichero con `deployer.config`: los
-`deployer.config` sí pueden contener secretos y deben permanecer locales.
+Este fichero es local y se crea desde `local.config.example` durante el
+bootstrap si aún no existe. No debe versionarse. La configuración local de
+referencia no incluye credenciales, tokens, rutas de usuario ni IP privadas: usa
+`localhost`, hostnames de desarrollo, driver Docker y recursos de Minikube.
 
 Valores locales recomendados para un adapter cada vez:
 

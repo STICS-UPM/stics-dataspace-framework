@@ -70,8 +70,7 @@ newman/
 # =========================
 deployer.config
 /deployer.config.example
-deployers/infrastructure/topologies/vm-single.config
-deployers/infrastructure/topologies/vm-distributed.config
+deployers/infrastructure/topologies/*.config
 inesdata-deployment/
 edc-deployment/
 

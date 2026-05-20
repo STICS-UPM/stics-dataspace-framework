@@ -37,6 +37,16 @@ class BootstrapFrameworkTests(unittest.TestCase):
             with open(os.path.join(deployer_dir, "deployer.config.example"), "w", encoding="utf-8") as handle:
                 handle.write(marker)
 
+        topology_dir = os.path.join(root, "deployers", "infrastructure", "topologies")
+        os.makedirs(topology_dir, exist_ok=True)
+        for topology_name, marker in (
+            ("local", "CLUSTER_TYPE=minikube\n"),
+            ("vm-single", "VM_EXTERNAL_IP=192.0.2.10\n"),
+            ("vm-distributed", "VM_PROVIDER_IP=192.0.2.20\n"),
+        ):
+            with open(os.path.join(topology_dir, f"{topology_name}.config.example"), "w", encoding="utf-8") as handle:
+                handle.write(marker)
+
         fake_bin = os.path.join(root, "fake-bin")
         os.makedirs(fake_bin, exist_ok=True)
         fake_python = os.path.join(fake_bin, "python3")
@@ -346,6 +356,11 @@ class BootstrapFrameworkTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(root, "deployers", "infrastructure", "deployer.config")))
         self.assertTrue(os.path.isfile(os.path.join(root, "deployers", "inesdata", "deployer.config")))
         self.assertTrue(os.path.isfile(os.path.join(root, "deployers", "edc", "deployer.config")))
+        self.assertTrue(os.path.isfile(os.path.join(root, "deployers", "infrastructure", "topologies", "local.config")))
+        self.assertTrue(os.path.isfile(os.path.join(root, "deployers", "infrastructure", "topologies", "vm-single.config")))
+        self.assertTrue(
+            os.path.isfile(os.path.join(root, "deployers", "infrastructure", "topologies", "vm-distributed.config"))
+        )
 
         with open(os.path.join(root, "deployers", "infrastructure", "deployer.config"), encoding="utf-8") as handle:
             self.assertIn("KC_URL=http://keycloak.local", handle.read())
@@ -353,6 +368,11 @@ class BootstrapFrameworkTests(unittest.TestCase):
             self.assertIn("DS_1_NAME=demo", handle.read())
         with open(os.path.join(root, "deployers", "edc", "deployer.config"), encoding="utf-8") as handle:
             self.assertIn("EDC_DASHBOARD_ENABLED=true", handle.read())
+        with open(
+            os.path.join(root, "deployers", "infrastructure", "topologies", "vm-single.config"),
+            encoding="utf-8",
+        ) as handle:
+            self.assertIn("VM_EXTERNAL_IP=192.0.2.10", handle.read())
 
     def test_bootstrap_skip_deployer_config_leaves_configs_absent(self):
         root, fake_bin = self._prepare_workspace()
@@ -378,6 +398,11 @@ class BootstrapFrameworkTests(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(root, "deployers", "infrastructure", "deployer.config")))
         self.assertFalse(os.path.exists(os.path.join(root, "deployers", "inesdata", "deployer.config")))
         self.assertFalse(os.path.exists(os.path.join(root, "deployers", "edc", "deployer.config")))
+        self.assertFalse(os.path.exists(os.path.join(root, "deployers", "infrastructure", "topologies", "local.config")))
+        self.assertFalse(os.path.exists(os.path.join(root, "deployers", "infrastructure", "topologies", "vm-single.config")))
+        self.assertFalse(
+            os.path.exists(os.path.join(root, "deployers", "infrastructure", "topologies", "vm-distributed.config"))
+        )
 
     def test_bootstrap_installs_playwright_system_deps_by_default_on_linux(self):
         root, fake_bin = self._prepare_workspace()
