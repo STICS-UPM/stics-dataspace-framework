@@ -142,6 +142,22 @@ La topología distribuida debe cambiar placement, direcciones y routing, pero no
 debe cambiar estos nombres funcionales salvo que se introduzca una migración
 explícita y compatible en el resolvedor común de namespaces.
 
+## Arranque En Frío y Readiness
+
+En una instalación limpia o después de reiniciar el entorno, algunos servicios
+pueden requerir más tiempo para estar operativos aunque sus recursos de
+Kubernetes ya existan. Esto aplica especialmente a `local` y `vm-single`, donde
+imágenes locales, volúmenes persistentes, DNS interno, Vault, Keycloak, bases de
+datos, conectores y componentes se inicializan en la misma máquina.
+
+Si un nivel falla por timeout de readiness, se deben revisar los logs del
+componente y del servicio dependiente antes de relanzar el nivel afectado. Una
+reejecución puede completarse correctamente cuando el primer intento ya dejó
+inicializados recursos persistentes o imágenes locales. Este comportamiento no
+debe ocultar fallos recurrentes: si el error se reproduce tras reinicio o desde
+un entorno limpio, debe tratarse como incidencia del framework, del despliegue o
+del componente correspondiente.
+
 ## Local
 
 `local` usa Minikube.
