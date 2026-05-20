@@ -1396,6 +1396,101 @@ minio:
             include_public_portal=True,
         )
 
+    def test_deploy_dataspace_uses_level3_local_image_overrides_when_prepared(self):
+        config = LevelOutputPublicPortalConfig(self.tmpdir.name)
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "DS_1_NAME": "demo",
+                "DS_1_CONNECTORS": "citycouncil",
+            }
+        )
+        adapter_root = os.path.join(self.tmpdir.name, "adapters", "inesdata")
+        script_path = os.path.join(adapter_root, "scripts", "local_build_load_deploy.sh")
+        for source_name in (
+            "inesdata-registration-service",
+            "inesdata-public-portal-backend",
+            "inesdata-public-portal-frontend",
+        ):
+            os.makedirs(os.path.join(adapter_root, "sources", source_name), exist_ok=True)
+        os.makedirs(os.path.dirname(script_path), exist_ok=True)
+        with open(script_path, "w", encoding="utf-8") as handle:
+            handle.write("#!/usr/bin/env bash\n")
+
+        overrides_dir = os.path.join(adapter_root, "build", "local-overrides")
+        os.makedirs(overrides_dir, exist_ok=True)
+        registration_override = os.path.join(overrides_dir, "registration-local-overrides.yaml")
+        public_portal_override = os.path.join(overrides_dir, "public-portal-local-overrides.yaml")
+        with open(registration_override, "w", encoding="utf-8") as handle:
+            handle.write("registration:\n  image:\n    name: local/inesdata-registration-service\n    tag: test\n")
+        with open(public_portal_override, "w", encoding="utf-8") as handle:
+            handle.write("backend:\n  image:\n    name: local/inesdata-public-portal-backend\n    tag: test\n")
+
+        infrastructure = INESDataInfrastructureAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            config_adapter=self.config_adapter,
+            config_cls=config,
+        )
+        seen_commands = []
+
+        def run(cmd, **_kwargs):
+            seen_commands.append(cmd)
+            return "127.0.0.1" if cmd == "minikube ip" else object()
+
+        deployment = INESDataDeploymentAdapter(
+            run=run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=infrastructure,
+            config_adapter=self.config_adapter,
+            config_cls=config,
+        )
+        deployment.connectors_adapter = FakeConnectorsAdapter()
+        infrastructure.ensure_local_infra_access = mock.Mock(return_value=True)
+        infrastructure.ensure_vault_unsealed = lambda: True
+        infrastructure.reconcile_vault_state_for_local_runtime = mock.Mock(return_value=True)
+        infrastructure.sync_common_credentials_from_kubernetes = mock.Mock(return_value=True)
+        infrastructure.deploy_helm_release = mock.Mock(return_value=True)
+        infrastructure.wait_for_dataspace_level3_pods = mock.Mock(return_value=True)
+        infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
+        deployment.wait_for_keycloak_admin_ready = lambda *_args, **_kwargs: True
+        deployment.restart_registration_service = lambda: None
+        deployment.update_helm_values_with_host_aliases = mock.Mock()
+
+        with mock.patch(
+            "adapters.inesdata.deployment.ensure_python_requirements",
+            lambda *_args, **_kwargs: None,
+        ), mock.patch(
+            "adapters.inesdata.deployment.requests.get",
+            return_value=mock.Mock(status_code=200),
+        ), mock.patch(
+            "adapters.shared.deployment.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+        ):
+            deployment.deploy_dataspace()
+
+        local_image_commands = [
+            command for command in seen_commands if "local_build_load_deploy.sh" in str(command)
+        ]
+        self.assertEqual(len(local_image_commands), 1)
+        self.assertIn("--deploy-target dataspace --skip-deploy", local_image_commands[0])
+        infrastructure.deploy_helm_release.assert_has_calls([
+            mock.call(
+                "registration-service",
+                "demo-core-ns",
+                [config.registration_values_file(), registration_override],
+                cwd=config.registration_service_dir(),
+            ),
+            mock.call(
+                "public-portal",
+                "demo-core-ns",
+                [config.public_portal_values_file(), public_portal_override],
+                cwd=config.public_portal_dir(),
+                timeout_seconds=300,
+            ),
+        ])
+
     def test_deploy_dataspace_for_vm_single_k3s_prepulls_level3_images_before_helm(self):
         config = LevelOutputPublicPortalConfig(self.tmpdir.name)
         self.config_adapter = LevelOutputConfigAdapter(

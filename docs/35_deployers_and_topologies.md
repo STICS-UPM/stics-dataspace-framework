@@ -142,7 +142,7 @@ La topología distribuida debe cambiar placement, direcciones y routing, pero no
 debe cambiar estos nombres funcionales salvo que se introduzca una migración
 explícita y compatible en el resolvedor común de namespaces.
 
-## Arranque En Frío y Readiness
+## Arranque en Frío y Readiness
 
 En una instalación limpia o después de reiniciar el entorno, algunos servicios
 pueden requerir más tiempo para estar operativos aunque sus recursos de

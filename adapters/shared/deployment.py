@@ -376,6 +376,19 @@ class SharedDataspaceDeploymentAdapter:
             self._prepull_k3s_image(image, timeout_seconds)
         print("Level 3 k3s image pre-pull completed.")
 
+    def _prepare_level3_local_dataspace_images(self, *, topology, namespace, dataspace):
+        del topology, namespace, dataspace
+        return True
+
+    def _level3_local_dataspace_images_prepared(self):
+        return False
+
+    def _level3_registration_values_files(self, values_file):
+        return values_file
+
+    def _level3_public_portal_values_files(self, values_file):
+        return values_file
+
     def _host_alias_ip_for_topology(self, topology):
         normalized_topology = normalize_topology(topology)
         cluster_type = str(self._cluster_runtime(normalized_topology).get("cluster_type") or "minikube").strip().lower()
@@ -583,6 +596,8 @@ class SharedDataspaceDeploymentAdapter:
                 root_cause="connector endpoints could not be reconciled from deployer.config",
             )
 
+        public_portal_values_files = self._level3_public_portal_values_files(values_file)
+
         chart_dir_getter = getattr(self.config, "public_portal_dir", None)
         release_getter = getattr(self.config, "helm_release_public_portal", None)
         if not callable(chart_dir_getter) or not callable(release_getter):
@@ -592,13 +607,14 @@ class SharedDataspaceDeploymentAdapter:
         if not os.path.exists(chart_dir):
             self._fail("Public portal chart directory not found", root_cause=chart_dir)
 
-        self._prepull_level3_k3s_images_if_needed(topology, [values_file])
+        if not self._level3_local_dataspace_images_prepared():
+            self._prepull_level3_k3s_images_if_needed(topology, [values_file])
 
         print("\nDeploying public portal...")
         if not self.infrastructure.deploy_helm_release(
             release_getter(),
             self._public_portal_namespace(),
-            values_file,
+            public_portal_values_files,
             cwd=chart_dir,
             timeout_seconds=300,
         ):
@@ -937,16 +953,26 @@ class SharedDataspaceDeploymentAdapter:
         if not os.path.exists(values_file):
             self._fail("Registration service values file not found")
 
+        if not self._prepare_level3_local_dataspace_images(
+            topology=normalized_topology,
+            namespace=self._registration_service_namespace(),
+            dataspace=ds_name,
+        ):
+            self._fail("Error preparing local Level 3 dataspace images")
+
+        registration_values_files = self._level3_registration_values_files(values_file)
+
         if update_minikube_host_aliases:
             self.update_helm_values_with_host_aliases(values_file, topology=normalized_topology)
 
-        self._prepull_level3_k3s_images_if_needed(normalized_topology, [values_file])
+        if not self._level3_local_dataspace_images_prepared():
+            self._prepull_level3_k3s_images_if_needed(normalized_topology, [values_file])
 
         print("\nDeploying registration-service...")
         if not self.infrastructure.deploy_helm_release(
             self.config.helm_release_rs(),
             self._registration_service_namespace(),
-            values_file,
+            registration_values_files,
             cwd=self.config.registration_service_dir()
         ):
             self._fail("Error deploying registration-service")
