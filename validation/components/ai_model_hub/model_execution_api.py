@@ -197,9 +197,34 @@ class AIModelHubModelExecutionApiSuite:
                 "name": f"AI Model Hub executable model {suffix}",
                 "version": "1.0.0",
                 "shortDescription": "Temporary model endpoint for A5.2 execution API smoke",
-                "assetType": "ai-model-execution-endpoint",
+                "assetType": "machineLearning",
                 "dct:description": "HttpData endpoint consumed through the connector-side model execution API",
                 "dcat:keyword": ["validation", "ai-model-hub", "model-execution", "A5.2"],
+                "daimo:asset_kind": "model",
+                "daimo:task": "text-classification",
+                "daimo:subtask": "sentiment-analysis",
+                "daimo:algorithm": "deterministic-rule-engine",
+                "daimo:library": "flask",
+                "daimo:framework": "model-server",
+                "daimo:software": "pionera-validation-framework",
+                "daimo:inference_path": DEFAULT_MODEL_PATH,
+                "task": "text-classification",
+                "subtask": "sentiment-analysis",
+                "algorithm": "deterministic-rule-engine",
+                "library": "flask",
+                "framework": "model-server",
+                "software": "pionera-validation-framework",
+                "contenttype": "application/json",
+                "inputFeatures": [
+                    {
+                        "name": "text",
+                        "type": "string",
+                        "required": True,
+                        "description": "Text to analyze",
+                    }
+                ],
+                "inputExample": DEFAULT_PAYLOAD,
+                "format": "json",
             },
             "dataAddress": {
                 "type": "HttpData",
@@ -640,14 +665,51 @@ def build_inesdata_ai_model_hub_model_execution_suite(topology: str = "local"):
 
 
 def default_model_url(adapter, model_path: str = DEFAULT_MODEL_PATH) -> str:
-    dataspace = str(_dataspace_name_loader(adapter)() or "demo").strip() or "demo"
+    config_loader = getattr(adapter, "load_deployer_config", None)
+    config = config_loader() if callable(config_loader) else {}
+    if not isinstance(config, dict):
+        config = {}
+    namespace = (
+        os.environ.get("AI_MODEL_HUB_MODEL_SERVER_NAMESPACE")
+        or os.environ.get("UI_AI_MODEL_HUB_MODEL_NAMESPACE")
+        or os.environ.get("UI_COMPONENTS_NAMESPACE")
+        or config.get("COMPONENTS_NAMESPACE")
+        or _dataspace_name_loader(adapter)()
+        or "components"
+    )
+    namespace = str(namespace or "components").strip() or "components"
     normalized_path = f"/{str(model_path or DEFAULT_MODEL_PATH).lstrip('/')}"
-    return f"http://model-server.{dataspace}.svc.cluster.local:8080{normalized_path}"
+    return f"http://model-server.{namespace}.svc.cluster.local:8080{normalized_path}"
 
 
 def _read_json(path: str) -> Any:
     with open(path, encoding="utf-8") as handle:
-        return json.load(handle)
+        raw = handle.read()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as original_error:
+        records = []
+        for index, line in enumerate(raw.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                records.append(json.loads(stripped))
+            except json.JSONDecodeError as line_error:
+                raise RuntimeError(
+                    f"Invalid JSON or JSON Lines content in {path} at line {index}: {line_error}"
+                ) from line_error
+        if records:
+            return records
+        raise original_error
+
+
+def _ensure_flares_records(value: Any, label: str) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        return [value]
+    raise RuntimeError(f"FLARES {label} file must contain a JSON array or JSON Lines objects")
 
 
 def _build_flares_metadata(source_dir: str) -> dict[str, Any]:
@@ -749,8 +811,14 @@ def load_flares_dataset(source_dir: str | None = None) -> dict[str, Any]:
             "FLARES source dataset is missing required files. "
             f"Expected Level 5 clone at {resolved_dir}; missing: {', '.join(missing)}"
         )
-    trial_sample = _read_json(os.path.join(resolved_dir, expected_files["trial_sample"]))
-    test_sample = _read_json(os.path.join(resolved_dir, expected_files["test_sample"]))
+    trial_sample = _ensure_flares_records(
+        _read_json(os.path.join(resolved_dir, expected_files["trial_sample"])),
+        "trial",
+    )
+    test_sample = _ensure_flares_records(
+        _read_json(os.path.join(resolved_dir, expected_files["test_sample"])),
+        "test",
+    )
     return {
         "source_dir": resolved_dir,
         "metadata": _build_flares_metadata(resolved_dir),

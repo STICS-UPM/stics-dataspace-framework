@@ -33,6 +33,8 @@ _REPORT_SERVER_PROCESSES: list[subprocess.Popen] = []
 LEVEL6_CONSOLE_LOG_FILENAME = "level6_console.log"
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 ANSI_SGR_RE = re.compile(r"\x1B\[([0-9;]*)m")
+PLAYWRIGHT_TEST_BEGIN_RE = re.compile(r"^\s*›\s+(?P<title>.+?)\s*$")
+PLAYWRIGHT_TEST_END_RE = re.compile(r"^\s*(?:✓|✗|-)\s+(?P<title>.+?)\s*$")
 ANSI_FG_CLASSES = {
     30: "ansi-fg-black",
     31: "ansi-fg-red",
@@ -557,6 +559,37 @@ def _strip_ansi_sequences(value: str) -> str:
     return ANSI_ESCAPE_RE.sub("", value)
 
 
+def _plain_console_line(value: str) -> str:
+    line = _strip_ansi_sequences(value)
+    line = line.replace("\r", "").replace("\b", "")
+    return re.sub(r"\s+", " ", line).strip()
+
+
+def _dashboard_console_content(value: str) -> tuple[str, int]:
+    """Hide transient Playwright start lines when a final result line exists."""
+    if not value:
+        return value, 0
+
+    lines = value.replace("\r", "\n").splitlines()
+    final_titles: set[str] = set()
+    for line in lines:
+        match = PLAYWRIGHT_TEST_END_RE.match(_plain_console_line(line))
+        if match:
+            final_titles.add(match.group("title"))
+
+    filtered_lines = []
+    hidden = 0
+    for line in lines:
+        match = PLAYWRIGHT_TEST_BEGIN_RE.match(_plain_console_line(line))
+        if match and match.group("title") in final_titles:
+            hidden += 1
+            continue
+        filtered_lines.append(line)
+
+    suffix = "\n" if value.endswith(("\n", "\r")) else ""
+    return "\n".join(filtered_lines) + suffix, hidden
+
+
 def _ansi_style_classes(style: dict[str, Any]) -> list[str]:
     classes = []
     if style.get("bold"):
@@ -1063,8 +1096,13 @@ def _render_console_log(experiment: dict[str, Any]) -> str:
     path = str(console_log.get("path") or LEVEL6_CONSOLE_LOG_FILENAME)
     line_count = int(console_log.get("line_count") or 0)
     size_bytes = int(console_log.get("size_bytes") or 0)
-    meta = f"{line_count} lines, {size_bytes} bytes"
-    rendered_content = _ansi_to_html(ansi_content)
+    dashboard_content, hidden_progress_lines = _dashboard_console_content(ansi_content)
+    dashboard_line_count = _line_count(_strip_ansi_sequences(dashboard_content))
+    meta = f"{dashboard_line_count} displayed lines, raw: {line_count} lines, {size_bytes} bytes"
+    if hidden_progress_lines:
+        suffix = "line" if hidden_progress_lines == 1 else "lines"
+        meta += f"; hidden {hidden_progress_lines} transient Playwright start {suffix}"
+    rendered_content = _ansi_to_html(dashboard_content)
     return (
         "<div class='console-meta'>"
         f"<span class='small'>{html.escape(meta)}</span>"

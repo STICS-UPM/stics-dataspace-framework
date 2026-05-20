@@ -70,7 +70,7 @@ const TARGETS: ObserverNavigationTarget[] = [
 
 test.skip(
   process.env[OBSERVER_DEMO_ENV] !== "1",
-  `Opt-in demo: set ${OBSERVER_DEMO_ENV}=1 to validate AI Model Observer navigation from the INESData UI.`,
+  `Set ${OBSERVER_DEMO_ENV}=1 or run Level 6 with the INESData adapter to validate AI Model Observer navigation from the INESData UI.`,
 );
 
 function observerHomeUrl(portalBaseUrl: string): string {

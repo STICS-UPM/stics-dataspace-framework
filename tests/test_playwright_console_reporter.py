@@ -184,6 +184,18 @@ const tests = [
     title: '10 AI model observer: transfer events are visible',
     location: { file: 'validation/ui/adapters/inesdata/specs/10-ai-model-observer.spec.ts' },
   },
+  {
+    title: '11 AI Model Browser: controlled model discovery, filtering and detail from INESData UI',
+    location: { file: 'validation/ui/adapters/inesdata/specs/11-ai-model-browser.spec.ts' },
+  },
+  {
+    title: '12 AI Model Execution: local model-server inference from INESData UI',
+    location: { file: 'validation/ui/adapters/inesdata/specs/12-ai-model-execution.spec.ts' },
+  },
+  {
+    title: '13 AI Model Benchmarking: compare two local model-server endpoints from INESData UI',
+    location: { file: 'validation/ui/adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts' },
+  },
 ];
 reporter.onBegin(null, { allTests: () => tests });
 for (const test of tests) {
@@ -202,7 +214,7 @@ for (const test of tests) {
         self.assertEqual(
             completed.stdout.strip().splitlines(),
             [
-                "Suite: INESData integration (6 tests)",
+                "Suite: INESData integration (9 tests)",
                 "Group: Core (2 tests)",
                 "✓ 01 login readiness: authentication and shell loaded",
                 "✓ 04 consumer catalog: published asset is discoverable",
@@ -210,9 +222,12 @@ for (const test of tests) {
                 "✓ 07 semantic virtualization: HTTP data is queryable",
                 "Group: Ontology Hub (1 test)",
                 "✓ 08 ontology hub: read-only INESData UI integration surfaces vocabularies and ontologies",
-                "Group: AI Model Hub (2 tests)",
+                "Group: AI Model Hub (5 tests)",
                 "✓ 09 AI Model Hub: HTTP data publication is discoverable",
                 "✓ 10 AI model observer: transfer events are visible",
+                "✓ 11 AI Model Browser: controlled model discovery, filtering and detail from INESData UI",
+                "✓ 12 AI Model Execution: local model-server inference from INESData UI",
+                "✓ 13 AI Model Benchmarking: compare two local model-server endpoints from INESData UI",
             ],
         )
 

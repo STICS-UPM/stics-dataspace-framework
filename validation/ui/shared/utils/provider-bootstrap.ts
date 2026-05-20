@@ -41,6 +41,13 @@ type ConsumerNegotiationArtifacts = {
   state?: string;
 };
 
+type ConsumerAgreementArtifacts = {
+  agreementId: string | null;
+  assetId: string;
+  attempts: number;
+  agreement: unknown;
+};
+
 type ConsumerTransferArtifacts = {
   transferId: string;
   finalState: string;
@@ -66,6 +73,8 @@ type ProviderCleanupReport = {
   entities: Record<CleanupEntityKind, CleanupEntityReport>;
 };
 
+type TokenProvider = string | (() => Promise<string>);
+
 const TRANSIENT_HTTP_STATUSES = new Set([401, 502, 503, 504]);
 const TRANSIENT_HTTP_MAX_ATTEMPTS = 4;
 const TRANSIENT_HTTP_RETRY_DELAY_MS = 2000;
@@ -77,6 +86,10 @@ function sleep(ms: number): Promise<void> {
 
 function isTransientHttpStatus(status: number): boolean {
   return TRANSIENT_HTTP_STATUSES.has(status);
+}
+
+async function resolveToken(tokenProvider: TokenProvider): Promise<string> {
+  return typeof tokenProvider === "function" ? tokenProvider() : tokenProvider;
 }
 
 function emptyCleanupEntityReport(): CleanupEntityReport {
@@ -286,13 +299,14 @@ async function issueConsumerToken(request: APIRequestContext, runtime: Dataspace
 async function createPolicy(
   request: APIRequestContext,
   runtime: DataspacePortalRuntime,
-  providerToken: string,
+  providerToken: TokenProvider,
   policyId: string,
 ): Promise<void> {
-  await executeRetriableRequest("Create policy", () =>
-    request.post(`${runtime.provider.managementBaseUrl}/policydefinitions`, {
+  await executeRetriableRequest("Create policy", async () => {
+    const token = await resolveToken(providerToken);
+    return request.post(`${runtime.provider.managementBaseUrl}/policydefinitions`, {
       headers: {
-        Authorization: `Bearer ${providerToken}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       data: {
@@ -309,14 +323,14 @@ async function createPolicy(
           obligation: [],
         },
       },
-    }),
-  );
+    });
+  });
 }
 
 async function createAsset(
   request: APIRequestContext,
   runtime: DataspacePortalRuntime,
-  providerToken: string,
+  providerToken: TokenProvider,
   assetId: string,
   sourceObjectNameOrOptions: string | AssetBootstrapOptions = "todos",
 ): Promise<void> {
@@ -327,10 +341,11 @@ async function createAsset(
   const sourceObjectName = options.sourceObjectName || "todos";
   const keywords = options.keywords || ["validation", "ui", "negotiation"];
 
-  await executeRetriableRequest("Create asset", () =>
-    request.post(`${runtime.provider.managementBaseUrl}/assets`, {
+  await executeRetriableRequest("Create asset", async () => {
+    const token = await resolveToken(providerToken);
+    return request.post(`${runtime.provider.managementBaseUrl}/assets`, {
       headers: {
-        Authorization: `Bearer ${providerToken}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       data: {
@@ -360,22 +375,23 @@ async function createAsset(
           ...(options.dataAddress || {}),
         },
       },
-    }),
-  );
+    });
+  });
 }
 
 async function createContractDefinition(
   request: APIRequestContext,
   runtime: DataspacePortalRuntime,
-  providerToken: string,
+  providerToken: TokenProvider,
   contractDefinitionId: string,
   policyId: string,
   assetId: string,
 ): Promise<void> {
-  await executeRetriableRequest("Create contract definition", () =>
-    request.post(`${runtime.provider.managementBaseUrl}/contractdefinitions`, {
+  await executeRetriableRequest("Create contract definition", async () => {
+    const token = await resolveToken(providerToken);
+    return request.post(`${runtime.provider.managementBaseUrl}/contractdefinitions`, {
       headers: {
-        Authorization: `Bearer ${providerToken}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       data: {
@@ -393,8 +409,8 @@ async function createContractDefinition(
           },
         ],
       },
-    }),
-  );
+    });
+  });
 }
 
 export async function bootstrapProviderContractArtifacts(
@@ -403,7 +419,7 @@ export async function bootstrapProviderContractArtifacts(
   assetId: string,
   suffix: string,
 ): Promise<BootstrapArtifacts> {
-  const providerToken = await issueUserToken(request, runtime);
+  const providerToken = () => issueUserToken(request, runtime);
   const policyId = `policy-ui-${suffix}`;
   const contractDefinitionId = `contract-ui-${suffix}`;
 
@@ -431,7 +447,7 @@ export async function bootstrapProviderNegotiationArtifacts(
   suffix: string,
   sourceObjectNameOrOptions?: string | AssetBootstrapOptions,
 ): Promise<BootstrapArtifacts> {
-  const providerToken = await issueUserToken(request, runtime);
+  const providerToken = () => issueUserToken(request, runtime);
   const policyId = `policy-ui-${suffix}`;
   const contractDefinitionId = `contract-ui-${suffix}`;
 
@@ -846,6 +862,101 @@ function negotiationErrorDetail(entry: any): string {
 
 function negotiationMatches(entry: any, negotiationId: string): boolean {
   return entry?.["@id"] === negotiationId || entry?.id === negotiationId;
+}
+
+function extractAgreementAssetId(agreement: any): string | undefined {
+  if (!agreement || typeof agreement !== "object") {
+    return undefined;
+  }
+
+  const directCandidates = [
+    agreement.assetId,
+    agreement["edc:assetId"],
+    agreement["https://w3id.org/edc/v0.0.1/ns/assetId"],
+  ];
+
+  for (const value of directCandidates) {
+    const normalized = String(value || "").trim();
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const assetNode = agreement.asset || agreement["edc:asset"];
+  if (typeof assetNode === "string" && assetNode.trim()) {
+    return assetNode.trim();
+  }
+
+  if (assetNode && typeof assetNode === "object") {
+    const nestedId = String(assetNode["@id"] || assetNode.id || assetNode.assetId || "").trim();
+    if (nestedId) {
+      return nestedId;
+    }
+  }
+
+  return undefined;
+}
+
+function agreementReferencesAssetId(agreement: any, assetId: string): boolean {
+  if (extractAgreementAssetId(agreement) === assetId) {
+    return true;
+  }
+
+  try {
+    return JSON.stringify(agreement).includes(assetId);
+  } catch {
+    return false;
+  }
+}
+
+export async function waitForConsumerAgreement(
+  request: APIRequestContext,
+  runtime: DataspacePortalRuntime,
+  assetId: string,
+  attempts = 20,
+  delayMs = 1000,
+): Promise<ConsumerAgreementArtifacts> {
+  const consumerToken = await issueConsumerToken(request, runtime);
+  const pageSize = 100;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    for (let offset = 0; offset <= 500; offset += pageSize) {
+      const response = await request.post(`${runtime.consumer.managementBaseUrl}/contractagreements/request`, {
+        headers: {
+          Authorization: `Bearer ${consumerToken}`,
+          "Content-Type": "application/json",
+        },
+        data: {
+          "@context": {
+            "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+          },
+          offset,
+          limit: pageSize,
+          filterExpression: [],
+        },
+      });
+      await ensureOk(response, "Poll consumer contract agreements");
+
+      const agreements = payloadItems(await response.json());
+      const matchingAgreement = agreements.find((agreement: any) => agreementReferencesAssetId(agreement, assetId));
+      if (matchingAgreement) {
+        return {
+          assetId,
+          attempts: attempt,
+          agreementId: matchingAgreement["@id"] || matchingAgreement.id || null,
+          agreement: matchingAgreement,
+        };
+      }
+
+      if (agreements.length < pageSize) {
+        break;
+      }
+    }
+
+    await sleep(delayMs);
+  }
+
+  throw new Error(`Consumer agreement for asset '${assetId}' did not become visible in contractagreements/request`);
 }
 
 async function lookupNegotiationById(

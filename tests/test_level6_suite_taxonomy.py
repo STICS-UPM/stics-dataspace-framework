@@ -13,10 +13,20 @@ class Level6SuiteTaxonomyTests(unittest.TestCase):
             classify_playwright_spec("adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts"),
             {"audit_suite": "INESData integration", "audit_group": "Ontology Hub"},
         )
-        self.assertEqual(
-            classify_playwright_spec("adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts"),
-            {"audit_suite": "INESData integration", "audit_group": "AI Model Hub"},
-        )
+        for spec in [
+            "adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts",
+            "adapters/inesdata/specs/11-ai-model-browser.spec.ts",
+            "adapters/inesdata/specs/12-ai-model-execution.spec.ts",
+            "adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts",
+            "adapters/inesdata/specs/14-ai-model-daimo-vocabulary.spec.ts",
+            "adapters/inesdata/specs/15-ai-model-external-execution.spec.ts",
+            "adapters/inesdata/specs/16-ai-model-observer-participant-summary.spec.ts",
+        ]:
+            with self.subTest(spec=spec):
+                self.assertEqual(
+                    classify_playwright_spec(spec),
+                    {"audit_suite": "INESData integration", "audit_group": "AI Model Hub"},
+                )
         self.assertEqual(
             classify_playwright_spec("adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts"),
             {"audit_suite": "INESData integration", "audit_group": "Semantic Virtualization"},

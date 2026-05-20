@@ -50,9 +50,10 @@ function setNextRequestName(name) {
     }
 }
 
-function scheduleRetryOrFail(requestToRepeat, attemptVar, maxAttemptsVar, defaultMaxAttempts, pendingTestName, failureTestName, failureReason, detail) {
+function scheduleRetryOrFail(requestToRepeat, attemptVar, maxAttemptsVar, defaultMaxAttempts, pendingTestName, failureTestName, failureReason, detail, nextRequestOverride) {
     const maxAttempts = readPositiveInt(maxAttemptsVar, defaultMaxAttempts)
     const attempt = readPositiveInt(attemptVar, 0) + 1
+    const nextRequest = nextRequestOverride || requestToRepeat
 
     if (attempt < maxAttempts) {
         saveCollectionVar(attemptVar, String(attempt))
@@ -63,7 +64,7 @@ function scheduleRetryOrFail(requestToRepeat, attemptVar, maxAttemptsVar, defaul
             console.log(detail)
         }
         console.log(`Retrying ${requestToRepeat}. Next attempt ${attempt + 1}/${maxAttempts}`)
-        setNextRequestName(requestToRepeat)
+        setNextRequestName(nextRequest)
         return true
     }
 
@@ -77,6 +78,30 @@ function scheduleRetryOrFail(requestToRepeat, attemptVar, maxAttemptsVar, defaul
     console.log(`Retry budget exhausted for ${requestToRepeat}: ${maxAttempts}/${maxAttempts}`)
     setNextRequestName(null)
     return false
+}
+
+function scheduleLoginThenRetry(requestToRepeat, attemptVar, maxAttemptsVar, defaultMaxAttempts, pendingTestName, failureTestName, failureReason, detail) {
+    const scheduled = scheduleRetryOrFail(
+        requestToRepeat,
+        attemptVar,
+        maxAttemptsVar,
+        defaultMaxAttempts,
+        pendingTestName,
+        failureTestName,
+        failureReason,
+        detail,
+        "Consumer Login"
+    )
+    if (scheduled) {
+        saveCollectionVar("e2e_after_consumer_login_request", requestToRepeat)
+    } else {
+        clearLocalVar("e2e_after_consumer_login_request")
+    }
+    return scheduled
+}
+
+function isAuthenticationStatus(code) {
+    return [401, 403].includes(code)
 }
 
 function isTransientTransferStartStatus(code) {
@@ -143,6 +168,11 @@ function isEdcAdapter() {
 if (requestName === "Consumer Login") {
     const body = parseJsonResponse()
     handleLoginToken(body)
+    const nextRequest = getStoredVar("e2e_after_consumer_login_request")
+    if (nextRequest) {
+        clearLocalVar("e2e_after_consumer_login_request")
+        setNextRequestName(nextRequest)
+    }
     return
 }
 const agreementId = getStoredVar("e2e_agreement_id")
@@ -161,6 +191,19 @@ if (["Check Transfer Status", "Resolve Current Transfer Destination"].includes(r
     setNextRequestName(null)
     return
 }
+if (requestName === "Start Transfer Process" && isAuthenticationStatus(status)) {
+    scheduleLoginThenRetry(
+        "Start Transfer Process",
+        "e2e_transfer_start_attempt",
+        "e2e_transfer_start_max_attempts",
+        DEFAULT_TRANSFER_START_MAX_ATTEMPTS,
+        "Transfer start authentication is being renewed",
+        "Transfer process could not be started after repeated authentication refreshes",
+        `Transfer start kept returning HTTP ${status} after refreshing the consumer token`,
+        `Start Transfer Process returned HTTP ${status}; refreshing the consumer token before retrying: ${responseText()}`
+    )
+    return
+}
 if (requestName === "Start Transfer Process" && isTransientTransferStartStatus(status)) {
     scheduleRetryOrFail(
         "Start Transfer Process",
@@ -174,6 +217,19 @@ if (requestName === "Start Transfer Process" && isTransientTransferStartStatus(s
     )
     return
 }
+if (requestName === "Check Transfer Status" && isAuthenticationStatus(status)) {
+    scheduleLoginThenRetry(
+        "Check Transfer Status",
+        "e2e_transfer_status_attempt",
+        "e2e_transfer_status_max_attempts",
+        DEFAULT_TRANSFER_STATUS_MAX_ATTEMPTS,
+        "Transfer status authentication is being renewed",
+        "Transfer status did not become visible after repeated authentication refreshes",
+        `Transfer ${transferId || "<unknown>"} kept returning HTTP ${status} after refreshing the consumer token`,
+        `Check Transfer Status returned HTTP ${status} for transfer id: ${transferId || "<unknown>"}; refreshing the consumer token before retrying: ${responseText()}`
+    )
+    return
+}
 if (requestName === "Check Transfer Status" && isTransientTransferLookupStatus(status)) {
     scheduleRetryOrFail(
         "Check Transfer Status",
@@ -184,6 +240,19 @@ if (requestName === "Check Transfer Status" && isTransientTransferLookupStatus(s
         "Transfer status did not become visible after repeated direct lookups",
         `Transfer ${transferId || "<unknown>"} kept returning HTTP ${status} before the retry budget was exhausted`,
         `Check Transfer Status returned HTTP ${status} for transfer id: ${transferId || "<unknown>"}`
+    )
+    return
+}
+if (requestName === "Resolve Current Transfer Destination" && isAuthenticationStatus(status)) {
+    scheduleLoginThenRetry(
+        "Resolve Current Transfer Destination",
+        "e2e_transfer_destination_attempt",
+        "e2e_transfer_destination_max_attempts",
+        DEFAULT_TRANSFER_DESTINATION_MAX_ATTEMPTS,
+        "Transfer destination authentication is being renewed",
+        "Transfer destination could not be resolved after repeated authentication refreshes",
+        `Transfer ${transferId || "<unknown>"} kept returning HTTP ${status} after refreshing the consumer token`,
+        `Resolve Current Transfer Destination returned HTTP ${status} for transfer id: ${transferId || "<unknown>"}; refreshing the consumer token before retrying: ${responseText()}`
     )
     return
 }

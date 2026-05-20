@@ -23,6 +23,7 @@ export type ConnectorPortalRuntime = {
 export type DataspacePortalRuntime = {
   adapter: string;
   dataspace: string;
+  componentsNamespace: string;
   dsDomain: string;
   keycloakUrl: string;
   keycloakClientId: string;
@@ -33,6 +34,7 @@ export type DataspacePortalRuntime = {
 type DataspaceDefaults = {
   adapter: string;
   dataspace: string;
+  componentsNamespace: string;
   environment: string;
   dsDomain: string;
   keycloakUrl: string;
@@ -167,6 +169,10 @@ function resolveDataspaceDefaults(): DataspaceDefaults {
   return {
     adapter,
     dataspace: process.env.UI_DATASPACE || deployerConfig.DS_1_NAME || "demo",
+    componentsNamespace:
+      process.env.UI_COMPONENTS_NAMESPACE ||
+      deployerConfig.COMPONENTS_NAMESPACE ||
+      "components",
     environment: process.env.UI_ENVIRONMENT || deployerConfig.ENVIRONMENT || infrastructureConfig.ENVIRONMENT || "DEV",
     dsDomain:
       process.env.UI_DS_DOMAIN ||
@@ -287,6 +293,7 @@ export function resolveDataspacePortalRuntime(): DataspacePortalRuntime {
   return {
     adapter: defaults.adapter,
     dataspace: defaults.dataspace,
+    componentsNamespace: defaults.componentsNamespace,
     dsDomain: defaults.dsDomain,
     keycloakUrl: defaults.keycloakUrl,
     keycloakClientId: defaults.keycloakClientId,

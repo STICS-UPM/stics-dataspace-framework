@@ -133,7 +133,6 @@ class OntologyHubVocabFormPage {
     const response = await Promise.race([
       responsePromise,
       redirectPromise.then(() => null),
-      this.page.waitForTimeout(2500).then(() => null),
     ]);
     const responseBody = response ? await response.text().catch(() => "") : "";
     let responsePayload = null;

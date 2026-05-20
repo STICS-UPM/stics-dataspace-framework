@@ -1,5 +1,5 @@
 const { expect } = require("../fixtures");
-const { clickMarked } = require("../support/live-marker");
+const { checkMarked, clickMarked, fillMarked } = require("../support/live-marker");
 
 class MlAssetsPage {
   constructor(page, runtime) {
@@ -38,6 +38,41 @@ class MlAssetsPage {
 
   cardByText(text) {
     return this.assetCards.filter({ hasText: text }).first();
+  }
+
+  cardsByText(text) {
+    return this.assetCards.filter({ hasText: text });
+  }
+
+  filterSection(sectionName) {
+    return this.page.locator("aside details").filter({ hasText: sectionName }).first();
+  }
+
+  filterOption(sectionName, optionText) {
+    return this.filterSection(sectionName).locator("label").filter({ hasText: optionText }).first();
+  }
+
+  filterCheckbox(sectionName, optionText) {
+    return this.filterOption(sectionName, optionText).locator("input[type='checkbox']").first();
+  }
+
+  async search(text) {
+    await fillMarked(this.searchInput, text);
+  }
+
+  async applyFilter(sectionName, optionText) {
+    const checkbox = this.filterCheckbox(sectionName, optionText);
+    await expect(checkbox).toBeVisible({ timeout: 15000 });
+    await checkMarked(checkbox);
+    await expect(checkbox).toBeChecked();
+  }
+
+  async expectCardVisible(text) {
+    await expect(this.cardByText(text)).toBeVisible({ timeout: 15000 });
+  }
+
+  async expectCardHidden(text) {
+    await expect(this.cardsByText(text)).toHaveCount(0, { timeout: 15000 });
   }
 
   async openDetailsForCard(card) {

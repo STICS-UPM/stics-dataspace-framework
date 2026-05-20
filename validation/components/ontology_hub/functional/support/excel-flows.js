@@ -1038,9 +1038,9 @@ function versionRowPattern(version) {
   return new RegExp(`${escapeRegExp(version.issued)}|${escapeRegExp(version.name)}`, "i");
 }
 
-async function waitForRecoveredVersionRow(page, runtime, prefix, updatedVersion) {
+async function waitForRecoveredVersionRow(page, runtime, prefix, updatedVersion, timeoutMs = Math.max(readyTimeoutMs * 4, 180000)) {
   const versionsUrl = `${runtime.baseUrl}/edition/vocabs/${encodeURIComponent(prefix)}/versions`;
-  const deadline = Date.now() + Math.max(readyTimeoutMs * 3, 90000);
+  const deadline = Date.now() + timeoutMs;
   const updatedRow = page.locator(".editionBoxSugg").filter({
     hasText: versionRowPattern(updatedVersion),
   }).first();
@@ -1048,6 +1048,11 @@ async function waitForRecoveredVersionRow(page, runtime, prefix, updatedVersion)
 
   while (Date.now() < deadline) {
     await page.waitForTimeout(5000);
+    await signInToEdition(page, runtime, {
+      recoveryTimeoutMs: 15000,
+    }).catch((error) => {
+      lastSignal = error && error.message ? error.message : String(error);
+    });
     try {
       await page.goto(versionsUrl, {
         waitUntil: "domcontentloaded",
@@ -1090,7 +1095,7 @@ async function waitForRecoveredVersionRow(page, runtime, prefix, updatedVersion)
   };
 }
 
-async function editVersion(page, runtime, prefix, currentVersionName, updatedVersion) {
+async function editVersion(page, runtime, prefix, currentVersionName, updatedVersion, options = {}) {
   const versionRow = page.locator(".editionBoxSugg").filter({ hasText: currentVersionName }).first();
   await versionRow.waitFor({ state: "visible", timeout: 5000 });
   await clickMarked(versionRow.locator(".imageVersionActionEdit"));
@@ -1128,7 +1133,13 @@ async function editVersion(page, runtime, prefix, currentVersionName, updatedVer
     };
   } catch (error) {
     if (runtime && prefix && (await pageShowsTransientAvailabilityFailure(page))) {
-      const recovery = await waitForRecoveredVersionRow(page, runtime, prefix, updatedVersion);
+      const recovery = await waitForRecoveredVersionRow(
+        page,
+        runtime,
+        prefix,
+        updatedVersion,
+        options.recoveryTimeoutMs,
+      );
       if (recovery.recovered) {
         return {
           recoveredFromTransientFailure: true,

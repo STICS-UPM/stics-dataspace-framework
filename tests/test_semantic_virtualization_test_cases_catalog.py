@@ -104,6 +104,20 @@ class SemanticVirtualizationTestCasesCatalogTests(unittest.TestCase):
         self.assertIn("SV-GTFS-BENCH-03", cases["SV-GTFS-BENCH-04"]["linked_cases"])
         self.assertIn("PT5-VS-11", cases["SV-GTFS-BENCH-04"]["linked_cases"])
 
+    def test_integration_cases_declare_closure_metadata(self):
+        catalog = self._load_catalog()
+        cases = catalog.get("integration_cases") or []
+
+        self.assertTrue(cases)
+        for case in cases:
+            with self.subTest(case=case.get("id")):
+                self.assertTrue(case.get("scope"))
+                self.assertTrue(case.get("case_group"))
+                self.assertTrue(case.get("validation_type"))
+                self.assertTrue(case.get("coverage_status"))
+                self.assertTrue(case.get("mapping_status"))
+                self.assertTrue(case.get("expected_result"))
+
 
 if __name__ == "__main__":
     unittest.main()

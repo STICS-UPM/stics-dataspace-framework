@@ -1,6 +1,6 @@
 {
   "id": "postman-environment-00",
-  "name": "02 Environment - INESData PIONERA",
+  "name": "00 Environment - INESData PIONERA",
   "values": [
     {
       "key": "provider",
@@ -69,6 +69,54 @@
       "enabled": true
     },
     {
+      "key": "registrationNamespace",
+      "value": "core-control",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "providerNamespace",
+      "value": "provider",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "consumerNamespace",
+      "value": "consumer",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "protocolPort",
+      "value": "19194",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "protocolPath",
+      "value": "/protocol",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "protocolAddressMode",
+      "value": "public",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "providerProtocolAddressOverride",
+      "value": "",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "consumerProtocolAddressOverride",
+      "value": "",
+      "type": "text",
+      "enabled": true
+    },
+    {
       "key": "transferStartPath",
       "value": "inesdatatransferprocesses",
       "type": "text",
@@ -82,13 +130,13 @@
     },
     {
       "key": "providerProtocolAddress",
-      "value": "http://conn-citycouncil-pionera:19194/protocol",
+      "value": "",
       "type": "text",
       "enabled": true
     },
     {
       "key": "consumerProtocolAddress",
-      "value": "http://conn-company-pionera:19194/protocol",
+      "value": "",
       "type": "text",
       "enabled": true
     }

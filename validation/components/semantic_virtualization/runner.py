@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 from urllib import error, parse, request
@@ -119,6 +120,54 @@ def _http_get(url: str, timeout: int = 20, headers: Dict[str, str] | None = None
         return exc.code, exc.headers.get("Content-Type", ""), body
     except error.URLError as exc:
         return 0, "", str(exc)
+
+
+def _http_get_json_with_retry(
+    url: str,
+    *,
+    timeout: int = 20,
+    headers: Dict[str, str] | None = None,
+    attempts: int = 8,
+    delay_seconds: float = 0.75,
+) -> Tuple[int, str, str]:
+    last_response = 0, "", ""
+    request_headers = {"Accept": "application/json"}
+    request_headers.update(headers or {})
+    for attempt in range(max(1, attempts)):
+        last_response = _http_get(url, timeout=timeout, headers=request_headers)
+        http_status, content_type, body_text = last_response
+        if http_status == 200 and "application/json" in content_type.lower():
+            try:
+                json.loads(body_text)
+                return last_response
+            except json.JSONDecodeError:
+                pass
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return last_response
+
+
+def _http_get_controlled_error_with_retry(
+    url: str,
+    *,
+    timeout: int = 20,
+    headers: Dict[str, str] | None = None,
+    attempts: int = 8,
+    delay_seconds: float = 0.75,
+) -> Tuple[int, str, str]:
+    last_response = 0, "", ""
+    for attempt in range(max(1, attempts)):
+        last_response = _http_get(url, timeout=timeout, headers=headers)
+        http_status, content_type, body_text = last_response
+        if 400 <= http_status < 500:
+            return last_response
+        if http_status == 200 and "application/json" in content_type.lower():
+            lowered = body_text.lower()
+            if '"status"' in lowered and "error" in lowered:
+                return last_response
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return last_response
 
 
 def evaluate_http_response(
@@ -417,7 +466,18 @@ def run_semantic_virtualization_validation(
 
         for case_id, phase, description, relative_path, require_json, request_headers, expectation in phase_checks:
             url = _build_url(normalized_base_url, relative_path)
-            http_status, content_type, body_text = _http_get(url, headers=request_headers)
+            if expectation == "controlled_error":
+                http_status, content_type, body_text = _http_get_controlled_error_with_retry(
+                    url,
+                    headers=request_headers,
+                )
+            elif require_json:
+                http_status, content_type, body_text = _http_get_json_with_retry(
+                    url,
+                    headers=request_headers,
+                )
+            else:
+                http_status, content_type, body_text = _http_get(url, headers=request_headers)
             if expectation == "controlled_error":
                 evaluation = evaluate_controlled_error_response(
                     http_status,

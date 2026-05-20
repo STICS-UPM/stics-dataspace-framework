@@ -150,14 +150,83 @@ class Level6UIReportingTests(unittest.TestCase):
         catalog = load_ui_catalog()
 
         self.assertEqual(len(catalog["support_checks"]), 1)
-        self.assertEqual(len(catalog["dataspace_cases"]), 10)
+        self.assertEqual(len(catalog["dataspace_cases"]), 16)
         self.assertEqual(len(catalog["ops_checks"]), 1)
         self.assertTrue(catalog["source_files"]["inesdata_integration"].endswith("validation/projects/inesdata/integration/test_cases.yaml"))
         self.assertEqual(catalog["support_checks"][0]["id"], "DS-UI-01")
         self.assertEqual(catalog["support_checks"][0]["operations"], ["login", "load_portal_shell"])
         self.assertEqual(catalog["dataspace_cases"][0]["id"], "DS-UI-03")
         self.assertIn("DS-UI-AMH-01", [case["id"] for case in catalog["dataspace_cases"]])
+        self.assertIn("DS-UI-AMH-BROWSER-01", [case["id"] for case in catalog["dataspace_cases"]])
+        self.assertIn("DS-UI-AMH-EXEC-01", [case["id"] for case in catalog["dataspace_cases"]])
+        self.assertIn("DS-UI-AMH-EXEC-02", [case["id"] for case in catalog["dataspace_cases"]])
+        self.assertIn("DS-UI-AMH-BENCH-01", [case["id"] for case in catalog["dataspace_cases"]])
+        self.assertIn("DS-UI-AMH-DAIMO-01", [case["id"] for case in catalog["dataspace_cases"]])
         self.assertIn("DS-UI-AMH-OBS-01", [case["id"] for case in catalog["dataspace_cases"]])
+        self.assertIn("DS-UI-AMH-OBS-02", [case["id"] for case in catalog["dataspace_cases"]])
+        ai_model_hub_case = next(case for case in catalog["dataspace_cases"] if case["id"] == "DS-UI-AMH-01")
+        self.assertEqual(
+            ai_model_hub_case["operations"],
+            [
+                "publish_ai_model_httpdata",
+                "discover_asset",
+                "open_catalog_detail",
+                "validate_model_metadata",
+                "negotiate_contract",
+                "verify_contract_agreement",
+            ],
+        )
+        ai_model_browser_case = next(case for case in catalog["dataspace_cases"] if case["id"] == "DS-UI-AMH-BROWSER-01")
+        self.assertEqual(
+            ai_model_browser_case["operations"],
+            [
+                "publish_machine_learning_httpdata",
+                "open_ai_model_browser",
+                "search_model",
+                "validate_model_card_metadata",
+                "filter_model_results_by_source_and_storage",
+                "filter_model_results_by_daimo_metadata",
+                "open_contract_offer_from_browser_primary_action",
+                "open_model_detail",
+                "validate_model_detail_and_offer",
+                "validate_browser_observer_evidence",
+            ],
+        )
+        ai_model_execution_case = next(case for case in catalog["dataspace_cases"] if case["id"] == "DS-UI-AMH-EXEC-01")
+        self.assertEqual(
+            ai_model_execution_case["operations"],
+            [
+                "publish_machine_learning_httpdata",
+                "open_ai_model_execution",
+                "select_executable_model",
+                "validate_execution_input_metadata",
+                "validate_execution_input_schema_errors",
+                "execute_model",
+                "validate_execution_output",
+                "inspect_execution_history",
+                "validate_execution_observer_evidence",
+            ],
+        )
+        ai_model_benchmarking_case = next(case for case in catalog["dataspace_cases"] if case["id"] == "DS-UI-AMH-BENCH-01")
+        self.assertEqual(
+            ai_model_benchmarking_case["operations"],
+            [
+                "publish_machine_learning_httpdata",
+                "open_ai_model_benchmarking",
+                "select_benchmark_models",
+                "validate_benchmark_input",
+                "obtain_model_outputs",
+                "download_suggested_dataset",
+                "upload_validation_dataset",
+                "run_model_benchmark",
+                "validate_benchmark_ranking",
+                "export_benchmark_results",
+                "validate_observer_benchmark_evidence",
+            ],
+        )
+        observer_case = next(case for case in catalog["dataspace_cases"] if case["id"] == "DS-UI-AMH-OBS-01")
+        self.assertEqual(observer_case["coverage_status"], "automated")
+        self.assertEqual(observer_case["mapping_status"], "mapped")
         self.assertFalse(
             any(case["coverage_status"] == "automated_opt_in" for case in catalog["dataspace_cases"])
         )

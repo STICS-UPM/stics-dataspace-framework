@@ -1,5 +1,23 @@
 const { requestConnectorManagementToken } = require("./auth");
 
+const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function requestWithRetry(action, requestFactory, attempts = 5, delayMs = 1000) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const response = await requestFactory();
+    if (!RETRYABLE_STATUS_CODES.has(response.status()) || attempt >= attempts) {
+      return response;
+    }
+    await delay(delayMs);
+  }
+
+  throw new Error(`${action} did not produce a response`);
+}
+
 async function ensureOk(response, action) {
   if (response.ok()) {
     return;
@@ -23,7 +41,7 @@ async function createPublishedProviderModelAsset(request, runtime, payload) {
     library,
   } = payload;
 
-  const assetResponse = await request.post(`${runtime.providerManagementUrl}/v3/assets`, {
+  const assetResponse = await requestWithRetry("Create provider model asset", () => request.post(`${runtime.providerManagementUrl}/v3/assets`, {
     headers: {
       Authorization: `Bearer ${providerToken}`,
       "Content-Type": "application/json",
@@ -55,10 +73,10 @@ async function createPublishedProviderModelAsset(request, runtime, payload) {
         name: "published-model",
       },
     },
-  });
+  }));
   await ensureOk(assetResponse, "Create provider model asset");
 
-  const policyResponse = await request.post(`${runtime.providerManagementUrl}/v3/policydefinitions`, {
+  const policyResponse = await requestWithRetry("Create provider publication policy", () => request.post(`${runtime.providerManagementUrl}/v3/policydefinitions`, {
     headers: {
       Authorization: `Bearer ${providerToken}`,
       "Content-Type": "application/json",
@@ -77,10 +95,10 @@ async function createPublishedProviderModelAsset(request, runtime, payload) {
         obligation: [],
       },
     },
-  });
+  }));
   await ensureOk(policyResponse, "Create provider publication policy");
 
-  const contractDefinitionResponse = await request.post(
+  const contractDefinitionResponse = await requestWithRetry("Create provider contract definition", () => request.post(
     `${runtime.providerManagementUrl}/v3/contractdefinitions`,
     {
       headers: {
@@ -103,7 +121,7 @@ async function createPublishedProviderModelAsset(request, runtime, payload) {
         ],
       },
     },
-  );
+  ));
   await ensureOk(contractDefinitionResponse, "Create provider contract definition");
 
   return {
@@ -134,7 +152,7 @@ async function createLocalConsumerModelAsset(request, runtime, payload) {
     dataAddress = {},
   } = payload;
 
-  const assetResponse = await request.post(`${runtime.consumerManagementUrl}/v3/assets`, {
+  const assetResponse = await requestWithRetry("Create consumer local model asset", () => request.post(`${runtime.consumerManagementUrl}/v3/assets`, {
     headers: {
       Authorization: `Bearer ${consumerToken}`,
       "Content-Type": "application/json",
@@ -168,7 +186,7 @@ async function createLocalConsumerModelAsset(request, runtime, payload) {
         ...dataAddress,
       },
     },
-  });
+  }));
   await ensureOk(assetResponse, "Create consumer local model asset");
 
   return {
@@ -189,7 +207,7 @@ async function waitForLocalConsumerAsset(request, runtime, assetId, attempts = 1
   const consumerToken = await requestConnectorManagementToken(runtime, runtime.consumerConnectorId);
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const response = await request.post(`${runtime.consumerManagementUrl}/v3/assets/request`, {
+    const response = await requestWithRetry("Poll consumer local assets", () => request.post(`${runtime.consumerManagementUrl}/v3/assets/request`, {
       headers: {
         Authorization: `Bearer ${consumerToken}`,
         "Content-Type": "application/json",
@@ -201,7 +219,7 @@ async function waitForLocalConsumerAsset(request, runtime, assetId, attempts = 1
         offset: 0,
         limit: 1000,
       },
-    });
+    }));
     await ensureOk(response, "Poll consumer local assets");
 
     const body = await response.json();
@@ -213,7 +231,7 @@ async function waitForLocalConsumerAsset(request, runtime, assetId, attempts = 1
       };
     }
 
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await delay(delayMs);
   }
 
   throw new Error(`Local consumer asset '${assetId}' did not become visible in management assets request`);
@@ -223,7 +241,7 @@ async function waitForLocalProviderAsset(request, runtime, assetId, attempts = 1
   const providerToken = await requestConnectorManagementToken(runtime, runtime.providerConnectorId);
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const response = await request.post(`${runtime.providerManagementUrl}/v3/assets/request`, {
+    const response = await requestWithRetry("Poll provider local assets", () => request.post(`${runtime.providerManagementUrl}/v3/assets/request`, {
       headers: {
         Authorization: `Bearer ${providerToken}`,
         "Content-Type": "application/json",
@@ -235,7 +253,7 @@ async function waitForLocalProviderAsset(request, runtime, assetId, attempts = 1
         offset: 0,
         limit: 1000,
       },
-    });
+    }));
     await ensureOk(response, "Poll provider local assets");
 
     const body = await response.json();
@@ -254,7 +272,7 @@ async function waitForLocalProviderAsset(request, runtime, assetId, attempts = 1
       };
     }
 
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await delay(delayMs);
   }
 
   throw new Error(`Local provider asset '${assetId}' did not become visible in management assets request`);
@@ -296,7 +314,7 @@ async function waitForConsumerAgreement(request, runtime, assetId, attempts = 15
   const consumerToken = await requestConnectorManagementToken(runtime, runtime.consumerConnectorId);
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const response = await request.post(`${runtime.consumerManagementUrl}/v3/contractagreements/request`, {
+    const response = await requestWithRetry("Poll consumer contract agreements", () => request.post(`${runtime.consumerManagementUrl}/v3/contractagreements/request`, {
       headers: {
         Authorization: `Bearer ${consumerToken}`,
         "Content-Type": "application/json",
@@ -307,7 +325,7 @@ async function waitForConsumerAgreement(request, runtime, assetId, attempts = 15
         },
         filterExpression: [],
       },
-    });
+    }));
     await ensureOk(response, "Poll consumer contract agreements");
 
     const agreements = await response.json();
@@ -322,7 +340,7 @@ async function waitForConsumerAgreement(request, runtime, assetId, attempts = 15
       };
     }
 
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await delay(delayMs);
   }
 
   throw new Error(`Consumer agreement for asset '${assetId}' did not become visible in contract agreements request`);
@@ -339,7 +357,7 @@ async function waitForConsumerCatalogAsset(
   const consumerToken = await requestConnectorManagementToken(runtime, runtime.consumerConnectorId);
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const response = await request.post(`${runtime.consumerManagementUrl}/v3/catalog/request`, {
+    const response = await requestWithRetry("Poll consumer catalog request", () => request.post(`${runtime.consumerManagementUrl}/v3/catalog/request`, {
       headers: {
         Authorization: `Bearer ${consumerToken}`,
         "Content-Type": "application/json",
@@ -351,7 +369,7 @@ async function waitForConsumerCatalogAsset(
         counterPartyAddress,
         protocol: "dataspace-protocol-http",
       },
-    });
+    }));
     await ensureOk(response, "Poll consumer catalog request");
 
     const body = await response.text();
@@ -363,7 +381,7 @@ async function waitForConsumerCatalogAsset(
       };
     }
 
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await delay(delayMs);
   }
 
   throw new Error(`Catalog asset '${assetId}' did not become visible through consumer catalog request`);

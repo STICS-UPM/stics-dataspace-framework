@@ -256,14 +256,14 @@ def resolve_ontology_hub_runtime(
             "ONTOLOGY_HUB_ADMIN_PASSWORD",
             "admin1234",
         ),
-        "expectedVocabularyPrefix": current_env.get("ONTOLOGY_HUB_EXPECTED_VOCAB") or "s4grid",
+        "expectedVocabularyPrefix": current_env.get("ONTOLOGY_HUB_EXPECTED_VOCAB") or "saref4grid",
         "expectedVocabularyTitle": current_env.get("ONTOLOGY_HUB_EXPECTED_TITLE") or "SAREF4GRID",
         "expectedSearchTerm": current_env.get("ONTOLOGY_HUB_EXPECTED_QUERY") or "Person",
         "expectedLabel": current_env.get("ONTOLOGY_HUB_EXPECTED_LABEL") or "Person",
         "expectedClassUri": current_env.get("ONTOLOGY_HUB_EXPECTED_CLASS_URI") or "http://schema.org/Person",
         "expectedClassPrefixedName": current_env.get("ONTOLOGY_HUB_EXPECTED_CLASS_PREFIXED_NAME")
-        or "s4grid:Person",
-        "expectedPrimaryTag": current_env.get("ONTOLOGY_HUB_EXPECTED_PRIMARY_TAG") or "Catalogs",
+        or "saref4grid:Person",
+        "expectedPrimaryTag": current_env.get("ONTOLOGY_HUB_EXPECTED_PRIMARY_TAG") or "Services",
         "expectedSecondaryTag": current_env.get("ONTOLOGY_HUB_EXPECTED_SECONDARY_TAG") or "Environment",
         "previousVersionDate": current_env.get("ONTOLOGY_HUB_PREVIOUS_VERSION_DATE") or "2025-01-15",
         "latestVersionDate": current_env.get("ONTOLOGY_HUB_LATEST_VERSION_DATE") or "2026-03-22",
@@ -272,7 +272,7 @@ def resolve_ontology_hub_runtime(
         "creationNamespace": current_env.get("ONTOLOGY_HUB_CREATION_NAMESPACE")
         or _chart_validation_value(chart_values, "validation", "ui", "creationNamespace")
         or "https://saref.etsi.org/saref4grid/",
-        "creationPrefix": explicit_creation_prefix or "s4grid",
+        "creationPrefix": explicit_creation_prefix or "saref4grid",
         "creationTitle": current_env.get("ONTOLOGY_HUB_CREATION_TITLE")
         or _chart_validation_value(chart_values, "validation", "ui", "creationTitle")
         or "SAREF4GRID Vocabulary",
@@ -287,13 +287,13 @@ def resolve_ontology_hub_runtime(
         or "es",
         "creationTag": current_env.get("ONTOLOGY_HUB_CREATION_TAG")
         or _chart_validation_value(chart_values, "validation", "ui", "creationTag")
-        or "Catalogs",
+        or "Services",
         "creationReview": current_env.get("ONTOLOGY_HUB_CREATION_REVIEW")
         or _chart_validation_value(chart_values, "validation", "ui", "creationReview")
         or "Validated through the Playwright ontology flow.",
         "listingSearchTerm": current_env.get("ONTOLOGY_HUB_LISTING_QUERY")
         or _chart_validation_value(chart_values, "validation", "ui", "listingSearchTerm")
-        or "s4grid",
+        or "saref4grid",
         "uiWorkers": _env_int(current_env, "ONTOLOGY_HUB_UI_WORKERS", 1),
         "uiExpectTimeoutMs": _env_int(
             current_env,

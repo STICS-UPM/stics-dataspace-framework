@@ -64,9 +64,9 @@ Ademas, cada entrada puede declarar:
 - `PT5-OH-13` consulta SPARQL
 - `PT5-OH-14` servicios externos
 
-### 5. Integracion en espacio de datos
+### 5. Integración en espacio de datos
 
-- `PT5-OH-16` conexion con el conector
+- `PT5-OH-16` conexión read-only con el conector INESData
 
 ## Mapeo a Flujos Reales
 
@@ -87,7 +87,7 @@ Ademas, cada entrada puede declarar:
 | `PT5-OH-13` | `api` | `GET /dataset/lov/sparql?query=ASK {...}` | `mapped` | La validacion automatica ejecuta una consulta SPARQL real sobre la ontologia de ejemplo sembrada y espera `boolean=true`. |
 | `PT5-OH-14` | `api` | `GET /dataset/lov/patterns` | `partial` | La ruta existe en navegacion y se valida su publicacion como servicio accesible. |
 | `PT5-OH-15` | `ui` | UI: `/dataset/lov/`, API docs: `/dataset/lov/api` | `mapped` | Se valida con Playwright la publicacion coordinada de la UI principal y la documentacion API. |
-| `PT5-OH-16` | `api` | Integracion con conector / espacio de datos | `partial` | No hay contrato tecnico local que documente esta integracion extremo a extremo. |
+| `PT5-OH-16` | `ui` | Integración read-only con conector / espacio de datos mediante `DS-UI-OH-01` | `mapped` | Level 6 valida la ruta INESData sin crear assets, contratos, vocabularios ni políticas. |
 
 ## Rutas Reales Confirmadas
 

@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 from urllib import error, parse, request
@@ -85,6 +86,48 @@ def _http_get(url: str, timeout: int = 20) -> Tuple[int, str, str]:
     except error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         return exc.code, exc.headers.get("Content-Type", ""), body
+
+
+def _http_get_until_stable(
+    url: str,
+    *,
+    attempts: int = 8,
+    delay_seconds: float = 5.0,
+    transient_statuses: Sequence[int] = (502, 503, 504),
+) -> Tuple[int, str, str, List[Dict[str, Any]]]:
+    history: List[Dict[str, Any]] = []
+    last_status = 0
+    last_content_type = ""
+    last_body = ""
+
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            last_status, last_content_type, last_body = _http_get(url)
+            history.append(
+                {
+                    "attempt": attempt,
+                    "http_status": last_status,
+                    "content_type": last_content_type,
+                }
+            )
+        except error.URLError as exc:
+            last_status = 0
+            last_content_type = ""
+            last_body = str(exc)
+            history.append(
+                {
+                    "attempt": attempt,
+                    "http_status": 0,
+                    "error": str(exc),
+                }
+            )
+
+        if last_status not in transient_statuses:
+            break
+        if attempt < attempts:
+            time.sleep(delay_seconds)
+
+    return last_status, last_content_type, last_body, history
 
 
 def _collect_strings(value: Any) -> Iterable[str]:
@@ -576,8 +619,9 @@ def evaluate_sparql_response(
 def _run_sparql_access_case(base_url: str, expected_class_uri: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     sparql_query = f"ASK {{ GRAPH ?g {{ <{expected_class_uri}> ?p ?o }} }}"
     request_url = f"{base_url}{SPARQL_PATH}?{parse.urlencode({'query': sparql_query})}"
-    http_status, content_type, body_text = _http_get(request_url)
+    http_status, content_type, body_text, retry_history = _http_get_until_stable(request_url)
     evaluation = evaluate_sparql_response(http_status, content_type, body_text)
+    evaluation["retry_history"] = retry_history
     case_result = _build_case_result(
         test_case_id="PT5-OH-13",
         description="Consulta SPARQL real sobre la ontologia de ejemplo sembrada",
@@ -600,6 +644,7 @@ def _run_sparql_access_case(base_url: str, expected_class_uri: str) -> Tuple[Dic
         "http_status": http_status,
         "content_type": content_type,
         "body": body_text,
+        "retry_history": retry_history,
     }
     return case_result, raw_artifact
 

@@ -37,6 +37,10 @@
         <span *ngIf="event.assetId">Asset: {{ event.assetId }}</span>
         <span *ngIf="event.participantId">Participant: {{ event.participantId }}</span>
         <span *ngIf="event.agreementId">Agreement: {{ event.agreementId }}</span>
+        <span *ngIf="event.taskType">Task: {{ event.taskType }}</span>
+        <span *ngIf="event.datasetRowCount !== null && event.datasetRowCount !== undefined">Rows: {{ event.datasetRowCount }}</span>
+        <span *ngIf="event.datasetFingerprint">Dataset: {{ event.datasetFingerprint }}</span>
+        <span *ngIf="event.selectedMetrics?.length">Metrics: {{ event.selectedMetrics?.join(', ') }}</span>
         <span *ngIf="event.httpStatus !== null">HTTP: {{ event.httpStatus }}</span>
         <span *ngIf="event.latencyMs !== null">Latency: {{ event.latencyMs }}ms</span>
       </div>
@@ -51,6 +55,7 @@
       </div>
 
       <pre *ngIf="event.details" class="observer-details">{{ event.details | json }}</pre>
+      <pre *ngIf="event.benchmarkSummary" class="observer-details">{{ event.benchmarkSummary | json }}</pre>
     </article>
   </div>
 </section>

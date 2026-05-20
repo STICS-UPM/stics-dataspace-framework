@@ -89,6 +89,8 @@ class ReportViewerTests(unittest.TestCase):
         )
         (experiment / "level6_console.log").write_text(
             "Suite: INESData integration\n"
+            "\x1b[36m›\x1b[0m 01 login readiness\n"
+            "\x1b[32m✓\x1b[0m 01 login readiness\n"
             "\x1b[31mProvider Management API Health failed\x1b[0m\n"
             "<console line must be escaped>\n",
             encoding="utf-8",
@@ -193,6 +195,9 @@ class ReportViewerTests(unittest.TestCase):
         self.assertIn("Newman", content)
         self.assertIn("Kafka transfer", content)
         self.assertIn("Level 6 console log", content)
+        self.assertIn("✓</span> 01 login readiness", content)
+        self.assertIn("hidden 1 transient Playwright start line", content)
+        self.assertNotIn("›</span> 01 login readiness", content)
         self.assertIn("Provider Management API Health failed", content)
         self.assertIn("<span class='ansi-fg-red'>Provider Management API Health failed</span>", content)
         self.assertIn("&lt;console line must be escaped&gt;", content)
@@ -206,6 +211,12 @@ class ReportViewerTests(unittest.TestCase):
         self.assertIn("<span class='ansi-bold ansi-fg-cyan'>Suite: INESData</span>", rendered)
         self.assertIn("&lt;unsafe&gt;", rendered)
         self.assertNotIn("\x1b", rendered)
+
+    def test_dashboard_console_keeps_unfinished_playwright_start_line(self):
+        rendered, hidden = reports._dashboard_console_content("\x1b[36m›\x1b[0m unfinished test\n")
+
+        self.assertEqual(hidden, 0)
+        self.assertIn("unfinished test", rendered)
 
     def test_inesdata_playwright_results_are_grouped_for_audit(self):
         with tempfile.TemporaryDirectory() as tmp:

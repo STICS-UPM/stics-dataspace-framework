@@ -80,6 +80,29 @@ class NewmanMetricsTests(unittest.TestCase):
         self.assertIn("--reporter-json-export", command)
         self.assertIn("experiments/exp-1/newman_reports/report.json", command)
 
+    @mock.patch("framework.newman_executor.subprocess.run")
+    def test_run_newman_delays_async_catalog_negotiation_and_transfer_collections(self, mock_run):
+        mock_run.return_value.returncode = 0
+        executor = NewmanExecutor()
+
+        with mock.patch.object(executor, "load_test_scripts", return_value="pm.test('ok')"):
+            for collection_name in (
+                "04_consumer_catalog.json",
+                "05_consumer_negotiation.json",
+                "06_consumer_transfer.json",
+            ):
+                executor.run_newman(
+                    f"validation/core/collections/{collection_name}",
+                    {"provider": "conn-a"},
+                    report_path=f"experiments/exp-1/newman_reports/{collection_name}",
+                )
+
+        for call in mock_run.call_args_list:
+            command = call.args[0]
+            self.assertIn("--delay-request", command)
+            delay_index = command.index("--delay-request")
+            self.assertEqual(command[delay_index + 1], str(executor.ASYNC_COLLECTION_DELAY_REQUEST_MS))
+
     def test_run_validation_collections_returns_report_paths(self):
         executor = NewmanExecutor()
 

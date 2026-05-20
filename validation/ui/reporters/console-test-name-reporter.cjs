@@ -76,7 +76,16 @@ class ConsoleTestNameReporter {
     if (file.includes("08-ontology-hub-inesdata-readonly.spec")) {
       return "Ontology Hub";
     }
-    if (file.includes("09-ai-model-hub-httpdata.spec") || file.includes("10-ai-model-observer.spec")) {
+    if (
+      file.includes("09-ai-model-hub-httpdata.spec") ||
+      file.includes("10-ai-model-observer.spec") ||
+      file.includes("11-ai-model-browser.spec") ||
+      file.includes("12-ai-model-execution.spec") ||
+      file.includes("13-ai-model-benchmarking.spec") ||
+      file.includes("14-ai-model-daimo-vocabulary.spec") ||
+      file.includes("15-ai-model-external-execution.spec") ||
+      file.includes("16-ai-model-observer-participant-summary.spec")
+    ) {
       return "AI Model Hub";
     }
     if (file.includes("07-semantic-virtualization-httpdata.spec")) {

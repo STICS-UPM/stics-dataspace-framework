@@ -16,6 +16,7 @@ DEFAULT_MAX_PAGES = 50
 DEFAULT_MANAGEMENT_TRANSIENT_RETRIES = 6
 DEFAULT_MANAGEMENT_TRANSIENT_RETRY_DELAY = 5.0
 TRANSIENT_MANAGEMENT_STATUS_CODES = {502, 503, 504}
+AUTHENTICATION_STATUS_CODES = {401, 403}
 SUPPORTED_MODES = {"safe", "dry-run", "aggressive"}
 SAFE_TEST_OBJECT_PREFIXES = (
     "todos-",
@@ -293,7 +294,7 @@ class ManagementApiTestDataCleaner:
             plan = build_cleanup_plan(inventory, mode=self.mode)
             connector_report["planned"] = plan
             self._record_unsafe_counts(connector_report, inventory, plan)
-            self._execute_plan(connector_report, token, plan)
+            self._execute_plan(connector_report, connector, token, plan)
             self._cleanup_storage_objects(connector, connector_report["storage"])
         except Exception as exc:
             connector_report["errors"].append(
@@ -328,7 +329,7 @@ class ManagementApiTestDataCleaner:
                 return token, self._load_inventory(management_base_url, token)
             except RuntimeError as exc:
                 last_error = exc
-                if "HTTP 401" not in str(exc) or attempt >= self.auth_retries:
+                if not self._is_authentication_error(exc) or attempt >= self.auth_retries:
                     raise
                 if self.auth_retry_delay:
                     time.sleep(self.auth_retry_delay)
@@ -395,21 +396,28 @@ class ManagementApiTestDataCleaner:
 
         return entities
 
-    def _execute_plan(self, connector_report: dict[str, Any], token: str, plan: dict[str, list[str]]) -> None:
+    def _execute_plan(
+        self,
+        connector_report: dict[str, Any],
+        connector: str,
+        token: str,
+        plan: dict[str, list[str]],
+    ) -> None:
         if self.mode == "dry-run":
             return
 
         management_base_url = connector_report["management_base_url"]
+        current_token = token
         reference_inventory = None
         reference_errors = None
         for entity_kind in ENTITY_ORDER:
             definition = ENTITY_DEFINITIONS[entity_kind]
             for entity_id in plan.get(entity_kind, []) or []:
                 delete_path = definition["delete_path"].format(entity_id=quote(entity_id, safe=""))
-                response = self.session.delete(
+                response, current_token = self._delete_management_with_auth_retry(
+                    connector,
                     f"{management_base_url}{delete_path}",
-                    headers=self._json_headers(token),
-                    timeout=30,
+                    current_token,
                 )
                 if response.status_code in {200, 204}:
                     connector_report["deleted"][entity_kind].append(entity_id)
@@ -426,9 +434,10 @@ class ManagementApiTestDataCleaner:
                     continue
                 if response.status_code == 409:
                     if reference_inventory is None:
-                        reference_inventory, reference_errors = self._load_reference_inventory(
+                        reference_inventory, reference_errors, current_token = self._load_reference_inventory(
+                            connector,
                             management_base_url,
-                            token,
+                            current_token,
                         )
                     skipped_entry = {
                         "entity_kind": entity_kind,
@@ -456,23 +465,74 @@ class ManagementApiTestDataCleaner:
 
     def _load_reference_inventory(
         self,
+        connector: str,
         management_base_url: str,
         token: str,
-    ) -> tuple[dict[str, list[Any]], dict[str, str]]:
+    ) -> tuple[dict[str, list[Any]], dict[str, str], str]:
         inventory: dict[str, list[Any]] = {}
         errors: dict[str, str] = {}
+        current_token = token
         for entity_kind, definition in REFERENCE_ENTITY_DEFINITIONS.items():
             try:
-                inventory[entity_kind] = self._list_entities_by_path(
+                current_token, inventory[entity_kind] = self._list_entities_by_path_with_auth_retry(
+                    connector,
                     management_base_url,
-                    token,
+                    current_token,
                     entity_kind,
                     definition["request_path"],
                 )
             except Exception as exc:
                 inventory[entity_kind] = []
                 errors[entity_kind] = str(exc)
-        return inventory, errors
+        return inventory, errors, current_token
+
+    def _list_entities_by_path_with_auth_retry(
+        self,
+        connector: str,
+        management_base_url: str,
+        token: str,
+        entity_kind: str,
+        request_path: str,
+    ) -> tuple[str, list[Any]]:
+        current_token = token
+        last_error = None
+        for attempt in range(self.auth_retries + 1):
+            try:
+                return current_token, self._list_entities_by_path(
+                    management_base_url,
+                    current_token,
+                    entity_kind,
+                    request_path,
+                )
+            except RuntimeError as exc:
+                last_error = exc
+                if not self._is_authentication_error(exc) or attempt >= self.auth_retries:
+                    raise
+                current_token = self._issue_token(connector)
+                if self.auth_retry_delay:
+                    time.sleep(self.auth_retry_delay)
+
+        raise last_error or RuntimeError(f"Could not list cleanup references for {connector}")
+
+    def _delete_management_with_auth_retry(self, connector: str, url: str, token: str) -> tuple[Any, str]:
+        current_token = token
+        response = None
+        for attempt in range(self.auth_retries + 1):
+            response = self.session.delete(
+                url,
+                headers=self._json_headers(current_token),
+                timeout=30,
+            )
+            status_code = int(getattr(response, "status_code", 0) or 0)
+            if status_code not in AUTHENTICATION_STATUS_CODES:
+                return response, current_token
+            if attempt >= self.auth_retries:
+                return response, current_token
+            current_token = self._issue_token(connector)
+            if self.auth_retry_delay:
+                time.sleep(self.auth_retry_delay)
+
+        return response, current_token
 
     @staticmethod
     def _find_entity_references(entity_id: str, reference_inventory: dict[str, list[Any]]) -> list[dict[str, Any]]:
@@ -864,6 +924,11 @@ class ManagementApiTestDataCleaner:
         status_code = int(getattr(response, "status_code", 0) or 0)
         if status_code not in expected_codes:
             raise RuntimeError(f"{label} failed with HTTP {status_code}: {self._response_text(response)}")
+
+    @staticmethod
+    def _is_authentication_error(exc: Exception) -> bool:
+        message = str(exc)
+        return any(f"HTTP {status_code}" in message for status_code in AUTHENTICATION_STATUS_CODES)
 
     @staticmethod
     def _allow_aggressive_cleanup() -> bool:

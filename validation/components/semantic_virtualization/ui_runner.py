@@ -39,7 +39,7 @@ UI_CASE_METADATA: Dict[str, Dict[str, Any]] = {
         "automation_mode": "ui",
         "execution_mode": "ui",
         "coverage_status": "automated",
-        "expected_result": "The Semantic Virtualization OpenAPI document is visible from a browser.",
+        "expected_result": "The Semantic Virtualization OpenAPI document is available as machine-readable JSON.",
         "spec": "sv_ui_01_browser_reachability.spec.js",
     },
     "SV-UI-03": {

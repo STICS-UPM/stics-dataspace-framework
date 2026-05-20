@@ -1,6 +1,8 @@
 """Shared Level 5 component facade reused by multiple adapters."""
 
 import os
+import shlex
+import tempfile
 import time
 
 import requests
@@ -282,10 +284,12 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         release_name,
         namespace,
         built_local_image=False,
+        deployer_config=None,
     ):
         normalized = self._normalize_component_key(component)
         resolved_release_name = str(release_name or "").strip()
         resolved_namespace = str(namespace or "").strip()
+        resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
 
         if built_local_image:
             print(f"Restarting deployment/{resolved_release_name} to pick up local image...\n")
@@ -306,12 +310,135 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 self._fail(f"Timeout waiting for component '{normalized}' deployment rollout")
             waited_for_rollout = True
 
-        return {
+        model_server = None
+        if normalized == "ai-model-hub":
+            model_server = self._ensure_ai_model_hub_model_server(
+                resolved_namespace,
+                resolved_config,
+            )
+
+        result = {
             "component": normalized,
             "release_name": resolved_release_name,
             "namespace": resolved_namespace,
             "built_local_image": bool(built_local_image),
             "waited_for_rollout": waited_for_rollout,
+        }
+        if model_server:
+            result["model_server"] = model_server
+        return result
+
+    def _ai_model_hub_model_server_enabled(self, deployer_config):
+        config = dict(deployer_config or {})
+        flag = config.get("AI_MODEL_HUB_MODEL_SERVER_ENABLED")
+        if flag is None:
+            flag = config.get("LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED")
+        return self._parse_bool(flag, default=True)
+
+    def _ai_model_hub_model_server_source_dir(self):
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return os.path.join(project_root, "adapters", "inesdata", "sources", "model-server")
+
+    def _ai_model_hub_model_server_image_ref(self, deployer_config):
+        return str((deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_IMAGE") or "model-server:latest").strip()
+
+    def _prepare_ai_model_hub_model_server_image(self, image_ref, deployer_config):
+        source_dir = self._ai_model_hub_model_server_source_dir()
+        dockerfile_path = os.path.join(source_dir, "Dockerfile")
+        if not os.path.isfile(dockerfile_path):
+            self._fail(
+                "AI Model Hub model-server Dockerfile not found",
+                root_cause=(
+                    f"Expected Dockerfile at: {dockerfile_path}. "
+                    "Level 5 needs this deterministic fixture for A5.2 model execution and benchmarking validation."
+                ),
+            )
+
+        auto_build_flag = deployer_config.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
+        if auto_build_flag is None:
+            auto_build_flag = deployer_config.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
+        if not self._parse_bool(auto_build_flag, default=True):
+            print(
+                "AI Model Hub model-server auto-build is disabled. "
+                f"Assuming image '{image_ref}' is already available in the cluster runtime."
+            )
+            return False
+
+        runtime = self._cluster_runtime(deployer_config)
+        cluster_type = str(runtime.get("cluster_type") or "minikube").strip().lower() or "minikube"
+        profile = (
+            deployer_config.get("MINIKUBE_PROFILE")
+            or getattr(self.config, "MINIKUBE_PROFILE", "minikube")
+            or "minikube"
+        ).strip() or "minikube"
+
+        if cluster_type == "minikube" and not self._minikube_is_available(profile):
+            self._fail(
+                "Minikube profile is not available for AI Model Hub model-server deployment",
+                root_cause=profile,
+            )
+
+        image_q = shlex.quote(image_ref)
+        print(f"\nBuilding local image on host: {image_ref}")
+        if self.run(f"docker build -t {image_q} .", check=False, cwd=source_dir) is None:
+            self._fail("Failed to build AI Model Hub model-server image on host", root_cause=image_ref)
+        self._load_image_into_cluster_runtime(cluster_type, profile, image_ref)
+        return True
+
+    def _ensure_ai_model_hub_model_server(self, namespace, deployer_config):
+        if not self._ai_model_hub_model_server_enabled(deployer_config):
+            print("AI Model Hub model-server deployment disabled by configuration.")
+            return {"enabled": False, "namespace": namespace}
+
+        resolved_namespace = str(namespace or "").strip() or "components"
+        image_ref = self._ai_model_hub_model_server_image_ref(deployer_config)
+        source_dir = self._ai_model_hub_model_server_source_dir()
+        manifest_path = os.path.join(source_dir, "k8s-model-server.yaml")
+        if not os.path.isfile(manifest_path):
+            self._fail(
+                "AI Model Hub model-server Kubernetes manifest not found",
+                root_cause=manifest_path,
+            )
+
+        built_local_image = self._prepare_ai_model_hub_model_server_image(image_ref, deployer_config)
+
+        ns_q = shlex.quote(resolved_namespace)
+        if self.run(f"kubectl get namespace {ns_q}", check=False) is None:
+            if self.run(f"kubectl create namespace {ns_q}", check=False) is None:
+                self._fail("Failed to create namespace for AI Model Hub model-server", root_cause=resolved_namespace)
+
+        with open(manifest_path, encoding="utf-8") as handle:
+            manifest = handle.read()
+        manifest = manifest.replace("namespace: demo", f"namespace: {resolved_namespace}")
+        manifest = manifest.replace("image: model-server:latest", f"image: {image_ref}")
+
+        temp_path = None
+        try:
+            fd, temp_path = tempfile.mkstemp(prefix="pionera-model-server-", suffix=".yaml")
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(manifest)
+            temp_q = shlex.quote(temp_path)
+            print(f"\nDeploying AI Model Hub model-server fixture in namespace '{resolved_namespace}'")
+            if self.run(f"kubectl apply -f {temp_q}", check=False) is None:
+                self._fail("Failed to apply AI Model Hub model-server manifest", root_cause=temp_path)
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+        if not self._wait_for_component_rollout(
+            resolved_namespace,
+            "model-server",
+            timeout_seconds=300,
+            label="ai-model-hub model-server",
+        ):
+            self._fail("Timeout waiting for AI Model Hub model-server deployment rollout")
+
+        return {
+            "enabled": True,
+            "namespace": resolved_namespace,
+            "image": image_ref,
+            "service": f"http://model-server.{resolved_namespace}.svc.cluster.local:8080",
+            "built_local_image": bool(built_local_image),
         }
 
     def _resolve_component_public_ingress_host(self, namespace, ingress_name):
@@ -480,6 +607,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             release_name=execution["release_name"],
             namespace=execution["namespace"],
             built_local_image=execution["built_local_image"],
+            deployer_config=execution["deployer_config"],
         )
         publication = self.verify_component_publication(
             normalized,

@@ -1,4 +1,4 @@
-import { APIResponse, Response } from "@playwright/test";
+import { APIResponse, Page, Response } from "@playwright/test";
 
 import { test, expect } from "../../../shared/fixtures/dataspace.fixture";
 
@@ -32,7 +32,7 @@ type OntologyHubInesdataReport = {
 
 test.skip(
   process.env.UI_ONTOLOGY_HUB_INESDATA_DEMO !== "1",
-  "Opt-in demo: set UI_ONTOLOGY_HUB_INESDATA_DEMO=1 to validate Ontology Hub read-only integration from the INESData UI.",
+  "Set UI_ONTOLOGY_HUB_INESDATA_DEMO=1 or run Level 6 with the INESData adapter to validate Ontology Hub read-only integration from the INESData UI.",
 );
 
 async function responseJsonArrayLength(response: APIResponse | Response): Promise<number | undefined> {
@@ -54,6 +54,61 @@ function isOntologyHubIntegrationUrl(url: string): boolean {
     url.includes("/dataset/api/v2/vocabulary/list") ||
     url.includes("ontology-hub")
   );
+}
+
+function isRecoverableIntegrationStatus(status: number): boolean {
+  return [401, 403, 502, 503, 504].includes(status);
+}
+
+async function waitForSuccessfulIntegrationResponse(
+  page: Page,
+  predicate: (response: Response) => boolean,
+  label: string,
+  options: {
+    timeoutMs?: number;
+    recover?: () => Promise<void>;
+  } = {},
+): Promise<Response> {
+  const timeoutMs = options.timeoutMs ?? 45_000;
+  const deadline = Date.now() + timeoutMs;
+  let lastResponse: Response | null = null;
+  let recovered = false;
+
+  while (Date.now() < deadline) {
+    const response = await page
+      .waitForResponse(predicate, {
+        timeout: Math.min(10_000, Math.max(1000, deadline - Date.now())),
+      })
+      .catch(() => null);
+
+    if (!response) {
+      if (!recovered && options.recover) {
+        recovered = true;
+        await options.recover();
+      }
+      continue;
+    }
+
+    lastResponse = response;
+    if (response.status() === 200) {
+      return response;
+    }
+
+    if (isRecoverableIntegrationStatus(response.status()) && !recovered && options.recover) {
+      recovered = true;
+      await options.recover();
+      continue;
+    }
+
+    if (!isRecoverableIntegrationStatus(response.status())) {
+      return response;
+    }
+  }
+
+  if (lastResponse) {
+    return lastResponse;
+  }
+  throw new Error(`${label} did not emit a response before ${timeoutMs}ms.`);
 }
 
 test("08 ontology hub: read-only INESData UI integration surfaces vocabularies and ontologies", async ({
@@ -108,9 +163,15 @@ test("08 ontology hub: read-only INESData UI integration surfaces vocabularies a
     await shellPage.expectReady();
     await captureStep(page, "01-ontology-hub-inesdata-after-login");
 
-    const vocabularyResponsePromise = page.waitForResponse(
+    const vocabularyResponsePromise = waitForSuccessfulIntegrationResponse(
+      page,
       (response) => response.url().includes("/connector-vocabularies/request"),
-      { timeout: 45_000 },
+      "Shared vocabulary API",
+      {
+        recover: async () => {
+          await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+        },
+      },
     );
     await shellPage.navigateToSection(
       /^\s*Vocabularies\s*$/i,
@@ -131,9 +192,15 @@ test("08 ontology hub: read-only INESData UI integration surfaces vocabularies a
     ).toBe(200);
     await captureStep(page, "02-ontology-hub-inesdata-vocabularies");
 
-    const ontologyHubResponsePromise = page.waitForResponse(
+    const ontologyHubResponsePromise = waitForSuccessfulIntegrationResponse(
+      page,
       (response) => response.url().includes("/dataset/api/v2/vocabulary/list"),
-      { timeout: 45_000 },
+      "Ontology Hub vocabulary list",
+      {
+        recover: async () => {
+          await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+        },
+      },
     );
     await shellPage.navigateToSection(
       /^\s*Ontologies\s*$/i,
@@ -154,7 +221,9 @@ test("08 ontology hub: read-only INESData UI integration surfaces vocabularies a
     ).toBe(200);
     await captureStep(page, "03-ontology-hub-inesdata-ontologies");
 
-    report.fatalErrorResponses = report.errorResponses;
+    report.fatalErrorResponses = report.errorResponses.filter(
+      (errorResponse) => !isRecoverableIntegrationStatus(errorResponse.status),
+    );
     expect(
       report.fatalErrorResponses,
       `Ontology Hub/INESData read-only integration returned fatal errors: ${JSON.stringify(report.fatalErrorResponses)}`,

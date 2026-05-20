@@ -5,6 +5,53 @@
     "description": "Colección compacta y autocontenida para Postman. Embebe los scripts necesarios para encadenar el flujo E2E principal sin depender de test_script inyectado por Newman.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "function envValue(name) {",
+          "  const raw = pm.environment.get(name);",
+          "  return raw === undefined || raw === null ? \"\" : String(raw).trim();",
+          "}",
+          "",
+          "function internalProtocolAddress(connectorKey, namespaceKey) {",
+          "  const connector = envValue(connectorKey);",
+          "  if (!connector) return \"\";",
+          "  const namespace = envValue(namespaceKey);",
+          "  const port = envValue(\"protocolPort\") || \"19194\";",
+          "  const rawPath = envValue(\"protocolPath\") || \"/protocol\";",
+          "  const path = rawPath.startsWith(\"/\") ? rawPath : `/${rawPath}`;",
+          "  const host = namespace ? `${connector}.${namespace}.svc.cluster.local` : connector;",
+          "  return `http://${host}:${port}${path}`;",
+          "}",
+          "",
+          "function publicProtocolAddress(connectorKey) {",
+          "  const connector = envValue(connectorKey);",
+          "  const domain = envValue(\"dsDomain\");",
+          "  if (!connector || !domain) return \"\";",
+          "  const rawPath = envValue(\"protocolPath\") || \"/protocol\";",
+          "  const path = rawPath.startsWith(\"/\") ? rawPath : `/${rawPath}`;",
+          "  return `http://${connector}.${domain}${path}`;",
+          "}",
+          "",
+          "function setResolvedProtocolAddress(targetKey, connectorKey, namespaceKey, overrideKey) {",
+          "  const explicit = envValue(overrideKey);",
+          "  const mode = (envValue(\"protocolAddressMode\") || \"public\").toLowerCase();",
+          "  const resolved = explicit || (mode === \"internal\" ? internalProtocolAddress(connectorKey, namespaceKey) : publicProtocolAddress(connectorKey));",
+          "  if (resolved) {",
+          "    pm.environment.set(targetKey, resolved);",
+          "    pm.collectionVariables.set(targetKey, resolved);",
+          "  }",
+          "}",
+          "",
+          "setResolvedProtocolAddress(\"providerProtocolAddress\", \"provider\", \"providerNamespace\", \"providerProtocolAddressOverride\");",
+          "setResolvedProtocolAddress(\"consumerProtocolAddress\", \"consumer\", \"consumerNamespace\", \"consumerProtocolAddressOverride\");"
+        ]
+      }
+    }
+  ],
   "variable": [
     {
       "key": "catalog_max_attempts",

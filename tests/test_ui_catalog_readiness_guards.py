@@ -23,12 +23,12 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
 
     def test_core_ui_specs_use_catalog_probe_instead_of_failing_before_ui_retries(self):
         expected_specs = [
-            ("core", "04-consumer-catalog.spec.ts"),
-            ("core", "05-consumer-negotiation.spec.ts"),
-            ("core", "05-e2e-transfer-flow.spec.ts"),
-            ("core", "06-consumer-transfer.spec.ts"),
-            ("core", "07-semantic-virtualization-httpdata.spec.ts"),
-            ("core", "09-ai-model-hub-httpdata.spec.ts"),
+            ("adapters", "inesdata", "specs", "04-consumer-catalog.spec.ts"),
+            ("adapters", "inesdata", "specs", "05-consumer-negotiation.spec.ts"),
+            ("adapters", "inesdata", "specs", "05-e2e-transfer-flow.spec.ts"),
+            ("adapters", "inesdata", "specs", "06-consumer-transfer.spec.ts"),
+            ("adapters", "inesdata", "specs", "07-semantic-virtualization-httpdata.spec.ts"),
+            ("adapters", "inesdata", "specs", "09-ai-model-hub-httpdata.spec.ts"),
         ]
 
         for parts in expected_specs:

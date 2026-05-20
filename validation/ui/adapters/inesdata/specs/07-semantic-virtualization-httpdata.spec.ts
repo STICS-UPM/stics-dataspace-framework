@@ -9,6 +9,7 @@ import {
   bootstrapProviderNegotiationArtifacts,
   cleanupProviderValidationArtifacts,
   probeConsumerCatalogDatasetReadiness,
+  waitForConsumerAgreement,
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS } from "../../../shared/utils/waiting";
 
@@ -29,6 +30,11 @@ type SemanticVirtualizationUiReport = {
   toleratedErrorResponses: Array<{ url: string; status: number }>;
   fatalErrorResponses: Array<{ url: string; status: number }>;
   negotiationMessage?: string;
+  consumerAgreement?: {
+    agreementId: string | null;
+    assetId: string;
+    attempts: number;
+  };
 };
 
 const DEFAULT_QUERY_PATH =
@@ -36,7 +42,7 @@ const DEFAULT_QUERY_PATH =
 
 test.skip(
   process.env.UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO !== "1",
-  "Opt-in demo: set UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO=1 to validate the Semantic Virtualization HttpData asset from the INESData UI.",
+  "Set UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO=1 or run Level 6 with the INESData adapter to validate the Semantic Virtualization HttpData asset from the INESData UI.",
 );
 
 function normalizePath(value: string): string {
@@ -229,6 +235,17 @@ test("07 semantic virtualization HttpData: visible discovery and negotiation fro
     expect(report.negotiationMessage, "No completed negotiation notification was detected").toMatch(
       /contract negotiation complete!/i,
     );
+    const consumerAgreement = await waitForConsumerAgreement(request, dataspaceRuntime, assetId, 20, 1_500);
+    report.consumerAgreement = {
+      agreementId: consumerAgreement.agreementId,
+      assetId: consumerAgreement.assetId,
+      attempts: consumerAgreement.attempts,
+    };
+    await attachJson("sv-httpdata-contract-agreement", report.consumerAgreement);
+    expect(
+      report.consumerAgreement.agreementId,
+      "No consumer contract agreement was found for the Semantic Virtualization asset",
+    ).toBeTruthy();
     report.toleratedErrorResponses = report.errorResponses.filter(({ url, status }) =>
       isTolerableCatalogRetry(url, status),
     );

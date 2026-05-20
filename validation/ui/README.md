@@ -251,41 +251,64 @@ Estos artefactos separan `support_checks`, `dataspace_cases`, `ops_checks`, `evi
 - `UI_AI_MODEL_HUB_CATALOG_CLEANUP`
 - `UI_AI_MODEL_HUB_MODEL_URL`
 - `UI_AI_MODEL_HUB_MODEL_PATH`
+- `UI_AI_MODEL_HUB_MODEL_NAMESPACE`
+- `UI_COMPONENTS_NAMESPACE`
 - `UI_INGRESS_PORT`
 - `PLAYWRIGHT_DNS_HOST_MAP`
 - `PLAYWRIGHT_HOST_RESOLVER_RULES`
 - `PLAYWRIGHT_INGRESS_PROXY_PORT`
 - `PLAYWRIGHT_TRACE`
 
-Desde el menu del framework, `I - INESData Tests` ejecuta los flujos del portal
-INESData y las demos de integracion de componentes vistas desde INESData. Las
-opciones directas `O`, `A` y `V` quedan reservadas para suites propias de cada
-componente.
+Desde el menú del framework, `I - INESData UI Tests` ejecuta los flujos del
+portal INESData y las demos de integración de componentes vistas desde
+INESData. Las opciones directas `O`, `A` y `V` quedan reservadas para suites
+propias de cada componente.
+
+En nivel 6, las demos de integración INESData se habilitan por defecto porque
+forman parte de las validaciones automatizadas A5.2. Las mismas variables se
+mantienen para ejecuciones manuales directas con Playwright.
 
 `UI_ONTOLOGY_HUB_INESDATA_DEMO=1` habilita una demo read-only para
 `PT5-OH-16` / `DS-UI-OH-01`. La prueba abre INESData, valida la ruta
 `Vocabularies` contra la API compartida del conector y la ruta `Ontologies`
-contra la API publica de Ontology Hub. No crea ni elimina vocabularios, assets,
-contratos ni politicas.
+contra la API pública de Ontology Hub. No crea ni elimina vocabularios, assets,
+contratos ni políticas.
 
-`UI_AI_MODEL_HUB_HTTPDATA_DEMO=1` habilita `DS-UI-AMH-01`: publica desde el
-provider un modelo controlado como asset `HttpData`, lo descubre desde el
-Catalog Browser del consumer y negocia el contrato desde la UI de INESData. No
-ejecuta inferencia ni transferencia; la demo valida el gobierno visual del
-modelo en INESData. `UI_AI_MODEL_HUB_MODEL_URL` permite fijar la URL completa
-del endpoint y `UI_AI_MODEL_HUB_MODEL_PATH` cambia la ruta por defecto
-`/api/v1/nlp/ecommerce-sentiment`.
+`UI_AI_MODEL_HUB_HTTPDATA_DEMO=1` habilita `DS-UI-AMH-01`,
+`DS-UI-AMH-BROWSER-01`, `DS-UI-AMH-EXEC-01` y `DS-UI-AMH-BENCH-01`. La primera
+prueba publica desde
+el provider un modelo controlado como asset `HttpData`, lo descubre desde el
+Catalog Browser del consumer, valida metadatos visibles del modelo, negocia el
+contrato desde la UI de INESData y confirma por API que el agreement queda
+registrado en el conector consumidor. La segunda prueba reutiliza una fixture
+controlada como asset `machineLearning` para validar `AI Model Browser`:
+búsqueda, filtros por origen y tarea, metadatos visibles y apertura del detalle
+del modelo. La tercera prueba usa el `model-server` determinista incluido en
+`adapters/inesdata/sources/model-server` como endpoint temporal para validar
+`AI Model Execution`: selección del modelo, payload de ejemplo, ejecución,
+salida visible e historial. La cuarta prueba usa dos endpoints comparables del
+mismo `model-server`, carga un CSV pequeño de validación y comprueba ranking,
+métricas y acceso a evidencia de benchmark. Estas pruebas no sustituyen a los
+modelos reales de A5.2; validan el gobierno visual, contractual, de
+descubrimiento especializado, ejecución y comparación mientras se integran
+modelos productivos.
+`UI_AI_MODEL_HUB_MODEL_URL` permite fijar la URL completa del endpoint y
+`UI_AI_MODEL_HUB_MODEL_PATH` cambia la ruta por defecto
+`/api/v1/nlp/ecommerce-sentiment`. Si no se define una URL explícita, las
+pruebas usan `model-server` en `UI_AI_MODEL_HUB_MODEL_NAMESPACE`, en
+`UI_COMPONENTS_NAMESPACE` o, por defecto, en el namespace `components`. Level 5
+despliega ese fixture automáticamente cuando `AI Model Hub` está configurado.
 
 `UI_AI_MODEL_OBSERVER_DEMO=1` habilita `DS-UI-AMH-OBS-01` / `MH-OBS-01`: abre
-`AI Model Observer` desde INESData y valida la navegacion visual hacia
+`AI Model Observer` desde INESData y valida la navegación visual hacia
 `Asset timeline`, `Agreement evidence`, `Benchmark evidence` y
 `Participant summary`. La prueba es read-only, usa IDs controlados, genera
-capturas/JSON y se marca como `skipped` si la UI del Observer aun no esta
+capturas/JSON y se marca como `skipped` si la UI del Observer aún no está
 integrada en el build local.
 
 `UI_SEMANTIC_VIRTUALIZATION_CATALOG_CLEANUP=1` activa una limpieza segura previa
-solo para artefactos de validacion con prefijos `qa-ui-*` y `asset-e2e-*` en el
-provider. Es util cuando ejecuciones anteriores saturan la primera pagina del
+solo para artefactos de validación con prefijos `qa-ui-*` y `asset-e2e-*` en el
+provider. Es útil cuando ejecuciones anteriores saturan la primera página del
 Catalog Browser e impiden mostrar el asset temporal de la demo.
 
 `UI_AI_MODEL_HUB_CATALOG_CLEANUP=1` aplica la misma idea solo sobre artefactos
@@ -297,7 +320,8 @@ ejemplo `dataset-flares-subtask2`.
 proceso Node de Playwright, sin editar `/etc/hosts`. Su formato es
 `host=ip,host=ip`. Para Chromium se puede usar en paralelo
 `PLAYWRIGHT_HOST_RESOLVER_RULES`, por ejemplo `MAP host 192.168.49.2`. Esto es
-útil para demos opt-in como `UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO=1`.
+útil para suites de integración habilitadas por Level 6, como
+`UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO=1`.
 
 Cuando la IP de ingress de minikube no sea alcanzable desde la VM, se puede
 usar `kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller

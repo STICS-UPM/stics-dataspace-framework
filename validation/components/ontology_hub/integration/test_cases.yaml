@@ -61,7 +61,7 @@ support_checks:
         pages:
           - /dataset
           - /dataset/terms
-          - /dataset/vocabs/s4grid
+          - /dataset/vocabs/saref4grid
       notes: Supporting check to ensure the public catalog baseline navigation remains available.
 
 test_cases:
@@ -316,8 +316,8 @@ test_cases:
           type: class
       seeded_fixture_dependency:
         required: true
-        vocabulary_prefix: s4grid
-        tag: Catalogs
+        vocabulary_prefix: saref4grid
+        tag: Services
 
   - id: PT5-OH-09
     component: ontology_hub
@@ -351,8 +351,8 @@ test_cases:
       notes: The primary evidence is UI-based over the current /dataset publication; the framework also keeps an equivalent API check over the current /dataset/api/v2 surface.
       seeded_fixture_dependency:
         required: true
-        vocabulary_prefix: s4grid
-        tag: Catalogs
+        vocabulary_prefix: saref4grid
+        tag: Services
 
   - id: PT5-OH-10
     component: ontology_hub
@@ -379,7 +379,7 @@ test_cases:
       ui_spec: validation/components/ontology_hub/integration/specs/pt5_oh_10_versions.spec.js
       real_flow:
         method: GET
-        path: /dataset/vocabs/s4grid
+        path: /dataset/vocabs/saref4grid
       notes: The UI exposes version history and versioned resources, but the functional selection remains only a partial PT5 coverage. Related OH-APP version flows are tracked through functional traceability and historical failures point to component behavior rather than a missing framework runner.
 
   - id: PT5-OH-11
@@ -406,7 +406,7 @@ test_cases:
       ui_spec: validation/components/ontology_hub/integration/specs/pt5_oh_11_vocab_detail.spec.js
       real_flow:
         method: GET
-        path: /dataset/vocabs/s4grid
+        path: /dataset/vocabs/saref4grid
 
   - id: PT5-OH-12
     component: ontology_hub
@@ -432,7 +432,7 @@ test_cases:
       ui_spec: validation/components/ontology_hub/integration/specs/pt5_oh_12_statistics.spec.js
       real_flow:
         method: GET
-        path: /dataset/vocabs/s4grid
+        path: /dataset/vocabs/saref4grid
 
   - id: PT5-OH-13
     component: ontology_hub
@@ -490,7 +490,7 @@ test_cases:
         method: GET
         path: /dataset/patterns
         query:
-          q: s4grid
+          q: saref4grid
       known_component_issue_cases:
         - OH-APP-22
       notes: The check validates the public patterns page with a real vocabulary query; internal pattern generation operations still have no stable public contract in the framework.
@@ -534,8 +534,8 @@ test_cases:
     type: ui
     validation_type: integration
     dataspace_dimension: integration
-    execution_mode: ui_readonly_opt_in
-    coverage_status: automated_opt_in
+    execution_mode: ui_readonly
+    coverage_status: automated
     mapping_status: mapped
     preconditions:
       - Ontology Hub is deployed in the PT5 environment
@@ -551,9 +551,10 @@ test_cases:
     traceability:
       - OntHub-56
     automation:
-      status: automated_opt_in
-      mode: ui_readonly_opt_in
+      status: automated
+      mode: ui_readonly
       ui_spec: validation/ui/adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts
       evidence_case: DS-UI-OH-01
-      enable_with: UI_ONTOLOGY_HUB_INESDATA_DEMO=1
-    notes: This is a conservative read-only integration check. It validates the connector UI and shared vocabulary/Ontology Hub APIs without creating assets, contracts, vocabularies or policies.
+      runtime_env:
+        UI_ONTOLOGY_HUB_INESDATA_DEMO: "1"
+    notes: This is a conservative read-only integration check. Level 6 enables it for the INESData adapter and validates the connector UI plus shared vocabulary/Ontology Hub APIs without creating assets, contracts, vocabularies or policies.

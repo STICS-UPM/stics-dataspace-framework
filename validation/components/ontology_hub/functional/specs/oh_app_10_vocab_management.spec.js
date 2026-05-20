@@ -12,11 +12,11 @@ const {
   openVersionsPage,
   REPOSITORY_VOCAB_STATE_KEY,
   runtimeFromCreatedVocabulary,
+  runIndexAllFromEdition,
   saveRunState,
   signInToEdition,
   signOut,
   updateVocabularyMetadata,
-  URI_VOCAB_STATE_KEY,
   VISUALIZATION_N3_STATE_KEY,
   VERSION_STATE_KEY,
 } = require("../support/excel-flows");
@@ -35,11 +35,13 @@ function normalizeText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-async function waitForVocabularyDetailText(page, runtime, prefix, expectedTexts, timeoutMs = 60000) {
+async function waitForVocabularyDetailText(page, runtime, prefix, expectedTexts, timeoutMs = 180000) {
   const deadline = Date.now() + timeoutMs;
   let missing = [];
+  let attempt = 0;
 
   while (Date.now() < deadline) {
+    attempt += 1;
     const bodyText = normalizeText(await page.locator("body").innerText().catch(() => ""));
     const normalizedBody = bodyText.toLowerCase();
     missing = expectedTexts.filter((text) => !normalizedBody.includes(normalizeText(text).toLowerCase()));
@@ -47,6 +49,9 @@ async function waitForVocabularyDetailText(page, runtime, prefix, expectedTexts,
       return;
     }
 
+    if (attempt % 4 === 0) {
+      await runIndexAllFromEdition(page, runtime);
+    }
     await page.waitForTimeout(3000);
     await page
       .goto(`${runtime.baseUrl}/dataset/vocabs/${encodeURIComponent(prefix)}`, {
@@ -84,24 +89,25 @@ test("OH-APP-10: edit ontology metadata and tags", async ({
   captureStep,
   attachJson,
 }) => {
-  test.setTimeout(180000);
-  const created = loadRunState(URI_VOCAB_STATE_KEY);
+  test.setTimeout(300000);
+  const created = loadRunState(REPOSITORY_VOCAB_STATE_KEY);
   const runtime = runtimeFromCreatedVocabulary(ontologyHubRuntime, created);
-  const updatedReview = "ADMIN TEST";
+  const updatedDescription = "ADMIN TEST metadata update";
   const updatedTag = "Vocabularies";
 
   await updateVocabularyMetadata(page, runtime, created.prefix, {
-    review: updatedReview,
+    description: updatedDescription,
     tag: updatedTag,
   });
-  await waitForVocabularyDetailText(page, runtime, created.prefix, [updatedTag, updatedReview]);
+  await runIndexAllFromEdition(page, runtime);
+  await waitForVocabularyDetailText(page, runtime, created.prefix, [updatedTag, updatedDescription]);
   await captureStep(page, "10-vocab-edited");
   await signOut(page, runtime);
 
   await attachJson("10-vocab-edit-report", {
     prefix: created.prefix,
     title: created.title,
-    updatedReview,
+    updatedDescription,
     updatedTag,
   });
 });
@@ -144,14 +150,16 @@ test("OH-APP-12: edit an ontology version", async ({
   captureStep,
   attachJson,
 }) => {
-  test.setTimeout(180000);
+  test.setTimeout(POST_VERSION_CRASH_TEST_TIMEOUT_MS);
   const created = loadRunState(REPOSITORY_VOCAB_STATE_KEY);
   const runtime = runtimeFromCreatedVocabulary(ontologyHubRuntime, created);
   const initialVersion = loadRunState(VERSION_STATE_KEY);
   await signInToEdition(page, runtime);
   await openVersionsPage(page, runtime, created.prefix);
   const updatedVersion = versionForCase("v2026-01-01", "2026-01-01");
-  const editOutcome = await editVersion(page, runtime, created.prefix, initialVersion.name, updatedVersion);
+  const editOutcome = await editVersion(page, runtime, created.prefix, initialVersion.name, updatedVersion, {
+    recoveryTimeoutMs: POST_VERSION_CRASH_RECOVERY_TIMEOUT_MS,
+  });
   await captureStep(page, "12-version-edited");
   await signOut(page, runtime);
   saveRunState(VERSION_STATE_KEY, updatedVersion);

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from validation.components.ai_model_hub import component_runner
 from validation.components.ai_model_hub.component_runner import run_ai_model_hub_component_validation
 from validation.components.ai_model_hub.runner import (
     evaluate_html_shell_response,
@@ -584,7 +585,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertEqual(result["functional_use_case_summary"]["total"], 1)
             self.assertEqual(result["functional_use_case_summary"]["passed"], 1)
             self.assertEqual(result["catalog_alignment"]["summary"]["executed_functional_use_cases"], 1)
-            self.assertEqual(result["catalog_alignment"]["summary"]["uncovered_functional_use_cases"], 1)
+            self.assertEqual(result["catalog_alignment"]["summary"]["uncovered_functional_use_cases"], 3)
             self.assertEqual(
                 result["functional_use_case_results"][0]["traceability"],
                 ["MH-MOB-01", "GTFS-Madrid-Bench"],
@@ -664,7 +665,11 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                 mock.patch(
                     "validation.components.ai_model_hub.component_runner.run_ai_model_hub_model_observer_validation",
                     return_value=observer_result,
-                ),
+                ) as observer,
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner._resolve_model_observer_base_url",
+                    return_value="http://backend-demo.dev.ds.dataspaceunit.upm",
+                ) as resolve_observer_base_url,
                 mock.patch.dict(
                     os.environ,
                     {
@@ -681,6 +686,12 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertEqual(result["summary"]["total"], 2)
             self.assertEqual(result["summary"]["passed"], 2)
             self.assertIn("model_observer", result["suites"])
+            resolve_observer_base_url.assert_called_once_with("http://ai-model-hub.example.local")
+            observer.assert_called_once()
+            self.assertEqual(
+                observer.call_args.kwargs["base_url"],
+                "http://backend-demo.dev.ds.dataspaceunit.upm",
+            )
             self.assertEqual(result["observer_case_summary"]["total"], 1)
             self.assertEqual(result["observer_case_summary"]["passed"], 1)
             self.assertEqual(result["catalog_alignment"]["summary"]["declared_observer_cases"], 6)
@@ -691,6 +702,38 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                 ["PT5-MH-17", "MH-46", "Model Clearing House"],
             )
             self.assertTrue(os.path.exists(result["artifacts"]["observer_case_results_json"]))
+
+    def test_resolve_model_observer_base_url_prefers_configured_backend_over_dashboard_url(self):
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(
+                component_runner,
+                "_derive_model_observer_base_url_from_adapter",
+                return_value="http://backend-demo.dev.ds.dataspaceunit.upm",
+            ) as derive_backend,
+        ):
+            result = component_runner._resolve_model_observer_base_url("http://ai-model-hub.example.local")
+
+        self.assertEqual(result, "http://backend-demo.dev.ds.dataspaceunit.upm")
+        derive_backend.assert_called_once()
+
+    def test_resolve_model_observer_base_url_prefers_explicit_environment(self):
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_MODEL_HUB_OBSERVER_API_BASE_URL": "http://observer.example.local/api/model-observer"},
+                clear=True,
+            ),
+            mock.patch.object(
+                component_runner,
+                "_derive_model_observer_base_url_from_adapter",
+                return_value="http://backend-demo.dev.ds.dataspaceunit.upm",
+            ) as derive_backend,
+        ):
+            result = component_runner._resolve_model_observer_base_url("http://ai-model-hub.example.local")
+
+        self.assertEqual(result, "http://observer.example.local")
+        derive_backend.assert_not_called()
 
 
 if __name__ == "__main__":

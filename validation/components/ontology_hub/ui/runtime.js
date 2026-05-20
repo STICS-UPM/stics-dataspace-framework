@@ -143,14 +143,14 @@ function resolveOntologyHubRuntime() {
         allowConfigFallback: false,
       },
     ),
-    expectedVocabularyPrefix: process.env.ONTOLOGY_HUB_EXPECTED_VOCAB || "s4grid",
+    expectedVocabularyPrefix: process.env.ONTOLOGY_HUB_EXPECTED_VOCAB || "saref4grid",
     expectedVocabularyTitle: process.env.ONTOLOGY_HUB_EXPECTED_TITLE || "SAREF4GRID",
     expectedSearchTerm: process.env.ONTOLOGY_HUB_EXPECTED_QUERY || "Person",
     expectedLabel: process.env.ONTOLOGY_HUB_EXPECTED_LABEL || "Person",
     expectedClassUri: process.env.ONTOLOGY_HUB_EXPECTED_CLASS_URI || "http://schema.org/Person",
     expectedClassPrefixedName:
-      process.env.ONTOLOGY_HUB_EXPECTED_CLASS_PREFIXED_NAME || "s4grid:Person",
-    expectedPrimaryTag: process.env.ONTOLOGY_HUB_EXPECTED_PRIMARY_TAG || "Catalogs",
+      process.env.ONTOLOGY_HUB_EXPECTED_CLASS_PREFIXED_NAME || "saref4grid:Person",
+    expectedPrimaryTag: process.env.ONTOLOGY_HUB_EXPECTED_PRIMARY_TAG || "Services",
     expectedSecondaryTag: process.env.ONTOLOGY_HUB_EXPECTED_SECONDARY_TAG || "Environment",
     previousVersionDate: process.env.ONTOLOGY_HUB_PREVIOUS_VERSION_DATE || "2025-01-15",
     latestVersionDate: process.env.ONTOLOGY_HUB_LATEST_VERSION_DATE || "2026-03-22",
@@ -161,7 +161,7 @@ function resolveOntologyHubRuntime() {
       "",
     creationNamespace:
       process.env.ONTOLOGY_HUB_CREATION_NAMESPACE || "https://saref.etsi.org/saref4grid/",
-    creationPrefix: process.env.ONTOLOGY_HUB_CREATION_PREFIX || "s4grid",
+    creationPrefix: process.env.ONTOLOGY_HUB_CREATION_PREFIX || "saref4grid",
     creationTitle:
       process.env.ONTOLOGY_HUB_CREATION_TITLE || "SAREF4GRID Vocabulary",
     creationDescription:
@@ -171,10 +171,10 @@ function resolveOntologyHubRuntime() {
       process.env.ONTOLOGY_HUB_CREATION_PRIMARY_LANGUAGE || "en",
     creationSecondaryLanguage:
       process.env.ONTOLOGY_HUB_CREATION_SECONDARY_LANGUAGE || "es",
-    creationTag: process.env.ONTOLOGY_HUB_CREATION_TAG || "Catalogs",
+    creationTag: process.env.ONTOLOGY_HUB_CREATION_TAG || "Services",
     creationReview:
       process.env.ONTOLOGY_HUB_CREATION_REVIEW || "Validated through the Playwright ontology flow.",
-    listingSearchTerm: process.env.ONTOLOGY_HUB_LISTING_QUERY || "s4grid",
+    listingSearchTerm: process.env.ONTOLOGY_HUB_LISTING_QUERY || "saref4grid",
     uiWorkers: normalizePositiveInteger(process.env.ONTOLOGY_HUB_UI_WORKERS, 1),
     uiExpectTimeoutMs: normalizePositiveInteger(
       process.env.ONTOLOGY_HUB_UI_EXPECT_TIMEOUT_MS,

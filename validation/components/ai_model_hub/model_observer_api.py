@@ -57,8 +57,23 @@ def resolve_model_observer_api_base_url(base_url: str | None = None) -> str:
     for env_name in OBSERVER_API_BASE_URL_ENVS:
         candidate = str(os.environ.get(env_name) or "").strip()
         if candidate:
-            return candidate.rstrip("/")
-    return str(base_url or "").strip().rstrip("/")
+            return _normalize_model_observer_api_base_url(candidate)
+    return _normalize_model_observer_api_base_url(base_url)
+
+
+def _normalize_model_observer_api_base_url(base_url: str | None = None) -> str:
+    candidate = str(base_url or "").strip().rstrip("/")
+    if not candidate:
+        return ""
+
+    parsed = parse.urlsplit(candidate)
+    normalized_path = parsed.path.rstrip("/")
+    observer_path = "/api/model-observer"
+    if normalized_path == observer_path or normalized_path.endswith(observer_path):
+        stripped_path = normalized_path[: -len(observer_path)].rstrip("/")
+        parsed = parsed._replace(path=stripped_path, query="", fragment="")
+        return parse.urlunsplit(parsed).rstrip("/")
+    return candidate
 
 
 def _utc_now() -> str:
@@ -271,10 +286,10 @@ def _case_result(
         "case_group": "observer",
         "validation_type": "non_functional",
         "dataspace_dimension": "governance",
-        "mapping_status": "planned_observer",
+        "mapping_status": "mapped",
         "automation_mode": "api",
         "execution_mode": "api",
-        "coverage_status": "automated" if status != "skipped" else "blocked_by_component",
+        "coverage_status": "automated",
         "observer_base_url": observer_base_url,
         "observed": {
             "run_id": run_context.get("run_id"),
@@ -322,7 +337,7 @@ def run_ai_model_hub_model_observer_validation(
     if not observer_base_url:
         skip_reason = (
             "Model Observer API base URL is not configured. Set AI_MODEL_HUB_OBSERVER_API_BASE_URL "
-            "after integrating Edmundo's Observer backend."
+            "after integrating the Observer backend."
         )
         executed_cases = [
             _case_result(

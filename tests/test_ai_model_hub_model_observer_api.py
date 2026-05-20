@@ -7,6 +7,7 @@ from unittest import mock
 from validation.components.ai_model_hub.model_observer_api import (
     CASE_ID,
     build_observer_event_batch,
+    resolve_model_observer_api_base_url,
     run_ai_model_hub_model_observer_validation,
 )
 
@@ -119,6 +120,30 @@ class AIModelHubModelObserverApiTests(unittest.TestCase):
         self.assertEqual([request["method"] for request in session.requests], ["POST", "GET", "GET", "GET", "GET"])
         headers = session.requests[0]["headers"]
         self.assertNotIn("Authorization", headers)
+
+    def test_run_model_observer_validation_normalizes_api_base_url_suffix(self):
+        run_context = build_observer_event_batch("observer-normalized")
+        session = FakeSession(run_context)
+
+        with mock.patch(
+            "validation.components.ai_model_hub.model_observer_api.build_observer_event_batch",
+            return_value=run_context,
+        ):
+            result = run_ai_model_hub_model_observer_validation(
+                base_url="http://observer.example.local/api/model-observer",
+                session=session,
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(
+            resolve_model_observer_api_base_url("http://observer.example.local/api/model-observer"),
+            "http://observer.example.local",
+        )
+        requested_urls = [request["url"] for request in session.requests]
+        self.assertTrue(
+            all("/api/model-observer/api/model-observer" not in url for url in requested_urls),
+            requested_urls,
+        )
 
     def test_run_model_observer_validation_skips_when_base_url_is_missing(self):
         with mock.patch.dict(os.environ, {}, clear=True):

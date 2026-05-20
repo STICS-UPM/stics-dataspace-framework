@@ -271,7 +271,7 @@ test_cases:
     execution_mode: api_ui
     coverage_status: automated
     mapping_status: mapped
-    expected_result: The virtualized output is exposed as HttpData and negotiable from INESData
+    expected_result: The virtualized output is exposed as HttpData, negotiable from INESData and linked to a consumer contract agreement
     automation:
       status: automated
       mode: api_ui
@@ -304,20 +304,52 @@ test_cases:
 
 integration_cases:
   - id: INT-VS-DS-01
+    scope: semantic_virtualization
+    case_group: dataspace_integration
     description: Publish Semantic Virtualization output as HttpData in INESData
+    type: integration
+    validation_type: integration
+    dataspace_dimension: connector_publication
+    execution_mode: api_ui
     status: automated
+    coverage_status: automated
+    mapping_status: mapped
     runner: validation/components/semantic_virtualization/dataspace_integration.py
+    linked_cases:
+      - PT5-VS-11
+      - DS-UI-SV-01
+    expected_result: Semantic Virtualization output is published as an INESData HttpData asset and remains traceable to the component validation suite.
     latest_ui_evidence: experiments/semantic-virtualization-inesdata-ui-marked-20260506/components/semantic-virtualization/inesdata-ui/results.json
 
   - id: INT-VS-DS-02
+    scope: semantic_virtualization
+    case_group: dataspace_integration
     description: Consume authorized virtualized resource from the dataspace
+    type: integration
+    validation_type: integration
+    dataspace_dimension: connector_consumption
+    execution_mode: api_ui
     status: automated
+    coverage_status: automated
+    mapping_status: mapped
     runner: validation/components/semantic_virtualization/dataspace_integration.py
+    linked_cases:
+      - PT5-VS-11
+      - DS-UI-SV-01
+    expected_result: The consumer can discover, negotiate and confirm agreement-backed access to the virtualized resource through the INESData dataspace flow.
     latest_ui_evidence: experiments/semantic-virtualization-inesdata-ui-marked-20260506/components/semantic-virtualization/inesdata-ui/results.json
 
   - id: SV-GTFS-BENCH-04
+    scope: semantic_virtualization
+    case_group: dataspace_integration
     description: Expose the official-derived GTFS-Bench RDF output as HttpData in INESData
+    type: integration
+    validation_type: integration
+    dataspace_dimension: official_dataset_httpdata
+    execution_mode: api_ui
     status: automated
+    coverage_status: automated
+    mapping_status: mapped
     runner: validation/components/semantic_virtualization/dataspace_integration.py
     enable_with: python3 validation/components/semantic_virtualization/dataspace_integration.py --gtfs-bench-official-materialization
     linked_cases:
@@ -329,17 +361,42 @@ integration_cases:
     latest_api_evidence: experiments/semantic-virtualization-gtfs-bench-official-httpdata-20260507-skip-transfer/components/semantic-virtualization/integration/semantic_virtualization_dataspace_integration.json
     latest_ui_evidence: experiments/experiment_2026-05-07_23-21-05/components/semantic-virtualization/inesdata-ui/results.json
     latest_ui_report: experiments/experiment_2026-05-07_23-21-05/components/semantic-virtualization/inesdata-ui/test-results/core-07-semantic-virtualiz-8c25d-egotiation-from-INESData-UI/sv-httpdata-ui-report.json
-    expected_result: The provider publishes a Semantic Virtualization HttpData asset with official GTFS-Bench RDF materialization metadata, and the consumer can discover, negotiate and optionally transfer it through INESData.
+    expected_result: The provider publishes a Semantic Virtualization HttpData asset with official GTFS-Bench RDF materialization metadata, and the consumer can discover, negotiate, confirm the agreement and optionally transfer it through INESData.
 
   - id: INT-VS-AMH-01
+    scope: semantic_virtualization
+    case_group: cross_component_traceability
     description: Trace Semantic Virtualization output as input context for AI Model Hub
+    type: integration
+    validation_type: integration
+    dataspace_dimension: cross_component_traceability
+    execution_mode: offline_traceability
     status: automated
+    coverage_status: automated
+    mapping_status: mapped
     runner: validation/components/ai_model_hub/virtualization_traceability.py
+    linked_cases:
+      - INT-VS-DS-01
+      - SV-GTFS-BENCH-04
+      - MH-MOB-01
+    expected_result: Semantic Virtualization GTFS-Bench evidence can be checked as input traceability for AI Model Hub mobility validation without copying raw datasets.
 
   - id: INT-VS-OH-01
+    scope: semantic_virtualization
+    case_group: cross_component_traceability
     description: Reuse ontologies published by Ontology Hub as mapping support
+    type: integration
+    validation_type: integration
+    dataspace_dimension: semantic_reuse
+    execution_mode: planned_traceability
     status: pending
+    coverage_status: pending
+    mapping_status: partial
     planned_runner: validation/components/semantic_virtualization/mapping_validation.py
+    linked_cases:
+      - PT5-VS-06
+      - PT5-OH-07
+    expected_result: Mapping validation should be able to reference ontology artifacts published or governed through Ontology Hub once a stable cross-component fixture is available.
 
 ui_demo_cases:
   - id: SV-UI-04

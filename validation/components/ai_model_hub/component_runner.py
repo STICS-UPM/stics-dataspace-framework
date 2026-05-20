@@ -18,6 +18,12 @@ MODEL_EXECUTION_ENV = "AI_MODEL_HUB_ENABLE_MODEL_EXECUTION"
 MODEL_BENCHMARKING_ENV = "AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING"
 MOBILITY_BENCHMARKING_ENV = "AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING"
 MODEL_OBSERVER_ENV = "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER"
+MODEL_OBSERVER_BASE_URL_ENVS = (
+    "AI_MODEL_HUB_OBSERVER_API_BASE_URL",
+    "AI_MODEL_OBSERVER_API_BASE_URL",
+    "AI_MODEL_HUB_PUBLIC_PORTAL_BACKEND_URL",
+    "INESDATA_PUBLIC_PORTAL_BACKEND_URL",
+)
 
 STATUS_PRIORITY = {
     "failed": 3,
@@ -284,6 +290,71 @@ def _component_adapter_name() -> str:
     ).strip().lower() or "inesdata"
 
 
+def _model_observer_topology() -> str:
+    return (
+        os.environ.get("AI_MODEL_HUB_MODEL_OBSERVER_TOPOLOGY")
+        or os.environ.get("PIONERA_TOPOLOGY")
+        or os.environ.get("INESDATA_TOPOLOGY")
+        or "local"
+    )
+
+
+def _explicit_model_observer_base_url_configured() -> bool:
+    return any(str(os.environ.get(env_name) or "").strip() for env_name in MODEL_OBSERVER_BASE_URL_ENVS)
+
+
+def _protocol_from_config(config: Dict[str, Any]) -> str:
+    environment = str(config.get("ENVIRONMENT") or config.get("DEPLOYMENT_ENVIRONMENT") or "").strip().upper()
+    return "https" if environment == "PRO" else "http"
+
+
+def _derive_model_observer_base_url_from_adapter() -> str:
+    try:
+        from validation.components.ai_model_hub.connector_governance_api import (
+            _build_adapter,
+            _dataspace_name_loader,
+        )
+
+        adapter = _build_adapter(_component_adapter_name(), _model_observer_topology())
+        config = dict(adapter.load_deployer_config() or {})
+        explicit_candidates = (
+            config.get("AI_MODEL_HUB_OBSERVER_API_BASE_URL"),
+            config.get("AI_MODEL_OBSERVER_API_BASE_URL"),
+            config.get("AI_MODEL_HUB_PUBLIC_PORTAL_BACKEND_URL"),
+            config.get("INESDATA_PUBLIC_PORTAL_BACKEND_URL"),
+            config.get("PUBLIC_PORTAL_BACKEND_URL"),
+        )
+        for candidate in explicit_candidates:
+            normalized = str(candidate or "").strip().rstrip("/")
+            if normalized:
+                return normalized
+
+        dataspace = str(
+            _dataspace_name_loader(adapter)()
+            or config.get("DS_1_NAME")
+            or config.get("DS_NAME")
+            or "demo"
+        ).strip()
+        ds_domain = str(config.get("DS_DOMAIN_BASE") or adapter.config.ds_domain_base() or "").strip()
+        if dataspace and ds_domain:
+            return f"{_protocol_from_config(config)}://backend-{dataspace}.{ds_domain}"
+    except Exception:
+        return ""
+    return ""
+
+
+def _resolve_model_observer_base_url(fallback_base_url: str | None = None) -> str:
+    from validation.components.ai_model_hub.model_observer_api import resolve_model_observer_api_base_url
+
+    if _explicit_model_observer_base_url_configured():
+        return resolve_model_observer_api_base_url()
+
+    derived_base_url = _derive_model_observer_base_url_from_adapter()
+    if derived_base_url:
+        return resolve_model_observer_api_base_url(derived_base_url)
+    return resolve_model_observer_api_base_url(fallback_base_url)
+
+
 def run_ai_model_hub_connector_governance_validation(experiment_dir: str | None = None) -> Dict[str, Any]:
     from validation.components.ai_model_hub.connector_governance_api import (
         build_ai_model_hub_connector_governance_suite,
@@ -478,7 +549,7 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
             (
                 "model_observer",
                 run_ai_model_hub_model_observer_validation(
-                    base_url=normalized_base_url,
+                    base_url=_resolve_model_observer_base_url(normalized_base_url),
                     experiment_dir=experiment_dir,
                 ),
             )

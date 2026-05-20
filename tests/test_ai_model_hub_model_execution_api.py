@@ -156,8 +156,12 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         self.assertEqual(context["payload"]["w1h_label"], "WHAT")
         self.assertEqual(context["sample"]["original_reliability_label"], "no confiable")
 
-    def test_default_model_url_uses_dataspace_service_dns(self):
+    def test_default_model_url_uses_components_namespace_service_dns(self):
         class Adapter:
+            @staticmethod
+            def load_deployer_config():
+                return {"COMPONENTS_NAMESPACE": "components"}
+
             class config:
                 @staticmethod
                 def dataspace_name():
@@ -165,7 +169,7 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
 
         self.assertEqual(
             default_model_url(Adapter()),
-            "http://model-server.demo.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
+            "http://model-server.components.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
         )
 
     def test_component_key_is_stable(self):

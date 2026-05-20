@@ -6,6 +6,7 @@ const {
   waitForConsumerCatalogAsset,
 } = require("../bootstrap");
 const { CatalogPage } = require("../pages/catalog.page");
+const { ContractsPage } = require("../pages/contracts.page");
 const { clickMarked } = require("../support/live-marker");
 
 test("PT5-MH-08: contract negotiation from catalog registers an agreement in the consumer connector", async ({
@@ -16,6 +17,7 @@ test("PT5-MH-08: contract negotiation from catalog registers an agreement in the
   attachJson,
 }) => {
   const catalogPage = new CatalogPage(page, aiModelHubRuntime);
+  const contractsPage = new ContractsPage(page, aiModelHubRuntime);
   const suffix = `${Date.now()}`;
   const assetId = `pt5-mh-08-model-${suffix}`;
   const assetName = `PT5 MH 08 Model ${suffix}`;
@@ -50,8 +52,12 @@ test("PT5-MH-08: contract negotiation from catalog registers an agreement in the
 
   await catalogPage.openNegotiationForCard(publishedCard);
   await expect(catalogPage.negotiationDialog).toContainText("Catalog Dataset");
+  await expect(catalogPage.negotiationDialog).toContainText("Select an Offer");
+  await expect(catalogPage.negotiationDialog).toContainText("Selected Offer");
   await expect(catalogPage.negotiationDialog).toContainText(assetId);
   await catalogPage.selectFirstOffer();
+  const selectedOfferText = await catalogPage.selectedOfferText();
+  expect(selectedOfferText).toMatch(/permission|prohibition|obligation|@id/i);
   await captureStep(page, "pt5-mh-08-offer-selected");
 
   await catalogPage.startNegotiation();
@@ -64,7 +70,22 @@ test("PT5-MH-08: contract negotiation from catalog registers an agreement in the
 
   await clickMarked(catalogPage.goToContractsButton);
   await expect(page).toHaveURL(new RegExp(`${aiModelHubRuntime.contractsPath}$`));
+  await contractsPage.waitUntilReady();
+  await contractsPage.search(assetId);
+  const contractCard = contractsPage.cardByAssetId(assetId);
+  await expect(contractCard).toBeVisible({ timeout: 20000 });
+  await expect(contractCard).toContainText("Asset");
+  await expect(contractCard).toContainText(assetId);
+  await expect(contractCard).toContainText(/Provider/i);
+  await expect(contractsPage.transferButtonForCard(contractCard)).toBeVisible();
+  const contractCardText = (await contractCard.innerText()).trim();
   await captureStep(page, "pt5-mh-08-contracts-route");
+
+  await contractsPage.openDetailsForCard(contractCard);
+  await expect(contractsPage.detailsDialog).toContainText("Compacted JSON-LD");
+  await expect(contractsPage.detailsDialog).toContainText("Expanded JSON-LD");
+  await expect(contractsPage.detailsDialog).toContainText(assetId);
+  await captureStep(page, "pt5-mh-08-contract-details");
 
   await attachJson("pt5-mh-08-contract-negotiation", {
     route: aiModelHubRuntime.catalogPath,
@@ -75,6 +96,8 @@ test("PT5-MH-08: contract negotiation from catalog registers an agreement in the
     catalogVisibility,
     agreementState,
     visibleCardText,
+    selectedOfferText,
+    contractCardText,
     authorizedConnectors: Object.keys(connectorAuthorization),
   });
 });

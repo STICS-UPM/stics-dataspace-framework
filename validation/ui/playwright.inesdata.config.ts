@@ -43,6 +43,12 @@ export default defineConfig({
     ...(ontologyHubInesdataDemo ? [] : ["adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts"]),
     ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts"]),
     ...(aiModelObserverDemo ? [] : ["adapters/inesdata/specs/10-ai-model-observer.spec.ts"]),
+    ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/11-ai-model-browser.spec.ts"]),
+    ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/12-ai-model-execution.spec.ts"]),
+    ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts"]),
+    ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/14-ai-model-daimo-vocabulary.spec.ts"]),
+    ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/15-ai-model-external-execution.spec.ts"]),
+    ...(aiModelObserverDemo ? [] : ["adapters/inesdata/specs/16-ai-model-observer-participant-summary.spec.ts"]),
   ],
   timeout: 4 * 60 * 1000,
   expect: {

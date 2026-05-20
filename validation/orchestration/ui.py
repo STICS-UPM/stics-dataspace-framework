@@ -19,6 +19,16 @@ LEVEL6_UI_DATASPACE_SPECS = (
     os.path.join("adapters", "inesdata", "specs", "03c-provider-contract-definition-create.spec.ts"),
     os.path.join("adapters", "inesdata", "specs", "05-consumer-negotiation.spec.ts"),
     os.path.join("adapters", "inesdata", "specs", "06-consumer-transfer.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "07-semantic-virtualization-httpdata.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "08-ontology-hub-inesdata-readonly.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "09-ai-model-hub-httpdata.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "10-ai-model-observer.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "11-ai-model-browser.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "12-ai-model-execution.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "13-ai-model-benchmarking.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "14-ai-model-daimo-vocabulary.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "15-ai-model-external-execution.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "16-ai-model-observer-participant-summary.spec.ts"),
 )
 LEVEL6_UI_INESDATA_CONFIG = "playwright.inesdata.config.ts"
 LEVEL6_UI_OPS_SPEC = os.path.join("ops", "minio-bucket-visibility.spec.ts")
@@ -172,6 +182,10 @@ def run_ui_dataspace(
     }
     if extra_env:
         env.update(extra_env)
+    env.setdefault("UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO", "1")
+    env.setdefault("UI_ONTOLOGY_HUB_INESDATA_DEMO", "1")
+    env.setdefault("UI_AI_MODEL_HUB_HTTPDATA_DEMO", "1")
+    env.setdefault("UI_AI_MODEL_OBSERVER_DEMO", "1")
     _enable_interaction_markers_by_default(env)
     specs = list(LEVEL6_UI_DATASPACE_SPECS)
     print(

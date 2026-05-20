@@ -1639,6 +1639,7 @@ class INESDataComponentsAdapter:
                     release_name=release_name,
                     namespace=namespace,
                     built_local_image=built_local_image,
+                    deployer_config=deployer_config,
                 )
             else:
                 if built_local_image:

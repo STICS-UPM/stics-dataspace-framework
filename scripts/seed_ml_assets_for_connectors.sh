@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="${WORK_DIR:-/tmp/inesdata_seed}"
 NAMESPACE="${NAMESPACE:-demo}"
+COMPONENTS_NAMESPACE="${COMPONENTS_NAMESPACE:-components}"
 COUNT="${COUNT:-8}"
 CONNECTORS_CSV="${CONNECTORS_CSV:-conn-citycouncil-demo,conn-company-demo}"
 CREDENTIALS_DIR="${CREDENTIALS_DIR:-$ROOT_DIR/inesdata-testing/deployments/DEV/demo}"
@@ -21,7 +22,8 @@ usage() {
 Usage: seed_ml_assets_for_connectors.sh [options]
 
 Options:
-  --namespace <ns>            Kubernetes namespace (default: demo)
+  --namespace <ns>            Dataspace namespace/name used by legacy seed defaults (default: demo)
+  --components-namespace <ns> Namespace where component fixtures run, including model-server (default: components)
   --count <n>                 Number of InesDataStore assets per connector (default: 8)
   --connectors <csv>          Connectors list (default: conn-citycouncil-demo,conn-company-demo)
   --credentials-dir <path>    Folder containing credentials-connector-<name>.json
@@ -44,6 +46,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --namespace)
       NAMESPACE="${2:-}"
+      shift 2
+      ;;
+    --components-namespace)
+      COMPONENTS_NAMESPACE="${2:-}"
       shift 2
       ;;
     --count)
@@ -311,7 +317,7 @@ EOF
 # MODEL DEFINITIONS — 25 HttpData models served by model-server
 # =============================================================================
 
-MODEL_SERVER_BASE="http://model-server.${NAMESPACE}.svc.cluster.local:8080"
+MODEL_SERVER_BASE="${MODEL_SERVER_BASE:-http://model-server.${COMPONENTS_NAMESPACE}.svc.cluster.local:8080}"
 
 MODEL_SLUGS=(
   chest-xray pneumonia covid19 lung-nodule tuberculosis

@@ -6138,7 +6138,7 @@ class MainCliTests(unittest.TestCase):
         self.assertIs(validation_engine.protocol_address_resolver.__self__, adapter.connectors)
         self.assertIs(
             validation_engine.protocol_address_resolver.__func__,
-            adapter.connectors.build_internal_protocol_address.__func__,
+            adapter.connectors.build_protocol_address.__func__,
         )
         self.assertIs(validation_engine.cleanup_test_entities.__self__, adapter.connectors)
         self.assertIs(validation_engine.cleanup_test_entities.__func__, adapter.connectors.cleanup_test_entities.__func__)
@@ -6150,7 +6150,7 @@ class MainCliTests(unittest.TestCase):
         self.assertIs(metrics_collector.ensure_kafka_topic.__func__, adapter.ensure_kafka_topic.__func__)
         self.assertTrue(metrics_collector.auto_mode())
 
-    def test_build_kafka_edc_validation_suite_wires_internal_protocol_resolver(self):
+    def test_build_kafka_edc_validation_suite_wires_protocol_resolver(self):
         adapter = InesdataAdapter(
             run=lambda *args, **kwargs: None,
             run_silent=lambda *args, **kwargs: "",
@@ -6162,7 +6162,7 @@ class MainCliTests(unittest.TestCase):
         self.assertIs(suite.protocol_address_resolver.__self__, adapter.connectors)
         self.assertIs(
             suite.protocol_address_resolver.__func__,
-            adapter.connectors.build_internal_protocol_address.__func__,
+            adapter.connectors.build_protocol_address.__func__,
         )
 
     def test_build_adapter_passes_dry_run_when_supported(self):

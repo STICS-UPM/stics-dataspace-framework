@@ -48,8 +48,21 @@ async function openMappingEditor(page, semanticVirtualizationRuntime) {
     semanticVirtualizationRuntime.mappingEditorBaseUrl,
     semanticVirtualizationRuntime.mappingEditorRootPath,
   );
-  const response = await page.goto(url, { waitUntil: "networkidle" });
-  const status = response ? response.status() : 0;
+  const deadline = Date.now() + 120 * 1000;
+  let response = null;
+  let status = 0;
+
+  while (Date.now() < deadline) {
+    response = await page.goto(url, { waitUntil: "networkidle" }).catch(() => null);
+    status = response ? response.status() : 0;
+    if (status === 200) {
+      break;
+    }
+    if (![0, 502, 503, 504].includes(status)) {
+      break;
+    }
+    await page.waitForTimeout(5000);
+  }
 
   expect(response, `Expected browser navigation response from ${url}`).not.toBeNull();
   expect(status).toBe(200);
@@ -136,10 +149,15 @@ async function importMappingFixture(page) {
 
   await uploadStreamlitFileMarked(page, /Upload mapping file/i, MAPPING_FIXTURE_PATH);
 
-  const labelInput = page.getByLabel(/Enter mapping label/i).last();
+  const labelInputs = page.locator('input[aria-label*="Enter mapping label"], textarea[aria-label*="Enter mapping label"]');
+  await expect
+    .poll(() => labelInputs.count(), { timeout: 45 * 1000 })
+    .toBeGreaterThan(1);
+  const labelInput = labelInputs.nth(1);
   await expect(labelInput).toBeVisible({ timeout: 45 * 1000 });
   await fillMarked(labelInput, mappingLabel);
   await pressMarked(labelInput, "Enter");
+  await expect(labelInput).toHaveValue(mappingLabel, { timeout: 10 * 1000 });
   await page.waitForLoadState("networkidle").catch(() => {});
 
   const importButton = page.getByRole("button", { name: /^Import$/ }).first();

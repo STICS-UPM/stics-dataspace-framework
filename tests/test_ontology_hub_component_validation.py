@@ -4,7 +4,10 @@ import tempfile
 import unittest
 from unittest import mock
 
+import yaml
+
 from validation.components.ontology_hub.integration.runner import (
+    _http_get_until_stable,
     evaluate_html_page_response,
     evaluate_sparql_response,
     evaluate_term_search_response,
@@ -12,7 +15,36 @@ from validation.components.ontology_hub.integration.runner import (
 )
 
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
+CATALOG_PATH = os.path.join(
+    PROJECT_ROOT,
+    "validation",
+    "components",
+    "ontology_hub",
+    "integration",
+    "test_cases.yaml",
+)
+
+
 class OntologyHubComponentValidationTests(unittest.TestCase):
+    def _load_catalog(self):
+        with open(CATALOG_PATH, "r", encoding="utf-8") as handle:
+            return yaml.safe_load(handle) or {}
+
+    def test_pt5_oh16_catalog_matches_inesdata_integration_route(self):
+        catalog = self._load_catalog()
+        cases = {case.get("id"): case for case in catalog.get("test_cases") or []}
+        case = cases["PT5-OH-16"]
+
+        self.assertEqual(case["execution_mode"], "ui_readonly")
+        self.assertEqual(case["coverage_status"], "automated")
+        self.assertEqual(case["mapping_status"], "mapped")
+        self.assertEqual(case["automation"]["status"], "automated")
+        self.assertEqual(case["automation"]["mode"], "ui_readonly")
+        self.assertEqual(case["automation"]["evidence_case"], "DS-UI-OH-01")
+        self.assertEqual(case["automation"]["runtime_env"]["UI_ONTOLOGY_HUB_INESDATA_DEMO"], "1")
+        self.assertNotIn("enable_with", case["automation"])
+
     def test_evaluate_term_search_response_passes_on_valid_json_payload(self):
         payload = {
             "results": [],
@@ -148,23 +180,45 @@ class OntologyHubComponentValidationTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "passed")
 
+    def test_http_get_until_stable_retries_transient_gateway_errors(self):
+        responses = [
+            (502, "text/html", "Bad Gateway"),
+            (200, "application/sparql-results+json", json.dumps({"boolean": True})),
+        ]
+
+        with mock.patch(
+            "validation.components.ontology_hub.integration.runner._http_get",
+            side_effect=responses,
+        ), mock.patch("validation.components.ontology_hub.integration.runner.time.sleep") as sleep_mock:
+            status, content_type, body, history = _http_get_until_stable(
+                "http://ontology-hub.local/dataset/sparql?query=ASK",
+                attempts=3,
+                delay_seconds=0.01,
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "application/sparql-results+json")
+        self.assertIn("boolean", body)
+        self.assertEqual([entry["http_status"] for entry in history], [502, 200])
+        sleep_mock.assert_called_once_with(0.01)
+
     def test_run_ontology_hub_validation_persists_artifacts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             def fake_http_get(url, timeout=20):
-                if "api/v2/term/search" in url and "tag=Catalogs" in url:
+                if "api/v2/term/search" in url and "tag=Services" in url:
                     payload = {
                         "total_results": 1,
-                        "filters": {"vocab": "s4grid", "tag": "Catalogs"},
+                        "filters": {"vocab": "saref4grid", "tag": "Services"},
                         "aggregations": {
-                            "vocabs": {"buckets": [{"key": "s4grid", "doc_count": 1}]},
+                            "vocabs": {"buckets": [{"key": "saref4grid", "doc_count": 1}]},
                             "tags": {"buckets": []},
                         },
                         "results": [
                             {
-                                "prefixedName": ["s4grid:Person"],
-                                "vocabulary": {"prefix": "s4grid"},
+                                "prefixedName": ["saref4grid:Person"],
+                                "vocabulary": {"prefix": "saref4grid"},
                                 "uri": ["http://schema.org/Person"],
-                                "tags": ["Catalogs"],
+                                "tags": ["Services"],
                             }
                         ],
                     }
@@ -174,23 +228,23 @@ class OntologyHubComponentValidationTests(unittest.TestCase):
                         "total_results": 1,
                         "filters": {},
                         "aggregations": {
-                            "vocabs": {"buckets": [{"key": "s4grid", "doc_count": 1}]},
+                            "vocabs": {"buckets": [{"key": "saref4grid", "doc_count": 1}]},
                             "tags": {"buckets": []},
                         },
                         "results": [
                             {
-                                "prefixedName": ["s4grid:Person"],
-                                "vocabulary": {"prefix": "s4grid"},
+                                "prefixedName": ["saref4grid:Person"],
+                                "vocabulary": {"prefix": "saref4grid"},
                                 "uri": ["http://schema.org/Person"],
-                                "tags": ["Catalogs"],
+                                "tags": ["Services"],
                             }
                         ],
                     }
                     return 200, "application/json", json.dumps(payload)
                 if "/dataset/sparql?" in url:
                     return 200, "application/sparql-results+json", json.dumps({"head": {}, "boolean": True})
-                if url.endswith("/dataset/patterns?q=s4grid"):
-                    return 200, "text/html", "<html><body><h1>Patterns</h1><div>Selected vocabularies</div><input id='checkbox_s4grid'></body></html>"
+                if url.endswith("/dataset/patterns?q=saref4grid"):
+                    return 200, "text/html", "<html><body><h1>Patterns</h1><div>Selected vocabularies</div><input id='checkbox_saref4grid'></body></html>"
                 if url.endswith("/dataset/api"):
                     return 200, "text/html", "<html><body>Pionera API /api/v2/term/search /dataset/api/v2/agent/list</body></html>"
                 if url.endswith("/dataset"):

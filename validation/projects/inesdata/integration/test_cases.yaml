@@ -184,12 +184,14 @@ integration_cases:
       - Open the consumer catalog from the INESData UI
       - Locate and open the Semantic Virtualization asset
       - Open contract offers and negotiate access from the UI
+      - Confirm that the consumer connector records a contract agreement for the virtualized asset
     operations:
       - publish_semantic_virtualization_httpdata
       - discover_asset
       - open_catalog_detail
       - negotiate_contract
-    expected_result: The Semantic Virtualization HttpData asset is visible from the consumer UI and can be negotiated successfully
+      - verify_contract_agreement
+    expected_result: The Semantic Virtualization HttpData asset is visible from the consumer UI, can be negotiated successfully and produces a consumer contract agreement
     automation:
       status: automated
       mode: ui_api
@@ -256,13 +258,17 @@ integration_cases:
       - Bootstrap a provider asset whose HttpData address represents an AI Model Hub model endpoint
       - Open the consumer catalog from the INESData UI
       - Locate and open the AI Model Hub model asset
+      - Validate visible controlled metadata for the model asset
       - Open contract offers and negotiate access from the UI
+      - Confirm that the consumer connector records a contract agreement for the model asset
     operations:
       - publish_ai_model_httpdata
       - discover_asset
       - open_catalog_detail
+      - validate_model_metadata
       - negotiate_contract
-    expected_result: The AI Model Hub HttpData model asset is visible from the consumer UI and can be negotiated successfully
+      - verify_contract_agreement
+    expected_result: The AI Model Hub HttpData model asset is visible from the consumer UI, exposes controlled metadata and produces a consumer contract agreement after negotiation
     automation:
       status: automated
       mode: ui_api
@@ -276,6 +282,270 @@ integration_cases:
         - PT5-MH-10
         - PT5-MH-18
 
+  - id: DS-UI-AMH-BROWSER-01
+    scope: inesdata_integration
+    case_group: ai_model_hub
+    description: AI Model Browser specialized discovery, filtering and detail from INESData UI
+    type: ui
+    validation_type: functional
+    dataspace_dimension: model_discovery
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - INESData provider and consumer connectors are reachable
+      - Controlled machine-learning HttpData assets can be published with contract offers
+      - AI Model Browser is integrated in the INESData connector interface
+    steps:
+      - Bootstrap two provider assets with divergent machine-learning DAIMO metadata and HttpData addresses
+      - Open AI Model Browser from the INESData consumer UI
+      - Search the controlled models by run identifier
+      - Validate visible model metadata, source and contract availability for the target model
+      - Apply source and storage filters without losing the controlled models
+      - Apply task, subtask, algorithm, library, framework, software and format filters
+      - Verify that rich DAIMO filters keep the target model and hide the contrast model
+      - Use the Browser primary Negotiate action to open the contract offer surface
+      - Open the model detail surface from AI Model Browser
+      - Validate federated detail fields and contract offer controls
+      - Open the Observer asset timeline for the target model when the Observer backend is available
+    operations:
+      - publish_machine_learning_httpdata
+      - open_ai_model_browser
+      - search_model
+      - validate_model_card_metadata
+      - filter_model_results_by_source_and_storage
+      - filter_model_results_by_daimo_metadata
+      - open_contract_offer_from_browser_primary_action
+      - open_model_detail
+      - validate_model_detail_and_offer
+      - validate_browser_observer_evidence
+    expected_result: AI Model Browser lists the controlled models, supports search, applies rich DAIMO filters correctly, opens the contract offer surface from the primary Negotiate action, opens a target model detail view with federated metadata and contract offer controls, and links Browser activity to Observer evidence when the backend is available
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/11-ai-model-browser.spec.ts
+      runtime_env:
+        UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
+      linked_cases:
+        - PT5-MH-01
+        - PT5-MH-04
+        - PT5-MH-05
+        - PT5-MH-06
+        - PT5-MH-07
+        - PT5-MH-08
+        - MH-OBS-03
+      notes: The Browser spec validates the primary Negotiate entry point without completing an additional negotiation; full negotiation completion remains covered by the dedicated contract suites. Observer timeline validation is recorded as a controlled subcheck when the backend is not available in the environment.
+
+  - id: DS-UI-AMH-EXEC-01
+    scope: inesdata_integration
+    case_group: ai_model_hub
+    description: AI Model Execution local model-server inference from INESData UI
+    type: ui
+    validation_type: functional
+    dataspace_dimension: model_execution
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - INESData provider connector portal is reachable
+      - The deterministic model-server service is deployed and reachable from connector pods
+      - AI Model Execution is integrated in the INESData connector interface
+    steps:
+      - Bootstrap a local provider asset with machine-learning metadata and an HttpData address pointing to model-server
+      - Open AI Model Execution from the INESData provider UI
+      - Select the controlled executable model
+      - Validate the generated input metadata and example payload
+      - Validate that malformed JSON and missing required fields are rejected before execution
+      - Execute the model through the connector-side model execution API
+      - Validate the visible status, output and execution history
+      - Open the Observer asset timeline filtered by the generated execution correlationId when the Observer backend is available
+    operations:
+      - publish_machine_learning_httpdata
+      - open_ai_model_execution
+      - select_executable_model
+      - validate_execution_input_metadata
+      - validate_execution_input_schema_errors
+      - execute_model
+      - validate_execution_output
+      - inspect_execution_history
+      - validate_execution_observer_evidence
+    expected_result: AI Model Execution validates payloads against the model input metadata, runs the controlled model-server endpoint from INESData, displays a successful deterministic inference result and links execution activity to Observer evidence when the backend is available
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/12-ai-model-execution.spec.ts
+      runtime_env:
+        UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
+      fixture:
+        source: adapters/inesdata/sources/model-server
+        endpoint: /api/v1/nlp/ecommerce-sentiment
+        note: Temporary deterministic fixture until real A5.2 models are integrated.
+      notes: The spec checks malformed JSON, missing required input fields, successful execution output, in-session execution history and Observer timeline evidence for the generated execution correlationId. Observer evidence is recorded as a controlled subcheck when the backend is not available in the environment.
+      linked_cases:
+        - PT5-MH-10
+        - PT5-MH-17
+        - MH-OBS-04
+
+  - id: DS-UI-AMH-EXEC-02
+    scope: inesdata_integration
+    case_group: ai_model_hub
+    description: AI Model Execution external model inference after INESData contract agreement
+    type: ui_api
+    validation_type: integration
+    dataspace_dimension: model_execution
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - INESData provider and consumer connector portals are reachable
+      - The deterministic model-server service is deployed and reachable from connector pods
+      - A provider-side machine-learning HttpData asset can be negotiated by the consumer
+      - AI Model Execution is integrated in the INESData consumer connector interface
+    steps:
+      - Bootstrap a provider machine-learning HttpData asset pointing to model-server
+      - Verify that the asset is visible in the consumer federated catalog
+      - Create a consumer contract negotiation and wait for the resulting agreement
+      - Open AI Model Execution from the INESData consumer UI
+      - Select the model from External Assets With Agreement
+      - Execute the model through the connector-side model execution API
+      - Validate the visible status, output and execution history
+      - Open the Observer asset timeline filtered by the generated execution correlationId when the Observer backend is available
+    operations:
+      - publish_provider_machine_learning_httpdata
+      - request_consumer_catalog
+      - negotiate_contract_agreement
+      - open_consumer_ai_model_execution
+      - select_external_model_with_agreement
+      - execute_external_model
+      - validate_execution_output
+      - inspect_execution_history
+      - validate_execution_observer_evidence
+    expected_result: The consumer can execute an external provider model only after a contract agreement exists, and the execution produces auditable output and Observer evidence when available
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/15-ai-model-external-execution.spec.ts
+      runtime_env:
+        UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
+      fixture:
+        source: adapters/inesdata/sources/model-server
+        endpoint: /api/v1/nlp/twitter-sentiment
+        transfer_type: HttpData-PULL
+        note: Temporary deterministic fixture until real A5.2 models are integrated.
+      notes: The spec validates the agreed external execution path without invoking Kafka. It creates a run-scoped provider model, negotiates access from the consumer, selects it from External Assets With Agreement and executes it through the model execution API.
+      linked_cases:
+        - PT5-MH-10
+        - PT5-MH-11
+        - PT5-MH-17
+        - AMH-INTEG-EXEC-AGREED-02
+        - MH-OBS-04
+
+  - id: DS-UI-AMH-BENCH-01
+    scope: inesdata_integration
+    case_group: ai_model_hub
+    description: AI Model Benchmarking local model-server comparison from INESData UI
+    type: ui
+    validation_type: integration
+    dataspace_dimension: model_benchmarking
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - INESData provider connector portal is reachable
+      - The deterministic model-server service is deployed and reachable from connector pods
+      - AI Model Benchmarking is integrated in the INESData connector interface
+    steps:
+      - Bootstrap two local provider assets with comparable machine-learning HttpData metadata
+      - Open AI Model Benchmarking from the INESData provider UI
+      - Select the two controlled models
+      - Validate the generated benchmark input against the selected model schema
+      - Obtain preliminary outputs for both selected models
+      - Download a suggested CSV dataset generated for the first selected model
+      - Upload a small validation CSV with expected sentiment labels
+      - Run the benchmark through the connector-side execution API
+      - Validate the visible ranking, metrics summary and benchmark evidence entry point
+      - Export the ranking results as CSV and validate the downloaded content
+      - Open the Observer benchmark evidence route for the generated benchmarkRunId when the Observer backend is available
+    operations:
+      - publish_machine_learning_httpdata
+      - open_ai_model_benchmarking
+      - select_benchmark_models
+      - validate_benchmark_input
+      - obtain_model_outputs
+      - download_suggested_dataset
+      - upload_validation_dataset
+      - run_model_benchmark
+      - validate_benchmark_ranking
+      - export_benchmark_results
+      - validate_observer_benchmark_evidence
+    expected_result: AI Model Benchmarking validates benchmark input, obtains outputs for both controlled model-server endpoints, provides a suggested CSV dataset, compares the models from INESData, displays ranking evidence, exports the ranking CSV and links the generated benchmarkRunId to Observer evidence when the backend is available
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts
+      runtime_env:
+        UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
+      fixture:
+        source: adapters/inesdata/sources/model-server
+        endpoints:
+          - /api/v1/nlp/ecommerce-sentiment
+          - /api/v1/nlp/twitter-sentiment
+        dataset_rows: 5
+        note: Temporary deterministic fixture until real A5.2 models are integrated.
+      notes: The spec validates generated single input, obtains outputs for the selected models, downloads a suggested CSV dataset, uploads the controlled validation CSV, runs the ranking benchmark, verifies the exported ranking CSV and opens Observer benchmark evidence for the generated benchmarkRunId. Observer evidence is recorded as a controlled subcheck when the backend is not available in the environment.
+      linked_cases:
+        - PT5-MH-12
+        - PT5-MH-13
+        - PT5-MH-14
+        - PT5-MH-15
+        - MH-OBS-05
+
+  - id: DS-UI-AMH-DAIMO-01
+    scope: inesdata_integration
+    case_group: ai_model_hub
+    description: AI Model Hub DAIMO machine-learning vocabulary creation from INESData UI
+    type: ui_api
+    validation_type: integration
+    dataspace_dimension: semantic_metadata
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - INESData provider connector portal is reachable
+      - The connector vocabulary API is deployed
+      - The Vocabularies UI exposes the machine-learning asset category
+      - Playwright interaction markers are enabled for audit-ready evidence
+    steps:
+      - Open the INESData provider connector UI and authenticate
+      - Open Vocabularies and create a run-scoped vocabulary
+      - Select the Machine learning category
+      - Register a controlled DAIMO JSON Schema for model metadata
+      - Verify that the vocabulary is persisted through the shared vocabulary API
+      - Open the JSON Schema dialog from the vocabulary card
+      - Open asset creation, select Machine learning and verify that the DAIMO vocabulary is available as metadata form
+    operations:
+      - login_provider
+      - open_vocabularies_route
+      - create_machine_learning_vocabulary
+      - submit_daimo_json_schema
+      - request_shared_vocabularies
+      - inspect_vocabulary_schema_dialog
+      - verify_daimo_vocabulary_in_machine_learning_asset_creation
+    expected_result: INESData persists a machine-learning vocabulary with DAIMO schema fields and exposes it in the Machine learning asset creation metadata surface
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/14-ai-model-daimo-vocabulary.spec.ts
+      runtime_env:
+        UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
+        PLAYWRIGHT_INTERACTION_MARKERS: "1"
+      linked_cases:
+        - PT5-MH-02
+        - PT5-MH-06
+        - PT5-MH-17
+        - AMH-DAIMO-VOCAB-01
+      notes: The spec creates a run-scoped vocabulary through the INESData UI, validates the persisted shared vocabulary payload, opens the schema dialog and verifies that the vocabulary can be selected from Machine learning asset creation. It does not create an asset and does not require real model endpoints.
+
   - id: DS-UI-AMH-OBS-01
     scope: inesdata_integration
     case_group: ai_model_hub
@@ -284,8 +554,8 @@ integration_cases:
     validation_type: non_functional
     dataspace_dimension: model_governance
     execution_mode: ui_contract
-    coverage_status: blocked_by_component
-    mapping_status: partial
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - AI Model Observer UI is integrated in the INESData connector interface
       - INESData consumer connector portal is reachable
@@ -306,7 +576,7 @@ integration_cases:
       - navigate_participant_summary
     expected_result: The AI Model Observer UI is available from INESData and its main evidence navigation routes are demonstrable for auditors
     automation:
-      status: automated_blocked
+      status: automated
       mode: ui_contract
       ui_spec: validation/ui/adapters/inesdata/specs/10-ai-model-observer.spec.ts
       runtime_env:
@@ -316,4 +586,45 @@ integration_cases:
         - MH-OBS-01
         - PT5-MH-17
         - Model Clearing House
-      notes: The validation contract is versioned, but the current environment reports a controlled skip until the Observer UI/API is integrated.
+      notes: The INESData connector interface and public portal backend include the Observer UI/API contract. The spec keeps a controlled skip only for older connector images that do not expose the route yet.
+
+  - id: DS-UI-AMH-OBS-02
+    scope: inesdata_integration
+    case_group: ai_model_hub
+    description: AI Model Observer participant summary aggregates controlled model evidence
+    type: ui_api
+    validation_type: non_functional
+    dataspace_dimension: model_governance
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - AI Model Observer UI/API is available through the INESData connector interface
+      - INESData consumer connector portal is reachable
+      - Playwright interaction markers are enabled for audit-ready evidence
+    steps:
+      - Open the INESData connector UI and authenticate
+      - Open AI Model Observer
+      - Seed a run-scoped controlled event batch through the Observer proxy
+      - Open the Participant summary route for the controlled consumer participant
+      - Verify totals by event type, latest evidence metadata and navigation to the asset timeline
+    operations:
+      - login_consumer
+      - open_ai_model_observer
+      - seed_controlled_observer_events
+      - open_participant_summary
+      - verify_event_type_totals
+      - navigate_latest_event_asset_timeline
+    expected_result: The AI Model Observer participant summary exposes auditable model operation totals without storing raw datasets, secrets or sensitive payloads
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/16-ai-model-observer-participant-summary.spec.ts
+      runtime_env:
+        UI_AI_MODEL_OBSERVER_DEMO: "1"
+        PLAYWRIGHT_INTERACTION_MARKERS: "1"
+      linked_cases:
+        - MH-OBS-06
+        - PT5-MH-17
+        - Model Clearing House
+      notes: The spec uses run-scoped synthetic metadata and hashes only. It records a controlled skip when an older environment does not expose the Observer UI/API yet.

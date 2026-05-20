@@ -1,6 +1,7 @@
 # Suite movilidad INESData
 
-Suite opt-in para futuras validaciones del espacio de movilidad de INESData.
+Scaffold read-only para futuras validaciones del espacio de movilidad de
+INESData.
 
 El dominio queda preparado como scaffold. Antes de activar pruebas reales, el
 owner funcional debe definir:

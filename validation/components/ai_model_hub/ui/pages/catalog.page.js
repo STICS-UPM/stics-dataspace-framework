@@ -16,6 +16,7 @@ class CatalogPage {
     this.requestCatalogButton = this.requestDialog.locator("button[type='submit']");
     this.negotiationDialog = page.locator("dialog#dashboard-dialog");
     this.offerRadioButtons = this.negotiationDialog.locator("input[type='radio']");
+    this.selectedOfferDetails = this.negotiationDialog.locator(".mockup-code").first();
     this.negotiateButton = this.negotiationDialog.locator("button").filter({ hasText: /Negotiate/i }).first();
     this.goToContractsButton = this.negotiationDialog.locator("button, div[role='button']").filter({
       hasText: /Go to Contracts/i,
@@ -49,12 +50,32 @@ class CatalogPage {
     return this.catalogCards.filter({ hasText: text }).first();
   }
 
+  async waitForCatalogCardsToSettle(timeout = 5000) {
+    await Promise.race([
+      this.catalogCards.first().waitFor({ state: "visible", timeout }),
+      this.errorAlert.first().waitFor({ state: "visible", timeout }),
+      this.emptyStateMessage.first().waitFor({ state: "visible", timeout }),
+    ]).catch(() => {});
+  }
+
+  async findCatalogCardOnCurrentPage(text, timeout = 2500) {
+    const card = this.catalogCardByText(text);
+    try {
+      await expect(card).toBeVisible({ timeout });
+      return card;
+    } catch {
+      return null;
+    }
+  }
+
   async findCatalogCardAcrossPages(text, maxPages = 10) {
     const visitedPages = new Set();
 
     for (let attempt = 0; attempt < maxPages; attempt += 1) {
-      const card = this.catalogCardByText(text);
-      if ((await card.count()) > 0) {
+      await this.waitForCatalogCardsToSettle();
+
+      const card = await this.findCatalogCardOnCurrentPage(text);
+      if (card) {
         return card;
       }
 
@@ -71,6 +92,7 @@ class CatalogPage {
 
       await clickMarked(this.nextPageButton);
       await this.page.waitForLoadState("domcontentloaded", { timeout: 1000 }).catch(() => {});
+      await this.page.waitForTimeout(500);
     }
 
     throw new Error(`Catalog card '${text}' was not visible in the paginated catalog results`);
@@ -88,6 +110,11 @@ class CatalogPage {
   async selectFirstOffer() {
     await expect(this.offerRadioButtons.first()).toBeVisible();
     await checkMarked(this.offerRadioButtons.first());
+    await expect(this.selectedOfferDetails).toBeVisible();
+  }
+
+  async selectedOfferText() {
+    return ((await this.selectedOfferDetails.innerText().catch(() => "")) || "").trim();
   }
 
   async startNegotiation() {

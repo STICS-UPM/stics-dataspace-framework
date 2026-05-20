@@ -5,7 +5,7 @@ const {
   buildFlaresBenchmarkRows,
   ensureFlaresLinguisticModelsPublished,
   ensureLocalFlaresBenchmarkDatasetPublished,
-  loadFlaresMiniFixture,
+  loadFlaresDataset,
 } = require("../../functional/linguistic/bootstrap");
 
 const DEMO_ENV = "AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO";
@@ -115,7 +115,7 @@ async function prepareBenchmarkingDemo({
   runBenchmark = false,
   stepPrefix,
 }) {
-  const fixture = loadFlaresMiniFixture();
+  const fixture = loadFlaresDataset();
   const benchmarkRows = buildFlaresBenchmarkRows(fixture);
   const inferenceCalls = await installBenchmarkInferDemoRoute(page, aiModelHubRuntime, benchmarkRows);
   const linguisticModels = await ensureFlaresLinguisticModelsPublished(

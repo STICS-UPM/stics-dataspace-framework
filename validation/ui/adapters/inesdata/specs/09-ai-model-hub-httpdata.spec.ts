@@ -9,6 +9,7 @@ import {
   bootstrapProviderNegotiationArtifacts,
   cleanupProviderValidationArtifacts,
   probeConsumerCatalogDatasetReadiness,
+  waitForConsumerAgreement,
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS } from "../../../shared/utils/waiting";
 
@@ -29,13 +30,18 @@ type AIModelHubUiReport = {
   toleratedErrorResponses: Array<{ url: string; status: number }>;
   fatalErrorResponses: Array<{ url: string; status: number }>;
   negotiationMessage?: string;
+  consumerAgreement?: {
+    agreementId: string | null;
+    assetId: string;
+    attempts: number;
+  };
 };
 
 const DEFAULT_MODEL_PATH = "/api/v1/nlp/ecommerce-sentiment";
 
 test.skip(
   process.env.UI_AI_MODEL_HUB_HTTPDATA_DEMO !== "1",
-  "Opt-in demo: set UI_AI_MODEL_HUB_HTTPDATA_DEMO=1 to validate an AI Model Hub HttpData model asset from the INESData UI.",
+  "Set UI_AI_MODEL_HUB_HTTPDATA_DEMO=1 or run Level 6 with the INESData adapter to validate an AI Model Hub HttpData model asset from the INESData UI.",
 );
 
 function normalizePath(value: string): string {
@@ -76,6 +82,7 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
   const assetId = `qa-ui-amh-httpdata-${suffix}`;
   const modelPath = aiModelHubModelPath();
   const modelUrl = aiModelHubModelUrl(dataspaceRuntime.dataspace);
+  const modelName = `AI Model Hub HttpData model ${suffix}`;
   const browserDiagnostics = collectBrowserDiagnostics(page);
   const loginPage = new KeycloakLoginPage(page, {
     portalUser: dataspaceRuntime.consumer.username,
@@ -142,7 +149,7 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
       suffix,
       {
         sourceObjectName: `ai-model-hub-model-${suffix}.json`,
-        name: `AI Model Hub HttpData model ${suffix}`,
+        name: modelName,
         version: "1.0.0",
         shortDescription: "AI Model Hub model endpoint exposed as HttpData for UI demo validation",
         description:
@@ -199,6 +206,16 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
       attachJson,
       context: "ai-model-hub-httpdata-catalog-detail",
     });
+    await expect(page.getByText(assetId, { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(modelName).first()).toBeVisible({ timeout: 10_000 });
+    await attachJson("ai-model-hub-httpdata-ui-metadata-assertions", {
+      assetId,
+      modelName,
+      modelPath,
+      modelUrl,
+      expectedAssetType: "ai-model-execution-endpoint",
+      expectedTask: "text-classification",
+    });
     await contractOffersPage.expectReady({
       assetId,
       attachJson,
@@ -214,6 +231,14 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
     expect(report.negotiationMessage, "No completed negotiation notification was detected").toMatch(
       /contract negotiation complete!/i,
     );
+    const consumerAgreement = await waitForConsumerAgreement(request, dataspaceRuntime, assetId, 20, 1_500);
+    report.consumerAgreement = {
+      agreementId: consumerAgreement.agreementId,
+      assetId: consumerAgreement.assetId,
+      attempts: consumerAgreement.attempts,
+    };
+    await attachJson("ai-model-hub-httpdata-contract-agreement", report.consumerAgreement);
+    expect(report.consumerAgreement.agreementId, "No consumer contract agreement was found for the model asset").toBeTruthy();
     report.toleratedErrorResponses = report.errorResponses.filter(({ url, status }) =>
       isTolerableCatalogRetry(url, status),
     );

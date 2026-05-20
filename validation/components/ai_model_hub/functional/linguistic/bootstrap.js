@@ -16,13 +16,44 @@ const FLARES_TRIAL_FILE = "5w1h_subtask_2_trial.json";
 const FLARES_TEST_FILE = "5w1h_subtarea_2_test.json";
 
 function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const raw = fs.readFileSync(filePath, "utf8");
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    const records = raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line, index) => {
+        try {
+          return JSON.parse(line);
+        } catch (lineError) {
+          throw new Error(
+            `Invalid JSON or JSON Lines content in ${filePath} at line ${index + 1}: ${lineError.message}`,
+          );
+        }
+      });
+    if (records.length > 0) {
+      return records;
+    }
+    throw error;
+  }
 }
 
 function ensureFile(filePath) {
   if (!fs.existsSync(filePath)) {
     throw new Error(`Required FLARES source file is missing: ${filePath}`);
   }
+}
+
+function ensureArrayRecords(records, label) {
+  if (Array.isArray(records)) {
+    return records;
+  }
+  if (records && typeof records === "object") {
+    return [records];
+  }
+  throw new Error(`FLARES ${label} file must contain a JSON array or JSON Lines objects`);
 }
 
 function buildFlaresExpectedOutputs(trialSample, testSample) {
@@ -92,8 +123,8 @@ function loadFlaresDataset(sourceDir = FLARES_DATASET_DIR) {
 
   [trialSamplePath, testSamplePath].forEach(ensureFile);
 
-  const subtask2TrialSample = readJson(trialSamplePath);
-  const subtask2TestSample = readJson(testSamplePath);
+  const subtask2TrialSample = ensureArrayRecords(readJson(trialSamplePath), "trial");
+  const subtask2TestSample = ensureArrayRecords(readJson(testSamplePath), "test");
   const expectedOutputs = buildFlaresExpectedOutputs(subtask2TrialSample, subtask2TestSample);
 
   return {

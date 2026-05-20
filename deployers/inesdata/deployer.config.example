@@ -8,3 +8,5 @@ COMMON_SERVICES_NAMESPACE=common-srvs
 COMPONENTS_NAMESPACE=components
 DS_1_CONNECTORS=citycouncil,company
 COMPONENTS=ontology-hub,ai-model-hub,semantic-virtualization
+AI_MODEL_HUB_MODEL_SERVER_ENABLED=true
+AI_MODEL_HUB_MODEL_SERVER_IMAGE=model-server:latest

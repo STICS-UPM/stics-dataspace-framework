@@ -611,6 +611,11 @@ def _run_ai_model_hub_ui_integration(mode):
         "--config",
         "playwright.inesdata.config.ts",
         "adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts",
+        "adapters/inesdata/specs/11-ai-model-browser.spec.ts",
+        "adapters/inesdata/specs/12-ai-model-execution.spec.ts",
+        "adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts",
+        "adapters/inesdata/specs/14-ai-model-daimo-vocabulary.spec.ts",
+        "adapters/inesdata/specs/15-ai-model-external-execution.spec.ts",
         "--workers=1",
     ]
     cmd.extend(mode.get("args") or [])
@@ -653,6 +658,7 @@ def _run_ai_model_observer_ui_integration(mode):
         "--config",
         "playwright.inesdata.config.ts",
         "adapters/inesdata/specs/10-ai-model-observer.spec.ts",
+        "adapters/inesdata/specs/16-ai-model-observer-participant-summary.spec.ts",
         "--workers=1",
     ]
     cmd.extend(mode.get("args") or [])

@@ -169,6 +169,43 @@ class TransientAuthCleanupSession(FakeCleanupSession):
         return super().post(url, headers=headers, data=data, json=json, timeout=timeout)
 
 
+class TransientDeleteAuthCleanupSession(FakeCleanupSession):
+    def __init__(self):
+        super().__init__()
+        self.token_requests = 0
+        self.rejected_delete_once = False
+        self.delete_authorizations = []
+
+    def post(self, url, headers=None, data=None, json=None, timeout=None):
+        if "openid-connect/token" in url:
+            self.token_requests += 1
+            return FakeResponse(200, {"access_token": f"jwt-token-{self.token_requests}"})
+        return super().post(url, headers=headers, data=data, json=json, timeout=timeout)
+
+    def delete(self, url, headers=None, timeout=None):
+        self.delete_authorizations.append((headers or {}).get("Authorization"))
+        if url.endswith("/assets/qa-ui-asset-1") and not self.rejected_delete_once:
+            self.rejected_delete_once = True
+            return FakeResponse(401, [{"type": "AuthenticationFailed"}])
+        return super().delete(url, headers=headers, timeout=timeout)
+
+
+class TransientReferenceAuthCleanupSession(ConflictCleanupSession):
+    def __init__(self):
+        super().__init__()
+        self.token_requests = 0
+        self.rejected_references_once = False
+
+    def post(self, url, headers=None, data=None, json=None, timeout=None):
+        if "openid-connect/token" in url:
+            self.token_requests += 1
+            return FakeResponse(200, {"access_token": f"jwt-token-{self.token_requests}"})
+        if url.endswith("/transferprocesses/request") and not self.rejected_references_once:
+            self.rejected_references_once = True
+            return FakeResponse(401, [{"type": "AuthenticationFailed"}])
+        return super().post(url, headers=headers, data=data, json=json, timeout=timeout)
+
+
 class TransientManagementCleanupSession(FakeCleanupSession):
     def __init__(self):
         super().__init__()
@@ -335,6 +372,56 @@ class TestDataCleanupTests(unittest.TestCase):
         self.assertEqual(report["status"], "completed")
         self.assertTrue(session.rejected_inventory_once)
         self.assertEqual(session.token_requests, 2)
+
+    def test_delete_cleanup_retries_once_after_transient_401(self):
+        session = TransientDeleteAuthCleanupSession()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cleaner = ManagementApiTestDataCleaner(
+                adapter=FakeAdapter(),
+                context=fake_context(),
+                connectors=["conn-a"],
+                experiment_dir=tmpdir,
+                mode="safe",
+                session=session,
+                auth_retry_delay=0,
+            )
+            report = cleaner.run()
+
+        self.assertEqual(report["status"], "completed")
+        self.assertTrue(session.rejected_delete_once)
+        self.assertEqual(session.token_requests, 2)
+        self.assertIn("Bearer jwt-token-2", session.delete_authorizations)
+        self.assertEqual(report["connectors"][0]["errors"], [])
+        self.assertEqual(session.entities["assets"], [{"@id": "manual-asset"}])
+
+    def test_reference_inventory_retries_once_after_transient_401(self):
+        session = TransientReferenceAuthCleanupSession()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cleaner = ManagementApiTestDataCleaner(
+                adapter=FakeAdapter(),
+                context=fake_context(),
+                connectors=["conn-a"],
+                experiment_dir=tmpdir,
+                mode="safe",
+                session=session,
+                auth_retry_delay=0,
+            )
+            report = cleaner.run()
+
+        skipped = report["connectors"][0]["skipped"]
+        self.assertEqual(report["status"], "completed")
+        self.assertTrue(session.rejected_references_once)
+        self.assertEqual(session.token_requests, 2)
+        self.assertNotIn("reference_errors", skipped[0])
+        self.assertEqual(
+            {(reference["kind"], reference["id"]) for reference in skipped[0]["references"]},
+            {
+                ("transfer_processes", "transfer-1"),
+                ("contract_agreements", "agreement-1"),
+            },
+        )
 
     def test_inventory_cleanup_retries_transient_management_gateway_error(self):
         session = TransientManagementCleanupSession()

@@ -120,6 +120,9 @@ function resolveAIModelHubRuntime() {
     consumerManagementUrl:
       process.env.AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL ||
       `http://${consumerConnectorId}.${dsDomain}/management`,
+    consumerProtocolUrl:
+      process.env.AI_MODEL_HUB_CONSUMER_PROTOCOL_URL ||
+      `http://${consumerConnectorId}.${dsDomain}/protocol`,
     providerDefaultUrl:
       process.env.AI_MODEL_HUB_PROVIDER_DEFAULT_URL ||
       `http://${providerConnectorId}.${dsDomain}/api`,

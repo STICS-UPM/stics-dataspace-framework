@@ -807,7 +807,11 @@ class NewmanExecutor:
         ]
 
         collection_name = os.path.basename(collection_path)
-        if collection_name in {"05_consumer_negotiation.json", "06_consumer_transfer.json"}:
+        if collection_name in {
+            "04_consumer_catalog.json",
+            "05_consumer_negotiation.json",
+            "06_consumer_transfer.json",
+        }:
             cmd.extend([
                 "--delay-request",
                 str(self.ASYNC_COLLECTION_DELAY_REQUEST_MS),

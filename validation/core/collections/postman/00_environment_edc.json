@@ -1,6 +1,6 @@
 {
   "id": "postman-environment-00-edc",
-  "name": "01 Environment - EDC Demo",
+  "name": "00 Environment - EDC PIONERA",
   "values": [
     {
       "key": "provider",
@@ -69,6 +69,54 @@
       "enabled": true
     },
     {
+      "key": "registrationNamespace",
+      "value": "edc-control",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "providerNamespace",
+      "value": "edc-provider",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "consumerNamespace",
+      "value": "edc-consumer",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "protocolPort",
+      "value": "19194",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "protocolPath",
+      "value": "/protocol",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "protocolAddressMode",
+      "value": "public",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "providerProtocolAddressOverride",
+      "value": "",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "consumerProtocolAddressOverride",
+      "value": "",
+      "type": "text",
+      "enabled": true
+    },
+    {
       "key": "transferStartPath",
       "value": "transferprocesses",
       "type": "text",
@@ -112,13 +160,13 @@
     },
     {
       "key": "providerProtocolAddress",
-      "value": "http://conn-citycounciledc-pionera-edc:19194/protocol",
+      "value": "",
       "type": "text",
       "enabled": true
     },
     {
       "key": "consumerProtocolAddress",
-      "value": "http://conn-companyedc-pionera-edc:19194/protocol",
+      "value": "",
       "type": "text",
       "enabled": true
     }

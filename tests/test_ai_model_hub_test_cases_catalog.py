@@ -102,6 +102,7 @@ class AIModelHubTestCasesCatalogTests(unittest.TestCase):
 
         observer_ui_case = cases["MH-OBS-01"]
         self.assertEqual(observer_ui_case["coverage_status"], "automated")
+        self.assertEqual(observer_ui_case["mapping_status"], "mapped")
         self.assertEqual(observer_ui_case["automation"]["status"], "automated")
         self.assertEqual(observer_ui_case["automation"]["mode"], "ui")
         self.assertEqual(
@@ -115,6 +116,7 @@ class AIModelHubTestCasesCatalogTests(unittest.TestCase):
 
         observer_api_case = cases["MH-OBS-02"]
         self.assertEqual(observer_api_case["coverage_status"], "automated")
+        self.assertEqual(observer_api_case["mapping_status"], "mapped")
         self.assertEqual(observer_api_case["automation"]["status"], "automated")
         self.assertEqual(observer_api_case["automation"]["mode"], "api")
         self.assertEqual(

@@ -43,6 +43,13 @@ Las tres colecciones reutilizan un environment del adapter que quieras probar:
 - `Validation-Environment/validation/core/collections/postman/00_environment.json` para INESData
 - `Validation-Environment/validation/core/collections/postman/00_environment_edc.json` para EDC
 
+Los environments versionados están parametrizados con las variables base del
+despliegue. INESData usa por defecto `pionera` con los namespaces
+`core-control`/`provider`/`consumer`, y EDC usa `pionera-edc` con
+`edc-control`/`edc-provider`/`edc-consumer`. Si tu `deployer.config` local usa
+otros valores, duplica el environment en Postman y ajusta esas variables sin
+modificar las colecciones.
+
 La lógica original que el framework inyecta dinámicamente sigue estando en:
 
 - `Validation-Environment/framework/newman_executor.py`
@@ -87,10 +94,17 @@ Esos ficheros son **environments importables de Postman** y contienen solo las v
   "keycloakUrl": "http://auth.dev.ed.dataspaceunit.upm",
   "keycloakClientId": "dataspace-users",
   "adapter": "inesdata",
+  "registrationNamespace": "core-control",
+  "providerNamespace": "provider",
+  "consumerNamespace": "consumer",
+  "protocolPort": "19194",
+  "protocolPath": "/protocol",
+  "providerProtocolAddressOverride": "",
+  "consumerProtocolAddressOverride": "",
   "transferStartPath": "inesdatatransferprocesses",
   "transferDestinationType": "InesDataStore",
-  "providerProtocolAddress": "http://conn-citycouncil-pionera:19194/protocol",
-  "consumerProtocolAddress": "http://conn-company-pionera:19194/protocol"
+  "providerProtocolAddress": "",
+  "consumerProtocolAddress": ""
 }
 ```
 
@@ -109,6 +123,13 @@ Esos ficheros son **environments importables de Postman** y contienen solo las v
   "keycloakUrl": "http://auth.dev.ed.dataspaceunit.upm",
   "keycloakClientId": "dataspace-users",
   "adapter": "edc",
+  "registrationNamespace": "edc-control",
+  "providerNamespace": "edc-provider",
+  "consumerNamespace": "edc-consumer",
+  "protocolPort": "19194",
+  "protocolPath": "/protocol",
+  "providerProtocolAddressOverride": "",
+  "consumerProtocolAddressOverride": "",
   "transferStartPath": "transferprocesses",
   "transferRequestType": "TransferRequestDto",
   "transferType": "AmazonS3-PUSH",
@@ -116,14 +137,14 @@ Esos ficheros son **environments importables de Postman** y contienen solo las v
   "transferDestinationBucket": "pionera-edc-conn-companyedc-pionera-edc",
   "transferDestinationRegion": "eu-central-1",
   "transferDestinationEndpointOverride": "http://minio.dev.ed.dataspaceunit.upm",
-  "providerProtocolAddress": "http://conn-citycounciledc-pionera-edc:19194/protocol",
-  "consumerProtocolAddress": "http://conn-companyedc-pionera-edc:19194/protocol"
+  "providerProtocolAddress": "",
+  "consumerProtocolAddress": ""
 }
 ```
 
 Notas importantes:
 
-- `providerProtocolAddress` y `consumerProtocolAddress` **no** son endpoints pensados para ser invocados directamente desde Postman en tu máquina; son direcciones que el conector utiliza internamente cuando recibe la request de Management API.
+- `providerProtocolAddress` y `consumerProtocolAddress` se resuelven automáticamente al iniciar la colección compacta a partir de `provider`, `consumer`, `providerNamespace`, `consumerNamespace`, `protocolPort` y `protocolPath`. Solo usa `providerProtocolAddressOverride` o `consumerProtocolAddressOverride` si necesitas forzar una ruta interna distinta.
 - Las contraseñas locales del entorno INESData actual se generan bajo `deployers/inesdata/deployments/DEV/pionera/credentials-connector-<connector>.json`, campo `connector_user.passwd`.
 - Para EDC, las contraseñas equivalentes se generan bajo `deployers/edc/deployments/DEV/pionera-edc/credentials-connector-<connector>.json`, campo `connector_user.passwd`.
 - La colección compacta genera dinámicamente todos los identificadores `e2e_*`, así que no hace falta precargarlos en el environment.

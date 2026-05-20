@@ -92,15 +92,16 @@ test_cases:
     validation_type: functional
     dataspace_dimension: publication
     execution_mode: ui
-    coverage_status: automated_partial_ui
-    mapping_status: partial
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - A provider user with adequate permissions is available
       - The model creation form is accessible
     steps:
       - Register a model with valid metadata
+      - Add advanced DAIMO metadata for modality, runtime, input contract, inference path and governance fields
       - Save the model in local state
-    expected_result: The model is created in local state
+    expected_result: The model is created in local state with core and advanced DAIMO metadata persisted
     traceability:
       - MH-04
       - MH-05
@@ -112,12 +113,12 @@ test_cases:
       - MH-11
       - MH-12
       - MH-13
-    notes: Automated UI validation slice for local model registration. It validates component-side publication behavior; federated publication is tracked separately in PT5-MH-03.
+    notes: Automated UI validation for local model registration. It validates component-side publication with core metadata, advanced DAIMO metadata, HttpData persistence, input schema/example and governance fields. Federated publication is tracked separately in PT5-MH-03.
     automation:
       status: automated
-      mode: ui_partial
+      mode: ui
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_02_model_registration.spec.js
-      notes: The first Playwright slice covers provider-side local asset creation with valid metadata and validation of the resulting asset card.
+      notes: The Playwright spec covers provider-side local asset creation and verifies the persisted management asset, including advanced DAIMO properties used later by Browser, Execution and Benchmarking flows.
 
   - id: PT5-MH-03
     component: ai_model_hub
@@ -208,15 +209,16 @@ test_cases:
     validation_type: functional
     dataspace_dimension: discovery
     execution_mode: ui
-    coverage_status: automated_partial_ui
-    mapping_status: partial
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - The catalog shows a filter panel
       - Sufficient metadata exists to discriminate results
     steps:
-      - Filter models by metadata
+      - Seed controlled models with divergent DAIMO metadata
+      - Filter models by task, subtask, algorithm, library, framework, software and format
       - Review the resulting set
-    expected_result: Filters are applied correctly
+    expected_result: Filters discriminate the controlled model result set correctly
     traceability:
       - MH-18
       - MH-19
@@ -225,12 +227,14 @@ test_cases:
       - MH-22
       - MH-23
       - MH-24
-    notes: Automated UI validation slice for filter readiness. It verifies filter-shell availability and controlled interaction when dynamic filters exist.
+    notes: Automated UI/API validation for filter readiness. It bootstraps controlled model assets and verifies that metadata filters discriminate the result set in both the component and INESData browser surfaces.
     automation:
       status: automated
-      mode: ui_partial
+      mode: api_ui
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_06_filters.spec.js
-      notes: The current Playwright slice verifies that the filter shell is present and can interact with dynamic filters when they are available.
+      inesdata_ui_spec: validation/ui/adapters/inesdata/specs/11-ai-model-browser.spec.ts
+      inesdata_ui_evidence_case: DS-UI-AMH-BROWSER-01
+      notes: The component spec verifies filter-shell availability and task filtering with controlled local assets. The INESData spec publishes two federated machineLearning HttpData assets with divergent DAIMO metadata and validates source, storage, task, subtask, algorithm, library, framework, software and format filters.
 
   - id: PT5-MH-07
     component: ai_model_hub
@@ -240,23 +244,26 @@ test_cases:
     validation_type: functional
     dataspace_dimension: visualization
     execution_mode: ui
-    coverage_status: automated_partial_ui
-    mapping_status: partial
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - At least one model is visible in the catalog
     steps:
       - Open the detailed model page
       - Review functional and technical metadata
-    expected_result: Complete metadata is visible
+      - Verify federated detail information and contract offer availability from INESData
+    expected_result: Model detail metadata and related contract offer information are visible
     traceability:
       - MH-25
       - MH-26
-    notes: Automated UI/API validation slice for model details. It bootstraps controlled metadata and validates the details view.
+    notes: Automated UI/API validation for model details. It bootstraps controlled metadata and validates local component details plus the INESData federated detail view.
     automation:
       status: automated
       mode: api_ui
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_07_model_details.spec.js
-      notes: The first automation slice bootstraps a local consumer-side model asset via management API and validates the detailed metadata modal in ML Assets.
+      inesdata_ui_spec: validation/ui/adapters/inesdata/specs/11-ai-model-browser.spec.ts
+      inesdata_ui_evidence_case: DS-UI-AMH-BROWSER-01
+      notes: The component spec bootstraps a local consumer-side model asset via management API and validates the detailed metadata modal in ML Assets. The INESData spec opens the federated catalog detail from AI Model Browser and checks asset identity, name, content type, format, asset type and contract offer controls after also validating that the Browser primary Negotiate action opens the offer surface.
 
   - id: PT5-MH-08
     component: ai_model_hub
@@ -275,6 +282,8 @@ test_cases:
       - Start the contract negotiation
       - Finalize the negotiation from the consumer side
       - Confirm the creation of the contract or related agreement
+      - Open the Contracts module and locate the agreement by asset identifier
+      - Open the contract details payload
     expected_result: The contract is registered
     traceability:
       - MH-28
@@ -282,7 +291,7 @@ test_cases:
       - MH-30
       - MH-31
       - MH-32
-    notes: Automated integration flow. It publishes a controlled provider asset, negotiates it from the consumer catalog UI and verifies the resulting agreement.
+    notes: Automated integration flow. It publishes a controlled provider asset, validates visible offer selection and ODRL offer payload, negotiates it from the consumer catalog UI, verifies the resulting agreement and confirms that the Contracts module lists the contract with details available. The INESData Browser suite additionally validates that the model card primary Negotiate action opens the offer surface without duplicating the negotiation.
     automation:
       status: automated
       mode: api_ui
@@ -290,7 +299,7 @@ test_cases:
       latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
       latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The first automation slice publishes a provider asset, negotiates it from the consumer catalog UI and confirms the resulting agreement through the consumer management API.
+      notes: The automation slice publishes a provider asset, validates the visible offer selection and selected ODRL payload, negotiates it from the consumer catalog UI, confirms the resulting agreement through the consumer management API, then searches the Contracts module by asset identifier and opens the agreement JSON-LD details.
 
   - id: PT5-MH-09
     component: ai_model_hub
@@ -337,6 +346,8 @@ test_cases:
       - For remote models, the corresponding contractual agreement is active
     steps:
       - Create a temporary HttpData asset for the executable endpoint
+      - Validate UI payload checks for malformed JSON and missing required fields from INESData
+      - For remote execution, negotiate a consumer agreement before exposing the model in the consumer UI
       - Execute inference through /management/v3/modelexecutions/execute
       - Validate the model response
       - Delete the temporary asset
@@ -344,15 +355,19 @@ test_cases:
     traceability:
       - MH-34
       - MH-35
-    notes: A connector-side API smoke is available for controlled HttpData model endpoints; the full FLARES functional inference path remains pending.
+    notes: A connector-side API smoke is available for controlled HttpData model endpoints. INESData UI execution is covered by DS-UI-AMH-EXEC-01 using a local deterministic model-server fixture and DS-UI-AMH-EXEC-02 using an external provider model after consumer agreement, while real A5.2 models are integrated.
     automation:
       status: automated
       mode: api
       runner: validation/components/ai_model_hub/model_execution_api.py
+      ui_spec: validation/ui/adapters/inesdata/specs/12-ai-model-execution.spec.ts
+      ui_evidence_case: DS-UI-AMH-EXEC-01
+      external_ui_spec: validation/ui/adapters/inesdata/specs/15-ai-model-external-execution.spec.ts
+      external_ui_evidence_case: DS-UI-AMH-EXEC-02
       latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
       latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner creates a temporary HttpData asset, calls /management/v3/modelexecutions/execute and deletes the asset after execution.
+      notes: The runner creates a temporary HttpData asset, calls /management/v3/modelexecutions/execute and deletes the asset after execution. The local UI spec creates a run-scoped machineLearning HttpData asset pointing to adapters/inesdata/sources/model-server, checks input validation errors, and validates visible execution output/history from AI Model Execution. The external UI spec validates that the consumer sees and executes the model only after a contract agreement exists.
 
   - id: PT5-MH-11
     component: ai_model_hub
@@ -395,8 +410,10 @@ test_cases:
       - The comparison module is accessible
     steps:
       - Select multiple models
+      - Validate the generated benchmark input for the selected models
+      - Download a suggested benchmark dataset generated from the selected model metadata
       - Confirm that they are prepared for comparison
-    expected_result: Models are selected correctly
+    expected_result: Models are selected correctly, the generated benchmark input is accepted and a suggested dataset is available
     traceability:
       - MH-37
     automation:
@@ -404,12 +421,14 @@ test_cases:
       mode: api_fixture
       runner: validation/components/ai_model_hub/model_benchmarking_api.py
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      inesdata_ui_spec: validation/ui/adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts
+      inesdata_ui_evidence_case: DS-UI-AMH-BENCH-01
       evidence_case: PT5-MH-12
       enable_with: AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1
       ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
       latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner selects two controlled FLARES compatible model assets and records the benchmark-ready dataset mapping. The Playwright UI demo reuses the same fixture and controlled infer route without touching AIModelHub sources.
+      notes: The runner selects two controlled FLARES compatible model assets and records the benchmark-ready dataset mapping. The Playwright UI demo reuses the same fixture and controlled infer route without touching AIModelHub sources. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two deterministic model-server endpoints; it validates the generated benchmark input and downloads a suggested CSV dataset before uploading the small validation CSV.
 
   - id: PT5-MH-13
     component: ai_model_hub
@@ -426,8 +445,9 @@ test_cases:
       - The same input can be sent to all of them
     steps:
       - Execute multiple models with the same input
+      - Obtain preliminary outputs for every selected model before ranking
       - Collect comparison responses
-    expected_result: Executions are comparable
+    expected_result: Executions are comparable and preliminary outputs are available for every selected model
     traceability:
       - MH-38
     automation:
@@ -435,12 +455,14 @@ test_cases:
       mode: api_fixture
       runner: validation/components/ai_model_hub/model_benchmarking_api.py
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      inesdata_ui_spec: validation/ui/adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts
+      inesdata_ui_evidence_case: DS-UI-AMH-BENCH-01
       evidence_case: PT5-MH-13
       enable_with: AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1
       ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
       latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner executes both controlled models over the same FLARES input fingerprints and stores per-model execution evidence. The Playwright demo clicks Run Benchmark and shows those executions in the UI.
+      notes: The runner executes both controlled models over the same FLARES input fingerprints and stores per-model execution evidence. The Playwright demo clicks Run Benchmark and shows those executions in the UI. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two deterministic model-server endpoints; it obtains visible preliminary outputs for both models before running the dataset benchmark.
 
   - id: PT5-MH-14
     component: ai_model_hub
@@ -455,6 +477,7 @@ test_cases:
     preconditions:
       - The comparison module produces aggregated metrics
     steps:
+      - Upload the controlled validation dataset
       - Collect and calculate comparison metrics
       - Review the coherence of the resulting values
     expected_result: Metrics are coherent with the task
@@ -465,12 +488,14 @@ test_cases:
       mode: api_fixture
       runner: validation/components/ai_model_hub/model_benchmarking_api.py
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      inesdata_ui_spec: validation/ui/adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts
+      inesdata_ui_evidence_case: DS-UI-AMH-BENCH-01
       evidence_case: PT5-MH-14
       enable_with: AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1
       ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
       latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner calculates accuracy, success rate, latency, throughput and score, then validates ranking coherence. The Playwright demo asserts that the UI renders the metrics columns.
+      notes: The runner calculates accuracy, success rate, latency, throughput and score, then validates ranking coherence. The Playwright demo asserts that the UI renders the metrics columns. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two deterministic model-server endpoints and a small validation CSV after input validation and output preparation.
 
   - id: PT5-MH-15
     component: ai_model_hub
@@ -486,8 +511,11 @@ test_cases:
       - Comparison metrics have already been calculated
     steps:
       - Display comparison tables and charts
+      - Show the ranking summary and benchmark evidence entry point
+      - Export the ranking results as CSV
+      - Open Observer benchmark evidence for the generated benchmarkRunId when available
       - Review the resulting visualization
-    expected_result: Comparative results are visible
+    expected_result: Comparative results, ranking summary, exported CSV and Observer benchmark evidence entry point are available
     traceability:
       - MH-40
       - MH-41
@@ -497,12 +525,14 @@ test_cases:
       mode: api_fixture_ui_ready
       runner: validation/components/ai_model_hub/model_benchmarking_api.py
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
+      inesdata_ui_spec: validation/ui/adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts
+      inesdata_ui_evidence_case: DS-UI-AMH-BENCH-01
       evidence_case: PT5-MH-15
       enable_with: AI_MODEL_HUB_ENABLE_MODEL_BENCHMARKING=1
       ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
       latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner produces renderable table rows and chart series for the comparison dashboard. The Playwright demo now validates the visible table and best-model summary for auditors.
+      notes: The runner produces renderable table rows and chart series for the comparison dashboard. The Playwright demo now validates the visible table and best-model summary for auditors. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two deterministic model-server endpoints, the visible ranking summary, the exported ranking CSV and the generated benchmarkRunId Observer evidence route.
 
   - id: PT5-MH-16
     component: ai_model_hub
@@ -595,7 +625,7 @@ observer_cases:
     dataspace_dimension: governance
     execution_mode: ui
     coverage_status: automated
-    mapping_status: planned_observer
+    mapping_status: mapped
     preconditions:
       - AI Model Observer UI is integrated in INESData
       - INESData login credentials are available
@@ -613,9 +643,10 @@ observer_cases:
       mode: ui
       ui_spec: validation/ui/adapters/inesdata/specs/10-ai-model-observer.spec.ts
       evidence_case: MH-OBS-01
-      enable_with: UI_AI_MODEL_OBSERVER_DEMO=1
+      runtime_env:
+        UI_AI_MODEL_OBSERVER_DEMO: "1"
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: Read-only audit-ready smoke. The spec skips safely when the Observer UI is not integrated yet.
+      notes: Read-only audit-ready smoke for the INESData connector interface. Level 6 enables the runtime marker and the spec skips safely only when an older connector image does not expose the Observer route.
 
   - id: MH-OBS-02
     component: ai_model_hub
@@ -626,7 +657,7 @@ observer_cases:
     dataspace_dimension: governance
     execution_mode: api
     coverage_status: automated
-    mapping_status: planned_observer
+    mapping_status: mapped
     preconditions:
       - Model Observer backend API is integrated and reachable
       - A controlled QA event batch can be written without storing sensitive payloads
@@ -647,10 +678,11 @@ observer_cases:
       mode: api
       runner: validation/components/ai_model_hub/model_observer_api.py
       evidence_case: MH-OBS-02
-      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1
-      configure_with: AI_MODEL_HUB_OBSERVER_API_BASE_URL=http://backend-demo.dev.ds.dataspaceunit.upm
+      runtime_env:
+        AI_MODEL_HUB_ENABLE_MODEL_OBSERVER: "1"
+      optional_override: AI_MODEL_HUB_OBSERVER_API_BASE_URL=http://backend-demo.dev.ds.dataspaceunit.upm
       suite_test: tests/test_ai_model_hub_model_observer_api.py
-      notes: The runner skips safely when the Observer API is not integrated yet, so Level 6 remains stable by default.
+      notes: Level 6 executes this suite by default. The runner resolves the Observer backend from deployer.config and accepts an explicit URL override for non-standard environments.
 
   - id: MH-OBS-03
     component: ai_model_hub
@@ -660,8 +692,8 @@ observer_cases:
     validation_type: integration
     dataspace_dimension: governance
     execution_mode: ui_api
-    coverage_status: planned
-    mapping_status: planned_observer
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - AI Model Browser exposes at least one controlled model
       - Observer timeline can be queried by assetId
@@ -675,11 +707,13 @@ observer_cases:
       - PT5-MH-07
       - PT5-MH-17
     automation:
-      status: planned
+      status: automated
       mode: ui_api
-      suggested_spec: validation/components/ai_model_hub/ui/specs/mh_obs_03_browser_observer.spec.js
-      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER_UI=1
-      notes: Planned after Browser-to-Observer event emission is integrated.
+      ui_spec: validation/ui/adapters/inesdata/specs/11-ai-model-browser.spec.ts
+      inesdata_ui_evidence_case: DS-UI-AMH-BROWSER-01
+      runtime_env:
+        UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
+      notes: The INESData Browser spec opens a controlled model detail view, then loads /ai-model-observer/timeline/:assetId and validates MODEL_DETAIL_VIEWED when the Observer backend is available. If the backend is not reachable in the environment, the subcheck is recorded as a controlled skip without failing Browser discovery.
 
   - id: MH-OBS-04
     component: ai_model_hub
@@ -689,8 +723,8 @@ observer_cases:
     validation_type: integration
     dataspace_dimension: governance
     execution_mode: api
-    coverage_status: planned
-    mapping_status: planned_observer
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - A controlled model execution flow is available
       - Execution propagates assetId, correlationId and agreementId when applicable
@@ -704,12 +738,14 @@ observer_cases:
       - PT5-MH-10
       - PT5-MH-17
     automation:
-      status: planned
-      mode: api
-      suggested_runner: validation/components/ai_model_hub/model_observer_api.py
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/12-ai-model-execution.spec.ts
+      inesdata_ui_evidence_case: DS-UI-AMH-EXEC-01
       related_runner: validation/components/ai_model_hub/model_execution_api.py
-      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1
-      notes: Planned after Execution-to-Observer event emission is stable.
+      runtime_env:
+        UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
+      notes: The INESData Execution spec executes a controlled model-server endpoint, opens /ai-model-observer/timeline/:assetId with the generated correlationId and validates MODEL_EXECUTION_REQUESTED/MODEL_EXECUTION_COMPLETED when the Observer backend is available. If the backend is not reachable in the environment, the subcheck is recorded as a controlled skip without failing model execution.
 
   - id: MH-OBS-05
     component: ai_model_hub
@@ -719,8 +755,8 @@ observer_cases:
     validation_type: integration
     dataspace_dimension: governance
     execution_mode: ui_api
-    coverage_status: planned
-    mapping_status: planned_observer
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - The benchmarking demo can produce or expose a benchmarkRunId
       - Observer benchmark evidence can be queried by benchmarkRunId
@@ -737,13 +773,15 @@ observer_cases:
       - PT5-MH-15
       - PT5-MH-17
     automation:
-      status: planned
+      status: automated
       mode: ui_api
-      suggested_spec: validation/components/ai_model_hub/ui/specs/mh_obs_05_benchmark_observer.spec.js
+      ui_spec: validation/ui/adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts
+      inesdata_ui_evidence_case: DS-UI-AMH-BENCH-01
       related_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_12_15_model_benchmarking_demo.spec.js
-      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER_UI=1
+      runtime_env:
+        UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: Planned audit demo linking benchmark UI evidence with clearing-house evidence.
+      notes: The INESData benchmarking spec captures the generated benchmarkRunId, opens /ai-model-observer/benchmarks/:benchmarkRunId and validates BENCHMARK_STARTED/BENCHMARK_COMPLETED, compared model details, metrics and benchmark summary when the Observer backend is available. If the backend is not reachable in the environment, the subcheck is recorded as a controlled skip without failing the functional benchmark.
 
   - id: MH-OBS-06
     component: ai_model_hub
@@ -753,8 +791,8 @@ observer_cases:
     validation_type: non_functional
     dataspace_dimension: governance
     execution_mode: api_ui
-    coverage_status: planned
-    mapping_status: planned_observer
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - Observer events exist for a provider or consumer participant
       - Participant summary API/UI is available
@@ -768,12 +806,15 @@ observer_cases:
       - PT5-MH-17
       - Model Clearing House
     automation:
-      status: planned
+      status: automated
       mode: api_ui
-      suggested_runner: validation/components/ai_model_hub/model_observer_api.py
-      suggested_spec: validation/components/ai_model_hub/ui/specs/mh_obs_06_participant_summary.spec.js
-      enable_with: AI_MODEL_HUB_ENABLE_MODEL_OBSERVER=1
-      notes: Planned after MH-OBS-02 confirms the API contract.
+      ui_spec: validation/ui/adapters/inesdata/specs/16-ai-model-observer-participant-summary.spec.ts
+      related_runner: validation/components/ai_model_hub/model_observer_api.py
+      inesdata_ui_evidence_case: DS-UI-AMH-OBS-02
+      runtime_env:
+        UI_AI_MODEL_OBSERVER_DEMO: "1"
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: The INESData Observer participant summary spec logs in through the connector UI, seeds a run-scoped controlled event batch through the Observer proxy, validates totals by event type, recent participant evidence and navigation from the latest event to the asset timeline. If an older environment does not expose the Observer UI/API yet, the spec records a controlled skip.
 
 functional_use_cases:
   - id: MH-LING-01
@@ -844,3 +885,84 @@ functional_use_cases:
       integration_runner: validation/components/ai_model_hub/virtualization_traceability.py
       integration_case: INT-VS-AMH-01
       notes: Runner writes JSON evidence under experiments without changing component sources or cluster state.
+
+  - id: AMH-DAIMO-VOCAB-01
+    component: ai_model_hub
+    case_group: integration
+    description: DAIMO machine-learning vocabulary is available through INESData
+    type: ui_api
+    validation_type: integration
+    dataspace_dimension: semantic_metadata
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - INESData provider connector UI is reachable
+      - The connector vocabulary API is deployed
+      - The Vocabularies UI exposes the Machine learning asset category
+    steps:
+      - Sign in to the INESData provider connector interface
+      - Create a run-scoped vocabulary in the Machine learning category
+      - Submit a controlled DAIMO JSON Schema with model metadata fields
+      - Verify the persisted shared vocabulary payload
+      - Open the vocabulary JSON Schema dialog from the UI
+      - Open Machine learning asset creation and verify that the DAIMO vocabulary is selectable as metadata form
+    expected_result: INESData can register, display and expose a DAIMO machine-learning vocabulary for AI Model Hub asset metadata validation
+    traceability:
+      - PT5-MH-02
+      - PT5-MH-06
+      - PT5-MH-17
+      - DS-UI-AMH-DAIMO-01
+    notes: This flow covers the DAIMO vocabulary integration gap without depending on real model endpoints. The created vocabulary is run-scoped, uses non-sensitive synthetic schema metadata and is verified from Machine learning asset creation without creating an asset.
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/14-ai-model-daimo-vocabulary.spec.ts
+      inesdata_ui_evidence_case: DS-UI-AMH-DAIMO-01
+      runtime_env:
+        UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: Level 6 includes this spec in the INESData integration profile. The spec validates UI creation, shared vocabulary persistence and schema dialog visibility.
+
+  - id: AMH-INTEG-EXEC-AGREED-02
+    component: ai_model_hub
+    case_group: integration
+    description: Consumer executes an external model after a contract agreement
+    type: ui_api
+    validation_type: integration
+    dataspace_dimension: execution
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - INESData provider and consumer connectors are deployed
+      - A provider machine-learning HttpData endpoint can be negotiated
+      - The consumer connector exposes the model execution API
+      - The model-server deterministic fixture is available until real models are integrated
+    steps:
+      - Publish a provider machine-learning HttpData model endpoint
+      - Verify consumer federated catalog visibility
+      - Negotiate a consumer contract agreement for the model asset
+      - Open AI Model Execution from the consumer connector UI
+      - Select the model from External Assets With Agreement
+      - Execute the model through the consumer connector
+      - Verify output, execution history and Observer timeline when available
+    expected_result: External model execution is gated by a consumer agreement and produces a successful deterministic inference result
+    traceability:
+      - PT5-MH-10
+      - PT5-MH-11
+      - PT5-MH-17
+      - DS-UI-AMH-EXEC-02
+    notes: This flow uses the connector model execution API and an HttpData-PULL transfer/EDR path. It does not invoke Kafka streaming transfer.
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/15-ai-model-external-execution.spec.ts
+      inesdata_ui_evidence_case: DS-UI-AMH-EXEC-02
+      runtime_env:
+        UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
+      fixture:
+        source: adapters/inesdata/sources/model-server
+        endpoint: /api/v1/nlp/twitter-sentiment
+      visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
+      notes: Level 6 includes this spec in the INESData integration profile. The spec creates a run-scoped provider model, negotiates a consumer agreement, selects the external agreed model from the consumer UI and validates execution output/history.

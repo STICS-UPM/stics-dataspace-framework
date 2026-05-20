@@ -45,15 +45,40 @@ async function waitForThemisResults(page, timeoutMs = 30000) {
   );
 }
 
+async function gotoHealthyPage(page, url, label, timeoutMs = 300000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    await page.goto(url, { waitUntil: "domcontentloaded" }).catch((error) => {
+      lastError = error;
+    });
+    try {
+      await expectHealthyPage(page, label);
+      return;
+    } catch (error) {
+      lastError = error;
+      const heading = await page.locator("h1").first().textContent().catch(() => "");
+      const failureSignal = `${heading || ""} ${error && error.message ? error.message : ""}`;
+      if (!/50[0-9]|oops|bad gateway|temporarily unavailable/i.test(failureSignal)) {
+        throw error;
+      }
+    }
+    await page.waitForTimeout(5000);
+  }
+
+  throw lastError || new Error(`${label} page did not become healthy after ${timeoutMs}ms`);
+}
+
 test("OH-APP-22: patterns page generates a zip", async ({
   page,
   ontologyHubRuntime,
   captureStep,
   attachJson,
 }, testInfo) => {
+  test.setTimeout(360000);
   await signInToEdition(page, ontologyHubRuntime);
-  await page.goto(`${ontologyHubRuntime.baseUrl}/dataset/patterns`, { waitUntil: "domcontentloaded" });
-  await expectHealthyPage(page, "Patterns");
+  await gotoHealthyPage(page, `${ontologyHubRuntime.baseUrl}/dataset/patterns`, "Patterns");
 
   const selectAllButton = page.locator("button, input[type='submit'], input[type='button']").filter({
     hasText: /select all/i,

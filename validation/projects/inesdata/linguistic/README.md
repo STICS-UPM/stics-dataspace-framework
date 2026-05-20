@@ -1,6 +1,7 @@
 # Suite lingüística INESData
 
-Suite opt-in para validar el espacio de datos lingüístico de INESData externo.
+Scaffold read-only para futuras validaciones del espacio de datos lingüístico de
+INESData externo.
 
 La suite debe empezar con casos `read-only`, por ejemplo:
 
