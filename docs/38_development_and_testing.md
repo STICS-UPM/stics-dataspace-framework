@@ -105,8 +105,9 @@ Las nuevas validaciones deben seguir este orden:
 5. Añadir pruebas focalizadas de orquestación y configuración.
 
 Para pruebas específicas de un INESData externo o productivo, no modifiques las
-suites base. Crea suites opt-in bajo `validation/projects/inesdata/` y actívalas
-desde el target correspondiente, como se describe en
+suites base. Crea suites de proyecto bajo `validation/projects/inesdata/`,
+decláralas en `project_suites.yaml` y actívalas desde el target correspondiente,
+como se describe en
 [Validación de INESData externo](./29_inesdata_external_validation_targets.md).
 
 ## Ficheros Generados y Sensibles

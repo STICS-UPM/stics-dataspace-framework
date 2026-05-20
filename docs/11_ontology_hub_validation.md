@@ -134,7 +134,7 @@ La trazabilidad se lee en tres capas:
 
 | Capa | Papel |
 | --- | --- |
-| `A5.1_Funcionlidades_Ex.1` | Funcionalidades atomicas `OntHub-*` |
+| `A5.1_Funcionalidades_Ex.1` | Funcionalidades atómicas `OntHub-*` |
 | `A5.1_Casos_Prueba_Ex.1` | Casos PT5 normalizados `PT5-OH-*` |
 | Hoja `Ontology Hub` | Casos operativos detallados del componente |
 
@@ -167,7 +167,7 @@ La cobertura PT5 se reparte entre `functional/` e `integration/`.
 | `PT5-OH-13` | cubierta desde integración, no desde funcional |
 | `PT5-OH-14` | si, sustancial |
 | `PT5-OH-15` | parcial |
-| `PT5-OH-16` | no automatizada de forma funcional directa |
+| `PT5-OH-16` | cubierta como integración INESData, no como funcional directa |
 
 ## Integración Semántica con INESData
 

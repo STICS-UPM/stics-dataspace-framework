@@ -132,13 +132,11 @@ Resolucion recomendada:
 La contraseña debe pedirse en modo oculto. El valor solo debe vivir en memoria
 durante la ejecución.
 
-El framework no debe escribir secretos en:
+El framework no debe escribir secretos en archivos versionados ni en artefactos
+de ejecución o trabajo local:
 
 - `validation/targets/*.yaml`;
-- `deployer.config`;
-- `context/`;
 - `docs/`;
-- `experiments/`;
 - logs;
 - reportes Newman o Playwright.
 

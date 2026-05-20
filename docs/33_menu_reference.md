@@ -262,7 +262,8 @@ completo. El submenú separa `Core` de las integraciones de componentes vistas
 desde INESData:
 
 - `Ontology Hub Integration with INESData`: ejecuta `DS-UI-OH-01`.
-- `AI Model Hub Integration with INESData`: ejecuta `DS-UI-AMH-01`.
+- `AI Model Hub Integration with INESData`: ejecuta `DS-UI-AMH-01`,
+  `DS-UI-AMH-BROWSER-01`, `DS-UI-AMH-EXEC-01` y `DS-UI-AMH-BENCH-01`.
 - `Semantic Virtualization Integration with INESData`: ejecuta `DS-UI-SV-01`.
 
 `O - Ontology Hub UI Tests (Normal/Live/Debug)`
