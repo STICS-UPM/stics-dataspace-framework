@@ -131,6 +131,13 @@ class AssetCreateDialog {
     rateLimits,
     availabilityTier,
   }) {
+    const filledControls = {
+      advancedFields: false,
+      piiSafe: false,
+      regulatedDomain: false,
+      humanInLoop: false,
+    };
+
     for (const modality of modalities) {
       await this.checkMlOption(modality);
     }
@@ -142,8 +149,9 @@ class AssetCreateDialog {
 
     const hasAdvancedFields = await this.openAdvancedFields();
     if (!hasAdvancedFields) {
-      return;
+      return filledControls;
     }
+    filledControls.advancedFields = true;
 
     for (const runtime of runtimes) {
       await this.checkMlOption(runtime);
@@ -166,13 +174,15 @@ class AssetCreateDialog {
     await this.fillJsonIfVisible(this.mlInputExampleTextarea, inputExample);
     await this.fillIfVisible(this.mlIntendedUseTextarea, intendedUse);
     await this.fillIfVisible(this.mlLimitationsTextarea, limitations);
-    await this.checkIfRequested(this.mlPiiSafeCheckbox, piiSafe);
-    await this.checkIfRequested(this.mlRegulatedDomainCheckbox, regulatedDomain);
-    await this.checkIfRequested(this.mlHumanInLoopCheckbox, humanInLoop);
+    filledControls.piiSafe = await this.checkIfRequested(this.mlPiiSafeCheckbox, piiSafe);
+    filledControls.regulatedDomain = await this.checkIfRequested(this.mlRegulatedDomainCheckbox, regulatedDomain);
+    filledControls.humanInLoop = await this.checkIfRequested(this.mlHumanInLoopCheckbox, humanInLoop);
     await this.fillIfVisible(this.mlLatencyP95Input, latencyP95);
     await this.fillIfVisible(this.mlThroughputInput, throughput);
     await this.fillIfVisible(this.mlRateLimitsInput, rateLimits);
     await this.selectIfVisible(this.mlAvailabilityTierSelect, availabilityTier);
+
+    return filledControls;
   }
 
   async openAdvancedFields() {
@@ -231,9 +241,10 @@ class AssetCreateDialog {
 
   async checkIfRequested(locator, enabled) {
     if (!enabled || (await locator.count()) === 0) {
-      return;
+      return false;
     }
     await checkMarked(locator.first(), { force: true });
+    return true;
   }
 
   async addProperty(key, value) {

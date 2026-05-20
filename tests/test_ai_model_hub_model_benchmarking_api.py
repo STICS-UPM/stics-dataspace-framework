@@ -34,6 +34,7 @@ class AIModelHubModelBenchmarkingApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["summary"], {"total": 4, "passed": 4, "failed": 0, "skipped": 0})
         self.assertEqual([case["test_case_id"] for case in result["executed_cases"]], CASE_IDS)
+        self.assertTrue(all(case["coverage_status"] == "automated" for case in result["executed_cases"]))
         self.assertEqual(result["visualization_data"]["best_model"], "FLARES Reliability Baseline A")
         self.assertEqual(len(result["visualization_data"]["table_rows"]), 2)
         self.assertNotIn("access_token", report_text)

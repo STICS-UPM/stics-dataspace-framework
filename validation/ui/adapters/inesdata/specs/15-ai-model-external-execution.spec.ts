@@ -337,11 +337,14 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
           }),
           contenttype: "application/json",
           format: "json",
+          method: "POST",
+          path: modelPath,
         },
         dataAddress: {
           type: "HttpData",
           baseUrl: modelUrl,
           method: "POST",
+          proxyBody: "true",
           name: `ai-model-external-execution-model-${suffix}.json`,
         },
       },
@@ -399,9 +402,8 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
 
     await expect(page.getByText(/External Asset/i).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/Agreement ready/i).first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/deterministic-rule-engine/i).first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/model-server/i).first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/Detected example payload/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(dataspaceRuntime.provider.connectorName).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/^POST$/i).first()).toBeVisible({ timeout: 10_000 });
     await captureStep(page, "02-ai-model-external-execution-model-selected");
     await attachJson("ai-model-external-execution-selection-assertions", {
       assetId,
@@ -409,11 +411,17 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
       modelUrl,
       expectedPayload: DEFAULT_PAYLOAD,
       expectedAgreementId: report.consumerAgreement.agreementId,
-      expectedModel: "Twitter Sentiment Analyzer",
+      expectedUiState: ["External Asset", "Agreement ready", dataspaceRuntime.provider.connectorName, "POST"],
     });
 
-    await clickMarked(page.getByRole("button", { name: /JSON Payload/i }).first(), { force: true });
-    const inputJson = page.locator("#inputJson").first();
+    const inputTab = page.getByRole("button", { name: /^(JSON Payload|Input)$/i }).first();
+    if (await inputTab.isVisible().catch(() => false)) {
+      await clickMarked(inputTab, { force: true });
+    }
+    const inputJsonById = page.locator("#inputJson").first();
+    const inputJson = (await inputJsonById.count()) > 0
+      ? inputJsonById
+      : page.getByRole("textbox", { name: /Input JSON Payload/i }).first();
     await expect(inputJson).toBeVisible({ timeout: 10_000 });
     await fillMarked(inputJson, JSON.stringify(DEFAULT_PAYLOAD, null, 2));
     await clickMarked(page.getByRole("button", { name: /Execute Model/i }).first(), { force: true });

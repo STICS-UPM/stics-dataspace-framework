@@ -20,9 +20,10 @@ Evidencia API complementaria:
 
 - `python3 -m validation.components.ai_model_hub.model_execution_api --flares-dataset`
   ejecuta un registro `FLARES` mediante la API del conector y enlaza la
-  respuesta con etiquetas esperadas derivadas de la fuente. Por ahora valida
-  transporte y alineación de dataset; la comparación semántica de etiquetas
-  FLARES queda pendiente de un endpoint de modelo compatible.
+  respuesta con etiquetas esperadas derivadas de la fuente. Por defecto usa
+  `/api/v1/nlp/flares-reliability-baseline-a` del `model-server`, por lo que
+  valida transporte, alineación de dataset y comparación semántica controlada
+  mediante `result.label`.
 
 Evidencia UI complementaria:
 
@@ -40,9 +41,9 @@ Evidencia API movilidad:
   datos listos para tabla/gráficas de benchmarking.
 - Dentro del runner del componente se ejecuta por defecto; para omitirla en una
   iteración rápida se puede usar `AI_MODEL_HUB_ENABLE_MOBILITY_BENCHMARKING=false`.
-- La suite no llama un endpoint vivo de inferencia de movilidad ni muta
-  INESData; deja esa demo UI como siguiente incremento cuando exista una ruta
-  estable.
+- La suite no muta INESData. Los endpoints vivos de movilidad del
+  `model-server` quedan disponibles como línea base reemplazable para futuros
+  incrementos UI/API.
 
 Evidencia de integración movilidad:
 

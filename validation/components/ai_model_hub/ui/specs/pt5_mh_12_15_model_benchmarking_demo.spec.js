@@ -273,6 +273,8 @@ test.describe("AI Model Hub benchmarking visual demo", () => {
     });
 
     await expect(state.benchmarkingPage.bestModelSummary).toContainText(/Best Model:/i);
+    await expect(state.benchmarkingPage.bestModelSummary).toContainText(/FLARES Reliability Baseline A/i);
+    await expect(state.benchmarkingPage.resultsRows).toHaveCount(state.linguisticModels.models.length);
     expect(state.resultRowsText.join("\n")).toContain("FLARES Reliability Baseline A");
     expect(state.resultRowsText.join("\n")).toContain("FLARES Reliability Baseline B");
   });

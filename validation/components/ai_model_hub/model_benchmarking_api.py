@@ -394,7 +394,7 @@ def run_ai_model_hub_model_benchmarking_validation(
             validation_type="functional",
             dataspace_dimension="comparison",
             execution_mode="api_fixture_ui_ready",
-            coverage_status="automated_partial_ui",
+            coverage_status="automated",
             assertions=visualization_assertions,
             evidence_artifact="pt5-mh-15-benchmark-visualization-data.json",
             observed={

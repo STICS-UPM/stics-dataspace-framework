@@ -34,14 +34,22 @@ class CatalogPage {
     await expect(this.root).toBeVisible();
   }
 
-  async requestCatalogManually(counterPartyAddress, counterPartyId = "") {
+  async openRequestDialog() {
     await clickMarked(this.requestButton);
     await expect(this.requestDialog).toBeVisible();
+  }
+
+  async fillRequestDialog(counterPartyAddress, counterPartyId = "") {
     if (counterPartyId) {
       await fillMarked(this.counterPartyIdInput, counterPartyId);
     }
     await fillMarked(this.counterPartyAddressInput, counterPartyAddress);
     await expect(this.requestCatalogButton).toBeEnabled();
+  }
+
+  async requestCatalogManually(counterPartyAddress, counterPartyId = "") {
+    await this.openRequestDialog();
+    await this.fillRequestDialog(counterPartyAddress, counterPartyId);
     await clickMarked(this.requestCatalogButton);
     await expect(this.requestDialog).toBeHidden({ timeout: 20000 });
   }

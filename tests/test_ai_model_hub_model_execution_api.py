@@ -8,6 +8,8 @@ from validation.components.ai_model_hub.model_execution_api import (
     AIModelHubModelExecutionApiSuite,
     COMPONENT_KEY,
     DEFAULT_EXPECTED_MODEL,
+    FLARES_EXPECTED_MODEL,
+    FLARES_MODEL_PATH,
     FUNCTIONAL_CASE_ID,
     build_flares_execution_context,
     default_model_url,
@@ -87,6 +89,8 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         self.assertEqual(result["component"], COMPONENT_KEY)
         self.assertEqual(result["created_entities"]["asset_id"], "a52-model-exec-fixed-uuid")
         self.assertEqual(result["executed_cases"][0]["test_case_id"], "PT5-MH-10")
+        self.assertEqual(result["executed_cases"][0]["mapping_status"], "mapped")
+        self.assertEqual(result["executed_cases"][0]["coverage_status"], "automated")
         self.assertEqual(result["executed_cases"][0]["evaluation"]["status"], "passed")
         self.assertNotIn("token-provider", report_text)
         self.assertNotIn("provider-pass", report_text)
@@ -138,12 +142,43 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         self.assertEqual([case["test_case_id"] for case in result["executed_cases"]], ["PT5-MH-10", FUNCTIONAL_CASE_ID])
 
         functional_case = result["executed_cases"][1]
+        self.assertEqual(functional_case["coverage_status"], "partial_api_execution")
         self.assertEqual(functional_case["fixture"]["dataset"], "FLARES")
         self.assertEqual(functional_case["fixture"]["record_id"], 463)
         self.assertEqual(functional_case["fixture"]["expected_reliability"], "confiable")
         self.assertEqual(functional_case["evaluation"]["semantic_comparison_status"], "pending_flares_model_endpoint")
         self.assertIn("text", session.posts[-1]["json"]["payload"])
         self.assertEqual(session.posts[-1]["json"]["payload"]["record_id"], 463)
+        self.assertEqual(session.posts[-1]["json"]["payload"]["expected_label"], "confiable")
+
+    def test_run_with_flares_model_server_response_validates_semantic_label(self):
+        session = FakeSession(
+            execution_payload={
+                "model": FLARES_EXPECTED_MODEL,
+                "variant": "baseline-a",
+                "task": "5w1h-reliability-classification",
+                "result": {"label": "confiable"},
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = create_flares_source(tmpdir)
+            context = build_flares_execution_context(source_dir=str(source_dir), record_id=463)
+            result = self._suite(session).run(
+                provider="conn-provider",
+                model_url=f"http://model-server.demo.svc.cluster.local:8080{FLARES_MODEL_PATH}",
+                payload=context["payload"],
+                expected_model=FLARES_EXPECTED_MODEL,
+                functional_context=context,
+                experiment_dir=tmpdir,
+            )
+
+        self.assertEqual(result["status"], "passed")
+        functional_case = result["executed_cases"][1]
+        self.assertEqual(functional_case["coverage_status"], "automated")
+        self.assertEqual(functional_case["evaluation"]["semantic_comparison_status"], "passed")
+        self.assertEqual(functional_case["evaluation"]["actual_label"], "confiable")
+        self.assertNotIn("limitation", functional_case)
+        self.assertIn("baseline_note", functional_case)
 
     def test_flares_execution_context_uses_dataset_expected_outputs(self):
         with tempfile.TemporaryDirectory() as tmpdir:

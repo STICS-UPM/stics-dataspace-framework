@@ -62,6 +62,12 @@ function resolveAIModelHubRuntime() {
     infrastructureConfig.DS_DOMAIN_BASE ||
     "dev.ds.dataspaceunit.upm"
   ).trim();
+  const componentsNamespace = (
+    process.env.AI_MODEL_HUB_MODEL_SERVER_NAMESPACE ||
+    process.env.UI_COMPONENTS_NAMESPACE ||
+    adapterConfig.COMPONENTS_NAMESPACE ||
+    "components"
+  ).trim();
   const keycloakBaseUrl = (
     process.env.AI_MODEL_HUB_KEYCLOAK_URL ||
     adapterConfig.KC_INTERNAL_URL ||
@@ -91,6 +97,7 @@ function resolveAIModelHubRuntime() {
     adapterName,
     dataspace,
     dsDomain,
+    componentsNamespace,
     keycloakBaseUrl,
     baseUrl:
       (process.env.AI_MODEL_HUB_BASE_URL || `http://ai-model-hub-${dataspace}.${dsDomain}`).replace(
@@ -129,6 +136,10 @@ function resolveAIModelHubRuntime() {
     consumerDefaultUrl:
       process.env.AI_MODEL_HUB_CONSUMER_DEFAULT_URL ||
       `http://${consumerConnectorId}.${dsDomain}/api`,
+    modelServerBaseUrl: (
+      process.env.AI_MODEL_HUB_MODEL_SERVER_BASE_URL ||
+      `http://model-server.${componentsNamespace}.svc.cluster.local:8080`
+    ).replace(/\/$/, ""),
     modelContentType: process.env.AI_MODEL_HUB_MODEL_CONTENT_TYPE || "application/json",
     modelVersion: process.env.AI_MODEL_HUB_MODEL_VERSION || "v1.0.0",
     modelDescription:

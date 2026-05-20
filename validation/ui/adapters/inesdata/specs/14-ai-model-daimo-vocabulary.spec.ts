@@ -284,8 +284,7 @@ test("14 AI Model Hub DAIMO Vocabulary: machine-learning schema is created from 
     await expect(page.getByRole("option", { name: vocabularyName }).first()).toBeVisible({ timeout: 20_000 });
     await clickMarked(page.getByRole("option", { name: vocabularyName }).first(), { force: true });
     await page.keyboard.press("Escape");
-    const selectedVocabularyPanel = page.locator("mat-expansion-panel").filter({ hasText: vocabularyName }).first();
-    await expect(selectedVocabularyPanel).toBeVisible({ timeout: 20_000 });
+    await expect(formField(page, /^Vocabularies$/i)).toContainText(vocabularyName, { timeout: 20_000 });
     report.assetCreateVocabularyCheck = {
       url: page.url(),
       assetType: "machineLearning",

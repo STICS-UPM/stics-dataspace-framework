@@ -66,23 +66,26 @@ test_cases:
     validation_type: functional
     dataspace_dimension: access
     execution_mode: ui
-    coverage_status: automated_partial_ui
-    mapping_status: partial
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - AI Model Hub is deployed and reachable
       - At least one valid connector or catalog context configuration exists
     steps:
-      - Access the catalog from the component UI
-      - Confirm that the main catalog view becomes operational
-    expected_result: The catalog loads correctly
+      - Access the catalog route from the component UI
+      - Confirm that the catalog request view becomes operational
+      - Open the manual catalog request dialog
+      - Fill the provider protocol URL and connector identifier without submitting the request
+      - Confirm that the request form is ready to execute a catalog request
+    expected_result: The catalog route and manual request surface are operational
     traceability:
       - MH-01
-    notes: Automated UI validation slice for QA evidence. It validates component access and catalog shell readiness; deeper catalog semantics remain covered by integration and governance flows.
+    notes: Automated UI validation for catalog access. It validates the route, shell readiness, public error absence and manual catalog request surface without creating additional catalog traffic. Deeper catalog publication, search, negotiation and governance semantics are covered by the mapped downstream PT5 cases.
     automation:
       status: automated
-      mode: ui_partial
+      mode: ui
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_01_catalog_access.spec.js
-      notes: The current Playwright slice verifies that the catalog route and its primary request surface render correctly.
+      notes: The Playwright spec verifies the catalog route, primary request button, manual request dialog, provider protocol URL field, connector identifier field and enabled submit state after valid controlled input.
 
   - id: PT5-MH-02
     component: ai_model_hub
@@ -157,23 +160,26 @@ test_cases:
     type: ui
     validation_type: functional
     dataspace_dimension: discovery
-    execution_mode: ui
-    coverage_status: automated_partial_ui
-    mapping_status: partial
+    execution_mode: api_ui
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
-      - Published or visible models exist in the catalog
+      - The consumer connector management API is reachable
+      - The model discovery UI is reachable
     steps:
-      - Open the model catalog
-      - Check that the model list is displayed correctly
-    expected_result: Models are listed correctly
+      - Seed a controlled local machine learning asset through the connector management API
+      - Open the model discovery UI
+      - Search the controlled asset by name
+      - Confirm that the controlled model card is listed without application errors
+    expected_result: The controlled local model is listed correctly
     traceability:
       - MH-16
-    notes: Automated UI validation slice for listing readiness. It verifies the discovery shell and guards against application error states.
+    notes: Automated API/UI validation for listing readiness. It creates a run-scoped local model asset and verifies that the discovery UI renders the corresponding model card.
     automation:
       status: automated
-      mode: ui_partial
+      mode: api_ui
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_04_model_listing.spec.js
-      notes: The current Playwright slice verifies that the ML assets discovery view renders without entering an application error state.
+      notes: The Playwright spec seeds a controlled consumer-side machineLearning HttpData asset, waits for management visibility and validates that the ML assets discovery view lists it.
 
   - id: PT5-MH-05
     component: ai_model_hub
@@ -182,24 +188,26 @@ test_cases:
     type: ui
     validation_type: functional
     dataspace_dimension: discovery
-    execution_mode: ui
-    coverage_status: automated_partial_ui
-    mapping_status: partial
+    execution_mode: api_ui
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
-      - Models are indexed in the catalog
+      - The consumer connector management API is reachable
       - The global search bar is visible
     steps:
-      - Search models using free text
-      - Review the returned result set
-    expected_result: Search results are coherent with the query
+      - Seed one matching model and one non-matching control model through the connector management API
+      - Search models using a run-scoped free text token
+      - Verify that the matching model is returned
+      - Verify that the non-matching control model is excluded
+    expected_result: Search results are coherent with the query and controlled fixture data
     traceability:
       - MH-17
-    notes: Automated UI validation slice for search readiness. It verifies that the discovery search surface accepts user input.
+    notes: Automated API/UI validation for search semantics. It uses run-scoped synthetic model metadata and does not depend on pre-existing catalog data.
     automation:
       status: automated
-      mode: ui_partial
+      mode: api_ui
       ui_spec: validation/components/ai_model_hub/ui/specs/pt5_mh_05_search.spec.js
-      notes: The current Playwright slice verifies that the discovery search input is available and accepts free text queries.
+      notes: The Playwright spec seeds controlled matching and non-matching local assets, applies a unique search token and verifies inclusion/exclusion in the UI result set.
 
   - id: PT5-MH-06
     component: ai_model_hub
@@ -339,8 +347,8 @@ test_cases:
     validation_type: integration
     dataspace_dimension: execution
     execution_mode: api
-    coverage_status: api_smoke
-    mapping_status: partial
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - A controlled executable model endpoint exists as HttpData
       - For remote models, the corresponding contractual agreement is active
@@ -355,7 +363,7 @@ test_cases:
     traceability:
       - MH-34
       - MH-35
-    notes: A connector-side API smoke is available for controlled HttpData model endpoints. INESData UI execution is covered by DS-UI-AMH-EXEC-01 using a local deterministic model-server fixture and DS-UI-AMH-EXEC-02 using an external provider model after consumer agreement, while real A5.2 models are integrated.
+    notes: Automated controlled baseline for connector-side execution of HttpData model endpoints. INESData UI execution is covered by DS-UI-AMH-EXEC-01 using a local deterministic model-server fixture and DS-UI-AMH-EXEC-02 using an external provider model after consumer agreement. Real A5.2 models remain a component evolution item and are not required to close this baseline.
     automation:
       status: automated
       mode: api
@@ -367,7 +375,7 @@ test_cases:
       latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
       latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner creates a temporary HttpData asset, calls /management/v3/modelexecutions/execute and deletes the asset after execution. The local UI spec creates a run-scoped machineLearning HttpData asset pointing to adapters/inesdata/sources/model-server, checks input validation errors, and validates visible execution output/history from AI Model Execution. The external UI spec validates that the consumer sees and executes the model only after a contract agreement exists.
+      notes: The runner creates a temporary HttpData asset, calls /management/v3/modelexecutions/execute and deletes the asset after execution as the A5.2 controlled baseline. The local UI spec creates a run-scoped machineLearning HttpData asset pointing to adapters/inesdata/sources/model-server, checks input validation errors, and validates visible execution output/history from AI Model Execution. The external UI spec validates that the consumer sees and executes the model only after a contract agreement exists.
 
   - id: PT5-MH-11
     component: ai_model_hub
@@ -505,7 +513,7 @@ test_cases:
     validation_type: functional
     dataspace_dimension: comparison
     execution_mode: api_fixture_ui_ready
-    coverage_status: automated_partial_ui
+    coverage_status: automated
     mapping_status: phase_3
     preconditions:
       - Comparison metrics have already been calculated
@@ -532,7 +540,7 @@ test_cases:
       ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
       latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner produces renderable table rows and chart series for the comparison dashboard. The Playwright demo now validates the visible table and best-model summary for auditors. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two deterministic model-server endpoints, the visible ranking summary, the exported ranking CSV and the generated benchmarkRunId Observer evidence route.
+    notes: The runner produces renderable table rows and chart series for the comparison dashboard. The Playwright demo validates the visible table and best-model summary for auditors. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two deterministic model-server endpoints, the visible ranking summary, the exported ranking CSV and the generated benchmarkRunId Observer evidence route.
 
   - id: PT5-MH-16
     component: ai_model_hub
@@ -841,13 +849,13 @@ functional_use_cases:
     expected_result: FLARES can populate the dataspace on demand, reach a negotiated agreement, prepare the linguistic benchmarking flow and execute a FLARES payload through the connector API without requiring global seeding
     traceability:
       - MH-LING-01
-    notes: Phase 3 scaffold executed from Level 6. The current automated slice covers provider publication, consumer negotiation and benchmark-ready dataset/model linkage; connector-side model execution is validated through the PT5-MH-10 runner with --flares-dataset. The semantic FLARES reliability-label comparison remains pending until a FLARES-compatible model endpoint is available.
+    notes: Phase 3 scaffold executed from Level 6. The current automated slice covers provider publication, consumer negotiation and benchmark-ready dataset/model linkage; connector-side model execution is validated through the PT5-MH-10 runner with --flares-dataset. A controlled FLARES-compatible model-server endpoint is available for the semantic reliability-label comparison; real model quality remains a component evolution item.
     automation:
       status: automated
       mode: api_ui
       ui_spec: validation/components/ai_model_hub/functional/specs/mh_ling_01_flares_reliability.spec.js
       api_runner: validation/components/ai_model_hub/model_execution_api.py --flares-dataset
-      notes: Suite-specific bootstrap publishes FLARES during Level 6, while the API runner validates connector-side execution with a FLARES payload and records the remaining model-specific semantic comparison gap.
+      notes: Suite-specific bootstrap publishes FLARES during Level 6. The API runner validates connector-side execution with a FLARES payload and, by default, uses the controlled model-server baseline /api/v1/nlp/flares-reliability-baseline-a to emit result.label for the semantic comparison.
 
   - id: MH-MOB-01
     component: ai_model_hub
@@ -873,7 +881,7 @@ functional_use_cases:
     traceability:
       - MH-MOB-01
       - GTFS-Madrid-Bench
-    notes: Safe Phase 3 slice for A5.2. The suite does not call a live mobility inference endpoint or mutate INESData; it validates the functional mobility benchmark contract with dataset-derived evidence until the stable UI/API route is selected.
+    notes: Safe Phase 3 slice for A5.2. The suite validates the functional mobility benchmark contract with dataset-derived evidence. Controlled model-server endpoints are available as replaceable GTFS mobility baselines; real model quality and final UI/API product routing remain component evolution items.
     automation:
       status: automated
       mode: api_source

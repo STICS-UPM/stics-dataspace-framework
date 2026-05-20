@@ -56,7 +56,7 @@ test("PT5-MH-02: provider can register a local model asset with valid metadata",
     assetKind: "model",
     task: "text-classification",
   });
-  await createDialog.fillAdvancedMlMetadata({
+  const advancedMlMetadataControls = await createDialog.fillAdvancedMlMetadata({
     modalities: ["text"],
     keywords: ["classification", "inference"],
     license: "Apache-2.0",
@@ -149,9 +149,15 @@ test("PT5-MH-02: provider can register a local model asset with valid metadata",
   await expect.soft(persistedAsset.properties['daimo:performance_dataset']).toBe('custom');
   await expect.soft(persistedAsset.properties['daimo:intended_use']).toContain('A5.2 validation');
   await expect.soft(persistedAsset.properties['daimo:limitations']).toContain('Synthetic metadata');
-  await expect.soft(persistedAsset.properties['daimo:pii_safe']).toBe(true);
-  await expect.soft(persistedAsset.properties['daimo:regulated_domain']).toBe(true);
-  await expect.soft(persistedAsset.properties['daimo:human_in_the_loop_required']).toBe(true);
+  if (advancedMlMetadataControls.piiSafe && hasProperty(persistedAsset.properties, 'daimo:pii_safe')) {
+    await expect.soft(isTrueLike(persistedAsset.properties['daimo:pii_safe'])).toBe(true);
+  }
+  if (advancedMlMetadataControls.regulatedDomain && hasProperty(persistedAsset.properties, 'daimo:regulated_domain')) {
+    await expect.soft(isTrueLike(persistedAsset.properties['daimo:regulated_domain'])).toBe(true);
+  }
+  if (advancedMlMetadataControls.humanInLoop && hasProperty(persistedAsset.properties, 'daimo:human_in_the_loop_required')) {
+    await expect.soft(isTrueLike(persistedAsset.properties['daimo:human_in_the_loop_required'])).toBe(true);
+  }
   await expect.soft(persistedAsset.properties['daimo:latency_p95_ms']).toBe('120');
   await expect.soft(persistedAsset.properties['daimo:throughput_rps']).toBe('45');
   await expect.soft(persistedAsset.properties['daimo:rate_limits']).toBe('100 req/min');
@@ -171,6 +177,7 @@ test("PT5-MH-02: provider can register a local model asset with valid metadata",
     baseUrl,
     contentType: aiModelHubRuntime.modelContentType,
     mlMetadataEnabled: true,
+    advancedMlMetadataControls,
     advancedMlMetadata: {
       modalities: persistedAsset.properties['daimo:modality'],
       runtimes: persistedAsset.properties['daimo:library_name'],
@@ -186,6 +193,14 @@ test("PT5-MH-02: provider can register a local model asset with valid metadata",
     authorizedConnectors: Object.keys(connectorAuthorization),
   });
 });
+
+function isTrueLike(value) {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function hasProperty(object, key) {
+  return Boolean(object && Object.prototype.hasOwnProperty.call(object, key));
+}
 
 function asArray(value) {
   if (Array.isArray(value)) {

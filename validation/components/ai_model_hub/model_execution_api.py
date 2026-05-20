@@ -21,6 +21,8 @@ EDC_NAMESPACE = "https://w3id.org/edc/v0.0.1/ns/"
 DEFAULT_MODEL_PATH = "/api/v1/nlp/ecommerce-sentiment"
 DEFAULT_PAYLOAD = {"text": "This product is excellent and very useful"}
 DEFAULT_EXPECTED_MODEL = "E-commerce Sentiment Analyzer"
+FLARES_MODEL_PATH = "/api/v1/nlp/flares-reliability-baseline-a"
+FLARES_EXPECTED_MODEL = "FLARES Reliability Baseline A"
 FLARES_DATASET_DIR = str(dataset_source_dir("flares-dataset"))
 FLARES_TRIAL_FILE = "5w1h_subtask_2_trial.json"
 FLARES_TEST_FILE = "5w1h_subtarea_2_test.json"
@@ -28,7 +30,7 @@ FLARES_DATASET_NAME = "FLARES"
 
 
 class AIModelHubModelExecutionApiSuite:
-    """Exercise Edmundo's connector-side model execution API with a temporary HttpData asset."""
+    """Exercise the connector-side model execution API with a temporary HttpData asset."""
 
     DEFAULT_REQUEST_ATTEMPTS = 3
     DEFAULT_REQUEST_RETRY_SECONDS = 2
@@ -196,7 +198,7 @@ class AIModelHubModelExecutionApiSuite:
             "properties": {
                 "name": f"AI Model Hub executable model {suffix}",
                 "version": "1.0.0",
-                "shortDescription": "Temporary model endpoint for A5.2 execution API smoke",
+                "shortDescription": "Temporary model endpoint for the A5.2 controlled execution baseline",
                 "assetType": "machineLearning",
                 "dct:description": "HttpData endpoint consumed through the connector-side model execution API",
                 "dcat:keyword": ["validation", "ai-model-hub", "model-execution", "A5.2"],
@@ -304,6 +306,33 @@ class AIModelHubModelExecutionApiSuite:
         }
 
     @staticmethod
+    def evaluate_flares_semantic_response(body: Any, functional_context: dict[str, Any]) -> dict[str, Any]:
+        expected_output = dict(functional_context.get("expected_output") or {})
+        expected_label = str(expected_output.get("expectedReliability") or "").strip()
+        result = body.get("result") if isinstance(body, dict) else None
+        actual_label = str((result or {}).get("label") or "").strip() if isinstance(result, dict) else ""
+        if not actual_label:
+            return {
+                "coverage_status": "partial_api_execution",
+                "comparison_scope": "transport_and_dataset_alignment",
+                "semantic_comparison_status": "pending_flares_model_endpoint",
+                "assertions": [],
+                "expected_label": expected_label,
+                "actual_label": None,
+            }
+        assertions = []
+        if actual_label != expected_label:
+            assertions.append(f"Expected FLARES reliability label '{expected_label}', got '{actual_label}'")
+        return {
+            "coverage_status": "automated",
+            "comparison_scope": "transport_dataset_and_semantic_label",
+            "semantic_comparison_status": "failed" if assertions else "passed",
+            "assertions": assertions,
+            "expected_label": expected_label,
+            "actual_label": actual_label,
+        }
+
+    @staticmethod
     def _case_result(
         *,
         status: str,
@@ -313,22 +342,25 @@ class AIModelHubModelExecutionApiSuite:
     ) -> dict[str, Any]:
         return {
             "test_case_id": TEST_CASE_ID,
-            "description": "Execute inference through the connector-side model execution API",
+            "description": "Execute inference through the connector-side model execution API with a controlled baseline",
             "type": "api",
             "case_group": "pt5",
             "validation_type": "integration",
             "dataspace_dimension": "execution",
-            "mapping_status": "phase_3",
+            "mapping_status": "mapped",
             "automation_mode": "api",
             "execution_mode": "api",
-            "coverage_status": "api_smoke",
+            "coverage_status": "automated",
             "request": request_payload,
             "response": response_payload,
             "evaluation": {
                 "status": status,
                 "assertions": assertions,
             },
-            "expected_result": "The model execution API resolves the HttpData asset and returns a model response",
+            "expected_result": (
+                "The model execution API resolves the controlled HttpData asset and returns "
+                "a deterministic model response"
+            ),
             "traceability": ["MH-34", "MH-35"],
         }
 
@@ -340,8 +372,19 @@ class AIModelHubModelExecutionApiSuite:
         request_payload: dict[str, Any],
         response_payload: dict[str, Any],
         functional_context: dict[str, Any],
+        semantic_evaluation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         expected_output = dict(functional_context.get("expected_output") or {})
+        semantic_evaluation = semantic_evaluation or {
+            "coverage_status": "partial_api_execution",
+            "comparison_scope": "transport_and_dataset_alignment",
+            "semantic_comparison_status": "pending_flares_model_endpoint",
+            "expected_label": expected_output.get("expectedReliability"),
+            "actual_label": None,
+        }
+        pending_semantic_comparison = (
+            semantic_evaluation.get("semantic_comparison_status") == "pending_flares_model_endpoint"
+        )
         return {
             "test_case_id": FUNCTIONAL_CASE_ID,
             "description": "Execute a FLARES linguistic record through the connector-side model execution API",
@@ -352,18 +395,20 @@ class AIModelHubModelExecutionApiSuite:
             "mapping_status": "phase_3",
             "automation_mode": "api",
             "execution_mode": "api",
-            "coverage_status": "partial_api_execution",
+            "coverage_status": semantic_evaluation.get("coverage_status") or "partial_api_execution",
             "request": request_payload,
             "response": response_payload,
             "evaluation": {
                 "status": status,
                 "assertions": assertions,
-                "comparison_scope": "transport_and_dataset_alignment",
-                "semantic_comparison_status": "pending_flares_model_endpoint",
+                "comparison_scope": semantic_evaluation.get("comparison_scope"),
+                "semantic_comparison_status": semantic_evaluation.get("semantic_comparison_status"),
+                "expected_label": semantic_evaluation.get("expected_label"),
+                "actual_label": semantic_evaluation.get("actual_label"),
             },
             "expected_result": (
                 "A FLARES source record is executable through the connector API and linked to "
-                "dataset-derived expected labels for the future reliability assertion"
+                "dataset-derived expected labels for the reliability assertion"
             ),
             "traceability": [FUNCTIONAL_CASE_ID],
             "fixture": {
@@ -374,10 +419,20 @@ class AIModelHubModelExecutionApiSuite:
                 "expected_reliability": expected_output.get("expectedReliability"),
                 "expected_outputs_source": functional_context.get("expected_outputs_source"),
             },
-            "limitation": (
-                "The current model-server endpoint is a controlled execution fixture. It confirms "
-                "connector-side execution with a FLARES payload, but it does not yet emit the "
-                "FLARES reliability label required for the final semantic comparison."
+            **(
+                {
+                    "limitation": (
+                        "The current model endpoint confirms connector-side execution with a FLARES payload, "
+                        "but it does not emit the FLARES reliability label required for the semantic comparison."
+                    )
+                }
+                if pending_semantic_comparison
+                else {
+                    "baseline_note": (
+                        "The FLARES reliability label is validated through the controlled model-server baseline. "
+                        "Real model quality remains a component evolution item."
+                    )
+                }
             ),
         }
 
@@ -472,8 +527,9 @@ class AIModelHubModelExecutionApiSuite:
                 )
             )
             if functional_context:
-                functional_status = "passed" if evaluation["status"] == "passed" else "failed"
-                functional_assertions = [] if functional_status == "passed" else list(evaluation["assertions"])
+                semantic_evaluation = self.evaluate_flares_semantic_response(execution_body, functional_context)
+                functional_assertions = list(evaluation["assertions"]) + list(semantic_evaluation["assertions"])
+                functional_status = "failed" if functional_assertions else "passed"
                 executed_cases.append(
                     self._functional_case_result(
                         status=functional_status,
@@ -481,6 +537,7 @@ class AIModelHubModelExecutionApiSuite:
                         request_payload=execution_request,
                         response_payload=execution_response,
                         functional_context=functional_context,
+                        semantic_evaluation=semantic_evaluation,
                     )
                 )
         except Exception as exc:
@@ -869,6 +926,7 @@ def build_flares_execution_context(
         "tag_end": record.get("Tag_End"),
         "dataset": metadata.get("datasetName") or FLARES_DATASET_NAME,
         "record_id": resolved_record_id,
+        "expected_label": expected_output.get("expectedReliability"),
     }
     return {
         "use_case_id": FUNCTIONAL_CASE_ID,
@@ -910,7 +968,7 @@ def _parse_json_object(value: str, label: str) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run PT5-MH-10 AI Model Hub model execution API smoke.")
+    parser = argparse.ArgumentParser(description="Run PT5-MH-10 AI Model Hub controlled execution baseline.")
     parser.add_argument("--topology", default="local", choices=["local", "vm-single"])
     parser.add_argument("--provider", default="")
     parser.add_argument("--model-url", default="")
@@ -930,6 +988,10 @@ def main(argv: list[str] | None = None) -> int:
             record_id=args.flares_record_id or None,
         )
         payload = dict(functional_context["payload"])
+        if args.model_path == DEFAULT_MODEL_PATH and not args.model_url:
+            args.model_path = FLARES_MODEL_PATH
+        if args.expected_model == DEFAULT_EXPECTED_MODEL:
+            args.expected_model = FLARES_EXPECTED_MODEL
     else:
         payload = _parse_json_object(args.payload_json, "--payload-json")
 

@@ -46,6 +46,10 @@ function ensureFile(filePath) {
   }
 }
 
+function joinUrl(baseUrl, routePath) {
+  return `${String(baseUrl || "").replace(/\/$/, "")}/${String(routePath || "").replace(/^\//, "")}`;
+}
+
 function ensureArrayRecords(records, label) {
   if (Array.isArray(records)) {
     return records;
@@ -520,11 +524,16 @@ function buildFlaresLinguisticModelPayload(fixture, runtime, spec) {
   const inputSchema = buildFlaresInputSchema();
   const inputFeatures = buildFlaresInputFeatures();
   const outputSchema = buildFlaresOutputSchema();
+  const modelBaseUrl = spec.baseUrl || (
+    spec.endpointPath && runtime.modelServerBaseUrl
+      ? joinUrl(runtime.modelServerBaseUrl, spec.endpointPath)
+      : `${runtime.consumerDefaultUrl}/mock-models/${spec.assetId}`
+  );
 
   return {
     assetId: spec.assetId,
     assetName: spec.assetName,
-    baseUrl: spec.baseUrl || `${runtime.consumerDefaultUrl}/mock-models/${spec.assetId}`,
+    baseUrl: modelBaseUrl,
     description: spec.description,
     version: spec.version || runtime.modelVersion,
     task: "text-classification",
@@ -544,7 +553,7 @@ function buildFlaresLinguisticModelPayload(fixture, runtime, spec) {
       "daimo:subtask": ["5w1h-reliability-classification"],
       "daimo:language": ["es"],
       "daimo:framework": ["flares"],
-      "daimo:inference_path": "/infer",
+      "daimo:inference_path": spec.endpointPath || "/infer",
       "daimo:input_schema": JSON.stringify(inputSchema),
       "daimo:input_schema_draft": "https://json-schema.org/draft/2020-12/schema",
       "daimo:input_features": JSON.stringify(inputFeatures),
@@ -564,6 +573,7 @@ async function ensureFlaresLinguisticModelsPublished(request, runtime, fixture =
         "Local linguistic baseline prepared for MH-LING-01. It exposes FLARES-compatible input metadata for benchmark readiness checks.",
       library: "flares-baseline-a",
       variant: "baseline-a",
+      endpointPath: "/api/v1/nlp/flares-reliability-baseline-a",
     },
     {
       assetId: "model-flares-reliability-baseline-b",
@@ -572,6 +582,7 @@ async function ensureFlaresLinguisticModelsPublished(request, runtime, fixture =
         "Second local linguistic baseline prepared for MH-LING-01. It shares the same FLARES-compatible input contract for comparison readiness.",
       library: "flares-baseline-b",
       variant: "baseline-b",
+      endpointPath: "/api/v1/nlp/flares-reliability-baseline-b",
     },
   ];
 

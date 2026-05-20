@@ -94,6 +94,15 @@ class AIModelHubUiRuntimeTests(unittest.TestCase):
 
         self.assertEqual(runtime["keycloakBaseUrl"], "http://override.example.local")
 
+    def test_runtime_exposes_model_server_base_url_from_components_namespace(self):
+        runtime = resolve_runtime_with_node({"UI_COMPONENTS_NAMESPACE": "components-a52"})
+
+        self.assertEqual(runtime["componentsNamespace"], "components-a52")
+        self.assertEqual(
+            runtime["modelServerBaseUrl"],
+            "http://model-server.components-a52.svc.cluster.local:8080",
+        )
+
     def test_runtime_uses_edc_connector_defaults_when_adapter_is_edc(self):
         runtime = resolve_runtime_with_node({"PIONERA_ADAPTER": "edc"})
 

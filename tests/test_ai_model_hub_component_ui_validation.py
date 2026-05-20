@@ -5,7 +5,10 @@ import tempfile
 import unittest
 from unittest import mock
 
-from validation.components.ai_model_hub.ui_runner import run_ai_model_hub_ui_validation
+from validation.components.ai_model_hub.ui_runner import (
+    UI_CASE_METADATA,
+    run_ai_model_hub_ui_validation,
+)
 
 
 def _build_playwright_results_payload():
@@ -13,8 +16,8 @@ def _build_playwright_results_payload():
         "PT5-MH-01: model catalog view is reachable from the public UI",
         "PT5-MH-02: provider can register a local model asset with valid metadata",
         "PT5-MH-03: provider publication becomes visible through the consumer catalog UI",
-        "PT5-MH-04: model listing view renders the discovery shell",
-        "PT5-MH-05: model discovery search input accepts free text queries",
+        "PT5-MH-04: model listing view renders a controlled model card",
+        "PT5-MH-05: model discovery search returns the controlled matching model",
         "PT5-MH-06: model discovery filter shell is available in the ML assets view",
         "PT5-MH-07: model details view exposes functional and technical metadata",
         "PT5-MH-08: contract negotiation from catalog registers an agreement in the consumer connector",
@@ -62,6 +65,22 @@ def _build_playwright_results_payload():
 
 
 class AIModelHubComponentUIValidationTests(unittest.TestCase):
+    def test_catalog_access_case_is_reported_as_mapped_ui(self):
+        metadata = UI_CASE_METADATA["PT5-MH-01"]
+
+        self.assertEqual(metadata["mapping_status"], "mapped")
+        self.assertEqual(metadata["coverage_status"], "automated")
+        self.assertEqual(metadata["automation_mode"], "ui")
+        self.assertEqual(metadata["execution_mode"], "ui")
+
+    def test_reinforced_discovery_cases_are_reported_as_mapped_api_ui(self):
+        for case_id in ["PT5-MH-04", "PT5-MH-05", "PT5-MH-06", "PT5-MH-07"]:
+            with self.subTest(case_id=case_id):
+                self.assertEqual(UI_CASE_METADATA[case_id]["mapping_status"], "mapped")
+                self.assertEqual(UI_CASE_METADATA[case_id]["coverage_status"], "automated")
+        self.assertEqual(UI_CASE_METADATA["PT5-MH-04"]["automation_mode"], "api_ui")
+        self.assertEqual(UI_CASE_METADATA["PT5-MH-05"]["automation_mode"], "api_ui")
+
     def test_run_ai_model_hub_ui_validation_can_be_disabled_explicitly(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.dict(os.environ, {"AI_MODEL_HUB_ENABLE_UI_VALIDATION": ""}, clear=False):

@@ -61,7 +61,26 @@ validación después de las suites del dataspace. En el estado actual:
   benchmarking, movilidad, ejecución de modelo, gobernanza de conectores y
   Observer API;
 - `semantic-virtualization` ejecuta API, mappings, trazabilidad GTFS-Bench,
-  materialización y UI funcional antes de sus comprobaciones de integración.
+  materialización, UI funcional y trazabilidad cruzada con AI Model Hub y
+  Ontology Hub antes de sus comprobaciones de integración.
+
+En `ai-model-hub`, la ejecución de modelos se cierra para A5.2 con una línea
+base controlada basada en el `model-server` determinista del framework. Esto
+valida el contrato de ejecución, la ruta de conector, la UI de INESData y la
+evidencia generada. La integración de modelos reales queda registrada como
+evolución del componente, sin bloquear la evidencia automatizada de la línea
+base actual.
+
+Para los casos de uso `FLARES` y `GTFS-Madrid-Bench`, el criterio de cierre es
+validar el flujo completo del caso de uso dentro del espacio de datos con
+muestras reproducibles derivadas de las fuentes sincronizadas. La validación no
+pretende demostrar que los mejores modelos posibles han sido seleccionados ni
+medir calidad predictiva con datasets completos.
+
+El `model-server` del adaptador `inesdata` expone líneas base controladas para
+`FLARES` y `GTFS-Madrid-Bench`. Esas rutas estabilizan el contrato de entrada y
+salida que deberán conservar los modelos reales cuando se sustituyan las líneas
+base.
 
 Kafka/streaming transfer es la única suite A5.2 que permanece desactivada por
 defecto por coste temporal. Se activa de forma explícita con

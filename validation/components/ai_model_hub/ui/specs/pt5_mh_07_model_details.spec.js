@@ -36,12 +36,17 @@ test("PT5-MH-07: model details view exposes functional and technical metadata", 
 
   const connectorAuthorization = await attachManagementAuthorizationRoutes(page, aiModelHubRuntime);
 
-  await assetsPage.goto();
-  await assetsPage.waitUntilReady();
-  await fillMarked(assetsPage.searchInput, assetName);
+  await expect(async () => {
+    await assetsPage.goto();
+    await assetsPage.waitUntilReady();
+    await fillMarked(assetsPage.searchInput, assetName);
+    await expect(assetsPage.cardByText(assetName)).toBeVisible({ timeout: 15000 });
+  }).toPass({
+    timeout: 90000,
+    intervals: [1000, 2000, 5000],
+  });
 
   const card = assetsPage.cardByText(assetName);
-  await expect(card).toBeVisible({ timeout: 15000 });
   await captureStep(page, "pt5-mh-07-card-visible");
 
   await assetsPage.openDetailsForCard(card);

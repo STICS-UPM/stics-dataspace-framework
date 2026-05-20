@@ -1,17 +1,42 @@
 const { test, expect } = require("../fixtures");
+const { attachManagementAuthorizationRoutes } = require("../auth");
+const { createLocalConsumerModelAsset, waitForLocalConsumerAsset } = require("../bootstrap");
 const { MlAssetsPage } = require("../pages/ml_assets.page");
 
-test("PT5-MH-04: model listing view renders the discovery shell", async ({
+test("PT5-MH-04: model listing view renders a controlled model card", async ({
   page,
+  request,
   aiModelHubRuntime,
   captureStep,
   attachJson,
 }) => {
   const assetsPage = new MlAssetsPage(page, aiModelHubRuntime);
+  const suffix = `${Date.now()}`;
+  const assetId = `pt5-mh-04-model-${suffix}`;
+  const assetName = `PT5 MH 04 Listed Model ${suffix}`;
+  const localAssetState = await createLocalConsumerModelAsset(request, aiModelHubRuntime, {
+    assetId,
+    assetName,
+    baseUrl: `http://pt5-mh-04.local/models/${suffix}`,
+    description: "PT5-MH-04 controlled local model for listing validation.",
+    version: "v1.0.0",
+    task: "text-classification",
+    library: "scikit-learn",
+    keywords: ["pt5-mh-04", "playwright", "listing"],
+  });
+  const managementVisibility = await waitForLocalConsumerAsset(request, aiModelHubRuntime, assetId);
+  const connectorAuthorization = await attachManagementAuthorizationRoutes(page, aiModelHubRuntime);
 
-  await assetsPage.goto();
-  await assetsPage.waitUntilReady();
-  await captureStep(page, "pt5-mh-04-ml-assets");
+  await expect(async () => {
+    await assetsPage.goto();
+    await assetsPage.waitUntilReady();
+    await assetsPage.search(assetName);
+    await assetsPage.expectCardVisible(assetName);
+  }).toPass({
+    timeout: 90000,
+    intervals: [1000, 2000, 5000],
+  });
+  await captureStep(page, "pt5-mh-04-listed-model");
 
   await expect(page).toHaveURL(new RegExp(`${aiModelHubRuntime.mlAssetsPath}$`));
   await expect(assetsPage.searchInput).toBeVisible();
@@ -20,6 +45,9 @@ test("PT5-MH-04: model listing view renders the discovery shell", async ({
 
   await attachJson("pt5-mh-04-state", {
     route: aiModelHubRuntime.mlAssetsPath,
+    localAssetState,
+    managementVisibility,
+    authorizedConnectors: Object.keys(connectorAuthorization),
     assetCardCount: await assetsPage.assetCards.count(),
     filterOptionCount: await assetsPage.filterCheckboxes.count(),
     noResultsVisible: await assetsPage.noResultsMessage.first().isVisible().catch(() => false),

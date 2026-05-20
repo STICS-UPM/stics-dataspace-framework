@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from validation.components.ai_model_hub.model_observer_api import (
@@ -75,6 +76,22 @@ class FakeSession:
 
 
 class AIModelHubModelObserverApiTests(unittest.TestCase):
+    def test_connector_interface_proxy_preserves_backend_host_header(self):
+        config_path = (
+            Path(__file__).resolve().parents[1]
+            / "adapters"
+            / "inesdata"
+            / "sources"
+            / "inesdata-connector-interface"
+            / "docker"
+            / "default.conf"
+        )
+        content = config_path.read_text(encoding="utf-8")
+
+        self.assertIn("location /inesdata-connector-interface/model-observer/", content)
+        self.assertIn("proxy_set_header Host $proxy_host;", content)
+        self.assertNotIn("proxy_set_header Host $host;\n        proxy_set_header X-Forwarded-Proto", content)
+
     def test_build_observer_event_batch_uses_hashes_not_raw_payloads(self):
         batch = build_observer_event_batch("observer-test")
 

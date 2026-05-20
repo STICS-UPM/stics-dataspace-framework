@@ -47,12 +47,40 @@ class AIModelHubTestCasesCatalogTests(unittest.TestCase):
         catalog = self._load_catalog()
         cases = {case.get("id"): case for case in catalog.get("test_cases") or []}
 
+        self.assertEqual(cases["PT5-MH-10"]["coverage_status"], "automated")
+        self.assertEqual(cases["PT5-MH-10"]["mapping_status"], "mapped")
         self.assertEqual(cases["PT5-MH-10"]["automation"]["status"], "automated")
         self.assertEqual(cases["PT5-MH-10"]["automation"]["mode"], "api")
         self.assertEqual(
             cases["PT5-MH-10"]["automation"]["runner"],
             "validation/components/ai_model_hub/model_execution_api.py",
         )
+        self.assertIn("controlled baseline", cases["PT5-MH-10"]["notes"])
+        self.assertIn("model-server", cases["PT5-MH-10"]["automation"]["notes"])
+
+    def test_model_catalog_access_case_is_automated_with_request_surface(self):
+        catalog = self._load_catalog()
+        cases = {case.get("id"): case for case in catalog.get("test_cases") or []}
+        case = cases["PT5-MH-01"]
+
+        self.assertEqual(case["coverage_status"], "automated")
+        self.assertEqual(case["mapping_status"], "mapped")
+        self.assertEqual(case["automation"]["status"], "automated")
+        self.assertEqual(case["automation"]["mode"], "ui")
+        self.assertIn("manual catalog request", case["notes"].lower())
+        self.assertIn("provider protocol URL", case["automation"]["notes"])
+
+    def test_model_discovery_listing_and_search_are_automated_with_controlled_assets(self):
+        catalog = self._load_catalog()
+        cases = {case.get("id"): case for case in catalog.get("test_cases") or []}
+
+        for case_id in ["PT5-MH-04", "PT5-MH-05"]:
+            with self.subTest(case_id=case_id):
+                self.assertEqual(cases[case_id]["coverage_status"], "automated")
+                self.assertEqual(cases[case_id]["mapping_status"], "mapped")
+                self.assertEqual(cases[case_id]["automation"]["status"], "automated")
+                self.assertEqual(cases[case_id]["automation"]["mode"], "api_ui")
+                self.assertIn("controlled", cases[case_id]["automation"]["notes"].lower())
 
     def test_model_benchmarking_cases_are_automated_for_level6(self):
         catalog = self._load_catalog()
@@ -60,6 +88,7 @@ class AIModelHubTestCasesCatalogTests(unittest.TestCase):
 
         for case_id in ["PT5-MH-12", "PT5-MH-13", "PT5-MH-14", "PT5-MH-15"]:
             with self.subTest(case_id=case_id):
+                self.assertEqual(cases[case_id]["coverage_status"], "automated")
                 self.assertEqual(cases[case_id]["automation"]["status"], "automated")
                 self.assertEqual(
                     cases[case_id]["automation"]["runner"],

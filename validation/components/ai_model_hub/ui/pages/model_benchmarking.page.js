@@ -9,6 +9,8 @@ class ModelBenchmarkingPage {
     this.heading = page.getByRole("heading", { name: "Model Benchmarking" });
     this.modelSearchInput = page.getByPlaceholder("Search by name, id, tag, or task...");
     this.datasetSearchInput = page.getByPlaceholder("Search datasets by name, id, task, tags...");
+    this.refreshAssetsButton = page.getByRole("button", { name: /Refresh Assets/i });
+    this.refreshDatasetsButton = page.getByRole("button", { name: /Refresh Datasets/i });
     this.loadSelectedDatasetButton = page.getByRole("button", { name: /Load Selected Dataset/i });
     this.validateInputButton = page.getByRole("button", { name: /Validate Input/i });
     this.runBenchmarkButton = page.getByRole("button", { name: /Run Benchmark/i });
@@ -63,14 +65,36 @@ class ModelBenchmarkingPage {
   }
 
   async selectModelByText(text) {
+    await expect(async () => {
+      await this.modelSearchInput.fill(text);
+      const option = this.modelOptionByText(text);
+      if (!(await option.isVisible().catch(() => false)) && (await this.refreshAssetsButton.isEnabled().catch(() => false))) {
+        await clickMarked(this.refreshAssetsButton);
+      }
+      await expect(option).toBeVisible({ timeout: 10000 });
+    }).toPass({
+      timeout: 60000,
+      intervals: [1000, 2000, 5000],
+    });
+
     const option = this.modelOptionByText(text);
-    await expect(option).toBeVisible({ timeout: 20000 });
     await checkMarked(option.locator("input[type='checkbox']"));
   }
 
   async selectDataspaceDatasetByText(text) {
+    await expect(async () => {
+      await this.datasetSearchInput.fill(text);
+      const option = this.datasetOptionByText(text);
+      if (!(await option.isVisible().catch(() => false)) && (await this.refreshDatasetsButton.isEnabled().catch(() => false))) {
+        await clickMarked(this.refreshDatasetsButton);
+      }
+      await expect(option).toBeVisible({ timeout: 10000 });
+    }).toPass({
+      timeout: 60000,
+      intervals: [1000, 2000, 5000],
+    });
+
     const option = this.datasetOptionByText(text);
-    await expect(option).toBeVisible({ timeout: 20000 });
     await checkMarked(option.locator("input[type='radio']"));
   }
 

@@ -169,9 +169,11 @@ function buildObserverEvents(runId: string) {
 }
 
 async function observerHomeIsVisible(page: Page): Promise<boolean> {
-  const heading = page.getByRole("heading", { name: /AI Model Observer/i }).first();
   try {
-    await expect(heading).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/^AI Model Observer$/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("heading", { name: /clearing-house evidence/i }).first()).toBeVisible({
+      timeout: 10_000,
+    });
   } catch {
     return false;
   }

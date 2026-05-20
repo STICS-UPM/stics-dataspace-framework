@@ -78,9 +78,11 @@ function observerHomeUrl(portalBaseUrl: string): string {
 }
 
 async function observerHomeIsVisible(page: Page): Promise<boolean> {
-  const heading = page.getByRole("heading", { name: /AI Model Observer/i }).first();
   try {
-    await expect(heading).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/^AI Model Observer$/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("heading", { name: /clearing-house evidence/i }).first()).toBeVisible({
+      timeout: 10_000,
+    });
   } catch {
     return false;
   }
@@ -141,7 +143,7 @@ test("10 AI Model Observer: home and evidence navigation are available from INES
 
     for (const target of TARGETS) {
       await page.goto(report.observerHomeUrl, { waitUntil: "domcontentloaded" });
-      await expect(page.getByRole("heading", { name: /AI Model Observer/i }).first()).toBeVisible();
+      expect(await observerHomeIsVisible(page), "AI Model Observer home is not visible").toBeTruthy();
 
       const card = page.locator("article").filter({ hasText: target.heading }).first();
       await expect(card, `${target.label} card is not visible`).toBeVisible();
