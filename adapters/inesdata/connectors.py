@@ -187,7 +187,9 @@ class INESDataConnectorsAdapter:
             for token in (
                 "connection refused",
                 "failed to establish a new connection",
+                "failed to resolve",
                 "name or service not known",
+                "nameresolutionerror",
                 "temporary failure in name resolution",
                 "nodename nor servname provided",
                 "max retries exceeded",
@@ -362,6 +364,10 @@ class INESDataConnectorsAdapter:
             hostname = connector_name
         normalized_path = f"/{str(path or '/protocol').lstrip('/')}"
         return f"http://{hostname}:{int(port)}{normalized_path}"
+
+    def build_protocol_address(self, connector_name, path="/protocol"):
+        normalized_path = f"/{str(path or '/protocol').lstrip('/')}"
+        return f"{self.connector_base_url(connector_name).rstrip('/')}{normalized_path}"
 
     def _dataspace_connector_target_namespaces(self, dataspace, dataspaces=None):
         connectors = list(dataspace.get("connectors") or [])
@@ -574,6 +580,39 @@ class INESDataConnectorsAdapter:
 
         return False
 
+    def _start_vault_bootstrap_access(self):
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        vault_url = str(
+            deployer_config.get("VT_URL") or deployer_config.get("VAULT_URL") or ""
+        ).strip().rstrip("/")
+        service_ref = self._vault_cluster_service_reference(vault_url)
+        if not service_ref:
+            return {"vault_url": None, "port_forward": None}
+
+        port_forward = self._open_temporary_port_forward(
+            service_ref["namespace"],
+            service_ref["service"],
+            remote_port=service_ref["port"],
+        )
+        if not port_forward:
+            print(
+                "Vault bootstrap fallback failed: could not open a temporary "
+                f"port-forward to {service_ref['service']} in namespace {service_ref['namespace']}."
+            )
+            return None
+
+        local_url = f"{service_ref['scheme']}://127.0.0.1:{port_forward['local_port']}"
+        print(
+            "Using temporary local Vault port-forward for Level 4 bootstrap commands "
+            f"({service_ref['service']}.{service_ref['namespace']}.svc -> {local_url})."
+        )
+        return {"vault_url": local_url, "port_forward": port_forward}
+
+    def _stop_vault_bootstrap_access(self, bootstrap_access):
+        if not bootstrap_access:
+            return
+        self._close_temporary_port_forward(bootstrap_access.get("port_forward"))
+
     def _prepare_vault_management_access(self, ds_name=None):
         if self._vault_management_token_verified:
             return True
@@ -746,15 +785,21 @@ class INESDataConnectorsAdapter:
             print("Keycloak admin authentication did not become ready")
         return False
 
-    def _bootstrap_connector_create_command(self, python_exec, connector_name, ds_name):
+    def _bootstrap_connector_environment_prefix(self, vault_url=None):
+        prefix = self._bootstrap_environment_prefix()
+        if vault_url:
+            prefix += f"PIONERA_VT_URL={shlex.quote(str(vault_url).rstrip('/'))} "
+        return prefix
+
+    def _bootstrap_connector_create_command(self, python_exec, connector_name, ds_name, vault_url=None):
         return (
-            f"{self._bootstrap_environment_prefix()}{python_exec} "
+            f"{self._bootstrap_connector_environment_prefix(vault_url)}{python_exec} "
             f"bootstrap.py connector create {connector_name} {ds_name}"
         )
 
-    def _bootstrap_connector_delete_command(self, python_exec, connector_name, ds_name):
+    def _bootstrap_connector_delete_command(self, python_exec, connector_name, ds_name, vault_url=None):
         return (
-            f"{self._bootstrap_environment_prefix()}{python_exec} "
+            f"{self._bootstrap_connector_environment_prefix(vault_url)}{python_exec} "
             f"bootstrap.py connector delete {connector_name} {ds_name}"
         )
 
@@ -2390,7 +2435,7 @@ class INESDataConnectorsAdapter:
         print(f"Warning: previous connector pods still visible before cleanup: {connector_name}")
         return False
 
-    def _cleanup_connector_state(self, connector_name, repo_dir, ds_name, python_exec, namespace=None):
+    def _cleanup_connector_state(self, connector_name, repo_dir, ds_name, python_exec, namespace=None, vault_url=None):
         values_file = self._remove_connector_values_file(connector_name)
         self.invalidate_management_api_token(connector_name)
 
@@ -2400,7 +2445,12 @@ class INESDataConnectorsAdapter:
         self.run(f"helm uninstall {release_name} -n {ns}", check=False)
         self._wait_for_connector_pods_deleted(connector_name, ns)
 
-        delete_cmd = self._bootstrap_connector_delete_command(python_exec, connector_name, ds_name)
+        delete_cmd = self._bootstrap_connector_delete_command(
+            python_exec,
+            connector_name,
+            ds_name,
+            vault_url=vault_url,
+        )
         self.run(delete_cmd, cwd=repo_dir, check=False)
 
         connector_db = connector_name.replace("-", "_")
@@ -2446,58 +2496,73 @@ class INESDataConnectorsAdapter:
         if not self._prepare_vault_management_access(ds_name=ds_name):
             return False
 
-        if not self.wait_for_keycloak_admin_ready():
-            print("Keycloak admin API not ready for connector cleanup")
+        vault_bootstrap_access = self._start_vault_bootstrap_access()
+        if vault_bootstrap_access is None:
             return False
+        vault_bootstrap_url = vault_bootstrap_access.get("vault_url")
 
-        values_file = self._cleanup_connector_state(
-            connector_name,
-            repo_dir,
-            ds_name,
-            python_exec,
-            namespace=target_namespace,
-        )
+        try:
+            if not self.wait_for_keycloak_admin_ready():
+                print("Keycloak admin API not ready for connector cleanup")
+                return False
 
-        if not self.wait_for_keycloak_admin_ready():
-            print("Keycloak admin API not ready for connector provisioning")
-            return False
-
-        print(f"Creating connector {connector_name}...")
-        create_cmd = self._bootstrap_connector_create_command(python_exec, connector_name, ds_name)
-        create_result = None
-        creds_path = self.config.connector_credentials_path(connector_name)
-        max_attempts = 2
-        for attempt in range(1, max_attempts + 1):
-            create_result = self.run(create_cmd, cwd=repo_dir, check=False)
-            missing_credentials = (
-                self._connector_credentials_missing_requirements(creds_path)
-                if create_result is not None
-                else []
+            values_file = self._cleanup_connector_state(
+                connector_name,
+                repo_dir,
+                ds_name,
+                python_exec,
+                namespace=target_namespace,
+                vault_url=vault_bootstrap_url,
             )
-            if create_result is not None and not missing_credentials:
-                break
-            if missing_credentials:
-                print(
-                    "Connector bootstrap produced incomplete credentials "
-                    f"({', '.join(missing_credentials)}). Retrying cleanly..."
+
+            if not self.wait_for_keycloak_admin_ready():
+                print("Keycloak admin API not ready for connector provisioning")
+                return False
+
+            print(f"Creating connector {connector_name}...")
+            create_cmd = self._bootstrap_connector_create_command(
+                python_exec,
+                connector_name,
+                ds_name,
+                vault_url=vault_bootstrap_url,
+            )
+            create_result = None
+            creds_path = self.config.connector_credentials_path(connector_name)
+            max_attempts = 2
+            for attempt in range(1, max_attempts + 1):
+                create_result = self.run(create_cmd, cwd=repo_dir, check=False)
+                missing_credentials = (
+                    self._connector_credentials_missing_requirements(creds_path)
+                    if create_result is not None
+                    else []
                 )
-                create_result = None
-            if attempt < max_attempts:
-                print(
-                    f"Connector creation failed on attempt {attempt}. "
-                    "Cleaning partial state and retrying after Keycloak readiness check..."
-                )
-                values_file = self._cleanup_connector_state(
-                    connector_name,
-                    repo_dir,
-                    ds_name,
-                    python_exec,
-                    namespace=target_namespace,
-                )
-                if not self.wait_for_keycloak_admin_ready():
-                    print("Keycloak admin API not ready for connector provisioning retry")
-                    return False
-                time.sleep(5)
+                if create_result is not None and not missing_credentials:
+                    break
+                if missing_credentials:
+                    print(
+                        "Connector bootstrap produced incomplete credentials "
+                        f"({', '.join(missing_credentials)}). Retrying cleanly..."
+                    )
+                    create_result = None
+                if attempt < max_attempts:
+                    print(
+                        f"Connector creation failed on attempt {attempt}. "
+                        "Cleaning partial state and retrying after Keycloak readiness check..."
+                    )
+                    values_file = self._cleanup_connector_state(
+                        connector_name,
+                        repo_dir,
+                        ds_name,
+                        python_exec,
+                        namespace=target_namespace,
+                        vault_url=vault_bootstrap_url,
+                    )
+                    if not self.wait_for_keycloak_admin_ready():
+                        print("Keycloak admin API not ready for connector provisioning retry")
+                        return False
+                    time.sleep(5)
+        finally:
+            self._stop_vault_bootstrap_access(vault_bootstrap_access)
 
         if create_result is None:
             print("Error: deployment failed")

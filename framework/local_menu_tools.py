@@ -829,22 +829,50 @@ def _minikube_profile_for_local_images(active_adapter: str) -> str:
     return (config.get("MINIKUBE_PROFILE") or "minikube").strip() or "minikube"
 
 
+def _first_non_empty(*values: str | None) -> str:
+    for value in values:
+        cleaned = (value or "").strip()
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def _adapter_env_prefix(active_adapter: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "_", active_adapter or "").strip("_").upper()
+
+
 def _dataspace_context_for_local_images(active_adapter: str) -> dict[str, str]:
     normalized_adapter = (active_adapter or "").strip().lower()
-    default_dataspace = "demoedc" if normalized_adapter == "edc" else "demo"
+    adapter_prefix = _adapter_env_prefix(normalized_adapter)
     config_path = os.path.join(project_root(), "deployers", active_adapter, "deployer.config")
     config = _read_key_value_config(config_path)
-    dataspace = (
-        config.get("DS_1_NAME")
-        or config.get("DS_NAME")
-        or config.get("DATASPACE_NAME")
-        or default_dataspace
-    ).strip() or default_dataspace
-    namespace = (
-        config.get("DS_1_NAMESPACE")
-        or config.get("NAMESPACE")
-        or dataspace
-    ).strip() or dataspace
+
+    dataspace = _first_non_empty(
+        os.getenv(f"PIONERA_{adapter_prefix}_DATASPACE_NAME") if adapter_prefix else None,
+        os.getenv(f"PIONERA_{adapter_prefix}_DATASPACE") if adapter_prefix else None,
+        config.get("DS_1_NAME"),
+        config.get("DS_NAME"),
+        config.get("DATASPACE_NAME"),
+        os.getenv("PIONERA_DATASPACE_NAME"),
+        os.getenv("DATASPACE_NAME"),
+    )
+    namespace = _first_non_empty(
+        os.getenv(f"PIONERA_{adapter_prefix}_NAMESPACE") if adapter_prefix else None,
+        os.getenv(f"PIONERA_{adapter_prefix}_K8S_NAMESPACE") if adapter_prefix else None,
+        config.get("DS_1_NAMESPACE"),
+        config.get("NAMESPACE"),
+        config.get("K8S_NAMESPACE"),
+        os.getenv("PIONERA_K8S_NAMESPACE"),
+        os.getenv("K8S_NAMESPACE"),
+        dataspace,
+    )
+    dataspace = dataspace or namespace
+    if not dataspace or not namespace:
+        raise RuntimeError(
+            "Unable to resolve dataspace and namespace for the local image workflow. "
+            f"Configure deployers/{active_adapter}/deployer.config with DS_1_NAME and DS_1_NAMESPACE, "
+            "or set PIONERA_<ADAPTER>_DATASPACE_NAME and PIONERA_<ADAPTER>_NAMESPACE."
+        )
     return {"dataspace": dataspace, "namespace": namespace}
 
 
@@ -875,7 +903,11 @@ def _restart_registered_recipe_deployment_if_running(recipe: LocalImageRecipe) -
     if not recipe.restart_deployment_template:
         return
 
-    context = _dataspace_context_for_local_images(recipe.adapter)
+    try:
+        context = _dataspace_context_for_local_images(recipe.adapter)
+    except RuntimeError as exc:
+        print(f"\n{exc}\nSkipping deployment restart for {recipe.key}.\n")
+        return
     deployment_name = recipe.restart_deployment_template.format(**context)
     namespace = context["namespace"]
 
@@ -906,7 +938,11 @@ def _restart_registered_recipe_deployment_if_running(recipe: LocalImageRecipe) -
 
 
 def _edc_deployments_for_local_image_keys(recipe_keys: list[str]) -> tuple[str, list[str]]:
-    context = _dataspace_context_for_local_images("edc")
+    try:
+        context = _dataspace_context_for_local_images("edc")
+    except RuntimeError as exc:
+        print(f"\n{exc}\nSkipping EDC deployment restart.\n")
+        return "", []
     namespace = context["namespace"]
     connectors = _configured_connector_names_for_local_images("edc")
     deployments = []
@@ -1021,6 +1057,8 @@ def _execute_registered_local_image_recipe(
             [
                 "--platform-dir",
                 resolved_platform_dir,
+                "--dataspace",
+                context["dataspace"],
                 "--namespace",
                 context["namespace"],
                 "--component",
@@ -1312,6 +1350,8 @@ def run_local_images_workflow_interactive(active_adapter="inesdata"):
         extra_args = [
             "--platform-dir",
             platform_dir,
+            "--dataspace",
+            context["dataspace"],
             "--namespace",
             context["namespace"],
         ]

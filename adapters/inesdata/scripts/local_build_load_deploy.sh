@@ -15,7 +15,8 @@ if [[ ! -d "$DEFAULT_PLATFORM_DIR/dataspace" && -d "$ROOT_DIR/deployers/inesdata
 fi
 
 PLATFORM_DIR="${PLATFORM_DIR:-$DEFAULT_PLATFORM_DIR}"
-K8S_NAMESPACE="${K8S_NAMESPACE:-demo}"
+K8S_NAMESPACE="${K8S_NAMESPACE:-}"
+DATASPACE_NAME="${DATASPACE_NAME:-}"
 MINIKUBE_PROFILE="${MINIKUBE_PROFILE:-minikube}"
 CLUSTER_RUNTIME="${CLUSTER_RUNTIME:-minikube}"
 K3S_IMAGE_IMPORT_COMMAND="${K3S_IMAGE_IMPORT_COMMAND:-sudo k3s ctr -n k8s.io images import}"
@@ -38,6 +39,7 @@ LEGACY_CONNECTORS_TARGET="__legacy-connectors__"
 usage() {
   cat <<'EOF'
 Usage: local_build_load_deploy.sh [--apply] [--manifest <path>] [--platform-dir <path>] [--namespace <name>]
+                                 [--dataspace <name>]
                                  [--minikube-profile <name>] [--cluster-runtime <minikube|k3s>]
                                  [--skip-build] [--skip-load] [--skip-deploy] [--build-only]
                                  [--target TODO|CHANGED|connector|connector-interface|registration-service|public-portal-backend|public-portal-frontend]
@@ -47,7 +49,8 @@ Options:
   --apply                     Execute build/load/deploy actions (default is dry-run).
   --manifest <path>           Use an existing build manifest TSV.
   --platform-dir <path>       Path to local INESData deployer artifacts (default: ./deployers/inesdata).
-  --namespace <name>          Kubernetes namespace and dataspace name (default: demo).
+  --namespace <name>          Kubernetes namespace where the target release is deployed (default: deployer.config DS_1_NAMESPACE, then dataspace).
+  --dataspace <name>          Dataspace name used by generated values files (default: deployer.config DS_1_NAME, then namespace).
   --minikube-profile <name>   Minikube profile name (default: minikube).
   --cluster-runtime <value>   Cluster runtime used for local image loading: minikube or k3s (default: minikube).
   --skip-build                Skip image build, use provided/latest manifest.
@@ -65,6 +68,7 @@ Options:
 Environment variables:
   PLATFORM_DIR
   K8S_NAMESPACE
+  DATASPACE_NAME
   MINIKUBE_PROFILE
   CLUSTER_RUNTIME
   K3S_IMAGE_IMPORT_COMMAND
@@ -89,6 +93,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --namespace)
       K8S_NAMESPACE="${2:-}"
+      shift 2
+      ;;
+    --dataspace)
+      DATASPACE_NAME="${2:-}"
       shift 2
       ;;
     --minikube-profile)
@@ -201,6 +209,82 @@ require_file() {
     echo "Required file not found: $p" >&2
     exit 1
   fi
+}
+
+read_platform_config_value() {
+  local key="$1"
+  local config_file="$PLATFORM_DIR/deployer.config"
+  local line
+
+  if [[ ! -f "$config_file" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    if [[ "$line" == "$key="* ]]; then
+      printf '%s\n' "${line#*=}"
+      return 0
+    fi
+  done < "$config_file"
+}
+
+resolve_dataspace_name() {
+  local candidate
+
+  if [[ -n "${DATASPACE_NAME:-}" ]]; then
+    printf '%s\n' "$DATASPACE_NAME"
+    return 0
+  fi
+
+  for key in DS_1_NAME DS_NAME DATASPACE_NAME; do
+    candidate="$(read_platform_config_value "$key" || true)"
+    if [[ -n "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "$K8S_NAMESPACE"
+}
+
+resolve_namespace_name() {
+  local candidate
+
+  if [[ -n "${K8S_NAMESPACE:-}" ]]; then
+    printf '%s\n' "$K8S_NAMESPACE"
+    return 0
+  fi
+
+  for key in DS_1_NAMESPACE NAMESPACE K8S_NAMESPACE; do
+    candidate="$(read_platform_config_value "$key" || true)"
+    if [[ -n "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "$DATASPACE_NAME"
+}
+
+resolve_base_values_file() {
+  local chart_dir="$1"
+  local preferred_file="$chart_dir/values-$DATASPACE_NAME.yaml"
+  local namespace_file="$chart_dir/values-$K8S_NAMESPACE.yaml"
+
+  if [[ -f "$preferred_file" ]]; then
+    printf '%s\n' "$preferred_file"
+    return 0
+  fi
+
+  if [[ "$namespace_file" != "$preferred_file" && -f "$namespace_file" ]]; then
+    printf '%s\n' "$namespace_file"
+    return 0
+  fi
+
+  printf '%s\n' "$preferred_file"
 }
 
 release_exists() {
@@ -411,10 +495,24 @@ load_image_into_runtime() {
   esac
 }
 
+DATASPACE_NAME="$(resolve_dataspace_name)"
+K8S_NAMESPACE="$(resolve_namespace_name)"
+if [[ -z "$DATASPACE_NAME" && -n "$K8S_NAMESPACE" ]]; then
+  DATASPACE_NAME="$K8S_NAMESPACE"
+fi
+if [[ -z "$K8S_NAMESPACE" && -n "$DATASPACE_NAME" ]]; then
+  K8S_NAMESPACE="$DATASPACE_NAME"
+fi
+if [[ -z "$DATASPACE_NAME" || -z "$K8S_NAMESPACE" ]]; then
+  echo "Unable to resolve dataspace name and Kubernetes namespace." >&2
+  echo "Configure PLATFORM_DIR/deployer.config with DS_1_NAME and DS_1_NAMESPACE, or pass --dataspace and --namespace." >&2
+  exit 1
+fi
 normalize_cluster_runtime
 
 echo "Mode: $([[ "$DRY_RUN" -eq 1 ]] && echo "dry-run" || echo "apply")"
 echo "Platform dir: $PLATFORM_DIR"
+echo "Dataspace name: $DATASPACE_NAME"
 echo "K8s namespace: $K8S_NAMESPACE"
 echo "Cluster runtime: $CLUSTER_RUNTIME"
 if [[ "$CLUSTER_RUNTIME" == "minikube" ]]; then
@@ -661,8 +759,8 @@ if [[ "$PRUNE_REPLACED_IMAGES" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
   capture_namespace_images "$PRE_DEPLOY_IMAGES_FILE"
 fi
 
-RS_BASE_VALUES="$PLATFORM_DIR/dataspace/registration-service/values-$K8S_NAMESPACE.yaml"
-PP_BASE_VALUES="$PLATFORM_DIR/dataspace/public-portal/values-$K8S_NAMESPACE.yaml"
+RS_BASE_VALUES="$(resolve_base_values_file "$PLATFORM_DIR/dataspace/registration-service")"
+PP_BASE_VALUES="$(resolve_base_values_file "$PLATFORM_DIR/dataspace/public-portal")"
 CONNECTOR_DIR="$PLATFORM_DIR/connector"
 
 if has_required_component "registration-service"; then

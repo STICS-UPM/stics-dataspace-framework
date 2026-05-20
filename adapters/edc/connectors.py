@@ -53,6 +53,13 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
             raise ValueError("DS_DOMAIN_BASE not defined in deployer.config")
         return f"http://{connector_name}.{ds_domain}/management/v3"
 
+    def build_protocol_address(self, connector_name, path="/protocol"):
+        base_url = self._connector_base_url(connector_name)
+        if not base_url:
+            raise ValueError("DS_DOMAIN_BASE not defined in deployer.config")
+        normalized_path = f"/{str(path or '/protocol').lstrip('/')}"
+        return f"{base_url.rstrip('/')}{normalized_path}"
+
     def wait_for_connector_ready(self, connector_name, timeout=300):
         return self.wait_for_management_api_ready(connector_name, timeout=timeout)
 

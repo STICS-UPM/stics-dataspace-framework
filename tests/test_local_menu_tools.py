@@ -299,7 +299,7 @@ class LocalMenuToolsTests(unittest.TestCase):
             mock.patch.object(
                 local_menu_tools,
                 "_dataspace_context_for_local_images",
-                return_value={"dataspace": "demo", "namespace": "demo"},
+                return_value={"dataspace": "pionera", "namespace": "core-control"},
             ),
             mock.patch.object(local_menu_tools, "_execute_local_images_workflow", return_value=True) as execute,
         ):
@@ -315,14 +315,57 @@ class LocalMenuToolsTests(unittest.TestCase):
             [
                 "--platform-dir",
                 os.path.join("deployers", "inesdata"),
+                "--dataspace",
+                "pionera",
                 "--namespace",
-                "demo",
+                "core-control",
                 "--component",
                 "connector",
             ],
             deploy=True,
             preserve_values=True,
         )
+
+    def test_dataspace_context_reads_deployer_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = os.path.join(tmpdir, "deployers", "inesdata")
+            os.makedirs(config_dir, exist_ok=True)
+            with open(os.path.join(config_dir, "deployer.config"), "w", encoding="utf-8") as handle:
+                handle.write("DS_1_NAME=pionera\nDS_1_NAMESPACE=core-control\n")
+
+            with (
+                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.object(local_menu_tools, "project_root", return_value=tmpdir),
+            ):
+                context = local_menu_tools._dataspace_context_for_local_images("inesdata")
+
+        self.assertEqual(context, {"dataspace": "pionera", "namespace": "core-control"})
+
+    def test_dataspace_context_allows_adapter_environment_override(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "PIONERA_INESDATA_DATASPACE_NAME": "custom-dataspace",
+                        "PIONERA_INESDATA_NAMESPACE": "custom-namespace",
+                    },
+                    clear=True,
+                ),
+                mock.patch.object(local_menu_tools, "project_root", return_value=tmpdir),
+            ):
+                context = local_menu_tools._dataspace_context_for_local_images("inesdata")
+
+        self.assertEqual(context, {"dataspace": "custom-dataspace", "namespace": "custom-namespace"})
+
+    def test_dataspace_context_requires_configuration(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.object(local_menu_tools, "project_root", return_value=tmpdir),
+                self.assertRaisesRegex(RuntimeError, "Unable to resolve dataspace and namespace"),
+            ):
+                local_menu_tools._dataspace_context_for_local_images("inesdata")
 
     def test_local_images_workflow_keeps_inesdata_connector_shortcut(self):
         with (
@@ -345,6 +388,8 @@ class LocalMenuToolsTests(unittest.TestCase):
             [
                 "--platform-dir",
                 os.path.join("deployers", "inesdata"),
+                "--dataspace",
+                "demo",
                 "--namespace",
                 "demo",
                 "--component",

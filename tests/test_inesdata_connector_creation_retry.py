@@ -114,6 +114,48 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         self.assertIn("PIONERA_TOPOLOGY=vm-single", delete_cmd)
         self.assertIn("bootstrap.py connector delete conn-demo demo", delete_cmd)
 
+    def test_bootstrap_connector_commands_can_override_vault_url_for_host_runtime(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=ConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+            adapter.config_adapter.topology = "vm-single"
+
+            create_cmd = adapter._bootstrap_connector_create_command(
+                "python3",
+                "conn-demo",
+                "demo",
+                vault_url="http://127.0.0.1:19082/",
+            )
+            delete_cmd = adapter._bootstrap_connector_delete_command(
+                "python3",
+                "conn-demo",
+                "demo",
+                vault_url="http://127.0.0.1:19082/",
+            )
+
+        self.assertIn("PIONERA_TOPOLOGY=vm-single", create_cmd)
+        self.assertIn("PIONERA_VT_URL=http://127.0.0.1:19082", create_cmd)
+        self.assertIn("bootstrap.py connector create conn-demo demo", create_cmd)
+        self.assertIn("PIONERA_VT_URL=http://127.0.0.1:19082", delete_cmd)
+        self.assertIn("bootstrap.py connector delete conn-demo demo", delete_cmd)
+
+    def test_vault_dns_resolution_failure_from_ubuntu_triggers_local_fallback(self):
+        message = (
+            "HTTPConnectionPool(host='common-srvs-vault.common-srvs.svc', port=8200): "
+            "Max retries exceeded with url: /v1/auth/token/lookup-self "
+            "(Caused by NameResolutionError(\"HTTPConnection(host='common-srvs-vault.common-srvs.svc', "
+            "port=8200): Failed to resolve 'common-srvs-vault.common-srvs.svc' "
+            "([Errno -2] Name or service not known)\"))"
+        )
+
+        self.assertTrue(INESDataConnectorsAdapter._should_attempt_local_fallback(requests.ConnectionError(message)))
+
     def test_force_clean_postgres_db_retries_until_database_and_role_are_gone(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             infra = mock.Mock()
@@ -193,6 +235,10 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             self.assertEqual(
                 adapter.build_internal_protocol_address("conn-cityproof-roleedcprove"),
                 "http://conn-cityproof-roleedcprove.roleedcprove-provider.svc.cluster.local:19194/protocol",
+            )
+            self.assertEqual(
+                adapter.build_protocol_address("conn-cityproof-roleedcprove"),
+                "http://conn-cityproof-roleedcprove.dev.ds.dataspaceunit.upm/protocol",
             )
 
     def test_update_connector_service_discovery_uses_cross_namespace_registration_service_hostname(self):
@@ -574,6 +620,129 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             self.assertFalse(create_calls[0].startswith("PIONERA_KC_URL="))
             self.assertEqual(len(delete_calls), 1)
             self.assertFalse(delete_calls[0].startswith("PIONERA_KC_URL="))
+
+    def test_create_connector_overrides_cluster_vault_url_with_temporary_local_port_forward(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            os.makedirs(config.repo_dir(), exist_ok=True)
+            open(config.repo_requirements_path(), "w", encoding="utf-8").close()
+            os.makedirs(config.venv_path(), exist_ok=True)
+            calls = []
+
+            class ConfigAdapterWithVault(ConnectorRetryConfigAdapter):
+                def __init__(self, root):
+                    super().__init__(root)
+                    self.topology = "vm-single"
+
+                def load_deployer_config(self):
+                    values = super().load_deployer_config()
+                    values.update(
+                        {
+                            "VT_URL": "http://common-srvs-vault.common-srvs.svc:8200",
+                            "VT_TOKEN": "root-token",
+                        }
+                    )
+                    return values
+
+            class Infra:
+                def __init__(self):
+                    self.port_forwards = []
+                    self.stops = []
+
+                @staticmethod
+                def ensure_local_infra_access():
+                    return True
+
+                @staticmethod
+                def ensure_vault_unsealed():
+                    return True
+
+                @staticmethod
+                def deploy_helm_release(*_args, **_kwargs):
+                    return True
+
+                @staticmethod
+                def wait_for_namespace_pods(*_args, **_kwargs):
+                    return True
+
+                @staticmethod
+                def manage_hosts_entries(*_args, **_kwargs):
+                    return None
+
+                @staticmethod
+                def get_pod_by_name(*_args, **_kwargs):
+                    return "minio"
+
+                def port_forward_service(self, *args, **kwargs):
+                    self.port_forwards.append((args, kwargs))
+                    return True
+
+                def stop_port_forward_service(self, *args, **kwargs):
+                    self.stops.append((args, kwargs))
+                    return True
+
+            def fake_run(cmd, **_kwargs):
+                calls.append(cmd)
+                if "bootstrap.py connector create" in cmd:
+                    with open(config.connector_credentials_path("conn-a-demo"), "w", encoding="utf-8") as handle:
+                        handle.write(
+                            "{"
+                            '"database":{"name":"db","user":"db","passwd":"secret"},'
+                            '"certificates":{"path":"certs","passwd":"secret"},'
+                            '"connector_user":{"user":"user","passwd":"secret"},'
+                            '"vault":{"path":"secret/data/demo/conn-a-demo","token":"token"},'
+                            '"minio":{"user":"conn-a-demo","passwd":"secret","access_key":"access","secret_key":"secret"}'
+                            "}"
+                        )
+                    with open(config.connector_values_file("conn-a-demo"), "w", encoding="utf-8") as handle:
+                        handle.write("hostAliases: []\n")
+                return object()
+
+            infra = Infra()
+            adapter = INESDataConnectorsAdapter(
+                run=fake_run,
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=infra,
+                config_adapter=ConfigAdapterWithVault(tmpdir),
+                config_cls=config,
+            )
+            adapter.wait_for_keycloak_admin_ready = lambda *_args, **_kwargs: True
+            adapter.setup_minio_bucket = lambda *_args, **_kwargs: True
+            adapter.force_clean_postgres_db = lambda *_args, **_kwargs: None
+            adapter.update_connector_host_aliases = lambda *_args, **_kwargs: None
+            adapter._prepare_vault_management_access = lambda *_args, **_kwargs: True
+
+            with (
+                mock.patch.object(adapter, "_reserve_local_port", return_value=19082),
+                mock.patch("adapters.inesdata.connectors.ensure_python_requirements", lambda *_args, **_kwargs: None),
+            ):
+                self.assertTrue(adapter.create_connector("conn-a-demo", ["conn-a-demo", "conn-b-demo"]))
+
+            create_calls = [call for call in calls if "bootstrap.py connector create" in call]
+            delete_calls = [call for call in calls if "bootstrap.py connector delete" in call]
+            self.assertEqual(len(create_calls), 1)
+            self.assertEqual(len(delete_calls), 1)
+            self.assertIn("PIONERA_VT_URL=http://127.0.0.1:19082", create_calls[0])
+            self.assertIn("PIONERA_VT_URL=http://127.0.0.1:19082", delete_calls[0])
+            self.assertEqual(
+                infra.port_forwards,
+                [
+                    (
+                        ("common-srvs", "common-srvs-vault", 19082, 8200),
+                        {"quiet": True},
+                    )
+                ],
+            )
+            self.assertEqual(
+                infra.stops,
+                [
+                    (
+                        ("common-srvs", "common-srvs-vault"),
+                        {"quiet": True},
+                    )
+                ],
+            )
 
     def test_connector_ready_uses_hostname_without_port_forward_by_default(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1306,6 +1475,72 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             ):
                 self.assertTrue(adapter._verify_vault_management_token(ds_name="demo"))
 
+            self.assertEqual(
+                infra.calls,
+                [
+                    (
+                        ("common-srvs", "common-srvs-vault", 19082, 8200),
+                        {"quiet": True},
+                    )
+                ],
+            )
+            self.assertEqual(
+                infra.stops,
+                [
+                    (
+                        ("common-srvs", "common-srvs-vault"),
+                        {"quiet": True},
+                    )
+                ],
+            )
+
+    def test_vault_bootstrap_access_uses_local_port_forward_for_cluster_service_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+
+            class ConfigAdapterWithVault(ConnectorRetryConfigAdapter):
+                def __init__(self, root):
+                    super().__init__(root)
+                    self.topology = "vm-single"
+
+                def load_deployer_config(self):
+                    values = super().load_deployer_config()
+                    values.update(
+                        {
+                            "VT_URL": "http://common-srvs-vault.common-srvs.svc:8200",
+                            "VT_TOKEN": "root-token",
+                        }
+                    )
+                    return values
+
+            class Infra:
+                def __init__(self):
+                    self.calls = []
+                    self.stops = []
+
+                def port_forward_service(self, *args, **kwargs):
+                    self.calls.append((args, kwargs))
+                    return True
+
+                def stop_port_forward_service(self, *args, **kwargs):
+                    self.stops.append((args, kwargs))
+                    return True
+
+            infra = Infra()
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "common-srvs-vault-0 1/1 Running 0 1m",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=infra,
+                config_adapter=ConfigAdapterWithVault(tmpdir),
+                config_cls=config,
+            )
+
+            with mock.patch.object(adapter, "_reserve_local_port", return_value=19082):
+                bootstrap_access = adapter._start_vault_bootstrap_access()
+                adapter._stop_vault_bootstrap_access(bootstrap_access)
+
+            self.assertEqual(bootstrap_access["vault_url"], "http://127.0.0.1:19082")
             self.assertEqual(
                 infra.calls,
                 [

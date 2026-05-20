@@ -2383,6 +2383,8 @@ def build_validation_engine(adapter, engine_cls=ValidationEngine):
     )
     protocol_address_resolver = _resolve_adapter_callable(
         adapter,
+        "connectors.build_protocol_address",
+        "connectors.build_public_protocol_address",
         "connectors.build_internal_protocol_address",
     )
     ds_name = "pionera"
@@ -2916,6 +2918,8 @@ def build_kafka_edc_validation_suite(
     )
     protocol_address_resolver = _resolve_adapter_callable(
         adapter,
+        "connectors.build_protocol_address",
+        "connectors.build_public_protocol_address",
         "connectors.build_internal_protocol_address",
     )
 
