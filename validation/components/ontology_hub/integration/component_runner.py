@@ -6,34 +6,13 @@ from typing import Any, Dict, List
 import yaml
 
 from validation.components.ontology_hub.integration.runner import run_ontology_hub_validation
-from validation.components.ontology_hub.integration.ui_runner import run_ontology_hub_ui_validation
 
 
 COMPONENT_KEY = "ontology-hub"
+SUITE_DISPLAY_NAME = "Ontology Hub API integration"
 CATALOG_PATH = Path(__file__).resolve().parent / "test_cases.yaml"
 
 CASE_DEFAULTS: Dict[str, Dict[str, str]] = {
-    "OH-LOGIN": {
-        "case_group": "support",
-        "validation_type": "support",
-        "dataspace_dimension": "support",
-        "mapping_status": "supporting",
-        "coverage_status": "automated",
-    },
-    "OH-LIST-SEARCH": {
-        "case_group": "support",
-        "validation_type": "support",
-        "dataspace_dimension": "support",
-        "mapping_status": "supporting",
-        "coverage_status": "automated",
-    },
-    "PT5-OH-01": {
-        "case_group": "pt5",
-        "validation_type": "functional",
-        "dataspace_dimension": "publication",
-        "mapping_status": "mapped",
-        "coverage_status": "automated",
-    },
     "PT5-OH-08": {
         "case_group": "pt5",
         "validation_type": "functional",
@@ -47,27 +26,6 @@ CASE_DEFAULTS: Dict[str, Dict[str, str]] = {
         "dataspace_dimension": "discovery",
         "mapping_status": "partial",
         "coverage_status": "partial",
-    },
-    "PT5-OH-10": {
-        "case_group": "pt5",
-        "validation_type": "functional",
-        "dataspace_dimension": "discovery",
-        "mapping_status": "partial",
-        "coverage_status": "partial",
-    },
-    "PT5-OH-11": {
-        "case_group": "pt5",
-        "validation_type": "functional",
-        "dataspace_dimension": "visualization",
-        "mapping_status": "mapped",
-        "coverage_status": "automated",
-    },
-    "PT5-OH-12": {
-        "case_group": "pt5",
-        "validation_type": "functional",
-        "dataspace_dimension": "visualization",
-        "mapping_status": "mapped",
-        "coverage_status": "automated",
     },
     "PT5-OH-13": {
         "case_group": "pt5",
@@ -125,15 +83,6 @@ def _write_json(path: str, payload: Dict[str, Any]) -> None:
 
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False)
-
-
-def _combine_status(api_status: str, ui_status: str) -> str:
-    statuses = {api_status, ui_status}
-    if "failed" in statuses:
-        return "failed"
-    if statuses == {"skipped"}:
-        return "skipped"
-    return "passed"
 
 
 def _case_sort_key(case: Dict[str, Any]) -> tuple[str, int, str]:
@@ -474,7 +423,6 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
     normalized_base_url = (base_url or "").rstrip("/")
 
     api_result = run_ontology_hub_validation(normalized_base_url, experiment_dir=experiment_dir)
-    ui_result = run_ontology_hub_ui_validation(normalized_base_url, experiment_dir=experiment_dir)
     catalog = _load_catalog()
     catalog_cases_by_id = {
         case.get("id"): case
@@ -485,11 +433,7 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
         _normalize_suite_cases("api", api_result),
         catalog_cases_by_id,
     )
-    normalized_ui_cases = _attach_catalog_metadata(
-        _normalize_suite_cases("ui", ui_result),
-        catalog_cases_by_id,
-    )
-    executed_cases = normalized_api_cases + normalized_ui_cases
+    executed_cases = normalized_api_cases
     pt5_case_results = _aggregate_pt5_cases(executed_cases)
     pt5_case_results = _attach_catalog_metadata(pt5_case_results, catalog_cases_by_id)
     support_checks = sorted(
@@ -501,30 +445,29 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
     )
     pt5_summary = _summarize_cases(pt5_case_results)
     support_summary = _summarize_cases(support_checks)
-    evidence_index = _collect_suite_evidence("api", api_result) + _collect_suite_evidence("ui", ui_result)
+    evidence_index = _collect_suite_evidence("api", api_result)
     findings = _build_findings(pt5_case_results, support_checks)
     catalog_alignment = _build_catalog_alignment(catalog, pt5_case_results, support_checks)
 
+    api_summary = api_result.get("summary") or {}
     summary = {
-        "total": int(api_result.get("summary", {}).get("total", 0))
-        + int(ui_result.get("summary", {}).get("total", 0)),
-        "passed": int(api_result.get("summary", {}).get("passed", 0))
-        + int(ui_result.get("summary", {}).get("passed", 0)),
-        "failed": int(api_result.get("summary", {}).get("failed", 0))
-        + int(ui_result.get("summary", {}).get("failed", 0)),
-        "skipped": int(api_result.get("summary", {}).get("skipped", 0))
-        + int(ui_result.get("summary", {}).get("skipped", 0)),
+        "total": int(api_summary.get("total", 0)),
+        "passed": int(api_summary.get("passed", 0)),
+        "failed": int(api_summary.get("failed", 0)),
+        "skipped": int(api_summary.get("skipped", 0)),
     }
 
     component_result: Dict[str, Any] = {
         "component": COMPONENT_KEY,
+        "suite": "api-integration",
+        "display_name": SUITE_DISPLAY_NAME,
+        "phase": "integration",
         "base_url": normalized_base_url,
         "timestamp": started_at,
-        "status": _combine_status(api_result.get("status", "skipped"), ui_result.get("status", "skipped")),
+        "status": api_result.get("status", "skipped"),
         "summary": summary,
         "suites": {
             "api": api_result,
-            "ui": ui_result,
         },
         "executed_cases": executed_cases,
         "pt5_case_results": pt5_case_results,
@@ -554,11 +497,6 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
         component_result["artifacts"] = {
             "report_json": report_path,
             "api_report_json": (api_result.get("artifacts") or {}).get("report_json"),
-            "ui_report_json": (ui_result.get("artifacts") or {}).get("report_json"),
-            "ui_test_results_dir": (ui_result.get("artifacts") or {}).get("test_results_dir"),
-            "ui_html_report_dir": (ui_result.get("artifacts") or {}).get("html_report_dir"),
-            "ui_blob_report_dir": (ui_result.get("artifacts") or {}).get("blob_report_dir"),
-            "ui_json_report_file": (ui_result.get("artifacts") or {}).get("json_report_file"),
             "pt5_case_results_json": pt5_cases_path,
             "support_checks_json": support_checks_path,
             "evidence_index_json": evidence_index_path,

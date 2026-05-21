@@ -341,7 +341,7 @@ def _summarize_components(experiment_path: Path) -> list[dict[str, Any]]:
         results.append(
             {
                 "kind": "component",
-                "title": str(payload.get("component") or path.parent.name),
+                "title": str(payload.get("display_name") or payload.get("component") or path.parent.name),
                 "status": str(payload.get("status") or "unknown"),
                 "summary": {
                     "total": summary.get("total", 0),

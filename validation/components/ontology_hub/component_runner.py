@@ -12,6 +12,10 @@ from validation.components.ontology_hub.integration.component_runner import (
 
 
 COMPONENT_KEY = "ontology-hub"
+PHASE_LABELS = {
+    "functional": "Ontology Hub functional",
+    "integration": "Ontology Hub API integration",
+}
 STATUS_PRIORITY = {
     "failed": 3,
     "passed": 2,
@@ -61,10 +65,15 @@ def _summary_from_phases(phases: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
     return summary
 
 
+def _phase_label(phase: str) -> str:
+    return PHASE_LABELS.get(phase, f"Ontology Hub {phase}")
+
+
 def _phase_failure_result(phase: str, exc: Exception) -> Dict[str, Any]:
     return {
         "component": COMPONENT_KEY,
         "suite": phase,
+        "display_name": _phase_label(phase),
         "status": "failed",
         "summary": {"total": 1, "passed": 0, "failed": 1, "skipped": 0},
         "executed_cases": [],
@@ -142,9 +151,11 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
         ("integration", run_ontology_hub_integration_component_validation),
     ]
     for phase, runner in phase_runners:
-        print(f"\nComponent suite: Ontology Hub {phase}\n")
+        print(f"\nComponent suite: {_phase_label(phase)}\n")
         try:
             phases[phase] = runner(normalized_base_url, experiment_dir=experiment_dir)
+            phases[phase].setdefault("display_name", _phase_label(phase))
+            phases[phase].setdefault("phase", phase)
         except Exception as exc:  # pragma: no cover - defensive integration guard
             phases[phase] = _phase_failure_result(phase, exc)
 
@@ -177,6 +188,7 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
         "status": _combine_status([phase_result.get("status", "skipped") for phase_result in phases.values()]),
         "summary": _summary_from_phases(phases),
         "phase_order": ["functional", "integration"],
+        "phase_display_names": {phase: _phase_label(phase) for phase in phases},
         "phases": phases,
         "suites": phases,
         "executed_cases": executed_cases,

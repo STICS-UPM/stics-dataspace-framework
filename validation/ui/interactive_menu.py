@@ -184,51 +184,6 @@ def _write_json(path, payload):
         json.dump(payload, handle, indent=2, ensure_ascii=False)
 
 
-def _run_ontology_hub_ui_tests(mode):
-    from validation.components.ontology_hub.runtime_config import resolve_ontology_hub_runtime
-
-    experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-    base_dir = str(project_root() / "experiments" / experiment_id / "components" / "ontology-hub" / "ui")
-    output_dir = os.path.join(base_dir, "test-results")
-    html_report_dir = os.path.join(base_dir, "playwright-report")
-    blob_report_dir = os.path.join(base_dir, "blob-report")
-    json_report_file = os.path.join(base_dir, "results.json")
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(html_report_dir, exist_ok=True)
-    os.makedirs(blob_report_dir, exist_ok=True)
-
-    runtime = resolve_ontology_hub_runtime()
-    runtime_path = os.path.join(base_dir, "resolved_runtime.json")
-    _write_json(runtime_path, runtime)
-
-    env = {
-        **os.environ,
-        "ONTOLOGY_HUB_BASE_URL": runtime.get("baseUrl", ""),
-        "ONTOLOGY_HUB_RUNTIME_FILE": runtime_path,
-        "ONTOLOGY_HUB_UI_WORKERS": "1",
-        "PLAYWRIGHT_OUTPUT_DIR": output_dir,
-        "PLAYWRIGHT_HTML_REPORT_DIR": html_report_dir,
-        "PLAYWRIGHT_BLOB_REPORT_DIR": blob_report_dir,
-        "PLAYWRIGHT_JSON_REPORT_FILE": json_report_file,
-    }
-    env.update(mode.get("env") or {})
-    cmd = [
-        "./node_modules/.bin/playwright",
-        "test",
-        "--config",
-        "../components/ontology_hub/integration/playwright.config.js",
-        "--workers=1",
-    ]
-    cmd.extend(mode.get("args") or [])
-
-    print(f"\nRunning Ontology Hub UI tests (artifacts in {base_dir})\n")
-    try:
-        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
-    finally:
-        _cleanup_playwright_processes()
-    return None
-
-
 def _run_ontology_hub_ui_functional(mode):
     from validation.components.ontology_hub.runtime_config import resolve_ontology_hub_runtime
 
@@ -280,35 +235,15 @@ def _run_ontology_hub_ui_functional(mode):
 
 def run_ontology_hub_ui_tests_interactive():
     """Run Ontology Hub Playwright UI tests in normal/live/debug modes."""
-    while True:
-        print("\n" + "=" * 50)
-        print("ONTOLOGY HUB UI TESTS")
-        print("=" * 50)
-        mode = _resolve_ui_mode()
-        if mode is None:
-            return None
+    print("\n" + "=" * 50)
+    print("ONTOLOGY HUB UI TESTS")
+    print("=" * 50)
+    mode = _resolve_ui_mode()
+    if mode is None:
+        return None
 
-        while True:
-            print("\nSelect Ontology Hub UI suite:")
-            print("1 - Ontology Hub Component Integration")
-            print("2 - Ontology Hub Functional")
-            print("B - Back")
-            try:
-                suite_choice = input("\nSuite: ").strip().upper()
-            except EOFError:
-                print("\nNo input. Returning to previous menu.\n")
-                return None
-
-            if suite_choice == "B":
-                return None
-            if suite_choice == "1":
-                _run_ontology_hub_ui_tests(mode)
-                return None
-            if suite_choice == "2":
-                _run_ontology_hub_ui_functional(mode)
-                return None
-
-            print("\nInvalid selection. Please try again.\n")
+    _run_ontology_hub_ui_functional(mode)
+    return None
 
 
 def _run_ontology_hub_ui_integration_with_inesdata(mode):

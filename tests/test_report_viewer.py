@@ -434,6 +434,25 @@ class ReportViewerTests(unittest.TestCase):
         self.assertEqual(inspected["suites"][0]["title"], "ai-model-hub / mobility-benchmarking-api")
         self.assertIn("ai_model_hub_mobility_benchmarking_api.json", content)
 
+    def test_component_summary_prefers_display_name_for_dashboard_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_13-30-00"
+            self._write_json(
+                experiment / "components" / "ontology-hub" / "ontology_hub_integration_component_validation.json",
+                {
+                    "component": "ontology-hub",
+                    "display_name": "Ontology Hub API integration",
+                    "status": "passed",
+                    "summary": {"total": 5, "passed": 5, "failed": 0, "skipped": 0},
+                },
+            )
+
+            inspected = reports.inspect_experiment(experiment)
+
+        self.assertEqual(inspected["suites"][0]["title"], "Ontology Hub API integration")
+        self.assertEqual(inspected["suites"][0]["audit_suite"], "Ontology Hub")
+        self.assertEqual(inspected["suites"][0]["audit_group"], "API integration")
+
     def test_static_report_server_binds_only_to_loopback(self):
         with tempfile.TemporaryDirectory() as tmp:
             fake_subprocess = FakeSubprocess()

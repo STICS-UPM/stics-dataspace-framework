@@ -112,13 +112,12 @@ function loginErrorHint(runtime) {
 }
 
 function stateFilePath() {
-  const explicit =
-    process.env.ONTOLOGY_HUB_INTEGRATION_STATE_FILE || process.env.ONTOLOGY_HUB_BOOTSTRAP_STATE_FILE;
+  const explicit = process.env.ONTOLOGY_HUB_BOOTSTRAP_STATE_FILE;
   if (explicit) {
     return explicit;
   }
 
-  return path.resolve(__dirname, "../../integration/state/ontology-hub-bootstrap.json");
+  return path.resolve(__dirname, "../../functional/state/ontology-hub-bootstrap.json");
 }
 
 function readStateFile(filePath) {

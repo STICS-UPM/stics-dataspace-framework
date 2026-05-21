@@ -45,9 +45,9 @@ class ComponentValidationRunnerTests(unittest.TestCase):
         ai_model_registration = get_component_registration("ai-model-hub")
 
         self.assertEqual(ontology_registration.supported_adapters, ("inesdata", "edc"))
-        self.assertEqual(ontology_registration.deployable_adapters, ("inesdata",))
+        self.assertEqual(ontology_registration.deployable_adapters, ("inesdata", "edc"))
         self.assertEqual(ai_model_registration.supported_adapters, ("inesdata", "edc"))
-        self.assertEqual(ai_model_registration.deployable_adapters, ("inesdata",))
+        self.assertEqual(ai_model_registration.deployable_adapters, ("inesdata", "edc"))
         self.assertEqual(COMPONENT_REGISTRY["ai-model-hub"].validation_groups, ("ai-model-hub",))
 
     def test_unregistered_component_is_reported_as_skipped(self):

@@ -152,6 +152,45 @@ for (const test of tests) {
             ],
         )
 
+    def test_console_reporter_labels_ontology_hub_integration_specs_as_api_integration(self):
+        script = """
+const Reporter = require('./validation/ui/reporters/console-test-name-reporter.cjs');
+const reporter = new Reporter();
+reporter.colors = false;
+reporter.interactive = false;
+process.env.PIONERA_PLAYWRIGHT_SUITE_NAME = 'Ontology Hub API integration';
+const functionalTest = {
+  title: 'OH functional',
+  location: { file: 'validation/components/ontology_hub/functional/specs/oh_app_00_home.spec.js' },
+};
+const integrationTest = {
+  title: 'OH API integration',
+  location: { file: 'validation/components/ontology_hub/integration/specs/pt5_oh_13_sparql.spec.js' },
+};
+reporter.onBegin(null, { allTests: () => [functionalTest, integrationTest] });
+reporter.onTestEnd(functionalTest, { status: 'passed' });
+reporter.onTestEnd(integrationTest, { status: 'passed' });
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+
+        self.assertEqual(
+            completed.stdout.strip().splitlines(),
+            [
+                "Suite: Ontology Hub API integration (2 tests)",
+                "Group: Functional (1 test)",
+                "✓ OH functional",
+                "Group: API integration (1 test)",
+                "✓ OH API integration",
+            ],
+        )
+
     def test_console_reporter_counts_inesdata_groups_from_suite_tree(self):
         script = """
 const Reporter = require('./validation/ui/reporters/console-test-name-reporter.cjs');

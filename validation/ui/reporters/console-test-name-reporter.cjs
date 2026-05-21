@@ -104,7 +104,7 @@ class ConsoleTestNameReporter {
       return "Functional";
     }
     if (file.includes("components/ontology-hub/integration/")) {
-      return "Component integration";
+      return "API integration";
     }
     if (file.includes("components/ai-model-hub/inesdata-ui/")) {
       return "AI Model Hub";

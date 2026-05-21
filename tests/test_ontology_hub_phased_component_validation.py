@@ -70,14 +70,20 @@ class OntologyHubPhasedComponentValidationTests(unittest.TestCase):
                     "validation.components.ontology_hub.component_runner.run_ontology_hub_integration_component_validation",
                     side_effect=integration_runner,
                 ),
+                mock.patch("builtins.print") as print_mock,
             ):
                 result = run_ontology_hub_component_validation(
                     "http://ontology-hub.example.local",
                     experiment_dir=tmpdir,
                 )
 
+            printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+            self.assertIn("Component suite: Ontology Hub functional", printed)
+            self.assertIn("Component suite: Ontology Hub API integration", printed)
             self.assertEqual(calls, ["functional", "integration"])
             self.assertEqual(result["phase_order"], ["functional", "integration"])
+            self.assertEqual(result["phase_display_names"]["integration"], "Ontology Hub API integration")
+            self.assertEqual(result["phases"]["integration"]["display_name"], "Ontology Hub API integration")
             self.assertEqual(result["summary"]["total"], 3)
             self.assertEqual(result["status"], "passed")
             self.assertEqual(set(result["phases"]), {"functional", "integration"})

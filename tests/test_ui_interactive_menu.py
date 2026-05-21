@@ -77,6 +77,17 @@ class UiInteractiveMenuTests(unittest.TestCase):
 
         mock_run_functional.assert_called_once_with({"label": "Normal", "args": [], "env": {}})
 
+    @mock.patch.object(interactive_menu, "_run_ontology_hub_ui_functional")
+    @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
+    def test_run_ontology_hub_ui_tests_interactive_routes_functional(
+        self,
+        _mock_resolve_mode,
+        mock_run_functional,
+    ):
+        interactive_menu.run_ontology_hub_ui_tests_interactive()
+
+        mock_run_functional.assert_called_once_with({"label": "Normal", "args": [], "env": {}})
+
     @mock.patch.object(interactive_menu, "_run_ontology_hub_ui_integration_with_inesdata")
     @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
     def test_run_inesdata_ui_tests_interactive_routes_ontology_hub_integration(

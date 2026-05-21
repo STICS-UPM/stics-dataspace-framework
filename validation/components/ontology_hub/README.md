@@ -1,40 +1,40 @@
 # Ontology Hub Validation
 
-Esta carpeta agrupa toda la validacion de `Ontology Hub` dentro del framework.
+Esta carpeta agrupa toda la validación de `Ontology Hub` dentro del framework.
 
 ## Estructura
 
-- `integration/`: validacion PT5 de integracion tecnica del componente dentro del framework.
+- `integration/`: validación PT5 de integración técnica API del componente dentro del framework. En consola y reportes aparece como `Ontology Hub API integration`.
 - `functional/`: flujos funcionales Playwright trazados contra la hoja `Ontology Hub` del Excel A5.2.
-- `ui/`: infraestructura Playwright compartida por ambas suites (`fixtures`, `pages`, `support`, runtime comun).
-- `runtime_config.py`: resolucion comun de runtime para el componente.
+- `ui/`: infraestructura Playwright compartida por las suites UI (`fixtures`, `pages`, `support`, runtime común).
+- `runtime_config.py`: resolución común de runtime para el componente.
 - `tools/`: utilidades auxiliares de mantenimiento y trazabilidad.
 
 ## Uso recomendado
 
-- Si quieres validar la integracion oficial del componente en el framework: revisa `validation/components/ontology_hub/integration/`.
-- Si quieres validar los flujos funcionales del componente como aplicacion: revisa `validation/components/ontology_hub/functional/`.
+- Si quieres validar la integración técnica API del componente en el framework: revisa `validation/components/ontology_hub/integration/`.
+- Si quieres validar los flujos funcionales del componente como aplicación: revisa `validation/components/ontology_hub/functional/`.
 
 ## Suites
 
-### Integration
+### API Integration
 
-- Proposito: casos PT5 y checks de soporte de integracion del componente dentro del framework.
+- Propósito: casos PT5 y checks de soporte de integración técnica API del componente dentro del framework.
 - Entrada principal: `validation/components/ontology_hub/integration/component_runner.py`.
-- Catalogo de casos: `validation/components/ontology_hub/integration/test_cases.yaml`.
-- Documentacion: `validation/components/ontology_hub/integration/README.md`.
+- Catálogo de casos: `validation/components/ontology_hub/integration/test_cases.yaml`.
+- Documentación: `validation/components/ontology_hub/integration/README.md`.
 
 ### Functional
 
-- Proposito: reproduccion funcional de los 27 casos del Excel `docs/A5.2_Casos_Prueba_.xlsx`.
+- Propósito: reproducción funcional de los 27 casos del Excel `docs/A5.2_Casos_Prueba_.xlsx`.
 - Suite PT5 ejecutada por defecto para `ontology-hub` en `Level 6`.
-- Entrada desde menu: `python3 main.py menu` -> `U - UI Validation` -> `2 - Ontology Hub Tests` -> modo -> `2 - Ontology Hub Functional`.
-- Documentacion: `validation/components/ontology_hub/functional/README.md`.
+- Entrada desde menú: `python3 main.py menu` -> `U - UI Validation` -> `2 - Ontology Hub Tests` -> modo -> `2 - Ontology Hub Functional`.
+- Documentación: `validation/components/ontology_hub/functional/README.md`.
 - Trazabilidad: `docs/11_ontology_hub_validation.md`.
 
 ## Artefactos
 
-Los artefactos de ejecucion del framework deben quedar bajo:
+Los artefactos de ejecución del framework deben quedar bajo:
 
 - `Validation-Environment/experiments/`
 

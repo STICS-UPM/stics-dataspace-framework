@@ -40,6 +40,14 @@ class Level6SuiteTaxonomyTests(unittest.TestCase):
             {"audit_suite": "Ontology Hub", "audit_group": "Functional"},
         )
         self.assertEqual(
+            classify_suite_artifact(
+                kind="component",
+                title="Ontology Hub API integration",
+                artifacts=["components/ontology-hub/ontology_hub_integration_component_validation.json"],
+            ),
+            {"audit_suite": "Ontology Hub", "audit_group": "API integration"},
+        )
+        self.assertEqual(
             classify_playwright_spec(
                 "validation/components/ai_model_hub/ui/specs/pt5_mh_01_catalog_access.spec.js"
             ),

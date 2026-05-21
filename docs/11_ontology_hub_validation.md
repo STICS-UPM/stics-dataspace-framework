@@ -10,7 +10,7 @@ y la trazabilidad PT5.
 | Elemento | Ruta |
 | --- | --- |
 | Suite funcional | `validation/components/ontology_hub/functional/` |
-| Suite de integración | `validation/components/ontology_hub/integration/` |
+| Suite de integración API | `validation/components/ontology_hub/integration/` |
 | Infraestructura Playwright compartida | `validation/components/ontology_hub/ui/` |
 | Runner comun de componentes | `validation/components/runner.py` |
 | Chart Helm | `deployers/shared/components/ontology-hub/` |
@@ -50,9 +50,9 @@ autoacceso del backend en operaciones como análisis de versiones.
 La suite `functional/` valida el comportamiento observable del componente. Se
 usa por defecto cuando `Level 6` ejecuta validación de componentes.
 
-La suite `integration/` conserva pruebas técnicas y casos PT5 normalizados. Es
-útil para comprobar endpoints, estado interno y compatibilidad técnica del
-componente.
+La suite `integration/` aparece en consola y reportes como `Ontology Hub API
+integration`. Conserva pruebas técnicas y casos PT5 normalizados para comprobar
+endpoints, estado interno y compatibilidad técnica del componente.
 
 ## Estado Funcional Reproducido
 

@@ -1,37 +1,37 @@
 # Ontology Hub Functional
 
-## Proposito
-Suite enfocada en flujos funcionales y de navegacion de Ontology Hub que sean
+## Propósito
+Suite enfocada en flujos funcionales y de navegación de Ontology Hub que sean
 trazables contra los 27 casos del Excel `Ontology Hub`. La suite usa Playwright
-contra la aplicacion real, integrada en el menu de `main.py`, y deja que
-fallen los problemas de la aplicacion en lugar de ocultarlos con postprocesos
+contra la aplicación real, integrada en el menú de `main.py`, y deja que
+fallen los problemas de la aplicación en lugar de ocultarlos con postprocesos
 manuales externos.
 
 ## Alcance
 - Caso `1`: disponibilidad de la home.
 - Caso `2`: login/logout.
 - Casos `3` y `4`: registro por URI y por repositorio.
-- Caso `5`: visualizacion de detalle y descarga `.n3`.
-- Casos `6` a `9`: filtros de catalogo.
-- Casos `10` a `14`: edicion, versiones y borrado de ontologias.
-- Casos `15` a `18`: agentes, usuarios y promocion.
+- Caso `5`: visualización de detalle y descarga `.n3`.
+- Casos `6` a `9`: filtros de catálogo.
+- Casos `10` a `14`: edición, versiones y borrado de ontologías.
+- Casos `15` a `18`: agentes, usuarios y promoción.
 - Casos `19` a `21`: tags.
 - Casos `22` a `24`: Patterns, FOOPS y Themis.
-- Casos `25` a `27`: busqueda y filtros de terminos.
+- Casos `25` a `27`: búsqueda y filtros de términos.
 
 ## Trazabilidad
-- Matriz funcional y correlacion PT5: `docs/11_ontology_hub_validation.md`
-- El criterio general de correlacion entre hojas del Excel y automatizacion se documenta en `docs/13_test_cases.md`.
-- La numeracion de automatizacion conserva dos ids historicos al inicio:
+- Matriz funcional y correlación PT5: `docs/11_ontology_hub_validation.md`
+- El criterio general de correlación entre hojas del Excel y automatización se documenta en `docs/13_test_cases.md`.
+- La numeración de automatización conserva dos ids históricos al inicio:
   `OH-APP-00` cubre el caso `1` del Excel y `OH-APP-01` cubre el caso `2`.
 
 ## Carpetas Auxiliares
 - `validation/components/ontology_hub/functional/fixtures/`: prerequisitos fijos de la suite, por ejemplo el fichero de `Themis`.
-- `validation/components/ontology_hub/functional/generated/`: copias estables de ficheros generados por la app durante la ejecucion.
+- `validation/components/ontology_hub/functional/generated/`: copias estables de ficheros generados por la app durante la ejecución.
 - `validation/components/ontology_hub/functional/state/`: estado interno compartido entre tests cuando la suite se ejecuta por CLI directa.
 - Subcarpetas actuales en `generated/`: `patterns/`, `n3/` y `themis/`.
 
-## Ejecucion desde el menu
+## Ejecución desde el menú
 ```
 python3 main.py menu
 U - UI Validation
@@ -40,27 +40,27 @@ U - UI Validation
 2 - Ontology Hub Functional
 ```
 
-## Integracion con Level 6
+## Integración con Level 6
 
 `Level 6` ejecuta `Ontology Hub Functional` en modo normal (`headless`) como
-suite de validacion por defecto para `ontology-hub`.
+suite de validación por defecto para `ontology-hub`.
 
-La suite `integration/` se conserva intacta para validaciones tecnicas de
-integracion y comprobaciones PT5 historicas del framework, pero ya no es la que
-se lanza automaticamente desde `Level 6`.
+La suite `integration/` también se ejecuta después de la suite funcional y se
+presenta como `Ontology Hub API integration`. Su alcance es técnico/API; la UI
+del componente queda cubierta por esta suite funcional Playwright.
 
-Al ejecutarse desde el menu, `Ontology Hub Functional` usa por defecto una
+Al ejecutarse desde el menú, `Ontology Hub Functional` usa por defecto una
 limpieza `soft` de los datos generados por el framework antes de lanzar la
 suite. Esa limpieza intenta borrar usuarios, agentes, vocabularios y tags de
-prueba sin reiniciar pods, y despues exige un preflight HTTP sano sobre
+prueba sin reiniciar pods, y después exige un preflight HTTP sano sobre
 `/dataset` y `/edition`.
 
-Si la limpieza selectiva falla o deja la aplicacion en mal estado, el framework
-cae automaticamente a `hard reset`. En ese caso reinicia los deployments del
+Si la limpieza selectiva falla o deja la aplicación en mal estado, el framework
+cae automáticamente a `hard reset`. En ese caso reinicia los deployments del
 release `<dataspace>-ontology-hub` dentro de `components_namespace`
 (por ejemplo `demo-ontology-hub-mongodb`,
 `demo-ontology-hub-elasticsearch` y `demo-ontology-hub` en `components`) y
-repite la comprobacion HTTP antes de continuar.
+repite la comprobación HTTP antes de continuar.
 
 Si hace falta cambiar el comportamiento, se puede forzar con:
 - `ONTOLOGY_HUB_FUNCTIONAL_RESET_MODE=soft`: intenta limpiar usuarios, agentes, vocabularios y tags sin reiniciar pods.
@@ -68,7 +68,7 @@ Si hace falta cambiar el comportamiento, se puede forzar con:
 - `ONTOLOGY_HUB_FUNCTIONAL_RESET_MODE=off`: no limpia ni reinicia antes de lanzar la suite.
 - Compatibilidad: se siguen aceptando `ONTOLOGY_HUB_APP_FLOWS_RESET_MODE` y `ONTOLOGY_HUB_APP_FLOWS_GENERATED_DIR` como alias antiguos.
 
-## Ejecucion directa por CLI
+## Ejecución directa por CLI
 Desde `validation/ui`:
 ```bash
 npx playwright test --config ../components/ontology_hub/functional/playwright.config.js
@@ -114,14 +114,14 @@ PWDEBUG=1 npx playwright test --config ../components/ontology_hub/functional/pla
 - `PLAYWRIGHT_JSON_REPORT_FILE`
 
 ## Normalizaciones Importantes
-- Caso `3` y caso `4`: los pasos manuales `docker ps`, `docker exec`, `cd setup` y `bash lovInitialization.sh` no se consideran parte del test. La app debe completar internamente la publicacion.
-- Caso `15`: los pasos `15` y `23-26` del Excel no se consideran parte del test. Si la activacion del usuario o la propagacion de permisos requieren Atlas/Docker manual, el test falla y eso se atribuye a la app.
-- Caso `24`: la automatizacion sigue el flujo corregido del Excel desde `/dataset`: abre un circulo del grafico, intenta lanzar `Themis` desde el panel derecho visible y, si ese acceso queda oculto, cae al tab `Themis` sin cambiar el resto del flujo. Luego cambia a `User Tests`, sube `test_cases.txt` y descarga el resultado. El fichero se puede indicar con `ONTOLOGY_HUB_THEMIS_TEST_FILE` o dejarlo en `validation/components/ontology_hub/functional/fixtures/themis/test_cases.txt`.
-- Casos `12` a `14`: si Ontology Hub devuelve un `502/503` transitorio tras editar o borrar versiones, la automatizacion espera la recuperacion del area `edition`, verifica el estado final de la version y solo entonces continua con los siguientes casos. Si la recuperacion no llega o el estado final no coincide, el test sigue fallando.
+- Caso `3` y caso `4`: los pasos manuales `docker ps`, `docker exec`, `cd setup` y `bash lovInitialization.sh` no se consideran parte del test. La app debe completar internamente la publicación.
+- Caso `15`: los pasos `15` y `23-26` del Excel no se consideran parte del test. Si la activación del usuario o la propagación de permisos requieren Atlas/Docker manual, el test falla y eso se atribuye a la app.
+- Caso `24`: la automatización sigue el flujo corregido del Excel desde `/dataset`: abre un círculo del gráfico, intenta lanzar `Themis` desde el panel derecho visible y, si ese acceso queda oculto, cae al tab `Themis` sin cambiar el resto del flujo. Luego cambia a `User Tests`, sube `test_cases.txt` y descarga el resultado. El fichero se puede indicar con `ONTOLOGY_HUB_THEMIS_TEST_FILE` o dejarlo en `validation/components/ontology_hub/functional/fixtures/themis/test_cases.txt`.
+- Casos `12` a `14`: si Ontology Hub devuelve un `502/503` transitorio tras editar o borrar versiones, la automatización espera la recuperación del área `edition`, verifica el estado final de la versión y solo entonces continúa con los siguientes casos. Si la recuperación no llega o el estado final no coincide, el test sigue fallando.
 
 ## Pendientes Reales
 - La suite ya modela los 27 casos del Excel, pero no se han verificado en bloque todos los caminos destructivos sobre este despliegue concreto.
-- Algunos casos pueden fallar por comportamiento real de la aplicacion o por diferencias del entorno de demo respecto al Excel historico. Esa trazabilidad queda reflejada en `docs/11_ontology_hub_validation.md`.
-- Tras `OH-APP-16`, `OH-APP-17` puede quedar bloqueado por comportamiento de la propia UI de edicion: en ejecuciones anteriores `/edition/users` devolvia `500`, y en `vm-single` `2026-04-30 14:00:47` la pagina de edicion carga pero no expone el enlace `+ USER`/`/edition/signup` esperado para completar la promocion.
-- `OH-APP-08` y `OH-APP-09` pueden seguir fallando aunque el vocabulario mantenga `tags = Services` e idiomas `en/es` en la vista de edicion. En el despliegue actual, el catalogo publico sigue publicando las facetas `Tag` y `Language` como `N/A`, por lo que la incidencia apunta al indexado o a la agregacion del catalogo, no al selector del test.
-- En sondeos previos de `vm-single`, `OH-APP-14` pudo reiniciar el pod despues de editar y borrar versiones. La causa observada fue un `ENOENT` no capturado en `versions.js` al hacer `unlink` de un `.n3` versionado ausente. El chart del framework monta `/app/versions` para reducir desincronizaciones tras reinicios; en el experimento `2026-04-30 14:00:47`, `OH-APP-14` ya no se reproduce.
+- Algunos casos pueden fallar por comportamiento real de la aplicación o por diferencias del entorno de demo respecto al Excel histórico. Esa trazabilidad queda reflejada en `docs/11_ontology_hub_validation.md`.
+- Tras `OH-APP-16`, `OH-APP-17` puede quedar bloqueado por comportamiento de la propia UI de edición: en ejecuciones anteriores `/edition/users` devolvía `500`, y en `vm-single` `2026-04-30 14:00:47` la página de edición carga pero no expone el enlace `+ USER`/`/edition/signup` esperado para completar la promoción.
+- `OH-APP-08` y `OH-APP-09` pueden seguir fallando aunque el vocabulario mantenga `tags = Services` e idiomas `en/es` en la vista de edición. En el despliegue actual, el catálogo público sigue publicando las facetas `Tag` y `Language` como `N/A`, por lo que la incidencia apunta al indexado o a la agregación del catálogo, no al selector del test.
+- En sondeos previos de `vm-single`, `OH-APP-14` pudo reiniciar el pod después de editar y borrar versiones. La causa observada fue un `ENOENT` no capturado en `versions.js` al hacer `unlink` de un `.n3` versionado ausente. El chart del framework monta `/app/versions` para reducir desincronizaciones tras reinicios; en el experimento `2026-04-30 14:00:47`, `OH-APP-14` ya no se reproduce.

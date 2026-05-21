@@ -70,7 +70,7 @@ def classify_playwright_spec(spec_file: Any, *, source_path: Any = "") -> dict[s
     if "components/ontology-hub/functional/" in blob:
         return _taxonomy("Ontology Hub", "Functional")
     if "components/ontology-hub/integration/" in blob:
-        return _taxonomy("Ontology Hub", "Component integration")
+        return _taxonomy("Ontology Hub", "API integration")
 
     if "components/ai-model-hub/inesdata-ui/" in blob:
         return _taxonomy(INTEGRATION_SUITE, "AI Model Hub")
@@ -111,8 +111,12 @@ def classify_suite_artifact(
     if "ui/inesdata/" in blob:
         return _taxonomy(INTEGRATION_SUITE, "Combined Playwright")
     if "components/ontology-hub/" in blob:
-        if "/integration/" in blob:
-            return _taxonomy("Ontology Hub", "Component integration")
+        if (
+            "/integration/" in blob
+            or "ontology-hub-api-integration" in blob
+            or "ontology-hub-integration-component-validation" in blob
+        ):
+            return _taxonomy("Ontology Hub", "API integration")
         return _taxonomy("Ontology Hub", "Functional")
     if "components/ai-model-hub/inesdata-ui/" in blob:
         return _taxonomy(INTEGRATION_SUITE, "AI Model Hub")

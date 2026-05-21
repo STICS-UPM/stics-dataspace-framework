@@ -46,6 +46,7 @@ def _suite_record(name: str, suite_result: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "name": name,
         "suite": suite_result.get("suite") or name,
+        "display_name": suite_result.get("display_name") or suite_result.get("suite_label") or name,
         "status": suite_result.get("status") or "skipped",
         "summary": _summary(suite_result),
         "artifact_keys": sorted(_artifact_paths(suite_result.get("artifacts")).keys()),
@@ -68,6 +69,7 @@ def _phase_record(name: str, phase_result: Dict[str, Any]) -> Dict[str, Any]:
         ]
     return {
         "name": name,
+        "display_name": phase_result.get("display_name") or phase_result.get("suite_label") or name,
         "status": phase_result.get("status") or "skipped",
         "summary": _summary(phase_result),
         "suites": suite_records,
