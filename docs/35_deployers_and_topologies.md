@@ -135,7 +135,10 @@ Para Semantic Virtualization, el nivel 5 sincroniza las fuentes necesarias para
 la validación del componente: `morph-kgv`, `mapping-editor` y `Automap`.
 `morph-kgv` se empaqueta como API runtime, `mapping-editor` se despliega cuando
 la UI/editor está habilitada y `Automap` queda disponible como herramienta de
-generación de mappings para trazabilidad y readiness de nivel 6.
+generación de mappings para trazabilidad, readiness y una línea base
+determinista de nivel 6. Esa línea base no invoca LLM ni lee secretos: usa
+fixtures versionados para comprobar extracción de esquema/ontología,
+materialización RDF controlada y métricas de evaluación.
 
 La resolución central vive en:
 

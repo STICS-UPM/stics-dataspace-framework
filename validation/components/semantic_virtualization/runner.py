@@ -13,6 +13,9 @@ from validation.components.semantic_virtualization.gtfs_bench_dataset import run
 from validation.components.semantic_virtualization.gtfs_bench_official import (
     run_gtfs_bench_official_source_validation,
 )
+from validation.components.semantic_virtualization.automap_execution import (
+    run_automap_deterministic_execution_validation,
+)
 from validation.components.semantic_virtualization.automap_source import run_automap_source_validation
 from validation.components.semantic_virtualization.mapping_validation import run_semantic_virtualization_mapping_validation
 from validation.components.semantic_virtualization.ui_runner import run_semantic_virtualization_ui_validation
@@ -531,6 +534,11 @@ def run_semantic_virtualization_validation(
     run_api_phase("functional")
     functional_runners = [
         ("automap_source", "automap-source", run_automap_source_validation),
+        (
+            "automap_execution",
+            "automap-deterministic-execution",
+            run_automap_deterministic_execution_validation,
+        ),
         ("mapping_fixtures", "mapping-fixtures", run_semantic_virtualization_mapping_validation),
         ("gtfs_bench_source", "gtfs-bench-official-source", run_gtfs_bench_official_source_validation),
         ("gtfs_bench_dataset", "gtfs-bench-official-dataset", run_gtfs_bench_official_dataset_validation),

@@ -109,6 +109,31 @@ support_checks:
       level5_sync: automatic when semantic-virtualization is configured
       execution_scope: Source readiness and traceability only; Automap is not deployed as a Level 5 runtime service in the current baseline
 
+  - id: SV-AUTOMAP-02
+    scope: semantic_virtualization
+    case_group: pt5
+    description: Execute a deterministic Automap mapping-generation evaluation baseline
+    type: functional
+    validation_type: functional
+    dataspace_dimension: mapping_generation_evaluation
+    execution_mode: offline_fixture
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: Automap deterministic tooling can extract source schema and ontology context, produce traceable RDF evidence from a controlled mapping fixture and evaluate it against a gold KG
+    linked_pt5_cases:
+      - PT5-VS-01
+      - PT5-VS-06
+      - PT5-VS-10
+    automation:
+      status: automated
+      mode: offline_deterministic_execution
+      runner: validation/components/semantic_virtualization/automap_execution.py
+      evidence_case: SV-AUTOMAP-02
+      source_repository: https://github.com/ProyectoPIONERA/automap
+      local_source_dir: adapters/inesdata/sources/automap
+      fixtures_dir: validation/components/semantic_virtualization/fixtures/automap
+      execution_scope: Deterministic offline execution baseline without LLM generation, remote model calls or secret access
+
 test_cases:
   - id: PT5-VS-01
     scope: semantic_virtualization
@@ -285,6 +310,8 @@ test_cases:
       mode: offline_fixture
       runner: validation/components/semantic_virtualization/mapping_validation.py
       evidence_case: PT5-VS-10
+      additional_evidence_cases:
+        - SV-AUTOMAP-02
 
   - id: PT5-VS-11
     scope: semantic_virtualization

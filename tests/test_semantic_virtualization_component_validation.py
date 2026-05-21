@@ -101,6 +101,9 @@ class SemanticVirtualizationComponentValidationTests(unittest.TestCase):
                 "validation.components.semantic_virtualization.runner.run_automap_source_validation",
                 return_value=self._suite_result("automap-source", "SV-AUTOMAP-01", "support"),
             ), mock.patch(
+                "validation.components.semantic_virtualization.runner.run_automap_deterministic_execution_validation",
+                return_value=self._suite_result("automap-deterministic-execution", "SV-AUTOMAP-02"),
+            ), mock.patch(
                 "validation.components.semantic_virtualization.runner.run_semantic_virtualization_mapping_validation",
                 return_value=self._suite_result("mapping-fixtures", "PT5-VS-01"),
             ), mock.patch(
@@ -121,16 +124,17 @@ class SemanticVirtualizationComponentValidationTests(unittest.TestCase):
             self.assertEqual(result["component"], "semantic-virtualization")
             self.assertEqual(result["suite"], "api")
             self.assertEqual(result["status"], "passed")
-            self.assertEqual(result["summary"]["total"], 10)
-            self.assertEqual(result["summary"]["passed"], 10)
+            self.assertEqual(result["summary"]["total"], 11)
+            self.assertEqual(result["summary"]["passed"], 11)
             self.assertEqual(result["phase_order"], ["preflight", "functional", "integration"])
             self.assertEqual(result["executed_cases"][1]["test_case_id"], "SV-API-04")
-            self.assertEqual(result["phases"]["functional"]["summary"]["total"], 6)
+            self.assertEqual(result["phases"]["functional"]["summary"]["total"], 7)
             self.assertEqual(result["phases"]["integration"]["summary"]["total"], 3)
-            self.assertEqual(result["pt5_summary"]["total"], 5)
+            self.assertEqual(result["pt5_summary"]["total"], 6)
             self.assertEqual(result["support_summary"]["total"], 5)
             self.assertGreaterEqual(len(result["evidence_index"]), 12)
             self.assertIn("automap_source", result["phases"]["functional"]["suites"])
+            self.assertIn("automap_execution", result["phases"]["functional"]["suites"])
             self.assertIn("mapping_fixtures", result["phases"]["functional"]["suites"])
             self.assertIn("gtfs_bench_source", result["phases"]["functional"]["suites"])
             self.assertIn("gtfs_bench_dataset", result["phases"]["functional"]["suites"])
@@ -203,6 +207,10 @@ class SemanticVirtualizationComponentValidationTests(unittest.TestCase):
                 side_effect=fake_support_suite("functional-automap-source", "SV-AUTOMAP-01"),
             ),
             mock.patch(
+                "validation.components.semantic_virtualization.runner.run_automap_deterministic_execution_validation",
+                side_effect=fake_functional_suite("functional-automap-execution", "SV-AUTOMAP-02"),
+            ),
+            mock.patch(
                 "validation.components.semantic_virtualization.runner.run_semantic_virtualization_mapping_validation",
                 side_effect=fake_functional_suite("functional-mapping", "PT5-VS-01"),
             ),
@@ -227,11 +235,12 @@ class SemanticVirtualizationComponentValidationTests(unittest.TestCase):
 
         self.assertLess(calls.index("functional-api"), calls.index("functional-ui"))
         self.assertLess(calls.index("functional-automap-source"), calls.index("functional-ui"))
+        self.assertLess(calls.index("functional-automap-execution"), calls.index("functional-ui"))
         self.assertLess(calls.index("functional-mapping"), calls.index("functional-ui"))
         self.assertLess(calls.index("functional-ui"), calls.index("integration-health"))
         self.assertIn("ui", result["phases"]["functional"]["suites"])
-        self.assertEqual(result["summary"]["total"], 11)
-        self.assertEqual(result["pt5_summary"]["total"], 9)
+        self.assertEqual(result["summary"]["total"], 12)
+        self.assertEqual(result["pt5_summary"]["total"], 10)
 
     def test_semantic_virtualization_is_registered_for_component_level6(self):
         registration = get_component_registration("semantic_virtualization")

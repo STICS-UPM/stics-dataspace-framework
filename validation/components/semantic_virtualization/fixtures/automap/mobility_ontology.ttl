@@ -1,0 +1,23 @@
+@prefix mob: <https://pionera.example/ontology/mobility#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+mob:Stop a owl:Class ;
+  rdfs:label "Mobility stop"@en ;
+  rdfs:comment "A public transport stop used by the deterministic Automap validation fixture."@en .
+
+mob:stopName a owl:DatatypeProperty ;
+  rdfs:label "stop name"@en ;
+  rdfs:domain mob:Stop ;
+  rdfs:range xsd:string .
+
+mob:latitude a owl:DatatypeProperty ;
+  rdfs:label "latitude"@en ;
+  rdfs:domain mob:Stop ;
+  rdfs:range xsd:decimal .
+
+mob:longitude a owl:DatatypeProperty ;
+  rdfs:label "longitude"@en ;
+  rdfs:domain mob:Stop ;
+  rdfs:range xsd:decimal .
