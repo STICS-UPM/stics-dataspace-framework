@@ -182,10 +182,12 @@ test("07 semantic virtualization HttpData: visible discovery and negotiation fro
       },
     );
     await attachJson("sv-httpdata-ui-bootstrap", report.providerBootstrap);
-    await attachJson(
-      "sv-httpdata-ui-catalog-api-readiness",
-      await probeConsumerCatalogDatasetReadiness(request, dataspaceRuntime, assetId),
-    );
+    const catalogApiReadiness = await probeConsumerCatalogDatasetReadiness(request, dataspaceRuntime, assetId);
+    await attachJson("sv-httpdata-ui-catalog-api-readiness", catalogApiReadiness);
+    expect(
+      catalogApiReadiness.status,
+      `Semantic Virtualization HttpData asset ${assetId} was not ready in the catalog API before UI validation: ${catalogApiReadiness.error || "unknown error"}`,
+    ).toBe("ready");
 
     await loginPage.open(dataspaceRuntime.consumer.portalBaseUrl);
     await loginPage.loginIfNeeded();
@@ -198,7 +200,6 @@ test("07 semantic virtualization HttpData: visible discovery and negotiation fro
       await shellPage.assertNoServerErrorBanner("Semantic Virtualization catalog page");
       await catalogPage.expectReady();
       await catalogPage.showLargestPageSize();
-      await expect(page.getByText(assetId, { exact: true })).toBeVisible({ timeout: 20_000 });
 
       let opened = await catalogPage.openDetailsForAsset(assetId);
       while (!opened && (await catalogPage.goToNextPage())) {
