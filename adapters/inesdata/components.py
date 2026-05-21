@@ -39,6 +39,8 @@ class INESDataComponentsAdapter:
     _MORPH_KGV_REPO_DIRNAME = "morph-kgv"
     _MAPPING_EDITOR_REPO_URL = "https://github.com/ProyectoPIONERA/mapping-editor.git"
     _MAPPING_EDITOR_REPO_DIRNAME = "mapping-editor"
+    _AUTOMAP_REPO_URL = "https://github.com/ProyectoPIONERA/automap.git"
+    _AUTOMAP_REPO_DIRNAME = "automap"
 
     def __init__(
         self,
@@ -660,6 +662,59 @@ class INESDataComponentsAdapter:
             ),
         )
 
+    def _resolve_automap_source_dir(self, deployer_config: dict) -> str:
+        sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")
+        automap_dir = os.path.join(sources_dir, self._AUTOMAP_REPO_DIRNAME)
+        required_paths = [
+            os.path.join(automap_dir, "README.md"),
+            os.path.join(automap_dir, "pyproject.toml"),
+            os.path.join(automap_dir, "main.py"),
+            os.path.join(automap_dir, "langgraph.json"),
+            os.path.join(automap_dir, "agents", "schema_agent.py"),
+            os.path.join(automap_dir, "graph", "workflow.py"),
+            os.path.join(automap_dir, "tools", "rml_tools.py"),
+            os.path.join(automap_dir, "evaluation", "metrics.py"),
+        ]
+        if all(os.path.isfile(path) for path in required_paths):
+            return automap_dir
+
+        should_clone = not os.path.isdir(automap_dir)
+        if not should_clone:
+            try:
+                remaining_entries = os.listdir(automap_dir)
+            except OSError:
+                remaining_entries = []
+            should_clone = len(remaining_entries) == 0
+
+        if should_clone:
+            os.makedirs(sources_dir, exist_ok=True)
+            if os.path.isdir(automap_dir):
+                try:
+                    os.rmdir(automap_dir)
+                except OSError:
+                    pass
+            print(f"Cloning automap into {automap_dir} ...")
+            import subprocess
+            try:
+                subprocess.run(["git", "clone", self._AUTOMAP_REPO_URL, automap_dir], check=True)
+            except Exception as exc:
+                self._fail(
+                    "Could not clone automap repository",
+                    root_cause=str(exc),
+                )
+
+        if all(os.path.isfile(path) for path in required_paths):
+            return automap_dir
+
+        self._fail(
+            "automap source directory is not usable",
+            root_cause=(
+                "Expected README.md, pyproject.toml, main.py, langgraph.json and core "
+                "agents/graph/tools/evaluation modules under "
+                "adapters/inesdata/sources/automap."
+            ),
+        )
+
     def _semantic_virtualization_api_dockerfile(self) -> str:
         return os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
@@ -808,6 +863,9 @@ class INESDataComponentsAdapter:
         # Keep the UI/editor source available as part of the component bundle,
         # while the A5.2 API image is built from morph-kgv.
         self._resolve_mapping_editor_source_dir(deployer_config)
+        # Automap is included as mapping-generation tooling for the virtualizer
+        # scope, but it is not part of the runtime API image.
+        self._resolve_automap_source_dir(deployer_config)
         dockerfile_path = self._semantic_virtualization_api_dockerfile()
         server_file = self._semantic_virtualization_api_server_file()
         if not os.path.isfile(dockerfile_path):

@@ -131,6 +131,12 @@ COMPONENTS_NAMESPACE=components
 | `ingress-nginx` | Ingress controller del cluster |
 | `kube-system` | Infraestructura Kubernetes |
 
+Para Semantic Virtualization, el nivel 5 sincroniza las fuentes necesarias para
+la validación del componente: `morph-kgv`, `mapping-editor` y `Automap`.
+`morph-kgv` se empaqueta como API runtime, `mapping-editor` se despliega cuando
+la UI/editor está habilitada y `Automap` queda disponible como herramienta de
+generación de mappings para trazabilidad y readiness de nivel 6.
+
 La resolución central vive en:
 
 ```text

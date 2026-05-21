@@ -591,12 +591,66 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             ],
         )
 
+    def test_resolve_automap_source_dir_clones_when_sources_dir_exists_but_is_empty(self):
+        adapter = self._make_adapter()
+        sources_dir = os.path.join(
+            os.path.dirname(os.path.abspath(components_module.__file__)),
+            "sources",
+        )
+        automap_dir = os.path.join(sources_dir, "automap")
+        required_paths = {
+            os.path.join(automap_dir, "README.md"),
+            os.path.join(automap_dir, "pyproject.toml"),
+            os.path.join(automap_dir, "main.py"),
+            os.path.join(automap_dir, "langgraph.json"),
+            os.path.join(automap_dir, "agents", "schema_agent.py"),
+            os.path.join(automap_dir, "graph", "workflow.py"),
+            os.path.join(automap_dir, "tools", "rml_tools.py"),
+            os.path.join(automap_dir, "evaluation", "metrics.py"),
+        }
+
+        clone_calls = []
+
+        def fake_isfile(path):
+            return path in required_paths and len(clone_calls) > 0
+
+        def fake_run(args, check):
+            clone_calls.append((tuple(args), check))
+            return None
+
+        with (
+            mock.patch("adapters.inesdata.components.os.path.isdir", side_effect=lambda path: path == automap_dir),
+            mock.patch("adapters.inesdata.components.os.listdir", return_value=[]),
+            mock.patch("adapters.inesdata.components.os.makedirs"),
+            mock.patch("adapters.inesdata.components.os.rmdir"),
+            mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=fake_isfile),
+            mock.patch("subprocess.run", side_effect=fake_run),
+        ):
+            resolved = adapter._resolve_automap_source_dir({})
+
+        self.assertEqual(resolved, automap_dir)
+        self.assertEqual(
+            clone_calls,
+            [
+                (
+                    (
+                        "git",
+                        "clone",
+                        "https://github.com/ProyectoPIONERA/automap.git",
+                        automap_dir,
+                    ),
+                    True,
+                )
+            ],
+        )
+
     def test_build_semantic_virtualization_image_uses_framework_api_dockerfile(self):
         adapter = self._make_adapter()
 
         with (
             mock.patch.object(adapter, "_resolve_morph_kgv_source_dir", return_value="/tmp/morph-kgv"),
             mock.patch.object(adapter, "_resolve_mapping_editor_source_dir", return_value="/tmp/mapping-editor") as mapping_mock,
+            mock.patch.object(adapter, "_resolve_automap_source_dir", return_value="/tmp/automap") as automap_mock,
             mock.patch.object(
                 adapter,
                 "_semantic_virtualization_api_dockerfile",
@@ -623,6 +677,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             cwd="/tmp/morph-kgv-build-context",
         )
         mapping_mock.assert_called_once_with({})
+        automap_mock.assert_called_once_with({})
         build_context_mock.assert_called_once_with("/tmp/morph-kgv")
         rmtree_mock.assert_called_once_with("/tmp/morph-kgv-build-context", ignore_errors=True)
 

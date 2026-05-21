@@ -281,8 +281,13 @@ desde INESData.
 Ejecuta validaciones UI/read-only del virtualizador semántico. La suite abre el
 endpoint público desde Playwright, valida el documento OpenAPI y comprueba que
 el endpoint de consulta responde desde el contexto del navegador. También cubre
-la UI/editor del virtualizador cuando está habilitada; la validación desde INESData se
-ejecuta desde `I`.
+la UI/editor del virtualizador cuando está habilitada; la validación desde
+INESData se ejecuta desde `I`.
+
+En el nivel 6, Semantic Virtualization también valida por consola la preparación
+de sus fuentes de soporte: `morph-kgv`, `mapping-editor`, datasets oficiales y
+Automap. Automap se trata como herramienta de generación de mappings y
+trazabilidad de alcance, no como servicio desplegado en Kubernetes.
 
 `F - Dataspace Interoperability Tests (Newman/Kafka)`
 

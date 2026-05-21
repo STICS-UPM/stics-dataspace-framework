@@ -84,6 +84,31 @@ support_checks:
       source_repository: https://github.com/oeg-upm/gtfs-bench
       latest_evidence: experiments/semantic-virtualization-gtfs-bench-official-materialization-20260507/components/semantic-virtualization/gtfs-bench-official-materialization/semantic_virtualization_gtfs_bench_official_materialization.json
 
+  - id: SV-AUTOMAP-01
+    scope: semantic_virtualization
+    case_group: support
+    description: Validate local availability of Automap mapping-generation tooling
+    type: support
+    validation_type: support
+    dataspace_dimension: mapping_generation_traceability
+    execution_mode: offline_source_readiness
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: The framework can trace Semantic Virtualization validation to the Automap repository as mapping-generation tooling without requiring LLM execution during Level 6
+    linked_pt5_cases:
+      - PT5-VS-01
+      - PT5-VS-06
+      - PT5-VS-10
+    automation:
+      status: automated
+      mode: offline_source_readiness
+      runner: validation/components/semantic_virtualization/automap_source.py
+      evidence_case: SV-AUTOMAP-01
+      source_repository: https://github.com/ProyectoPIONERA/automap
+      local_source_dir: adapters/inesdata/sources/automap
+      level5_sync: automatic when semantic-virtualization is configured
+      execution_scope: Source readiness and traceability only; Automap is not deployed as a Level 5 runtime service in the current baseline
+
 test_cases:
   - id: PT5-VS-01
     scope: semantic_virtualization

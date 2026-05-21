@@ -94,6 +94,12 @@ deployers/inesdata/deployer.config.example
 - validaciones de componentes;
 - métricas y reportes de experimento.
 
+En Semantic Virtualization, el alcance automatizado actual considera
+`morph-kgv` como API de virtualización, `mapping-editor` como UI/editor de
+mappings y `Automap` como herramienta de generación de mappings. Automap se
+sincroniza como fuente del componente y se valida como readiness/trazabilidad de
+código fuente; no se despliega como servicio runtime en la baseline actual.
+
 Los artefactos se escriben bajo `experiments/`, que es salida generada y no debe
 versionarse.
 

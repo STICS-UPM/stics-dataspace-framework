@@ -83,13 +83,20 @@ class SemanticVirtualizationTestCasesCatalogTests(unittest.TestCase):
         self.assertIn("SV-GTFS-BENCH-01", cases)
         self.assertIn("SV-GTFS-BENCH-02", cases)
         self.assertIn("SV-GTFS-BENCH-03", cases)
+        self.assertIn("SV-AUTOMAP-01", cases)
         self.assertEqual(cases["SV-GTFS-BENCH-01"]["automation"]["status"], "automated")
         self.assertEqual(cases["SV-GTFS-BENCH-02"]["automation"]["status"], "automated")
         self.assertEqual(cases["SV-GTFS-BENCH-03"]["automation"]["status"], "automated")
+        self.assertEqual(cases["SV-AUTOMAP-01"]["automation"]["status"], "automated")
         self.assertEqual(
             cases["SV-GTFS-BENCH-03"]["automation"]["runner"],
             "validation/components/semantic_virtualization/gtfs_bench_materialization.py",
         )
+        self.assertEqual(
+            cases["SV-AUTOMAP-01"]["automation"]["runner"],
+            "validation/components/semantic_virtualization/automap_source.py",
+        )
+        self.assertIn("PT5-VS-10", cases["SV-AUTOMAP-01"]["linked_pt5_cases"])
 
     def test_catalog_declares_official_gtfs_bench_dataspace_integration(self):
         catalog = self._load_catalog()
