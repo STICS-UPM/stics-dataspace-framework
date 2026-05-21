@@ -4,6 +4,8 @@ const path = require("path");
 const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
 const DEFAULT_TOKEN_ATTEMPTS = 5;
 const DEFAULT_TOKEN_RETRY_DELAY_MS = 1000;
+const DEFAULT_MANAGEMENT_BRIDGE_ATTEMPTS = 4;
+const DEFAULT_MANAGEMENT_BRIDGE_RETRY_DELAY_MS = 1000;
 
 function projectRoot() {
   return path.resolve(__dirname, "../../../..");
@@ -237,6 +239,49 @@ function responseHeaders(headers) {
   return forwarded;
 }
 
+function shouldRetryManagementBridge(url, method, status) {
+  const normalizedMethod = String(method || "").toUpperCase();
+  if (!["GET", "HEAD"].includes(normalizedMethod) || !RETRYABLE_STATUS_CODES.has(status)) {
+    return false;
+  }
+
+  try {
+    return new URL(url).pathname.toLowerCase().endsWith("/dataplanes");
+  } catch {
+    return false;
+  }
+}
+
+async function fetchManagementBridge(url, options) {
+  const attempts = positiveInt(
+    process.env.AI_MODEL_HUB_MANAGEMENT_BRIDGE_ATTEMPTS,
+    DEFAULT_MANAGEMENT_BRIDGE_ATTEMPTS,
+  );
+  const retryDelayMs = positiveInt(
+    process.env.AI_MODEL_HUB_MANAGEMENT_BRIDGE_RETRY_DELAY_MS,
+    DEFAULT_MANAGEMENT_BRIDGE_RETRY_DELAY_MS,
+  );
+  const method = options.method || "GET";
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, options);
+      if (!shouldRetryManagementBridge(url, method, response.status) || attempt >= attempts) {
+        return response;
+      }
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) {
+        break;
+      }
+    }
+    await delay(retryDelayMs);
+  }
+
+  throw lastError || new Error(`Management bridge request failed for ${url}`);
+}
+
 function corsHeaders(requestHeaders) {
   const origin = requestHeaders.origin || "*";
   return {
@@ -261,7 +306,7 @@ async function fulfillDirectManagementRequest(route, connector) {
     return;
   }
 
-  const response = await fetch(request.url(), {
+  const response = await fetchManagementBridge(request.url(), {
     method: request.method(),
     headers: filteredHeaders(headers, connector.authorization),
     body: ["GET", "HEAD"].includes(request.method().toUpperCase()) ? undefined : request.postDataBuffer(),
@@ -305,7 +350,7 @@ async function fulfillDashboardProxyRequest(route, proxyRequest, requestUrl) {
 
   const request = route.request();
   const method = request.method();
-  const response = await fetch(targetUrl, {
+  const response = await fetchManagementBridge(targetUrl, {
     method,
     headers: filteredHeaders(
       request.headers(),
