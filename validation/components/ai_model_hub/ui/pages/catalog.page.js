@@ -9,6 +9,7 @@ class CatalogPage {
     this.requestButton = page.locator("lib-catalog-request .btn");
     this.catalogCards = page.locator("lib-catalog-card");
     this.errorAlert = page.locator(".alert-error");
+    this.errorAlertCloseButton = this.errorAlert.locator("button").first();
     this.emptyStateMessage = page.locator("section").getByText(/No catalog has been requested yet/i);
     this.requestDialog = page.locator("dialog#dashboard-dialog");
     this.counterPartyAddressInput = this.requestDialog.locator("input[name='counterPartyAddress']");
@@ -47,11 +48,41 @@ class CatalogPage {
     await expect(this.requestCatalogButton).toBeEnabled();
   }
 
-  async requestCatalogManually(counterPartyAddress, counterPartyId = "") {
-    await this.openRequestDialog();
-    await this.fillRequestDialog(counterPartyAddress, counterPartyId);
-    await clickMarked(this.requestCatalogButton);
-    await expect(this.requestDialog).toBeHidden({ timeout: 20000 });
+  async clearCatalogError() {
+    const alert = this.errorAlert.first();
+    if (!(await alert.isVisible().catch(() => false))) {
+      return;
+    }
+
+    if (await this.errorAlertCloseButton.isVisible().catch(() => false)) {
+      await clickMarked(this.errorAlertCloseButton);
+      await expect(alert).toBeHidden({ timeout: 3000 }).catch(() => {});
+    }
+  }
+
+  async requestCatalogManually(counterPartyAddress, counterPartyId = "", attempts = 3) {
+    let lastErrorText = "";
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      await this.clearCatalogError();
+      await this.openRequestDialog();
+      await this.fillRequestDialog(counterPartyAddress, counterPartyId);
+      await clickMarked(this.requestCatalogButton);
+      await expect(this.requestDialog).toBeHidden({ timeout: 20000 });
+      await this.waitForCatalogCardsToSettle();
+
+      const alert = this.errorAlert.first();
+      if (!(await alert.isVisible().catch(() => false))) {
+        return;
+      }
+
+      lastErrorText = ((await alert.innerText().catch(() => "")) || "").trim();
+      if (attempt < attempts) {
+        await this.page.waitForTimeout(1000 * attempt);
+      }
+    }
+
+    throw new Error(`Catalog request failed after ${attempts} attempts: ${lastErrorText}`);
   }
 
   catalogCardByText(text) {

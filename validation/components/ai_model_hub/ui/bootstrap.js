@@ -310,34 +310,72 @@ function extractAgreementAssetId(agreement) {
   return null;
 }
 
+function payloadItems(payload) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+
+  for (const key of ["@graph", "items", "results", "data", "content"]) {
+    if (Array.isArray(payload[key])) {
+      return payload[key];
+    }
+  }
+
+  return Object.keys(payload).length ? [payload] : [];
+}
+
+function agreementReferencesAssetId(agreement, assetId) {
+  if (extractAgreementAssetId(agreement) === assetId) {
+    return true;
+  }
+
+  try {
+    return JSON.stringify(agreement).includes(assetId);
+  } catch {
+    return false;
+  }
+}
+
 async function waitForConsumerAgreement(request, runtime, assetId, attempts = 15, delayMs = 1000) {
   const consumerToken = await requestConnectorManagementToken(runtime, runtime.consumerConnectorId);
+  const pageSize = 100;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const response = await requestWithRetry("Poll consumer contract agreements", () => request.post(`${runtime.consumerManagementUrl}/v3/contractagreements/request`, {
-      headers: {
-        Authorization: `Bearer ${consumerToken}`,
-        "Content-Type": "application/json",
-      },
-      data: {
-        "@context": {
-          "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    for (let offset = 0; offset <= 500; offset += pageSize) {
+      const response = await requestWithRetry("Poll consumer contract agreements", () => request.post(`${runtime.consumerManagementUrl}/v3/contractagreements/request`, {
+        headers: {
+          Authorization: `Bearer ${consumerToken}`,
+          "Content-Type": "application/json",
         },
-        filterExpression: [],
-      },
-    }));
-    await ensureOk(response, "Poll consumer contract agreements");
+        data: {
+          "@context": {
+            "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+          },
+          offset,
+          limit: pageSize,
+          filterExpression: [],
+        },
+      }));
+      await ensureOk(response, "Poll consumer contract agreements");
 
-    const agreements = await response.json();
-    const normalized = Array.isArray(agreements) ? agreements : [];
-    const matchingAgreement = normalized.find((agreement) => extractAgreementAssetId(agreement) === assetId);
-    if (matchingAgreement) {
-      return {
-        assetId,
-        attempts: attempt,
-        agreementId: matchingAgreement["@id"] || matchingAgreement.id || null,
-        agreement: matchingAgreement,
-      };
+      const agreements = payloadItems(await response.json());
+      const matchingAgreement = agreements.find((agreement) => agreementReferencesAssetId(agreement, assetId));
+      if (matchingAgreement) {
+        return {
+          assetId,
+          attempts: attempt,
+          agreementId: matchingAgreement["@id"] || matchingAgreement.id || null,
+          agreement: matchingAgreement,
+        };
+      }
+
+      if (agreements.length < pageSize) {
+        break;
+      }
     }
 
     await delay(delayMs);
