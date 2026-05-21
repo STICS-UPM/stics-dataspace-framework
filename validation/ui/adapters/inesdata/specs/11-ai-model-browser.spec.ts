@@ -292,7 +292,9 @@ async function inspectBrowserObserverEvidence(page: Page, assetId: string, model
 
   await expect(detailEvent).toBeVisible();
   await expect(page.getByText(modelName).first()).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText(/VIEWED/i).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator("article.observer-card .observer-badge", { hasText: /^VIEWED$/i }).first()).toBeVisible({
+    timeout: 10_000,
+  });
 
   return {
     status: "passed" as const,

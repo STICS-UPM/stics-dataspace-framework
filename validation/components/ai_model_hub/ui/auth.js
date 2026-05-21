@@ -237,6 +237,46 @@ function responseHeaders(headers) {
   return forwarded;
 }
 
+function corsHeaders(requestHeaders) {
+  const origin = requestHeaders.origin || "*";
+  return {
+    "access-control-allow-origin": origin,
+    "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+    "access-control-allow-headers":
+      requestHeaders["access-control-request-headers"] || "authorization,content-type,accept",
+    "access-control-allow-credentials": "true",
+  };
+}
+
+async function fulfillDirectManagementRequest(route, connector) {
+  const request = route.request();
+  const headers = request.headers();
+
+  if (request.method().toUpperCase() === "OPTIONS") {
+    await route.fulfill({
+      status: 204,
+      headers: corsHeaders(headers),
+      body: "",
+    });
+    return;
+  }
+
+  const response = await fetch(request.url(), {
+    method: request.method(),
+    headers: filteredHeaders(headers, connector.authorization),
+    body: ["GET", "HEAD"].includes(request.method().toUpperCase()) ? undefined : request.postDataBuffer(),
+  });
+
+  await route.fulfill({
+    status: response.status,
+    headers: {
+      ...responseHeaders(response.headers),
+      ...corsHeaders(headers),
+    },
+    body: Buffer.from(await response.arrayBuffer()),
+  });
+}
+
 async function fulfillDashboardProxyRequest(route, proxyRequest, requestUrl) {
   if (proxyRequest.serviceName === "api" && /^check\/health\/?$/i.test(proxyRequest.remainingPath)) {
     await route.fulfill({
@@ -301,12 +341,7 @@ async function attachManagementAuthorizationRoutes(page, runtime) {
       return;
     }
 
-    await route.continue({
-      headers: {
-        ...request.headers(),
-        authorization: connector.authorization,
-      },
-    });
+    await fulfillDirectManagementRequest(route, connector);
   };
 
   await page.route("**/management/**", routeHandler);

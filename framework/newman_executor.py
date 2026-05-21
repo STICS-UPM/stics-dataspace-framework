@@ -239,9 +239,6 @@ class NewmanExecutor:
         failures = report.get("run", {}).get("failures", []) or []
         for failure in failures:
             request_name = (failure.get("source") or {}).get("name")
-            if request_name not in self.AUTH_LOGIN_REQUESTS and request_name not in self.AUTH_HEALTH_REQUESTS:
-                continue
-
             error = failure.get("error") or {}
             error_text = " ".join(
                 str(error.get(key) or "")
@@ -260,13 +257,14 @@ class NewmanExecutor:
                 )
 
             body_text = self._response_body_text(response)
-            if (
-                request_name in self.AUTH_HEALTH_REQUESTS
-                and status_code == 401
-                and "AuthenticationFailed" in body_text
-            ):
+            if status_code == 401 and "AuthenticationFailed" in body_text:
+                scope = (
+                    "auth health check"
+                    if request_name in self.AUTH_HEALTH_REQUESTS
+                    else "authenticated request"
+                )
                 return (
-                    f"{request_name} returned transient HTTP 401 AuthenticationFailed "
+                    f"{request_name} returned transient HTTP 401 AuthenticationFailed during {scope} "
                     f"({content_type})"
                 )
 
