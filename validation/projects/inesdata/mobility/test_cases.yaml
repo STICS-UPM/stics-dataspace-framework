@@ -7,20 +7,36 @@ cases:
     type: playwright
     profile: read-only
     status: proposed
+    coverage_status: scaffold_external_target
+    mapping_status: external_project_scaffold
+    execution_mode: read_only_target_scaffold
     objective: Verificar que el portal de movilidad está disponible si el target lo habilita.
     preconditions:
       - Target externo configurado con `dataspaces[].name=mobility`.
       - URL pública o validable definida para el portal de movilidad.
     evidence:
       - Screenshot o trace de Playwright.
+    automation:
+      status: proposed
+      mode: read_only_playwright
+      enabled_by_default: false
+      notes: Scaffold for external INESData targets. It is not part of Level 6 A5.2 default coverage until a target explicitly enables it.
   - id: INESDATA-MOB-02
     title: Catálogo de movilidad visible
     type: playwright
     profile: read-only
     status: proposed
+    coverage_status: scaffold_external_target
+    mapping_status: external_project_scaffold
+    execution_mode: read_only_target_scaffold
     objective: Verificar que el catálogo de movilidad muestra información pública o aprobada.
     preconditions:
       - Existen datasets públicos o aprobados para validación read-only.
     evidence:
       - Captura del catálogo.
       - Conteo o texto visible no sensible.
+    automation:
+      status: proposed
+      mode: read_only_playwright
+      enabled_by_default: false
+      notes: Scaffold for external INESData targets. It is not part of Level 6 A5.2 default coverage until a target explicitly enables it.

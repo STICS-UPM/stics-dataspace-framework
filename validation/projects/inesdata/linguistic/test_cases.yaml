@@ -7,6 +7,9 @@ cases:
     type: playwright
     profile: read-only
     status: proposed
+    coverage_status: scaffold_external_target
+    mapping_status: external_project_scaffold
+    execution_mode: read_only_target_scaffold
     objective: Verificar que el portal del espacio lingüístico está disponible para el usuario de validación.
     preconditions:
       - Target externo configurado con `dataspaces[].name=linguistic`.
@@ -14,11 +17,19 @@ cases:
     evidence:
       - Screenshot o trace de Playwright.
       - URL validada redactada si el target lo requiere.
+    automation:
+      status: proposed
+      mode: read_only_playwright
+      enabled_by_default: false
+      notes: Scaffold for external INESData targets. It is not part of Level 6 A5.2 default coverage until a target explicitly enables it.
   - id: INESDATA-LING-02
     title: Catálogo lingüístico visible
     type: playwright
     profile: read-only
     status: proposed
+    coverage_status: scaffold_external_target
+    mapping_status: external_project_scaffold
+    execution_mode: read_only_target_scaffold
     objective: Verificar que el usuario puede abrir el catálogo lingüístico y ver resultados publicados.
     preconditions:
       - El target define `public_portal_url` para el espacio lingüístico.
@@ -26,14 +37,27 @@ cases:
     evidence:
       - Captura del catálogo.
       - Conteo o texto visible no sensible.
+    automation:
+      status: proposed
+      mode: read_only_playwright
+      enabled_by_default: false
+      notes: Scaffold for external INESData targets. It is not part of Level 6 A5.2 default coverage until a target explicitly enables it.
   - id: INESDATA-LING-03
     title: Smoke API del dataspace lingüístico
     type: newman
     profile: read-only
     status: proposed
+    coverage_status: scaffold_external_target
+    mapping_status: external_project_scaffold
+    execution_mode: read_only_target_scaffold
     objective: Reutilizar Newman core contra conectores lingüísticos cuando el target aporte endpoints compatibles.
     preconditions:
       - Conectores provider/consumer definidos en el target.
       - Management API accesible para el usuario de validación.
     evidence:
       - Reporte JSON Newman.
+    automation:
+      status: proposed
+      mode: read_only_newman
+      enabled_by_default: false
+      notes: Scaffold for external INESData targets. It is not part of Level 6 A5.2 default coverage until a target explicitly enables it.

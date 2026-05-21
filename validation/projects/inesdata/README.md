@@ -44,6 +44,8 @@ Cada dominio debe tener:
 - `integration/` forma parte de la validación A5.2 del framework.
 - `linguistic/` y `mobility/` siguen siendo suites de proyecto para targets
   externos o productivos y se habilitan mediante `project_suites` en el target.
+  Sus casos quedan marcados como `scaffold_external_target` y no cuentan como
+  cobertura por defecto de `Level 6` para A5.2.
 - Producción debe empezar en perfil `read-only`.
 - No se deben versionar secretos, tokens, usuarios reales ni datos sensibles.
 - No se deben modificar fuentes de producto ni suites base para cubrir
