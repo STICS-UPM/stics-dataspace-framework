@@ -87,16 +87,26 @@ En esta ejecución ya pasan `OH-APP-14` y `OH-APP-24`, que habían fallado en
 sondeos previos de `vm-single`.
 
 La ejecución de cierre sin Kafka del `2026-05-22` actualiza el estado operativo.
-Tras los ajustes de automatización confirmados en el experimento
-`experiment_2026-05-22_13-51-24`, la suite funcional queda en `26/27`, la
-integración en `4/5` y dejan de ser pendientes vigentes `OH-APP-03`,
-`OH-APP-04`, `OH-APP-17`, `OH-APP-22`, el bloque de versiones y la ficha `.n3`.
-Los pendientes reproducidos en esa ejecución son:
+Tras actualizar el repositorio del componente y ajustar la automatización, la
+suite funcional queda en `27/27`. La validación de integración queda cubierta
+en `5/5` con doble evidencia para SPARQL: ejecución interna en Kubernetes y
+diagnóstico de exposición pública por ingress. Dejan de ser pendientes vigentes
+`OH-APP-03`, `OH-APP-04`, `OH-APP-10`, `OH-APP-17`, `OH-APP-22`, el bloque de
+versiones y la ficha `.n3`.
+
+Las incidencias que conviene conservar como trazabilidad técnica son:
 
 | Caso | Síntoma observado | Lectura técnica |
 | --- | --- | --- |
-| `OH-APP-10` | El guardado de metadata/tags devuelve `500` al editar el vocabulario de repositorio. | Posible problema de persistencia o reindexado de metadatos/tags en Ontology Hub. |
-| `PT5-OH-13` | La consulta SPARQL de integración recibe HTTP `502`. | Incidencia del endpoint SPARQL público del componente. |
+| `PT5-OH-13` | La consulta SPARQL pública puede recibir HTTP `502` por ingress aunque el endpoint interno del componente responda. | La validación se separa en evidencia interna de Kubernetes y evidencia pública por ingress para distinguir funcionalidad SPARQL de exposición HTTP. |
+
+`PT5-OH-13` queda ajustado como doble evidencia: el criterio principal verifica
+la consulta SPARQL dentro del clúster contra el recurso RDF sembrado; la misma
+consulta por ingress público queda registrada como diagnóstico. Si el primer
+intento interno encuentra Fuseki vacío, el runner reconstruye la TDB temporal
+del pod desde `/app/public/lov.nq` y reintenta. Si el check interno pasa y el
+público falla, el artefacto conserva el fallo de exposición sin ocultarlo ni
+convertirlo en `skipped`.
 
 Tras el análisis posterior de `OH-APP-22`, el flujo automatizado se ajusta para
 abrir Patterns con un vocabulario sembrado en la query

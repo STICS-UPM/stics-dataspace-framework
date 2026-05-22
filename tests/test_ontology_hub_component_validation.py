@@ -31,19 +31,11 @@ class OntologyHubComponentValidationTests(unittest.TestCase):
         with open(CATALOG_PATH, "r", encoding="utf-8") as handle:
             return yaml.safe_load(handle) or {}
 
-    def test_pt5_oh16_catalog_matches_inesdata_integration_route(self):
+    def test_integration_catalog_does_not_duplicate_inesdata_readonly_route(self):
         catalog = self._load_catalog()
         cases = {case.get("id"): case for case in catalog.get("test_cases") or []}
-        case = cases["PT5-OH-16"]
 
-        self.assertEqual(case["execution_mode"], "ui_readonly")
-        self.assertEqual(case["coverage_status"], "automated")
-        self.assertEqual(case["mapping_status"], "mapped")
-        self.assertEqual(case["automation"]["status"], "automated")
-        self.assertEqual(case["automation"]["mode"], "ui_readonly")
-        self.assertEqual(case["automation"]["evidence_case"], "DS-UI-OH-01")
-        self.assertEqual(case["automation"]["runtime_env"]["UI_ONTOLOGY_HUB_INESDATA_DEMO"], "1")
-        self.assertNotIn("enable_with", case["automation"])
+        self.assertNotIn("PT5-OH-16", cases)
 
     def test_pt5_oh14_remains_partial_with_patterns_component_issue(self):
         catalog = self._load_catalog()
@@ -54,7 +46,7 @@ class OntologyHubComponentValidationTests(unittest.TestCase):
         self.assertEqual(case["mapping_status"], "partial")
         self.assertEqual(case["automation"]["runner_case"], "pt5_oh_14_patterns_access")
         self.assertEqual(case["automation"]["known_component_issue_cases"], ["OH-APP-22"])
-        self.assertIn("missing prefix.keyword mapping", case["automation"]["notes"])
+        self.assertIn("generación funcional del ZIP", case["automation"]["notes"])
 
     def test_evaluate_term_search_response_passes_on_valid_json_payload(self):
         payload = {
@@ -263,10 +255,20 @@ class OntologyHubComponentValidationTests(unittest.TestCase):
                 raise AssertionError(f"Unexpected URL: {url}")
 
             with mock.patch("validation.components.ontology_hub.integration.runner._http_get", side_effect=fake_http_get):
-                result = run_ontology_hub_validation(
-                    "http://ontology-hub-demo.dev.ds.dataspaceunit.upm",
-                    experiment_dir=tmpdir,
-                )
+                with mock.patch(
+                    "validation.components.ontology_hub.integration.runner._kubectl_http_get_until_stable",
+                    return_value=(
+                        200,
+                        "application/sparql-results+json",
+                        json.dumps({"head": {}, "boolean": True}),
+                        [{"attempt": 1, "http_status": 200}],
+                        True,
+                    ),
+                ):
+                    result = run_ontology_hub_validation(
+                        "http://ontology-hub-demo.dev.ds.dataspaceunit.upm",
+                        experiment_dir=tmpdir,
+                    )
 
             self.assertEqual(result["component"], "ontology-hub")
             self.assertEqual(result["status"], "passed")

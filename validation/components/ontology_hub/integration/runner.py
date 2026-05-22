@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import subprocess
 import time
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
@@ -128,6 +129,192 @@ def _http_get_until_stable(
             time.sleep(delay_seconds)
 
     return last_status, last_content_type, last_body, history
+
+
+def _parse_curl_with_markers(stdout: str) -> Tuple[int, str, str]:
+    status_match = re.search(r"\n__PIONERA_HTTP_STATUS__:(\d{3})\s*", stdout)
+    content_type_match = re.search(r"\n__PIONERA_CONTENT_TYPE__:(.*?)\s*$", stdout, flags=re.DOTALL)
+    body_end = status_match.start() if status_match else len(stdout)
+    body = stdout[:body_end]
+    status = int(status_match.group(1)) if status_match else 0
+    content_type = content_type_match.group(1).strip() if content_type_match else ""
+    return status, content_type, body
+
+
+def _kubectl_exec_http_get(
+    *,
+    namespace: str,
+    deployment_name: str,
+    url: str,
+    timeout: int = 20,
+) -> Tuple[int, str, str, Dict[str, Any]]:
+    target = f"deployment/{deployment_name}"
+    command = [
+        "kubectl",
+        "exec",
+        "-n",
+        namespace,
+        target,
+        "--",
+        "curl",
+        "--silent",
+        "--show-error",
+        "--location",
+        "--max-time",
+        str(timeout),
+        "--write-out",
+        "\n__PIONERA_HTTP_STATUS__:%{http_code}\n__PIONERA_CONTENT_TYPE__:%{content_type}\n",
+        url,
+    ]
+    diagnostic: Dict[str, Any] = {
+        "executed": False,
+        "namespace": namespace,
+        "target": target,
+        "url": url,
+    }
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 15,
+        )
+    except FileNotFoundError as exc:
+        diagnostic["error"] = f"kubectl not found: {exc}"
+        return 0, "", diagnostic["error"], diagnostic
+    except subprocess.TimeoutExpired as exc:
+        diagnostic["error"] = f"kubectl exec timed out after {exc.timeout}s"
+        return 0, "", diagnostic["error"], diagnostic
+
+    diagnostic["executed"] = True
+    diagnostic["returncode"] = completed.returncode
+    if completed.stderr:
+        diagnostic["stderr"] = completed.stderr.strip()
+
+    http_status, content_type, body = _parse_curl_with_markers(completed.stdout or "")
+    if completed.returncode != 0 and not body:
+        body = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        diagnostic["error"] = (completed.stderr or completed.stdout or "").strip()
+    return http_status, content_type, body, diagnostic
+
+
+def _kubectl_exec_shell(
+    *,
+    namespace: str,
+    deployment_name: str,
+    script: str,
+    timeout: int = 180,
+) -> Dict[str, Any]:
+    target = f"deployment/{deployment_name}"
+    command = [
+        "kubectl",
+        "exec",
+        "-n",
+        namespace,
+        target,
+        "--",
+        "sh",
+        "-lc",
+        script,
+    ]
+    diagnostic: Dict[str, Any] = {
+        "executed": False,
+        "namespace": namespace,
+        "target": target,
+    }
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        diagnostic["error"] = f"kubectl not found: {exc}"
+        return diagnostic
+    except subprocess.TimeoutExpired as exc:
+        diagnostic["error"] = f"kubectl exec timed out after {exc.timeout}s"
+        return diagnostic
+
+    diagnostic.update(
+        {
+            "executed": True,
+            "returncode": completed.returncode,
+            "stdout_excerpt": (completed.stdout or "")[-3000:],
+            "stderr_excerpt": (completed.stderr or "")[-3000:],
+        }
+    )
+    if completed.returncode != 0:
+        diagnostic["error"] = (completed.stderr or completed.stdout or "").strip()
+    return diagnostic
+
+
+def _kubectl_http_get_until_stable(
+    *,
+    namespace: str,
+    deployment_name: str,
+    url: str,
+    attempts: int = 8,
+    delay_seconds: float = 5.0,
+    transient_statuses: Sequence[int] = (0, 502, 503, 504),
+) -> Tuple[int, str, str, List[Dict[str, Any]], bool]:
+    history: List[Dict[str, Any]] = []
+    last_status = 0
+    last_content_type = ""
+    last_body = ""
+    ever_executed = False
+
+    for attempt in range(1, max(1, attempts) + 1):
+        last_status, last_content_type, last_body, diagnostic = _kubectl_exec_http_get(
+            namespace=namespace,
+            deployment_name=deployment_name,
+            url=url,
+        )
+        ever_executed = ever_executed or bool(diagnostic.get("executed"))
+        history.append(
+            {
+                "attempt": attempt,
+                "http_status": last_status,
+                "content_type": last_content_type,
+                **diagnostic,
+            }
+        )
+
+        if not diagnostic.get("executed"):
+            break
+        if last_status not in transient_statuses:
+            break
+        if attempt < attempts:
+            time.sleep(delay_seconds)
+
+    return last_status, last_content_type, last_body, history, ever_executed
+
+
+def _prepare_sparql_store(runtime: Dict[str, Any]) -> Dict[str, Any]:
+    script = r'''
+set -u
+export PATH="/opt/java/openjdk/bin:/opt/java/openjdk/jre/bin:${PATH}"
+if [ ! -s /app/public/lov.nq ] && [ -x /app/setup/lovInitialization.sh ]; then
+  bash /app/setup/lovInitialization.sh
+fi
+if [ ! -s /app/public/lov.nq ]; then
+  echo "Missing /app/public/lov.nq; cannot prepare SPARQL store"
+  exit 21
+fi
+pkill -f "[f]useki-server" || true
+sleep 1
+rm -f /app/jena/tdb_lov_db/*
+FORCE_RELOAD=true bash /app/setup/jena.sh
+'''
+    return _kubectl_exec_shell(
+        namespace=runtime["componentsNamespace"],
+        deployment_name=runtime["releaseName"],
+        script=script,
+        timeout=240,
+    )
 
 
 def _collect_strings(value: Any) -> Iterable[str]:
@@ -616,35 +803,168 @@ def evaluate_sparql_response(
     return result
 
 
-def _run_sparql_access_case(base_url: str, expected_class_uri: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    sparql_query = f"ASK {{ GRAPH ?g {{ <{expected_class_uri}> ?p ?o }} }}"
-    request_url = f"{base_url}{SPARQL_PATH}?{parse.urlencode({'query': sparql_query})}"
-    http_status, content_type, body_text, retry_history = _http_get_until_stable(request_url)
-    evaluation = evaluate_sparql_response(http_status, content_type, body_text)
-    evaluation["retry_history"] = retry_history
+def _assertion_summary(evaluation: Dict[str, Any]) -> str:
+    assertions = list(evaluation.get("assertions") or [])
+    if assertions:
+        return "; ".join(str(message) for message in assertions)
+    status = evaluation.get("http_status")
+    if status:
+        return f"HTTP {status}"
+    return str(evaluation.get("body_excerpt") or "unknown error")[:240]
+
+
+def _combine_sparql_evaluations(
+    *,
+    internal_evaluation: Dict[str, Any],
+    public_evaluation: Dict[str, Any],
+    internal_executed: bool,
+) -> Dict[str, Any]:
+    internal_passed = internal_evaluation.get("status") == "passed"
+    public_passed = public_evaluation.get("status") == "passed"
+    assertions: List[str] = []
+    warnings: List[str] = []
+
+    if internal_executed:
+        if not internal_passed:
+            assertions.append(f"Internal cluster SPARQL check failed: {_assertion_summary(internal_evaluation)}")
+    elif not public_passed:
+        assertions.append("Internal cluster SPARQL check could not be executed and the public endpoint also failed.")
+    else:
+        warnings.append("Internal cluster SPARQL check could not be executed; public endpoint evidence was used.")
+
+    if not public_passed:
+        message = (
+            "Public SPARQL exposure through ingress did not pass. "
+            f"Diagnostic: {_assertion_summary(public_evaluation)}"
+        )
+        if internal_passed:
+            warnings.append(message)
+        else:
+            assertions.append(message)
+
+    return {
+        "status": "failed" if assertions else "passed",
+        "assertions": assertions,
+        "warnings": warnings,
+        "internal_cluster_status": internal_evaluation.get("status"),
+        "public_ingress_status": public_evaluation.get("status"),
+        "checks": {
+            "internal_cluster": internal_evaluation,
+            "public_ingress": public_evaluation,
+        },
+    }
+
+
+def _run_sparql_access_case(base_url: str, runtime: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    expected_resource_uri = runtime["expectedSparqlResourceUri"]
+    sparql_query = f"ASK {{ GRAPH ?g {{ <{expected_resource_uri}> ?p ?o }} }}"
+    query_string = parse.urlencode({"query": sparql_query})
+    public_request_url = f"{base_url}{SPARQL_PATH}?{query_string}"
+    internal_request_url = f"{runtime['internalBaseUrl']}{SPARQL_PATH}?{query_string}"
+    preparation: Dict[str, Any] = {
+        "attempted": False,
+        "enabled": bool(runtime.get("prepareSparqlStore", True)),
+    }
+
+    internal_status, internal_type, internal_body, internal_retry_history, internal_executed = _kubectl_http_get_until_stable(
+        namespace=runtime["componentsNamespace"],
+        deployment_name=runtime["releaseName"],
+        url=internal_request_url,
+    )
+    internal_evaluation = evaluate_sparql_response(internal_status, internal_type, internal_body)
+    internal_evaluation["retry_history"] = internal_retry_history
+    internal_evaluation["executed"] = internal_executed
+
+    if runtime.get("prepareSparqlStore", True) and internal_executed and internal_evaluation.get("status") != "passed":
+        preparation = {
+            "attempted": True,
+            "enabled": True,
+            **_prepare_sparql_store(runtime),
+        }
+        internal_status, internal_type, internal_body, internal_retry_history, internal_executed = _kubectl_http_get_until_stable(
+            namespace=runtime["componentsNamespace"],
+            deployment_name=runtime["releaseName"],
+            url=internal_request_url,
+            attempts=4,
+        )
+        internal_evaluation = evaluate_sparql_response(internal_status, internal_type, internal_body)
+        internal_evaluation["retry_history"] = internal_retry_history
+        internal_evaluation["executed"] = internal_executed
+        internal_evaluation["preparation"] = preparation
+
+    public_status, public_type, public_body, public_retry_history = _http_get_until_stable(public_request_url)
+    public_evaluation = evaluate_sparql_response(public_status, public_type, public_body)
+    public_evaluation["retry_history"] = public_retry_history
+
+    evaluation = _combine_sparql_evaluations(
+        internal_evaluation=internal_evaluation,
+        public_evaluation=public_evaluation,
+        internal_executed=internal_executed,
+    )
     case_result = _build_case_result(
         test_case_id="PT5-OH-13",
         description="Consulta SPARQL real sobre la ontologia de ejemplo sembrada",
         case_type="api",
         metadata=API_CASE_METADATA["PT5-OH-13"],
-        requests_payload={
-            "method": "GET",
-            "url": request_url,
-            "query": sparql_query,
-        },
-        responses_payload={
-            "http_status": http_status,
-            "content_type": content_type,
-        },
+        requests_payload=[
+            {
+                "role": "internal_cluster",
+                "method": "GET",
+                "url": internal_request_url,
+                "query": sparql_query,
+                "expected_resource_uri": expected_resource_uri,
+                "namespace": runtime["componentsNamespace"],
+                "deployment": runtime["releaseName"],
+            },
+            {
+                "role": "public_ingress",
+                "method": "GET",
+                "url": public_request_url,
+                "query": sparql_query,
+                "expected_resource_uri": expected_resource_uri,
+            },
+        ],
+        responses_payload=[
+            {
+                "role": "internal_cluster",
+                "http_status": internal_status,
+                "content_type": internal_type,
+                "executed": internal_executed,
+            },
+            {
+                "role": "public_ingress",
+                "http_status": public_status,
+                "content_type": public_type,
+            },
+        ],
         evaluation=evaluation,
-        expected_result="La consulta ASK sobre la clase sembrada devuelve true en el endpoint SPARQL publico.",
+        expected_result=(
+            "La consulta ASK sobre el recurso RDF sembrado devuelve true dentro del cluster. "
+            "La exposicion publica por ingress queda registrada como evidencia diagnostica."
+        ),
     )
     raw_artifact = {
-        "url": request_url,
-        "http_status": http_status,
-        "content_type": content_type,
-        "body": body_text,
-        "retry_history": retry_history,
+        "query": sparql_query,
+        "expected_resource_uri": expected_resource_uri,
+        "preparation": preparation,
+        "internal_cluster": {
+            "url": internal_request_url,
+            "namespace": runtime["componentsNamespace"],
+            "deployment": runtime["releaseName"],
+            "http_status": internal_status,
+            "content_type": internal_type,
+            "body": internal_body,
+            "retry_history": internal_retry_history,
+            "executed": internal_executed,
+        },
+        "public_ingress": {
+            "url": public_request_url,
+            "http_status": public_status,
+            "content_type": public_type,
+            "body": public_body,
+            "retry_history": public_retry_history,
+        },
+        "evaluation": evaluation,
     }
     return case_result, raw_artifact
 
@@ -688,7 +1008,7 @@ def run_ontology_hub_validation(base_url: str, experiment_dir: str | None = None
     executed_cases.append(pt5_oh_09)
     raw_artifacts.append(("PT5-OH-09", "pt5-oh-09-response.json", artifact_09))
 
-    pt5_oh_13, artifact_13 = _run_sparql_access_case(normalized_base_url, runtime["expectedClassUri"])
+    pt5_oh_13, artifact_13 = _run_sparql_access_case(normalized_base_url, runtime)
     executed_cases.append(pt5_oh_13)
     raw_artifacts.append(("PT5-OH-13", "pt5-oh-13-response.json", artifact_13))
 

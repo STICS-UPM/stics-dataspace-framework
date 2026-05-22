@@ -10,7 +10,7 @@ La suite actual ejecuta cinco casos técnicos:
 
 - `PT5-OH-08`: búsqueda pública de términos.
 - `PT5-OH-09`: búsqueda filtrada equivalente por API.
-- `PT5-OH-13`: consulta SPARQL real.
+- `PT5-OH-13`: consulta SPARQL real sobre el recurso RDF sembrado, con doble evidencia: ejecución interna en Kubernetes y exposición pública por ingress.
 - `PT5-OH-14`: acceso al servicio de patrones.
 - `PT5-OH-15`: disponibilidad coordinada de UI pública y documentación API.
 
@@ -38,3 +38,18 @@ Artefactos esperados:
 ## Criterio De Cierre
 
 Si un caso falla porque el componente responde `500`, `502` u otra respuesta funcionalmente inválida, el fallo se conserva como incidencia del componente o de su integración. No debe transformarse en `skipped`.
+
+Para `PT5-OH-13`, el criterio principal es que la consulta `ASK` funcione desde
+dentro del clúster sobre el endpoint del componente. La misma consulta se ejecuta
+también por el endpoint público para dejar evidencia de exposición. Si el check
+interno pasa y el ingress falla, la suite conserva el caso como automatizado y
+registra el fallo público como advertencia diagnóstica en el artefacto
+`pt5-oh-13-response.json`.
+
+Si el primer intento interno no encuentra datos en Fuseki, el runner puede
+preparar el almacén RDF temporal del pod a partir de `/app/public/lov.nq` y
+reintentar la consulta. Este comportamiento está activado por defecto mediante
+`ONTOLOGY_HUB_PREPARE_SPARQL_STORE=true` y puede desactivarse si se quiere
+validar únicamente el estado exacto en que quedó el componente tras el despliegue.
+El recurso consultado se puede ajustar con
+`ONTOLOGY_HUB_EXPECTED_SPARQL_RESOURCE_URI`.

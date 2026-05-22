@@ -218,6 +218,11 @@ def resolve_ontology_hub_runtime(
             or deployer_config.get("COMPONENTS_NAMESPACE")
             or "components"
         ).strip(),
+        "releaseName": (current_env.get("ONTOLOGY_HUB_RELEASE_NAME") or f"{dataspace}-ontology-hub").strip(),
+        "internalBaseUrl": (
+            current_env.get("ONTOLOGY_HUB_INTERNAL_BASE_URL")
+            or f"http://127.0.0.1:{_chart_validation_value(chart_values, 'service', 'port') or '3333'}"
+        ).rstrip("/"),
         "adminEmail": _resolve_runtime_value(
             current_env,
             {
@@ -261,6 +266,12 @@ def resolve_ontology_hub_runtime(
         "expectedSearchTerm": current_env.get("ONTOLOGY_HUB_EXPECTED_QUERY") or "Person",
         "expectedLabel": current_env.get("ONTOLOGY_HUB_EXPECTED_LABEL") or "Person",
         "expectedClassUri": current_env.get("ONTOLOGY_HUB_EXPECTED_CLASS_URI") or "http://schema.org/Person",
+        "expectedSparqlResourceUri": (
+            current_env.get("ONTOLOGY_HUB_EXPECTED_SPARQL_RESOURCE_URI")
+            or _chart_validation_value(chart_values, "validation", "integration", "sparqlResourceUri")
+            or explicit_creation_uri
+            or "https://saref.etsi.org/saref4grid/v2.1.1/"
+        ),
         "expectedClassPrefixedName": current_env.get("ONTOLOGY_HUB_EXPECTED_CLASS_PREFIXED_NAME")
         or "saref4grid:Person",
         "expectedPrimaryTag": current_env.get("ONTOLOGY_HUB_EXPECTED_PRIMARY_TAG") or "Services",
@@ -316,6 +327,7 @@ def resolve_ontology_hub_runtime(
             DEFAULT_UI_READY_TIMEOUT_MS,
         ),
         "strictPreflight": _env_bool(current_env, "ONTOLOGY_HUB_UI_STRICT_PREFLIGHT", False),
+        "prepareSparqlStore": _env_bool(current_env, "ONTOLOGY_HUB_PREPARE_SPARQL_STORE", True),
         "preflightTimeout": _env_int(
             current_env,
             "ONTOLOGY_HUB_UI_PREFLIGHT_TIMEOUT",

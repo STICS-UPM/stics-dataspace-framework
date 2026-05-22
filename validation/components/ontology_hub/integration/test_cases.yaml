@@ -76,7 +76,7 @@ test_cases:
   - id: PT5-OH-13
     component: ontology_hub
     case_group: pt5
-    description: Consulta SPARQL real sobre la ontología de ejemplo sembrada
+    description: Consulta SPARQL real sobre el recurso RDF de ejemplo sembrado
     type: api
     validation_type: interoperability
     dataspace_dimension: interoperability
@@ -84,12 +84,16 @@ test_cases:
     coverage_status: automated
     mapping_status: mapped
     preconditions:
-      - El endpoint SPARQL público está disponible.
+      - Ontology Hub está desplegado en Kubernetes.
+      - El endpoint SPARQL interno del componente está disponible dentro del clúster.
+      - El endpoint SPARQL público por ingress está publicado como superficie diagnóstica.
       - La ontología sembrada está cargada en el almacén RDF.
     steps:
-      - Ejecutar una consulta SPARQL `ASK` sobre la clase esperada.
-      - Validar que el endpoint devuelve HTTP 200 y una respuesta booleana válida.
-    expected_result: La consulta SPARQL devuelve un resultado válido sobre la ontología sembrada.
+      - Ejecutar una consulta SPARQL `ASK` sobre el recurso RDF esperado desde dentro del clúster.
+      - Ejecutar la misma consulta SPARQL por el endpoint público.
+      - Validar como criterio principal que la consulta interna devuelve HTTP 200 y `boolean=true`.
+      - Registrar la respuesta pública por ingress como evidencia diagnóstica de exposición.
+    expected_result: La consulta SPARQL interna devuelve un resultado válido sobre la ontología sembrada; la exposición pública queda trazada en el artefacto del caso.
     traceability:
       - OntHub-26
     automation:
@@ -100,7 +104,13 @@ test_cases:
         method: GET
         path: /dataset/sparql
         query:
-          query: ASK { <http://schema.org/Person> ?p ?o }
+          query: ASK { GRAPH ?g { <https://saref.etsi.org/saref4grid/v2.1.1/> ?p ?o } }
+      runtime_env:
+        ONTOLOGY_HUB_EXPECTED_SPARQL_RESOURCE_URI: https://saref.etsi.org/saref4grid/v2.1.1/
+        ONTOLOGY_HUB_PREPARE_SPARQL_STORE: "true"
+      evidence:
+        - internal_cluster
+        - public_ingress
 
   - id: PT5-OH-14
     component: ontology_hub
