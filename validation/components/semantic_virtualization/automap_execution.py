@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 from rdflib import Graph, Literal, Namespace, RDF, URIRef
-from rdflib.namespace import XSD
+from rdflib.namespace import OWL, RDFS, XSD
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
@@ -29,10 +29,14 @@ COMPONENT_KEY = "semantic-virtualization"
 SUITE_NAME = "automap-deterministic-execution"
 TEST_CASE_ID = "SV-AUTOMAP-02"
 DEFAULT_FIXTURES_DIR = PROJECT_ROOT / "validation" / "components" / "semantic_virtualization" / "fixtures" / "automap"
+DEFAULT_ONTOLOGY_HUB_ARTIFACT = (
+    PROJECT_ROOT / "validation" / "components" / "semantic_virtualization" / "fixtures" / "ontology" / "mobility-mini.ttl"
+)
 
 EXPECTED_COLUMNS = ["stop_id", "stop_name", "lat", "lon"]
 AUTOMAP_BASE = Namespace("https://pionera.example/automap/")
 MOBILITY = Namespace("https://pionera.example/ontology/mobility#")
+ONTOLOGY_HUB_MOBILITY = Namespace("https://w3id.org/pionera/validation/mobility#")
 
 
 def _component_dir(experiment_dir: str | os.PathLike[str] | None) -> Path | None:
@@ -61,20 +65,28 @@ def _load_automap_module(source_dir: Path, relative_path: str, module_name: str)
     return module
 
 
-def _materialize_mobility_fixture(csv_path: Path, output_path: Path) -> dict[str, Any]:
+def _materialize_mobility_fixture(
+    csv_path: Path,
+    output_path: Path,
+    *,
+    mobility_namespace: Namespace = MOBILITY,
+    stop_name_predicate: str = "stopName",
+    latitude_predicate: str = "latitude",
+    longitude_predicate: str = "longitude",
+) -> dict[str, Any]:
     graph = Graph()
     graph.bind("automap", AUTOMAP_BASE)
-    graph.bind("mob", MOBILITY)
+    graph.bind("mob", mobility_namespace)
 
     row_count = 0
     with csv_path.open("r", encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle):
             row_count += 1
             subject = URIRef(AUTOMAP_BASE[f"stop/{row['stop_id']}"])
-            graph.add((subject, RDF.type, MOBILITY.Stop))
-            graph.add((subject, MOBILITY.stopName, Literal(row["stop_name"])))
-            graph.add((subject, MOBILITY.latitude, Literal(row["lat"], datatype=XSD.decimal)))
-            graph.add((subject, MOBILITY.longitude, Literal(row["lon"], datatype=XSD.decimal)))
+            graph.add((subject, RDF.type, mobility_namespace.Stop))
+            graph.add((subject, mobility_namespace[stop_name_predicate], Literal(row["stop_name"])))
+            graph.add((subject, mobility_namespace[latitude_predicate], Literal(row["lat"], datatype=XSD.decimal)))
+            graph.add((subject, mobility_namespace[longitude_predicate], Literal(row["lon"], datatype=XSD.decimal)))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with warnings.catch_warnings():
@@ -99,6 +111,192 @@ def _run_direct_ask_query(rdf_path: Path) -> dict[str, Any]:
     return {
         "query": "ASK stop SOL has type Stop and label Sol",
         "passed": bool(graph.query(query)),
+    }
+
+
+def _run_ontology_hub_ask_query(rdf_path: Path) -> dict[str, Any]:
+    graph = Graph()
+    graph.parse(rdf_path, format="nt")
+    query = """
+    ASK {
+      <https://pionera.example/automap/stop/SOL> a <https://w3id.org/pionera/validation/mobility#Stop> ;
+        <https://w3id.org/pionera/validation/mobility#hasStopName> "Sol" .
+    }
+    """
+    return {
+        "query": "ASK stop SOL uses Ontology Hub mobility terms",
+        "passed": bool(graph.query(query)),
+    }
+
+
+def _parse_ontology_hub_artifact(ontology_path: Path) -> dict[str, Any]:
+    assertions: list[str] = []
+    graph = Graph()
+    try:
+        graph.parse(ontology_path, format="turtle")
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "assertions": [f"Ontology Hub artifact is not valid Turtle/RDF: {exc}"],
+            "path": str(ontology_path),
+        }
+
+    ontology_subjects = sorted(str(subject) for subject in graph.subjects(RDF.type, OWL.Ontology))
+    labels = sorted(str(label) for subject in graph.subjects(RDF.type, OWL.Ontology) for label in graph.objects(subject, RDFS.label))
+    expected_terms = [
+        ONTOLOGY_HUB_MOBILITY.Stop,
+        ONTOLOGY_HUB_MOBILITY.hasStopName,
+        ONTOLOGY_HUB_MOBILITY.hasLatitude,
+        ONTOLOGY_HUB_MOBILITY.hasLongitude,
+    ]
+    missing_terms = [str(term) for term in expected_terms if (term, None, None) not in graph]
+
+    if not ontology_subjects:
+        assertions.append("Ontology Hub artifact must declare owl:Ontology metadata")
+    if not labels:
+        assertions.append("Ontology Hub artifact must expose a governance/catalog label")
+    if missing_terms:
+        assertions.append("Ontology Hub artifact is missing expected mobility terms: " + ", ".join(missing_terms))
+
+    return {
+        "status": "failed" if assertions else "passed",
+        "assertions": assertions,
+        "path": str(ontology_path),
+        "ontology_iris": ontology_subjects,
+        "labels": labels,
+        "triple_count": len(graph),
+        "expected_terms": [str(term) for term in expected_terms],
+    }
+
+
+def _validate_automap_ontology_hub_reuse(
+    *,
+    rml_tools: Any,
+    metrics_module: Any,
+    csv_path: Path,
+    fixtures_dir: Path,
+    output_dir: Path,
+) -> dict[str, Any]:
+    assertions: list[str] = []
+    ontology_path = DEFAULT_ONTOLOGY_HUB_ARTIFACT
+    mapping_path = fixtures_dir / "ontology_hub_mobility_mapping.yarrr.yml"
+    gold_kg_path = fixtures_dir / "ontology_hub_mobility_gold.nt"
+    generated_kg_path = output_dir / "automap_generated_ontology_hub_mobility.nt"
+
+    for label, path in {
+        "ontology_hub_artifact": ontology_path,
+        "mapping": mapping_path,
+        "gold_kg": gold_kg_path,
+    }.items():
+        if not path.is_file():
+            assertions.append(f"Automap/Ontology Hub fixture is missing: {label} ({path})")
+
+    if assertions:
+        return {
+            "status": "failed",
+            "assertions": assertions,
+            "ontology_hub_artifact": str(ontology_path),
+            "mapping_path": str(mapping_path),
+            "gold_kg_path": str(gold_kg_path),
+        }
+
+    ontology_profile = _parse_ontology_hub_artifact(ontology_path)
+    assertions.extend(ontology_profile.get("assertions") or [])
+
+    ontology_summary = rml_tools.get_ontology_subgraph(str(ontology_path), EXPECTED_COLUMNS)
+    ontology_markers = [
+        "Class: <https://w3id.org/pionera/validation/mobility#Stop>",
+        "hasStopName",
+        "hasLatitude",
+        "hasLongitude",
+    ]
+    missing_ontology_markers = [marker for marker in ontology_markers if marker not in ontology_summary]
+    if missing_ontology_markers:
+        assertions.append(
+            "Automap did not extract expected Ontology Hub-governed terms: "
+            + ", ".join(missing_ontology_markers)
+        )
+
+    mapping_text = mapping_path.read_text(encoding="utf-8")
+    try:
+        mapping_data = yaml.safe_load(mapping_text)
+    except yaml.YAMLError as exc:
+        mapping_data = None
+        assertions.append(f"Ontology Hub YARRRML fixture is not valid YAML: {exc}")
+    if not isinstance(mapping_data, dict) or "mappings" not in mapping_data:
+        assertions.append("Ontology Hub YARRRML fixture must contain a mappings block")
+    if "https://w3id.org/pionera/validation/mobility#" not in mapping_text:
+        assertions.append("Ontology Hub YARRRML fixture must reference the governed mobility ontology namespace")
+
+    materialization = _materialize_mobility_fixture(
+        csv_path,
+        generated_kg_path,
+        mobility_namespace=ONTOLOGY_HUB_MOBILITY,
+        stop_name_predicate="hasStopName",
+        latitude_predicate="hasLatitude",
+        longitude_predicate="hasLongitude",
+    )
+    if materialization["rows"] != 3:
+        assertions.append(f"Expected 3 ontology-backed materialized rows, got {materialization['rows']}")
+    if materialization["triples"] != 12:
+        assertions.append(f"Expected 12 ontology-backed RDF triples, got {materialization['triples']}")
+
+    pipeline_result = {
+        "yarrrml_output": mapping_text,
+        "rdf_output": str(generated_kg_path),
+        "csv_path": str(csv_path),
+        "retry_count": 0,
+        "feedback": "Deterministic Automap execution using an Ontology Hub-governable ontology artifact",
+        "messages": [],
+    }
+    evaluation_metrics = metrics_module.evaluate(
+        levels=[2, 3],
+        pipeline_result=pipeline_result,
+        gold_kg_path=str(gold_kg_path),
+    )
+    if evaluation_metrics.get("L2_skipped"):
+        assertions.append(f"Automap/Ontology Hub gold KG comparison was skipped: {evaluation_metrics.get('L2_skip_reason')}")
+    else:
+        for metric_name in [
+            "L2_norm_triple_precision",
+            "L2_norm_triple_recall",
+            "L2_norm_triple_f1",
+            "L2_predicate_f1",
+            "L2_class_f1",
+        ]:
+            if evaluation_metrics.get(metric_name) != 1.0:
+                assertions.append(f"Expected Automap/Ontology Hub {metric_name}=1.0, got {evaluation_metrics.get(metric_name)}")
+    if evaluation_metrics.get("L3_skipped"):
+        assertions.append(f"Automap/Ontology Hub column coverage was skipped: {evaluation_metrics.get('L3_skip_reason')}")
+    elif evaluation_metrics.get("L3_columns_mapped_yarrrml") != len(EXPECTED_COLUMNS):
+        assertions.append(
+            "Automap/Ontology Hub YARRRML column coverage did not map all fixture columns: "
+            + ", ".join(evaluation_metrics.get("L3_columns_missing_yarrrml") or [])
+        )
+
+    sparql_check = _run_ontology_hub_ask_query(generated_kg_path)
+    if not sparql_check["passed"]:
+        assertions.append("Direct SPARQL ASK validation over the Ontology Hub-backed KG did not pass")
+
+    return {
+        "status": "failed" if assertions else "passed",
+        "assertions": assertions,
+        "ontology_hub_artifact": ontology_profile,
+        "ontology_summary_excerpt": ontology_summary[:1200],
+        "ontology_markers_checked": ontology_markers,
+        "mapping": {
+            "path": str(mapping_path),
+            "yaml_valid": isinstance(mapping_data, dict),
+            "governed_namespace": "https://w3id.org/pionera/validation/mobility#",
+        },
+        "materialization": materialization,
+        "metrics": evaluation_metrics,
+        "sparql": sparql_check,
+        "linked_cases": ["INT-VS-OH-01", "PT5-OH-07", "PT5-VS-06", "PT5-VS-10"],
+        "execution_scope": (
+            "Deterministic cross-component traceability baseline: Automap consumes an ontology artifact "
+            "with Ontology Hub governance metadata and produces RDF evidence using those ontology terms."
+        ),
     }
 
 
@@ -227,6 +425,18 @@ def validate_automap_deterministic_execution(
     sparql_check = _run_direct_ask_query(generated_kg_path)
     if not sparql_check["passed"]:
         assertions.append("Direct SPARQL ASK validation over the generated KG did not pass")
+    ontology_hub_reuse = _validate_automap_ontology_hub_reuse(
+        rml_tools=rml_tools,
+        metrics_module=metrics_module,
+        csv_path=csv_path,
+        fixtures_dir=resolved_fixtures_dir,
+        output_dir=resolved_output_dir,
+    )
+    if ontology_hub_reuse.get("status") != "passed":
+        assertions.extend(
+            f"Automap/Ontology Hub reuse: {assertion}"
+            for assertion in list(ontology_hub_reuse.get("assertions") or [])
+        )
 
     return {
         "status": "failed" if assertions else "passed",
@@ -256,10 +466,12 @@ def validate_automap_deterministic_execution(
             "in the subject URI instead of as a literal object."
         ),
         "sparql": sparql_check,
+        "ontology_hub_reuse": ontology_hub_reuse,
         "execution_scope": (
             "Deterministic offline execution baseline for Automap schema extraction, ontology extraction, "
-            "RDF materialization evidence and evaluation metrics. The LLM generation path is intentionally not "
-            "executed in Level 6 because it requires model/runtime configuration and secrets outside the open-source baseline."
+            "Ontology Hub-governed ontology reuse, RDF materialization evidence and evaluation metrics. "
+            "The LLM generation path is intentionally not executed in Level 6 because it requires model/runtime "
+            "configuration and secrets outside the open-source baseline."
         ),
         "secret_policy": "No environment files, API keys or remote LLM endpoints are read by this validation.",
     }
@@ -289,12 +501,13 @@ def run_automap_deterministic_execution_validation(
         "type": "functional",
         "case_group": "pt5",
         "validation_type": "functional",
-        "dataspace_dimension": "mapping_generation_evaluation",
+        "dataspace_dimension": "mapping_generation_evaluation_and_semantic_reuse",
         "mapping_status": "mapped",
         "automation_mode": "offline_deterministic_execution",
         "execution_mode": "offline_fixture",
         "coverage_status": "automated",
-        "linked_pt5_cases": ["PT5-VS-01", "PT5-VS-06", "PT5-VS-10"],
+        "linked_pt5_cases": ["PT5-VS-01", "PT5-VS-06", "PT5-VS-10", "PT5-OH-07"],
+        "linked_cases": ["INT-VS-OH-01"],
         "evaluation": {
             "status": validation["status"],
             "assertions": list(validation.get("assertions") or []),
@@ -302,7 +515,8 @@ def run_automap_deterministic_execution_validation(
         "evidence": validation,
         "expected_result": (
             "Automap deterministic tooling can extract source schema and ontology context, produce "
-            "traceable RDF evidence from a controlled mapping fixture and evaluate it against a gold KG."
+            "traceable RDF evidence from controlled mapping fixtures, reuse an Ontology Hub-governable "
+            "ontology artifact and evaluate the outputs against gold KGs."
         ),
     }
     summary = {

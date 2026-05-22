@@ -35,7 +35,11 @@ class SemanticVirtualizationAutomapExecutionTests(unittest.TestCase):
                         "Class: <https://pionera.example/ontology/mobility#Stop>\\n"
                         "DatatypeProperty: stopName\\n"
                         "DatatypeProperty: latitude\\n"
-                        "DatatypeProperty: longitude"
+                        "DatatypeProperty: longitude\\n"
+                        "Class: <https://w3id.org/pionera/validation/mobility#Stop>\\n"
+                        "DatatypeProperty: hasStopName\\n"
+                        "DatatypeProperty: hasLatitude\\n"
+                        "DatatypeProperty: hasLongitude"
                     )
                 """
             ).strip()
@@ -80,6 +84,9 @@ class SemanticVirtualizationAutomapExecutionTests(unittest.TestCase):
         self.assertEqual(result["schema"]["columns"], ["stop_id", "stop_name", "lat", "lon"])
         self.assertEqual(result["materialization"]["triples"], 12)
         self.assertTrue(result["sparql"]["passed"])
+        self.assertEqual(result["ontology_hub_reuse"]["status"], "passed")
+        self.assertTrue(result["ontology_hub_reuse"]["sparql"]["passed"])
+        self.assertIn("PT5-OH-07", result["ontology_hub_reuse"]["linked_cases"])
         self.assertEqual(
             result["secret_policy"],
             "No environment files, API keys or remote LLM endpoints are read by this validation.",
@@ -115,6 +122,7 @@ class SemanticVirtualizationAutomapExecutionTests(unittest.TestCase):
             self.assertTrue(os.path.exists(generated_kg))
             self.assertEqual(report["summary"], {"total": 1, "passed": 1, "failed": 0, "skipped": 0})
             self.assertEqual(report["pt5_case_results"][0]["test_case_id"], TEST_CASE_ID)
+            self.assertIn("INT-VS-OH-01", report["pt5_case_results"][0]["linked_cases"])
 
 
 if __name__ == "__main__":

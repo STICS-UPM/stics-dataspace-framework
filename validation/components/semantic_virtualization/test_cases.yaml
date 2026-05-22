@@ -115,15 +115,18 @@ support_checks:
     description: Execute a deterministic Automap mapping-generation evaluation baseline
     type: functional
     validation_type: functional
-    dataspace_dimension: mapping_generation_evaluation
+    dataspace_dimension: mapping_generation_evaluation_and_semantic_reuse
     execution_mode: offline_fixture
     coverage_status: automated
     mapping_status: mapped
-    expected_result: Automap deterministic tooling can extract source schema and ontology context, produce traceable RDF evidence from a controlled mapping fixture and evaluate it against a gold KG
+    expected_result: Automap deterministic tooling can extract source schema and ontology context, reuse an Ontology Hub-governable ontology artifact, produce traceable RDF evidence from controlled mapping fixtures and evaluate it against gold KGs
     linked_pt5_cases:
       - PT5-VS-01
       - PT5-VS-06
       - PT5-VS-10
+      - PT5-OH-07
+    linked_cases:
+      - INT-VS-OH-01
     automation:
       status: automated
       mode: offline_deterministic_execution
@@ -132,7 +135,8 @@ support_checks:
       source_repository: https://github.com/ProyectoPIONERA/automap
       local_source_dir: adapters/inesdata/sources/automap
       fixtures_dir: validation/components/semantic_virtualization/fixtures/automap
-      execution_scope: Deterministic offline execution baseline without LLM generation, remote model calls or secret access
+      ontology_hub_artifact: validation/components/semantic_virtualization/fixtures/ontology/mobility-mini.ttl
+      execution_scope: Deterministic offline execution baseline with Ontology Hub-governable ontology reuse, without LLM generation, remote model calls or secret access
 
 test_cases:
   - id: PT5-VS-01
@@ -448,7 +452,8 @@ integration_cases:
     linked_cases:
       - PT5-VS-06
       - PT5-OH-07
-    expected_result: Mapping validation references ontology artifacts that are parseable as RDF/OWL, expose governance/catalog metadata and provide the classes and properties reused by Semantic Virtualization mappings.
+      - SV-AUTOMAP-02
+    expected_result: Mapping validation and the Automap deterministic baseline reference ontology artifacts that are parseable as RDF/OWL, expose governance/catalog metadata and provide the classes and properties reused by Semantic Virtualization mappings.
 
 ui_demo_cases:
   - id: SV-UI-04

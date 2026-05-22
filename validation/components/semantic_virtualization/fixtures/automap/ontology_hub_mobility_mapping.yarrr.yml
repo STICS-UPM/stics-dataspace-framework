@@ -1,0 +1,15 @@
+prefixes:
+  automap: "https://pionera.example/automap/"
+  mob: "https://w3id.org/pionera/validation/mobility#"
+  xsd: "http://www.w3.org/2001/XMLSchema#"
+
+mappings:
+  ontology_hub_mobility_stops:
+    sources:
+      - ["mobility_stops.csv~csv"]
+    s: "automap:stop/$(stop_id)"
+    po:
+      - ["a", "mob:Stop"]
+      - ["mob:hasStopName", "$(stop_name)"]
+      - ["mob:hasLatitude", "$(lat)", "xsd:decimal"]
+      - ["mob:hasLongitude", "$(lon)", "xsd:decimal"]

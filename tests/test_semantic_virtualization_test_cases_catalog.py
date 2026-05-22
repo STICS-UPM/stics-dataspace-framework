@@ -144,6 +144,7 @@ class SemanticVirtualizationTestCasesCatalogTests(unittest.TestCase):
             "validation/components/semantic_virtualization/mapping_validation.py",
         )
         self.assertIn("PT5-OH-07", cases["INT-VS-OH-01"]["linked_cases"])
+        self.assertIn("SV-AUTOMAP-02", cases["INT-VS-OH-01"]["linked_cases"])
 
 
 if __name__ == "__main__":
