@@ -252,6 +252,8 @@ Estos artefactos separan `support_checks`, `dataspace_cases`, `ops_checks`, `evi
 - `UI_AI_MODEL_HUB_MODEL_URL`
 - `UI_AI_MODEL_HUB_MODEL_PATH`
 - `UI_AI_MODEL_HUB_MODEL_NAMESPACE`
+- `UI_CATALOG_READINESS_TIMEOUT_MS`
+- `UI_FEDERATED_CATALOG_READINESS_TIMEOUT_MS`
 - `UI_COMPONENTS_NAMESPACE`
 - `UI_INGRESS_PORT`
 - `PLAYWRIGHT_DNS_HOST_MAP`
@@ -311,8 +313,14 @@ solo para artefactos de validación con prefijos `qa-ui-*` y `asset-e2e-*` en el
 provider. Es útil cuando ejecuciones anteriores saturan la primera página del
 Catalog Browser e impiden mostrar el asset temporal de la demo.
 
+`UI_CATALOG_READINESS_TIMEOUT_MS` permite ajustar el tiempo máximo de espera
+para que un asset temporal aparezca en el catálogo del consumidor. El alias
+`UI_FEDERATED_CATALOG_READINESS_TIMEOUT_MS` se mantiene para los flujos que usan
+el catálogo federado de INESData. Por defecto se espera hasta 180 segundos para
+absorber la estabilización inicial del catálogo en despliegues recién creados.
+
 `UI_AI_MODEL_HUB_CATALOG_CLEANUP=1` aplica la misma idea solo sobre artefactos
-de validacion con prefijos `qa-ui-*`, `asset-e2e-*`, `policy-ui-*` y
+de validación con prefijos `qa-ui-*`, `asset-e2e-*`, `policy-ui-*` y
 `contract-ui-*`. No elimina datasets funcionales con nombres estables, por
 ejemplo `dataset-flares-subtask2`.
 

@@ -79,6 +79,7 @@ const TRANSIENT_HTTP_STATUSES = new Set([401, 502, 503, 504]);
 const TRANSIENT_HTTP_MAX_ATTEMPTS = 4;
 const TRANSIENT_HTTP_RETRY_DELAY_MS = 2000;
 const CLEANUP_ENTITY_ORDER: CleanupEntityKind[] = ["contractdefinitions", "policydefinitions", "assets"];
+const DEFAULT_CATALOG_READINESS_TIMEOUT_MS = 180_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -86,6 +87,19 @@ function sleep(ms: number): Promise<void> {
 
 function isTransientHttpStatus(status: number): boolean {
   return TRANSIENT_HTTP_STATUSES.has(status);
+}
+
+function catalogReadinessTimeoutMs(): number {
+  const configured = Number.parseInt(
+    process.env.UI_CATALOG_READINESS_TIMEOUT_MS ||
+      process.env.UI_FEDERATED_CATALOG_READINESS_TIMEOUT_MS ||
+      "",
+    10,
+  );
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  return DEFAULT_CATALOG_READINESS_TIMEOUT_MS;
 }
 
 async function resolveToken(tokenProvider: TokenProvider): Promise<string> {
@@ -703,7 +717,7 @@ async function fetchConsumerCatalogDatasetWithOffer(
   assetId: string,
   counterPartyAddress: string,
   counterPartyId: string,
-  timeoutMs = 120_000,
+  timeoutMs = catalogReadinessTimeoutMs(),
 ): Promise<{ catalogResponse: any; dataset: any }> {
   const deadline = Date.now() + timeoutMs;
   let lastDatasetFound = false;
@@ -735,13 +749,15 @@ async function fetchConsumerFederatedCatalogDatasetWithOffer(
   request: APIRequestContext,
   runtime: DataspacePortalRuntime,
   assetId: string,
-  timeoutMs = 120_000,
+  timeoutMs = catalogReadinessTimeoutMs(),
 ): Promise<{ catalogResponse: any; dataset: any; datasetCount: number }> {
   const deadline = Date.now() + timeoutMs;
   let lastDatasetFound = false;
+  let lastDatasetCount = 0;
 
   while (Date.now() < deadline) {
     const catalogResponse = await fetchConsumerFederatedCatalogResponse(request, runtime);
+    lastDatasetCount = federatedCatalogDatasetCount(catalogResponse);
     const match = findFederatedCatalogDataset(catalogResponse, assetId);
     if (match) {
       lastDatasetFound = true;
@@ -757,7 +773,8 @@ async function fetchConsumerFederatedCatalogDatasetWithOffer(
 
   throw new Error(
     `Federated catalog dataset '${assetId}' did not expose an offer policy in time. ` +
-      `Last catalog state: ${lastDatasetFound ? "dataset without offer policy" : "dataset not found"}`,
+      `Last catalog state: ${lastDatasetFound ? "dataset without offer policy" : "dataset not found"}. ` +
+      `Last visible dataset count: ${lastDatasetCount}`,
   );
 }
 

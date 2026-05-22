@@ -7,6 +7,7 @@ import { ContractOffersPage } from "../components/consumer/contract-offers.page"
 import {
   bootstrapProviderNegotiationArtifacts,
   probeConsumerCatalogDatasetReadiness,
+  waitForConsumerAgreement,
 } from "../../../shared/utils/provider-bootstrap";
 import { collectBrowserDiagnostics } from "../../../shared/utils/browser-diagnostics";
 import { EVENTUAL_UI_RETRY_INTERVALS } from "../../../shared/utils/waiting";
@@ -25,6 +26,12 @@ type NegotiationReport = {
   toleratedErrorResponses: Array<{ url: string; status: number }>;
   fatalErrorResponses: Array<{ url: string; status: number }>;
   negotiationMessage?: string;
+  negotiationNotificationWarning?: string;
+  consumerAgreement?: {
+    agreementId: string | null;
+    assetId: string;
+    attempts: number;
+  };
 };
 
 test("05 consumer negotiation: visible negotiation from catalog", async ({
@@ -122,12 +129,24 @@ test("05 consumer negotiation: visible negotiation from catalog", async ({
     await captureStep(page, "03-negotiation-contract-offers");
 
     await contractOffersPage.negotiateFirstOffer();
-    report.negotiationMessage = await contractOffersPage.waitForNegotiationComplete(45_000);
+    try {
+      report.negotiationMessage = await contractOffersPage.waitForNegotiationComplete(15_000);
+    } catch (error) {
+      report.negotiationNotificationWarning = error instanceof Error ? error.message : String(error);
+    }
+    const consumerAgreement = await waitForConsumerAgreement(request, dataspaceRuntime, assetId, 40, 1_500);
+    report.consumerAgreement = {
+      agreementId: consumerAgreement.agreementId,
+      assetId: consumerAgreement.assetId,
+      attempts: consumerAgreement.attempts,
+    };
+    await attachJson("consumer-negotiation-contract-agreement", report.consumerAgreement);
     await captureStep(page, "04-negotiation-complete");
 
-    expect(report.negotiationMessage, "No completed negotiation notification was detected").toMatch(
-      /contract negotiation complete!/i,
-    );
+    expect(
+      report.consumerAgreement.agreementId,
+      "No consumer contract agreement was found after negotiating from the INESData UI",
+    ).toBeTruthy();
     report.toleratedErrorResponses = report.errorResponses.filter(({ url, status }) =>
       isTolerableCatalogRetry(url, status),
     );

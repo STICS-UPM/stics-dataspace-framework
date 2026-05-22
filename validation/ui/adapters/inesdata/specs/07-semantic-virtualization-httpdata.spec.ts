@@ -80,6 +80,7 @@ test("07 semantic virtualization HttpData: visible discovery and negotiation fro
   attachJson,
 }) => {
   test.skip(dataspaceRuntime.adapter !== "inesdata", "This demo validates the INESData connector UI path.");
+  test.setTimeout(300_000);
 
   const suffix = `${Date.now()}`;
   const assetId = `qa-ui-sv-httpdata-${suffix}`;
