@@ -92,6 +92,26 @@ td.validation-na {
   white-space: nowrap;
 }
 
+.validation-cell-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.validation-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.validation-details-button {
+  flex: 0 0 auto;
+  line-height: 28px;
+  min-width: auto;
+  padding: 0 8px;
+}
+
 :host ::ng-deep .validation-tooltip {
   white-space: pre-wrap;
   max-width: 720px;

@@ -5,6 +5,7 @@ import { QuerySpec, TransferProcess } from "../../shared/models/edc-connector-en
 import { ConfirmationDialogComponent, ConfirmDialogModel } from "../../shared/components/confirmation-dialog/confirmation-dialog.component";
 import { MatDialog } from "@angular/material/dialog";
 import { PageEvent } from '@angular/material/paginator';
+import { TransferDetailsDialogComponent } from './transfer-details-dialog.component';
 
 @Component({
   selector: 'app-transfer-history',
@@ -143,6 +144,16 @@ export class TransferHistoryViewerComponent implements OnInit {
     return parts.length ? parts.join(' ') : status;
   }
 
+  getValidationSummary(item: any): string {
+    return this.getValidationStatus(item) || 'N/A';
+  }
+
+  hasValidationDetails(item: any): boolean {
+    const display = this.getValidationDisplay(item);
+    const summary = this.getValidationSummary(item);
+    return Boolean(display && display !== 'N/A' && display !== summary);
+  }
+
   getValidationCssClass(item: any): string {
     const status = this.getValidationStatus(item);
     if (!status) {
@@ -155,5 +166,19 @@ export class TransferHistoryViewerComponent implements OnInit {
       return 'validation-skipped';
     }
     return 'validation-failed';
+  }
+
+  openValidationDetails(item: any) {
+    const display = this.getValidationDisplay(item);
+    if (!display || display === 'N/A') {
+      return;
+    }
+    this.dialog.open(TransferDetailsDialogComponent, {
+      width: '600px',
+      data: {
+        title: 'Validation details',
+        content: display
+      }
+    });
   }
 }

@@ -1,11 +1,13 @@
 import { NgModule } from '@angular/core';
 import { TransferHistoryRoutingModule } from './transfer-history-routing.module'
 import { TransferHistoryViewerComponent } from './transfer-history-viewer.component';
+import { TransferDetailsDialogComponent } from './transfer-details-dialog.component';
 import { SharedModule } from 'src/app/shared/shared.module';
 
 @NgModule({
   declarations: [
-    TransferHistoryViewerComponent
+    TransferHistoryViewerComponent,
+    TransferDetailsDialogComponent
   ],
   imports: [
     TransferHistoryRoutingModule,

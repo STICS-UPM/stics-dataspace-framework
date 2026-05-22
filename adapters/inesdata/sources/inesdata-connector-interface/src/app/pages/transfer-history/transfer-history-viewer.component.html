@@ -46,7 +46,14 @@
             [class]="getValidationCssClass(item)"
             [matTooltip]="getValidationDisplay(item)"
             matTooltipClass="validation-tooltip">
-          {{ getValidationDisplay(item) }}
+          <div class="validation-cell-content">
+            <span class="validation-summary">{{ getValidationSummary(item) }}</span>
+            <button mat-button color="primary" class="validation-details-button"
+                    *ngIf="hasValidationDetails(item)"
+                    (click)="openValidationDetails(item); $event.stopPropagation()">
+              Details
+            </button>
+          </div>
         </td>
       </ng-container>
 
