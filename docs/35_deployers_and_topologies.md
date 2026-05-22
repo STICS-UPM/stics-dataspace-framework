@@ -138,7 +138,8 @@ la UI/editor está habilitada y `Automap` queda disponible como herramienta de
 generación de mappings para trazabilidad, readiness y una línea base
 determinista de nivel 6. Esa línea base no invoca LLM ni lee secretos: usa
 fixtures versionados para comprobar extracción de esquema/ontología,
-materialización RDF controlada y métricas de evaluación.
+reutilización de una ontología gobernable por Ontology Hub, materialización RDF
+controlada y métricas de evaluación.
 
 La resolución central vive en:
 

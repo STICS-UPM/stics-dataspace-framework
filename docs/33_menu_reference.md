@@ -289,8 +289,9 @@ de sus fuentes de soporte: `morph-kgv`, `mapping-editor`, datasets oficiales y
 Automap. Automap se trata como herramienta de generación de mappings y
 trazabilidad de alcance, no como servicio desplegado en Kubernetes. Además,
 `Level 6` ejecuta una línea base determinista de Automap sin LLM: valida un
-fixture pequeño de movilidad, extrae esquema y ontología, materializa RDF
-controlado y calcula métricas contra un KG de referencia.
+fixture pequeño de movilidad, extrae esquema y ontología, reutiliza una
+ontología gobernable por Ontology Hub, materializa RDF controlado y calcula
+métricas contra KGs de referencia.
 
 `F - Dataspace Interoperability Tests (Newman/Kafka)`
 

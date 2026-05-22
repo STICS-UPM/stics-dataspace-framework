@@ -100,11 +100,11 @@ mappings y `Automap` como herramienta de generación de mappings. Automap se
 sincroniza como fuente del componente y se valida en dos pasos: primero como
 readiness/trazabilidad de código fuente y después con una línea base
 determinista que ejercita extracción de esquema, extracción de ontología,
-materialización RDF controlada y métricas de comparación contra un KG de
-referencia. La ruta LLM completa de Automap no se ejecuta por defecto en
-`Level 6` porque requiere configuración de modelo y secretos externos a la
-baseline versionable; Automap no se despliega como servicio runtime en la
-baseline actual.
+reutilización de una ontología gobernable por Ontology Hub, materialización RDF
+controlada y métricas de comparación contra KGs de referencia. La ruta LLM
+completa de Automap no se ejecuta por defecto en `Level 6` porque requiere
+configuración de modelo y secretos externos a la baseline versionable; Automap
+no se despliega como servicio runtime en la baseline actual.
 
 Los artefactos se escriben bajo `experiments/`, que es salida generada y no debe
 versionarse.
