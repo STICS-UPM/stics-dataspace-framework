@@ -122,6 +122,8 @@ PWDEBUG=1 npx playwright test --config ../components/ontology_hub/functional/pla
 ## Pendientes Reales
 - La suite ya modela los 27 casos del Excel, pero no se han verificado en bloque todos los caminos destructivos sobre este despliegue concreto.
 - Algunos casos pueden fallar por comportamiento real de la aplicación o por diferencias del entorno de demo respecto al Excel histórico. Esa trazabilidad queda reflejada en `docs/11_ontology_hub_validation.md`.
-- Tras `OH-APP-16`, `OH-APP-17` puede quedar bloqueado por comportamiento de la propia UI de edición: en ejecuciones anteriores `/edition/users` devolvía `500`, y en `vm-single` `2026-04-30 14:00:47` la página de edición carga pero no expone el enlace `+ USER`/`/edition/signup` esperado para completar la promoción.
-- `OH-APP-08` y `OH-APP-09` pueden seguir fallando aunque el vocabulario mantenga `tags = Services` e idiomas `en/es` en la vista de edición. En el despliegue actual, el catálogo público sigue publicando las facetas `Tag` y `Language` como `N/A`, por lo que la incidencia apunta al indexado o a la agregación del catálogo, no al selector del test.
+- En la ejecución de cierre del `2026-05-22`, `OH-APP-17` pasa y no se mantiene como pendiente vigente.
+- En la ejecución de cierre del `2026-05-22`, `OH-APP-08` y `OH-APP-09` pasan; no se mantienen como pendientes vigentes.
+- `OH-APP-10` sigue fallando porque los metadatos/tags editados no se reflejan en la ficha pública después de guardar.
+- `OH-APP-22` sigue fallando porque `/dataset/patterns` devuelve `500` y bloquea la generación del ZIP.
 - En sondeos previos de `vm-single`, `OH-APP-14` pudo reiniciar el pod después de editar y borrar versiones. La causa observada fue un `ENOENT` no capturado en `versions.js` al hacer `unlink` de un `.n3` versionado ausente. El chart del framework monta `/app/versions` para reducir desincronizaciones tras reinicios; en el experimento `2026-04-30 14:00:47`, `OH-APP-14` ya no se reproduce.

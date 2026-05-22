@@ -86,6 +86,17 @@ chart, queda en `23/27`. `AI Model Hub` pasa en el mismo experimento y
 En esta ejecución ya pasan `OH-APP-14` y `OH-APP-24`, que habían fallado en
 sondeos previos de `vm-single`.
 
+La ejecución de cierre sin Kafka del `2026-05-22` actualiza el estado operativo:
+la suite funcional queda en `25/27`, la integración en `4/5` y dejan de ser
+pendientes vigentes `OH-APP-17`, el bloque de versiones y la ficha `.n3`. Los
+pendientes reproducidos en esa ejecución son:
+
+| Caso | Síntoma observado | Lectura técnica |
+| --- | --- | --- |
+| `OH-APP-10` | Tras guardar, no aparecen `Vocabularies` ni `ADMIN TEST metadata update` después de 180 segundos. | Posible problema de persistencia o reindexado de metadatos/tags. |
+| `OH-APP-22` | `/dataset/patterns` devuelve `500` y no genera el ZIP. | Error server-side localizado en Patterns; FOOPS y Themis sí pasan. |
+| `PT5-OH-13` | La consulta SPARQL de integración recibe HTTP `502`. | Incidencia del endpoint SPARQL público del componente. |
+
 ### Bug OH-APP-14: versiones y ficheros `.n3`
 
 En sondeos previos de `vm-single`, el crash de `OH-APP-14` dejo este stack trace en el pod
