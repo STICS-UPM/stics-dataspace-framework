@@ -125,7 +125,7 @@ public class JenaValidationService implements RdfValidationService {
 
     private String transformUrlForMinikube(String url) {
         if (url != null) {
-            return url.replace("ontology-hub-demo.dev.ds.dataspaceunit.upm", "demo-ontology-hub.components:3333");
+            return url.replace("{ONTOLOGY_HUB_BASE_URL}", "{ONTOLOGY_HUB_INTERNAL_URL}");
         }
         return url;
     }

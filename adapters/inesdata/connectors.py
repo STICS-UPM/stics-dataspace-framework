@@ -5,11 +5,14 @@ import re
 import shlex
 import socket
 import time
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 import requests
 import yaml
 
+from deployers.infrastructure.lib.namespaces import resolve_namespace_profile_plan
+from deployers.shared.lib.components import ontology_validator_source_path, patch_ontology_validator_source
 from deployers.shared.lib.topology import (
     LOCAL_TOPOLOGY,
     VM_SINGLE_TOPOLOGY,
@@ -1351,6 +1354,33 @@ class INESDataConnectorsAdapter:
             deployer_config = {}
         return build_cluster_runtime(deployer_config, topology=self._normalized_topology())
 
+    def _ontology_validator_patch_context(self):
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        dataspace_name = self.config_adapter.primary_dataspace_name()
+        dataspace_namespace = self.config_adapter.primary_dataspace_namespace()
+        namespace_plan = resolve_namespace_profile_plan(
+            deployer_config,
+            dataspace_name=dataspace_name,
+            dataspace_namespace=dataspace_namespace,
+            common_default=getattr(self.config, "NS_COMMON", "common-srvs"),
+            components_default="components",
+        )
+        return SimpleNamespace(
+            dataspace_name=dataspace_name,
+            config=deployer_config,
+            namespace_roles=namespace_plan["namespace_roles"],
+        )
+
+    def _patch_ontology_validator_source_for_level4_build(self, root_dir):
+        try:
+            return patch_ontology_validator_source(
+                self._ontology_validator_patch_context(),
+                root_dir,
+            )
+        except Exception as exc:
+            print(f"Ontology validator URL patch skipped: {exc}")
+            return False
+
     def _maybe_prepare_level4_local_connector_images(self, namespace):
         mode = self._level4_local_images_mode()
         policy = self._resolve_level4_local_image_policy(
@@ -1393,6 +1423,12 @@ class INESDataConnectorsAdapter:
             print(f"Skipping Level 4 local connector image preparation; missing script: {detail}")
             return True
 
+        validator_source_path = ontology_validator_source_path(root_dir)
+        original_validator_source = None
+        if validator_source_path is not None:
+            original_validator_source = validator_source_path.read_text(encoding="utf-8")
+            self._patch_ontology_validator_source_for_level4_build(root_dir)
+
         platform_dir = self.config.repo_dir()
         cluster_runtime = self._cluster_runtime()
         cluster_type = str(cluster_runtime.get("cluster_type") or "minikube").strip().lower() or "minikube"
@@ -1419,7 +1455,14 @@ class INESDataConnectorsAdapter:
         print("\nPreparing local INESData connector images for Level 4...")
         print(f"Cluster runtime: {cluster_type}")
         print("This builds and loads inesdata-connector and inesdata-connector-interface before Helm deploy.")
-        result = self.run(command, check=False)
+        try:
+            result = self.run(command, check=False)
+        finally:
+            if validator_source_path is not None and original_validator_source is not None:
+                current_source = validator_source_path.read_text(encoding="utf-8")
+                if current_source != original_validator_source:
+                    validator_source_path.write_text(original_validator_source, encoding="utf-8", newline="\n")
+                    print("Ontology validator source restored after local image build.")
         if result is None:
             print("Error preparing local INESData connector images for Level 4.")
             return False

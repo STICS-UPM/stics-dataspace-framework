@@ -1,6 +1,9 @@
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -14,6 +17,9 @@ from deployers.shared.lib.components import (
     configured_optional_components,
     get_component_contract,
     infer_component_hostname,
+    ontology_validator_source_path,
+    ontology_validator_url_mapping,
+    patch_ontology_validator_source,
     required_connector_extensions_for_adapter,
     resolve_component_release_name,
     summarize_components_for_adapter,
@@ -218,6 +224,72 @@ class SharedComponentsContractTests(unittest.TestCase):
                 },
             ],
         )
+
+    def test_ontology_validator_url_mapping_uses_configured_namespace(self):
+        context = SimpleNamespace(
+            dataspace_name="pionera",
+            config={
+                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+                "COMPONENTS_NAMESPACE": "custom-components",
+            },
+        )
+
+        self.assertEqual(
+            ontology_validator_url_mapping(context),
+            {
+                "external_url": "http://ontology-hub-pionera.dev.ds.dataspaceunit.upm",
+                "internal_url": "http://pionera-ontology-hub.custom-components:3333",
+            },
+        )
+
+    def test_patch_ontology_validator_source_rewrites_placeholder(self):
+        java_source = (
+            "class JenaValidationService {\n"
+            "    private String transformUrlForMinikube(String url) {\n"
+            "        return url.replace(\"{ONTOLOGY_HUB_BASE_URL}\", "
+            "\"{ONTOLOGY_HUB_INTERNAL_URL}\");\n"
+            "    }\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_path = root.joinpath(
+                "adapters",
+                "inesdata",
+                "sources",
+                "inesdata-connector",
+                "extensions",
+                "ontology-validator",
+                "src",
+                "main",
+                "java",
+                "org",
+                "upm",
+                "inesdata",
+                "validator",
+                "services",
+                "impl",
+                "JenaValidationService.java",
+            )
+            source_path.parent.mkdir(parents=True)
+            source_path.write_text(java_source, encoding="utf-8")
+            context = SimpleNamespace(
+                dataspace_name="pionera",
+                config={
+                    "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+                    "COMPONENTS_NAMESPACE": "components-runtime",
+                },
+            )
+
+            self.assertEqual(ontology_validator_source_path(root), source_path)
+            self.assertTrue(patch_ontology_validator_source(context, root))
+
+            updated = source_path.read_text(encoding="utf-8")
+            self.assertIn(
+                'url.replace("http://ontology-hub-pionera.dev.ds.dataspaceunit.upm", '
+                '"http://pionera-ontology-hub.components-runtime:3333")',
+                updated,
+            )
 
 
 if __name__ == "__main__":

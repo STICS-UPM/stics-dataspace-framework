@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+import re
 from typing import Any
 
 
@@ -361,3 +363,130 @@ def build_component_preview(
         "unsupported": unsupported_values,
         "unknown": unknown_values,
     }
+
+
+_ONTOLOGY_VALIDATOR_SOURCE_PARTS = (
+    "adapters",
+    "inesdata",
+    "sources",
+    "inesdata-connector",
+    "extensions",
+    "ontology-validator",
+    "src",
+    "main",
+    "java",
+    "org",
+    "upm",
+    "inesdata",
+    "validator",
+    "services",
+    "impl",
+    "JenaValidationService.java",
+)
+
+
+def _repo_root_candidates(project_root: str | Path | None) -> list[Path]:
+    candidates: list[Path] = []
+    if project_root:
+        root = Path(project_root).resolve()
+        candidates.extend([root, root.parent, root.parent.parent])
+        if root.name == "inesdata" and root.parent.name == "deployers":
+            candidates.insert(0, root.parent.parent)
+    candidates.append(Path(__file__).resolve().parents[3])
+
+    resolved: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        resolved.append(candidate)
+    return resolved
+
+
+def ontology_validator_source_path(project_root: str | Path | None) -> Path | None:
+    relative_path = Path(*_ONTOLOGY_VALIDATOR_SOURCE_PARTS)
+    for root in _repo_root_candidates(project_root):
+        candidate = root / relative_path
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def ontology_validator_url_mapping(context: Any) -> dict[str, str]:
+    config = dict(getattr(context, "config", {}) or {})
+    dataspace_name = str(
+        getattr(context, "dataspace_name", "")
+        or config.get("DS_1_NAME")
+        or config.get("DATASPACE_NAME")
+        or ""
+    ).strip()
+    if not dataspace_name:
+        return {}
+
+    external_host = configured_component_host(
+        "ontology-hub",
+        config,
+        dataspace_name=dataspace_name,
+    )
+    if not external_host:
+        return {}
+
+    raw_url = str(
+        config.get("ONTOLOGY_HUB_URL")
+        or config.get("ONTOLOGY_HUB_HOST")
+        or config.get("ONTOLOGY_HUB_HOSTNAME")
+        or ""
+    ).strip()
+    protocol = "https" if raw_url.startswith("https://") else "http"
+    namespace_roles = getattr(context, "namespace_roles", None)
+    components_namespace = str(
+        getattr(namespace_roles, "components_namespace", "")
+        or config.get("COMPONENTS_NAMESPACE")
+        or "components"
+    ).strip() or "components"
+    release_name = resolve_component_release_name("ontology-hub", dataspace_name=dataspace_name)
+
+    return {
+        "external_url": f"{protocol}://{external_host}",
+        "internal_url": f"http://{release_name}.{components_namespace}:3333",
+    }
+
+
+def patch_ontology_validator_source(context: Any, project_root: str | Path | None) -> bool:
+    mapping = ontology_validator_url_mapping(context)
+    if not mapping:
+        print("Ontology validator URL patch skipped: Ontology Hub endpoint could not be resolved.")
+        return False
+
+    source_path = ontology_validator_source_path(project_root)
+    if source_path is None:
+        print("Ontology validator URL patch skipped: JenaValidationService.java was not found.")
+        return False
+
+    content = source_path.read_text(encoding="utf-8")
+    pattern = r'(return\s+url\.replace\(")([^"]*)(",\s*")([^"]*)("\);)'
+
+    def replace(match: re.Match[str]) -> str:
+        return (
+            f"{match.group(1)}{mapping['external_url']}"
+            f"{match.group(3)}{mapping['internal_url']}{match.group(5)}"
+        )
+
+    updated, replacements = re.subn(pattern, replace, content, count=1)
+    if replacements == 0:
+        print("Ontology validator URL patch skipped: expected url.replace(...) pattern was not found.")
+        return False
+
+    if updated != content:
+        source_path.write_text(updated, encoding="utf-8", newline="\n")
+        print(
+            "Ontology validator URL patch applied: "
+            f"{mapping['external_url']} -> {mapping['internal_url']}"
+        )
+    else:
+        print(
+            "Ontology validator URL patch already up to date: "
+            f"{mapping['external_url']} -> {mapping['internal_url']}"
+        )
+    return True

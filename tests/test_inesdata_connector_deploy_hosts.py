@@ -27,6 +27,9 @@ class ConnectorDeployHostsConfig:
     def repo_requirements_path(self):
         return os.path.join(self.root, "requirements.txt")
 
+    def script_dir(self):
+        return self.root
+
     def connector_values_file(self, connector_name):
         return os.path.join(self.root, f"values-{connector_name}.yaml")
 
@@ -46,6 +49,25 @@ class ConnectorDeployHostsConfigAdapter:
     @staticmethod
     def generate_connector_hosts(connectors):
         return [f"127.0.0.1 {connector}.example.local" for connector in connectors]
+
+
+class ConnectorLocalImageConfigAdapter(ConnectorDeployHostsConfigAdapter):
+    @staticmethod
+    def load_deployer_config():
+        return {
+            "DS_1_NAME": "pionera",
+            "DS_1_NAMESPACE": "pionera",
+            "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+            "COMPONENTS_NAMESPACE": "components-runtime",
+        }
+
+    @staticmethod
+    def primary_dataspace_name():
+        return "pionera"
+
+    @staticmethod
+    def primary_dataspace_namespace():
+        return "pionera"
 
 
 class RecordingInfrastructure:
@@ -106,6 +128,69 @@ class ConnectorDeployHostsTests(unittest.TestCase):
                     "127.0.0.1 conn-a-demo.example.local",
                 ],
             )
+
+    def test_local_image_build_patches_ontology_validator_temporarily(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorDeployHostsConfig(tmpdir)
+            adapter_root = os.path.join(tmpdir, "adapters", "inesdata")
+            connector_source = os.path.join(adapter_root, "sources", "inesdata-connector")
+            interface_source = os.path.join(adapter_root, "sources", "inesdata-connector-interface")
+            script_path = os.path.join(adapter_root, "scripts", "local_build_load_deploy.sh")
+            java_path = os.path.join(
+                connector_source,
+                "extensions",
+                "ontology-validator",
+                "src",
+                "main",
+                "java",
+                "org",
+                "upm",
+                "inesdata",
+                "validator",
+                "services",
+                "impl",
+                "JenaValidationService.java",
+            )
+            original_java = (
+                "class JenaValidationService {\n"
+                "    String transform(String url) {\n"
+                "        return url.replace(\"{ONTOLOGY_HUB_BASE_URL}\", "
+                "\"{ONTOLOGY_HUB_INTERNAL_URL}\");\n"
+                "    }\n"
+                "}\n"
+            )
+            os.makedirs(os.path.dirname(java_path), exist_ok=True)
+            os.makedirs(interface_source, exist_ok=True)
+            os.makedirs(os.path.dirname(script_path), exist_ok=True)
+            with open(java_path, "w", encoding="utf-8") as handle:
+                handle.write(original_java)
+            with open(script_path, "w", encoding="utf-8") as handle:
+                handle.write("#!/usr/bin/env bash\nexit 0\n")
+
+            observed = {}
+
+            def fake_run(*_args, **_kwargs):
+                with open(java_path, encoding="utf-8") as handle:
+                    observed["java_during_build"] = handle.read()
+                return object()
+
+            adapter = INESDataConnectorsAdapter(
+                run=fake_run,
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=RecordingInfrastructure(),
+                config_adapter=ConnectorLocalImageConfigAdapter(),
+                config_cls=config,
+            )
+
+            self.assertTrue(adapter._maybe_prepare_level4_local_connector_images("pionera"))
+            self.assertIn(
+                'url.replace("http://ontology-hub-pionera.dev.ds.dataspaceunit.upm", '
+                '"http://pionera-ontology-hub.components-runtime:3333")',
+                observed["java_during_build"],
+            )
+            with open(java_path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), original_java)
 
 
 if __name__ == "__main__":
