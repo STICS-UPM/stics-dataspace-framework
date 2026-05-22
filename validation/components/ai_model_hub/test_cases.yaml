@@ -318,7 +318,7 @@ test_cases:
     dataspace_dimension: execution
     execution_mode: api
     coverage_status: automated
-    mapping_status: phase_3
+    mapping_status: mapped
     preconditions:
       - A valid agreement exists for the remote model
       - The transfer mechanism is configured
@@ -386,7 +386,7 @@ test_cases:
     dataspace_dimension: execution
     execution_mode: api
     coverage_status: automated
-    mapping_status: phase_3
+    mapping_status: mapped
     preconditions:
       - Active agreements exist for consumable models
     steps:
@@ -412,7 +412,7 @@ test_cases:
     dataspace_dimension: comparison
     execution_mode: api_fixture_ui_ready
     coverage_status: automated
-    mapping_status: phase_3
+    mapping_status: mapped
     preconditions:
       - Multiple comparable models exist
       - The comparison module is accessible
@@ -447,7 +447,7 @@ test_cases:
     dataspace_dimension: comparison
     execution_mode: api_fixture
     coverage_status: automated
-    mapping_status: phase_3
+    mapping_status: mapped
     preconditions:
       - Multiple comparable and executable models exist
       - The same input can be sent to all of them
@@ -481,7 +481,7 @@ test_cases:
     dataspace_dimension: comparison
     execution_mode: api_fixture
     coverage_status: automated
-    mapping_status: phase_3
+    mapping_status: mapped
     preconditions:
       - The comparison module produces aggregated metrics
     steps:
@@ -514,7 +514,7 @@ test_cases:
     dataspace_dimension: comparison
     execution_mode: api_fixture_ui_ready
     coverage_status: automated
-    mapping_status: phase_3
+    mapping_status: mapped
     preconditions:
       - Comparison metrics have already been calculated
     steps:
@@ -551,7 +551,7 @@ test_cases:
     dataspace_dimension: identity
     execution_mode: api
     coverage_status: automated
-    mapping_status: phase_3
+    mapping_status: mapped
     preconditions:
       - A working OIDC/OAuth2 integration exists in the final environment
     steps:
@@ -577,7 +577,7 @@ test_cases:
     dataspace_dimension: governance
     execution_mode: api
     coverage_status: automated
-    mapping_status: phase_3
+    mapping_status: mapped
     preconditions:
       - The system exposes verifiable operational traceability
     steps:
@@ -603,7 +603,7 @@ test_cases:
     dataspace_dimension: integration
     execution_mode: api
     coverage_status: automated
-    mapping_status: phase_3
+    mapping_status: mapped
     preconditions:
       - The component is integrated with EDC APIs and the PT5 environment connectors
     steps:
@@ -833,8 +833,8 @@ functional_use_cases:
     validation_type: functional
     dataspace_dimension: linguistic
     execution_mode: api_ui
-    coverage_status: partial
-    mapping_status: phase_3
+    coverage_status: automated_controlled_baseline
+    mapping_status: mapped
     preconditions:
       - AI Model Hub, provider connector and consumer connector are deployed
       - FLARES source repository was synchronized by Level 5
@@ -849,7 +849,7 @@ functional_use_cases:
     expected_result: FLARES can populate the dataspace on demand, reach a negotiated agreement, prepare the linguistic benchmarking flow and execute a FLARES payload through the connector API without requiring global seeding
     traceability:
       - MH-LING-01
-    notes: Phase 3 scaffold executed from Level 6. The current automated slice covers provider publication, consumer negotiation and benchmark-ready dataset/model linkage; connector-side model execution is validated through the PT5-MH-10 runner with --flares-dataset. A controlled FLARES-compatible model-server endpoint is available for the semantic reliability-label comparison; real model quality remains a component evolution item.
+    notes: Level 6 executes the controlled A5.2 baseline. The automated slice covers provider publication, consumer negotiation, benchmark-ready dataset/model linkage and connector-side execution through the PT5-MH-10 runner with --flares-dataset. A controlled FLARES-compatible model-server endpoint is available for the semantic reliability-label comparison; replacing it with real FLARES models remains a component evolution item, not a framework blocker.
     automation:
       status: automated
       mode: api_ui
@@ -866,7 +866,7 @@ functional_use_cases:
     dataspace_dimension: mobility
     execution_mode: api_source
     coverage_status: automated_source
-    mapping_status: phase_3
+    mapping_status: mapped
     preconditions:
       - GTFS-Madrid-Bench source repository was synchronized by Level 5
       - At least two controlled mobility benchmark models are selected by the suite
@@ -881,7 +881,7 @@ functional_use_cases:
     traceability:
       - MH-MOB-01
       - GTFS-Madrid-Bench
-    notes: Safe Phase 3 slice for A5.2. The suite validates the functional mobility benchmark contract with dataset-derived evidence. Controlled model-server endpoints are available as replaceable GTFS mobility baselines; real model quality and final UI/API product routing remain component evolution items.
+    notes: Controlled A5.2 baseline. The suite validates the functional mobility benchmark contract with dataset-derived evidence. Controlled model-server endpoints are available as replaceable GTFS mobility baselines; real model quality and final UI/API product routing remain component evolution items.
     automation:
       status: automated
       mode: api_source
