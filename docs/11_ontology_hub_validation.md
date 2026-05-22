@@ -68,7 +68,7 @@ warning por errores propios de la aplicación.
 | `OH-APP-09` | El facet `Language` muestra `N/A (2)` aunque la metadata del vocabulario contiene `en` y `es`. | Posible problema de indexación o normalización de idioma en el catálogo. |
 | `OH-APP-12` | La edición de una versión devuelve `502 Bad Gateway`. | Error server-side durante el flujo de edición de versión. |
 | `OH-APP-13` | La zona de edición queda temporalmente no disponible al borrar una versión. | Puede ser efecto cascada del fallo previo de edición. |
-| `OH-APP-17` | La página de administracion de usuarios devuelve `500`. | Error server-side que bloquea la promoción de usuario a admin. |
+| `OH-APP-17` | La página de administración de usuarios devuelve `500`. | Error server-side que bloquea la promoción de usuario a admin. |
 | `OH-APP-22` | La página de patrones devuelve `500`. | Error server-side que bloquea la generación del zip. |
 
 La ejecución `vm-single` reproducida el `2026-04-30 14:00:47`, tras corregir la
@@ -86,20 +86,37 @@ chart, queda en `23/27`. `AI Model Hub` pasa en el mismo experimento y
 En esta ejecución ya pasan `OH-APP-14` y `OH-APP-24`, que habían fallado en
 sondeos previos de `vm-single`.
 
-La ejecución de cierre sin Kafka del `2026-05-22` actualiza el estado operativo:
-la suite funcional queda en `25/27`, la integración en `4/5` y dejan de ser
-pendientes vigentes `OH-APP-17`, el bloque de versiones y la ficha `.n3`. Los
-pendientes reproducidos en esa ejecución son:
+La ejecución de cierre sin Kafka del `2026-05-22` actualiza el estado operativo.
+Tras los ajustes de automatización confirmados en el experimento
+`experiment_2026-05-22_13-51-24`, la suite funcional queda en `26/27`, la
+integración en `4/5` y dejan de ser pendientes vigentes `OH-APP-03`,
+`OH-APP-04`, `OH-APP-17`, `OH-APP-22`, el bloque de versiones y la ficha `.n3`.
+Los pendientes reproducidos en esa ejecución son:
 
 | Caso | Síntoma observado | Lectura técnica |
 | --- | --- | --- |
-| `OH-APP-10` | Tras guardar, no aparecen `Vocabularies` ni `ADMIN TEST metadata update` después de 180 segundos. | Posible problema de persistencia o reindexado de metadatos/tags. |
-| `OH-APP-22` | `/dataset/patterns` devuelve `500` y no genera el ZIP. | Error server-side localizado en Patterns; FOOPS y Themis sí pasan. |
+| `OH-APP-10` | El guardado de metadata/tags devuelve `500` al editar el vocabulario de repositorio. | Posible problema de persistencia o reindexado de metadatos/tags en Ontology Hub. |
 | `PT5-OH-13` | La consulta SPARQL de integración recibe HTTP `502`. | Incidencia del endpoint SPARQL público del componente. |
+
+Tras el análisis posterior de `OH-APP-22`, el flujo automatizado se ajusta para
+abrir Patterns con un vocabulario sembrado en la query
+(`/dataset/patterns?q=<prefix>`). Esto evita confundir el estado vacío de la
+página con un fallo de generación de patrones. El ajuste pasó en una ejecución
+aislada de Playwright para `OH-APP-22` y quedó confirmado dentro de nivel 6 en
+los experimentos `experiment_2026-05-22_13-04-54` y
+`experiment_2026-05-22_13-51-24`.
+
+También se ajusta la frontera entre alta y edición de vocabularios: `OH-APP-03`
+y `OH-APP-04` se centran en registrar el vocabulario por URI/repositorio y
+verificar su publicación, mientras que la modificación posterior de metadatos
+queda en `OH-APP-10`. Para no depender de una variante concreta del routing del
+formulario, la automatización reintenta por `PUT` cuando el guardado AJAX recibe
+un `404` en `/edition/vocabs/:prefix`. El ajuste quedó confirmado en nivel 6 en
+`experiment_2026-05-22_13-51-24`.
 
 ### Bug OH-APP-14: versiones y ficheros `.n3`
 
-En sondeos previos de `vm-single`, el crash de `OH-APP-14` dejo este stack trace en el pod
+En sondeos previos de `vm-single`, el crash de `OH-APP-14` dejó este stack trace en el pod
 `<dataspace>-ontology-hub`:
 
 ```text
@@ -115,12 +132,12 @@ La secuencia es:
 5. La excepción termina el proceso Node y Kubernetes reinicia el pod.
 
 El bug principal está en la aplicación: las operaciones `fs.rename`/`fs.unlink`
-de versiones no deberian terminar el proceso ante `ENOENT`; deberian mantener
+de versiones no deberían terminar el proceso ante `ENOENT`; deberían mantener
 MongoDB y el filesystem en un estado consistente o devolver un error controlado.
 
 El framework mitiga la parte de infraestructura montando `/app/versions` como
 volumen del chart de Ontology Hub. Por defecto usa `emptyDir` para mantener
-compatibilidad con despliegues efimeros, y permite activar PVC con:
+compatibilidad con despliegues efímeros, y permite activar PVC con:
 
 ```yaml
 versions:
@@ -129,10 +146,13 @@ versions:
     size: 1Gi
 ```
 
-Esto reduce la desincronizacion entre MongoDB y los ficheros `.n3` cuando hay
+Esto reduce la desincronización entre MongoDB y los ficheros `.n3` cuando hay
 reinicios del pod. En el experimento `2026-04-30 14:00:47`, `OH-APP-14` ya no
-se reproduce como fallo, aunque la correccion defensiva en `versions.js` sigue
-siendo recomendable para evitar que un `ENOENT` pueda terminar el proceso Node.
+se reproduce como fallo. En `experiment_2026-05-22_13-51-24` el test también
+pasa, pero el log del contenedor previo vuelve a mostrar un `ENOENT` en
+`versions.js` y un reinicio del pod. Por tanto, la corrección defensiva en el
+componente sigue siendo recomendable para evitar que un fichero versionado
+ausente pueda terminar el proceso Node.
 
 `Level 6` puede terminar como `Succeeded` porque el nivel se ejecuto de forma
 controlada y genero los artefactos esperados. Eso no significa que todos los

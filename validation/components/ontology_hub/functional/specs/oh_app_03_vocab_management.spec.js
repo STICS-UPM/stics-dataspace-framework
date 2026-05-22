@@ -9,7 +9,6 @@ const {
   createVocabularyFromRepository,
   deleteRunState,
   REPOSITORY_VOCAB_STATE_KEY,
-  reopenVocabularyEditionAndSave,
   runIndexAllFromEdition,
   saveRunState,
   signOut,
@@ -41,11 +40,6 @@ test("OH-APP-03: register ontology by URI", async ({
     creationReview: runtime.creationReview,
   };
   await runIndexAllFromEdition(page, runtime);
-  await reopenVocabularyEditionAndSave(page, runtime, created.prefix, {
-    title: runtime.creationTitle,
-    description: runtime.creationDescription,
-  });
-  await runIndexAllFromEdition(page, runtime);
   await captureStep(page, "03-uri-detail");
 
   await expectVocabularyVisibleInCatalog(page, runtime, created);
@@ -72,8 +66,6 @@ test("OH-APP-04: register ontology from repository", async ({
     creationTag: runtime.creationTag,
     creationReview: runtime.creationReview,
   };
-  await runIndexAllFromEdition(page, runtime);
-  await reopenVocabularyEditionAndSave(page, runtime, created.prefix);
   await runIndexAllFromEdition(page, runtime);
   await captureStep(page, "04-repository-detail");
 

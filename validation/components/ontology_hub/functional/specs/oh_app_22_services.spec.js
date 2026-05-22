@@ -71,6 +71,30 @@ async function gotoHealthyPage(page, url, label, timeoutMs = 300000) {
   throw lastError || new Error(`${label} page did not become healthy after ${timeoutMs}ms`);
 }
 
+function resolvePatternsRuntime(ontologyHubRuntime) {
+  try {
+    return runtimeFromCreatedVocabulary(ontologyHubRuntime, loadRunState(URI_VOCAB_STATE_KEY));
+  } catch (error) {
+    return ontologyHubRuntime;
+  }
+}
+
+function resolvePatternsQuery(runtime) {
+  return (
+    runtime.expectedVocabularyPrefix ||
+    runtime.creationPrefix ||
+    runtime.listingSearchTerm ||
+    runtime.expectedVocabularyTitle ||
+    "saref4grid"
+  );
+}
+
+function buildPatternsUrl(runtime, query) {
+  const url = new URL("/dataset/patterns", runtime.baseUrl);
+  url.searchParams.set("q", query);
+  return url.toString();
+}
+
 test("OH-APP-22: patterns page generates a zip", async ({
   page,
   ontologyHubRuntime,
@@ -78,27 +102,37 @@ test("OH-APP-22: patterns page generates a zip", async ({
   attachJson,
 }, testInfo) => {
   test.setTimeout(360000);
-  await signInToEdition(page, ontologyHubRuntime);
-  await runIndexAllFromEdition(page, ontologyHubRuntime);
-  await gotoHealthyPage(page, `${ontologyHubRuntime.baseUrl}/dataset/patterns`, "Patterns");
+  const patternsRuntime = resolvePatternsRuntime(ontologyHubRuntime);
+  const patternsQuery = resolvePatternsQuery(patternsRuntime);
+  const patternsUrl = buildPatternsUrl(patternsRuntime, patternsQuery);
 
-  const selectAllButton = page.locator("button, input[type='submit'], input[type='button']").filter({
-    hasText: /select all/i,
-  }).first();
+  await signInToEdition(page, patternsRuntime);
+  await runIndexAllFromEdition(page, patternsRuntime);
+  await gotoHealthyPage(page, patternsUrl, `Patterns for ${patternsQuery}`);
+
+  const selectAllButton = page.getByRole("button", { name: /^select all$/i }).first();
   if ((await selectAllButton.count()) === 0) {
     throw new Error("Patterns page does not expose the 'Select All' control expected by the Excel flow.");
   }
 
   await clickMarked(selectAllButton);
+  const selectedVocabularyItems = page.locator("#selectedVocabularies .nav-item-vocabulary");
+  await selectedVocabularyItems.first().waitFor({ state: "visible", timeout: 5000 });
+  const selectedVocabularies = (await selectedVocabularyItems.allTextContents())
+    .map((value) => value.replace("x", "").replace("×", "").trim())
+    .filter(Boolean);
+  if (selectedVocabularies.length === 0) {
+    throw new Error("Patterns page did not select any vocabulary after pressing 'Select All'.");
+  }
 
-  const bothOption = page.getByLabel(/both/i).first();
+  const bothOption = page.locator("#patterns-both").first();
   if ((await bothOption.count()) > 0) {
     await checkMarked(bothOption).catch(async () => {
       await clickMarked(bothOption);
     });
   }
 
-  const noOption = page.getByLabel(/^no$/i).first();
+  const noOption = page.locator("#flatten-no").first();
   if ((await noOption.count()) > 0) {
     await checkMarked(noOption).catch(async () => {
       await clickMarked(noOption);
@@ -110,8 +144,20 @@ test("OH-APP-22: patterns page generates a zip", async ({
     throw new Error("Patterns page does not expose the Submit control expected by the Excel flow.");
   }
 
-  const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
+  const patternsResponsePromise = page.waitForResponse(
+    (response) => response.url().includes("/dataset/api/v2/patterns"),
+    { timeout: 120000 },
+  );
+  const downloadPromise = page.waitForEvent("download", { timeout: 120000 });
   await clickMarked(submitButton);
+  const patternsResponse = await patternsResponsePromise;
+  if (!patternsResponse.ok()) {
+    const responseText = await patternsResponse.text().catch(() => "");
+    throw new Error(
+      `Patterns API returned HTTP ${patternsResponse.status()} for selected vocabularies ` +
+        `[${selectedVocabularies.join(", ")}]. Response excerpt: ${responseText.slice(0, 500)}`,
+    );
+  }
   const download = await downloadPromise;
   const filePath = testInfo.outputPath("patterns.zip");
   await download.saveAs(filePath);
@@ -125,11 +171,17 @@ test("OH-APP-22: patterns page generates a zip", async ({
   expect(hasDataFolder).toBeTruthy();
   expect(hasWebFolder).toBeTruthy();
 
-  const expectedDataFiles = ["error.log.txt", "Patterns_name.txt", "Patterns_type.txt", "Structure.csv"];
+  const hasZipEntry = (file) => entries.some((entry) => entry === `data/${file}` || entry.endsWith(`/${file}`));
+  const expectedDataFiles = [
+    { label: "error log", candidates: ["error_log.txt", "error.log.txt"] },
+    { label: "Patterns_name.txt", candidates: ["Patterns_name.txt"] },
+    { label: "Patterns_type.txt", candidates: ["Patterns_type.txt"] },
+    { label: "Structure.csv", candidates: ["Structure.csv"] },
+  ];
   const expectedWebFiles = ["PatternName.html", "PatternType.html", "Structure.html"];
-  const missingDataFiles = expectedDataFiles.filter(
-    (file) => !entries.some((entry) => entry === `data/${file}` || entry.endsWith(`/${file}`)),
-  );
+  const missingDataFiles = expectedDataFiles
+    .filter((expected) => !expected.candidates.some(hasZipEntry))
+    .map((expected) => `${expected.label} (${expected.candidates.join(" or ")})`);
   const missingWebFiles = expectedWebFiles.filter(
     (file) => !entries.some((entry) => entry === `web/${file}` || entry.endsWith(`/${file}`)),
   );
@@ -141,9 +193,12 @@ test("OH-APP-22: patterns page generates a zip", async ({
   }
 
   await captureStep(page, "22-patterns");
-  await signOut(page, ontologyHubRuntime);
+  await signOut(page, patternsRuntime);
 
   await attachJson("22-patterns-report", {
+    patternsQuery,
+    patternsUrl,
+    selectedVocabularies,
     downloadFile: download.suggestedFilename(),
     size: stat.size,
     entries,

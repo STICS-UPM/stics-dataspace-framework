@@ -115,6 +115,7 @@ PWDEBUG=1 npx playwright test --config ../components/ontology_hub/functional/pla
 
 ## Normalizaciones Importantes
 - Caso `3` y caso `4`: los pasos manuales `docker ps`, `docker exec`, `cd setup` y `bash lovInitialization.sh` no se consideran parte del test. La app debe completar internamente la publicación.
+- Caso `3` y caso `4`: el alcance automatizado es el alta del vocabulario por URI/repositorio y su visibilidad posterior. La edición posterior de metadatos queda concentrada en `OH-APP-10`. Si el guardado AJAX del formulario responde `404` sobre `/edition/vocabs/:prefix`, la automatización reintenta el mismo formulario contra la ruta `PUT` soportada por la sesión autenticada para mantener compatibilidad con variantes de routing del componente.
 - Caso `15`: los pasos `15` y `23-26` del Excel no se consideran parte del test. Si la activación del usuario o la propagación de permisos requieren Atlas/Docker manual, el test falla y eso se atribuye a la app.
 - Caso `24`: la automatización sigue el flujo corregido del Excel desde `/dataset`: abre un círculo del gráfico, intenta lanzar `Themis` desde el panel derecho visible y, si ese acceso queda oculto, cae al tab `Themis` sin cambiar el resto del flujo. Luego cambia a `User Tests`, sube `test_cases.txt` y descarga el resultado. El fichero se puede indicar con `ONTOLOGY_HUB_THEMIS_TEST_FILE` o dejarlo en `validation/components/ontology_hub/functional/fixtures/themis/test_cases.txt`.
 - Casos `12` a `14`: si Ontology Hub devuelve un `502/503` transitorio tras editar o borrar versiones, la automatización espera la recuperación del área `edition`, verifica el estado final de la versión y solo entonces continúa con los siguientes casos. Si la recuperación no llega o el estado final no coincide, el test sigue fallando.
@@ -124,6 +125,6 @@ PWDEBUG=1 npx playwright test --config ../components/ontology_hub/functional/pla
 - Algunos casos pueden fallar por comportamiento real de la aplicación o por diferencias del entorno de demo respecto al Excel histórico. Esa trazabilidad queda reflejada en `docs/11_ontology_hub_validation.md`.
 - En la ejecución de cierre del `2026-05-22`, `OH-APP-17` pasa y no se mantiene como pendiente vigente.
 - En la ejecución de cierre del `2026-05-22`, `OH-APP-08` y `OH-APP-09` pasan; no se mantienen como pendientes vigentes.
-- `OH-APP-10` sigue fallando porque los metadatos/tags editados no se reflejan en la ficha pública después de guardar.
-- `OH-APP-22` sigue fallando porque `/dataset/patterns` devuelve `500` y bloquea la generación del ZIP.
+- `OH-APP-10` sigue fallando porque el guardado de metadatos/tags sobre el vocabulario de repositorio devuelve un error `500`.
+- `OH-APP-22` abre Patterns con el vocabulario sembrado en la query (`/dataset/patterns?q=<prefix>`) para evitar el estado vacío de la página. El flujo pasó en una ejecución aislada posterior y quedó confirmado dentro del nivel 6 del experimento `experiment_2026-05-22_13-04-54`.
 - En sondeos previos de `vm-single`, `OH-APP-14` pudo reiniciar el pod después de editar y borrar versiones. La causa observada fue un `ENOENT` no capturado en `versions.js` al hacer `unlink` de un `.n3` versionado ausente. El chart del framework monta `/app/versions` para reducir desincronizaciones tras reinicios; en el experimento `2026-04-30 14:00:47`, `OH-APP-14` ya no se reproduce.

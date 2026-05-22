@@ -469,14 +469,22 @@ async function saveVocabulary(page, runtime = {}, expectedPrefix = "", expectedT
   const formPage = new OntologyHubVocabFormPage(page);
   const outcome = await formPage.save();
   const formErrors = await formPage.readFormErrors();
+  const prefix = normalizeText(expectedPrefix || runtime.creationPrefix || runtime.expectedVocabularyPrefix);
 
   if (formErrors) {
     throw new Error(`Ontology Hub reported vocabulary form errors: ${formErrors}`);
   }
+  if (outcome.responseStatus && outcome.responseStatus >= 400) {
+    const responseExcerpt = normalizeText(outcome.responseBody).replace(/\s+/g, " ").slice(0, 240);
+    throw new Error(
+      `Ontology Hub vocabulary save returned HTTP ${outcome.responseStatus} for '${
+        prefix || "unknown"
+      }'. ${responseExcerpt ? `Response excerpt: ${responseExcerpt}` : `Final URL: ${outcome.finalUrl || "unknown"}`}`,
+    );
+  }
 
   const landedOnVocabularyDetail = /\/dataset\/vocabs\/[^/]+\/?$/i.test(outcome.finalUrl || "");
   if (!landedOnVocabularyDetail) {
-    const prefix = normalizeText(expectedPrefix || runtime.creationPrefix || runtime.expectedVocabularyPrefix);
     if (prefix) {
       await waitForPublicVocabularyDetail(
         page,

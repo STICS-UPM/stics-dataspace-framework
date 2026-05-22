@@ -142,6 +142,16 @@ class OntologyHubVocabFormPage {
       responsePayload = null;
     }
 
+    if (response && response.status() === 404 && this.#isVocabularyEditionTarget(response.url())) {
+      const fallbackOutcome = await this.#saveWithPutFallback();
+      return {
+        ...fallbackOutcome,
+        primaryResponseStatus: response.status(),
+        primaryResponseBody: responseBody,
+        fallbackUsed: true,
+      };
+    }
+
     let redirected = await Promise.race([
       redirectPromise,
       this.page.waitForTimeout(1500).then(() => false),
@@ -175,6 +185,71 @@ class OntologyHubVocabFormPage {
     return {
       redirected,
       responseStatus: response ? response.status() : 0,
+      responseBody,
+      redirectTarget,
+      finalUrl: this.page.url(),
+    };
+  }
+
+  #isVocabularyEditionTarget(url) {
+    try {
+      return /\/edition\/vocabs\/[^/]+\/?$/.test(new URL(url).pathname);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async #formUrlEncodedPayload() {
+    const entries = await this.form.evaluate((form) => {
+      const formData = new FormData(form);
+      return Array.from(formData.entries())
+        .filter(([, value]) => typeof value === "string")
+        .map(([name, value]) => [String(name), String(value)]);
+    });
+    const payload = new URLSearchParams();
+    for (const [name, value] of entries) {
+      if (name === "_method" || name === "_csrf" || name === "payload") {
+        continue;
+      }
+      payload.append(name, value);
+    }
+    return payload.toString();
+  }
+
+  async #saveWithPutFallback() {
+    const action = (await this.form.getAttribute("action")) || this.page.url();
+    const targetUrl = new URL(action, this.page.url()).toString();
+    const response = await this.page.request.put(targetUrl, {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      data: await this.#formUrlEncodedPayload(),
+    });
+    const responseBody = await response.text().catch(() => "");
+    let responsePayload = null;
+    try {
+      responsePayload = responseBody ? JSON.parse(responseBody) : null;
+    } catch (error) {
+      responsePayload = null;
+    }
+
+    const redirectTarget =
+      responsePayload && typeof responsePayload === "object"
+        ? String(responsePayload.redirect || "").trim()
+        : "";
+    let redirected = false;
+    if (redirectTarget && !/^500$/i.test(redirectTarget)) {
+      await this.page.goto(new URL(redirectTarget, this.page.url()).toString(), {
+        waitUntil: "domcontentloaded",
+      });
+      redirected = true;
+    } else if (response.ok()) {
+      await this.page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
+    }
+
+    return {
+      redirected,
+      responseStatus: response.status(),
       responseBody,
       redirectTarget,
       finalUrl: this.page.url(),
