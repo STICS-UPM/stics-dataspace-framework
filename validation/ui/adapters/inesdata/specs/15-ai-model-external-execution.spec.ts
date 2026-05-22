@@ -10,8 +10,8 @@ import {
   bootstrapConsumerNegotiation,
   bootstrapProviderNegotiationArtifacts,
   cleanupProviderValidationArtifacts,
+  probeConsumerCatalogDatasetReadiness,
   waitForConsumerAgreement,
-  waitForConsumerCatalogDatasetReadiness,
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS, waitForUiTransition } from "../../../shared/utils/waiting";
 
@@ -31,12 +31,14 @@ type AIModelExternalExecutionUiReport = {
     contractDefinitionId: string;
   };
   catalogReadiness?: {
+    status?: "ready" | "timeout";
     assetId: string;
     counterPartyAddress: string;
     counterPartyId: string;
     datasetId: string;
     offerId: string;
     datasetCount: number;
+    error?: string;
   };
   consumerNegotiation?: {
     negotiationId: string;
@@ -353,7 +355,7 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
     );
     await attachJson("ai-model-external-execution-provider-bootstrap", report.providerBootstrap);
 
-    report.catalogReadiness = await waitForConsumerCatalogDatasetReadiness(
+    report.catalogReadiness = await probeConsumerCatalogDatasetReadiness(
       request,
       dataspaceRuntime,
       assetId,

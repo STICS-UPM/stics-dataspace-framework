@@ -29,6 +29,7 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
             ("adapters", "inesdata", "specs", "06-consumer-transfer.spec.ts"),
             ("adapters", "inesdata", "specs", "07-semantic-virtualization-httpdata.spec.ts"),
             ("adapters", "inesdata", "specs", "09-ai-model-hub-httpdata.spec.ts"),
+            ("adapters", "inesdata", "specs", "15-ai-model-external-execution.spec.ts"),
         ]
 
         for parts in expected_specs:
