@@ -196,8 +196,8 @@ class ReportViewerTests(unittest.TestCase):
         self.assertIn("Kafka transfer", content)
         self.assertIn("Level 6 console log", content)
         self.assertIn("✓</span> 01 login readiness", content)
-        self.assertIn("hidden 1 transient Playwright start line", content)
-        self.assertNotIn("›</span> 01 login readiness", content)
+        self.assertIn("›</span> 01 login readiness", content)
+        self.assertNotIn("hidden 1 transient Playwright start line", content)
         self.assertIn("Provider Management API Health failed", content)
         self.assertIn("<span class='ansi-fg-red'>Provider Management API Health failed</span>", content)
         self.assertIn("&lt;console line must be escaped&gt;", content)
@@ -244,11 +244,27 @@ class ReportViewerTests(unittest.TestCase):
         self.assertIn("&lt;unsafe&gt;", rendered)
         self.assertNotIn("\x1b", rendered)
 
+    def test_console_log_renderer_preserves_extended_ansi_colors(self):
+        rendered = reports._ansi_to_html("\x1b[38;5;196mfailed\x1b[0m \x1b[38;2;1;2;3mcustom\x1b[0m")
+
+        self.assertIn("style='color: #ff0000'", rendered)
+        self.assertIn("style='color: #010203'", rendered)
+        self.assertNotIn("\x1b", rendered)
+
     def test_dashboard_console_keeps_unfinished_playwright_start_line(self):
         rendered, hidden = reports._dashboard_console_content("\x1b[36m›\x1b[0m unfinished test\n")
 
         self.assertEqual(hidden, 0)
         self.assertIn("unfinished test", rendered)
+
+    def test_dashboard_console_keeps_completed_playwright_start_line_for_audit(self):
+        rendered, hidden = reports._dashboard_console_content(
+            "\x1b[36m›\x1b[0m completed test\n\x1b[32m✓\x1b[0m completed test\n"
+        )
+
+        self.assertEqual(hidden, 0)
+        self.assertIn("›\x1b[0m completed test", rendered)
+        self.assertIn("✓\x1b[0m completed test", rendered)
 
     def test_inesdata_playwright_results_are_grouped_for_audit(self):
         with tempfile.TemporaryDirectory() as tmp:

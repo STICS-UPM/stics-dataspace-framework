@@ -582,28 +582,10 @@ def _plain_console_line(value: str) -> str:
 
 
 def _dashboard_console_content(value: str) -> tuple[str, int]:
-    """Hide transient Playwright start lines when a final result line exists."""
+    """Return a complete static rendering of the console log for audit review."""
     if not value:
         return value, 0
-
-    lines = value.replace("\r", "\n").splitlines()
-    final_titles: set[str] = set()
-    for line in lines:
-        match = PLAYWRIGHT_TEST_END_RE.match(_plain_console_line(line))
-        if match:
-            final_titles.add(match.group("title"))
-
-    filtered_lines = []
-    hidden = 0
-    for line in lines:
-        match = PLAYWRIGHT_TEST_BEGIN_RE.match(_plain_console_line(line))
-        if match and match.group("title") in final_titles:
-            hidden += 1
-            continue
-        filtered_lines.append(line)
-
-    suffix = "\n" if value.endswith(("\n", "\r")) else ""
-    return "\n".join(filtered_lines) + suffix, hidden
+    return value.replace("\r", "\n"), 0
 
 
 def _ansi_style_classes(style: dict[str, Any]) -> list[str]:
@@ -621,6 +603,49 @@ def _ansi_style_classes(style: dict[str, Any]) -> list[str]:
     if bg_class:
         classes.append(bg_class)
     return classes
+
+
+def _ansi_256_to_hex(value: int) -> str | None:
+    palette = [
+        "#000000",
+        "#800000",
+        "#008000",
+        "#808000",
+        "#000080",
+        "#800080",
+        "#008080",
+        "#c0c0c0",
+        "#808080",
+        "#ff0000",
+        "#00ff00",
+        "#ffff00",
+        "#0000ff",
+        "#ff00ff",
+        "#00ffff",
+        "#ffffff",
+    ]
+    if 0 <= value < len(palette):
+        return palette[value]
+    if 16 <= value <= 231:
+        value -= 16
+        red = value // 36
+        green = (value % 36) // 6
+        blue = value % 6
+        levels = [0, 95, 135, 175, 215, 255]
+        return f"#{levels[red]:02x}{levels[green]:02x}{levels[blue]:02x}"
+    if 232 <= value <= 255:
+        level = 8 + (value - 232) * 10
+        return f"#{level:02x}{level:02x}{level:02x}"
+    return None
+
+
+def _ansi_style_attribute(style: dict[str, Any]) -> str:
+    declarations = []
+    if style.get("fg_rgb"):
+        declarations.append(f"color: {style['fg_rgb']}")
+    if style.get("bg_rgb"):
+        declarations.append(f"background-color: {style['bg_rgb']}")
+    return "; ".join(declarations)
 
 
 def _apply_ansi_sgr(style: dict[str, Any], params: list[int]) -> None:
@@ -644,18 +669,30 @@ def _apply_ansi_sgr(style: dict[str, Any], params: list[int]) -> None:
             style.pop("underline", None)
         elif code == 39:
             style.pop("fg", None)
+            style.pop("fg_rgb", None)
         elif code == 49:
             style.pop("bg", None)
+            style.pop("bg_rgb", None)
         elif code in ANSI_FG_CLASSES:
             style["fg"] = ANSI_FG_CLASSES[code]
+            style.pop("fg_rgb", None)
         elif code in ANSI_BG_CLASSES:
             style["bg"] = ANSI_BG_CLASSES[code]
+            style.pop("bg_rgb", None)
         elif code in {38, 48}:
-            # Skip extended color parameters. The dashboard preserves the text
-            # safely even when a terminal emits unsupported color modes.
-            if index + 1 < len(params) and params[index + 1] == 5:
+            target = "fg_rgb" if code == 38 else "bg_rgb"
+            class_target = "fg" if code == 38 else "bg"
+            if index + 2 < len(params) and params[index + 1] == 5:
+                color = _ansi_256_to_hex(params[index + 2])
+                if color:
+                    style[target] = color
+                    style.pop(class_target, None)
                 index += 2
-            elif index + 1 < len(params) and params[index + 1] == 2:
+            elif index + 4 < len(params) and params[index + 1] == 2:
+                red, green, blue = params[index + 2 : index + 5]
+                if all(0 <= item <= 255 for item in (red, green, blue)):
+                    style[target] = f"#{red:02x}{green:02x}{blue:02x}"
+                    style.pop(class_target, None)
                 index += 4
         index += 1
 
@@ -677,8 +714,14 @@ def _ansi_to_html(value: str) -> str:
     def open_span() -> None:
         nonlocal span_open
         classes = _ansi_style_classes(style)
-        if classes:
-            parts.append(f"<span class='{' '.join(classes)}'>")
+        style_attribute = _ansi_style_attribute(style)
+        if classes or style_attribute:
+            attributes = []
+            if classes:
+                attributes.append(f"class='{' '.join(classes)}'")
+            if style_attribute:
+                attributes.append(f"style='{html.escape(style_attribute, quote=True)}'")
+            parts.append(f"<span {' '.join(attributes)}>")
             span_open = True
 
     for match in ANSI_ESCAPE_RE.finditer(value):
@@ -905,9 +948,9 @@ def _render_dashboard_html(experiment: dict[str, Any]) -> str:
       color: var(--ink);
       line-height: 1.5;
     }}
-    main {{ max-width: 1120px; margin: 0 auto; padding: 40px 24px 72px; }}
+    main {{ width: min(100%, 1680px); margin: 0 auto; padding: 32px clamp(16px, 2vw, 36px) 72px; }}
     header {{ margin-bottom: 28px; }}
-    h1 {{ margin: 0 0 8px; font-size: clamp(2rem, 4vw, 3.4rem); letter-spacing: -0.04em; }}
+    h1 {{ margin: 0 0 8px; font-size: 2.4rem; letter-spacing: 0; }}
     h2 {{ margin: 32px 0 14px; font-size: 1.35rem; }}
     h3 {{ margin: 18px 0 10px; font-size: 1.02rem; }}
     p {{ color: var(--muted); margin: 0; }}
@@ -917,13 +960,13 @@ def _render_dashboard_html(experiment: dict[str, Any]) -> str:
     .card, .section {{
       background: rgba(255, 250, 240, 0.92);
       border: 1px solid var(--line);
-      border-radius: 18px;
+      border-radius: 8px;
       box-shadow: 0 14px 32px rgba(24, 33, 47, 0.08);
     }}
     .card {{ padding: 16px; }}
     .card span {{ display: block; color: var(--muted); font-size: 0.85rem; }}
     .card strong {{ display: block; margin-top: 6px; font-size: 1.05rem; overflow-wrap: anywhere; }}
-    .section {{ padding: 20px; }}
+    .section {{ overflow-x: auto; padding: 20px; }}
     table {{ border-collapse: collapse; width: 100%; font-size: 0.95rem; }}
     th, td {{ border-bottom: 1px solid var(--line); padding: 11px 8px; text-align: left; vertical-align: top; }}
     th {{ color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }}
@@ -933,7 +976,7 @@ def _render_dashboard_html(experiment: dict[str, Any]) -> str:
     .fail {{ background: #fee4e2; color: var(--fail); }}
     .neutral {{ background: #eef2f6; color: var(--neutral); }}
     .links {{ display: grid; gap: 10px; }}
-    .link-card {{ background: #ffffffb8; border: 1px solid var(--line); border-radius: 14px; padding: 13px 14px; }}
+    .link-card {{ background: #ffffffb8; border: 1px solid var(--line); border-radius: 8px; padding: 13px 14px; }}
     .small {{ color: var(--muted); font-size: 0.87rem; }}
     code {{ background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 2px 6px; }}
     .console-meta {{ align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; margin-bottom: 12px; }}
@@ -950,6 +993,7 @@ def _render_dashboard_html(experiment: dict[str, Any]) -> str:
       padding: 16px;
       tab-size: 2;
       white-space: pre-wrap;
+      width: 100%;
     }}
     .ansi-bold {{ font-weight: 800; }}
     .ansi-dim {{ opacity: 0.72; }}

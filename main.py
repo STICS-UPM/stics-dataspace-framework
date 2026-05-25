@@ -98,6 +98,7 @@ from validation.orchestration.reports import (
     build_experiment_dashboard,
     discover_report_experiments,
     format_report_experiment_summary,
+    inspect_experiment,
     launch_playwright_report,
     launch_static_report_server,
     open_local_url,
@@ -190,7 +191,11 @@ class _Level6ConsoleCapture:
             self._thread.start()
 
             self._previous_force_color = os.environ.get("FORCE_COLOR")
-            if stdout_is_tty and "FORCE_COLOR" not in os.environ and "NO_COLOR" not in os.environ:
+            if (
+                "FORCE_COLOR" not in os.environ
+                and "NO_COLOR" not in os.environ
+                and _env_flag("PIONERA_CONSOLE_LOG_FORCE_COLOR", True)
+            ):
                 os.environ["FORCE_COLOR"] = "1"
                 self._force_color_was_set = True
 
@@ -6459,6 +6464,7 @@ def run_validate(
                 local_stability_preflight,
                 validation_profile=validation_profile,
             )
+            _generate_framework_dashboard(experiment_dir)
             raise validation_error
 
         kafka_edc_results = run_level6_kafka_edc_after_newman(
@@ -6633,6 +6639,7 @@ def run_validate(
                         local_stability_preflight,
                         validation_profile=validation_profile,
                     )
+                    _generate_framework_dashboard(experiment_dir)
                     raise RuntimeError(
                         f"Playwright validation failed with status '{playwright_failure}'"
                     )
@@ -6645,6 +6652,7 @@ def run_validate(
             local_stability_preflight,
             validation_profile=validation_profile,
         )
+        framework_report = _generate_framework_dashboard(experiment_dir)
 
         return {
             "experiment_dir": experiment_dir,
@@ -6658,6 +6666,7 @@ def run_validate(
             "test_data_cleanup": test_data_cleanup,
             "public_endpoint_preflight": public_endpoint_preflight,
             "hosts_sync": hosts_sync,
+            "framework_report": framework_report,
             "local_capacity": {
                 "preflight": local_capacity_preflight,
             },
@@ -8753,6 +8762,26 @@ def _print_report_artifact_paths(experiment):
         print(f"- {artifact.get('path')}")
 
 
+def _generate_framework_dashboard(experiment_dir):
+    try:
+        experiment = inspect_experiment(experiment_dir)
+        dashboard_path = build_experiment_dashboard(experiment)
+    except Exception as exc:
+        print(f"[WARNING] Could not generate framework dashboard: {exc}")
+        return {
+            "status": "failed",
+            "error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+    print(f"Framework dashboard saved to {dashboard_path}")
+    return {
+        "status": "generated",
+        "path": str(dashboard_path),
+    }
+
+
 def _open_experiment_dashboard_interactive(experiment):
     try:
         dashboard_path = build_experiment_dashboard(experiment)
@@ -9537,9 +9566,11 @@ def main(
             parser.error("'report' expects exactly one experiment identifier")
         generator = report_generator_cls(storage=experiment_storage)
         summary = generator.generate(experiment_id)
+        framework_report = _generate_framework_dashboard(ExperimentLoader.experiment_dir(experiment_id))
         return {
             "experiment_dir": ExperimentLoader.experiment_dir(experiment_id),
             "summary": summary,
+            "framework_report": framework_report,
         }
 
     if args.adapter == "compare":

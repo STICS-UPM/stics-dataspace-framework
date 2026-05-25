@@ -4872,6 +4872,59 @@ class MainCliTests(unittest.TestCase):
         self.assertIs(result["local_stability"]["preflight"], preflight)
         self.assertIs(result["local_stability"]["postflight"], postflight)
 
+    def test_run_validate_cli_generates_framework_dashboard(self):
+        class InesdataValidationDeployer(FakeDeployer):
+            def get_validation_profile(self, context):
+                return {
+                    "adapter": "inesdata",
+                    "newman_enabled": True,
+                    "test_data_cleanup_enabled": False,
+                    "playwright_enabled": False,
+                }
+
+        adapter = FakeAdapter()
+        self.fake_deployer_module.InesdataValidationDeployer = InesdataValidationDeployer
+        dashboard_result = {
+            "status": "generated",
+            "path": "/tmp/experiment/framework-report/index.html",
+        }
+
+        with mock.patch.object(
+            main,
+            "build_metrics_collector",
+            return_value=mock.Mock(collect_experiment_newman_metrics=lambda experiment_dir: []),
+        ), mock.patch.object(
+            main,
+            "_run_level6_local_capacity_preflight",
+            return_value={"status": "passed"},
+        ), mock.patch.object(
+            main,
+            "_run_level6_local_stability_preflight",
+            return_value={"status": "passed"},
+        ), mock.patch.object(
+            main,
+            "_run_level6_local_stability_postflight",
+            return_value={"status": "passed"},
+        ), mock.patch.object(
+            main,
+            "_generate_framework_dashboard",
+            return_value=dashboard_result,
+        ) as dashboard_mock:
+            result = main.run_validate(
+                adapter,
+                deployer_name="inesdata",
+                deployer_registry={
+                    **self.deployer_registry,
+                    "inesdata": "fake_deployer_module:InesdataValidationDeployer",
+                },
+                validation_engine_cls=FakeValidationEngine,
+                experiment_storage=FakeStorage,
+                topology="local",
+            )
+
+        dashboard_mock.assert_called_once_with(result["experiment_dir"])
+        self.assertEqual(result["framework_report"], dashboard_result)
+
     def test_level6_kafka_prompt_is_first_visible_level6_action(self):
         events = []
 
@@ -6073,13 +6126,25 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("invalid choice", stderr.getvalue().lower())
 
     def test_report_command_generates_summary_for_existing_experiment(self):
-        result = main.main(
-            ["report", "experiment_2026-03-10_12-00-00"],
-            adapter_registry=self.registry,
-            report_generator_cls=FakeReportGenerator,
-        )
+        dashboard_result = {
+            "status": "generated",
+            "path": "/tmp/experiment/framework-report/index.html",
+        }
+
+        with mock.patch.object(
+            main,
+            "_generate_framework_dashboard",
+            return_value=dashboard_result,
+        ) as dashboard_mock:
+            result = main.main(
+                ["report", "experiment_2026-03-10_12-00-00"],
+                adapter_registry=self.registry,
+                report_generator_cls=FakeReportGenerator,
+            )
 
         self.assertEqual(result["summary"]["experiment_id"], "experiment_2026-03-10_12-00-00")
+        dashboard_mock.assert_called_once()
+        self.assertEqual(result["framework_report"], dashboard_result)
 
     def test_compare_command_dispatches_to_report_generator(self):
         result = main.main(

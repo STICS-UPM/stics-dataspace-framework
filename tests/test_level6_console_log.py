@@ -52,6 +52,22 @@ class Level6ConsoleLogTests(unittest.TestCase):
         self.assertIn("child stdout is tty=True", content)
         self.assertEqual(os.environ.get("FORCE_COLOR"), previous_force_color)
 
+    def test_capture_forces_framework_status_colors_into_log_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            previous_force_color = os.environ.get("FORCE_COLOR")
+            with mock.patch.dict(
+                "os.environ",
+                {"PIONERA_LEVEL6_CONSOLE_LOG": "1", "PIONERA_CONSOLE_LOG_FORCE_COLOR": "1"},
+                clear=True,
+            ), mock.patch("main.os.isatty", return_value=False):
+                with main._Level6ConsoleCapture(tmpdir, mirror_output=False):
+                    print(main._console_status_label("passed"))
+
+            content = (Path(tmpdir) / main.LEVEL6_CONSOLE_LOG_FILENAME).read_text(encoding="utf-8")
+
+        self.assertIn("\x1b[32m✓\x1b[0m", content)
+        self.assertEqual(os.environ.get("FORCE_COLOR"), previous_force_color)
+
 
 if __name__ == "__main__":
     unittest.main()

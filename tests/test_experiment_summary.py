@@ -7,6 +7,7 @@ from unittest import mock
 from framework.experiment_runner import ExperimentRunner
 from framework.experiment_storage import ExperimentStorage
 from framework.experiment_summary import ExperimentSummaryBuilder
+from framework.reporting.report_generator import ExperimentReportGenerator
 
 
 class ExperimentSummaryTests(unittest.TestCase):
@@ -135,6 +136,100 @@ class ExperimentSummaryTests(unittest.TestCase):
         self.assertEqual(summary["generated_graphs"], [])
         self.assertIn("## Endpoint Latency", markdown)
         self.assertIn("Health", markdown)
+
+    def test_compare_includes_level6_validation_layers_and_component_metrics(self):
+        generator = ExperimentReportGenerator(storage=ExperimentStorage)
+
+        def write_json(path, payload):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            experiment_a = os.path.join(tmpdir, "experiment_a")
+            experiment_b = os.path.join(tmpdir, "experiment_b")
+            comparison_dir = os.path.join(tmpdir, "comparison")
+            for experiment, ui_passed, kafka_consumed in (
+                (experiment_a, 2, 9),
+                (experiment_b, 3, 10),
+            ):
+                os.makedirs(experiment, exist_ok=True)
+                write_json(
+                    os.path.join(experiment, "metadata.json"),
+                    {
+                        "experiment_id": os.path.basename(experiment),
+                        "timestamp": "2026-05-25T10:00:00",
+                        "adapter": "InesdataAdapter",
+                        "topology": "local",
+                        "cluster_runtime": "minikube",
+                    },
+                )
+                write_json(
+                    os.path.join(experiment, "aggregated_metrics.json"),
+                    {"test_summary": {"total_tests": 4, "tests_passed": 4, "tests_failed": 0}},
+                )
+                write_json(os.path.join(experiment, "test_results.json"), [])
+                write_json(
+                    os.path.join(experiment, "ui", "inesdata", "playwright_validation.json"),
+                    {
+                        "adapter": "inesdata",
+                        "status": "passed",
+                        "summary": {
+                            "total_specs": 3,
+                            "status_counts": {"passed": ui_passed, "failed": 3 - ui_passed},
+                        },
+                    },
+                )
+                write_json(
+                    os.path.join(experiment, "components", "ontology-hub", "ontology_hub_component_validation.json"),
+                    {
+                        "component": "ontology-hub",
+                        "status": "passed",
+                        "summary": {"total": 5, "passed": 5, "failed": 0, "skipped": 0},
+                        "pt5_summary": {"total": 3, "passed": 3, "failed": 0, "skipped": 0},
+                    },
+                )
+                write_json(
+                    os.path.join(experiment, "kafka_transfer_results.json"),
+                    [
+                        {
+                            "status": "passed" if kafka_consumed == 10 else "failed",
+                            "metrics": {
+                                "messages_produced": 10,
+                                "messages_consumed": kafka_consumed,
+                                "messages_missing": 10 - kafka_consumed,
+                                "average_latency_ms": 20.0,
+                                "throughput_messages_per_second": 1.0,
+                            },
+                        }
+                    ],
+                )
+                write_json(
+                    os.path.join(experiment, "local_stability_postflight.json"),
+                    {
+                        "blocking_issues": [],
+                        "comparison": {"status": "passed", "warnings": [], "node_not_ready_delta": 0},
+                        "snapshot": {"warnings": []},
+                    },
+                )
+
+            result = generator.compare(experiment_a, experiment_b, output_dir=comparison_dir)
+
+            with open(os.path.join(comparison_dir, "comparison_report.md"), "r", encoding="utf-8") as handle:
+                markdown = handle.read()
+            with open(os.path.join(comparison_dir, "comparison_report.html"), "r", encoding="utf-8") as handle:
+                html_report = handle.read()
+
+        self.assertIn("metrics", result)
+        self.assertIn("A5.2 Validation Scope", markdown)
+        self.assertIn("Component Coverage", markdown)
+        self.assertIn("Kafka Transfer", markdown)
+        self.assertIn("Kafka Transfer", html_report)
+        self.assertIn("Local Stability", html_report)
+        if result.get("graphs"):
+            self.assertIn("data:image/png;base64,", html_report)
+        self.assertEqual(result["metrics"]["kafka_transfer"]["missing_messages_delta"], -1)
+        self.assertEqual(result["metrics"]["validation_layers"][0]["experiment_b"]["total"], 5)
 
     def test_experiment_runner_generates_summary_files(self):
         class FakeAdapter:

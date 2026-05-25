@@ -286,8 +286,10 @@ INESData se ejecuta desde `I`.
 
 En el nivel 6, Semantic Virtualization también valida por consola la preparación
 de sus fuentes de soporte: `morph-kgv`, `mapping-editor`, datasets oficiales y
-Automap. Automap se trata como herramienta de generación de mappings y
-trazabilidad de alcance, no como servicio desplegado en Kubernetes. Además,
+Automap. Para `morph-kgv`, se comprueba el contrato de ejecución documentado:
+CLI `run_query.py`, comando `morph-kgv serve config.ini`, ejemplos `config.ini`
+y endpoint `/sparql`. Automap se trata como herramienta de generación de
+mappings y trazabilidad de alcance, no como servicio desplegado en Kubernetes. Además,
 `Level 6` ejecuta una línea base determinista de Automap sin LLM: valida un
 fixture pequeño de movilidad, extrae esquema y ontología, reutiliza una
 ontología gobernable por Ontology Hub, materializa RDF controlado y calcula

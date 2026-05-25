@@ -231,6 +231,13 @@ class ExperimentStorage:
         return path
 
     @staticmethod
+    def save_comparison_html(content, comparison_dir, file_name="comparison_report.html"):
+        path = os.path.join(comparison_dir, file_name)
+        ExperimentStorage._write_text(path, content)
+        print(f"Comparison HTML report saved to {path}")
+        return path
+
+    @staticmethod
     def save(results, experiment_dir=None, file_name="experiment_results.json"):
         """Save a generic experiment result bundle to JSON."""
         experiment_dir = experiment_dir or ExperimentStorage.create_experiment_directory()
