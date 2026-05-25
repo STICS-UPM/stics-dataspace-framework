@@ -79,6 +79,11 @@ class AIModelHubFunctionalValidationTests(unittest.TestCase):
             self.assertEqual(result["status"], "passed")
             self.assertEqual(result["summary"]["total"], 1)
             self.assertEqual(result["functional_use_case_results"][0]["test_case_id"], "MH-LING-01")
+            self.assertEqual(result["functional_use_case_results"][0]["mapping_status"], "mapped")
+            self.assertEqual(
+                result["functional_use_case_results"][0]["coverage_status"],
+                "automated_controlled_baseline",
+            )
             self.assertTrue(os.path.exists(result["artifacts"]["report_json"]))
             self.assertTrue(os.path.exists(result["artifacts"]["json_report_file"]))
 

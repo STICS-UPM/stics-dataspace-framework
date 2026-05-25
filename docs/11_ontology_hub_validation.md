@@ -189,7 +189,10 @@ La numeración tiene una excepción histórica: `OH-APP-00` cubre el caso `1`,
 | `2` | `OH-APP-01` |
 | `3` a `27` | `OH-APP-03` a `OH-APP-27` |
 
-La cobertura PT5 se reparte entre `functional/` e `integration/`.
+La cobertura PT5 se reparte entre `functional/` e `integration/`. Cuando un
+caso aparece como compuesto, la evidencia de usuario se conserva en la suite
+funcional `OH-APP-*` y la evidencia técnica queda en la suite API de integración,
+sin duplicar pasos automatizados.
 
 | Caso PT5 | Cobertura actual |
 | --- | --- |
@@ -201,13 +204,13 @@ La cobertura PT5 se reparte entre `functional/` e `integration/`.
 | `PT5-OH-06` | no automatizada de forma funcional |
 | `PT5-OH-07` | no explícita como aserción semántica RDF/OWL |
 | `PT5-OH-08` | parcial |
-| `PT5-OH-09` | si |
+| `PT5-OH-09` | sí, cobertura compuesta UI+API |
 | `PT5-OH-10` | si |
 | `PT5-OH-11` | parcial |
 | `PT5-OH-12` | no explícita |
 | `PT5-OH-13` | cubierta desde integración, no desde funcional |
-| `PT5-OH-14` | si, sustancial |
-| `PT5-OH-15` | parcial |
+| `PT5-OH-14` | sí, cobertura compuesta UI+API |
+| `PT5-OH-15` | sí, cobertura compuesta UI+API |
 | `PT5-OH-16` | cubierta como integración INESData, no como funcional directa |
 
 ## Integración Semántica con INESData

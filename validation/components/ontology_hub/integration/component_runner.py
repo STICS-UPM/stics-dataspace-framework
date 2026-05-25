@@ -24,8 +24,8 @@ CASE_DEFAULTS: Dict[str, Dict[str, str]] = {
         "case_group": "pt5",
         "validation_type": "functional",
         "dataspace_dimension": "discovery",
-        "mapping_status": "partial",
-        "coverage_status": "partial",
+        "mapping_status": "mapped",
+        "coverage_status": "automated",
     },
     "PT5-OH-13": {
         "case_group": "pt5",
@@ -38,15 +38,15 @@ CASE_DEFAULTS: Dict[str, Dict[str, str]] = {
         "case_group": "pt5",
         "validation_type": "integration",
         "dataspace_dimension": "services",
-        "mapping_status": "partial",
-        "coverage_status": "partial",
+        "mapping_status": "mapped",
+        "coverage_status": "automated",
     },
     "PT5-OH-15": {
         "case_group": "pt5",
         "validation_type": "integration",
         "dataspace_dimension": "integration",
-        "mapping_status": "partial",
-        "coverage_status": "partial",
+        "mapping_status": "mapped",
+        "coverage_status": "automated",
     },
 }
 

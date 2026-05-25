@@ -9,12 +9,17 @@ La validación UI PT5 del componente se ejecuta desde `validation/components/ont
 La suite actual ejecuta cinco casos técnicos:
 
 - `PT5-OH-08`: búsqueda pública de términos.
-- `PT5-OH-09`: búsqueda filtrada equivalente por API.
+- `PT5-OH-09`: búsqueda filtrada con cobertura compuesta UI+API.
 - `PT5-OH-13`: consulta SPARQL real sobre el recurso RDF sembrado, con doble evidencia: ejecución interna en Kubernetes y exposición pública por ingress.
-- `PT5-OH-14`: acceso al servicio de patrones.
-- `PT5-OH-15`: disponibilidad coordinada de UI pública y documentación API.
+- `PT5-OH-14`: servicios ontológicos con cobertura compuesta UI+API.
+- `PT5-OH-15`: disponibilidad coordinada de UI pública y documentación API con cobertura compuesta UI+API.
 
 Los flujos de UI equivalentes quedan cubiertos por la suite funcional `OH-APP-*` y por la integración read-only desde INESData cuando aplica.
+
+Los casos `PT5-OH-09`, `PT5-OH-14` y `PT5-OH-15` se declaran como cobertura
+compuesta: la evidencia de usuario vive en la suite funcional `OH-APP-*` y esta
+suite conserva el check técnico API/HTTP que permite defender la integración sin
+duplicar pasos de Playwright.
 
 ## Archivos
 

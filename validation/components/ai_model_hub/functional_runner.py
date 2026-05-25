@@ -23,10 +23,10 @@ FUNCTIONAL_CASE_METADATA: Dict[str, Dict[str, Any]] = {
         "case_group": "functional_use_case",
         "validation_type": "functional",
         "dataspace_dimension": "linguistic",
-        "mapping_status": "phase_3",
+        "mapping_status": "mapped",
         "automation_mode": "api_ui",
         "execution_mode": "api_ui",
-        "coverage_status": "partial",
+        "coverage_status": "automated_controlled_baseline",
         "expected_result": (
             "FLARES can populate the dataspace on demand, reach a negotiated agreement, "
             "prepare the linguistic benchmarking flow and execute a FLARES payload through the connector API."

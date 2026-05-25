@@ -96,8 +96,11 @@ deployers/inesdata/deployer.config.example
 
 En Semantic Virtualization, el alcance automatizado actual considera
 `morph-kgv` como API de virtualización, `mapping-editor` como UI/editor de
-mappings y `Automap` como herramienta de generación de mappings. Automap se
-sincroniza como fuente del componente y se valida en dos pasos: primero como
+mappings y `Automap` como herramienta de generación de mappings. `morph-kgv` se
+valida como runtime principal del virtualizador: `Level 6` comprueba su
+contrato versionable de ejecución, incluyendo `run_query.py`, el comando
+`morph-kgv serve config.ini`, ejemplos `config.ini` y el endpoint `/sparql`.
+Automap se sincroniza como fuente del componente y se valida en dos pasos: primero como
 readiness/trazabilidad de código fuente y después con una línea base
 determinista que ejercita extracción de esquema, extracción de ontología,
 reutilización de una ontología gobernable por Ontology Hub, materialización RDF

@@ -46,9 +46,9 @@ test_cases:
     type: api
     validation_type: functional
     dataspace_dimension: discovery
-    execution_mode: api_equivalent
-    coverage_status: partial
-    mapping_status: partial
+    execution_mode: composite_ui_api
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - La API de búsqueda pública está disponible.
       - El vocabulario sembrado expone metadatos consultables.
@@ -61,8 +61,23 @@ test_cases:
       - OntHub-35
     automation:
       status: automated
-      mode: api_equivalent
+      mode: composite_ui_api
       runner_case: pt5_oh_09_filtered_search
+      composite_evidence:
+        - suite: ontology_hub_functional
+          cases:
+            - OH-APP-08
+            - OH-APP-09
+            - OH-APP-10
+            - OH-APP-18
+            - OH-APP-19
+            - OH-APP-20
+            - OH-APP-21
+          role: Evidencia UI sobre búsqueda, metadatos y gestión de etiquetas.
+        - suite: ontology_hub_integration
+          cases:
+            - PT5-OH-09
+          role: Validación técnica API filtrada por vocabulario y etiqueta.
       real_flow:
         method: GET
         path: /dataset/api/v2/term/search
@@ -71,7 +86,7 @@ test_cases:
           type: class
           vocab: saref4grid
           tag: Services
-      notes: La evidencia principal de UI se cubre en la suite funcional OH-APP; esta suite conserva el equivalente API técnico para integración.
+      notes: Cobertura compuesta UI+API. La suite funcional aporta la evidencia de interfaz y esta suite conserva el equivalente técnico de integración.
 
   - id: PT5-OH-13
     component: ontology_hub
@@ -119,9 +134,9 @@ test_cases:
     type: api
     validation_type: integration
     dataspace_dimension: services
-    execution_mode: api
-    coverage_status: partial
-    mapping_status: partial
+    execution_mode: composite_ui_api
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - Los servicios ontológicos están desplegados.
       - La ruta pública de patrones está publicada.
@@ -134,16 +149,26 @@ test_cases:
       - OntHub-53
     automation:
       status: automated
-      mode: api
+      mode: composite_ui_api
       runner_case: pt5_oh_14_patterns_access
+      composite_evidence:
+        - suite: ontology_hub_functional
+          cases:
+            - OH-APP-22
+            - OH-APP-23
+            - OH-APP-24
+            - OH-APP-25
+          role: Evidencia UI de generación de patrones, FOOPS, Themis y Widoco.
+        - suite: ontology_hub_integration
+          cases:
+            - PT5-OH-14
+          role: Check técnico de publicación del servicio de patrones.
       real_flow:
         method: GET
         path: /dataset/patterns
         query:
           q: saref4grid
-      known_component_issue_cases:
-        - OH-APP-22
-      notes: La generación funcional del ZIP se cubre en OH-APP-22; esta suite mantiene el acceso técnico al servicio.
+      notes: Cobertura compuesta UI+API. La generación funcional del ZIP se cubre en OH-APP-22; esta suite mantiene el acceso técnico al servicio.
 
   - id: PT5-OH-15
     component: ontology_hub
@@ -152,9 +177,9 @@ test_cases:
     type: api
     validation_type: integration
     dataspace_dimension: integration
-    execution_mode: api
-    coverage_status: partial
-    mapping_status: partial
+    execution_mode: composite_ui_api
+    coverage_status: automated
+    mapping_status: mapped
     preconditions:
       - La UI pública de Ontology Hub está publicada.
       - La documentación API está publicada.
@@ -168,12 +193,22 @@ test_cases:
       - OntHub-55
     automation:
       status: automated
-      mode: api
+      mode: composite_ui_api
       runner_case: pt5_oh_15_ui_api_access
+      composite_evidence:
+        - suite: ontology_hub_functional
+          cases:
+            - OH-APP-00
+            - OH-APP-01
+          role: Evidencia UI de disponibilidad y navegación pública.
+        - suite: ontology_hub_integration
+          cases:
+            - PT5-OH-15
+          role: Check técnico coordinado de UI pública y documentación API.
       real_flow:
         requests:
           - method: GET
             path: /dataset
           - method: GET
             path: /dataset/api
-      notes: La navegación UI completa se cubre en la suite funcional OH-APP-00/OH-APP-01; esta suite conserva el check HTTP/API técnico.
+      notes: Cobertura compuesta UI+API. La navegación UI completa se cubre en OH-APP-00/OH-APP-01; esta suite conserva el check HTTP/API técnico.

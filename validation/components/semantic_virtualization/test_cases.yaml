@@ -84,6 +84,32 @@ support_checks:
       source_repository: https://github.com/oeg-upm/gtfs-bench
       latest_evidence: experiments/semantic-virtualization-gtfs-bench-official-materialization-20260507/components/semantic-virtualization/gtfs-bench-official-materialization/semantic_virtualization_gtfs_bench_official_materialization.json
 
+  - id: SV-MORPH-KGV-01
+    scope: semantic_virtualization
+    case_group: support
+    description: Validate morph-kgv source readiness and SPARQL endpoint contract
+    type: support
+    validation_type: support
+    dataspace_dimension: virtualization_runtime_traceability
+    execution_mode: offline_source_readiness
+    coverage_status: automated
+    mapping_status: mapped
+    expected_result: The framework can trace Semantic Virtualization validation to morph-kgv as the runtime that exposes VIRTStore querying and the SPARQL endpoint contract
+    linked_pt5_cases:
+      - PT5-VS-01
+      - PT5-VS-02
+      - PT5-VS-03
+      - PT5-VS-04
+    automation:
+      status: automated
+      mode: offline_source_readiness
+      runner: validation/components/semantic_virtualization/morph_kgv_source.py
+      evidence_case: SV-MORPH-KGV-01
+      source_repository: https://github.com/ProyectoPIONERA/morph-kgv
+      local_source_dir: adapters/inesdata/sources/morph-kgv
+      level5_sync: automatic when semantic-virtualization is configured
+      execution_scope: Source readiness and execution-contract traceability only; external databases and secrets are not required during Level 6
+
   - id: SV-AUTOMAP-01
     scope: semantic_virtualization
     case_group: support

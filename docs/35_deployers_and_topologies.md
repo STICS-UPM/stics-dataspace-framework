@@ -141,6 +141,10 @@ fixtures versionados para comprobar extracción de esquema/ontología,
 reutilización de una ontología gobernable por Ontology Hub, materialización RDF
 controlada y métricas de evaluación.
 
+La validación de `morph-kgv` comprueba además que el source sincronizado expone
+el contrato actual del componente: instalación versionable, `run_query.py`,
+`morph-kgv serve config.ini`, ejemplos `config.ini` y endpoint `/sparql`.
+
 La resolución central vive en:
 
 ```text

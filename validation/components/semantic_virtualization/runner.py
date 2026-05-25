@@ -18,6 +18,7 @@ from validation.components.semantic_virtualization.automap_execution import (
 )
 from validation.components.semantic_virtualization.automap_source import run_automap_source_validation
 from validation.components.semantic_virtualization.mapping_validation import run_semantic_virtualization_mapping_validation
+from validation.components.semantic_virtualization.morph_kgv_source import run_morph_kgv_source_validation
 from validation.components.semantic_virtualization.ui_runner import run_semantic_virtualization_ui_validation
 
 
@@ -533,6 +534,7 @@ def run_semantic_virtualization_validation(
     run_api_phase("preflight")
     run_api_phase("functional")
     functional_runners = [
+        ("morph_kgv_source", "morph-kgv-source", run_morph_kgv_source_validation),
         ("automap_source", "automap-source", run_automap_source_validation),
         (
             "automap_execution",
