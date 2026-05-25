@@ -8,6 +8,10 @@ import time
 import requests
 
 
+class ManagementAuthenticationError(RuntimeError):
+    """Management API rejected a connector token that can be safely refreshed."""
+
+
 class NewmanExecutor:
     """Runs Postman collections through Newman.
 
@@ -22,9 +26,40 @@ class NewmanExecutor:
     TRANSIENT_AUTH_RETRY_DELAY_SECONDS = 5
     MANAGEMENT_PREFLIGHT_ATTEMPTS = 3
     MANAGEMENT_PREFLIGHT_RETRY_DELAY_SECONDS = 2
+    DSP_NEGOTIATION_RECOVERY_ATTEMPTS = 2
+    DSP_NEGOTIATION_RECOVERY_DELAY_SECONDS = 10
     AUTH_LOGIN_REQUESTS = {"Provider Login", "Consumer Login"}
     AUTH_HEALTH_REQUESTS = {"Provider Management API Health", "Consumer Management API Health"}
     TRANSIENT_AUTH_STATUS_CODES = {502, 503, 504}
+    MANAGEMENT_AUTH_REFRESH_STATUS_CODES = {401, 403}
+    MANAGEMENT_AUTH_FAILURE_HINTS = (
+        "authenticationfailed",
+        "could not be authenticated",
+    )
+    DSP_NEGOTIATION_RECOVERY_HINTS = (
+        "terminated",
+        "401",
+        "unauthorized",
+        "invalid_client",
+        "token is not active",
+        "contractnegotiationerror",
+        "contract negotiation error",
+        "dsp",
+        "oauth",
+    )
+    E2E_NEGOTIATION_STATE_KEYS = (
+        "e2e_catalog_attempt",
+        "e2e_offer_policy_id",
+        "e2e_catalog_asset_id",
+        "e2e_negotiation_id",
+        "e2e_negotiation_start_attempt",
+        "e2e_negotiation_status_attempt",
+        "e2e_agreement_id",
+        "e2e_transfer_id",
+        "e2e_transfer_process_id",
+        "e2e_transfer_status_attempt",
+        "e2e_endpoint_data_reference",
+    )
     TRANSIENT_AUTH_ERROR_HINTS = (
         "ECONNRESET",
         "ECONNREFUSED",
@@ -155,6 +190,12 @@ class NewmanExecutor:
         with open(environment_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
 
+    def _clear_environment_values(self, environment_path, keys):
+        self._write_environment_values(
+            environment_path,
+            {key: "" for key in keys},
+        )
+
     @staticmethod
     def _is_missing_or_unresolved(value):
         text = str(value or "").strip()
@@ -273,6 +314,47 @@ class NewmanExecutor:
 
         return None
 
+    def _newman_failure_text(self, report_path):
+        if not report_path or not os.path.exists(report_path):
+            return ""
+
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                report = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return ""
+
+        parts = []
+        for failure in report.get("run", {}).get("failures", []) or []:
+            source = failure.get("source") or {}
+            error = failure.get("error") or {}
+            source_name = source.get("name") or source.get("id") or "unknown request"
+            error_text = " ".join(
+                str(error.get(key) or "")
+                for key in ("name", "test", "message")
+            ).strip()
+            if error_text:
+                parts.append(f"{source_name}: {error_text}")
+
+        return " | ".join(parts)
+
+    def _newman_negotiation_failure_detail(self, report_path):
+        detail = self._newman_failure_text(report_path)
+        if not detail:
+            return None
+
+        lowered = detail.lower()
+        if any(hint in lowered for hint in self.DSP_NEGOTIATION_RECOVERY_HINTS):
+            return detail
+        return None
+
+    @staticmethod
+    def _compact_detail(detail, limit=500):
+        text = " ".join(str(detail or "").split())
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 3)] + "..."
+
     def _should_wait_for_contract_agreement(self, environment_path):
         _, env_vars = self._read_environment_values(environment_path)
         return bool(env_vars.get("e2e_negotiation_id") and not env_vars.get("e2e_agreement_id"))
@@ -290,6 +372,15 @@ class NewmanExecutor:
             text = ""
         text = " ".join(text.split())
         return text[:limit]
+
+    def _is_management_authentication_failure(self, response):
+        status_code = int(getattr(response, "status_code", 0) or 0)
+        if status_code not in self.MANAGEMENT_AUTH_REFRESH_STATUS_CODES:
+            return False
+        preview = self._response_preview(response, limit=1000).lower()
+        if not preview:
+            return True
+        return any(hint in preview for hint in self.MANAGEMENT_AUTH_FAILURE_HINTS)
 
     def _request_with_transient_retry(self, send_request, label, attempts, retry_delay):
         for attempt in range(1, attempts + 1):
@@ -389,15 +480,53 @@ class NewmanExecutor:
         )
         if response.status_code != 200:
             preview = self._response_preview(response)
-            raise RuntimeError(
-                f"{label} returned HTTP {response.status_code}"
-                + (f": {preview}" if preview else "")
-            )
+            message = f"{label} returned HTTP {response.status_code}" + (f": {preview}" if preview else "")
+            if self._is_management_authentication_failure(response):
+                raise ManagementAuthenticationError(message)
+            raise RuntimeError(message)
         try:
             body = response.json()
         except ValueError as exc:
             raise RuntimeError(f"{label} returned a non-JSON body") from exc
         return response, body
+
+    def _post_management_json_with_auth_refresh(
+        self,
+        env_vars,
+        role,
+        token,
+        url,
+        payload,
+        label,
+        attempts,
+        retry_delay,
+    ):
+        current_token = token
+        last_error = None
+        for attempt in range(1, attempts + 1):
+            try:
+                response, body = self._post_management_json(
+                    url,
+                    current_token,
+                    payload,
+                    label,
+                    attempts,
+                    retry_delay,
+                )
+                return response, body, current_token
+            except ManagementAuthenticationError as exc:
+                last_error = exc
+                if attempt >= attempts:
+                    raise
+                _, current_token = self._connector_login(
+                    env_vars,
+                    role,
+                    attempts,
+                    retry_delay,
+                )
+                continue
+
+        raise last_error or RuntimeError(f"{label} failed after authentication refresh")
 
     @staticmethod
     def _preflight_body_summary(body):
@@ -478,9 +607,11 @@ class NewmanExecutor:
         if provider_token and provider and ds_domain:
             url = self._management_url(provider, ds_domain, "/management/v3/assets/request")
             try:
-                response, body = self._post_management_json(
-                    url,
+                response, body, provider_token = self._post_management_json_with_auth_refresh(
+                    env_vars,
+                    "provider",
                     provider_token,
+                    url,
                     {
                         "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
                         "offset": 0,
@@ -504,9 +635,11 @@ class NewmanExecutor:
         if consumer_token and consumer and ds_domain:
             url = self._management_url(consumer, ds_domain, "/management/v3/contractnegotiations/request")
             try:
-                response, body = self._post_management_json(
-                    url,
+                response, body, consumer_token = self._post_management_json_with_auth_refresh(
+                    env_vars,
+                    "consumer",
                     consumer_token,
+                    url,
                     {
                         "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
                         "offset": 0,
@@ -529,9 +662,11 @@ class NewmanExecutor:
         if consumer_token and consumer and ds_domain and provider_protocol and provider_participant_id:
             url = self._management_url(consumer, ds_domain, "/management/v3/catalog/request")
             try:
-                response, body = self._post_management_json(
-                    url,
+                response, body, consumer_token = self._post_management_json_with_auth_refresh(
+                    env_vars,
+                    "consumer",
                     consumer_token,
+                    url,
                     {
                         "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
                         "@type": "CatalogRequest",
@@ -706,65 +841,96 @@ class NewmanExecutor:
                 + ", ".join(missing)
             )
 
-        url = f"http://{consumer}.{ds_domain}/management/v3/contractnegotiations/request"
+        direct_url = f"http://{consumer}.{ds_domain}/management/v3/contractnegotiations/{negotiation_id}"
+        list_url = f"http://{consumer}.{ds_domain}/management/v3/contractnegotiations/request"
         payload = {
             "@context": {
                 "@vocab": "https://w3id.org/edc/v0.0.1/ns/"
             },
             "offset": 0,
-            "limit": 10,
+            "limit": 100,
         }
         deadline = time.time() + float(timeout)
         last_state = None
         last_issue = None
 
         while time.time() <= deadline:
+            negotiation = None
             try:
-                response = requests.post(
-                    url,
+                response = requests.get(
+                    direct_url,
                     headers={
                         "Authorization": f"Bearer {consumer_jwt}",
-                        "Content-Type": "application/json",
+                        "Accept": "application/json",
                     },
-                    json=payload,
                     timeout=10,
                 )
             except requests.RequestException as exc:
-                last_issue = str(exc)
+                last_issue = f"direct lookup failed: {exc}"
             else:
-                if response.status_code != 200:
-                    last_issue = f"HTTP {response.status_code}"
-                else:
+                if response.status_code == 200:
                     try:
                         body = response.json()
                     except ValueError:
-                        last_issue = "response body is not valid JSON"
+                        last_issue = "direct lookup body is not valid JSON"
                     else:
                         negotiation = self._find_negotiation(body, negotiation_id)
                         if negotiation is None:
-                            last_issue = f"negotiation {negotiation_id} not found"
+                            last_issue = f"direct lookup did not return negotiation {negotiation_id}"
+                else:
+                    last_issue = f"direct lookup HTTP {response.status_code}"
+
+            if negotiation is None:
+                try:
+                    response = requests.post(
+                        list_url,
+                        headers={
+                            "Authorization": f"Bearer {consumer_jwt}",
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                        timeout=10,
+                    )
+                except requests.RequestException as exc:
+                    last_issue = f"{last_issue}; list lookup failed: {exc}" if last_issue else str(exc)
+                else:
+                    if response.status_code != 200:
+                        list_issue = f"list lookup HTTP {response.status_code}"
+                        last_issue = f"{last_issue}; {list_issue}" if last_issue else list_issue
+                    else:
+                        try:
+                            body = response.json()
+                        except ValueError:
+                            list_issue = "list lookup body is not valid JSON"
+                            last_issue = f"{last_issue}; {list_issue}" if last_issue else list_issue
                         else:
-                            last_state = negotiation.get("state")
-                            agreement_id = negotiation.get("contractAgreementId")
-                            if agreement_id:
-                                self._write_environment_values(
-                                    environment_path,
-                                    {"e2e_agreement_id": agreement_id},
-                                )
-                                print(
-                                    "[INFO] contractAgreementId obtained before transfer: "
-                                    f"{agreement_id}"
-                                )
-                                return agreement_id
-                            last_issue = negotiation.get("errorDetail") or f"state={last_state or 'unknown'}"
-                            if last_state == "TERMINATED":
-                                provider_detail = self._provider_negotiation_diagnostic(env_vars)
-                                if provider_detail:
-                                    last_issue = f"{last_issue}; provider_side=({provider_detail})"
-                                raise RuntimeError(
-                                    "Negotiation reached TERMINATED before contractAgreementId. "
-                                    f"Negotiation={negotiation_id}, detail={last_issue}"
-                                )
+                            negotiation = self._find_negotiation(body, negotiation_id)
+                            if negotiation is None:
+                                list_issue = f"negotiation {negotiation_id} not found"
+                                last_issue = f"{last_issue}; {list_issue}" if last_issue else list_issue
+
+            if negotiation is not None:
+                last_state = negotiation.get("state")
+                agreement_id = negotiation.get("contractAgreementId")
+                if agreement_id:
+                    self._write_environment_values(
+                        environment_path,
+                        {"e2e_agreement_id": agreement_id},
+                    )
+                    print(
+                        "[INFO] contractAgreementId obtained before transfer: "
+                        f"{agreement_id}"
+                    )
+                    return agreement_id
+                last_issue = negotiation.get("errorDetail") or f"state={last_state or 'unknown'}"
+                if last_state == "TERMINATED":
+                    provider_detail = self._provider_negotiation_diagnostic(env_vars)
+                    if provider_detail:
+                        last_issue = f"{last_issue}; provider_side=({provider_detail})"
+                    raise RuntimeError(
+                        "Negotiation reached TERMINATED before contractAgreementId. "
+                        f"Negotiation={negotiation_id}, detail={last_issue}"
+                    )
 
             remaining = deadline - time.time()
             if remaining <= 0:
@@ -889,6 +1055,158 @@ class NewmanExecutor:
 
         return report_path
 
+    @staticmethod
+    def _collection_report_path(report_dir, collection_name, suffix=""):
+        if not report_dir:
+            return None
+        report_name = f"{os.path.splitext(collection_name)[0]}{suffix}.json"
+        return os.path.join(report_dir, report_name)
+
+    def _is_recoverable_dsp_negotiation_failure(self, error, report_path):
+        detail = " ".join(
+            item
+            for item in (
+                str(error or ""),
+                self._newman_negotiation_failure_detail(report_path) or "",
+            )
+            if item
+        )
+        lowered = detail.lower()
+        return any(hint in lowered for hint in self.DSP_NEGOTIATION_RECOVERY_HINTS)
+
+    def _rerun_catalog_and_negotiation_for_dsp_recovery(
+        self,
+        env_vars,
+        environment_path,
+        report_dir,
+        exported_reports,
+        collection_base,
+        recovery_attempt,
+        recovery_attempts,
+    ):
+        suffix = f"_recovery_{recovery_attempt:02d}"
+        self._clear_environment_values(
+            environment_path,
+            self.E2E_NEGOTIATION_STATE_KEYS,
+        )
+
+        latest_negotiation_report = None
+        for collection_name in ("04_consumer_catalog.json", "05_consumer_negotiation.json"):
+            collection_path = os.path.join(collection_base, collection_name)
+            report_path = self._collection_report_path(report_dir, collection_name, suffix=suffix)
+            print(
+                f"[recovery {recovery_attempt}/{recovery_attempts}] "
+                f"Running collection: {collection_name}"
+            )
+            exported_report = self.run_newman(
+                collection_path,
+                env_vars,
+                report_path=report_path,
+                environment_path=environment_path,
+            )
+            if exported_report:
+                exported_reports.append(exported_report)
+
+            if collection_name == "04_consumer_catalog.json":
+                self._require_environment_values(
+                    environment_path,
+                    ("e2e_offer_policy_id", "e2e_catalog_asset_id"),
+                    "contract negotiation recovery",
+                )
+            else:
+                latest_negotiation_report = exported_report or report_path
+
+        return latest_negotiation_report
+
+    @staticmethod
+    def _archive_recovered_reports(report_paths, exported_reports):
+        for report_path in dict.fromkeys(path for path in report_paths if path):
+            if not os.path.exists(report_path):
+                continue
+
+            archive_path = f"{report_path}.recovered"
+            index = 2
+            while os.path.exists(archive_path):
+                archive_path = f"{report_path}.recovered_{index}"
+                index += 1
+
+            try:
+                os.replace(report_path, archive_path)
+            except OSError as exc:
+                print(f"[WARNING] Could not archive recovered Newman report {report_path}: {exc}")
+                continue
+
+            while report_path in exported_reports:
+                exported_reports.remove(report_path)
+            print(
+                "[INFO] Archived recovered failed Newman report: "
+                f"{os.path.basename(report_path)} -> {os.path.basename(archive_path)}"
+            )
+
+    def _wait_for_contract_agreement_with_dsp_recovery(
+        self,
+        env_vars,
+        environment_path,
+        report_dir,
+        exported_reports,
+        collection_base,
+        negotiation_report_path,
+    ):
+        recovery_attempts = self._positive_int_from_env(
+            "PIONERA_NEWMAN_DSP_NEGOTIATION_RECOVERY_ATTEMPTS",
+            self.DSP_NEGOTIATION_RECOVERY_ATTEMPTS,
+        )
+        recovery_delay = self._positive_float_from_env(
+            "PIONERA_NEWMAN_DSP_NEGOTIATION_RECOVERY_DELAY_SECONDS",
+            self.DSP_NEGOTIATION_RECOVERY_DELAY_SECONDS,
+        )
+        current_report_path = negotiation_report_path
+        recovered_failure_reports = []
+
+        for attempt in range(1, recovery_attempts + 1):
+            try:
+                agreement_id = self.wait_for_contract_agreement(environment_path)
+                if recovered_failure_reports:
+                    self._archive_recovered_reports(
+                        recovered_failure_reports,
+                        exported_reports,
+                    )
+                return agreement_id
+            except RuntimeError as exc:
+                if (
+                    attempt >= recovery_attempts
+                    or not self._is_recoverable_dsp_negotiation_failure(exc, current_report_path)
+                ):
+                    raise
+
+                if current_report_path:
+                    recovered_failure_reports.append(current_report_path)
+                detail = (
+                    self._newman_negotiation_failure_detail(current_report_path)
+                    or str(exc)
+                )
+                print(
+                    "[INFO] Contract negotiation reached a recoverable DSP/OAuth symptom: "
+                    f"{self._compact_detail(detail)}"
+                )
+                print(
+                    "[INFO] Clearing E2E negotiation state and re-running catalog plus "
+                    f"negotiation after {recovery_delay:g}s "
+                    f"({attempt + 1}/{recovery_attempts})."
+                )
+                time.sleep(recovery_delay)
+                current_report_path = self._rerun_catalog_and_negotiation_for_dsp_recovery(
+                    env_vars,
+                    environment_path,
+                    report_dir,
+                    exported_reports,
+                    collection_base,
+                    attempt + 1,
+                    recovery_attempts,
+                )
+
+        raise RuntimeError("Contract agreement recovery exhausted unexpectedly")
+
     def run_validation_collections(self, env_vars, report_dir=None):
         """Run all validation collections in sequence and optionally export JSON reports."""
         base = os.path.join("validation", "core", "collections")
@@ -913,10 +1231,7 @@ class NewmanExecutor:
                 collection_path = os.path.join(base, c)
                 print(f"[{i}/{total}] Running collection: {c}")
 
-                report_path = None
-                if report_dir:
-                    report_name = f"{os.path.splitext(c)[0]}.json"
-                    report_path = os.path.join(report_dir, report_name)
+                report_path = self._collection_report_path(report_dir, c)
 
                 exported_report = self.run_newman(
                     collection_path,
@@ -935,7 +1250,14 @@ class NewmanExecutor:
                     )
 
                 if c == "05_consumer_negotiation.json" and self._should_wait_for_contract_agreement(environment_path):
-                    self.wait_for_contract_agreement(environment_path)
+                    self._wait_for_contract_agreement_with_dsp_recovery(
+                        env_vars,
+                        environment_path,
+                        report_dir,
+                        exported_reports,
+                        base,
+                        exported_report or report_path,
+                    )
 
         return exported_reports
 

@@ -168,6 +168,127 @@ class NewmanMetricsTests(unittest.TestCase):
         mock_wait.assert_called_once()
         self.assertTrue(mock_wait.call_args.args[0].endswith("environment.json"))
 
+    def test_detects_recoverable_dsp_negotiation_failure_from_report(self):
+        executor = NewmanExecutor()
+        report = {
+            "run": {
+                "failures": [
+                    {
+                        "source": {"name": "Check Negotiation Status"},
+                        "error": {
+                            "name": "AssertionError",
+                            "test": "Negotiation did not end in a terminated state",
+                            "message": (
+                                "Negotiation neg-1 reached TERMINATED state; "
+                                "consumer-side errorDetail is empty"
+                            ),
+                        },
+                    }
+                ]
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_path = os.path.join(tmpdir, "05_consumer_negotiation.json")
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(report, f)
+
+            detail = executor._newman_negotiation_failure_detail(report_path)
+
+        self.assertIn("TERMINATED", detail)
+        self.assertIn("Check Negotiation Status", detail)
+
+    @mock.patch("framework.newman_executor.time.sleep", return_value=None)
+    def test_run_validation_collections_recovers_dsp_negotiation_failure_once(self, mock_sleep):
+        executor = NewmanExecutor()
+        executed = []
+
+        def write_report(report_path, failures=None):
+            if not report_path:
+                return
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "collection": {
+                            "info": {
+                                "name": os.path.splitext(os.path.basename(report_path))[0]
+                            }
+                        },
+                        "run": {
+                            "failures": failures or [],
+                            "executions": [],
+                        },
+                    },
+                    f,
+                )
+
+        def fake_run_newman(path, env, report_path=None, environment_path=None):
+            executed.append((os.path.basename(path), os.path.basename(report_path or "")))
+            recovery = bool(report_path and "_recovery_02" in report_path)
+            if path.endswith("04_consumer_catalog.json"):
+                executor._write_environment_values(
+                    environment_path,
+                    {
+                        "e2e_offer_policy_id": "offer-recovery" if recovery else "offer-initial",
+                        "e2e_catalog_asset_id": "asset-recovery" if recovery else "asset-initial",
+                    },
+                )
+            if path.endswith("05_consumer_negotiation.json"):
+                executor._write_environment_values(
+                    environment_path,
+                    {
+                        "e2e_negotiation_id": "neg-recovery" if recovery else "neg-initial",
+                        "e2e_agreement_id": "",
+                    },
+                )
+                failures = [] if recovery else [
+                    {
+                        "source": {"name": "Check Negotiation Status"},
+                        "error": {
+                            "name": "AssertionError",
+                            "test": "Negotiation did not end in a terminated state",
+                            "message": "Negotiation neg-initial reached TERMINATED state",
+                        },
+                    }
+                ]
+                write_report(report_path, failures=failures)
+                return report_path
+            write_report(report_path)
+            return report_path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(
+                executor,
+                "run_newman",
+                side_effect=fake_run_newman,
+            ), mock.patch.object(
+                executor,
+                "wait_for_contract_agreement",
+                side_effect=[
+                    RuntimeError("Timed out waiting for contractAgreementId before transfer"),
+                    "agreement-recovered",
+                ],
+            ) as mock_wait, mock.patch.dict(os.environ, {
+                "PIONERA_NEWMAN_DSP_NEGOTIATION_RECOVERY_DELAY_SECONDS": "0",
+            }):
+                reports = executor.run_validation_collections(
+                    {"provider": "conn-a"},
+                    report_dir=tmpdir,
+                )
+                archived_report_path = os.path.join(tmpdir, "05_consumer_negotiation.json.recovered")
+                self.assertTrue(os.path.exists(archived_report_path))
+
+        executed_names = [item[0] for item in executed]
+        report_names = [item[1] for item in executed]
+        self.assertEqual(executed_names.count("04_consumer_catalog.json"), 2)
+        self.assertEqual(executed_names.count("05_consumer_negotiation.json"), 2)
+        self.assertIn("04_consumer_catalog_recovery_02.json", report_names)
+        self.assertIn("05_consumer_negotiation_recovery_02.json", report_names)
+        self.assertNotIn("05_consumer_negotiation.json", [os.path.basename(path) for path in reports])
+        self.assertTrue(reports[-1].endswith("06_consumer_transfer.json"))
+        self.assertEqual(mock_wait.call_count, 2)
+        mock_sleep.assert_called_once_with(0.0)
+
     def test_run_validation_collections_stops_when_catalog_vars_are_missing(self):
         executor = NewmanExecutor()
 
@@ -243,10 +364,67 @@ class NewmanMetricsTests(unittest.TestCase):
         )
 
     @mock.patch("framework.newman_executor.requests.post")
+    def test_management_api_preflight_refreshes_provider_token_after_authentication_failure(self, mock_post):
+        executor = NewmanExecutor()
+        provider_login_response = mock.Mock(status_code=200)
+        provider_login_response.json.return_value = {"access_token": "provider-token-old"}
+        provider_refresh_response = mock.Mock(status_code=200)
+        provider_refresh_response.json.return_value = {"access_token": "provider-token-new"}
+        consumer_login_response = mock.Mock(status_code=200)
+        consumer_login_response.json.return_value = {"access_token": "consumer-token"}
+        unauthorized_response = mock.Mock(status_code=401)
+        unauthorized_response.text = '[{"message":"Request could not be authenticated","type":"AuthenticationFailed"}]'
+        assets_response = mock.Mock(status_code=200)
+        assets_response.json.return_value = []
+        negotiations_response = mock.Mock(status_code=200)
+        negotiations_response.json.return_value = []
+        catalog_response = mock.Mock(status_code=200)
+        catalog_response.json.return_value = {"dcat:dataset": []}
+        mock_post.side_effect = [
+            provider_login_response,
+            consumer_login_response,
+            unauthorized_response,
+            provider_refresh_response,
+            assets_response,
+            negotiations_response,
+            catalog_response,
+        ]
+
+        diagnostics = executor.run_management_api_preflight(
+            {
+                "provider": "conn-a",
+                "consumer": "conn-b",
+                "provider_user": "provider-user",
+                "provider_password": "provider-pass",
+                "consumer_user": "consumer-user",
+                "consumer_password": "consumer-pass",
+                "dsDomain": "example.local",
+                "dataspace": "demo",
+                "keycloakUrl": "http://auth.example.local",
+                "keycloakClientId": "dataspace-users",
+                "providerParticipantId": "conn-a",
+                "providerProtocolAddress": "http://conn-a:19194/protocol",
+            },
+        )
+
+        self.assertTrue(all(check["ok"] for check in diagnostics["checks"]))
+        self.assertEqual(mock_post.call_count, 7)
+        first_assets_headers = mock_post.call_args_list[2].kwargs["headers"]
+        second_assets_headers = mock_post.call_args_list[4].kwargs["headers"]
+        self.assertEqual(first_assets_headers["Authorization"], "Bearer provider-token-old")
+        self.assertEqual(second_assets_headers["Authorization"], "Bearer provider-token-new")
+
+    @mock.patch("framework.newman_executor.requests.post")
     def test_management_api_preflight_raises_with_diagnostic_when_management_auth_fails(self, mock_post):
         executor = NewmanExecutor()
-        login_response = mock.Mock(status_code=200)
-        login_response.json.return_value = {"access_token": "token-123"}
+        provider_login_response_1 = mock.Mock(status_code=200)
+        provider_login_response_1.json.return_value = {"access_token": "provider-token-1"}
+        provider_login_response_2 = mock.Mock(status_code=200)
+        provider_login_response_2.json.return_value = {"access_token": "provider-token-2"}
+        provider_login_response_3 = mock.Mock(status_code=200)
+        provider_login_response_3.json.return_value = {"access_token": "provider-token-3"}
+        consumer_login_response = mock.Mock(status_code=200)
+        consumer_login_response.json.return_value = {"access_token": "consumer-token"}
         unauthorized_response = mock.Mock(status_code=401)
         unauthorized_response.text = '[{"message":"Request could not be authenticated","type":"AuthenticationFailed"}]'
         negotiations_response = mock.Mock(status_code=200)
@@ -254,8 +432,12 @@ class NewmanMetricsTests(unittest.TestCase):
         catalog_response = mock.Mock(status_code=200)
         catalog_response.json.return_value = {"dcat:dataset": []}
         mock_post.side_effect = [
-            login_response,
-            login_response,
+            provider_login_response_1,
+            consumer_login_response,
+            unauthorized_response,
+            provider_login_response_2,
+            unauthorized_response,
+            provider_login_response_3,
             unauthorized_response,
             negotiations_response,
             catalog_response,
@@ -458,18 +640,18 @@ class NewmanMetricsTests(unittest.TestCase):
         self.assertEqual(final_report["run"]["failures"], [])
 
     @mock.patch("framework.newman_executor.time.sleep", return_value=None)
-    @mock.patch("framework.newman_executor.requests.post")
-    def test_wait_for_contract_agreement_updates_environment_when_available(self, mock_post, _mock_sleep):
+    @mock.patch("framework.newman_executor.requests.get")
+    def test_wait_for_contract_agreement_updates_environment_when_available(self, mock_get, _mock_sleep):
         executor = NewmanExecutor()
         pending_response = mock.Mock(status_code=200)
-        pending_response.json.return_value = [
-            {"@id": "neg-1", "state": "IN_PROGRESS"}
-        ]
+        pending_response.json.return_value = {"@id": "neg-1", "state": "IN_PROGRESS"}
         ready_response = mock.Mock(status_code=200)
-        ready_response.json.return_value = [
-            {"@id": "neg-1", "state": "FINALIZED", "contractAgreementId": "agreement-123"}
-        ]
-        mock_post.side_effect = [pending_response, ready_response]
+        ready_response.json.return_value = {
+            "@id": "neg-1",
+            "state": "FINALIZED",
+            "contractAgreementId": "agreement-123",
+        }
+        mock_get.side_effect = [pending_response, ready_response]
 
         with tempfile.TemporaryDirectory() as tmpdir:
             environment_path = os.path.join(tmpdir, "environment.json")
@@ -492,6 +674,7 @@ class NewmanMetricsTests(unittest.TestCase):
 
         self.assertEqual(agreement_id, "agreement-123")
         self.assertEqual(env_values["e2e_agreement_id"], "agreement-123")
+        self.assertTrue(mock_get.call_args_list[0].args[0].endswith("/management/v3/contractnegotiations/neg-1"))
 
     def test_find_negotiation_does_not_fallback_to_stale_entry_when_id_is_missing(self):
         executor = NewmanExecutor()
@@ -505,14 +688,12 @@ class NewmanMetricsTests(unittest.TestCase):
 
         self.assertIsNone(executor._find_negotiation(body, "new-negotiation"))
 
-    @mock.patch("framework.newman_executor.requests.post")
-    def test_wait_for_contract_agreement_raises_when_timeout_expires(self, mock_post):
+    @mock.patch("framework.newman_executor.requests.get")
+    def test_wait_for_contract_agreement_raises_when_timeout_expires(self, mock_get):
         executor = NewmanExecutor()
         pending_response = mock.Mock(status_code=200)
-        pending_response.json.return_value = [
-            {"@id": "neg-1", "state": "IN_PROGRESS"}
-        ]
-        mock_post.return_value = pending_response
+        pending_response.json.return_value = {"@id": "neg-1", "state": "IN_PROGRESS"}
+        mock_get.return_value = pending_response
 
         with tempfile.TemporaryDirectory() as tmpdir:
             environment_path = os.path.join(tmpdir, "environment.json")
@@ -534,12 +715,11 @@ class NewmanMetricsTests(unittest.TestCase):
                 )
 
     @mock.patch("framework.newman_executor.requests.post")
-    def test_wait_for_contract_agreement_reports_provider_detail_when_terminated(self, mock_post):
+    @mock.patch("framework.newman_executor.requests.get")
+    def test_wait_for_contract_agreement_reports_provider_detail_when_terminated(self, mock_get, mock_post):
         executor = NewmanExecutor()
         consumer_response = mock.Mock(status_code=200)
-        consumer_response.json.return_value = [
-            {"@id": "neg-1", "state": "TERMINATED"}
-        ]
+        consumer_response.json.return_value = {"@id": "neg-1", "state": "TERMINATED"}
         provider_response = mock.Mock(status_code=200)
         provider_response.json.return_value = [
             {
@@ -551,7 +731,8 @@ class NewmanMetricsTests(unittest.TestCase):
                 "errorDetail": "Failed to send agreement to consumer: 401 Unauthorized",
             }
         ]
-        mock_post.side_effect = [consumer_response, provider_response]
+        mock_get.return_value = consumer_response
+        mock_post.return_value = provider_response
 
         with tempfile.TemporaryDirectory() as tmpdir:
             environment_path = os.path.join(tmpdir, "environment.json")
@@ -574,10 +755,11 @@ class NewmanMetricsTests(unittest.TestCase):
                     poll_interval=0,
                 )
 
-        self.assertEqual(mock_post.call_count, 2)
+        self.assertEqual(mock_get.call_count, 1)
+        self.assertEqual(mock_post.call_count, 1)
         self.assertIn(
             "conn-a.example.local/management/v3/contractnegotiations/request",
-            mock_post.call_args_list[1].args[0],
+            mock_post.call_args_list[0].args[0],
         )
 
     def test_parse_newman_report_extracts_request_metrics(self):

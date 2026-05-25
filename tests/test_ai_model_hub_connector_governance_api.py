@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from validation.components.ai_model_hub.connector_governance_api import (
     AIModelHubConnectorGovernanceApiSuite,
@@ -74,6 +75,15 @@ class FakeSession:
         self.gets.append({"url": url, "headers": headers or {}})
         if url.endswith("/management/v3/contractnegotiations/neg-1"):
             return FakeResponse(200, {"@id": "neg-1", "state": "FINALIZED", "contractAgreementId": "agreement-1"})
+        if url.endswith("/management/v3/contractagreements/agreement-1"):
+            return FakeResponse(
+                200,
+                {
+                    "@id": "agreement-1",
+                    "assetId": "a52-amh-access-fixed-uuid",
+                    "state": "FINALIZED",
+                },
+            )
         if url.endswith("/management/v3/transferprocesses/transfer-1"):
             return FakeResponse(200, {"@id": "transfer-1", "state": "STARTED"})
         if url.endswith("/management/v3/edrs/transfer-1/dataaddress"):
@@ -148,11 +158,84 @@ class AIModelHubConnectorGovernanceApiTests(unittest.TestCase):
         self.assertNotIn("edr-secret", report_text)
 
         self.assertTrue(any(entry["url"].endswith("/management/v3/assets") for entry in session.posts))
-        self.assertTrue(any(entry["url"].endswith("/management/v3/contractagreements/request") for entry in session.posts))
+        self.assertTrue(any(entry["url"].endswith("/management/v3/contractagreements/agreement-1") for entry in session.gets))
         self.assertTrue(any(entry["url"].endswith("/management/v3/transferprocesses") for entry in session.posts))
         self.assertEqual(len(session.deletes), 2)
         cleanup_asset_steps = [step for step in result["steps"] if step["name"] == "cleanup_asset"]
         self.assertEqual(cleanup_asset_steps[0]["status"], "skipped")
+
+    def test_run_waits_until_negotiated_agreement_is_listed(self):
+        class DelayedAgreementSession(FakeSession):
+            def __init__(self):
+                super().__init__()
+                self.agreement_requests = 0
+
+            def post(self, url, timeout=30, headers=None, json=None, data=None):
+                if url.endswith("/management/v3/contractagreements/request"):
+                    self.posts.append({"url": url, "headers": headers or {}, "json": json, "data": data})
+                    self.agreement_requests += 1
+                    if self.agreement_requests == 1:
+                        return FakeResponse(200, [])
+                    return FakeResponse(
+                        200,
+                        [
+                            {
+                                "@id": "agreement-1",
+                                "assetId": "a52-amh-access-fixed-uuid",
+                                "state": "FINALIZED",
+                            }
+                        ],
+                    )
+                return super().post(url, timeout=timeout, headers=headers, json=json, data=data)
+
+            def get(self, url, timeout=30, headers=None):
+                if url.endswith("/management/v3/contractagreements/agreement-1"):
+                    self.gets.append({"url": url, "headers": headers or {}})
+                    return FakeResponse(404, {"error": "not found"})
+                return super().get(url, timeout=timeout, headers=headers)
+
+        session = DelayedAgreementSession()
+        suite = self._suite(session)
+
+        with mock.patch("validation.components.ai_model_hub.connector_governance_api.time.sleep", return_value=None):
+            result = suite.run(
+                provider="conn-provider",
+                consumer="conn-consumer",
+                model_url="http://model-server.demo.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertGreaterEqual(session.agreement_requests, 2)
+        self.assertEqual(result["created_entities"]["agreements_listed"], 1)
+
+    def test_run_can_use_direct_agreement_lookup_when_list_is_paginated(self):
+        class PaginatedAgreementSession(FakeSession):
+            def __init__(self):
+                super().__init__()
+                self.agreement_requests = 0
+
+            def post(self, url, timeout=30, headers=None, json=None, data=None):
+                if url.endswith("/management/v3/contractagreements/request"):
+                    self.posts.append({"url": url, "headers": headers or {}, "json": json, "data": data})
+                    self.agreement_requests += 1
+                    return FakeResponse(200, [])
+                return super().post(url, timeout=timeout, headers=headers, json=json, data=data)
+
+        session = PaginatedAgreementSession()
+        suite = self._suite(session)
+
+        with mock.patch("validation.components.ai_model_hub.connector_governance_api.time.sleep", return_value=None):
+            result = suite.run(
+                provider="conn-provider",
+                consumer="conn-consumer",
+                model_url="http://model-server.demo.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(session.agreement_requests, 0)
+        self.assertTrue(
+            any(entry["url"].endswith("/management/v3/contractagreements/agreement-1") for entry in session.gets)
+        )
 
     def test_run_marks_dependent_cases_failed_when_oidc_login_fails(self):
         class FailingLoginSession(FakeSession):

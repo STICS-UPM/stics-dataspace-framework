@@ -893,19 +893,19 @@
         }
       ],
       "request": {
-        "method": "POST",
+        "method": "GET",
         "header": [
           {
             "key": "Authorization",
             "value": "Bearer {{consumer_jwt}}"
           },
           {
-            "key": "Content-Type",
+            "key": "Accept",
             "value": "application/json"
           }
         ],
         "url": {
-          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/contractnegotiations/request",
+          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/contractnegotiations/{{e2e_negotiation_id}}",
           "protocol": "http",
           "host": [
             "{{consumer}}",
@@ -915,17 +915,8 @@
             "management",
             "v3",
             "contractnegotiations",
-            "request"
+            "{{e2e_negotiation_id}}"
           ]
-        },
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 100\n}",
-          "options": {
-            "raw": {
-              "language": "json"
-            }
-          }
         },
         "description": "Reintenta la consulta hasta obtener contractAgreementId o agotar presupuesto."
       }

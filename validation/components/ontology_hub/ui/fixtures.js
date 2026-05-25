@@ -5,6 +5,16 @@ const { resolveOntologyHubRuntime, resolveOntologyHubTimeouts } = require("./run
 const { ensureOntologyHubBootstrap } = require("./support/bootstrap");
 const timeouts = resolveOntologyHubTimeouts();
 
+async function attachCaptureWarning(testInfo, name, error) {
+  const outputPath = testInfo.outputPath(`${name}-capture-warning.txt`);
+  const message = error && (error.stack || error.message) ? error.stack || error.message : String(error);
+  fs.writeFileSync(outputPath, message, "utf8");
+  await testInfo.attach(`${name}-capture-warning`, {
+    path: outputPath,
+    contentType: "text/plain",
+  });
+}
+
 const test = base.extend({
   page: async ({ page }, use) => {
     page.setDefaultTimeout(timeouts.readyTimeoutMs);
@@ -23,11 +33,37 @@ const test = base.extend({
   captureStep: async ({}, use, testInfo) => {
     await use(async (page, name) => {
       const outputPath = testInfo.outputPath(`${name}.png`);
-      await page.screenshot({ path: outputPath, fullPage: true });
-      await testInfo.attach(name, {
-        path: outputPath,
-        contentType: "image/png",
-      });
+      try {
+        await page.screenshot({
+          path: outputPath,
+          fullPage: true,
+          animations: "disabled",
+          timeout: 15000,
+        });
+        await testInfo.attach(name, {
+          path: outputPath,
+          contentType: "image/png",
+        });
+        return;
+      } catch (error) {
+        await attachCaptureWarning(testInfo, name, error);
+      }
+
+      const fallbackPath = testInfo.outputPath(`${name}-viewport.png`);
+      try {
+        await page.screenshot({
+          path: fallbackPath,
+          fullPage: false,
+          animations: "disabled",
+          timeout: 15000,
+        });
+        await testInfo.attach(name, {
+          path: fallbackPath,
+          contentType: "image/png",
+        });
+      } catch (error) {
+        await attachCaptureWarning(testInfo, `${name}-viewport`, error);
+      }
     });
   },
 

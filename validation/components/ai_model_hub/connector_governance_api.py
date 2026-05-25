@@ -477,14 +477,66 @@ class AIModelHubConnectorGovernanceApiSuite:
             time.sleep(max(1, int(runtime["poll_interval_seconds"])))
         raise RuntimeError(f"Negotiation {negotiation_id} did not produce contractAgreementId (last_state={last_state})")
 
-    def _list_agreements(self, consumer: str, consumer_jwt: str):
+    def _list_agreements(self, consumer: str, consumer_jwt: str, agreement_id: str | None = None):
+        payload = {"@context": {"@vocab": EDC_NAMESPACE}, "offset": 0, "limit": 100}
         body, status_code = self._post_json(
             self._management_url(consumer, "/management/v3/contractagreements/request"),
             consumer_jwt,
-            {"@context": {"@vocab": EDC_NAMESPACE}, "offset": 0, "limit": 100},
+            payload,
             "AI Model Hub access contract agreements query",
         )
         return self._extract_items(body), status_code
+
+    def _lookup_agreement(self, consumer: str, consumer_jwt: str, agreement_id: str):
+        body, status_code = self._get_json(
+            self._management_url(consumer, f"/management/v3/contractagreements/{agreement_id}"),
+            consumer_jwt,
+            "AI Model Hub access contract agreement lookup",
+            accepted_statuses={200, 400, 404, 405},
+        )
+        if status_code != 200:
+            return None, status_code
+        return body, status_code
+
+    def _wait_for_listed_agreement(
+        self,
+        consumer: str,
+        consumer_jwt: str,
+        agreement_id: str,
+        asset_id: str,
+        runtime: dict[str, Any],
+    ) -> tuple[list[Any], int, Any]:
+        deadline = self.time_provider() + int(runtime["negotiation_timeout_seconds"])
+        last_count = 0
+        last_status = None
+        while self.time_provider() <= deadline:
+            direct_agreement, direct_status = self._lookup_agreement(consumer, consumer_jwt, agreement_id)
+            last_status = direct_status
+            if direct_agreement is not None and (
+                self._agreement_matches(direct_agreement, agreement_id, asset_id)
+                or agreement_id in json.dumps(direct_agreement)
+            ):
+                return [direct_agreement], direct_status, direct_agreement
+
+            agreements, status_code = self._list_agreements(consumer, consumer_jwt, agreement_id=agreement_id)
+            last_count = len(agreements)
+            last_status = status_code
+            matching_agreement = next(
+                (
+                    item
+                    for item in agreements
+                    if self._agreement_matches(item, agreement_id, asset_id)
+                    or agreement_id in json.dumps(item)
+                ),
+                None,
+            )
+            if matching_agreement is not None:
+                return agreements, status_code, matching_agreement
+            time.sleep(max(1, int(runtime["poll_interval_seconds"])))
+        raise RuntimeError(
+            f"Agreement {agreement_id} was not found in contractagreements/request after polling "
+            f"(last_count={last_count}, last_status={last_status})"
+        )
 
     @staticmethod
     def _agreement_matches(agreement: Any, agreement_id: str, asset_id: str) -> bool:
@@ -804,20 +856,20 @@ class AIModelHubConnectorGovernanceApiSuite:
             created_entities["agreement_id"] = agreement["agreement_id"]
             step("wait_for_contract_agreement", state=agreement["state"], agreement_id=agreement["agreement_id"])
 
-            agreements, agreements_status = self._list_agreements(consumer, consumer_jwt)
-            matching_agreement = next(
-                (
-                    item
-                    for item in agreements
-                    if self._agreement_matches(item, agreement["agreement_id"], asset_id)
-                    or agreement["agreement_id"] in json.dumps(item)
-                ),
-                None,
+            agreements, agreements_status, matching_agreement = self._wait_for_listed_agreement(
+                consumer,
+                consumer_jwt,
+                agreement["agreement_id"],
+                asset_id,
+                runtime,
             )
-            if matching_agreement is None:
-                raise RuntimeError(f"Agreement {agreement['agreement_id']} was not found in contractagreements/request")
             created_entities["agreements_listed"] = len(agreements)
-            step("list_active_agreements", http_status=agreements_status, agreements_listed=len(agreements))
+            step(
+                "list_active_agreements",
+                http_status=agreements_status,
+                agreement_id=agreement["agreement_id"],
+                agreements_listed=len(agreements),
+            )
 
             if run_access_transfer:
                 transfer_id, transfer_status = self._start_model_access_transfer(

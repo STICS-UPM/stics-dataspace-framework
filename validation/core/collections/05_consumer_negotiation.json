@@ -92,19 +92,19 @@
     {
       "name": "Check Negotiation Status",
       "request": {
-        "method": "POST",
+        "method": "GET",
         "header": [
           {
             "key": "Authorization",
             "value": "Bearer {{consumer_jwt}}"
           },
           {
-            "key": "Content-Type",
+            "key": "Accept",
             "value": "application/json"
           }
         ],
         "url": {
-          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/contractnegotiations/request",
+          "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/contractnegotiations/{{e2e_negotiation_id}}",
           "host": [
             "{{consumer}}",
             "{{dsDomain}}"
@@ -113,12 +113,8 @@
             "management",
             "v3",
             "contractnegotiations",
-            "request"
+            "{{e2e_negotiation_id}}"
           ]
-        },
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 100\n}"
         }
       }
     }

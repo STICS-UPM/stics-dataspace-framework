@@ -1,11 +1,16 @@
 const { expect } = require("../fixtures");
-const { checkMarked, clickMarked, fillMarked } = require("../support/live-marker");
+const { checkMarked, clickMarked, fillMarked, selectOptionMarked } = require("../support/live-marker");
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 class MlAssetsPage {
   constructor(page, runtime) {
     this.page = page;
     this.runtime = runtime;
     this.root = page.locator("app-ml-assets-browser");
+    this.connectorSelect = this.root.locator("select").first();
     this.searchInput = page.locator("lib-filter-input input");
     this.filterHeading = page.getByRole("heading", { name: "Filters" });
     this.clearFiltersButton = page.locator("aside button").filter({ hasText: "Clear" });
@@ -58,6 +63,15 @@ class MlAssetsPage {
 
   async search(text) {
     await fillMarked(this.searchInput, text);
+  }
+
+  async switchToConnector(connectorName) {
+    await expect(this.connectorSelect).toBeVisible({ timeout: 15000 });
+    await selectOptionMarked(this.connectorSelect, { label: connectorName });
+    await expect(this.connectorSelect.locator("option:checked")).toHaveText(
+      new RegExp(`^\\s*${escapeRegExp(connectorName)}\\s*$`, "i"),
+    );
+    await this.page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
   }
 
   async applyFilter(sectionName, optionText) {

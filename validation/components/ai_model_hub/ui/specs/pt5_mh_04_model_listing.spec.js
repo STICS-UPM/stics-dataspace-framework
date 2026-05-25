@@ -47,6 +47,10 @@ test("PT5-MH-04: model listing view renders a controlled model card", async ({
     route: aiModelHubRuntime.mlAssetsPath,
     localAssetState,
     managementVisibility,
+    selectedConnector: await assetsPage.connectorSelect
+      .locator("option:checked")
+      .textContent({ timeout: 1000 })
+      .catch(() => null),
     authorizedConnectors: Object.keys(connectorAuthorization),
     assetCardCount: await assetsPage.assetCards.count(),
     filterOptionCount: await assetsPage.filterCheckboxes.count(),
