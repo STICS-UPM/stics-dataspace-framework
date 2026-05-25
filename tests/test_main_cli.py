@@ -6526,3 +6526,38 @@ class MainCliTests(unittest.TestCase):
         )
 
         self.assertTrue(result["baseline"])
+
+    def test_level6_validation_summary_deduplicates_failed_component_cases(self):
+        failed_case = {
+            "test_case_id": "OH-APP-11",
+            "description": "add a new ontology version",
+            "evaluation": {"status": "failed", "assertions": ["502 Bad Gateway"]},
+            "response": {"message": "502 Bad Gateway"},
+        }
+        component_results = [
+            {
+                "component": "ontology-hub",
+                "status": "failed",
+                "phase_order": ["functional"],
+                "phases": {
+                    "functional": {
+                        "display_name": "Ontology Hub functional",
+                        "executed_cases": [failed_case],
+                        "suites": {
+                            "playwright": {
+                                "executed_cases": [failed_case],
+                            }
+                        },
+                    }
+                },
+            }
+        ]
+
+        buffer = io.StringIO()
+        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}, clear=False), contextlib.redirect_stdout(buffer):
+            main._print_level6_validation_summary(
+                experiment_dir="/tmp/experiment_2026-05-25_14-24-03",
+                component_results=component_results,
+            )
+
+        self.assertEqual(buffer.getvalue().count("OH-APP-11"), 1)

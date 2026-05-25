@@ -677,15 +677,24 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                         "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER": "1",
                     },
                 ),
+                mock.patch("builtins.print") as print_mock,
             ):
                 result = run_ai_model_hub_component_validation(
                     "http://ai-model-hub.example.local",
                     experiment_dir=tmpdir,
                 )
 
+            printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+            self.assertIn("Component API suite: AI Model Hub preflight", printed)
+            self.assertIn("Component Playwright suite: AI Model Hub functional", printed)
+            self.assertIn("Component API suite: AI Model Hub integration", printed)
+            self.assertIn("✓ MH-OBS-02", printed)
             self.assertEqual(result["summary"]["total"], 2)
             self.assertEqual(result["summary"]["passed"], 2)
             self.assertIn("model_observer", result["suites"])
+            self.assertEqual(result["phase_execution_channels"]["preflight"], ["api"])
+            self.assertEqual(result["phase_execution_channels"]["integration"], ["api"])
+            self.assertEqual(result["suite_execution_channels"]["model_observer"], "api")
             resolve_observer_base_url.assert_called_once_with("http://ai-model-hub.example.local")
             observer.assert_called_once()
             self.assertEqual(

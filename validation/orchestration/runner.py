@@ -12,6 +12,11 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from validation.components.console_output import (
+    print_component_validation_summary,
+    print_interoperability_suite_header,
+)
+
 
 @dataclass
 class Level6Runtime:
@@ -179,6 +184,7 @@ def run_level6(runtime: Level6Runtime) -> None:
             raise RuntimeError("Level 6 validation readiness check failed")
 
         runtime.validation_engine.last_storage_checks = []
+        print_interoperability_suite_header("Newman connector interoperability", "Newman")
         validation_reports = runtime.validation_engine.run_all_dataspace_tests(
             connectors,
             experiment_dir=experiment_dir,
@@ -214,7 +220,7 @@ def run_level6(runtime: Level6Runtime) -> None:
         )
 
         if runtime.should_run_kafka_edc_validation():
-            print("\nRunning Kafka transfer validation suite...")
+            print_interoperability_suite_header("Kafka transfer interoperability", "Kafka")
             kafka_edc_results = runtime.run_kafka_edc_validation(connectors, experiment_dir) or []
             print("Kafka transfer validation results:")
             for result in kafka_edc_results:
@@ -294,16 +300,7 @@ def run_level6(runtime: Level6Runtime) -> None:
                     }
                 ]
 
-            for result in component_results:
-                component = result.get("component", "unknown-component")
-                status = result.get("status", "unknown")
-                if status == "passed":
-                    print(f"  Component validation passed for {component}")
-                elif status == "failed":
-                    print(f"  Warning: component validation failed for {component}")
-                else:
-                    reason = result.get("reason") or (result.get("error") or {}).get("message", "unknown reason")
-                    print(f"  Component validation skipped for {component} ({reason})")
+            print_component_validation_summary(component_results)
 
         runtime.save_experiment_state(
             experiment_dir,

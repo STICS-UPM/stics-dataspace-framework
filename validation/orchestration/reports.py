@@ -51,6 +51,15 @@ ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 ANSI_SGR_RE = re.compile(r"\x1B\[([0-9;]*)m")
 PLAYWRIGHT_TEST_BEGIN_RE = re.compile(r"^\s*›\s+(?P<title>.+?)\s*$")
 PLAYWRIGHT_TEST_END_RE = re.compile(r"^\s*(?:✓|✗|-)\s+(?P<title>.+?)\s*$")
+DASHBOARD_SUITE_HEADER_RE = re.compile(
+    r"^\s*(?:Suite|Group|Component suite|Component API suite|Component Playwright suite|"
+    r"Interoperability(?: [^:]+)? suite):\s+.+"
+)
+DASHBOARD_STATUS_PREFIX_RE = re.compile(
+    r"^(?P<control>(?:\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]))*)"
+    r"(?P<indent>\s*)(?P<icon>✓|✗|-|›)(?P<spacing>\s+)(?P<text>.+)$"
+)
+ANSI_HAS_SGR_RE = re.compile(r"\x1B\[[0-9;]*m")
 ANSI_FG_CLASSES = {
     30: "ansi-fg-black",
     31: "ansi-fg-red",
@@ -349,6 +358,8 @@ def _summarize_components(experiment_path: Path) -> list[dict[str, Any]]:
                     "failed": summary.get("failed", 0),
                     "skipped": summary.get("skipped", 0),
                 },
+                "phase_execution_channels": payload.get("phase_execution_channels"),
+                "suite_execution_channels": payload.get("suite_execution_channels"),
                 "artifacts": [_relative(path, experiment_path)],
             }
         )
@@ -581,11 +592,136 @@ def _plain_console_line(value: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
 
 
+def _playwright_progress_title(line: str) -> str | None:
+    match = PLAYWRIGHT_TEST_BEGIN_RE.match(_plain_console_line(line))
+    if not match:
+        return None
+    return match.group("title").strip()
+
+
+def _playwright_result_title(line: str) -> str | None:
+    match = PLAYWRIGHT_TEST_END_RE.match(_plain_console_line(line))
+    if not match:
+        return None
+    return match.group("title").strip()
+
+
+def _dashboard_line_has_sgr(line: str) -> bool:
+    return bool(ANSI_HAS_SGR_RE.search(line))
+
+
+def _dashboard_is_component_suite_header(line: str) -> bool:
+    plain = _plain_console_line(line)
+    return plain.startswith(("Component suite:", "Component API suite:", "Component Playwright suite:"))
+
+
+def _dashboard_is_interoperability_suite_header(line: str) -> bool:
+    plain = _plain_console_line(line)
+    return plain.startswith(("Interoperability ", "Interoperability suite:"))
+
+
+def _dashboard_is_interoperability_suite_footer(line: str) -> bool:
+    return _plain_console_line(line).startswith("End interoperability suite:")
+
+
+def _dashboard_is_suite_header(line: str) -> bool:
+    return bool(DASHBOARD_SUITE_HEADER_RE.match(_plain_console_line(line)))
+
+
+def _dashboard_has_result_prefix(line: str) -> bool:
+    return bool(DASHBOARD_STATUS_PREFIX_RE.match(_plain_console_line(line)))
+
+
+def _dashboard_component_headers_to_hide(lines: list[str]) -> set[int]:
+    hidden: set[int] = set()
+    component_header_indices = [
+        index for index, line in enumerate(lines) if _dashboard_is_component_suite_header(line)
+    ]
+    for position, index in enumerate(component_header_indices):
+        next_index = component_header_indices[position + 1] if position + 1 < len(component_header_indices) else len(lines)
+        block = lines[index + 1 : next_index]
+        plain_header = _plain_console_line(lines[index])
+        has_artifact_suite_header = any(_plain_console_line(line).startswith("Suite:") for line in block)
+        has_direct_result = any(_dashboard_has_result_prefix(line) for line in block)
+        if not has_direct_result:
+            hidden.add(index)
+        elif has_artifact_suite_header and plain_header.startswith("Component suite:"):
+            hidden.add(index)
+    return hidden
+
+
+def _dashboard_colorize_plain_line(line: str) -> str:
+    """Apply stable dashboard colors when a raw console line has no SGR color."""
+    if not line or _dashboard_line_has_sgr(line):
+        return line
+
+    plain = _plain_console_line(line)
+    if not plain:
+        return line
+
+    if (
+        _dashboard_is_component_suite_header(plain)
+        or _dashboard_is_interoperability_suite_header(plain)
+        or plain == "Component validation summary"
+    ):
+        return f"\033[33;1m{line}\033[0m"
+
+    if DASHBOARD_SUITE_HEADER_RE.match(plain):
+        return f"\033[36;1m{line}\033[0m"
+
+    status_match = DASHBOARD_STATUS_PREFIX_RE.match(line)
+    if not status_match:
+        return line
+
+    icon = status_match.group("icon")
+    color = {
+        "✓": "32",
+        "✗": "31",
+        "-": "33",
+        "›": "36",
+    }.get(icon)
+    if not color:
+        return line
+    return (
+        f"{status_match.group('control')}{status_match.group('indent')}\033[{color}m{icon}\033[0m"
+        f"{status_match.group('spacing')}{status_match.group('text')}"
+    )
+
+
 def _dashboard_console_content(value: str) -> tuple[str, int]:
     """Return a complete static rendering of the console log for audit review."""
     if not value:
         return value, 0
-    return value.replace("\r", "\n"), 0
+
+    normalized = value.replace("\r", "\n")
+    raw_lines = normalized.split("\n")
+    hidden_component_headers = _dashboard_component_headers_to_hide(raw_lines)
+    completed_titles = {
+        title
+        for title in (_playwright_result_title(line) for line in raw_lines)
+        if title
+    }
+    rendered_lines: list[str] = []
+    hidden_progress_lines = 0
+
+    for index, line in enumerate(raw_lines):
+        if _dashboard_is_interoperability_suite_footer(line):
+            continue
+
+        if index in hidden_component_headers:
+            continue
+
+        progress_title = _playwright_progress_title(line)
+        if progress_title and progress_title in completed_titles:
+            hidden_progress_lines += 1
+            continue
+
+        colored_line = _dashboard_colorize_plain_line(line)
+        if _dashboard_is_suite_header(line) and rendered_lines and rendered_lines[-1] != "":
+            rendered_lines.append("")
+        rendered_lines.append(colored_line)
+
+    return "\n".join(rendered_lines), hidden_progress_lines
 
 
 def _ansi_style_classes(style: dict[str, Any]) -> list[str]:
@@ -1111,6 +1247,32 @@ def _render_suite_summaries(experiment: dict[str, Any]) -> str:
     )
 
 
+def _format_execution_channels(value: Any) -> str:
+    if not isinstance(value, dict) or not value:
+        return ""
+    labels = []
+    for phase, channels in value.items():
+        if isinstance(channels, str):
+            channel_values = [channels]
+        elif isinstance(channels, (list, tuple, set)):
+            channel_values = list(channels)
+        else:
+            channel_values = []
+        clean_channels = [
+            str(channel).strip()
+            for channel in channel_values
+            if str(channel or "").strip()
+        ]
+        if not clean_channels:
+            continue
+        display = ", ".join(
+            channel.upper() if channel.lower() == "api" else channel.title()
+            for channel in clean_channels
+        )
+        labels.append(f"{phase}: {display}")
+    return "; ".join(labels)
+
+
 def _suite_details(suite: dict[str, Any]) -> str:
     kind = suite.get("kind")
     if kind == "newman":
@@ -1138,6 +1300,9 @@ def _suite_details(suite: dict[str, Any]) -> str:
             f"Total: {summary.get('total', 0)}, passed: {summary.get('passed', 0)}, "
             f"failed: {summary.get('failed', 0)}, skipped: {summary.get('skipped', 0)}."
         )
+        channel_details = _format_execution_channels(suite.get("phase_execution_channels"))
+        if channel_details:
+            details += f" Channels: {channel_details}."
         groups = list(summary.get("groups") or [])
         if kind == "playwright-json" and groups:
             group_labels = [

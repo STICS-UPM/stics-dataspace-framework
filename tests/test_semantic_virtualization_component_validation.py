@@ -238,9 +238,15 @@ class SemanticVirtualizationComponentValidationTests(unittest.TestCase):
                 "validation.components.semantic_virtualization.runner.run_semantic_virtualization_ui_validation",
                 side_effect=fake_ui_runner,
             ),
+            mock.patch("builtins.print") as print_mock,
         ):
             result = run_semantic_virtualization_validation("http://semantic.example.local")
 
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("Component API suite: Virtualizador functional", printed)
+        self.assertIn("Component Playwright suite: Virtualizador functional", printed)
+        self.assertIn("Component API suite: Virtualizador integration", printed)
+        self.assertIn("✓ SV-API-03", printed)
         self.assertLess(calls.index("functional-api"), calls.index("functional-ui"))
         self.assertLess(calls.index("functional-morph-kgv-source"), calls.index("functional-ui"))
         self.assertLess(calls.index("functional-automap-source"), calls.index("functional-ui"))
@@ -248,6 +254,9 @@ class SemanticVirtualizationComponentValidationTests(unittest.TestCase):
         self.assertLess(calls.index("functional-mapping"), calls.index("functional-ui"))
         self.assertLess(calls.index("functional-ui"), calls.index("integration-health"))
         self.assertIn("ui", result["phases"]["functional"]["suites"])
+        self.assertIn("api", result["phase_execution_channels"]["functional"])
+        self.assertIn("playwright", result["phase_execution_channels"]["functional"])
+        self.assertEqual(result["phase_execution_channels"]["integration"], ["api"])
         self.assertEqual(result["summary"]["total"], 13)
         self.assertEqual(result["pt5_summary"]["total"], 10)
 

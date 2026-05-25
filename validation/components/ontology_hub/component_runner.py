@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from validation.components.artifact_contract import attach_component_artifact_manifest
+from validation.components.console_output import print_component_case_results, print_component_suite_header
 from validation.components.ontology_hub.functional.component_runner import (
     run_ontology_hub_component_validation as run_ontology_hub_functional_component_validation,
 )
@@ -15,6 +16,10 @@ COMPONENT_KEY = "ontology-hub"
 PHASE_LABELS = {
     "functional": "Ontology Hub functional",
     "integration": "Ontology Hub API integration",
+}
+PHASE_CHANNELS = {
+    "functional": "playwright",
+    "integration": "api",
 }
 STATUS_PRIORITY = {
     "failed": 3,
@@ -151,13 +156,17 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
         ("integration", run_ontology_hub_integration_component_validation),
     ]
     for phase, runner in phase_runners:
-        print(f"\nComponent suite: {_phase_label(phase)}\n")
+        print_component_suite_header(_phase_label(phase), PHASE_CHANNELS.get(phase))
         try:
             phases[phase] = runner(normalized_base_url, experiment_dir=experiment_dir)
             phases[phase].setdefault("display_name", _phase_label(phase))
             phases[phase].setdefault("phase", phase)
+            phases[phase].setdefault("execution_channel", PHASE_CHANNELS.get(phase))
+            if PHASE_CHANNELS.get(phase) == "api":
+                print_component_case_results(phases[phase].get("executed_cases") or [])
         except Exception as exc:  # pragma: no cover - defensive integration guard
             phases[phase] = _phase_failure_result(phase, exc)
+            phases[phase].setdefault("execution_channel", PHASE_CHANNELS.get(phase))
 
     executed_cases = [
         case
@@ -189,6 +198,10 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
         "summary": _summary_from_phases(phases),
         "phase_order": ["functional", "integration"],
         "phase_display_names": {phase: _phase_label(phase) for phase in phases},
+        "phase_execution_channels": {
+            phase: [PHASE_CHANNELS.get(phase, "unknown")]
+            for phase in phases
+        },
         "phases": phases,
         "suites": phases,
         "executed_cases": executed_cases,

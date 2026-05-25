@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 import yaml
 
 from validation.components.artifact_contract import attach_component_artifact_manifest
+from validation.components.console_output import print_component_case_results, print_component_suite_header
 from validation.components.ai_model_hub.runner import run_ai_model_hub_validation
 from validation.components.ai_model_hub.functional_runner import run_ai_model_hub_functional_validation
 from validation.components.ai_model_hub.ui_runner import run_ai_model_hub_ui_validation
@@ -494,10 +495,26 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
     started_at = datetime.now().isoformat()
     normalized_base_url = (base_url or "").rstrip("/")
 
+    current_suite_header: tuple[str, str] | None = None
+
+    def print_suite_header(title: str, channel: str) -> None:
+        nonlocal current_suite_header
+        header_key = (channel, title)
+        if current_suite_header == header_key:
+            return
+        print_component_suite_header(title, channel)
+        current_suite_header = header_key
+
+    print_suite_header("AI Model Hub preflight", "api")
     bootstrap_result = run_ai_model_hub_validation(normalized_base_url, experiment_dir=experiment_dir)
-    print("\nComponent suite: AI Model Hub functional\n")
+    bootstrap_result.setdefault("execution_channel", "api")
+    print_component_case_results(bootstrap_result.get("executed_cases") or [])
+
+    print_suite_header("AI Model Hub functional", "playwright")
     ui_result = run_ai_model_hub_ui_validation(normalized_base_url, experiment_dir=experiment_dir)
+    ui_result.setdefault("execution_channel", "playwright")
     functional_result = run_ai_model_hub_functional_validation(normalized_base_url, experiment_dir=experiment_dir)
+    functional_result.setdefault("execution_channel", "playwright")
     preflight_suite_results = [
         ("bootstrap", bootstrap_result),
     ]
@@ -506,52 +523,62 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
         ("linguistic_functional", functional_result),
     ]
     integration_suite_results: List[tuple[str, Dict[str, Any]]] = []
-    integration_started = False
     if _connector_governance_enabled():
-        if not integration_started:
-            print("\nComponent suite: AI Model Hub integration\n")
-            integration_started = True
+        print_suite_header("AI Model Hub integration", "api")
+        connector_governance_result = run_ai_model_hub_connector_governance_validation(experiment_dir=experiment_dir)
+        connector_governance_result.setdefault("execution_channel", "api")
+        print_component_case_results(connector_governance_result.get("executed_cases") or [])
         integration_suite_results.append(
             (
                 "connector_governance",
-                run_ai_model_hub_connector_governance_validation(experiment_dir=experiment_dir),
+                connector_governance_result,
             )
         )
     if _model_execution_enabled():
-        if not integration_started:
-            print("\nComponent suite: AI Model Hub integration\n")
-            integration_started = True
+        print_suite_header("AI Model Hub integration", "api")
+        model_execution_result = run_ai_model_hub_model_execution_validation(experiment_dir=experiment_dir)
+        model_execution_result.setdefault("execution_channel", "api")
+        print_component_case_results(model_execution_result.get("executed_cases") or [])
         integration_suite_results.append(
             (
                 "model_execution",
-                run_ai_model_hub_model_execution_validation(experiment_dir=experiment_dir),
+                model_execution_result,
             )
         )
     if _model_benchmarking_enabled():
+        print_suite_header("AI Model Hub functional", "api")
+        model_benchmarking_result = run_ai_model_hub_model_benchmarking_validation(experiment_dir=experiment_dir)
+        model_benchmarking_result.setdefault("execution_channel", "api")
+        print_component_case_results(model_benchmarking_result.get("executed_cases") or [])
         functional_suite_results.append(
             (
                 "model_benchmarking",
-                run_ai_model_hub_model_benchmarking_validation(experiment_dir=experiment_dir),
+                model_benchmarking_result,
             )
         )
     if _mobility_benchmarking_enabled():
+        print_suite_header("AI Model Hub functional", "api")
+        mobility_benchmarking_result = run_ai_model_hub_mobility_benchmarking_validation(experiment_dir=experiment_dir)
+        mobility_benchmarking_result.setdefault("execution_channel", "api")
+        print_component_case_results(mobility_benchmarking_result.get("executed_cases") or [])
         functional_suite_results.append(
             (
                 "mobility_benchmarking",
-                run_ai_model_hub_mobility_benchmarking_validation(experiment_dir=experiment_dir),
+                mobility_benchmarking_result,
             )
         )
     if _model_observer_enabled():
-        if not integration_started:
-            print("\nComponent suite: AI Model Hub integration\n")
-            integration_started = True
+        print_suite_header("AI Model Hub integration", "api")
+        model_observer_result = run_ai_model_hub_model_observer_validation(
+            base_url=_resolve_model_observer_base_url(normalized_base_url),
+            experiment_dir=experiment_dir,
+        )
+        model_observer_result.setdefault("execution_channel", "api")
+        print_component_case_results(model_observer_result.get("executed_cases") or [])
         integration_suite_results.append(
             (
                 "model_observer",
-                run_ai_model_hub_model_observer_validation(
-                    base_url=_resolve_model_observer_base_url(normalized_base_url),
-                    experiment_dir=experiment_dir,
-                ),
+                model_observer_result,
             )
         )
     named_suite_results = preflight_suite_results + functional_suite_results + integration_suite_results
@@ -628,6 +655,15 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
         "functional": _phase_summary(functional_suite_results),
         "integration": _phase_summary(integration_suite_results),
     }
+    suite_execution_channels = {
+        name: str(suite_result.get("execution_channel") or "unknown")
+        for name, suite_result in named_suite_results
+    }
+    phase_execution_channels = {
+        "preflight": sorted({suite_execution_channels.get(name, "unknown") for name, _ in preflight_suite_results}),
+        "functional": sorted({suite_execution_channels.get(name, "unknown") for name, _ in functional_suite_results}),
+        "integration": sorted({suite_execution_channels.get(name, "unknown") for name, _ in integration_suite_results}),
+    }
 
     combined_status = "skipped"
     for suite_result in suite_results:
@@ -640,6 +676,8 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
         "status": combined_status,
         "summary": summary,
         "phase_order": ["preflight", "functional", "integration"],
+        "phase_execution_channels": phase_execution_channels,
+        "suite_execution_channels": suite_execution_channels,
         "phases": phases,
         "suites": suites,
         "executed_cases": executed_cases,

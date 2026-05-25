@@ -7,6 +7,7 @@ class ConsoleTestNameReporter {
     this.groupHeadersByTest = new WeakMap();
     this.printGroupHeaders = false;
     this.printedGroupHeaderTests = new WeakSet();
+    this.testIndent = "  ";
   }
 
   _supportsColor() {
@@ -178,6 +179,7 @@ class ConsoleTestNameReporter {
     this._prepareGroupCounts(suite);
     if (suiteName) {
       const suiteLabel = this._suiteLabel(suiteName, this._suiteTestCount(suite));
+      console.log();
       console.log(this._color(`Suite: ${suiteLabel}`, "36;1"));
     }
   }
@@ -187,7 +189,7 @@ class ConsoleTestNameReporter {
       return;
     }
     this._printGroupHeader(test);
-    process.stdout.write(`${this._color("›", "36")} ${test.title}`);
+    process.stdout.write(`${this.testIndent}${this._color("›", "36")} ${test.title}`);
     this.pendingLine = true;
   }
 
@@ -200,14 +202,14 @@ class ConsoleTestNameReporter {
     this._printGroupHeader(test);
     const status = result.status || "unknown";
     if (status === "passed") {
-      console.log(`${this._color("✓", "32")} ${test.title}`);
+      console.log(`${this.testIndent}${this._color("✓", "32")} ${test.title}`);
       return;
     }
     if (status === "skipped") {
-      console.log(`${this._color("-", "33")} ${test.title}`);
+      console.log(`${this.testIndent}${this._color("-", "33")} ${test.title}`);
       return;
     }
-    console.log(this._color(`✗ ${test.title}`, "31"));
+    console.log(this._color(`${this.testIndent}✗ ${test.title}`, "31"));
   }
 }
 

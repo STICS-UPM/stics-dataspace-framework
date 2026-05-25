@@ -29,9 +29,9 @@ reporter.onTestEnd({ title: '03 failing path' }, { status: 'failed' });
             completed.stdout.strip().splitlines(),
             [
                 "Suite: INESData integration (3 tests)",
-                "✓ 01 login readiness: authentication and shell loaded",
-                "- 02 optional path",
-                "✗ 03 failing path",
+                "  ✓ 01 login readiness: authentication and shell loaded",
+                "  - 02 optional path",
+                "  ✗ 03 failing path",
             ],
         )
 
@@ -53,7 +53,7 @@ reporter.onBegin();
             check=True,
         )
 
-        self.assertEqual(completed.stdout, "Suite: Ontology Hub functional\n")
+        self.assertEqual(completed.stdout, "\nSuite: Ontology Hub functional\n")
 
     def test_console_reporter_prints_logical_group_headers_when_suite_is_mixed(self):
         script = """
@@ -88,9 +88,9 @@ reporter.onTestEnd(ontologyTest, { status: 'passed' });
             [
                 "Suite: INESData integration (2 tests)",
                 "Group: Core (1 test)",
-                "✓ 01 login readiness: authentication and shell loaded",
+                "  ✓ 01 login readiness: authentication and shell loaded",
                 "Group: Ontology Hub (1 test)",
-                "✓ 08 ontology hub: read-only INESData UI integration surfaces vocabularies and ontologies",
+                "  ✓ 08 ontology hub: read-only INESData UI integration surfaces vocabularies and ontologies",
             ],
         )
 
@@ -142,13 +142,13 @@ for (const test of tests) {
             [
                 "Suite: AI Model Hub functional (5 tests)",
                 "Group: Functional (2 tests)",
-                "✓ PT5-MH-01: model catalog view is reachable from the public UI",
-                "✓ PT5-MH-02: provider can register a local model asset with valid metadata",
+                "  ✓ PT5-MH-01: model catalog view is reachable from the public UI",
+                "  ✓ PT5-MH-02: provider can register a local model asset with valid metadata",
                 "Group: AI Model Hub (1 test)",
-                "✓ PT5-MH-03: provider publication becomes visible through the consumer catalog UI",
+                "  ✓ PT5-MH-03: provider publication becomes visible through the consumer catalog UI",
                 "Group: Functional (2 tests)",
-                "✓ PT5-MH-04: model listing view renders the discovery shell",
-                "✓ PT5-MH-05: model discovery search input accepts free text queries",
+                "  ✓ PT5-MH-04: model listing view renders the discovery shell",
+                "  ✓ PT5-MH-05: model discovery search input accepts free text queries",
             ],
         )
 
@@ -185,9 +185,9 @@ reporter.onTestEnd(integrationTest, { status: 'passed' });
             [
                 "Suite: Ontology Hub API integration (2 tests)",
                 "Group: Functional (1 test)",
-                "✓ OH functional",
+                "  ✓ OH functional",
                 "Group: API integration (1 test)",
-                "✓ OH API integration",
+                "  ✓ OH API integration",
             ],
         )
 
@@ -255,18 +255,18 @@ for (const test of tests) {
             [
                 "Suite: INESData integration (9 tests)",
                 "Group: Core (2 tests)",
-                "✓ 01 login readiness: authentication and shell loaded",
-                "✓ 04 consumer catalog: published asset is discoverable",
+                "  ✓ 01 login readiness: authentication and shell loaded",
+                "  ✓ 04 consumer catalog: published asset is discoverable",
                 "Group: Semantic Virtualization (1 test)",
-                "✓ 07 semantic virtualization: HTTP data is queryable",
+                "  ✓ 07 semantic virtualization: HTTP data is queryable",
                 "Group: Ontology Hub (1 test)",
-                "✓ 08 ontology hub: read-only INESData UI integration surfaces vocabularies and ontologies",
+                "  ✓ 08 ontology hub: read-only INESData UI integration surfaces vocabularies and ontologies",
                 "Group: AI Model Hub (5 tests)",
-                "✓ 09 AI Model Hub: HTTP data publication is discoverable",
-                "✓ 10 AI model observer: transfer events are visible",
-                "✓ 11 AI Model Browser: controlled model discovery, filtering and detail from INESData UI",
-                "✓ 12 AI Model Execution: local model-server inference from INESData UI",
-                "✓ 13 AI Model Benchmarking: compare two local model-server endpoints from INESData UI",
+                "  ✓ 09 AI Model Hub: HTTP data publication is discoverable",
+                "  ✓ 10 AI model observer: transfer events are visible",
+                "  ✓ 11 AI Model Browser: controlled model discovery, filtering and detail from INESData UI",
+                "  ✓ 12 AI Model Execution: local model-server inference from INESData UI",
+                "  ✓ 13 AI Model Benchmarking: compare two local model-server endpoints from INESData UI",
             ],
         )
 
@@ -287,7 +287,7 @@ reporter.onTestEnd({ title: '03 failing path' }, { status: 'failed' });
             check=True,
         )
 
-        self.assertEqual(completed.stdout, "\u001b[31m✗ 03 failing path\u001b[0m\n")
+        self.assertEqual(completed.stdout, "\u001b[31m  ✗ 03 failing path\u001b[0m\n")
 
 
 if __name__ == "__main__":

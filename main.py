@@ -114,6 +114,10 @@ from validation.components.runner import (
     run_component_validations as run_registered_component_validations,
     summarize_component_results,
 )
+from validation.components.console_output import (
+    print_component_validation_summary,
+    print_interoperability_suite_header,
+)
 from validation.datasets.manager import sync_level5_dataset_sources
 from validation.ui import interactive_menu as ui_interactive_menu
 from validation.ui.ui_runner import run_playwright_validation
@@ -3003,6 +3007,12 @@ def _console_status_label(status, *, stream=None):
     return _colorize_console_icon(icon, normalized, stream=stream)
 
 
+def _console_color(text, code, *, stream=None):
+    if not _console_supports_color(stream=stream):
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
 def _print_kafka_transfer_steps(result, indent="    "):
     steps = result.get("steps") if isinstance(result, dict) else None
     if not isinstance(steps, list) or not steps:
@@ -3155,15 +3165,16 @@ def run_level6_kafka_edc_after_newman(
             }
         ]
         _save_kafka_edc_results(results, experiment_dir, experiment_storage=experiment_storage)
+        print_interoperability_suite_header("Kafka transfer interoperability", "Kafka")
         print(
-            "\nKafka transfer validation suite skipped. Kafka validations are disabled by default in Level 6 "
+            "Kafka transfer validation suite skipped. Kafka validations are disabled by default in Level 6 "
             "to keep routine validation faster. In an interactive Level 6 run, answer yes when prompted. "
             "For non-interactive runs, set PIONERA_LEVEL6_RUN_KAFKA=true. If PIONERA_LEVEL6_SKIP_KAFKA "
             "is enabled, unset it or set PIONERA_LEVEL6_SKIP_KAFKA=false."
         )
         return results
 
-    print("\nRunning Kafka transfer validation suite...")
+    print_interoperability_suite_header("Kafka transfer interoperability", "Kafka")
     kafka_preparation_result = _finalize_level6_kafka_preparation(
         kafka_preparation,
         experiment_dir,
@@ -3249,6 +3260,190 @@ def _status_from_kafka_results(results):
     return "completed"
 
 
+def _level6_normalized_status(status):
+    raw = str(status or "").strip().lower()
+    if raw in {"passed", "success", "ok", "completed", "succeeded"}:
+        return "passed"
+    if raw in {"failed", "fail", "error", "terminated"}:
+        return "failed"
+    if raw in {"skipped", "skip", "pending", "disabled"}:
+        return "skipped"
+    return raw or "unknown"
+
+
+def _level6_failure_reason(*candidates):
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            for key in ("message", "reason", "error", "details"):
+                value = candidate.get(key)
+                if isinstance(value, dict):
+                    nested = _level6_failure_reason(value)
+                    if nested:
+                        return nested
+                if value not in (None, ""):
+                    return str(value)
+        elif candidate not in (None, ""):
+            return str(candidate)
+    return "See the generated suite artifact for details."
+
+
+def _level6_case_label(case):
+    case_id = str(case.get("test_case_id") or case.get("case_id") or case.get("id") or "").strip()
+    title = str(
+        case.get("description")
+        or case.get("expected_result")
+        or case.get("name")
+        or case.get("title")
+        or ""
+    ).strip()
+    if case_id and title:
+        if title.lower().startswith(case_id.lower()):
+            return title
+        return f"{case_id}: {title}"
+    return case_id or title or "Unnamed test"
+
+
+def _iter_level6_component_failed_tests(component_results):
+    for component_result in component_results or []:
+        if not isinstance(component_result, dict):
+            continue
+        component = str(component_result.get("component") or "component").replace("-", " ").title()
+        phases = component_result.get("phases")
+        emitted = False
+        if isinstance(phases, dict):
+            phase_order = list(component_result.get("phase_order") or phases.keys())
+            for phase in phase_order:
+                phase_result = phases.get(phase)
+                if not isinstance(phase_result, dict):
+                    continue
+                phase_name = str(phase_result.get("display_name") or phase).replace("_", " ").replace("-", " ").title()
+                case_groups = [phase_result.get("executed_cases")]
+                suites = phase_result.get("suites")
+                if isinstance(suites, dict):
+                    for suite_result in suites.values():
+                        if isinstance(suite_result, dict):
+                            case_groups.append(suite_result.get("executed_cases"))
+                for cases in case_groups:
+                    for case in cases or []:
+                        if not isinstance(case, dict):
+                            continue
+                        evaluation = case.get("evaluation") if isinstance(case.get("evaluation"), dict) else {}
+                        response = case.get("response") if isinstance(case.get("response"), dict) else {}
+                        if _level6_normalized_status(evaluation.get("status") or case.get("status")) != "failed":
+                            continue
+                        emitted = True
+                        yield {
+                            "suite": f"{component} / {phase_name}",
+                            "test": _level6_case_label(case),
+                            "reason": _level6_failure_reason(evaluation, response, case),
+                        }
+        if emitted:
+            continue
+        if _level6_normalized_status(component_result.get("status")) == "failed":
+            yield {
+                "suite": component,
+                "test": "Component validation",
+                "reason": _level6_failure_reason(component_result.get("error"), component_result.get("reason")),
+            }
+
+
+def _iter_level6_playwright_failed_tests(playwright_result):
+    if not isinstance(playwright_result, dict):
+        return
+    summary = playwright_result.get("summary") if isinstance(playwright_result.get("summary"), dict) else {}
+    for spec in summary.get("spec_results") or []:
+        if not isinstance(spec, dict):
+            continue
+        if _level6_normalized_status(spec.get("status")) != "failed":
+            continue
+        title = str(spec.get("title") or spec.get("file") or "Playwright test").strip()
+        yield {
+            "suite": "INESData UI",
+            "test": title,
+            "reason": _level6_failure_reason(spec.get("error"), spec.get("reason")),
+        }
+
+
+def _iter_level6_kafka_failed_tests(kafka_results):
+    for result in kafka_results or []:
+        if not isinstance(result, dict):
+            continue
+        if _level6_normalized_status(result.get("status")) != "failed":
+            continue
+        provider = result.get("provider", "unknown-provider")
+        consumer = result.get("consumer", "unknown-consumer")
+        yield {
+            "suite": "Kafka transfer interoperability",
+            "test": f"Kafka transfer: {provider} -> {consumer}",
+            "reason": _level6_failure_reason(result.get("error"), result.get("reason")),
+        }
+
+
+def _dedupe_level6_failures(failures):
+    unique = []
+    seen = set()
+    for failure in failures or []:
+        if not isinstance(failure, dict):
+            continue
+        key = (
+            str(failure.get("suite") or ""),
+            str(failure.get("test") or ""),
+            str(failure.get("reason") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(failure)
+    return unique
+
+
+def _print_level6_validation_summary(
+    *,
+    experiment_dir,
+    framework_report=None,
+    validation_error=None,
+    playwright_result=None,
+    playwright_failure=None,
+    component_results=None,
+    kafka_edc_results=None,
+):
+    failures = []
+    if validation_error is not None:
+        failures.append(
+            {
+                "suite": "Newman connector interoperability",
+                "test": "Newman execution",
+                "reason": str(validation_error),
+            }
+        )
+    failures.extend(list(_iter_level6_playwright_failed_tests(playwright_result)))
+    failures.extend(list(_iter_level6_component_failed_tests(component_results)))
+    failures.extend(list(_iter_level6_kafka_failed_tests(kafka_edc_results)))
+    failures = _dedupe_level6_failures(failures)
+    if playwright_failure and not any(item["suite"] == "INESData UI" for item in failures):
+        failures.append(
+            {
+                "suite": "Playwright validation",
+                "test": "Playwright execution",
+                "reason": f"Playwright validation failed with status '{playwright_failure}'",
+            }
+        )
+
+    status = "failed" if failures else "passed"
+    print(f"\n{_console_color('Level 6 validation summary', '36;1')}\n")
+    print(f"  Status: {_console_status_label(status)} {status}")
+    if experiment_dir:
+        print(f"  Experiment: {os.path.basename(str(experiment_dir))}")
+    if isinstance(framework_report, dict) and framework_report.get("path"):
+        print(f"  Dashboard: {framework_report['path']}")
+    if failures:
+        print("  Failed tests:")
+        for item in failures:
+            print(f"    {_console_status_label('failed')} [{item['suite']}] {item['test']} - {item['reason']}")
+    else:
+        print(f"  Failed tests: {_console_status_label('passed')} none")
+
+
 def run_interoperability_newman_tests(
     adapter,
     *,
@@ -3313,6 +3508,7 @@ def run_interoperability_newman_tests(
             parameters = inspect.signature(run_method).parameters
         except (TypeError, ValueError):
             parameters = {}
+        print_interoperability_suite_header("Newman connector interoperability", "Newman")
         if "experiment_dir" in parameters:
             validation_result = run_method(connectors, experiment_dir=experiment_dir)
         else:
@@ -6425,7 +6621,13 @@ def run_validate(
         )
         validation_result = None
         validation_error = None
+        kafka_edc_results = []
+        playwright_result = None
+        playwright_failure = None
+        component_results = []
+        component_validation_summary = None
 
+        print_interoperability_suite_header("Newman connector interoperability", "Newman")
         try:
             if "experiment_dir" in parameters:
                 validation_result = run_method(connectors, experiment_dir=experiment_dir)
@@ -6464,7 +6666,16 @@ def run_validate(
                 local_stability_preflight,
                 validation_profile=validation_profile,
             )
-            _generate_framework_dashboard(experiment_dir)
+            framework_report = _generate_framework_dashboard(experiment_dir)
+            _print_level6_validation_summary(
+                experiment_dir=experiment_dir,
+                framework_report=framework_report,
+                validation_error=validation_error,
+                playwright_result=playwright_result,
+                playwright_failure=playwright_failure,
+                component_results=component_results,
+                kafka_edc_results=kafka_edc_results,
+            )
             raise validation_error
 
         kafka_edc_results = run_level6_kafka_edc_after_newman(
@@ -6480,10 +6691,6 @@ def run_validate(
             kafka_enabled=kafka_level6_enabled,
         )
 
-        playwright_result = None
-        playwright_failure = None
-        component_results = []
-        component_validation_summary = None
         if validation_profile is not None:
             if not getattr(validation_profile, "playwright_enabled", False):
                 playwright_result = {
@@ -6618,16 +6825,7 @@ def run_validate(
                             }
                         ]
 
-                    for result in component_results:
-                        component = result.get("component", "unknown-component")
-                        status = result.get("status", "unknown")
-                        if status == "passed":
-                            print(f"  Component validation passed for {component}")
-                        elif status == "failed":
-                            print(f"  Warning: component validation failed for {component}")
-                        else:
-                            reason = result.get("reason") or (result.get("error") or {}).get("message", "unknown reason")
-                            print(f"  Component validation skipped for {component} ({reason})")
+                    print_component_validation_summary(component_results)
                 if component_results:
                     component_validation_summary = summarize_component_results(component_results)
                 if playwright_failure is not None:
@@ -6639,7 +6837,16 @@ def run_validate(
                         local_stability_preflight,
                         validation_profile=validation_profile,
                     )
-                    _generate_framework_dashboard(experiment_dir)
+                    framework_report = _generate_framework_dashboard(experiment_dir)
+                    _print_level6_validation_summary(
+                        experiment_dir=experiment_dir,
+                        framework_report=framework_report,
+                        validation_error=validation_error,
+                        playwright_result=playwright_result,
+                        playwright_failure=playwright_failure,
+                        component_results=component_results,
+                        kafka_edc_results=kafka_edc_results,
+                    )
                     raise RuntimeError(
                         f"Playwright validation failed with status '{playwright_failure}'"
                     )
@@ -6653,6 +6860,15 @@ def run_validate(
             validation_profile=validation_profile,
         )
         framework_report = _generate_framework_dashboard(experiment_dir)
+        _print_level6_validation_summary(
+            experiment_dir=experiment_dir,
+            framework_report=framework_report,
+            validation_error=validation_error,
+            playwright_result=playwright_result,
+            playwright_failure=playwright_failure,
+            component_results=component_results,
+            kafka_edc_results=kafka_edc_results,
+        )
 
         return {
             "experiment_dir": experiment_dir,

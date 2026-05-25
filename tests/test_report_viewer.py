@@ -112,6 +112,10 @@ class ReportViewerTests(unittest.TestCase):
                 "component": "ontology-hub",
                 "status": "failed",
                 "summary": {"total": 4, "passed": 3, "failed": 1, "skipped": 0},
+                "phase_execution_channels": {
+                    "functional": ["playwright"],
+                    "integration": ["api"],
+                },
                 "runtime": {"adminPassword": "must-not-appear-in-dashboard"},
             },
         )
@@ -195,11 +199,13 @@ class ReportViewerTests(unittest.TestCase):
         self.assertIn("Newman", content)
         self.assertIn("Kafka transfer", content)
         self.assertIn("Level 6 console log", content)
+        self.assertIn("<span class='ansi-bold ansi-fg-cyan'>Suite: INESData integration</span>", content)
         self.assertIn("✓</span> 01 login readiness", content)
-        self.assertIn("›</span> 01 login readiness", content)
-        self.assertNotIn("hidden 1 transient Playwright start line", content)
+        self.assertNotIn("›</span> 01 login readiness", content)
+        self.assertIn("hidden 1 transient Playwright start line", content)
         self.assertIn("Provider Management API Health failed", content)
         self.assertIn("<span class='ansi-fg-red'>Provider Management API Health failed</span>", content)
+        self.assertIn("Channels: functional: Playwright; integration: API.", content)
         self.assertIn("&lt;console line must be escaped&gt;", content)
         self.assertIn("level6_console.log", content)
         self.assertNotIn("\x1b", content)
@@ -218,6 +224,7 @@ class ReportViewerTests(unittest.TestCase):
             )
             (experiment / "newman_console.log").write_text(
                 "Newman interoperability console log: /tmp/newman_console.log\n"
+                "Interoperability Newman suite: Newman connector interoperability\n"
                 "\x1b[32m✓\x1b[0m Provider Management API Health\n"
                 "\x1b[31m✗\x1b[0m Consumer Management API Health\n"
                 "Done.\n",
@@ -232,6 +239,11 @@ class ReportViewerTests(unittest.TestCase):
         self.assertEqual(inspected["console_logs"][0]["path"], "newman_console.log")
         self.assertIn("Newman interoperability console log", content)
         self.assertIn("Open raw newman_console.log", content)
+        self.assertIn(
+            "<span class='ansi-bold ansi-fg-yellow'>Interoperability Newman suite: Newman connector interoperability</span>",
+            content,
+        )
+        self.assertNotIn("End interoperability suite", content)
         self.assertIn("<span class='ansi-fg-green'>✓</span> Provider Management API Health", content)
         self.assertIn("<span class='ansi-fg-red'>✗</span> Consumer Management API Health", content)
         self.assertIn("newman_console.log", [artifact["path"] for artifact in inspected["artifacts"]])
@@ -257,14 +269,69 @@ class ReportViewerTests(unittest.TestCase):
         self.assertEqual(hidden, 0)
         self.assertIn("unfinished test", rendered)
 
-    def test_dashboard_console_keeps_completed_playwright_start_line_for_audit(self):
+    def test_dashboard_console_hides_completed_playwright_start_line(self):
         rendered, hidden = reports._dashboard_console_content(
             "\x1b[36m›\x1b[0m completed test\n\x1b[32m✓\x1b[0m completed test\n"
         )
 
-        self.assertEqual(hidden, 0)
-        self.assertIn("›\x1b[0m completed test", rendered)
+        self.assertEqual(hidden, 1)
+        self.assertNotIn("›\x1b[0m completed test", rendered)
         self.assertIn("✓\x1b[0m completed test", rendered)
+
+    def test_dashboard_console_hides_carriage_return_playwright_start_line(self):
+        rendered, hidden = reports._dashboard_console_content(
+            "› completed test\r\x1b[2K✓ completed test\n"
+        )
+
+        self.assertEqual(hidden, 1)
+        self.assertNotIn("› completed test", rendered)
+        self.assertIn("\x1b[32m✓\x1b[0m completed test", rendered)
+
+    def test_dashboard_console_colorizes_plain_suite_headers_and_result_prefixes(self):
+        rendered, hidden = reports._dashboard_console_content(
+            "Component API suite: Virtualizador integration\n"
+            "✓ SV-API-01: semantic virtualization API health endpoint responds successfully\n"
+            "Component Playwright suite: Virtualizador functional\n"
+            "Suite: Virtualizador functional (1 test)\n"
+            "✓ SV-UI-01: semantic virtualization root is reachable from a browser\n"
+            "✗ SV-UI-02: failing test\n"
+            "  ✓ Kafka transfer: provider -> consumer\n"
+            "Component validation summary\n"
+        )
+
+        html_content = reports._ansi_to_html(rendered)
+
+        self.assertEqual(hidden, 0)
+        self.assertIn(
+            "<span class='ansi-bold ansi-fg-yellow'>Component API suite: Virtualizador integration</span>",
+            html_content,
+        )
+        self.assertIn(
+            "<span class='ansi-bold ansi-fg-yellow'>Component Playwright suite: Virtualizador functional</span>",
+            html_content,
+        )
+        self.assertIn(
+            "<span class='ansi-bold ansi-fg-yellow'>Component validation summary</span>",
+            html_content,
+        )
+        self.assertIn("<span class='ansi-fg-green'>✓</span> SV-API-01", html_content)
+        self.assertIn("<span class='ansi-bold ansi-fg-cyan'>Suite: Virtualizador functional (1 test)</span>", html_content)
+        self.assertIn("<span class='ansi-fg-green'>✓</span> SV-UI-01", html_content)
+        self.assertIn("<span class='ansi-fg-red'>✗</span> SV-UI-02", html_content)
+        self.assertIn("  <span class='ansi-fg-green'>✓</span> Kafka transfer: provider -&gt; consumer", html_content)
+
+    def test_dashboard_console_hides_empty_component_suite_wrappers(self):
+        rendered, hidden = reports._dashboard_console_content(
+            "Component API suite: AI Model Hub integration\n\n"
+            "Component Playwright suite: Virtualizador functional\n"
+            "Suite: Virtualizador functional (1 test)\n"
+            "✓ SV-UI-01: semantic virtualization root is reachable from a browser\n"
+        )
+
+        self.assertEqual(hidden, 0)
+        self.assertNotIn("Component API suite: AI Model Hub integration", rendered)
+        self.assertIn("Component Playwright suite: Virtualizador functional", rendered)
+        self.assertIn("Suite: Virtualizador functional (1 test)", rendered)
 
     def test_inesdata_playwright_results_are_grouped_for_audit(self):
         with tempfile.TemporaryDirectory() as tmp:

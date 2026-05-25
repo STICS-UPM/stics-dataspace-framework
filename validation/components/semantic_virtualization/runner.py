@@ -6,6 +6,11 @@ from typing import Any, Dict, List, Tuple
 from urllib import error, parse, request
 
 from validation.components.artifact_contract import attach_component_artifact_manifest
+from validation.components.console_output import (
+    print_component_case_result,
+    print_component_case_results,
+    print_component_suite_header,
+)
 from validation.components.semantic_virtualization.gtfs_bench_materialization import (
     run_gtfs_bench_official_materialization_validation,
 )
@@ -464,10 +469,12 @@ def run_semantic_virtualization_validation(
         phase_checks = [check for check in checks if check[1] == phase_name]
         if not phase_checks:
             return
-        if phase_name == "functional":
-            print("\nComponent suite: Virtualizador functional\n")
+        if phase_name == "preflight":
+            print_component_suite_header("Virtualizador preflight", "api")
+        elif phase_name == "functional":
+            print_component_suite_header("Virtualizador functional", "api")
         elif phase_name == "integration":
-            print("\nComponent suite: Virtualizador integration\n")
+            print_component_suite_header("Virtualizador integration", "api")
 
         for case_id, phase, description, relative_path, require_json, request_headers, expectation in phase_checks:
             url = _build_url(normalized_base_url, relative_path)
@@ -524,6 +531,7 @@ def run_semantic_virtualization_validation(
             executed_cases.append(case_result)
             api_cases.append(case_result)
             api_cases_by_phase.setdefault(phase, []).append(case_result)
+            print_component_case_result(case_result)
 
             if component_dir:
                 artifact_key = f"{case_id.lower()}-response.json"
@@ -555,12 +563,17 @@ def run_semantic_virtualization_validation(
             suite_result = runner(experiment_dir=experiment_dir)
         except Exception as exc:  # pragma: no cover - defensive integration guard
             suite_result = _suite_failure_result(suite_name, exc)
+        suite_result.setdefault("execution_channel", "api")
         functional_suite_results[suite_key] = suite_result
-        executed_cases.extend(_tag_suite_cases(suite_key, suite_result, "functional"))
+        tagged_cases = _tag_suite_cases(suite_key, suite_result, "functional")
+        executed_cases.extend(tagged_cases)
+        print_component_case_results(tagged_cases)
+    print_component_suite_header("Virtualizador functional", "playwright")
     ui_result = run_semantic_virtualization_ui_validation(
         normalized_base_url,
         experiment_dir=experiment_dir,
     )
+    ui_result.setdefault("execution_channel", "playwright")
     ui_cases = [
         {**case, "source_phase": "functional"}
         for case in list(ui_result.get("executed_cases") or [])
@@ -595,6 +608,7 @@ def run_semantic_virtualization_validation(
                 "status": "failed"
                 if any(((case.get("evaluation") or {}).get("status") == "failed") for case in phase_api_cases)
                 else "passed",
+                "execution_channel": "api",
                 "summary": _summarize_cases(phase_api_cases),
                 "executed_cases": phase_api_cases,
             }
@@ -620,6 +634,16 @@ def run_semantic_virtualization_validation(
             "summary": phase_summary,
             "suites": suite_results,
         }
+    phase_execution_channels = {
+        phase: sorted(
+            {
+                str(suite_result.get("execution_channel") or "unknown")
+                for suite_result in (phases.get(phase, {}).get("suites") or {}).values()
+                if isinstance(suite_result, dict)
+            }
+        )
+        for phase in phase_order
+    }
 
     result: Dict[str, Any] = {
         "component": COMPONENT_KEY,
@@ -629,11 +653,13 @@ def run_semantic_virtualization_validation(
         "status": status,
         "summary": summary,
         "phase_order": phase_order,
+        "phase_execution_channels": phase_execution_channels,
         "phases": phases,
         "suites": {
             "api": {
                 "status": "failed" if any(((case.get("evaluation") or {}).get("status") == "failed") for case in api_cases)
                 else "passed",
+                "execution_channel": "api",
                 "summary": _summarize_cases(api_cases),
                 "executed_cases": api_cases,
             },
