@@ -31,12 +31,6 @@ async function highlight(locator) {
     restoreDomMarker = undefined;
   }
 
-  try {
-    await locator.highlight();
-  } catch {
-    // Playwright's overlay is best-effort; the DOM marker keeps video evidence readable.
-  }
-
   const delayMs = markerDelayMs();
   if (delayMs > 0) {
     await locator.page().waitForTimeout(delayMs);

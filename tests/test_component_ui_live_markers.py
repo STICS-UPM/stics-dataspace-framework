@@ -18,6 +18,11 @@ COMPONENT_MARKER_HELPERS = [
     / "live-marker.js",
 ]
 
+ALL_MARKER_HELPERS = [
+    *COMPONENT_MARKER_HELPERS,
+    PROJECT_ROOT / "validation" / "ui" / "shared" / "utils" / "live-marker.ts",
+]
+
 
 class ComponentUiLiveMarkerTests(unittest.TestCase):
     def test_component_helpers_export_the_same_marked_actions(self):
@@ -48,13 +53,13 @@ console.log(JSON.stringify(Object.keys(helper).sort()));
                 self.assertEqual(set(json.loads(result.stdout)), expected_exports)
 
     def test_component_helpers_apply_dom_marker_for_auditable_videos(self):
-        for helper_path in COMPONENT_MARKER_HELPERS:
+        for helper_path in ALL_MARKER_HELPERS:
             with self.subTest(helper_path=helper_path):
                 source = helper_path.read_text(encoding="utf-8")
 
                 self.assertIn("data-pionera-playwright-marker", source)
                 self.assertIn("locator.scrollIntoViewIfNeeded", source)
-                self.assertIn("locator.highlight", source)
+                self.assertNotIn("locator.highlight", source)
                 self.assertIn("PLAYWRIGHT_INTERACTION_MARKERS", source)
                 self.assertIn("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", source)
 
