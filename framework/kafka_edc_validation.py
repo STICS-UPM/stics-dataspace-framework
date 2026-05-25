@@ -14,6 +14,14 @@ class KafkaDataAddressUnsupported(RuntimeError):
     """Raised when the deployed connector does not accept Kafka data addresses."""
 
 
+class KafkaTransferIncomplete(RuntimeError):
+    """Raised when Kafka relays some, but not all, messages produced by the suite."""
+
+    def __init__(self, message, metrics=None):
+        super().__init__(message)
+        self.metrics = metrics or {}
+
+
 class KafkaEdcValidationSuite:
     """Validate an end-to-end EDC + Kafka transfer flow."""
 
@@ -1518,6 +1526,91 @@ class KafkaEdcValidationSuite:
         upper = float(ordered[upper_index])
         return lower + (upper - lower) * weight
 
+    def _build_transfer_metrics(
+        self,
+        *,
+        status,
+        produced_count,
+        consumed_count,
+        source_topic,
+        destination_topic,
+        consumer_group_id,
+        latencies_ms,
+        duration_seconds,
+        probe_result,
+        message_samples,
+        missing_message_ids=None,
+    ):
+        metrics = {
+            "status": status,
+            "messages_produced": produced_count,
+            "messages_consumed": consumed_count,
+            "source_topic": source_topic,
+            "destination_topic": destination_topic,
+            "consumer_group_id": consumer_group_id,
+            "probe": probe_result,
+            "message_samples": message_samples,
+        }
+        if missing_message_ids:
+            metrics["messages_missing"] = len(missing_message_ids)
+            metrics["missing_message_ids"] = list(missing_message_ids)
+        if latencies_ms:
+            metrics.update(
+                {
+                    "average_latency_ms": round(sum(latencies_ms) / len(latencies_ms), 2),
+                    "min_latency_ms": round(min(latencies_ms), 2),
+                    "max_latency_ms": round(max(latencies_ms), 2),
+                    "p50_latency_ms": round(self._compute_percentile(latencies_ms, 0.50), 2),
+                    "p95_latency_ms": round(self._compute_percentile(latencies_ms, 0.95), 2),
+                    "p99_latency_ms": round(self._compute_percentile(latencies_ms, 0.99), 2),
+                    "throughput_messages_per_second": round(consumed_count / duration_seconds, 2),
+                }
+            )
+        return metrics
+
+    def _raise_if_incomplete_transfer(
+        self,
+        *,
+        produced_count,
+        consumed_count,
+        expected_ids,
+        source_topic,
+        destination_topic,
+        consumer_group_id,
+        latencies_ms,
+        duration_seconds,
+        probe_result,
+        message_samples,
+        timeout_seconds,
+    ):
+        if consumed_count >= produced_count:
+            return
+        for sample in message_samples:
+            if sample.get("status") == "produced":
+                sample["status"] = "missing"
+        missing_ids = sorted(expected_ids)
+        metrics = self._build_transfer_metrics(
+            status="incomplete",
+            produced_count=produced_count,
+            consumed_count=consumed_count,
+            source_topic=source_topic,
+            destination_topic=destination_topic,
+            consumer_group_id=consumer_group_id,
+            latencies_ms=latencies_ms,
+            duration_seconds=duration_seconds,
+            probe_result=probe_result,
+            message_samples=message_samples,
+            missing_message_ids=missing_ids,
+        )
+        missing_preview = ", ".join(missing_ids[:5])
+        suffix = f"; missing message ids: {missing_preview}" if missing_preview else ""
+        raise KafkaTransferIncomplete(
+            "Kafka transfer consumed only "
+            f"{consumed_count}/{produced_count} produced messages before timeout "
+            f"({timeout_seconds}s){suffix}",
+            metrics=metrics,
+        )
+
     def _wait_for_transfer_runtime_stabilization(self, runtime, transfer_process, source_topic, destination_topic=None):
         timeout_seconds = max(int(runtime.get("startup_grace_seconds", 0)), 0)
         correlation_id = None
@@ -2066,6 +2159,7 @@ class KafkaEdcValidationSuite:
         latencies_ms = []
         message_samples = []
         sample_ids = set()
+        expected_ids = set()
 
         try:
             producer, consumer, group_id = self._open_probe_clients(runtime, destination_topic)
@@ -2078,6 +2172,7 @@ class KafkaEdcValidationSuite:
                     "message_id": message_id,
                     "producer_timestamp_ms": self.time_provider(),
                 }
+                expected_ids.add(message_id)
                 if len(message_samples) < message_sample_limit:
                     message_samples.append(
                         {
@@ -2104,6 +2199,9 @@ class KafkaEdcValidationSuite:
                             continue
                         if payload.get("probe"):
                             continue
+                        message_id = payload.get("message_id")
+                        if message_id not in expected_ids:
+                            continue
                         produced_at = payload.get("producer_timestamp_ms")
                         consumed_at = self.time_provider()
                         try:
@@ -2114,9 +2212,10 @@ class KafkaEdcValidationSuite:
                         if math.isnan(latency) or math.isinf(latency) or latency < 0:
                             invalid_latency_count += 1
                             continue
-                        if payload.get("message_id") in sample_ids:
+                        expected_ids.remove(message_id)
+                        if message_id in sample_ids:
                             for sample in message_samples:
-                                if sample.get("message_id") == payload.get("message_id"):
+                                if sample.get("message_id") == message_id:
                                     sample["status"] = "consumed"
                                     sample["latency_ms"] = round(latency, 2)
                                     break
@@ -2143,24 +2242,32 @@ class KafkaEdcValidationSuite:
             raise RuntimeError(f"Detected {invalid_latency_count} invalid Kafka latency samples")
         if not latencies_ms:
             raise RuntimeError("No Kafka messages were consumed through the EDC transfer")
+        self._raise_if_incomplete_transfer(
+            produced_count=produced_count,
+            consumed_count=consumed_count,
+            expected_ids=expected_ids,
+            source_topic=source_topic,
+            destination_topic=destination_topic,
+            consumer_group_id=group_id,
+            latencies_ms=latencies_ms,
+            duration_seconds=duration_seconds,
+            probe_result=probe_result,
+            message_samples=message_samples,
+            timeout_seconds=runtime["consumer_poll_timeout_seconds"],
+        )
 
-        return {
-            "status": "completed",
-            "messages_produced": produced_count,
-            "messages_consumed": consumed_count,
-            "source_topic": source_topic,
-            "destination_topic": destination_topic,
-            "consumer_group_id": group_id,
-            "average_latency_ms": round(sum(latencies_ms) / len(latencies_ms), 2),
-            "min_latency_ms": round(min(latencies_ms), 2),
-            "max_latency_ms": round(max(latencies_ms), 2),
-            "p50_latency_ms": round(self._compute_percentile(latencies_ms, 0.50), 2),
-            "p95_latency_ms": round(self._compute_percentile(latencies_ms, 0.95), 2),
-            "p99_latency_ms": round(self._compute_percentile(latencies_ms, 0.99), 2),
-            "throughput_messages_per_second": round(consumed_count / duration_seconds, 2),
-            "probe": probe_result,
-            "message_samples": message_samples,
-        }
+        return self._build_transfer_metrics(
+            status="completed",
+            produced_count=produced_count,
+            consumed_count=consumed_count,
+            source_topic=source_topic,
+            destination_topic=destination_topic,
+            consumer_group_id=group_id,
+            latencies_ms=latencies_ms,
+            duration_seconds=duration_seconds,
+            probe_result=probe_result,
+            message_samples=message_samples,
+        )
 
     def _measure_transfer_latency_with_kubernetes_exec(self, runtime, source_topic, destination_topic, probe_result=None):
         message_count = int(runtime["message_count"])
@@ -2247,24 +2354,32 @@ class KafkaEdcValidationSuite:
             raise RuntimeError(f"Detected {invalid_latency_count} invalid Kafka latency samples")
         if not latencies_ms:
             raise RuntimeError("No Kafka messages were consumed through the EDC transfer")
+        self._raise_if_incomplete_transfer(
+            produced_count=produced_count,
+            consumed_count=consumed_count,
+            expected_ids=expected_ids,
+            source_topic=source_topic,
+            destination_topic=destination_topic,
+            consumer_group_id="kubernetes-exec",
+            latencies_ms=latencies_ms,
+            duration_seconds=duration_seconds,
+            probe_result=probe_result,
+            message_samples=message_samples,
+            timeout_seconds=runtime["consumer_poll_timeout_seconds"],
+        )
 
-        return {
-            "status": "completed",
-            "messages_produced": produced_count,
-            "messages_consumed": consumed_count,
-            "source_topic": source_topic,
-            "destination_topic": destination_topic,
-            "consumer_group_id": "kubernetes-exec",
-            "average_latency_ms": round(sum(latencies_ms) / len(latencies_ms), 2),
-            "min_latency_ms": round(min(latencies_ms), 2),
-            "max_latency_ms": round(max(latencies_ms), 2),
-            "p50_latency_ms": round(self._compute_percentile(latencies_ms, 0.50), 2),
-            "p95_latency_ms": round(self._compute_percentile(latencies_ms, 0.95), 2),
-            "p99_latency_ms": round(self._compute_percentile(latencies_ms, 0.99), 2),
-            "throughput_messages_per_second": round(consumed_count / duration_seconds, 2),
-            "probe": probe_result,
-            "message_samples": message_samples,
-        }
+        return self._build_transfer_metrics(
+            status="completed",
+            produced_count=produced_count,
+            consumed_count=consumed_count,
+            source_topic=source_topic,
+            destination_topic=destination_topic,
+            consumer_group_id="kubernetes-exec",
+            latencies_ms=latencies_ms,
+            duration_seconds=duration_seconds,
+            probe_result=probe_result,
+            message_samples=message_samples,
+        )
 
     @staticmethod
     def _pair_artifact_path(experiment_dir, provider, consumer):
@@ -2335,6 +2450,7 @@ class KafkaEdcValidationSuite:
             "Unable to obtain credentials",
             "Kafka transfer path did not relay a probe message in time",
             "No Kafka messages were consumed through the EDC transfer",
+            "Kafka transfer consumed only",
         )
         if any(fragment in error_message for fragment in transient_fragments):
             return True
@@ -2574,6 +2690,9 @@ class KafkaEdcValidationSuite:
             payload["status"] = "skipped" if unsupported_kafka else "failed"
             if unsupported_kafka:
                 payload["reason"] = "kafka_dataaddress_not_supported"
+            partial_metrics = getattr(exc, "metrics", None)
+            if isinstance(partial_metrics, dict) and partial_metrics:
+                payload["metrics"] = partial_metrics
             payload["error"] = {
                 "type": type(exc).__name__,
                 "message": str(exc),

@@ -74,9 +74,9 @@ Cuando Kafka no puede alcanzarse o arrancarse, el payload sigue existiendo e inc
 - `broker_source` cuando se conozca
 - `bootstrap_servers` cuando se conozcan
 
-## Resolucion del Broker
+## Resolución del Broker
 
-La resolucion del broker sigue este orden:
+La resolución del broker sigue este orden:
 
 1. variables de entorno
 2. configuración Kafka del adapter
@@ -207,6 +207,15 @@ adapter-specific en el `deployer.config` del adapter correspondiente:
 El adapter `inesdata` reutiliza esos valores tanto para `main.py --kafka` como
 para `main.py menu` en `Level 6`. En EDC deben usarse solo cuando el runtime
 EDC desplegado exponga soporte Kafka equivalente.
+
+## Criterio de Éxito de Transferencia
+
+La suite funcional Kafka de `Level 6` produce un conjunto finito de mensajes por
+cada par proveedor-consumidor. El resultado solo se considera `passed` cuando el
+topic destino consume todos los mensajes producidos por esa misma ejecución. Si
+se consumen menos mensajes de los producidos, por ejemplo `9/10`, el par queda
+como `failed`, se registra el error `KafkaTransferIncomplete` con los IDs
+faltantes y el framework realiza el reintento transitorio previsto para ese par.
 
 ## Runtime del Conector
 
