@@ -7932,6 +7932,7 @@ def _print_interactive_menu(adapter_name, adapter_registry=None, topology="local
     print("A - AI Model Hub UI Tests (Normal/Live/Debug)")
     print("V - Semantic Virtualization UI Tests (Normal/Live/Debug)")
     print("F - Dataspace Interoperability Tests (Newman/Kafka)")
+    print("Y - Run UI Test by ID (Playwright)")
     print()
     print("[Control]")
     print("? - Help")
@@ -7997,6 +7998,8 @@ def _print_interactive_help():
     print("F - Use to run interoperability suites independently of full Level 6.")
     print("    The sub-menu separates Newman connector tests from Kafka transfer tests.")
     print("    Kafka still requires explicit confirmation because it can take significantly longer.")
+    print("Y - Use to run one mapped Playwright UI test by its audit/test ID.")
+    print("    API-only IDs remain covered by Level 6 component validation summaries.")
     print()
     print("[Compatibility]")
     print("Levels 1-2 belong to the shared local foundation; the menu asks for an adapter only when an operation needs Levels 3-6, unless you preselect one with S.")
@@ -9154,6 +9157,7 @@ def _run_legacy_menu_action(action_name, current_adapter="inesdata"):
         "ontology_hub_ui": ui_interactive_menu.run_ontology_hub_ui_tests_interactive,
         "ai_model_hub_ui": ui_interactive_menu.run_ai_model_hub_ui_tests_interactive,
         "semantic_virtualization_ui": ui_interactive_menu.run_semantic_virtualization_ui_tests_interactive,
+        "validation_test_by_id": ui_interactive_menu.run_validation_test_by_id_interactive,
     }
     if action_name == "local_images":
         return local_menu_tools.run_local_images_workflow_interactive(active_adapter=current_adapter)
@@ -9352,6 +9356,10 @@ def run_interactive_menu(
 
                 if choice == "V":
                     _run_legacy_menu_action("semantic_virtualization_ui")
+                    continue
+
+                if choice == "Y":
+                    _run_legacy_menu_action("validation_test_by_id")
                     continue
 
                 if choice == "X":

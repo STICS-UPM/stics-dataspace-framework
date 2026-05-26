@@ -71,6 +71,12 @@ COMPONENT_CONTRACTS: dict[str, ComponentContract] = {
     ),
 }
 
+COMPONENT_VALIDATION_ORDER = (
+    "ontology-hub",
+    "ai-model-hub",
+    "semantic-virtualization",
+)
+
 
 def component_values_file_candidates(chart_dir: str, ds_name: str, namespace: str) -> list[str]:
     return [
@@ -238,7 +244,9 @@ def component_validation_groups(components: list[str] | tuple[str, ...] | None) 
                 continue
             seen.add(group)
             groups.append(group)
-    return groups
+    ordered_groups = [group for group in COMPONENT_VALIDATION_ORDER if group in seen]
+    ordered_groups.extend(group for group in groups if group not in COMPONENT_VALIDATION_ORDER)
+    return ordered_groups
 
 
 def required_connector_extensions_for_adapter(

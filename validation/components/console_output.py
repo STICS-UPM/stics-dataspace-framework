@@ -85,13 +85,13 @@ def print_component_suite_header(title: str, channel: str | None = None) -> None
     channel_key = str(channel or "").strip().lower()
     channel_label = CHANNEL_LABELS.get(channel_key)
     prefix = f"Component {channel_label} suite" if channel_label else "Component suite"
-    print(f"\n{_color(f'{prefix}: {title}', HEADER_COLOR)}\n")
+    print(f"\n{_color(f'{prefix}: {title}', HEADER_COLOR)}")
 
 
 def print_interoperability_suite_header(title: str, channel: str | None = None) -> None:
     channel_value = str(channel or "").strip()
     channel_label = f" {channel_value}" if channel_value else ""
-    print(f"\n{_color(f'Interoperability{channel_label} suite: {title}', INTEROPERABILITY_COLOR)}\n")
+    print(f"\n{_color(f'Interoperability{channel_label} suite: {title}', INTEROPERABILITY_COLOR)}")
 
 
 def _component_label(component: Any) -> str:
@@ -282,5 +282,13 @@ def print_component_validation_summary(component_results: Iterable[Mapping[str, 
     failed = sum(1 for status in statuses if status == "failed")
     skipped = sum(1 for status in statuses if status == "skipped")
     overall_status = "failed" if failed else "skipped" if skipped else "passed"
-    _, overall_rendered = _status_label(overall_status)
-    print(f"\n  {overall_rendered} Components: {passed}/{total} passed, {failed} failed, {skipped} skipped")
+    label_color = {"passed": "32", "failed": "31", "skipped": "33"}.get(overall_status, "36")
+    failed_color = "31" if failed else "32"
+    skipped_color = "33" if skipped else "32"
+    print(
+        "\n"
+        f"{_color('Components:', label_color)} "
+        f"{_color(f'{passed}/{total} passed', '32')}, "
+        f"{_color(f'{failed} failed', failed_color)}, "
+        f"{_color(f'{skipped} skipped', skipped_color)}"
+    )

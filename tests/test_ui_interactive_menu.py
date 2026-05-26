@@ -66,6 +66,56 @@ class UiInteractiveMenuTests(unittest.TestCase):
         self.assertEqual(mode["args"], ["--headed"])
         self.assertEqual(mode["env"]["PLAYWRIGHT_HEADED_GPU_FIX"], "1")
 
+    def test_resolve_validation_ui_test_route_maps_component_id(self):
+        route = interactive_menu._resolve_validation_ui_test_route("oh-app-10")
+
+        self.assertIs(route["runner"], interactive_menu._run_ontology_hub_ui_functional)
+        self.assertEqual(route["grep"], r"^OH\-APP\-10\b")
+
+    def test_resolve_validation_ui_test_route_maps_inesdata_id(self):
+        route = interactive_menu._resolve_validation_ui_test_route("DS-UI-AMH-BENCH-01")
+
+        self.assertIs(route["runner"], interactive_menu._run_inesdata_ui_specs_by_id)
+        self.assertEqual(route["specs"], ["adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts"])
+        self.assertEqual(route["grep"], r"^13 AI Model Benchmarking\b")
+        self.assertEqual(route["env"], {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"})
+
+    @mock.patch.object(interactive_menu, "_run_ontology_hub_ui_functional")
+    @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
+    def test_run_validation_test_by_id_interactive_routes_component_test(
+        self,
+        _mock_resolve_mode,
+        mock_runner,
+    ):
+        with mock.patch("builtins.input", side_effect=["OH-APP-10"]):
+            interactive_menu.run_validation_test_by_id_interactive()
+
+        mock_runner.assert_called_once_with(
+            {"label": "Normal", "args": [], "env": {}},
+            test_grep=r"^OH\-APP\-10\b",
+        )
+
+    @mock.patch.object(interactive_menu, "_run_inesdata_ui_specs_by_id")
+    @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
+    def test_run_validation_test_by_id_interactive_routes_inesdata_test(
+        self,
+        _mock_resolve_mode,
+        mock_runner,
+    ):
+        with mock.patch("builtins.input", side_effect=["DS-UI-OH-01"]):
+            interactive_menu.run_validation_test_by_id_interactive()
+
+        route = mock_runner.call_args.args[1]
+        self.assertEqual(route["id"], "DS-UI-OH-01")
+        self.assertEqual(route["specs"], ["adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts"])
+
+    def test_run_validation_test_by_id_interactive_reports_unmapped_api_case(self):
+        output = io.StringIO()
+        with mock.patch("builtins.input", side_effect=["PT5-OH-13"]), mock.patch("sys.stdout", output):
+            interactive_menu.run_validation_test_by_id_interactive()
+
+        self.assertIn("No Playwright UI test route is mapped", output.getvalue())
+
     @mock.patch.object(interactive_menu, "_run_ai_model_hub_ui_functional")
     @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
     def test_run_ai_model_hub_ui_tests_interactive_routes_functional(

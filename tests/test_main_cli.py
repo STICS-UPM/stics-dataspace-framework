@@ -2659,7 +2659,7 @@ class MainCliTests(unittest.TestCase):
         )
 
     def test_ui_validation_shortcuts_delegate_component_actions(self):
-        with mock.patch("builtins.input", side_effect=["I", "O", "A", "V", "Q"]), mock.patch.object(
+        with mock.patch("builtins.input", side_effect=["I", "O", "A", "V", "Y", "Q"]), mock.patch.object(
             main,
             "_run_legacy_menu_action",
             return_value=None,
@@ -2676,7 +2676,13 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["status"], "exited")
         self.assertEqual(
             [call.args[0] for call in legacy_action.call_args_list],
-            ["inesdata_ui", "ontology_hub_ui", "ai_model_hub_ui", "semantic_virtualization_ui"],
+            [
+                "inesdata_ui",
+                "ontology_hub_ui",
+                "ai_model_hub_ui",
+                "semantic_virtualization_ui",
+                "validation_test_by_id",
+            ],
         )
 
     def test_menu_keeps_legacy_component_ui_validation_shortcuts(self):
@@ -2811,6 +2817,17 @@ class MainCliTests(unittest.TestCase):
             result = main._run_legacy_menu_action("semantic_virtualization_ui")
 
         self.assertEqual(result, "semantic-virtualization-ui-ok")
+        migrated_action.assert_called_once_with()
+
+    def test_migrated_validation_test_by_id_action_does_not_import_inesdata_py(self):
+        with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch.object(
+            main.ui_interactive_menu,
+            "run_validation_test_by_id_interactive",
+            return_value="test-by-id-ok",
+        ) as migrated_action:
+            result = main._run_legacy_menu_action("validation_test_by_id")
+
+        self.assertEqual(result, "test-by-id-ok")
         migrated_action.assert_called_once_with()
 
     def test_menu_metrics_can_run_without_kafka_by_default(self):

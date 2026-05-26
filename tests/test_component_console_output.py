@@ -6,6 +6,7 @@ from unittest import mock
 
 from validation.components.console_output import (
     print_component_case_result,
+    print_component_suite_header,
     print_component_validation_summary,
     print_interoperability_suite_header,
 )
@@ -92,7 +93,38 @@ class ComponentConsoleOutputTests(unittest.TestCase):
         self.assertIn("Playwright", printed)
         self.assertIn("API, Playwright", printed)
         self.assertIn("✓ passed", printed)
+        self.assertNotIn("✓ passed Components:", printed)
         self.assertIn("Components: 2/2 passed, 0 failed, 0 skipped", printed)
+
+    def test_component_suite_header_uses_single_trailing_line_break(self):
+        buffer = io.StringIO()
+        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}, clear=False), contextlib.redirect_stdout(buffer):
+            print_component_suite_header("Virtualizador functional", "playwright")
+
+        self.assertEqual(
+            buffer.getvalue(),
+            "\nComponent Playwright suite: Virtualizador functional\n",
+        )
+
+    def test_component_validation_summary_counts_are_colored_without_status_icon(self):
+        component_results = [
+            {
+                "component": "ontology-hub",
+                "status": "passed",
+                "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+            }
+        ]
+
+        buffer = io.StringIO()
+        with mock.patch.dict(os.environ, {"FORCE_COLOR": "1"}, clear=True), contextlib.redirect_stdout(buffer):
+            print_component_validation_summary(component_results)
+
+        printed = buffer.getvalue()
+        self.assertNotIn("✓ passed Components:", printed)
+        self.assertIn("\033[32mComponents:\033[0m", printed)
+        self.assertIn("\033[32m1/1 passed\033[0m", printed)
+        self.assertIn("\033[32m0 failed\033[0m", printed)
+        self.assertIn("\033[32m0 skipped\033[0m", printed)
 
     def test_component_validation_summary_title_is_yellow_when_color_is_forced(self):
         component_results = [

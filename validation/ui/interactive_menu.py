@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import getpass
@@ -184,7 +185,20 @@ def _write_json(path, payload):
         json.dump(payload, handle, indent=2, ensure_ascii=False)
 
 
-def _run_ontology_hub_ui_functional(mode):
+def _playwright_grep_for_id(test_id):
+    normalized = str(test_id or "").strip()
+    if not normalized:
+        return ""
+    return rf"^{re.escape(normalized)}\b"
+
+
+def _append_playwright_grep(command, test_grep=None):
+    grep = str(test_grep or "").strip()
+    if grep:
+        command.extend(["--grep", grep])
+
+
+def _run_ontology_hub_ui_functional(mode, test_grep=None):
     from validation.components.ontology_hub.runtime_config import resolve_ontology_hub_runtime
 
     experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
@@ -223,6 +237,7 @@ def _run_ontology_hub_ui_functional(mode):
         "../components/ontology_hub/functional/playwright.config.js",
         "--workers=1",
     ]
+    _append_playwright_grep(cmd, test_grep)
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning Ontology Hub Functional (artifacts in {base_dir})\n")
@@ -246,7 +261,7 @@ def run_ontology_hub_ui_tests_interactive():
     return None
 
 
-def _run_ontology_hub_ui_integration_with_inesdata(mode):
+def _run_ontology_hub_ui_integration_with_inesdata(mode, test_grep=None):
     experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     base_dir = str(project_root() / "experiments" / experiment_id / "components" / "ontology-hub" / "inesdata-ui")
     output_dir = os.path.join(base_dir, "test-results")
@@ -278,6 +293,7 @@ def _run_ontology_hub_ui_integration_with_inesdata(mode):
         "adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts",
         "--workers=1",
     ]
+    _append_playwright_grep(cmd, test_grep)
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning Ontology Hub Integration with INESData ({mode['label']}, artifacts in {base_dir})\n")
@@ -371,7 +387,7 @@ def _resolve_semantic_virtualization_base_url(adapter=None):
     return f"http://{host}".rstrip("/")
 
 
-def _run_semantic_virtualization_ui_tests(mode):
+def _run_semantic_virtualization_ui_tests(mode, test_grep=None):
     base_url = _resolve_semantic_virtualization_base_url()
     if not base_url:
         print("Semantic Virtualization base URL could not be resolved; aborting.")
@@ -405,6 +421,7 @@ def _run_semantic_virtualization_ui_tests(mode):
         "../components/semantic_virtualization/ui/playwright.config.js",
         "--workers=1",
     ]
+    _append_playwright_grep(cmd, test_grep)
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning Semantic Virtualization UI tests (artifacts in {base_dir})\n")
@@ -428,7 +445,7 @@ def run_semantic_virtualization_ui_tests_interactive():
         return None
 
 
-def _run_semantic_virtualization_ui_integration_with_inesdata(mode):
+def _run_semantic_virtualization_ui_integration_with_inesdata(mode, test_grep=None):
     experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     base_dir = str(
         project_root() / "experiments" / experiment_id / "components" / "semantic-virtualization" / "inesdata-ui"
@@ -462,6 +479,7 @@ def _run_semantic_virtualization_ui_integration_with_inesdata(mode):
         "adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts",
         "--workers=1",
     ]
+    _append_playwright_grep(cmd, test_grep)
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning Semantic Virtualization Integration with INESData ({mode['label']}, artifacts in {base_dir})\n")
@@ -472,7 +490,7 @@ def _run_semantic_virtualization_ui_integration_with_inesdata(mode):
     return None
 
 
-def _run_ai_model_hub_ui_functional(mode):
+def _run_ai_model_hub_ui_functional(mode, test_grep=None):
     base_url = _resolve_ai_model_hub_base_url()
     if not base_url:
         print("AI Model Hub base URL could not be resolved; aborting.")
@@ -506,6 +524,7 @@ def _run_ai_model_hub_ui_functional(mode):
         "--config",
         "../components/ai_model_hub/ui/playwright.config.js",
     ]
+    _append_playwright_grep(cmd, test_grep)
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning AI Model Hub Functional UI tests (artifacts in {base_dir})\n")
@@ -516,7 +535,7 @@ def _run_ai_model_hub_ui_functional(mode):
     return None
 
 
-def _run_ai_model_hub_ui_integration(mode):
+def _run_ai_model_hub_ui_integration(mode, test_grep=None):
     experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     base_dir = str(project_root() / "experiments" / experiment_id / "components" / "ai-model-hub" / "inesdata-ui")
     output_dir = os.path.join(base_dir, "test-results")
@@ -553,6 +572,7 @@ def _run_ai_model_hub_ui_integration(mode):
         "adapters/inesdata/specs/15-ai-model-external-execution.spec.ts",
         "--workers=1",
     ]
+    _append_playwright_grep(cmd, test_grep)
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning AI Model Hub Integration with INESData ({mode['label']}, artifacts in {base_dir})\n")
@@ -563,7 +583,7 @@ def _run_ai_model_hub_ui_integration(mode):
     return None
 
 
-def _run_ai_model_observer_ui_integration(mode):
+def _run_ai_model_observer_ui_integration(mode, test_grep=None):
     experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     base_dir = str(project_root() / "experiments" / experiment_id / "components" / "ai-model-hub" / "observer-ui")
     output_dir = os.path.join(base_dir, "test-results")
@@ -596,6 +616,7 @@ def _run_ai_model_observer_ui_integration(mode):
         "adapters/inesdata/specs/16-ai-model-observer-participant-summary.spec.ts",
         "--workers=1",
     ]
+    _append_playwright_grep(cmd, test_grep)
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning AI Model Observer / Clearing House ({mode['label']}, artifacts in {base_dir})\n")
@@ -899,3 +920,218 @@ def run_inesdata_ui_tests_interactive():
         elif choice == "5":
             _run_ai_model_observer_ui_integration(mode)
         return None
+
+
+def _safe_test_id_path(test_id):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(test_id or "").strip()).strip("-") or "test-by-id"
+
+
+def _run_inesdata_ui_specs_by_id(mode, route):
+    test_id = route["id"]
+    experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    base_dir = str(
+        project_root()
+        / "experiments"
+        / experiment_id
+        / "ui"
+        / "test-by-id"
+        / _safe_test_id_path(test_id)
+    )
+    output_dir = os.path.join(base_dir, "test-results")
+    html_report_dir = os.path.join(base_dir, "playwright-report")
+    blob_report_dir = os.path.join(base_dir, "blob-report")
+    json_report_file = os.path.join(base_dir, "results.json")
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(html_report_dir, exist_ok=True)
+    os.makedirs(blob_report_dir, exist_ok=True)
+
+    env = _ui_runtime_env_from_adapter(_default_inesdata_adapter())
+    env.update(
+        {
+            "PLAYWRIGHT_OUTPUT_DIR": output_dir,
+            "PLAYWRIGHT_HTML_REPORT_DIR": html_report_dir,
+            "PLAYWRIGHT_BLOB_REPORT_DIR": blob_report_dir,
+            "PLAYWRIGHT_JSON_REPORT_FILE": json_report_file,
+            "PLAYWRIGHT_INTERACTION_MARKERS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKERS", "1"),
+            "PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "350"),
+        }
+    )
+    env.update(route.get("env") or {})
+    env.update(mode.get("env") or {})
+
+    cmd = [
+        "./node_modules/.bin/playwright",
+        "test",
+        "--config",
+        "playwright.inesdata.config.ts",
+        *list(route["specs"]),
+        "--workers=1",
+    ]
+    _append_playwright_grep(cmd, route.get("grep"))
+    cmd.extend(mode.get("args") or [])
+
+    print(f"\nRunning {route['label']} ({mode['label']}, artifacts in {base_dir})\n")
+    try:
+        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+    finally:
+        _cleanup_playwright_processes()
+    return None
+
+
+def _resolve_validation_ui_test_route(test_id):
+    normalized = str(test_id or "").strip().upper()
+    if not normalized:
+        return None
+
+    if normalized.startswith("OH-APP-"):
+        return {
+            "id": normalized,
+            "label": f"Ontology Hub UI test {normalized}",
+            "runner": _run_ontology_hub_ui_functional,
+            "grep": _playwright_grep_for_id(normalized),
+        }
+
+    if re.fullmatch(r"PT5-MH-(0[1-8]|1[2-5])", normalized) or normalized == "MH-LING-01":
+        return {
+            "id": normalized,
+            "label": f"AI Model Hub UI test {normalized}",
+            "runner": _run_ai_model_hub_ui_functional,
+            "grep": _playwright_grep_for_id(normalized),
+        }
+
+    if normalized.startswith("SV-UI-") or normalized in {"PT5-VS-07", "PT5-VS-08"}:
+        return {
+            "id": normalized,
+            "label": f"Semantic Virtualization UI test {normalized}",
+            "runner": _run_semantic_virtualization_ui_tests,
+            "grep": _playwright_grep_for_id(normalized),
+        }
+
+    inesdata_routes = {
+        "DS-UI-03": {
+            "specs": ["adapters/inesdata/specs/03-provider-setup.spec.ts"],
+            "grep": r"^03 provider setup\b",
+            "label": "INESData UI test DS-UI-03",
+        },
+        "DS-UI-03B": {
+            "specs": ["adapters/inesdata/specs/03b-provider-policy-create.spec.ts"],
+            "grep": r"^03b provider setup\b",
+            "label": "INESData UI test DS-UI-03B",
+        },
+        "DS-UI-03C": {
+            "specs": ["adapters/inesdata/specs/03c-provider-contract-definition-create.spec.ts"],
+            "grep": r"^03c provider setup\b",
+            "label": "INESData UI test DS-UI-03C",
+        },
+        "DS-UI-04": {
+            "specs": ["adapters/inesdata/specs/04-consumer-catalog.spec.ts"],
+            "grep": r"^04 consumer catalog\b",
+            "label": "INESData UI test DS-UI-04",
+        },
+        "DS-UI-05": {
+            "specs": ["adapters/inesdata/specs/05-consumer-negotiation.spec.ts"],
+            "grep": r"^05 consumer negotiation\b",
+            "label": "INESData UI test DS-UI-05",
+        },
+        "DS-UI-06": {
+            "specs": ["adapters/inesdata/specs/06-consumer-transfer.spec.ts"],
+            "grep": r"^06 consumer transfer\b",
+            "label": "INESData UI test DS-UI-06",
+        },
+        "DS-UI-SV-01": {
+            "specs": ["adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts"],
+            "grep": r"^07 semantic virtualization\b",
+            "label": "INESData UI test DS-UI-SV-01",
+            "env": {"UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO": "1"},
+        },
+        "DS-UI-OH-01": {
+            "specs": ["adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts"],
+            "grep": r"^08 ontology hub\b",
+            "label": "INESData UI test DS-UI-OH-01",
+            "env": {"UI_ONTOLOGY_HUB_INESDATA_DEMO": "1"},
+        },
+        "DS-UI-AMH-01": {
+            "specs": ["adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts"],
+            "grep": r"^09 AI Model Hub\b",
+            "label": "INESData UI test DS-UI-AMH-01",
+            "env": {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"},
+        },
+        "DS-UI-AMH-OBS-01": {
+            "specs": ["adapters/inesdata/specs/10-ai-model-observer.spec.ts"],
+            "grep": r"^10 AI Model Observer\b",
+            "label": "INESData UI test DS-UI-AMH-OBS-01",
+            "env": {"UI_AI_MODEL_OBSERVER_DEMO": "1"},
+        },
+        "DS-UI-AMH-BROWSER-01": {
+            "specs": ["adapters/inesdata/specs/11-ai-model-browser.spec.ts"],
+            "grep": r"^11 AI Model Browser\b",
+            "label": "INESData UI test DS-UI-AMH-BROWSER-01",
+            "env": {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"},
+        },
+        "DS-UI-AMH-EXEC-01": {
+            "specs": ["adapters/inesdata/specs/12-ai-model-execution.spec.ts"],
+            "grep": r"^12 AI Model Execution\b",
+            "label": "INESData UI test DS-UI-AMH-EXEC-01",
+            "env": {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"},
+        },
+        "DS-UI-AMH-BENCH-01": {
+            "specs": ["adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts"],
+            "grep": r"^13 AI Model Benchmarking\b",
+            "label": "INESData UI test DS-UI-AMH-BENCH-01",
+            "env": {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"},
+        },
+        "DS-UI-AMH-DAIMO-01": {
+            "specs": ["adapters/inesdata/specs/14-ai-model-daimo-vocabulary.spec.ts"],
+            "grep": r"^14 AI Model Hub DAIMO\b",
+            "label": "INESData UI test DS-UI-AMH-DAIMO-01",
+            "env": {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"},
+        },
+        "DS-UI-AMH-EXEC-02": {
+            "specs": ["adapters/inesdata/specs/15-ai-model-external-execution.spec.ts"],
+            "grep": r"^15 AI Model Execution\b",
+            "label": "INESData UI test DS-UI-AMH-EXEC-02",
+            "env": {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"},
+        },
+        "DS-UI-AMH-OBS-02": {
+            "specs": ["adapters/inesdata/specs/16-ai-model-observer-participant-summary.spec.ts"],
+            "grep": r"^16 AI Model Observer\b",
+            "label": "INESData UI test DS-UI-AMH-OBS-02",
+            "env": {"UI_AI_MODEL_OBSERVER_DEMO": "1"},
+        },
+    }
+    route = inesdata_routes.get(normalized)
+    if route:
+        return {
+            "id": normalized,
+            "runner": _run_inesdata_ui_specs_by_id,
+            **route,
+        }
+    return None
+
+
+def run_validation_test_by_id_interactive():
+    """Run a single mapped Playwright UI validation by its audit/test ID."""
+    try:
+        test_id = input("\nTest ID: ").strip()
+    except EOFError:
+        print("\nNo input. Returning to main menu.\n")
+        return None
+    if not test_id or test_id.upper() == "B":
+        return None
+
+    route = _resolve_validation_ui_test_route(test_id)
+    if route is None:
+        print(
+            "\nNo Playwright UI test route is mapped for that ID yet. "
+            "Run Level 6 for API-only cases or use one of the component/UI suite options.\n"
+        )
+        return None
+
+    mode = _resolve_ui_mode()
+    if mode is None:
+        return None
+
+    runner = route["runner"]
+    if runner is _run_inesdata_ui_specs_by_id:
+        return runner(mode, route)
+    return runner(mode, test_grep=route.get("grep"))

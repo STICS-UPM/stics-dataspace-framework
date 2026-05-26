@@ -77,6 +77,13 @@ class SharedComponentsContractTests(unittest.TestCase):
 
         self.assertEqual(groups, ["ontology-hub", "ai-model-hub", "semantic-virtualization"])
 
+    def test_component_validation_groups_use_audit_order(self):
+        groups = component_validation_groups(
+            ["semantic-virtualization", "ai-model-hub", "ontology-hub"]
+        )
+
+        self.assertEqual(groups, ["ontology-hub", "ai-model-hub", "semantic-virtualization"])
+
     def test_summarize_components_for_adapter_separates_pending_support(self):
         summary = summarize_components_for_adapter(
             {"COMPONENTS": "ontology-hub,ai-model-hub,semantic-virtualization"},

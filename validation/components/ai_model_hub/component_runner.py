@@ -523,28 +523,6 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
         ("linguistic_functional", functional_result),
     ]
     integration_suite_results: List[tuple[str, Dict[str, Any]]] = []
-    if _connector_governance_enabled():
-        print_suite_header("AI Model Hub integration", "api")
-        connector_governance_result = run_ai_model_hub_connector_governance_validation(experiment_dir=experiment_dir)
-        connector_governance_result.setdefault("execution_channel", "api")
-        print_component_case_results(connector_governance_result.get("executed_cases") or [])
-        integration_suite_results.append(
-            (
-                "connector_governance",
-                connector_governance_result,
-            )
-        )
-    if _model_execution_enabled():
-        print_suite_header("AI Model Hub integration", "api")
-        model_execution_result = run_ai_model_hub_model_execution_validation(experiment_dir=experiment_dir)
-        model_execution_result.setdefault("execution_channel", "api")
-        print_component_case_results(model_execution_result.get("executed_cases") or [])
-        integration_suite_results.append(
-            (
-                "model_execution",
-                model_execution_result,
-            )
-        )
     if _model_benchmarking_enabled():
         print_suite_header("AI Model Hub functional", "api")
         model_benchmarking_result = run_ai_model_hub_model_benchmarking_validation(experiment_dir=experiment_dir)
@@ -565,6 +543,28 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
             (
                 "mobility_benchmarking",
                 mobility_benchmarking_result,
+            )
+        )
+    if _connector_governance_enabled():
+        print_suite_header("AI Model Hub integration", "api")
+        connector_governance_result = run_ai_model_hub_connector_governance_validation(experiment_dir=experiment_dir)
+        connector_governance_result.setdefault("execution_channel", "api")
+        print_component_case_results(connector_governance_result.get("executed_cases") or [])
+        integration_suite_results.append(
+            (
+                "connector_governance",
+                connector_governance_result,
+            )
+        )
+    if _model_execution_enabled():
+        print_suite_header("AI Model Hub integration", "api")
+        model_execution_result = run_ai_model_hub_model_execution_validation(experiment_dir=experiment_dir)
+        model_execution_result.setdefault("execution_channel", "api")
+        print_component_case_results(model_execution_result.get("executed_cases") or [])
+        integration_suite_results.append(
+            (
+                "model_execution",
+                model_execution_result,
             )
         )
     if _model_observer_enabled():

@@ -666,6 +666,13 @@ def _dashboard_colorize_plain_line(line: str) -> str:
     ):
         return f"\033[33;1m{line}\033[0m"
 
+    if plain.startswith("Components:"):
+        if " failed" in plain and not re.search(r"\b0 failed\b", plain):
+            return f"\033[31m{line}\033[0m"
+        if " skipped" in plain and not re.search(r"\b0 skipped\b", plain):
+            return f"\033[33m{line}\033[0m"
+        return f"\033[32m{line}\033[0m"
+
     if DASHBOARD_SUITE_HEADER_RE.match(plain):
         return f"\033[36;1m{line}\033[0m"
 
