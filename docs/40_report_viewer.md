@@ -75,13 +75,17 @@ entrada del experimento.
 ## Alineación UNE 0087
 
 La alineación UNE 0087 se genera como artefacto de apoyo, no como certificación
-formal ni como bloqueo de Level 6. Para crearla sobre un experimento existente:
+formal ni como bloqueo de Level 6. Level 6 la crea automáticamente al cerrar el
+experimento, antes de construir el dashboard. Para crearla o regenerarla sobre
+un experimento existente:
 
 ```bash
 python3 -m framework.reporting.une_0087_alignment --experiment-dir experiments/<experiment_id>
 ```
 
-También se pueden añadir evidencias externas del mismo cierre A5.2:
+Por defecto se usan los artefactos del experimento y la documentación
+versionada de `docs/`. También se pueden añadir evidencias externas del mismo
+cierre A5.2:
 
 ```bash
 python3 -m framework.reporting.une_0087_alignment \
@@ -90,8 +94,12 @@ python3 -m framework.reporting.une_0087_alignment \
 ```
 
 El comando escribe `une_0087_alignment.json` y `une_0087_alignment.md` dentro
-del experimento. Si existen, el dashboard los detecta automáticamente y muestra
-un resumen por criterios cubiertos, parcialmente cubiertos y no cubiertos.
+del experimento. Level 6 también imprime una tabla compacta de resumen por
+estado e indica la ruta de `une_0087_alignment.md` para consultar el detalle por
+criterio; esa salida queda registrada en `level6_console.log` y en la consola
+del dashboard. Si los artefactos existen, el dashboard los detecta
+automáticamente y muestra un resumen por criterios cubiertos, parcialmente
+cubiertos y no cubiertos.
 
 ## Seguridad
 

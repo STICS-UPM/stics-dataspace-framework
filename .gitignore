@@ -126,6 +126,7 @@ Thumbs.db
 logs/
 context/
 runtime/
+validation/evidences/
 docs_/
 bugs/
 validation/components/ontology_hub/tools

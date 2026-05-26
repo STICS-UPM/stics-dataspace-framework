@@ -56,6 +56,8 @@ cada experimento y no forman parte del contenido estable de `docs/`.
 | Reportes visuales | `main.py report-viewer` | Interfaz local para consultar experimentos |
 | Pruebas automatizadas | `tests/` | Cobertura técnica del framework |
 | Diagramas públicos | `docs/*.png` | Vista local y distribuida del entorno |
+| Reporte consolidado A5.2/E5.2 | `docs/E5.2_Resultados_Validacion_Componentes.xlsx` | Matriz de resultados, evidencias y checklist de apoyo UNE 0087 |
+| Alineación UNE 0087 | `experiments/<experimento>/une_0087_alignment.*` | Artefacto de apoyo no certificante generado desde evidencias del experimento |
 
 ## Namespaces Canónicos
 

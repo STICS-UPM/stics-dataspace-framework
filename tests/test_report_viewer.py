@@ -292,6 +292,14 @@ class ReportViewerTests(unittest.TestCase):
         self.assertNotIn("› completed test", rendered)
         self.assertIn("\x1b[32m✓\x1b[0m completed test", rendered)
 
+    def test_dashboard_console_sanitizes_project_root_paths(self):
+        absolute_path = reports.project_root() / "experiments" / "experiment_1" / "level6_console.log"
+        rendered, hidden = reports._dashboard_console_content(f"Level 6 console log: {absolute_path}\n")
+
+        self.assertEqual(hidden, 0)
+        self.assertIn("Level 6 console log: experiments/experiment_1/level6_console.log", rendered)
+        self.assertNotIn(reports.project_root().as_posix(), rendered)
+
     def test_dashboard_console_colorizes_plain_suite_headers_and_result_prefixes(self):
         rendered, hidden = reports._dashboard_console_content(
             "Component API suite: Virtualizador integration\n"

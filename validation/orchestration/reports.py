@@ -700,6 +700,7 @@ def _dashboard_console_content(value: str) -> tuple[str, int]:
     if not value:
         return value, 0
 
+    project_root_prefix = f"{project_root().as_posix().rstrip('/')}/"
     normalized = value.replace("\r", "\n")
     raw_lines = normalized.split("\n")
     hidden_component_headers = _dashboard_component_headers_to_hide(raw_lines)
@@ -712,6 +713,7 @@ def _dashboard_console_content(value: str) -> tuple[str, int]:
     hidden_progress_lines = 0
 
     for index, line in enumerate(raw_lines):
+        line = line.replace(project_root_prefix, "")
         if _dashboard_is_interoperability_suite_footer(line):
             continue
 

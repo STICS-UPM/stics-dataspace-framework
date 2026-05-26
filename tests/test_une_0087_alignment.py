@@ -5,6 +5,9 @@ from pathlib import Path
 
 from framework.reporting.une_0087_alignment import (
     build_une_0087_alignment,
+    default_project_evidence_paths,
+    format_une_0087_console_rows,
+    format_une_0087_console_summary,
     write_une_0087_alignment,
 )
 
@@ -75,12 +78,16 @@ class Une0087AlignmentTests(unittest.TestCase):
         criteria = {item["id"]: item for item in alignment["criteria"]}
         self.assertEqual(alignment["assessment_type"], "non_certifying_alignment")
         self.assertFalse(alignment["certification_claim"])
+        self.assertEqual(alignment["experiment_dir"], "experiments/experiment_2026-05-04_15-44-46")
         self.assertEqual(alignment["summary"]["total_criteria"], 23)
         self.assertEqual(criteria["Int.1"]["status"], "covered")
         self.assertEqual(criteria["Int.4"]["status"], "covered")
         self.assertEqual(criteria["Fun.4"]["status"], "covered")
         self.assertEqual(criteria["Neg.3"]["status"], "not_covered")
         self.assertGreater(criteria["Tec.5"]["evidence_count"], 0)
+        self.assertEqual(criteria["Int.1"]["checklist"]["status_label"], "Cubierto")
+        self.assertIn("primary_artifacts", criteria["Int.1"]["checklist"])
+        self.assertTrue(criteria["Int.1"]["checklist"]["primary_artifact"])
 
     def test_writes_json_and_markdown_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -99,8 +106,34 @@ class Une0087AlignmentTests(unittest.TestCase):
             self.assertTrue(json_path.exists())
             self.assertTrue(md_path.exists())
             self.assertEqual(json.loads(json_path.read_text(encoding="utf-8"))["schema_version"], "1.0")
-            self.assertIn("UNE 0087 Alignment", md_path.read_text(encoding="utf-8"))
+            markdown = md_path.read_text(encoding="utf-8")
+            self.assertIn("Alineación UNE 0087", markdown)
+            self.assertIn("Artefacto principal", markdown)
+            self.assertIn("[Metadatos del experimento](metadata.json)", markdown)
             self.assertEqual(alignment["summary"]["total_criteria"], 23)
+
+    def test_formats_console_rows_without_using_match_counts_as_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            experiment = root / "experiments" / "experiment_1"
+            self._write_json(experiment / "metadata.json", {"topology": "vm-single", "architecture": "catalog"})
+
+            alignment = build_une_0087_alignment(
+                experiment,
+                include_project_context=False,
+                project_root=root,
+            )
+            rows = format_une_0087_console_rows(alignment)
+
+        self.assertEqual(len(rows), 23)
+        self.assertIn("Artefacto principal", rows[0])
+        self.assertIn("Nota de revisión", rows[0])
+        self.assertNotIn("Evidencia", rows[0])
+
+        summary_rows = format_une_0087_console_summary(alignment)
+        self.assertEqual(summary_rows[0]["Status"], "Total")
+        self.assertEqual(summary_rows[0]["Criteria"], "23")
+        self.assertEqual(summary_rows[1]["Status"], "Covered")
 
     def test_regeneration_does_not_use_previous_alignment_as_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,6 +155,14 @@ class Une0087AlignmentTests(unittest.TestCase):
         criteria = {item["id"]: item for item in alignment["criteria"]}
         self.assertEqual(criteria["Neg.3"]["status"], "not_covered")
         self.assertEqual(criteria["Gob.1"]["status"], "not_covered")
+
+    def test_default_project_evidence_uses_versioned_public_paths(self):
+        paths = default_project_evidence_paths(Path.cwd())
+        relative_paths = [path.relative_to(Path.cwd()).as_posix() for path in paths]
+
+        self.assertTrue(relative_paths)
+        self.assertTrue(all(not path.startswith("context/") for path in relative_paths))
+        self.assertTrue(any(path.startswith("docs/") for path in relative_paths))
 
 
 if __name__ == "__main__":
