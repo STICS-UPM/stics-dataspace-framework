@@ -7994,6 +7994,7 @@ def _print_interactive_menu(adapter_name, adapter_registry=None, topology="local
     print("V - Semantic Virtualization UI Tests (Normal/Live/Debug)")
     print("F - Dataspace Interoperability Tests (Newman/Kafka)")
     print("Y - Run UI Test by ID (Playwright)")
+    print("Z - Run API Test by ID")
     print()
     print("[Control]")
     print("? - Help")
@@ -8060,7 +8061,7 @@ def _print_interactive_help():
     print("    The sub-menu separates Newman connector tests from Kafka transfer tests.")
     print("    Kafka still requires explicit confirmation because it can take significantly longer.")
     print("Y - Use to run one mapped Playwright UI test by its audit/test ID.")
-    print("    API-only IDs remain covered by Level 6 component validation summaries.")
+    print("Z - Use to run one mapped component API test by its audit/test ID.")
     print()
     print("[Compatibility]")
     print("Levels 1-2 belong to the shared local foundation; the menu asks for an adapter only when an operation needs Levels 3-6, unless you preselect one with S.")
@@ -9256,7 +9257,7 @@ def _run_validation_target_menu_interactive(current_adapter=None, adapter_regist
         print("Invalid selection. Please try again.")
 
 
-def _run_legacy_menu_action(action_name, current_adapter="inesdata"):
+def _run_legacy_menu_action(action_name, current_adapter="inesdata", topology="local"):
     """Run compatibility menu shortcuts through the migrated main.py modules."""
     migrated_actions = {
         "bootstrap": local_menu_tools.run_framework_bootstrap_interactive,
@@ -9269,6 +9270,11 @@ def _run_legacy_menu_action(action_name, current_adapter="inesdata"):
         "semantic_virtualization_ui": ui_interactive_menu.run_semantic_virtualization_ui_tests_interactive,
         "validation_test_by_id": ui_interactive_menu.run_validation_test_by_id_interactive,
     }
+    if action_name == "validation_api_test_by_id":
+        return ui_interactive_menu.run_validation_api_test_by_id_interactive(
+            adapter_name=current_adapter,
+            topology=topology,
+        )
     if action_name == "local_images":
         return local_menu_tools.run_local_images_workflow_interactive(active_adapter=current_adapter)
 
@@ -9470,6 +9476,21 @@ def run_interactive_menu(
 
                 if choice == "Y":
                     _run_legacy_menu_action("validation_test_by_id")
+                    continue
+
+                if choice == "Z":
+                    selected_adapter = _interactive_require_adapter_selection(
+                        current_adapter,
+                        adapter_registry=registry,
+                    )
+                    if not selected_adapter:
+                        continue
+                    current_adapter = selected_adapter
+                    _run_legacy_menu_action(
+                        "validation_api_test_by_id",
+                        current_adapter=current_adapter,
+                        topology=topology,
+                    )
                     continue
 
                 if choice == "X":

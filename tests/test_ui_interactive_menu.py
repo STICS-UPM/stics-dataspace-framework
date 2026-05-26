@@ -80,6 +80,80 @@ class UiInteractiveMenuTests(unittest.TestCase):
         self.assertEqual(route["grep"], r"^13 AI Model Benchmarking\b")
         self.assertEqual(route["env"], {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"})
 
+    def test_resolve_validation_api_test_route_maps_component_id(self):
+        route = interactive_menu._resolve_validation_api_test_route("pt5-oh-13")
+
+        self.assertIs(route["runner"], interactive_menu._run_ontology_hub_api_case)
+        self.assertEqual(route["component"], "ontology-hub")
+        self.assertTrue(route["requires_base_url"])
+
+    @mock.patch.object(interactive_menu, "_write_api_test_by_id_result", return_value="/tmp/api-result.json")
+    @mock.patch.object(interactive_menu, "_api_test_experiment_dir", return_value="/tmp/api-test")
+    @mock.patch.object(interactive_menu, "_resolve_component_api_base_url", return_value="http://ontology.example.test")
+    @mock.patch.object(interactive_menu, "_run_ontology_hub_api_case")
+    def test_run_validation_api_test_by_id_interactive_routes_component_api_test(
+        self,
+        mock_runner,
+        mock_resolve_base_url,
+        _mock_experiment_dir,
+        _mock_write_result,
+    ):
+        mock_runner.return_value = {
+            "executed_cases": [
+                {
+                    "test_case_id": "PT5-OH-13",
+                    "description": "SPARQL access",
+                    "evaluation": {"status": "passed", "assertions": []},
+                }
+            ]
+        }
+
+        with mock.patch("builtins.input", side_effect=["PT5-OH-13"]):
+            result = interactive_menu.run_validation_api_test_by_id_interactive(
+                adapter_name="inesdata",
+                topology="local",
+            )
+
+        mock_resolve_base_url.assert_called_once_with(
+            "ontology-hub",
+            adapter_name="inesdata",
+            topology="local",
+        )
+        mock_runner.assert_called_once_with("http://ontology.example.test", "/tmp/api-test", "PT5-OH-13")
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["test_case_id"], "PT5-OH-13")
+
+    @mock.patch.object(interactive_menu, "_write_api_test_by_id_result", return_value="/tmp/api-result.json")
+    @mock.patch.object(interactive_menu, "_api_test_experiment_dir", return_value="/tmp/api-test")
+    @mock.patch.object(interactive_menu, "_resolve_component_api_base_url")
+    @mock.patch.object(interactive_menu, "_run_ai_model_hub_model_benchmarking_api_case")
+    def test_run_validation_api_test_by_id_interactive_skips_base_url_when_not_required(
+        self,
+        mock_runner,
+        mock_resolve_base_url,
+        _mock_experiment_dir,
+        _mock_write_result,
+    ):
+        mock_runner.return_value = {
+            "executed_cases": [
+                {
+                    "test_case_id": "PT5-MH-14",
+                    "description": "Benchmark metrics",
+                    "evaluation": {"status": "passed", "assertions": []},
+                }
+            ]
+        }
+
+        with mock.patch("builtins.input", side_effect=["PT5-MH-14"]):
+            result = interactive_menu.run_validation_api_test_by_id_interactive(
+                adapter_name="inesdata",
+                topology="local",
+            )
+
+        mock_resolve_base_url.assert_not_called()
+        mock_runner.assert_called_once_with("", "/tmp/api-test", "PT5-MH-14")
+        self.assertEqual(result["status"], "passed")
+
     @mock.patch.object(interactive_menu, "_run_ontology_hub_ui_functional")
     @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
     def test_run_validation_test_by_id_interactive_routes_component_test(

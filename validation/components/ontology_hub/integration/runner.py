@@ -969,63 +969,76 @@ def _run_sparql_access_case(base_url: str, runtime: Dict[str, Any]) -> Tuple[Dic
     return case_result, raw_artifact
 
 
-def run_ontology_hub_validation(base_url: str, experiment_dir: str | None = None) -> Dict[str, Any]:
+def run_ontology_hub_validation(
+    base_url: str,
+    experiment_dir: str | None = None,
+    case_ids: list[str] | tuple[str, ...] | set[str] | None = None,
+) -> Dict[str, Any]:
     runtime = resolve_ontology_hub_runtime(base_url=base_url)
     normalized_base_url = runtime["baseUrl"]
     started_at = datetime.now().isoformat()
+    requested_case_ids = {str(case_id or "").strip().upper() for case_id in (case_ids or []) if str(case_id or "").strip()}
 
     executed_cases: List[Dict[str, Any]] = []
     raw_artifacts: List[Tuple[str, str, Dict[str, Any]]] = []
 
-    pt5_oh_08, artifact_08 = _run_search_case(
-        base_url=normalized_base_url,
-        test_case_id="PT5-OH-08",
-        description="Busqueda de vocabularios por texto libre con contenido real indexado",
-        query_params={
-            "q": runtime["expectedSearchTerm"],
-            "type": "class",
-        },
-        expected_result="La busqueda devuelve al menos un termino indexado de ejemplo, con agregaciones y contenido coherentes.",
-        expected_vocab=runtime["expectedVocabularyPrefix"],
-    )
-    executed_cases.append(pt5_oh_08)
-    raw_artifacts.append(("PT5-OH-08", "pt5-oh-08-response.json", artifact_08))
+    def requested(test_case_id: str) -> bool:
+        return not requested_case_ids or test_case_id.upper() in requested_case_ids
 
-    pt5_oh_09, artifact_09 = _run_search_case(
-        base_url=normalized_base_url,
-        test_case_id="PT5-OH-09",
-        description="Filtrado de vocabularios mediante vocabulario y etiqueta",
-        query_params={
-            "q": runtime["expectedSearchTerm"],
-            "type": "class",
-            "vocab": runtime["expectedVocabularyPrefix"],
-            "tag": runtime["expectedPrimaryTag"],
-        },
-        expected_result="La busqueda filtrada devuelve resultados coherentes con el vocabulario y la etiqueta de ejemplo.",
-        expected_vocab=runtime["expectedVocabularyPrefix"],
-        expected_tag=runtime["expectedPrimaryTag"],
-    )
-    executed_cases.append(pt5_oh_09)
-    raw_artifacts.append(("PT5-OH-09", "pt5-oh-09-response.json", artifact_09))
+    if requested("PT5-OH-08"):
+        pt5_oh_08, artifact_08 = _run_search_case(
+            base_url=normalized_base_url,
+            test_case_id="PT5-OH-08",
+            description="Busqueda de vocabularios por texto libre con contenido real indexado",
+            query_params={
+                "q": runtime["expectedSearchTerm"],
+                "type": "class",
+            },
+            expected_result="La busqueda devuelve al menos un termino indexado de ejemplo, con agregaciones y contenido coherentes.",
+            expected_vocab=runtime["expectedVocabularyPrefix"],
+        )
+        executed_cases.append(pt5_oh_08)
+        raw_artifacts.append(("PT5-OH-08", "pt5-oh-08-response.json", artifact_08))
 
-    pt5_oh_13, artifact_13 = _run_sparql_access_case(normalized_base_url, runtime)
-    executed_cases.append(pt5_oh_13)
-    raw_artifacts.append(("PT5-OH-13", "pt5-oh-13-response.json", artifact_13))
+    if requested("PT5-OH-09"):
+        pt5_oh_09, artifact_09 = _run_search_case(
+            base_url=normalized_base_url,
+            test_case_id="PT5-OH-09",
+            description="Filtrado de vocabularios mediante vocabulario y etiqueta",
+            query_params={
+                "q": runtime["expectedSearchTerm"],
+                "type": "class",
+                "vocab": runtime["expectedVocabularyPrefix"],
+                "tag": runtime["expectedPrimaryTag"],
+            },
+            expected_result="La busqueda filtrada devuelve resultados coherentes con el vocabulario y la etiqueta de ejemplo.",
+            expected_vocab=runtime["expectedVocabularyPrefix"],
+            expected_tag=runtime["expectedPrimaryTag"],
+        )
+        executed_cases.append(pt5_oh_09)
+        raw_artifacts.append(("PT5-OH-09", "pt5-oh-09-response.json", artifact_09))
 
-    pt5_oh_14, artifact_14 = _run_html_case(
-        base_url=normalized_base_url,
-        test_case_id="PT5-OH-14",
-        description="Acceso al servicio de patrones",
-        path=f"{PATTERNS_PATH}?{parse.urlencode({'q': runtime['expectedVocabularyPrefix']})}",
-        required_markers=["selected vocabularies", f"checkbox_{runtime['expectedVocabularyPrefix']}"],
-        expected_result="La pagina del servicio de patrones esta publicada y accesible.",
-    )
-    executed_cases.append(pt5_oh_14)
-    raw_artifacts.append(("PT5-OH-14", "pt5-oh-14-response.json", artifact_14))
+    if requested("PT5-OH-13"):
+        pt5_oh_13, artifact_13 = _run_sparql_access_case(normalized_base_url, runtime)
+        executed_cases.append(pt5_oh_13)
+        raw_artifacts.append(("PT5-OH-13", "pt5-oh-13-response.json", artifact_13))
 
-    pt5_oh_15, artifact_15 = _run_ui_api_access_case(normalized_base_url)
-    executed_cases.append(pt5_oh_15)
-    raw_artifacts.append(("PT5-OH-15", "pt5-oh-15-response.json", artifact_15))
+    if requested("PT5-OH-14"):
+        pt5_oh_14, artifact_14 = _run_html_case(
+            base_url=normalized_base_url,
+            test_case_id="PT5-OH-14",
+            description="Acceso al servicio de patrones",
+            path=f"{PATTERNS_PATH}?{parse.urlencode({'q': runtime['expectedVocabularyPrefix']})}",
+            required_markers=["selected vocabularies", f"checkbox_{runtime['expectedVocabularyPrefix']}"],
+            expected_result="La pagina del servicio de patrones esta publicada y accesible.",
+        )
+        executed_cases.append(pt5_oh_14)
+        raw_artifacts.append(("PT5-OH-14", "pt5-oh-14-response.json", artifact_14))
+
+    if requested("PT5-OH-15"):
+        pt5_oh_15, artifact_15 = _run_ui_api_access_case(normalized_base_url)
+        executed_cases.append(pt5_oh_15)
+        raw_artifacts.append(("PT5-OH-15", "pt5-oh-15-response.json", artifact_15))
 
     summary = {
         "total": len(executed_cases),
@@ -1033,7 +1046,7 @@ def run_ontology_hub_validation(base_url: str, experiment_dir: str | None = None
         "failed": sum(1 for case in executed_cases if case["evaluation"]["status"] == "failed"),
         "skipped": 0,
     }
-    overall_status = "failed" if summary["failed"] else "passed"
+    overall_status = "failed" if summary["failed"] else "passed" if summary["total"] else "skipped"
     pt5_summary = _summarize_case_list(executed_cases)
 
     component_result: Dict[str, Any] = {

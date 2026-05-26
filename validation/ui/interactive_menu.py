@@ -4,6 +4,7 @@ import re
 import subprocess
 import sys
 import getpass
+import contextlib
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from framework.experiment_storage import ExperimentStorage
 from validation.components.ontology_hub.functional.runtime_preparation import (
     prepare_ontology_hub_for_functional,
 )
+from validation.components.console_output import print_component_case_results, print_component_suite_header
 from validation.orchestration import ui as orchestration_ui
 
 
@@ -924,6 +926,451 @@ def run_inesdata_ui_tests_interactive():
 
 def _safe_test_id_path(test_id):
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(test_id or "").strip()).strip("-") or "test-by-id"
+
+
+@contextlib.contextmanager
+def _temporary_env(updates):
+    previous = {key: os.environ.get(key) for key in updates}
+    try:
+        for key, value in updates.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = str(value)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _build_validation_adapter(adapter_name=None, topology=None):
+    normalized_adapter = str(adapter_name or os.environ.get("PIONERA_ADAPTER") or "inesdata").strip().lower()
+    normalized_topology = str(topology or os.environ.get("PIONERA_TOPOLOGY") or "local").strip().lower() or "local"
+    if normalized_adapter == "edc":
+        from adapters.edc.adapter import EdcAdapter
+
+        return EdcAdapter(topology=normalized_topology)
+    return InesdataAdapter(topology=normalized_topology)
+
+
+def _primary_dataspace_name(adapter):
+    getter = getattr(getattr(adapter, "config_adapter", None), "primary_dataspace_name", None)
+    if callable(getter):
+        return str(getter() or "").strip()
+    config = adapter.load_deployer_config() or {}
+    return str(config.get("DS_1_NAME") or config.get("DATASPACE_NAME") or "demo").strip()
+
+
+def _resolve_component_api_base_url(component, *, adapter_name=None, topology=None):
+    normalized_component = str(component or "").strip().lower()
+    adapter = _build_validation_adapter(adapter_name=adapter_name, topology=topology)
+    infer = getattr(getattr(adapter, "components", None), "infer_component_urls", None)
+    if callable(infer):
+        config = adapter.load_deployer_config() or {}
+        urls = infer([normalized_component], ds_name=_primary_dataspace_name(adapter), deployer_config=config)
+        inferred_url = str((urls or {}).get(normalized_component) or "").rstrip("/")
+        if inferred_url:
+            return inferred_url
+
+    if normalized_component == "ontology-hub":
+        from validation.components.ontology_hub.runtime_config import resolve_ontology_hub_runtime
+
+        return str(resolve_ontology_hub_runtime().get("baseUrl") or "").rstrip("/")
+    if normalized_component == "ai-model-hub":
+        return _resolve_ai_model_hub_base_url(adapter)
+    if normalized_component == "semantic-virtualization":
+        return _resolve_semantic_virtualization_base_url(adapter)
+    return ""
+
+
+def _api_test_experiment_dir(test_id):
+    experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    return str(project_root() / "experiments" / experiment_id / "api" / "test-by-id" / _safe_test_id_path(test_id))
+
+
+def _case_results_from_payload(payload):
+    cases = []
+    if isinstance(payload, dict):
+        for key in (
+            "executed_cases",
+            "pt5_case_results",
+            "pt5_cases",
+            "support_checks",
+            "functional_use_case_results",
+            "functional_use_cases",
+            "observer_case_results",
+            "observer_cases",
+            "test_cases",
+        ):
+            value = payload.get(key)
+            if isinstance(value, list):
+                cases.extend(item for item in value if isinstance(item, dict))
+        for key in ("suites", "phases"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                for child in value.values():
+                    cases.extend(_case_results_from_payload(child))
+        if payload.get("test_case_id"):
+            cases.append(payload)
+    elif isinstance(payload, list):
+        for item in payload:
+            cases.extend(_case_results_from_payload(item))
+    return cases
+
+
+def _unique_cases(cases):
+    unique = []
+    seen = set()
+    for index, case in enumerate(cases or []):
+        case_id = str(case.get("test_case_id") or case.get("case_id") or case.get("id") or "").strip()
+        status = str(((case.get("evaluation") or {}).get("status") or case.get("status") or "")).strip().lower()
+        key = (case_id, status, str(case.get("source_suite") or case.get("suite") or ""), index if not case_id else "")
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(case)
+    return unique
+
+
+def _filter_cases_by_test_id(payload, test_id):
+    normalized = str(test_id or "").strip().upper()
+    return _unique_cases(
+        [
+            case
+            for case in _case_results_from_payload(payload)
+            if str(case.get("test_case_id") or case.get("case_id") or case.get("id") or "").strip().upper()
+            == normalized
+        ]
+    )
+
+
+def _summarize_api_cases(cases):
+    summary = {"total": len(cases), "passed": 0, "failed": 0, "skipped": 0}
+    for case in cases:
+        status = str(((case.get("evaluation") or {}).get("status") or case.get("status") or "skipped")).lower()
+        if status in {"error", "failed"}:
+            summary["failed"] += 1
+        elif status in {"passed", "success"}:
+            summary["passed"] += 1
+        else:
+            summary["skipped"] += 1
+    return summary
+
+
+def _write_api_test_by_id_result(experiment_dir, payload):
+    os.makedirs(experiment_dir, exist_ok=True)
+    report_path = os.path.join(experiment_dir, "api-test-by-id-result.json")
+    _write_json(report_path, payload)
+    return report_path
+
+
+def _run_ontology_hub_api_case(base_url, experiment_dir, test_id):
+    from validation.components.ontology_hub.integration.runner import run_ontology_hub_validation
+
+    return run_ontology_hub_validation(base_url, experiment_dir=experiment_dir, case_ids=[test_id])
+
+
+def _run_ai_model_hub_preflight_api_case(base_url, experiment_dir, _test_id):
+    from validation.components.ai_model_hub.runner import run_ai_model_hub_validation
+
+    return run_ai_model_hub_validation(base_url, experiment_dir=experiment_dir)
+
+
+def _run_ai_model_hub_connector_governance_api_case(_base_url, experiment_dir, _test_id):
+    from validation.components.ai_model_hub.component_runner import run_ai_model_hub_connector_governance_validation
+
+    return run_ai_model_hub_connector_governance_validation(experiment_dir=experiment_dir)
+
+
+def _run_ai_model_hub_model_execution_api_case(_base_url, experiment_dir, _test_id):
+    from validation.components.ai_model_hub.component_runner import run_ai_model_hub_model_execution_validation
+
+    return run_ai_model_hub_model_execution_validation(experiment_dir=experiment_dir)
+
+
+def _run_ai_model_hub_model_benchmarking_api_case(_base_url, experiment_dir, _test_id):
+    from validation.components.ai_model_hub.component_runner import run_ai_model_hub_model_benchmarking_validation
+
+    return run_ai_model_hub_model_benchmarking_validation(experiment_dir=experiment_dir)
+
+
+def _run_ai_model_hub_mobility_benchmarking_api_case(_base_url, experiment_dir, _test_id):
+    from validation.components.ai_model_hub.component_runner import run_ai_model_hub_mobility_benchmarking_validation
+
+    return run_ai_model_hub_mobility_benchmarking_validation(experiment_dir=experiment_dir)
+
+
+def _run_ai_model_hub_model_observer_api_case(base_url, experiment_dir, _test_id):
+    from validation.components.ai_model_hub.component_runner import run_ai_model_hub_model_observer_validation
+
+    return run_ai_model_hub_model_observer_validation(base_url=base_url, experiment_dir=experiment_dir)
+
+
+def _run_semantic_virtualization_api_check_case(base_url, experiment_dir, test_id):
+    from validation.components.semantic_virtualization.runner import run_semantic_virtualization_api_checks_validation
+
+    return run_semantic_virtualization_api_checks_validation(base_url, experiment_dir=experiment_dir, case_ids=[test_id])
+
+
+def _run_semantic_virtualization_mapping_api_case(_base_url, experiment_dir, _test_id):
+    from validation.components.semantic_virtualization.mapping_validation import (
+        run_semantic_virtualization_mapping_validation,
+    )
+
+    return run_semantic_virtualization_mapping_validation(experiment_dir=experiment_dir)
+
+
+def _run_semantic_virtualization_morph_source_api_case(_base_url, experiment_dir, _test_id):
+    from validation.components.semantic_virtualization.morph_kgv_source import run_morph_kgv_source_validation
+
+    return run_morph_kgv_source_validation(experiment_dir=experiment_dir)
+
+
+def _run_semantic_virtualization_automap_source_api_case(_base_url, experiment_dir, _test_id):
+    from validation.components.semantic_virtualization.automap_source import run_automap_source_validation
+
+    return run_automap_source_validation(experiment_dir=experiment_dir)
+
+
+def _run_semantic_virtualization_automap_execution_api_case(_base_url, experiment_dir, _test_id):
+    from validation.components.semantic_virtualization.automap_execution import (
+        run_automap_deterministic_execution_validation,
+    )
+
+    return run_automap_deterministic_execution_validation(experiment_dir=experiment_dir)
+
+
+def _run_gtfs_bench_source_api_case(_base_url, experiment_dir, _test_id):
+    from validation.components.semantic_virtualization.gtfs_bench_official import (
+        run_gtfs_bench_official_source_validation,
+    )
+
+    return run_gtfs_bench_official_source_validation(experiment_dir=experiment_dir)
+
+
+def _run_gtfs_bench_dataset_api_case(_base_url, experiment_dir, _test_id):
+    from validation.components.semantic_virtualization.gtfs_bench_dataset import (
+        run_gtfs_bench_official_dataset_validation,
+    )
+
+    return run_gtfs_bench_official_dataset_validation(experiment_dir=experiment_dir)
+
+
+def _run_gtfs_bench_materialization_api_case(_base_url, experiment_dir, _test_id):
+    from validation.components.semantic_virtualization.gtfs_bench_materialization import (
+        run_gtfs_bench_official_materialization_validation,
+    )
+
+    return run_gtfs_bench_official_materialization_validation(experiment_dir=experiment_dir)
+
+
+def _api_test_routes():
+    routes = {}
+
+    def add(case_ids, *, label, component, runner, requires_base_url=True):
+        for case_id in case_ids:
+            normalized = str(case_id or "").strip().upper()
+            if normalized:
+                routes[normalized] = {
+                    "id": normalized,
+                    "label": label,
+                    "component": component,
+                    "runner": runner,
+                    "requires_base_url": requires_base_url,
+                }
+
+    add(
+        ["PT5-OH-08", "PT5-OH-09", "PT5-OH-13", "PT5-OH-14", "PT5-OH-15"],
+        label="Ontology Hub API integration",
+        component="ontology-hub",
+        runner=_run_ontology_hub_api_case,
+    )
+    add(
+        ["MH-BOOTSTRAP-01", "MH-BOOTSTRAP-02"],
+        label="AI Model Hub API preflight",
+        component="ai-model-hub",
+        runner=_run_ai_model_hub_preflight_api_case,
+    )
+    add(
+        ["PT5-MH-09", "PT5-MH-11", "PT5-MH-16", "PT5-MH-17", "PT5-MH-18"],
+        label="AI Model Hub connector governance API",
+        component="ai-model-hub",
+        runner=_run_ai_model_hub_connector_governance_api_case,
+        requires_base_url=False,
+    )
+    add(
+        ["PT5-MH-10", "MH-LING-01"],
+        label="AI Model Hub model execution API",
+        component="ai-model-hub",
+        runner=_run_ai_model_hub_model_execution_api_case,
+        requires_base_url=False,
+    )
+    add(
+        ["PT5-MH-12", "PT5-MH-13", "PT5-MH-14", "PT5-MH-15"],
+        label="AI Model Hub model benchmarking API",
+        component="ai-model-hub",
+        runner=_run_ai_model_hub_model_benchmarking_api_case,
+        requires_base_url=False,
+    )
+    add(
+        ["MH-MOB-01"],
+        label="AI Model Hub mobility benchmarking API",
+        component="ai-model-hub",
+        runner=_run_ai_model_hub_mobility_benchmarking_api_case,
+        requires_base_url=False,
+    )
+    add(
+        ["MH-OBS-02"],
+        label="AI Model Hub observer API",
+        component="ai-model-hub",
+        runner=_run_ai_model_hub_model_observer_api_case,
+    )
+    add(
+        ["SV-BOOTSTRAP-01", "SV-API-01", "SV-API-02", "SV-API-03", "SV-API-04"],
+        label="Semantic Virtualization API checks",
+        component="semantic-virtualization",
+        runner=_run_semantic_virtualization_api_check_case,
+    )
+    add(
+        ["PT5-VS-01", "PT5-VS-03", "PT5-VS-04", "PT5-VS-05", "PT5-VS-06", "PT5-VS-09", "PT5-VS-10", "INT-VS-OH-01"],
+        label="Semantic Virtualization mapping API",
+        component="semantic-virtualization",
+        runner=_run_semantic_virtualization_mapping_api_case,
+        requires_base_url=False,
+    )
+    add(
+        ["SV-MORPH-KGV-01"],
+        label="Semantic Virtualization morph-kgv source API",
+        component="semantic-virtualization",
+        runner=_run_semantic_virtualization_morph_source_api_case,
+        requires_base_url=False,
+    )
+    add(
+        ["SV-AUTOMAP-01"],
+        label="Semantic Virtualization Automap source API",
+        component="semantic-virtualization",
+        runner=_run_semantic_virtualization_automap_source_api_case,
+        requires_base_url=False,
+    )
+    add(
+        ["SV-AUTOMAP-02"],
+        label="Semantic Virtualization Automap execution API",
+        component="semantic-virtualization",
+        runner=_run_semantic_virtualization_automap_execution_api_case,
+        requires_base_url=False,
+    )
+    add(
+        ["SV-GTFS-BENCH-01"],
+        label="Semantic Virtualization GTFS-Bench source API",
+        component="semantic-virtualization",
+        runner=_run_gtfs_bench_source_api_case,
+        requires_base_url=False,
+    )
+    add(
+        ["SV-GTFS-BENCH-02"],
+        label="Semantic Virtualization GTFS-Bench dataset API",
+        component="semantic-virtualization",
+        runner=_run_gtfs_bench_dataset_api_case,
+        requires_base_url=False,
+    )
+    add(
+        ["SV-GTFS-BENCH-03"],
+        label="Semantic Virtualization GTFS-Bench materialization API",
+        component="semantic-virtualization",
+        runner=_run_gtfs_bench_materialization_api_case,
+        requires_base_url=False,
+    )
+    return routes
+
+
+def _resolve_validation_api_test_route(test_id):
+    normalized = str(test_id or "").strip().upper()
+    if not normalized:
+        return None
+    return _api_test_routes().get(normalized)
+
+
+def run_validation_api_test_by_id_interactive(adapter_name=None, topology=None):
+    """Run one mapped component API validation by its audit/test ID."""
+    try:
+        test_id = input("\nAPI Test ID: ").strip()
+    except EOFError:
+        print("\nNo input. Returning to main menu.\n")
+        return None
+    if not test_id or test_id.upper() == "B":
+        return None
+
+    route = _resolve_validation_api_test_route(test_id)
+    if route is None:
+        known_ids = ", ".join(sorted(_api_test_routes()))
+        print(
+            "\nNo component API test route is mapped for that ID yet. "
+            f"Known API IDs: {known_ids}\n"
+        )
+        return None
+
+    normalized_adapter = str(adapter_name or os.environ.get("PIONERA_ADAPTER") or "inesdata").strip().lower()
+    normalized_topology = str(topology or os.environ.get("PIONERA_TOPOLOGY") or "local").strip().lower() or "local"
+    base_url = ""
+    if route.get("requires_base_url", True):
+        base_url = _resolve_component_api_base_url(
+            route["component"],
+            adapter_name=normalized_adapter,
+            topology=normalized_topology,
+        )
+        if not base_url:
+            print(f"\n{route['component']} base URL could not be resolved; aborting.\n")
+            return None
+
+    experiment_dir = _api_test_experiment_dir(route["id"])
+    env_updates = {
+        "PIONERA_ADAPTER": normalized_adapter,
+        "PIONERA_TOPOLOGY": normalized_topology,
+        "INESDATA_TOPOLOGY": normalized_topology,
+        "AI_MODEL_HUB_COMPONENT_ADAPTER": normalized_adapter,
+    }
+
+    print_component_suite_header(f"{route['label']} ({route['id']})", "api")
+    print(f"\nRunning API test {route['id']} (artifacts in {experiment_dir})\n")
+    with _temporary_env(env_updates):
+        result = route["runner"](base_url, experiment_dir, route["id"])
+
+    target_cases = _filter_cases_by_test_id(result, route["id"])
+    if target_cases:
+        print_component_case_results(target_cases)
+    else:
+        print(f"  - {route['id']}: no case result was produced by the selected API runner")
+
+    summary = _summarize_api_cases(target_cases)
+    status = "failed" if summary["failed"] else "passed" if summary["passed"] else "skipped"
+    report_path = _write_api_test_by_id_result(
+        experiment_dir,
+        {
+            "test_case_id": route["id"],
+            "label": route["label"],
+            "component": route["component"],
+            "adapter": normalized_adapter,
+            "topology": normalized_topology,
+            "base_url": base_url,
+            "status": status,
+            "summary": summary,
+            "target_cases": target_cases,
+            "suite_result": result,
+        },
+    )
+    print(f"\nAPI test status: {status}")
+    print(f"Result artifact: {report_path}\n")
+    return {
+        "status": status,
+        "test_case_id": route["id"],
+        "component": route["component"],
+        "experiment_dir": experiment_dir,
+        "report_json": report_path,
+        "summary": summary,
+    }
 
 
 def _run_inesdata_ui_specs_by_id(mode, route):

@@ -2694,7 +2694,7 @@ class MainCliTests(unittest.TestCase):
         )
 
     def test_ui_validation_shortcuts_delegate_component_actions(self):
-        with mock.patch("builtins.input", side_effect=["I", "O", "A", "V", "Y", "Q"]), mock.patch.object(
+        with mock.patch("builtins.input", side_effect=["I", "O", "A", "V", "Y", "Z", "Q"]), mock.patch.object(
             main,
             "_run_legacy_menu_action",
             return_value=None,
@@ -2717,6 +2717,7 @@ class MainCliTests(unittest.TestCase):
                 "ai_model_hub_ui",
                 "semantic_virtualization_ui",
                 "validation_test_by_id",
+                "validation_api_test_by_id",
             ],
         )
 
@@ -2864,6 +2865,21 @@ class MainCliTests(unittest.TestCase):
 
         self.assertEqual(result, "test-by-id-ok")
         migrated_action.assert_called_once_with()
+
+    def test_migrated_validation_api_test_by_id_action_does_not_import_inesdata_py(self):
+        with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch.object(
+            main.ui_interactive_menu,
+            "run_validation_api_test_by_id_interactive",
+            return_value="api-test-by-id-ok",
+        ) as migrated_action:
+            result = main._run_legacy_menu_action(
+                "validation_api_test_by_id",
+                current_adapter="fake",
+                topology="vm-single",
+            )
+
+        self.assertEqual(result, "api-test-by-id-ok")
+        migrated_action.assert_called_once_with(adapter_name="fake", topology="vm-single")
 
     def test_menu_metrics_can_run_without_kafka_by_default(self):
         calls = []

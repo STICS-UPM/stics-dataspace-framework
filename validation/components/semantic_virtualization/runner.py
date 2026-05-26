@@ -97,6 +97,56 @@ CASE_METADATA: Dict[str, Dict[str, str]] = {
 }
 
 
+def _api_checks() -> list[tuple[str, str, str, str, bool, Dict[str, str] | None, str]]:
+    return [
+        (
+            "SV-BOOTSTRAP-01",
+            "preflight",
+            "Service root availability",
+            ROOT_PATH,
+            False,
+            None,
+            "success",
+        ),
+        (
+            "SV-API-04",
+            "functional",
+            "Invalid SPARQL query returns a controlled error",
+            CONTROLLED_ERROR_QUERY_PATH,
+            False,
+            {"Accept": "application/sparql-results+json"},
+            "controlled_error",
+        ),
+        (
+            "SV-API-01",
+            "integration",
+            "API health endpoint availability",
+            HEALTH_PATH,
+            False,
+            None,
+            "success",
+        ),
+        (
+            "SV-API-02",
+            "integration",
+            "API capabilities endpoint availability",
+            CAPABILITIES_PATH,
+            True,
+            None,
+            "success",
+        ),
+        (
+            "SV-API-03",
+            "integration",
+            "SPARQL query endpoint returns results",
+            QUERY_PATH,
+            False,
+            {"Accept": "application/sparql-results+json"},
+            "success",
+        ),
+    ]
+
+
 def _component_dir(experiment_dir: str | None) -> str | None:
     if not experiment_dir:
         return None
@@ -399,60 +449,118 @@ def _evidence_index(executed_cases: List[Dict[str, Any]], artifacts: Dict[str, s
     return evidence
 
 
+def run_semantic_virtualization_api_checks_validation(
+    base_url: str,
+    experiment_dir: str | None = None,
+    case_ids: list[str] | tuple[str, ...] | set[str] | None = None,
+) -> Dict[str, Any]:
+    started_at = datetime.now().isoformat()
+    normalized_base_url = (base_url or "").rstrip("/")
+    requested_case_ids = {str(case_id or "").strip().upper() for case_id in (case_ids or []) if str(case_id or "").strip()}
+    checks = [
+        check
+        for check in _api_checks()
+        if not requested_case_ids or str(check[0]).upper() in requested_case_ids
+    ]
+    component_dir = _component_dir(experiment_dir)
+    artifacts: Dict[str, str] = {}
+    executed_cases: List[Dict[str, Any]] = []
+
+    for case_id, phase, description, relative_path, require_json, request_headers, expectation in checks:
+        url = _build_url(normalized_base_url, relative_path)
+        if expectation == "controlled_error":
+            http_status, content_type, body_text = _http_get_controlled_error_with_retry(
+                url,
+                headers=request_headers,
+            )
+        elif require_json:
+            http_status, content_type, body_text = _http_get_json_with_retry(
+                url,
+                headers=request_headers,
+            )
+        else:
+            http_status, content_type, body_text = _http_get(url, headers=request_headers)
+        if expectation == "controlled_error":
+            evaluation = evaluate_controlled_error_response(
+                http_status,
+                content_type,
+                body_text,
+            )
+        else:
+            evaluation = evaluate_http_response(
+                http_status,
+                content_type,
+                body_text,
+                require_json=require_json,
+            )
+        response_payload = {
+            "http_status": http_status,
+            "content_type": content_type,
+            "body_excerpt": body_text[:500],
+            **{
+                key: value
+                for key, value in evaluation.items()
+                if key in {"payload_keys", "payload_length", "controlled_error"}
+            },
+        }
+        case_result = _build_case_result(
+            case_id=case_id,
+            description=description,
+            metadata=CASE_METADATA[case_id],
+            status=evaluation["status"],
+            request_payload={
+                "method": "GET",
+                "url": url,
+                "path": relative_path,
+                "headers": request_headers or {},
+            },
+            response_payload=response_payload,
+            assertions=list(evaluation.get("assertions") or []),
+        )
+        case_result["source_phase"] = phase
+        executed_cases.append(case_result)
+
+        if component_dir:
+            artifact_key = f"{case_id.lower()}-response.json"
+            artifact_path = os.path.join(component_dir, artifact_key)
+            _write_json(artifact_path, case_result)
+            artifacts[artifact_key] = artifact_path
+
+    summary = _summarize_cases(executed_cases)
+    status = "failed" if summary["failed"] else "passed" if summary["total"] else "skipped"
+    pt5_cases = [case for case in executed_cases if case.get("case_group") == "pt5"]
+    support_checks = [case for case in executed_cases if case.get("case_group") == "support"]
+    result: Dict[str, Any] = {
+        "component": COMPONENT_KEY,
+        "suite": "api-checks",
+        "base_url": normalized_base_url,
+        "timestamp": started_at,
+        "status": status,
+        "summary": summary,
+        "executed_cases": executed_cases,
+        "pt5_case_results": pt5_cases,
+        "pt5_cases": pt5_cases,
+        "support_checks": support_checks,
+        "evidence_index": [],
+    }
+
+    if component_dir:
+        report_path = os.path.join(component_dir, "semantic_virtualization_api_checks_validation.json")
+        artifacts["report_json"] = report_path
+        result["artifacts"] = artifacts
+        result["evidence_index"] = _evidence_index(executed_cases, artifacts)
+        _write_json(report_path, result)
+
+    return result
+
+
 def run_semantic_virtualization_validation(
     base_url: str,
     experiment_dir: str | None = None,
 ) -> Dict[str, Any]:
     started_at = datetime.now().isoformat()
     normalized_base_url = (base_url or "").rstrip("/")
-
-    checks = [
-        (
-            "SV-BOOTSTRAP-01",
-            "preflight",
-            "Service root availability",
-            ROOT_PATH,
-            False,
-            None,
-            "success",
-        ),
-        (
-            "SV-API-04",
-            "functional",
-            "Invalid SPARQL query returns a controlled error",
-            CONTROLLED_ERROR_QUERY_PATH,
-            False,
-            {"Accept": "application/sparql-results+json"},
-            "controlled_error",
-        ),
-        (
-            "SV-API-01",
-            "integration",
-            "API health endpoint availability",
-            HEALTH_PATH,
-            False,
-            None,
-            "success",
-        ),
-        (
-            "SV-API-02",
-            "integration",
-            "API capabilities endpoint availability",
-            CAPABILITIES_PATH,
-            True,
-            None,
-            "success",
-        ),
-        (
-            "SV-API-03",
-            "integration",
-            "SPARQL query endpoint returns results",
-            QUERY_PATH,
-            False,
-            {"Accept": "application/sparql-results+json"},
-            "success",
-        ),
-    ]
+    checks = _api_checks()
 
     component_dir = _component_dir(experiment_dir)
     artifacts: Dict[str, str] = {}
