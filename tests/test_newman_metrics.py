@@ -77,6 +77,8 @@ class NewmanMetricsTests(unittest.TestCase):
         command = mock_run.call_args.args[0]
         self.assertIn("--reporters", command)
         self.assertIn("cli,json", command)
+        self.assertIn("--color", command)
+        self.assertEqual(command[command.index("--color") + 1], "on")
         self.assertIn("--reporter-json-export", command)
         self.assertIn("experiments/exp-1/newman_reports/report.json", command)
 
@@ -160,13 +162,67 @@ class NewmanMetricsTests(unittest.TestCase):
                 executor,
                 "wait_for_contract_agreement",
                 return_value="agreement-123",
-            ) as mock_wait:
+            ) as mock_wait, mock.patch.object(
+                executor,
+                "wait_for_contract_agreement_visibility",
+                return_value={"agreement_id": "agreement-123"},
+            ) as mock_visibility:
                 reports = executor.run_validation_collections({"provider": "conn-a"}, report_dir=tmpdir)
 
         self.assertEqual(len(reports), 6)
         self.assertTrue(mock_run.call_args_list[4].args[0].endswith("05_consumer_negotiation.json"))
         mock_wait.assert_called_once()
         self.assertTrue(mock_wait.call_args.args[0].endswith("environment.json"))
+        mock_visibility.assert_called_once()
+        self.assertEqual(mock_visibility.call_args.kwargs["agreement_id"], "agreement-123")
+
+    def test_run_validation_collections_waits_for_visibility_when_negotiation_exports_agreement(self):
+        executor = NewmanExecutor()
+
+        def fake_run_newman(path, env, report_path=None, environment_path=None):
+            if path.endswith("04_consumer_catalog.json"):
+                executor._write_environment_values(
+                    environment_path,
+                    {
+                        "e2e_offer_policy_id": "offer-123",
+                        "e2e_catalog_asset_id": "asset-123",
+                    },
+                )
+            if path.endswith("05_consumer_negotiation.json"):
+                executor._write_environment_values(
+                    environment_path,
+                    {"e2e_agreement_id": "agreement-123"},
+                )
+            return report_path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(
+                executor,
+                "run_newman",
+                side_effect=fake_run_newman,
+            ), mock.patch.object(
+                executor,
+                "wait_for_contract_agreement",
+            ) as mock_wait, mock.patch.object(
+                executor,
+                "wait_for_contract_agreement_visibility",
+                return_value={"agreement_id": "agreement-123"},
+            ) as mock_visibility:
+                reports = executor.run_validation_collections(
+                    {
+                        "provider": "conn-a",
+                        "consumer": "conn-b",
+                        "dsDomain": "example.local",
+                        "provider_jwt": "provider-token",
+                        "consumer_jwt": "consumer-token",
+                    },
+                    report_dir=tmpdir,
+                )
+
+        self.assertEqual(len(reports), 6)
+        mock_wait.assert_not_called()
+        mock_visibility.assert_called_once()
+        self.assertEqual(mock_visibility.call_args.kwargs["agreement_id"], "agreement-123")
 
     def test_detects_recoverable_dsp_negotiation_failure_from_report(self):
         executor = NewmanExecutor()
@@ -268,7 +324,11 @@ class NewmanMetricsTests(unittest.TestCase):
                     RuntimeError("Timed out waiting for contractAgreementId before transfer"),
                     "agreement-recovered",
                 ],
-            ) as mock_wait, mock.patch.dict(os.environ, {
+            ) as mock_wait, mock.patch.object(
+                executor,
+                "wait_for_contract_agreement_visibility",
+                return_value={"agreement_id": "agreement-recovered"},
+            ) as mock_visibility, mock.patch.dict(os.environ, {
                 "PIONERA_NEWMAN_DSP_NEGOTIATION_RECOVERY_DELAY_SECONDS": "0",
             }):
                 reports = executor.run_validation_collections(
@@ -287,6 +347,8 @@ class NewmanMetricsTests(unittest.TestCase):
         self.assertNotIn("05_consumer_negotiation.json", [os.path.basename(path) for path in reports])
         self.assertTrue(reports[-1].endswith("06_consumer_transfer.json"))
         self.assertEqual(mock_wait.call_count, 2)
+        mock_visibility.assert_called_once()
+        self.assertEqual(mock_visibility.call_args.kwargs["agreement_id"], "agreement-recovered")
         mock_sleep.assert_called_once_with(0.0)
 
     def test_run_validation_collections_stops_when_catalog_vars_are_missing(self):
@@ -596,6 +658,8 @@ class NewmanMetricsTests(unittest.TestCase):
 
         def fake_run(cmd, check=False, capture_output=False, text=True):
             call_count["value"] += 1
+            self.assertTrue(capture_output)
+            self.assertTrue(text)
             report_path = cmd[cmd.index("--reporter-json-export") + 1]
             if call_count["value"] == 1:
                 write_report(
@@ -610,10 +674,10 @@ class NewmanMetricsTests(unittest.TestCase):
                         }
                     ],
                 )
-                return mock.Mock(returncode=1)
+                return mock.Mock(returncode=1, stdout="FAILED ATTEMPT\n", stderr="")
 
             write_report(report_path, [])
-            return mock.Mock(returncode=0)
+            return mock.Mock(returncode=0, stdout="PASSED ATTEMPT\n", stderr="")
 
         mock_run.side_effect = fake_run
 
@@ -621,6 +685,7 @@ class NewmanMetricsTests(unittest.TestCase):
             report_path = os.path.join(tmpdir, "06_consumer_transfer.json")
             with mock.patch.object(executor, "ensure_available", return_value=["newman"]), \
                     mock.patch.object(executor, "load_test_scripts", return_value="pm.test('ok')"), \
+                    mock.patch("builtins.print") as mock_print, \
                     mock.patch.dict(os.environ, {
                         "PIONERA_NEWMAN_TRANSIENT_AUTH_ATTEMPTS": "2",
                         "PIONERA_NEWMAN_TRANSIENT_AUTH_RETRY_DELAY_SECONDS": "0",
@@ -638,6 +703,9 @@ class NewmanMetricsTests(unittest.TestCase):
         self.assertEqual(call_count["value"], 2)
         mock_sleep.assert_called_once_with(0.0)
         self.assertEqual(final_report["run"]["failures"], [])
+        printed = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+        self.assertIn("PASSED ATTEMPT", printed)
+        self.assertNotIn("FAILED ATTEMPT", printed)
 
     @mock.patch("framework.newman_executor.time.sleep", return_value=None)
     @mock.patch("framework.newman_executor.requests.get")
@@ -761,6 +829,140 @@ class NewmanMetricsTests(unittest.TestCase):
             "conn-a.example.local/management/v3/contractnegotiations/request",
             mock_post.call_args_list[0].args[0],
         )
+
+    @mock.patch("framework.newman_executor.requests.post")
+    @mock.patch("framework.newman_executor.requests.get")
+    def test_wait_for_contract_agreement_accepts_terminal_state_with_agreement(self, mock_get, mock_post):
+        executor = NewmanExecutor()
+        consumer_response = mock.Mock(status_code=200)
+        consumer_response.json.return_value = {
+            "@id": "neg-1",
+            "state": "TERMINATING",
+            "contractAgreementId": "agreement-1",
+            "errorDetail": "Provider verification returned 401 Unauthorized",
+        }
+        mock_get.return_value = consumer_response
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment_path = os.path.join(tmpdir, "environment.json")
+            executor._write_environment_file(
+                {
+                    "provider": "conn-a",
+                    "consumer": "conn-b",
+                    "dsDomain": "example.local",
+                    "provider_jwt": "provider-token",
+                    "consumer_jwt": "consumer-token",
+                    "e2e_negotiation_id": "neg-1",
+                },
+                environment_path,
+            )
+
+            agreement_id = executor.wait_for_contract_agreement(
+                environment_path,
+                timeout=1,
+                poll_interval=0,
+            )
+
+        self.assertEqual(agreement_id, "agreement-1")
+        mock_post.assert_not_called()
+
+    @mock.patch("framework.newman_executor.time.sleep", return_value=None)
+    @mock.patch("framework.newman_executor.requests.post")
+    @mock.patch("framework.newman_executor.requests.get")
+    def test_wait_for_contract_agreement_visibility_waits_for_both_connectors(
+        self,
+        mock_get,
+        mock_post,
+        mock_sleep,
+    ):
+        executor = NewmanExecutor()
+        direct_missing = mock.Mock(status_code=404)
+        consumer_direct_ready = mock.Mock(status_code=200)
+        consumer_direct_ready.json.return_value = {"@id": "agreement-1", "state": "VERIFIED"}
+        provider_list_missing = mock.Mock(status_code=200)
+        provider_list_missing.json.return_value = []
+        provider_list_ready = mock.Mock(status_code=200)
+        provider_list_ready.json.return_value = [{"@id": "agreement-1", "state": "VERIFIED"}]
+        mock_get.side_effect = [
+            direct_missing,
+            consumer_direct_ready,
+            direct_missing,
+        ]
+        mock_post.side_effect = [
+            provider_list_missing,
+            provider_list_ready,
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment_path = os.path.join(tmpdir, "environment.json")
+            executor._write_environment_file(
+                {
+                    "provider": "conn-a",
+                    "consumer": "conn-b",
+                    "dsDomain": "example.local",
+                    "provider_jwt": "provider-token",
+                    "consumer_jwt": "consumer-token",
+                    "e2e_agreement_id": "agreement-1",
+                },
+                environment_path,
+            )
+
+            result = executor.wait_for_contract_agreement_visibility(
+                environment_path,
+                timeout=1,
+                poll_interval=0,
+            )
+
+        self.assertTrue(result["provider_visible"])
+        self.assertTrue(result["consumer_visible"])
+        self.assertEqual(result["agreement_id"], "agreement-1")
+        self.assertEqual(mock_post.call_count, 2)
+        self.assertIn(
+            "conn-a.example.local/management/v3/contractagreements/request",
+            mock_post.call_args_list[0].args[0],
+        )
+        mock_sleep.assert_called()
+
+    @mock.patch("framework.newman_executor.requests.post")
+    @mock.patch("framework.newman_executor.requests.get")
+    def test_wait_for_contract_agreement_reports_provider_detail_when_terminating_without_agreement(self, mock_get, mock_post):
+        executor = NewmanExecutor()
+        consumer_response = mock.Mock(status_code=200)
+        consumer_response.json.return_value = {"@id": "neg-1", "state": "TERMINATING"}
+        provider_response = mock.Mock(status_code=200)
+        provider_response.json.return_value = [
+            {
+                "@id": "provider-neg-1",
+                "type": "PROVIDER",
+                "state": "TERMINATING",
+                "counterPartyId": "conn-b",
+                "createdAt": 2,
+                "errorDetail": "Failed to verify agreement: 401 Unauthorized",
+            }
+        ]
+        mock_get.return_value = consumer_response
+        mock_post.return_value = provider_response
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment_path = os.path.join(tmpdir, "environment.json")
+            executor._write_environment_file(
+                {
+                    "provider": "conn-a",
+                    "consumer": "conn-b",
+                    "dsDomain": "example.local",
+                    "provider_jwt": "provider-token",
+                    "consumer_jwt": "consumer-token",
+                    "e2e_negotiation_id": "neg-1",
+                },
+                environment_path,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "TERMINATING.*provider_side=.*401 Unauthorized"):
+                executor.wait_for_contract_agreement(
+                    environment_path,
+                    timeout=1,
+                    poll_interval=0,
+                )
 
     def test_parse_newman_report_extracts_request_metrics(self):
         collector = MetricsCollector()

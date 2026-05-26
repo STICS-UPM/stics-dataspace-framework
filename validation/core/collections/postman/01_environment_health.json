@@ -2,7 +2,7 @@
   "info": {
     "name": "01 Environment Health",
     "_postman_id": "postman-environment-health-01",
-    "description": "Versión Postman autocontenida de la colección 01 Environment Health, con tests embebidos y sin dependencia de test_script inyectado por Newman.",
+    "description": "Self-contained Postman version of the 01 Environment Health collection, with embedded tests and no dependency on Newman-injected test_script.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -59,7 +59,7 @@
             }
           ]
         },
-        "description": "Versión Postman autocontenida de `Provider Login`."
+        "description": "Self-contained Postman version of `Provider Login`."
       },
       "event": [
         {
@@ -149,7 +149,7 @@
             }
           ]
         },
-        "description": "Versión Postman autocontenida de `Consumer Login`."
+        "description": "Self-contained Postman version of `Consumer Login`."
       },
       "event": [
         {
@@ -222,7 +222,7 @@
             }
           }
         },
-        "description": "Versión Postman autocontenida de `Provider Management API Health`."
+        "description": "Self-contained Postman version of `Provider Management API Health`."
       },
       "event": [
         {
@@ -290,7 +290,7 @@
             }
           }
         },
-        "description": "Versión Postman autocontenida de `Consumer Management API Health`."
+        "description": "Self-contained Postman version of `Consumer Management API Health`."
       },
       "event": [
         {
@@ -357,7 +357,7 @@
             }
           }
         },
-        "description": "Versión Postman autocontenida de `Provider DSP Catalog Endpoint`."
+        "description": "Self-contained Postman version of `Provider DSP Catalog Endpoint`."
       },
       "event": [
         {
@@ -431,7 +431,7 @@
             }
           }
         },
-        "description": "Versión Postman autocontenida de `Consumer DSP Catalog Endpoint`."
+        "description": "Self-contained Postman version of `Consumer DSP Catalog Endpoint`."
       },
       "event": [
         {

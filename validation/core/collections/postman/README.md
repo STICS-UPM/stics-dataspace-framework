@@ -853,19 +853,25 @@ pm.test("Negotiation state is recognized", function () {
     "AGREED",
     "VERIFIED",
     "FINALIZED",
+    "TERMINATING",
     "TERMINATED"
   ]);
 });
 
-if (state === "TERMINATED") {
+const agreementId = negotiation.contractAgreementId;
+if ((state === "TERMINATING" || state === "TERMINATED") && !agreementId) {
   pm.test("Negotiation did not terminate", function () {
-    pm.expect.fail(`Negotiation reached TERMINATED state${negotiation.errorDetail ? `: ${negotiation.errorDetail}` : ''}`);
+    pm.expect.fail(`Negotiation reached ${state} state before contractAgreementId${negotiation.errorDetail ? `: ${negotiation.errorDetail}` : ''}`);
   });
   setNext(null);
   return;
 }
 
-const agreementId = negotiation.contractAgreementId;
+if ((state === "TERMINATING" || state === "TERMINATED") && agreementId) {
+  console.log(`Negotiation reached ${state} after producing contractAgreementId; transfer validation will confirm agreement usability.`);
+  if (negotiation.errorDetail) console.log("Negotiation error detail:", negotiation.errorDetail);
+}
+
 if (!agreementId) {
   retryOrFail(`Negotiation ${negotiationId} is in state ${state || 'unknown'} without contractAgreementId`);
   return;

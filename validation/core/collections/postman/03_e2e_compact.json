@@ -2,7 +2,7 @@
   "info": {
     "name": "03 E2E Compact Flow",
     "_postman_id": "postman-e2e-compact-03",
-    "description": "Colección compacta y autocontenida para Postman. Embebe los scripts necesarios para encadenar el flujo E2E principal sin depender de test_script inyectado por Newman.",
+    "description": "Compact, self-contained Postman collection. It embeds the scripts required to chain the main E2E flow without depending on Newman-injected test_script.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -186,7 +186,7 @@
             }
           ]
         },
-        "description": "Autentica al proveedor y genera los identificadores e2e_* usados en el resto del flujo manual compactado."
+        "description": "Authenticates the provider and generates the e2e_* identifiers used by the rest of the compact manual flow."
       }
     },
     {
@@ -261,7 +261,7 @@
             }
           }
         },
-        "description": "Crea el asset negociable mínimo del proveedor."
+        "description": "Creates the provider's minimal negotiable asset."
       }
     },
     {
@@ -336,7 +336,7 @@
             }
           }
         },
-        "description": "Crea la policy asociada al asset E2E."
+        "description": "Creates the policy associated with the E2E asset."
       }
     },
     {
@@ -411,7 +411,7 @@
             }
           }
         },
-        "description": "Crea la contract definition que referencia asset y policy."
+        "description": "Creates the contract definition that references the asset and policy."
       }
     },
     {
@@ -501,7 +501,7 @@
             }
           ]
         },
-        "description": "Autentica al consumidor para catálogo, negociación y transferencia."
+        "description": "Authenticates the consumer for catalog, negotiation and transfer."
       }
     },
     {
@@ -650,7 +650,7 @@
             }
           }
         },
-        "description": "Localiza desde el consumidor la oferta publicada por el proveedor y extrae participantId, policyId y assetId de catálogo."
+        "description": "Locates the provider offer from the consumer side and extracts participantId, policyId and assetId from the catalog."
       }
     },
     {
@@ -770,7 +770,7 @@
             }
           }
         },
-        "description": "Lanza la negociación contractual con la oferta localizada en catálogo."
+        "description": "Starts contract negotiation with the offer located in the catalog."
       }
     },
     {
@@ -864,19 +864,24 @@
               "    \"AGREED\",",
               "    \"VERIFIED\",",
               "    \"FINALIZED\",",
+              "    \"TERMINATING\",",
               "    \"TERMINATED\"",
               "  ]);",
               "});",
               "",
-              "if (state === \"TERMINATED\") {",
+              "const agreementId = negotiation.contractAgreementId;",
+              "if ((state === \"TERMINATING\" || state === \"TERMINATED\") && !agreementId) {",
               "  pm.test(\"Negotiation did not terminate\", function () {",
-              "    pm.expect.fail(`Negotiation reached TERMINATED state${negotiation.errorDetail ? `: ${negotiation.errorDetail}` : ''}`);",
+              "    pm.expect.fail(`Negotiation reached ${state} state before contractAgreementId${negotiation.errorDetail ? `: ${negotiation.errorDetail}` : ''}`);",
               "  });",
               "  setNext(null);",
               "  return;",
               "}",
               "",
-              "const agreementId = negotiation.contractAgreementId;",
+              "if ((state === \"TERMINATING\" || state === \"TERMINATED\") && agreementId) {",
+              "  console.log(`Negotiation reached ${state} after producing contractAgreementId; transfer validation will confirm agreement usability.`);",
+              "  if (negotiation.errorDetail) console.log(\"Negotiation error detail:\", negotiation.errorDetail);",
+              "}",
               "if (!agreementId) {",
               "  retryOrFail(`Negotiation ${negotiationId} is in state ${state || 'unknown'} without contractAgreementId`);",
               "  return;",
@@ -1112,7 +1117,7 @@
             }
           }
         },
-        "description": "Inicia la transferencia AmazonS3-PUSH usando el endpoint del adapter configurado."
+        "description": "Starts the AmazonS3-PUSH transfer using the configured adapter endpoint."
       }
     },
     {
@@ -1327,7 +1332,7 @@
             "{{e2e_transfer_id}}"
           ]
         },
-        "description": "Resuelve el destino final del transfer process y valida el bucket del consumidor."
+        "description": "Resolves the final transfer process destination and validates the consumer bucket."
       }
     }
   ]

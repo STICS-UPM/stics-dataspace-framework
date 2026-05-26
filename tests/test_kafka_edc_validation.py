@@ -1346,6 +1346,42 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
         self.assertEqual(late_confirmation_call.kwargs["timeout_seconds"], 5)
         self.assertEqual(late_confirmation_call.kwargs["offset"], 0)
 
+    def test_kubernetes_exec_measure_accepts_late_transfer_confirmation(self):
+        ids = iter(["id1", "id2"])
+        counter = itertools.count(1000, 5)
+        suite = KafkaEdcValidationSuite(
+            uuid_factory=ids.__next__,
+            time_provider=lambda: float(next(counter)),
+        )
+        runtime = {
+            "message_count": 2,
+            "message_sample_limit": 2,
+            "consumer_poll_timeout_seconds": 1,
+            "late_transfer_confirmation_seconds": 5,
+        }
+        late_messages = [
+            {"message_id": "kafka-transfer-0-id1", "producer_timestamp_ms": 1000},
+            {"message_id": "kafka-transfer-1-id2", "producer_timestamp_ms": 1005},
+        ]
+
+        with patch.object(suite, "_kubernetes_topic_end_offset", return_value=0):
+            with patch.object(suite, "_produce_kubernetes_exec_message"):
+                with patch.object(suite, "_consume_kubernetes_exec_messages", return_value=late_messages):
+                    with patch("framework.kafka_edc_validation.time.sleep", return_value=None):
+                        with patch("framework.kafka_edc_validation.time.time", side_effect=[0, 2, 2, 2, 3]):
+                            metrics = suite._measure_transfer_latency_with_kubernetes_exec(
+                                runtime,
+                                "source-topic",
+                                "destination-topic",
+                                probe_result={"status": "ready"},
+                            )
+
+        self.assertEqual(metrics["status"], "completed")
+        self.assertEqual(metrics["messages_produced"], 2)
+        self.assertEqual(metrics["messages_consumed"], 2)
+        self.assertEqual(metrics["late_confirmation"]["status"], "completed")
+        self.assertEqual(metrics["late_confirmation"]["messages_consumed"], 2)
+
     def test_kubernetes_exec_stabilization_waits_for_dataplane_group_before_probe(self):
         suite = KafkaEdcValidationSuite()
         runtime = {
@@ -1445,7 +1481,7 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
 
         self.assertEqual(len(results), 2)
         self.assertEqual(run_pair_mock.call_count, 3)
-        self.assertEqual(kafka_manager.stop_calls, 0)
+        self.assertEqual(kafka_manager.stop_calls, 1)
         self.assertTrue(results[0]["retry_attempted"])
         self.assertEqual(results[0]["attempt_count"], 2)
         self.assertIn("Kafka transfer path did not relay", results[0]["retry_reason"])
@@ -1533,7 +1569,7 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
 
         self.assertEqual(len(results), 2)
         self.assertEqual(run_pair_mock.call_count, 3)
-        self.assertEqual(kafka_manager.stop_calls, 0)
+        self.assertEqual(kafka_manager.stop_calls, 1)
         self.assertTrue(results[0]["retry_attempted"])
         self.assertEqual(results[0]["attempt_count"], 2)
         self.assertIn("No Kafka messages were consumed", results[0]["retry_reason"])
@@ -1574,7 +1610,7 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
 
         self.assertEqual(len(results), 2)
         self.assertEqual(run_pair_mock.call_count, 3)
-        self.assertEqual(kafka_manager.stop_calls, 0)
+        self.assertEqual(kafka_manager.stop_calls, 1)
         self.assertTrue(results[0]["retry_attempted"])
         self.assertEqual(results[0]["attempt_count"], 2)
         self.assertIn("consumed only 9/10", results[0]["retry_reason"])

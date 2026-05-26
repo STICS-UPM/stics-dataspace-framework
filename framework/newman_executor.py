@@ -21,6 +21,7 @@ class NewmanExecutor:
 
     CONTRACT_AGREEMENT_TIMEOUT_SECONDS = 60
     CONTRACT_AGREEMENT_POLL_INTERVAL_SECONDS = 3
+    CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS = 30
     ASYNC_COLLECTION_DELAY_REQUEST_MS = 2000
     TRANSIENT_AUTH_ATTEMPTS = 3
     TRANSIENT_AUTH_RETRY_DELAY_SECONDS = 5
@@ -37,6 +38,7 @@ class NewmanExecutor:
         "could not be authenticated",
     )
     DSP_NEGOTIATION_RECOVERY_HINTS = (
+        "terminating",
         "terminated",
         "401",
         "unauthorized",
@@ -372,6 +374,13 @@ class NewmanExecutor:
             text = ""
         text = " ".join(text.split())
         return text[:limit]
+
+    @staticmethod
+    def _emit_process_output(result):
+        for stream_name in ("stdout", "stderr"):
+            output = getattr(result, stream_name, None)
+            if isinstance(output, str) and output:
+                print(output, end="" if output.endswith("\n") else "\n")
 
     def _is_management_authentication_failure(self, response):
         status_code = int(getattr(response, "status_code", 0) or 0)
@@ -711,6 +720,25 @@ class NewmanExecutor:
         return diagnostics
 
     @staticmethod
+    def _extract_identifier(item):
+        if not isinstance(item, dict):
+            return None
+        return item.get("@id") or item.get("id")
+
+    @classmethod
+    def _find_contract_agreement(cls, body, agreement_id):
+        if isinstance(body, list):
+            for item in body:
+                if cls._extract_identifier(item) == agreement_id:
+                    return item
+            return None
+
+        if isinstance(body, dict) and cls._extract_identifier(body) == agreement_id:
+            return body
+
+        return None
+
+    @staticmethod
     def _find_negotiation(body, negotiation_id):
         if isinstance(body, list):
             for item in body:
@@ -727,6 +755,189 @@ class NewmanExecutor:
                 return body
 
         return None
+
+    def _query_contract_agreement(self, connector, ds_domain, token, agreement_id):
+        direct_url = self._management_url(
+            connector,
+            ds_domain,
+            f"/management/v3/contractagreements/{agreement_id}",
+        )
+        list_url = self._management_url(
+            connector,
+            ds_domain,
+            "/management/v3/contractagreements/request",
+        )
+        issues = []
+
+        try:
+            response = requests.get(
+                direct_url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                },
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            issues.append(f"direct lookup failed: {exc}")
+        else:
+            if response.status_code == 200:
+                try:
+                    body = response.json()
+                except ValueError:
+                    issues.append("direct lookup body is not valid JSON")
+                else:
+                    agreement = self._find_contract_agreement(body, agreement_id)
+                    if agreement is not None:
+                        return agreement, None
+                    issues.append(f"direct lookup did not return agreement {agreement_id}")
+            elif response.status_code not in {404, 405}:
+                issues.append(f"direct lookup HTTP {response.status_code}")
+
+        payload = {
+            "@context": {
+                "@vocab": "https://w3id.org/edc/v0.0.1/ns/"
+            },
+            "offset": 0,
+            "limit": 100,
+        }
+        try:
+            response = requests.post(
+                list_url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            issues.append(f"list lookup failed: {exc}")
+        else:
+            if response.status_code == 200:
+                try:
+                    body = response.json()
+                except ValueError:
+                    issues.append("list lookup body is not valid JSON")
+                else:
+                    agreement = self._find_contract_agreement(body, agreement_id)
+                    if agreement is not None:
+                        return agreement, None
+                    issues.append(f"agreement {agreement_id} not found in list lookup")
+            else:
+                issues.append(f"list lookup HTTP {response.status_code}")
+
+        return None, "; ".join(issues)
+
+    def wait_for_contract_agreement_visibility(
+        self,
+        environment_path,
+        agreement_id=None,
+        timeout=None,
+        poll_interval=None,
+    ):
+        timeout = (
+            self._positive_int_from_env(
+                "PIONERA_NEWMAN_CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS",
+                self.CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS,
+            )
+            if timeout is None
+            else timeout
+        )
+        poll_interval = (
+            self.CONTRACT_AGREEMENT_POLL_INTERVAL_SECONDS
+            if poll_interval is None
+            else poll_interval
+        )
+
+        _, env_vars = self._read_environment_values(environment_path)
+        agreement_id = agreement_id or env_vars.get("e2e_agreement_id")
+        provider = env_vars.get("provider")
+        consumer = env_vars.get("consumer")
+        ds_domain = env_vars.get("dsDomain")
+        provider_jwt = env_vars.get("provider_jwt")
+        consumer_jwt = env_vars.get("consumer_jwt")
+        missing = [
+            key for key, value in (
+                ("e2e_agreement_id", agreement_id),
+                ("provider", provider),
+                ("consumer", consumer),
+                ("dsDomain", ds_domain),
+                ("provider_jwt", provider_jwt),
+                ("consumer_jwt", consumer_jwt),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                "Cannot wait for contract agreement visibility because these environment variables "
+                "are missing: " + ", ".join(missing)
+            )
+
+        deadline = time.time() + float(timeout)
+        visible = set()
+        last_errors = {}
+        checks = (
+            ("provider", provider, provider_jwt),
+            ("consumer", consumer, consumer_jwt),
+        )
+
+        while time.time() <= deadline:
+            for role, connector, token in checks:
+                if role in visible:
+                    continue
+                agreement, issue = self._query_contract_agreement(
+                    connector,
+                    ds_domain,
+                    token,
+                    agreement_id,
+                )
+                if agreement is not None:
+                    visible.add(role)
+                    last_errors.pop(role, None)
+                elif issue:
+                    last_errors[role] = issue
+
+            if len(visible) == len(checks):
+                print(
+                    "[INFO] contractAgreementId visible before transfer: "
+                    f"{agreement_id}"
+                )
+                return {
+                    "agreement_id": agreement_id,
+                    "provider_visible": True,
+                    "consumer_visible": True,
+                }
+
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+
+            missing_roles = [role for role, _, _ in checks if role not in visible]
+            detail = "; ".join(
+                f"{role}: {last_errors[role]}"
+                for role in missing_roles
+                if role in last_errors
+            )
+            print(
+                "[INFO] Waiting for contractAgreementId visibility before "
+                f"06_consumer_transfer.json ({agreement_id}; missing={','.join(missing_roles)}"
+                + (f"; detail={self._compact_detail(detail)}" if detail else "")
+                + ")"
+            )
+            time.sleep(min(float(poll_interval), remaining))
+
+        missing_roles = [role for role, _, _ in checks if role not in visible]
+        detail = "; ".join(
+            f"{role}: {last_errors[role]}"
+            for role in missing_roles
+            if role in last_errors
+        )
+        raise RuntimeError(
+            f"Contract agreement {agreement_id} was not visible before 06_consumer_transfer.json "
+            f"(missing={','.join(missing_roles)})"
+            + (f"; last_errors={self._compact_detail(detail)}" if detail else "")
+        )
 
     @staticmethod
     def _negotiation_summary(negotiation):
@@ -799,7 +1010,7 @@ class NewmanExecutor:
         candidates.sort(key=lambda item: item.get("createdAt") or 0, reverse=True)
         terminated = [
             item for item in candidates
-            if item.get("state") == "TERMINATED"
+            if item.get("state") in {"TERMINATING", "TERMINATED"}
         ]
         selected = terminated[0] if terminated else candidates[0]
         summary = self._negotiation_summary(selected)
@@ -923,12 +1134,12 @@ class NewmanExecutor:
                     )
                     return agreement_id
                 last_issue = negotiation.get("errorDetail") or f"state={last_state or 'unknown'}"
-                if last_state == "TERMINATED":
+                if last_state in {"TERMINATING", "TERMINATED"}:
                     provider_detail = self._provider_negotiation_diagnostic(env_vars)
                     if provider_detail:
                         last_issue = f"{last_issue}; provider_side=({provider_detail})"
                     raise RuntimeError(
-                        "Negotiation reached TERMINATED before contractAgreementId. "
+                        f"Negotiation reached {last_state} before contractAgreementId. "
                         f"Negotiation={negotiation_id}, detail={last_issue}"
                     )
 
@@ -968,6 +1179,8 @@ class NewmanExecutor:
             collection_path,
             "--reporters",
             "cli,json",
+            "--color",
+            "on",
         ]
 
         collection_name = os.path.basename(collection_path)
@@ -1028,7 +1241,7 @@ class NewmanExecutor:
                 result = subprocess.run(
                     cmd,
                     check=False,
-                    capture_output=False,
+                    capture_output=True,
                     text=True
                 )
             except FileNotFoundError:
@@ -1037,6 +1250,7 @@ class NewmanExecutor:
                 return None
 
             if result.returncode == 0:
+                self._emit_process_output(result)
                 return report_path
 
             transient_auth_detail = self._newman_auth_failure_detail(report_path)
@@ -1050,6 +1264,7 @@ class NewmanExecutor:
                 time.sleep(retry_delay)
                 continue
 
+            self._emit_process_output(result)
             print(f"[WARNING] Newman returned exit code {result.returncode}")
             return report_path
 
@@ -1249,15 +1464,26 @@ class NewmanExecutor:
                         "contract negotiation",
                     )
 
-                if c == "05_consumer_negotiation.json" and self._should_wait_for_contract_agreement(environment_path):
-                    self._wait_for_contract_agreement_with_dsp_recovery(
-                        env_vars,
-                        environment_path,
-                        report_dir,
-                        exported_reports,
-                        base,
-                        exported_report or report_path,
-                    )
+                if c == "05_consumer_negotiation.json":
+                    agreement_id = None
+                    if self._should_wait_for_contract_agreement(environment_path):
+                        agreement_id = self._wait_for_contract_agreement_with_dsp_recovery(
+                            env_vars,
+                            environment_path,
+                            report_dir,
+                            exported_reports,
+                            base,
+                            exported_report or report_path,
+                        )
+                    else:
+                        _, current_env_vars = self._read_environment_values(environment_path)
+                        agreement_id = current_env_vars.get("e2e_agreement_id")
+
+                    if agreement_id:
+                        self.wait_for_contract_agreement_visibility(
+                            environment_path,
+                            agreement_id=agreement_id,
+                        )
 
         return exported_reports
 

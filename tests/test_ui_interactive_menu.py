@@ -70,15 +70,47 @@ class UiInteractiveMenuTests(unittest.TestCase):
         route = interactive_menu._resolve_validation_ui_test_route("oh-app-10")
 
         self.assertIs(route["runner"], interactive_menu._run_ontology_hub_ui_functional)
-        self.assertEqual(route["grep"], r"^OH\-APP\-10\b")
+        self.assertEqual(route["grep"], r"OH\-APP\-10\b")
 
     def test_resolve_validation_ui_test_route_maps_inesdata_id(self):
         route = interactive_menu._resolve_validation_ui_test_route("DS-UI-AMH-BENCH-01")
 
         self.assertIs(route["runner"], interactive_menu._run_inesdata_ui_specs_by_id)
         self.assertEqual(route["specs"], ["adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts"])
-        self.assertEqual(route["grep"], r"^13 AI Model Benchmarking\b")
+        self.assertEqual(route["grep"], r"13 AI Model Benchmarking\b")
         self.assertEqual(route["env"], {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"})
+
+    def test_finalize_playwright_run_reports_empty_match(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            json_report = Path(tmpdir) / "results.json"
+            html_report = Path(tmpdir) / "playwright-report"
+            html_report.mkdir()
+            (html_report / "index.html").write_text("<html></html>", encoding="utf-8")
+            json_report.write_text(
+                """
+                {
+                  "stats": {"expected": 0, "unexpected": 0, "flaky": 0, "skipped": 0},
+                  "errors": [{"message": "Error: No tests found"}]
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            output = io.StringIO()
+            completed = mock.Mock(returncode=1)
+            with mock.patch("sys.stdout", output):
+                result = interactive_menu._finalize_playwright_run(
+                    "Ontology Hub Functional",
+                    completed,
+                    str(json_report),
+                    str(html_report),
+                    test_grep=r"OH\-APP\-00\b",
+                )
+
+        self.assertEqual(result["summary"]["total"], 0)
+        self.assertIn("Playwright did not find tests", output.getvalue())
+        self.assertIn(r"OH\-APP\-00\b", output.getvalue())
+        self.assertIn("Error: No tests found", output.getvalue())
 
     def test_resolve_validation_api_test_route_maps_component_id(self):
         route = interactive_menu._resolve_validation_api_test_route("pt5-oh-13")
@@ -166,7 +198,7 @@ class UiInteractiveMenuTests(unittest.TestCase):
 
         mock_runner.assert_called_once_with(
             {"label": "Normal", "args": [], "env": {}},
-            test_grep=r"^OH\-APP\-10\b",
+            test_grep=r"OH\-APP\-10\b",
         )
 
     @mock.patch.object(interactive_menu, "_run_inesdata_ui_specs_by_id")
@@ -183,12 +215,42 @@ class UiInteractiveMenuTests(unittest.TestCase):
         self.assertEqual(route["id"], "DS-UI-OH-01")
         self.assertEqual(route["specs"], ["adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts"])
 
-    def test_run_validation_test_by_id_interactive_reports_unmapped_api_case(self):
+    @mock.patch.object(interactive_menu, "_run_validation_api_route_by_id")
+    def test_run_validation_test_by_id_interactive_routes_api_test(self, mock_api_runner):
+        with mock.patch("builtins.input", side_effect=["PT5-OH-13"]):
+            interactive_menu.run_validation_test_by_id_interactive(
+                adapter_name="edc",
+                topology="vm-single",
+            )
+
+        route = mock_api_runner.call_args.args[0]
+        self.assertEqual(route["id"], "PT5-OH-13")
+        self.assertEqual(mock_api_runner.call_args.kwargs["adapter_name"], "edc")
+        self.assertEqual(mock_api_runner.call_args.kwargs["topology"], "vm-single")
+
+    @mock.patch.object(interactive_menu, "_run_validation_ui_route_by_id")
+    @mock.patch.object(interactive_menu, "_run_validation_api_route_by_id")
+    def test_run_validation_test_by_id_interactive_handles_ambiguous_api_choice(
+        self,
+        mock_api_runner,
+        mock_ui_runner,
+    ):
+        with mock.patch("builtins.input", side_effect=["PT5-MH-14", "3"]):
+            interactive_menu.run_validation_test_by_id_interactive(
+                adapter_name="inesdata",
+                topology="local",
+            )
+
+        route = mock_api_runner.call_args.args[0]
+        self.assertEqual(route["id"], "PT5-MH-14")
+        mock_ui_runner.assert_not_called()
+
+    def test_run_validation_test_by_id_interactive_reports_unmapped_case(self):
         output = io.StringIO()
-        with mock.patch("builtins.input", side_effect=["PT5-OH-13"]), mock.patch("sys.stdout", output):
+        with mock.patch("builtins.input", side_effect=["UNKNOWN-01"]), mock.patch("sys.stdout", output):
             interactive_menu.run_validation_test_by_id_interactive()
 
-        self.assertIn("No Playwright UI test route is mapped", output.getvalue())
+        self.assertIn("No automated test route is mapped", output.getvalue())
 
     @mock.patch.object(interactive_menu, "_run_ai_model_hub_ui_functional")
     @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})

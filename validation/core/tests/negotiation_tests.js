@@ -180,13 +180,15 @@ if (requestName === "Check Negotiation Status") {
             "AGREED",
             "VERIFIED",
             "FINALIZED",
+            "TERMINATING",
             "TERMINATED"
         ])
     })
-    if (state === "TERMINATED") {
+    const agreementId = negotiation.contractAgreementId
+    if ((state === "TERMINATING" || state === "TERMINATED") && !agreementId) {
         clearLocalVar("e2e_negotiation_status_attempt")
         const detailParts = [
-            `Negotiation ${negotiationId || "<unknown>"} reached TERMINATED state`,
+            `Negotiation ${negotiationId || "<unknown>"} reached ${state} state before contractAgreementId`,
             `counterPartyId=${negotiation.counterPartyId || "<unknown>"}`,
             `counterPartyAddress=${negotiation.counterPartyAddress || "<unknown>"}`
         ]
@@ -206,7 +208,15 @@ if (requestName === "Check Negotiation Status") {
         setNextRequestName(null)
         return
     }
-    const agreementId = negotiation.contractAgreementId
+    if ((state === "TERMINATING" || state === "TERMINATED") && agreementId) {
+        console.log(
+            `Negotiation reached ${state} after producing contractAgreementId; ` +
+            "the transfer collection will validate whether the agreement is usable."
+        )
+        if (negotiation.errorDetail) {
+            console.log("Negotiation error detail:", negotiation.errorDetail)
+        }
+    }
     if (agreementId) {
         clearLocalVar("e2e_negotiation_status_attempt")
         saveCollectionVar("e2e_agreement_id", agreementId)

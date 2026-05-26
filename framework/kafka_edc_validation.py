@@ -47,6 +47,7 @@ class KafkaEdcValidationSuite:
     DEFAULT_STABILIZATION_GROUP_WAIT_SECONDS = 10
     DEFAULT_STABILIZATION_PROBE_TIMEOUT_SECONDS = 30
     DEFAULT_STABILIZATION_LATE_CONFIRMATION_SECONDS = 30
+    DEFAULT_TRANSFER_LATE_CONFIRMATION_SECONDS = 30
     DEFAULT_STABILIZATION_REQUEST_TIMEOUT_MS = 5000
 
     def __init__(
@@ -126,6 +127,7 @@ class KafkaEdcValidationSuite:
             "pre_run_settle_seconds": "KAFKA_EDC_PRE_RUN_SETTLE_SECONDS",
             "agreement_visibility_timeout_seconds": "KAFKA_EDC_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS",
             "message_sample_limit": "KAFKA_EDC_MESSAGE_SAMPLE_LIMIT",
+            "late_transfer_confirmation_seconds": "KAFKA_EDC_LATE_TRANSFER_CONFIRMATION_SECONDS",
             "validation_backend": "KAFKA_EDC_VALIDATION_BACKEND",
         }
         for key, config_key in optional_mapping.items():
@@ -162,6 +164,7 @@ class KafkaEdcValidationSuite:
             "max_block_ms",
             "consumer_request_timeout_ms",
             "message_sample_limit",
+            "late_transfer_confirmation_seconds",
         ):
             raw = runtime.get(integer_key)
             if raw in (None, ""):
@@ -1540,6 +1543,7 @@ class KafkaEdcValidationSuite:
         probe_result,
         message_samples,
         missing_message_ids=None,
+        late_confirmation=None,
     ):
         metrics = {
             "status": status,
@@ -1551,6 +1555,8 @@ class KafkaEdcValidationSuite:
             "probe": probe_result,
             "message_samples": message_samples,
         }
+        if late_confirmation:
+            metrics["late_confirmation"] = late_confirmation
         if missing_message_ids:
             metrics["messages_missing"] = len(missing_message_ids)
             metrics["missing_message_ids"] = list(missing_message_ids)
@@ -1582,6 +1588,7 @@ class KafkaEdcValidationSuite:
         probe_result,
         message_samples,
         timeout_seconds,
+        late_confirmation=None,
     ):
         if consumed_count >= produced_count:
             return
@@ -1601,15 +1608,67 @@ class KafkaEdcValidationSuite:
             probe_result=probe_result,
             message_samples=message_samples,
             missing_message_ids=missing_ids,
+            late_confirmation=late_confirmation,
         )
         missing_preview = ", ".join(missing_ids[:5])
         suffix = f"; missing message ids: {missing_preview}" if missing_preview else ""
+        confirmation_suffix = ""
+        if late_confirmation:
+            confirmation_suffix = (
+                " after the primary timeout and late confirmation window "
+                f"({late_confirmation.get('timeout_seconds', 0)}s)"
+            )
         raise KafkaTransferIncomplete(
             "Kafka transfer consumed only "
-            f"{consumed_count}/{produced_count} produced messages before timeout "
-            f"({timeout_seconds}s){suffix}",
+            f"{consumed_count}/{produced_count} produced messages "
+            f"before timeout ({timeout_seconds}s){confirmation_suffix}{suffix}",
             metrics=metrics,
         )
+
+    def _record_expected_transfer_payload(
+        self,
+        payload,
+        *,
+        expected_ids,
+        sample_ids,
+        message_samples,
+        latencies_ms,
+    ):
+        if not isinstance(payload, dict) or payload.get("probe"):
+            return "ignored"
+        message_id = payload.get("message_id")
+        if message_id not in expected_ids:
+            return "ignored"
+        produced_at = payload.get("producer_timestamp_ms")
+        consumed_at = self.time_provider()
+        try:
+            latency = float(consumed_at) - float(produced_at)
+        except (TypeError, ValueError):
+            return "invalid"
+        if math.isnan(latency) or math.isinf(latency) or latency < 0:
+            return "invalid"
+
+        expected_ids.remove(message_id)
+        if message_id in sample_ids:
+            for sample in message_samples:
+                if sample.get("message_id") == message_id:
+                    sample["status"] = "consumed"
+                    sample["latency_ms"] = round(latency, 2)
+                    break
+        latencies_ms.append(latency)
+        return "consumed"
+
+    def _transfer_late_confirmation_seconds(self, runtime):
+        try:
+            return max(
+                int(runtime.get(
+                    "late_transfer_confirmation_seconds",
+                    self.DEFAULT_TRANSFER_LATE_CONFIRMATION_SECONDS,
+                )),
+                0,
+            )
+        except (TypeError, ValueError):
+            return self.DEFAULT_TRANSFER_LATE_CONFIRMATION_SECONDS
 
     def _wait_for_transfer_runtime_stabilization(self, runtime, transfer_process, source_topic, destination_topic=None):
         timeout_seconds = max(int(runtime.get("startup_grace_seconds", 0)), 0)
@@ -2319,41 +2378,66 @@ class KafkaEdcValidationSuite:
                 offset=destination_start_offset,
             )
             for payload in messages:
-                if payload.get("probe"):
-                    continue
-                message_id = payload.get("message_id")
-                if message_id not in expected_ids:
-                    continue
-                expected_ids.remove(message_id)
-                produced_at = payload.get("producer_timestamp_ms")
-                consumed_at = self.time_provider()
-                try:
-                    latency = float(consumed_at) - float(produced_at)
-                except (TypeError, ValueError):
+                record_status = self._record_expected_transfer_payload(
+                    payload,
+                    expected_ids=expected_ids,
+                    sample_ids=sample_ids,
+                    message_samples=message_samples,
+                    latencies_ms=latencies_ms,
+                )
+                if record_status == "invalid":
                     invalid_latency_count += 1
                     continue
-                if math.isnan(latency) or math.isinf(latency) or latency < 0:
-                    invalid_latency_count += 1
-                    continue
-                if message_id in sample_ids:
-                    for sample in message_samples:
-                        if sample.get("message_id") == message_id:
-                            sample["status"] = "consumed"
-                            sample["latency_ms"] = round(latency, 2)
-                            break
-                latencies_ms.append(latency)
-                consumed_count += 1
+                if record_status == "consumed":
+                    consumed_count += 1
                 if consumed_count >= message_count:
                     break
             if consumed_count >= message_count:
                 break
             time.sleep(0.5)
 
+        late_confirmation = None
+        late_confirmation_seconds = self._transfer_late_confirmation_seconds(runtime)
+        if consumed_count < message_count and late_confirmation_seconds > 0:
+            late_started_at = time.time()
+            late_deadline = late_started_at + late_confirmation_seconds
+            late_consumed_before = consumed_count
+            while time.time() <= late_deadline and consumed_count < message_count:
+                messages = self._consume_kubernetes_exec_messages(
+                    runtime,
+                    destination_topic,
+                    timeout_ms=2000,
+                    max_messages=max(1, message_count),
+                    offset=destination_start_offset,
+                )
+                for payload in messages:
+                    record_status = self._record_expected_transfer_payload(
+                        payload,
+                        expected_ids=expected_ids,
+                        sample_ids=sample_ids,
+                        message_samples=message_samples,
+                        latencies_ms=latencies_ms,
+                    )
+                    if record_status == "invalid":
+                        invalid_latency_count += 1
+                        continue
+                    if record_status == "consumed":
+                        consumed_count += 1
+                    if consumed_count >= message_count:
+                        break
+                if consumed_count >= message_count:
+                    break
+                time.sleep(0.5)
+            late_confirmation = {
+                "status": "completed" if consumed_count >= message_count else "incomplete",
+                "timeout_seconds": late_confirmation_seconds,
+                "seconds_waited": round(max(0.0, time.time() - late_started_at), 2),
+                "messages_consumed": consumed_count - late_consumed_before,
+            }
+
         duration_seconds = max((self.time_provider() - start_ms) / 1000.0, 0.001)
         if invalid_latency_count > 0:
             raise RuntimeError(f"Detected {invalid_latency_count} invalid Kafka latency samples")
-        if not latencies_ms:
-            raise RuntimeError("No Kafka messages were consumed through the EDC transfer")
         self._raise_if_incomplete_transfer(
             produced_count=produced_count,
             consumed_count=consumed_count,
@@ -2366,6 +2450,7 @@ class KafkaEdcValidationSuite:
             probe_result=probe_result,
             message_samples=message_samples,
             timeout_seconds=runtime["consumer_poll_timeout_seconds"],
+            late_confirmation=late_confirmation,
         )
 
         return self._build_transfer_metrics(
@@ -2379,6 +2464,7 @@ class KafkaEdcValidationSuite:
             duration_seconds=duration_seconds,
             probe_result=probe_result,
             message_samples=message_samples,
+            late_confirmation=late_confirmation,
         )
 
     @staticmethod
@@ -2407,12 +2493,28 @@ class KafkaEdcValidationSuite:
 
         provisioning_mode = str(getattr(kafka_manager, "provisioning_mode", "") or "").strip().lower()
         if provisioning_mode.startswith("kubernetes"):
-            # In local Kubernetes runs the broker is ephemeral; resetting it between
-            # transient pair retries destroys topics and invalidates the transfer flow.
-            return False
+            # A retry starts a fresh transfer flow and creates fresh topics. Recycling
+            # a framework-managed broker here avoids carrying an unstable coordinator
+            # state from a failed Kafka relay attempt into the next attempt.
+            return True
         return True
 
-    def _reset_framework_managed_kafka(self, runtime=None):
+    def _is_kafka_runtime_pair_failure(self, payload):
+        if not isinstance(payload, dict) or payload.get("status") == "passed":
+            return False
+        error_message = self._pair_error_message(payload)
+        runtime_fragments = (
+            "NoBrokersAvailable",
+            "Kafka transfer path did not relay a probe message in time",
+            "No Kafka messages were consumed through the EDC transfer",
+            "Kafka transfer consumed only",
+            "Kafka topic",
+        )
+        return any(fragment in error_message for fragment in runtime_fragments)
+
+    def _reset_framework_managed_kafka(self, runtime=None, payload=None):
+        if payload is not None and not self._is_kafka_runtime_pair_failure(payload):
+            return False
         if not self._should_reset_framework_managed_kafka(runtime):
             return False
         kafka_manager = self.kafka_manager
@@ -2739,7 +2841,7 @@ class KafkaEdcValidationSuite:
 
                 retry_reason = self._pair_error_message(result)
                 self._wait_for_post_run_settlement(settle_runtime, result)
-                self._reset_framework_managed_kafka(settle_runtime)
+                self._reset_framework_managed_kafka(settle_runtime, result)
                 time.sleep(self.DEFAULT_PAIR_RETRY_SECONDS)
 
             if result is None:

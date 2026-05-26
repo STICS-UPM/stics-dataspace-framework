@@ -191,13 +191,91 @@ def _playwright_grep_for_id(test_id):
     normalized = str(test_id or "").strip()
     if not normalized:
         return ""
-    return rf"^{re.escape(normalized)}\b"
+    return rf"{re.escape(normalized)}\b"
 
 
 def _append_playwright_grep(command, test_grep=None):
     grep = str(test_grep or "").strip()
     if grep:
         command.extend(["--grep", grep])
+
+
+def _summarize_playwright_json_report(json_report_file):
+    summary = {
+        "expected": 0,
+        "unexpected": 0,
+        "flaky": 0,
+        "skipped": 0,
+        "total": None,
+        "errors": [],
+    }
+    try:
+        with open(json_report_file, "r", encoding="utf-8") as handle:
+            payload = json.load(handle) or {}
+    except (OSError, json.JSONDecodeError):
+        return summary
+
+    stats = payload.get("stats") or {}
+    for key in ("expected", "unexpected", "flaky", "skipped"):
+        try:
+            summary[key] = int(stats.get(key) or 0)
+        except (TypeError, ValueError):
+            summary[key] = 0
+    summary["total"] = sum(summary[key] for key in ("expected", "unexpected", "flaky", "skipped"))
+
+    errors = []
+    for error in payload.get("errors") or []:
+        if isinstance(error, dict):
+            message = str(error.get("message") or error.get("stack") or "").strip()
+        else:
+            message = str(error or "").strip()
+        if message:
+            errors.append(message.splitlines()[0])
+    summary["errors"] = errors
+    return summary
+
+
+def _finalize_playwright_run(label, completed_process, json_report_file, html_report_dir, test_grep=None):
+    summary = _summarize_playwright_json_report(json_report_file)
+    returncode = getattr(completed_process, "returncode", None)
+    total = summary.get("total")
+    report_index = os.path.join(html_report_dir, "index.html")
+
+    if total is None:
+        print(f"\nPlaywright result could not be read for {label}.")
+        if returncode is not None:
+            print(f"Playwright exit code: {returncode}")
+    elif total == 0:
+        print(f"\nPlaywright did not find tests for {label}.")
+        if test_grep:
+            print(f"Applied filter: {test_grep}")
+        for error in summary.get("errors") or []:
+            print(f"Playwright error: {error}")
+    elif returncode == 0:
+        print(
+            "\nPlaywright result: "
+            f"{summary['expected']}/{total} passed, "
+            f"{summary['unexpected']} failed, {summary['skipped']} skipped"
+        )
+    else:
+        print(
+            "\nPlaywright result: "
+            f"{summary['expected']}/{total} passed, "
+            f"{summary['unexpected']} failed, {summary['skipped']} skipped "
+            f"(exit code {returncode})"
+        )
+
+    if os.path.isfile(report_index):
+        print(f"Playwright HTML report: {report_index}")
+        print(f"Open with: npx playwright show-report {html_report_dir}\n")
+    else:
+        print(f"Playwright HTML report was not generated at {report_index}\n")
+
+    return {
+        "returncode": returncode,
+        "summary": summary,
+        "html_report": report_index if os.path.isfile(report_index) else None,
+    }
 
 
 def _run_ontology_hub_ui_functional(mode, test_grep=None):
@@ -243,11 +321,18 @@ def _run_ontology_hub_ui_functional(mode, test_grep=None):
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning Ontology Hub Functional (artifacts in {base_dir})\n")
+    completed = None
     try:
-        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+        completed = subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
     finally:
         _cleanup_playwright_processes()
-    return None
+    return _finalize_playwright_run(
+        "Ontology Hub Functional",
+        completed,
+        json_report_file,
+        html_report_dir,
+        test_grep=test_grep,
+    )
 
 
 def run_ontology_hub_ui_tests_interactive():
@@ -299,11 +384,18 @@ def _run_ontology_hub_ui_integration_with_inesdata(mode, test_grep=None):
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning Ontology Hub Integration with INESData ({mode['label']}, artifacts in {base_dir})\n")
+    completed = None
     try:
-        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+        completed = subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
     finally:
         _cleanup_playwright_processes()
-    return None
+    return _finalize_playwright_run(
+        "Ontology Hub Integration with INESData",
+        completed,
+        json_report_file,
+        html_report_dir,
+        test_grep=test_grep,
+    )
 
 
 def _resolve_ai_model_hub_base_url(adapter=None):
@@ -427,11 +519,18 @@ def _run_semantic_virtualization_ui_tests(mode, test_grep=None):
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning Semantic Virtualization UI tests (artifacts in {base_dir})\n")
+    completed = None
     try:
-        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+        completed = subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
     finally:
         _cleanup_playwright_processes()
-    return None
+    return _finalize_playwright_run(
+        "Semantic Virtualization UI tests",
+        completed,
+        json_report_file,
+        html_report_dir,
+        test_grep=test_grep,
+    )
 
 
 def run_semantic_virtualization_ui_tests_interactive():
@@ -485,11 +584,18 @@ def _run_semantic_virtualization_ui_integration_with_inesdata(mode, test_grep=No
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning Semantic Virtualization Integration with INESData ({mode['label']}, artifacts in {base_dir})\n")
+    completed = None
     try:
-        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+        completed = subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
     finally:
         _cleanup_playwright_processes()
-    return None
+    return _finalize_playwright_run(
+        "Semantic Virtualization Integration with INESData",
+        completed,
+        json_report_file,
+        html_report_dir,
+        test_grep=test_grep,
+    )
 
 
 def _run_ai_model_hub_ui_functional(mode, test_grep=None):
@@ -530,11 +636,18 @@ def _run_ai_model_hub_ui_functional(mode, test_grep=None):
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning AI Model Hub Functional UI tests (artifacts in {base_dir})\n")
+    completed = None
     try:
-        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+        completed = subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
     finally:
         _cleanup_playwright_processes()
-    return None
+    return _finalize_playwright_run(
+        "AI Model Hub Functional UI tests",
+        completed,
+        json_report_file,
+        html_report_dir,
+        test_grep=test_grep,
+    )
 
 
 def _run_ai_model_hub_ui_integration(mode, test_grep=None):
@@ -578,11 +691,18 @@ def _run_ai_model_hub_ui_integration(mode, test_grep=None):
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning AI Model Hub Integration with INESData ({mode['label']}, artifacts in {base_dir})\n")
+    completed = None
     try:
-        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+        completed = subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
     finally:
         _cleanup_playwright_processes()
-    return None
+    return _finalize_playwright_run(
+        "AI Model Hub Integration with INESData",
+        completed,
+        json_report_file,
+        html_report_dir,
+        test_grep=test_grep,
+    )
 
 
 def _run_ai_model_observer_ui_integration(mode, test_grep=None):
@@ -622,11 +742,18 @@ def _run_ai_model_observer_ui_integration(mode, test_grep=None):
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning AI Model Observer / Clearing House ({mode['label']}, artifacts in {base_dir})\n")
+    completed = None
     try:
-        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+        completed = subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
     finally:
         _cleanup_playwright_processes()
-    return None
+    return _finalize_playwright_run(
+        "AI Model Observer / Clearing House",
+        completed,
+        json_report_file,
+        html_report_dir,
+        test_grep=test_grep,
+    )
 
 
 def run_ai_model_hub_ui_tests_interactive():
@@ -1293,25 +1420,41 @@ def _resolve_validation_api_test_route(test_id):
     return _api_test_routes().get(normalized)
 
 
-def run_validation_api_test_by_id_interactive(adapter_name=None, topology=None):
-    """Run one mapped component API validation by its audit/test ID."""
-    try:
-        test_id = input("\nAPI Test ID: ").strip()
-    except EOFError:
-        print("\nNo input. Returning to main menu.\n")
-        return None
-    if not test_id or test_id.upper() == "B":
+def _select_validation_route_kind_interactive():
+    while True:
+        print("\nSelected ID has both Playwright UI and component API validations.")
+        print("1 - Run both validations")
+        print("2 - Playwright UI validation")
+        print("3 - Component API validation")
+        print("B - Back")
+        try:
+            choice = input("\nSelection: ").strip().upper()
+        except EOFError:
+            print("\nNo input. Returning to main menu.\n")
+            return None
+        if choice in {"", "1"}:
+            return "both"
+        if choice == "2":
+            return "ui"
+        if choice == "3":
+            return "api"
+        if choice == "B":
+            return None
+        print("\nInvalid selection. Please try again.\n")
+
+
+def _run_validation_ui_route_by_id(route):
+    mode = _resolve_ui_mode()
+    if mode is None:
         return None
 
-    route = _resolve_validation_api_test_route(test_id)
-    if route is None:
-        known_ids = ", ".join(sorted(_api_test_routes()))
-        print(
-            "\nNo component API test route is mapped for that ID yet. "
-            f"Known API IDs: {known_ids}\n"
-        )
-        return None
+    runner = route["runner"]
+    if runner is _run_inesdata_ui_specs_by_id:
+        return runner(mode, route)
+    return runner(mode, test_grep=route.get("grep"))
 
+
+def _run_validation_api_route_by_id(route, adapter_name=None, topology=None):
     normalized_adapter = str(adapter_name or os.environ.get("PIONERA_ADAPTER") or "inesdata").strip().lower()
     normalized_topology = str(topology or os.environ.get("PIONERA_TOPOLOGY") or "local").strip().lower() or "local"
     base_url = ""
@@ -1373,6 +1516,28 @@ def run_validation_api_test_by_id_interactive(adapter_name=None, topology=None):
     }
 
 
+def run_validation_api_test_by_id_interactive(adapter_name=None, topology=None):
+    """Run one mapped component API validation by its audit/test ID."""
+    try:
+        test_id = input("\nAPI Test ID: ").strip()
+    except EOFError:
+        print("\nNo input. Returning to main menu.\n")
+        return None
+    if not test_id or test_id.upper() == "B":
+        return None
+
+    route = _resolve_validation_api_test_route(test_id)
+    if route is None:
+        known_ids = ", ".join(sorted(_api_test_routes()))
+        print(
+            "\nNo component API test route is mapped for that ID yet. "
+            f"Known API IDs: {known_ids}\n"
+        )
+        return None
+
+    return _run_validation_api_route_by_id(route, adapter_name=adapter_name, topology=topology)
+
+
 def _run_inesdata_ui_specs_by_id(mode, route):
     test_id = route["id"]
     experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
@@ -1418,11 +1583,18 @@ def _run_inesdata_ui_specs_by_id(mode, route):
     cmd.extend(mode.get("args") or [])
 
     print(f"\nRunning {route['label']} ({mode['label']}, artifacts in {base_dir})\n")
+    completed = None
     try:
-        subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
+        completed = subprocess.run(cmd, cwd=str(project_root() / "validation" / "ui"), env=env)
     finally:
         _cleanup_playwright_processes()
-    return None
+    return _finalize_playwright_run(
+        route["label"],
+        completed,
+        json_report_file,
+        html_report_dir,
+        test_grep=route.get("grep"),
+    )
 
 
 def _resolve_validation_ui_test_route(test_id):
@@ -1457,91 +1629,91 @@ def _resolve_validation_ui_test_route(test_id):
     inesdata_routes = {
         "DS-UI-03": {
             "specs": ["adapters/inesdata/specs/03-provider-setup.spec.ts"],
-            "grep": r"^03 provider setup\b",
+            "grep": r"03 provider setup\b",
             "label": "INESData UI test DS-UI-03",
         },
         "DS-UI-03B": {
             "specs": ["adapters/inesdata/specs/03b-provider-policy-create.spec.ts"],
-            "grep": r"^03b provider setup\b",
+            "grep": r"03b provider setup\b",
             "label": "INESData UI test DS-UI-03B",
         },
         "DS-UI-03C": {
             "specs": ["adapters/inesdata/specs/03c-provider-contract-definition-create.spec.ts"],
-            "grep": r"^03c provider setup\b",
+            "grep": r"03c provider setup\b",
             "label": "INESData UI test DS-UI-03C",
         },
         "DS-UI-04": {
             "specs": ["adapters/inesdata/specs/04-consumer-catalog.spec.ts"],
-            "grep": r"^04 consumer catalog\b",
+            "grep": r"04 consumer catalog\b",
             "label": "INESData UI test DS-UI-04",
         },
         "DS-UI-05": {
             "specs": ["adapters/inesdata/specs/05-consumer-negotiation.spec.ts"],
-            "grep": r"^05 consumer negotiation\b",
+            "grep": r"05 consumer negotiation\b",
             "label": "INESData UI test DS-UI-05",
         },
         "DS-UI-06": {
             "specs": ["adapters/inesdata/specs/06-consumer-transfer.spec.ts"],
-            "grep": r"^06 consumer transfer\b",
+            "grep": r"06 consumer transfer\b",
             "label": "INESData UI test DS-UI-06",
         },
         "DS-UI-SV-01": {
             "specs": ["adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts"],
-            "grep": r"^07 semantic virtualization\b",
+            "grep": r"07 semantic virtualization\b",
             "label": "INESData UI test DS-UI-SV-01",
             "env": {"UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO": "1"},
         },
         "DS-UI-OH-01": {
             "specs": ["adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts"],
-            "grep": r"^08 ontology hub\b",
+            "grep": r"08 ontology hub\b",
             "label": "INESData UI test DS-UI-OH-01",
             "env": {"UI_ONTOLOGY_HUB_INESDATA_DEMO": "1"},
         },
         "DS-UI-AMH-01": {
             "specs": ["adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts"],
-            "grep": r"^09 AI Model Hub\b",
+            "grep": r"09 AI Model Hub\b",
             "label": "INESData UI test DS-UI-AMH-01",
             "env": {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"},
         },
         "DS-UI-AMH-OBS-01": {
             "specs": ["adapters/inesdata/specs/10-ai-model-observer.spec.ts"],
-            "grep": r"^10 AI Model Observer\b",
+            "grep": r"10 AI Model Observer\b",
             "label": "INESData UI test DS-UI-AMH-OBS-01",
             "env": {"UI_AI_MODEL_OBSERVER_DEMO": "1"},
         },
         "DS-UI-AMH-BROWSER-01": {
             "specs": ["adapters/inesdata/specs/11-ai-model-browser.spec.ts"],
-            "grep": r"^11 AI Model Browser\b",
+            "grep": r"11 AI Model Browser\b",
             "label": "INESData UI test DS-UI-AMH-BROWSER-01",
             "env": {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"},
         },
         "DS-UI-AMH-EXEC-01": {
             "specs": ["adapters/inesdata/specs/12-ai-model-execution.spec.ts"],
-            "grep": r"^12 AI Model Execution\b",
+            "grep": r"12 AI Model Execution\b",
             "label": "INESData UI test DS-UI-AMH-EXEC-01",
             "env": {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"},
         },
         "DS-UI-AMH-BENCH-01": {
             "specs": ["adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts"],
-            "grep": r"^13 AI Model Benchmarking\b",
+            "grep": r"13 AI Model Benchmarking\b",
             "label": "INESData UI test DS-UI-AMH-BENCH-01",
             "env": {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"},
         },
         "DS-UI-AMH-DAIMO-01": {
             "specs": ["adapters/inesdata/specs/14-ai-model-daimo-vocabulary.spec.ts"],
-            "grep": r"^14 AI Model Hub DAIMO\b",
+            "grep": r"14 AI Model Hub DAIMO\b",
             "label": "INESData UI test DS-UI-AMH-DAIMO-01",
             "env": {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"},
         },
         "DS-UI-AMH-EXEC-02": {
             "specs": ["adapters/inesdata/specs/15-ai-model-external-execution.spec.ts"],
-            "grep": r"^15 AI Model Execution\b",
+            "grep": r"15 AI Model Execution\b",
             "label": "INESData UI test DS-UI-AMH-EXEC-02",
             "env": {"UI_AI_MODEL_HUB_HTTPDATA_DEMO": "1"},
         },
         "DS-UI-AMH-OBS-02": {
             "specs": ["adapters/inesdata/specs/16-ai-model-observer-participant-summary.spec.ts"],
-            "grep": r"^16 AI Model Observer\b",
+            "grep": r"16 AI Model Observer\b",
             "label": "INESData UI test DS-UI-AMH-OBS-02",
             "env": {"UI_AI_MODEL_OBSERVER_DEMO": "1"},
         },
@@ -1556,8 +1728,8 @@ def _resolve_validation_ui_test_route(test_id):
     return None
 
 
-def run_validation_test_by_id_interactive():
-    """Run a single mapped Playwright UI validation by its audit/test ID."""
+def run_validation_test_by_id_interactive(adapter_name=None, topology=None):
+    """Run a single mapped validation by its audit/test ID."""
     try:
         test_id = input("\nTest ID: ").strip()
     except EOFError:
@@ -1566,19 +1738,72 @@ def run_validation_test_by_id_interactive():
     if not test_id or test_id.upper() == "B":
         return None
 
-    route = _resolve_validation_ui_test_route(test_id)
-    if route is None:
-        print(
-            "\nNo Playwright UI test route is mapped for that ID yet. "
-            "Run Level 6 for API-only cases or use one of the component/UI suite options.\n"
-        )
-        return None
+    ui_route = _resolve_validation_ui_test_route(test_id)
+    api_route = _resolve_validation_api_test_route(test_id)
+    if ui_route is not None and api_route is not None:
+        choice = _select_validation_route_kind_interactive()
+        if choice is None:
+            return None
 
-    mode = _resolve_ui_mode()
-    if mode is None:
-        return None
+        results = {}
+        if choice in {"both", "api"}:
+            print(f"\nResolved test type: Component API ({api_route['id']})")
+            results["api"] = _run_validation_api_route_by_id(
+                api_route,
+                adapter_name=adapter_name,
+                topology=topology,
+            )
+        if choice in {"both", "ui"}:
+            print(f"\nResolved test type: Playwright UI ({ui_route['id']})")
+            results["ui"] = _run_validation_ui_route_by_id(ui_route)
+        return results if choice == "both" else next(iter(results.values()), None)
 
-    runner = route["runner"]
-    if runner is _run_inesdata_ui_specs_by_id:
-        return runner(mode, route)
-    return runner(mode, test_grep=route.get("grep"))
+    if ui_route is not None:
+        print(f"\nResolved test type: Playwright UI ({ui_route['id']})")
+        return _run_validation_ui_route_by_id(ui_route)
+
+    if api_route is not None:
+        print(f"\nResolved test type: Component API ({api_route['id']})")
+        return _run_validation_api_route_by_id(api_route, adapter_name=adapter_name, topology=topology)
+
+    known_ui_ids = sorted(
+        [
+            "OH-APP-*",
+            "PT5-MH-01..08",
+            "PT5-MH-12..15",
+            "MH-LING-01",
+            "SV-UI-*",
+            "PT5-VS-07",
+            "PT5-VS-08",
+            *_resolve_known_inesdata_ui_ids(),
+        ]
+    )
+    known_api_ids = sorted(_api_test_routes())
+    print(
+        "\nNo automated test route is mapped for that ID yet. "
+        "Run Level 6 to execute the complete validation scope.\n"
+    )
+    print("Known UI ID patterns/examples: " + ", ".join(known_ui_ids))
+    print("Known API IDs: " + ", ".join(known_api_ids) + "\n")
+    return None
+
+
+def _resolve_known_inesdata_ui_ids():
+    return [
+        "DS-UI-03",
+        "DS-UI-03B",
+        "DS-UI-03C",
+        "DS-UI-04",
+        "DS-UI-05",
+        "DS-UI-06",
+        "DS-UI-SV-01",
+        "DS-UI-OH-01",
+        "DS-UI-AMH-01",
+        "DS-UI-AMH-OBS-01",
+        "DS-UI-AMH-BROWSER-01",
+        "DS-UI-AMH-EXEC-01",
+        "DS-UI-AMH-BENCH-01",
+        "DS-UI-AMH-DAIMO-01",
+        "DS-UI-AMH-EXEC-02",
+        "DS-UI-AMH-OBS-02",
+    ]

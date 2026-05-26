@@ -791,6 +791,55 @@ class KafkaTransferConsoleOutputTests(unittest.TestCase):
 
         self.assertIn("Message: id=msg-1 status=consumed latency=3.4ms", stdout.getvalue())
 
+    def test_level6_kafka_log_completes_results_missing_from_progress_callback(self):
+        class KafkaReadyAdapter:
+            def get_kafka_config(self):
+                return {"bootstrap_servers": "localhost:9092"}
+
+        class NoopFallback:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def activate_if_needed(self):
+                return False
+
+            def close(self):
+                return None
+
+        results = [
+            {"status": "passed", "provider": "conn-a", "consumer": "conn-b"},
+            {"status": "passed", "provider": "conn-b", "consumer": "conn-a"},
+        ]
+
+        def run_kafka(connectors, experiment_dir, *, validator, experiment_storage, progress_callback=None):
+            self.assertTrue(callable(progress_callback))
+            progress_callback(results[0])
+            return results
+
+        stdout = io.StringIO()
+        with mock.patch.object(main, "build_kafka_edc_validation_suite", return_value=mock.Mock()), mock.patch.object(
+            main,
+            "run_kafka_edc_validation",
+            side_effect=run_kafka,
+        ), mock.patch.object(
+            main,
+            "_Level6LocalHttpPortForwardFallback",
+            NoopFallback,
+        ), contextlib.redirect_stdout(stdout):
+            returned = main.run_level6_kafka_edc_after_newman(
+                KafkaReadyAdapter(),
+                ["conn-a", "conn-b"],
+                "/tmp/experiment",
+                deployer_name="inesdata",
+                kafka_enabled=True,
+            )
+
+        output = stdout.getvalue()
+        self.assertEqual(returned, results)
+        self.assertEqual(output.count("Kafka transfer: conn-a -> conn-b"), 1)
+        self.assertEqual(output.count("Kafka transfer: conn-b -> conn-a"), 1)
+        self.assertIn("Summary: ✓ 2  ✗ 0  - 0", output)
+
 
 class NamespacePlanSummaryTests(unittest.TestCase):
     def test_namespace_plan_summary_marks_compact_layout_as_active(self):
@@ -2717,7 +2766,7 @@ class MainCliTests(unittest.TestCase):
                 "ai_model_hub_ui",
                 "semantic_virtualization_ui",
                 "validation_test_by_id",
-                "validation_api_test_by_id",
+                "validation_test_by_id",
             ],
         )
 
@@ -2864,7 +2913,7 @@ class MainCliTests(unittest.TestCase):
             result = main._run_legacy_menu_action("validation_test_by_id")
 
         self.assertEqual(result, "test-by-id-ok")
-        migrated_action.assert_called_once_with()
+        migrated_action.assert_called_once_with(adapter_name="inesdata", topology="local")
 
     def test_migrated_validation_api_test_by_id_action_does_not_import_inesdata_py(self):
         with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch.object(
@@ -4992,6 +5041,9 @@ class MainCliTests(unittest.TestCase):
 
         dashboard_mock.assert_called_once_with(result["experiment_dir"])
         self.assertEqual(result["framework_report"], dashboard_result)
+        self.assertEqual(result["une_0087_alignment"]["status"], "generated")
+        self.assertTrue(os.path.exists(os.path.join(result["experiment_dir"], "une_0087_alignment.json")))
+        self.assertTrue(os.path.exists(os.path.join(result["experiment_dir"], "une_0087_alignment.md")))
 
     def test_level6_kafka_prompt_is_first_visible_level6_action(self):
         events = []

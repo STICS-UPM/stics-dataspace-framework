@@ -34,6 +34,8 @@ ensure_runtime_dependencies(
     },
 )
 
+from tabulate import tabulate
+
 from framework.experiment_runner import ExperimentRunner
 from framework.experiment_storage import ExperimentStorage
 from framework.kafka_edc_validation import KafkaEdcValidationSuite
@@ -49,6 +51,10 @@ from framework.local_stability import LocalStabilityMonitor, compare_local_stabi
 from framework.metrics_collector import MetricsCollector
 from framework.reporting.experiment_loader import ExperimentLoader
 from framework.reporting.report_generator import ExperimentReportGenerator
+from framework.reporting.une_0087_alignment import (
+    format_une_0087_console_summary,
+    write_une_0087_alignment,
+)
 from framework.transfer_storage_verifier import TransferStorageVerifier
 from framework.validation_engine import ValidationEngine
 from framework import local_menu_tools
@@ -3120,6 +3126,14 @@ def _print_kafka_edc_summary(results, *, indent="  "):
     print(f"{indent}Summary: {'  '.join(summary_parts)}")
 
 
+def _kafka_result_log_key(result):
+    if not isinstance(result, dict):
+        return None
+    provider = str(result.get("provider", "unknown-provider")).strip()
+    consumer = str(result.get("consumer", "unknown-consumer")).strip()
+    return provider, consumer
+
+
 def _print_kafka_edc_results(results, *, include_heading=True, include_results=True, include_summary=True):
     if include_heading:
         print("Kafka transfer validation results:")
@@ -3188,7 +3202,7 @@ def run_level6_kafka_edc_after_newman(
             message = error.get("message") or "unknown reason"
             print(f"Kafka runtime preparation did not complete during Newman: {message}")
             print("Performing a final Kafka readiness check now...")
-    progress_state = {"heading_printed": False}
+    progress_state = {"heading_printed": False, "printed_result_keys": set()}
 
     def _print_progress_result(result):
         if not progress_state["heading_printed"]:
@@ -3199,6 +3213,9 @@ def run_level6_kafka_edc_after_newman(
             _env_flag("KAFKA_TRANSFER_LOG_MESSAGES", False),
         )
         _print_kafka_edc_result(result, verbose_messages=verbose_messages)
+        result_key = _kafka_result_log_key(result)
+        if result_key is not None:
+            progress_state["printed_result_keys"].add(result_key)
 
     try:
         validator = build_kafka_edc_validation_suite(
@@ -3233,6 +3250,22 @@ def run_level6_kafka_edc_after_newman(
             }
         ]
         _save_kafka_edc_results(results, experiment_dir, experiment_storage=experiment_storage)
+
+    missing_progress_results = []
+    if progress_state["heading_printed"]:
+        printed_result_keys = progress_state["printed_result_keys"]
+        missing_progress_results = [
+            result
+            for result in list(results or [])
+            if _kafka_result_log_key(result) not in printed_result_keys
+        ]
+        if missing_progress_results:
+            _print_kafka_edc_results(
+                missing_progress_results,
+                include_heading=False,
+                include_results=True,
+                include_summary=False,
+            )
 
     _print_kafka_edc_results(
         results,
@@ -6660,6 +6693,7 @@ def run_validate(
         playwright_failure = None
         component_results = []
         component_validation_summary = None
+        une_0087_alignment = None
 
         print_interoperability_suite_header("Newman connector interoperability", "Newman")
         try:
@@ -6700,6 +6734,7 @@ def run_validate(
                 local_stability_preflight,
                 validation_profile=validation_profile,
             )
+            une_0087_alignment = _generate_level6_une_0087_alignment(experiment_dir)
             framework_report = _generate_framework_dashboard(experiment_dir)
             level6_validation_summary = _print_level6_validation_summary(
                 experiment_dir=experiment_dir,
@@ -6876,6 +6911,7 @@ def run_validate(
                         local_stability_preflight,
                         validation_profile=validation_profile,
                     )
+                    une_0087_alignment = _generate_level6_une_0087_alignment(experiment_dir)
                     framework_report = _generate_framework_dashboard(experiment_dir)
                     level6_validation_summary = _print_level6_validation_summary(
                         experiment_dir=experiment_dir,
@@ -6899,6 +6935,7 @@ def run_validate(
             local_stability_preflight,
             validation_profile=validation_profile,
         )
+        une_0087_alignment = _generate_level6_une_0087_alignment(experiment_dir)
         framework_report = _generate_framework_dashboard(experiment_dir)
         level6_validation_summary = _print_level6_validation_summary(
             experiment_dir=experiment_dir,
@@ -6922,6 +6959,7 @@ def run_validate(
             "playwright": playwright_result,
             "component_results": component_results,
             "component_validation_summary": component_validation_summary,
+            "une_0087_alignment": une_0087_alignment,
             "test_data_cleanup": test_data_cleanup,
             "public_endpoint_preflight": public_endpoint_preflight,
             "hosts_sync": hosts_sync,
@@ -7993,8 +8031,7 @@ def _print_interactive_menu(adapter_name, adapter_registry=None, topology="local
     print("A - AI Model Hub UI Tests (Normal/Live/Debug)")
     print("V - Semantic Virtualization UI Tests (Normal/Live/Debug)")
     print("F - Dataspace Interoperability Tests (Newman/Kafka)")
-    print("Y - Run UI Test by ID (Playwright)")
-    print("Z - Run API Test by ID")
+    print("Y - Run Test by ID (Playwright/API)")
     print()
     print("[Control]")
     print("? - Help")
@@ -8060,8 +8097,8 @@ def _print_interactive_help():
     print("F - Use to run interoperability suites independently of full Level 6.")
     print("    The sub-menu separates Newman connector tests from Kafka transfer tests.")
     print("    Kafka still requires explicit confirmation because it can take significantly longer.")
-    print("Y - Use to run one mapped Playwright UI test by its audit/test ID.")
-    print("Z - Use to run one mapped component API test by its audit/test ID.")
+    print("Y - Use to run one mapped automated test by its audit/test ID.")
+    print("    The framework resolves whether the selected ID belongs to Playwright UI or component API validation.")
     print()
     print("[Compatibility]")
     print("Levels 1-2 belong to the shared local foundation; the menu asks for an adapter only when an operation needs Levels 3-6, unless you preselect one with S.")
@@ -9069,6 +9106,64 @@ def _generate_framework_dashboard(experiment_dir):
     }
 
 
+def _generate_level6_une_0087_alignment(experiment_dir):
+    if not experiment_dir:
+        return {
+            "status": "skipped",
+            "reason": "missing-experiment-dir",
+        }
+    try:
+        alignment = write_une_0087_alignment(experiment_dir)
+    except Exception as exc:
+        print(f"[WARNING] Could not generate UNE 0087 alignment: {exc}")
+        return {
+            "status": "failed",
+            "error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+
+    summary = alignment.get("summary") if isinstance(alignment, dict) else {}
+    statuses = summary.get("statuses") if isinstance(summary, dict) else {}
+    print(
+        "UNE 0087 alignment generated: "
+        f"covered={statuses.get('covered', 0)}, "
+        f"partial={statuses.get('partially_covered', 0)}, "
+        f"missing={statuses.get('not_covered', 0)}"
+    )
+    _print_level6_une_0087_checklist(alignment, experiment_dir)
+    return {
+        "status": "generated",
+        "artifacts": [
+            "une_0087_alignment.json",
+            "une_0087_alignment.md",
+        ],
+        "summary": summary,
+    }
+
+
+def _print_level6_une_0087_checklist(alignment, experiment_dir=None):
+    rows = format_une_0087_console_summary(alignment)
+    if not rows:
+        return
+
+    markdown_path = os.path.join(str(experiment_dir), "une_0087_alignment.md") if experiment_dir else "une_0087_alignment.md"
+
+    print()
+    print(_console_color("UNE 0087 summary", "33;1"))
+    print("Non-certifying support checklist. Full criteria details are available in the Markdown report.")
+    print(
+        tabulate(
+            rows,
+            headers="keys",
+            tablefmt="github",
+            disable_numparse=True,
+        )
+    )
+    print(f"Detailed UNE report: {markdown_path}")
+
+
 def _offer_open_level6_dashboard(framework_report):
     if not _env_flag("PIONERA_LEVEL6_PROMPT_OPEN_REPORT", True):
         return
@@ -9268,8 +9363,12 @@ def _run_legacy_menu_action(action_name, current_adapter="inesdata", topology="l
         "ontology_hub_ui": ui_interactive_menu.run_ontology_hub_ui_tests_interactive,
         "ai_model_hub_ui": ui_interactive_menu.run_ai_model_hub_ui_tests_interactive,
         "semantic_virtualization_ui": ui_interactive_menu.run_semantic_virtualization_ui_tests_interactive,
-        "validation_test_by_id": ui_interactive_menu.run_validation_test_by_id_interactive,
     }
+    if action_name == "validation_test_by_id":
+        return ui_interactive_menu.run_validation_test_by_id_interactive(
+            adapter_name=current_adapter,
+            topology=topology,
+        )
     if action_name == "validation_api_test_by_id":
         return ui_interactive_menu.run_validation_api_test_by_id_interactive(
             adapter_name=current_adapter,
@@ -9474,20 +9573,9 @@ def run_interactive_menu(
                     _run_legacy_menu_action("semantic_virtualization_ui")
                     continue
 
-                if choice == "Y":
-                    _run_legacy_menu_action("validation_test_by_id")
-                    continue
-
-                if choice == "Z":
-                    selected_adapter = _interactive_require_adapter_selection(
-                        current_adapter,
-                        adapter_registry=registry,
-                    )
-                    if not selected_adapter:
-                        continue
-                    current_adapter = selected_adapter
+                if choice in {"Y", "Z"}:
                     _run_legacy_menu_action(
-                        "validation_api_test_by_id",
+                        "validation_test_by_id",
                         current_adapter=current_adapter,
                         topology=topology,
                     )
