@@ -417,7 +417,7 @@ class OntologyHubFunctionalComponentValidationTests(unittest.TestCase):
                 "pt5_case_results": [
                     {
                         "test_case_id": "PT5-OH-01",
-                        "description": "Registrar una ontologia mediante URI o repositorio",
+                        "description": "Register an ontology through URI or repository",
                         "case_group": "pt5",
                         "evaluation": {"status": "passed", "assertions": ["OH-APP-03: passed"]},
                     }

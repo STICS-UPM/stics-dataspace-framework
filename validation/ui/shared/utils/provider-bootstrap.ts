@@ -310,6 +310,27 @@ async function issueConsumerToken(request: APIRequestContext, runtime: Dataspace
   return token;
 }
 
+async function executeRetriableConsumerRequest<
+  TResponse extends { ok(): boolean; status(): number; text(): Promise<string> },
+>(
+  action: string,
+  request: APIRequestContext,
+  runtime: DataspacePortalRuntime,
+  execute: (consumerToken: string) => Promise<TResponse>,
+  maxAttempts = TRANSIENT_HTTP_MAX_ATTEMPTS,
+): Promise<{ response: TResponse; consumerToken: string }> {
+  let consumerToken = "";
+  const response = await executeRetriableRequest(
+    action,
+    async () => {
+      consumerToken = await issueConsumerToken(request, runtime);
+      return execute(consumerToken);
+    },
+    maxAttempts,
+  );
+  return { response, consumerToken };
+}
+
 async function createPolicy(
   request: APIRequestContext,
   runtime: DataspacePortalRuntime,
@@ -548,8 +569,7 @@ export async function fetchConsumerCatalogResponse(
   counterPartyAddress: string,
   counterPartyId?: string,
 ): Promise<unknown> {
-  const consumerToken = await issueConsumerToken(request, runtime);
-  const response = await executeRetriableRequest("Consumer catalog request", () =>
+  const { response } = await executeRetriableConsumerRequest("Consumer catalog request", request, runtime, (consumerToken) =>
     request.post(`${runtime.consumer.managementBaseUrl}/catalog/request`, {
       headers: {
         Authorization: `Bearer ${consumerToken}`,
@@ -583,8 +603,7 @@ async function fetchConsumerFederatedCatalogResponse(
   runtime: DataspacePortalRuntime,
   querySpec: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const consumerToken = await issueConsumerToken(request, runtime);
-  const response = await executeRetriableRequest("Consumer federated catalog request", () =>
+  const { response } = await executeRetriableConsumerRequest("Consumer federated catalog request", request, runtime, (consumerToken) =>
     request.post(`${consumerManagementRoot(runtime)}/federatedcatalog/request`, {
       headers: {
         Authorization: `Bearer ${consumerToken}`,
@@ -610,8 +629,7 @@ async function fetchConsumerFederatedCatalogCount(
   runtime: DataspacePortalRuntime,
   querySpec: Record<string, unknown> = {},
 ): Promise<number> {
-  const consumerToken = await issueConsumerToken(request, runtime);
-  const response = await executeRetriableRequest("Consumer federated catalog count", () =>
+  const { response } = await executeRetriableConsumerRequest("Consumer federated catalog count", request, runtime, (consumerToken) =>
     request.post(`${consumerManagementRoot(runtime)}/pagination/count?type=federatedCatalog`, {
       headers: {
         Authorization: `Bearer ${consumerToken}`,
@@ -933,25 +951,30 @@ export async function waitForConsumerAgreement(
   attempts = 20,
   delayMs = 1000,
 ): Promise<ConsumerAgreementArtifacts> {
-  const consumerToken = await issueConsumerToken(request, runtime);
   const pageSize = 100;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     for (let offset = 0; offset <= 500; offset += pageSize) {
-      const response = await request.post(`${runtime.consumer.managementBaseUrl}/contractagreements/request`, {
-        headers: {
-          Authorization: `Bearer ${consumerToken}`,
-          "Content-Type": "application/json",
-        },
-        data: {
-          "@context": {
-            "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
-          },
-          offset,
-          limit: pageSize,
-          filterExpression: [],
-        },
-      });
+      const { response } = await executeRetriableConsumerRequest(
+        "Poll consumer contract agreements",
+        request,
+        runtime,
+        (consumerToken) =>
+          request.post(`${runtime.consumer.managementBaseUrl}/contractagreements/request`, {
+            headers: {
+              Authorization: `Bearer ${consumerToken}`,
+              "Content-Type": "application/json",
+            },
+            data: {
+              "@context": {
+                "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+              },
+              offset,
+              limit: pageSize,
+              filterExpression: [],
+            },
+          }),
+      );
       await ensureOk(response, "Poll consumer contract agreements");
 
       const agreements = payloadItems(await response.json());
@@ -976,74 +999,89 @@ export async function waitForConsumerAgreement(
   throw new Error(`Consumer agreement for asset '${assetId}' did not become visible in contractagreements/request`);
 }
 
+type NegotiationLookupResult = {
+  negotiation?: any;
+};
+
 async function lookupNegotiationById(
   request: APIRequestContext,
-  managementBaseUrl: string,
-  consumerToken: string,
+  runtime: DataspacePortalRuntime,
   negotiationId: string,
-): Promise<any | undefined> {
-  const response = await request.get(`${managementBaseUrl}/contractnegotiations/${negotiationId}`, {
-    headers: {
-      Authorization: `Bearer ${consumerToken}`,
-    },
-  });
+): Promise<NegotiationLookupResult> {
+  for (let attempt = 1; attempt <= TRANSIENT_HTTP_MAX_ATTEMPTS; attempt += 1) {
+    const consumerToken = await issueConsumerToken(request, runtime);
+    const response = await request.get(`${runtime.consumer.managementBaseUrl}/contractnegotiations/${negotiationId}`, {
+      headers: {
+        Authorization: `Bearer ${consumerToken}`,
+      },
+    });
 
-  if (response.ok()) {
-    return await response.json();
+    if (response.ok()) {
+      return { negotiation: await response.json() };
+    }
+
+    if ([404, 405].includes(response.status())) {
+      return {};
+    }
+
+    if (isTransientHttpStatus(response.status()) && attempt < TRANSIENT_HTTP_MAX_ATTEMPTS) {
+      await sleep(TRANSIENT_HTTP_RETRY_DELAY_MS * attempt);
+      continue;
+    }
+
+    await ensureOk(response, "Consumer negotiation direct lookup");
   }
-
-  if ([404, 405].includes(response.status())) {
-    return undefined;
-  }
-
-  await ensureOk(response, "Consumer negotiation direct lookup");
-  return undefined;
+  return {};
 }
 
 async function lookupNegotiationFromList(
   request: APIRequestContext,
-  managementBaseUrl: string,
-  consumerToken: string,
+  runtime: DataspacePortalRuntime,
   negotiationId: string,
-): Promise<any | undefined> {
+): Promise<NegotiationLookupResult> {
   const pageSize = 100;
   for (let offset = 0; offset <= 500; offset += pageSize) {
-    const lookupResponse = await request.post(`${managementBaseUrl}/contractnegotiations/request`, {
-      headers: {
-        Authorization: `Bearer ${consumerToken}`,
-        "Content-Type": "application/json",
-      },
-      data: {
-        "@context": {
-          "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
-        },
-        offset,
-        limit: pageSize,
-      },
-    });
-    await ensureOk(lookupResponse, "Consumer negotiation lookup");
-    const lookupBody = await lookupResponse.json();
+    const { response } = await executeRetriableConsumerRequest(
+      "Consumer negotiation lookup",
+      request,
+      runtime,
+      (consumerToken) =>
+        request.post(`${runtime.consumer.managementBaseUrl}/contractnegotiations/request`, {
+          headers: {
+            Authorization: `Bearer ${consumerToken}`,
+            "Content-Type": "application/json",
+          },
+          data: {
+            "@context": {
+              "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+            },
+            offset,
+            limit: pageSize,
+          },
+        }),
+    );
+    await ensureOk(response, "Consumer negotiation lookup");
+    const lookupBody = await response.json();
     const negotiations = Array.isArray(lookupBody) ? lookupBody : [];
     const negotiation = negotiations.find((entry: any) => negotiationMatches(entry, negotiationId));
     if (negotiation) {
-      return negotiation;
+      return { negotiation };
     }
     if (negotiations.length < pageSize) {
       break;
     }
   }
-  return undefined;
+  return {};
 }
 
 async function lookupNegotiation(
   request: APIRequestContext,
-  managementBaseUrl: string,
-  consumerToken: string,
+  runtime: DataspacePortalRuntime,
   negotiationId: string,
 ): Promise<any | undefined> {
   return (
-    (await lookupNegotiationById(request, managementBaseUrl, consumerToken, negotiationId)) ||
-    (await lookupNegotiationFromList(request, managementBaseUrl, consumerToken, negotiationId))
+    (await lookupNegotiationById(request, runtime, negotiationId)).negotiation ||
+    (await lookupNegotiationFromList(request, runtime, negotiationId)).negotiation
   );
 }
 
@@ -1054,7 +1092,6 @@ export async function bootstrapConsumerNegotiation(
   counterPartyAddress: string,
   counterPartyId: string,
 ): Promise<ConsumerNegotiationArtifacts> {
-  const consumerToken = await issueConsumerToken(request, runtime);
   const { catalogResponse, dataset } = await fetchConsumerCatalogDatasetWithOffer(
     request,
     runtime,
@@ -1063,21 +1100,27 @@ export async function bootstrapConsumerNegotiation(
     counterPartyId,
   );
 
-  const response = await request.post(`${runtime.consumer.managementBaseUrl}/contractnegotiations`, {
-    headers: {
-      Authorization: `Bearer ${consumerToken}`,
-      "Content-Type": "application/json",
-    },
-    data: {
-      "@context": {
-        "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
-      },
-      "@type": "ContractRequest",
-      counterPartyAddress,
-      protocol: "dataspace-protocol-http",
-      policy: buildNegotiationPolicy(catalogResponse, dataset, counterPartyId),
-    },
-  });
+  const { response } = await executeRetriableConsumerRequest(
+    "Consumer contract negotiation request",
+    request,
+    runtime,
+    (consumerToken) =>
+      request.post(`${runtime.consumer.managementBaseUrl}/contractnegotiations`, {
+        headers: {
+          Authorization: `Bearer ${consumerToken}`,
+          "Content-Type": "application/json",
+        },
+        data: {
+          "@context": {
+            "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+          },
+          "@type": "ContractRequest",
+          counterPartyAddress,
+          protocol: "dataspace-protocol-http",
+          policy: buildNegotiationPolicy(catalogResponse, dataset, counterPartyId),
+        },
+      }),
+  );
   await ensureOk(response, "Consumer contract negotiation request");
   const body = await response.json();
   const negotiationId = body?.["@id"] || body?.id;
@@ -1089,12 +1132,7 @@ export async function bootstrapConsumerNegotiation(
   let lastState = "UNKNOWN";
   let lastErrorDetail = "";
   while (Date.now() < deadline) {
-    const negotiation = await lookupNegotiation(
-      request,
-      runtime.consumer.managementBaseUrl,
-      consumerToken,
-      negotiationId,
-    );
+    const negotiation = await lookupNegotiation(request, runtime, negotiationId);
     lastState = negotiationState(negotiation) || lastState;
     lastErrorDetail = negotiationErrorDetail(negotiation) || lastErrorDetail;
     const agreementId = negotiationAgreementId(negotiation);
@@ -1115,12 +1153,7 @@ export async function bootstrapConsumerNegotiation(
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
-  const finalNegotiation = await lookupNegotiation(
-    request,
-    runtime.consumer.managementBaseUrl,
-    consumerToken,
-    negotiationId,
-  );
+  const finalNegotiation = await lookupNegotiation(request, runtime, negotiationId);
   const finalAgreementId = negotiationAgreementId(finalNegotiation);
   if (finalAgreementId) {
     return {
@@ -1148,7 +1181,6 @@ export async function bootstrapConsumerTransfer(
   counterPartyAddress: string,
   objectName?: string,
 ): Promise<ConsumerTransferArtifacts> {
-  const consumerToken = await issueConsumerToken(request, runtime);
   const transferStartPath = runtime.consumer.transferStartPath || "inesdatatransferprocesses";
   const transferDestinationType = runtime.consumer.transferDestinationType || "InesDataStore";
   const isEdcAdapter = runtime.adapter === "edc" || runtime.consumer.adapter === "edc";
@@ -1205,13 +1237,19 @@ export async function bootstrapConsumerTransfer(
         transferType,
         dataDestination: buildDataDestination(),
       };
-  const response = await request.post(`${runtime.consumer.managementBaseUrl}/${transferStartPath}`, {
-    headers: {
-      Authorization: `Bearer ${consumerToken}`,
-      "Content-Type": "application/json",
-    },
-    data: transferPayload,
-  });
+  const { response } = await executeRetriableConsumerRequest(
+    "Consumer transfer request",
+    request,
+    runtime,
+    (consumerToken) =>
+      request.post(`${runtime.consumer.managementBaseUrl}/${transferStartPath}`, {
+        headers: {
+          Authorization: `Bearer ${consumerToken}`,
+          "Content-Type": "application/json",
+        },
+        data: transferPayload,
+      }),
+  );
   await ensureOk(response, "Consumer transfer request");
   const body = await response.json();
   const transferId = body?.["@id"] || body?.id;
@@ -1221,11 +1259,17 @@ export async function bootstrapConsumerTransfer(
 
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    const stateResponse = await request.get(`${runtime.consumer.managementBaseUrl}/transferprocesses/${transferId}`, {
-      headers: {
-        Authorization: `Bearer ${consumerToken}`,
-      },
-    });
+    const { response: stateResponse } = await executeRetriableConsumerRequest(
+      "Consumer transfer status lookup",
+      request,
+      runtime,
+      (consumerToken) =>
+        request.get(`${runtime.consumer.managementBaseUrl}/transferprocesses/${transferId}`, {
+          headers: {
+            Authorization: `Bearer ${consumerToken}`,
+          },
+        }),
+    );
     await ensureOk(stateResponse, "Consumer transfer status lookup");
     const stateBody = await stateResponse.json();
     const state = String(stateBody?.state || "").trim().toUpperCase();

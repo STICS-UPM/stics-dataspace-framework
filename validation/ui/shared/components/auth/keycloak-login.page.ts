@@ -8,6 +8,14 @@ type KeycloakLoginConfig = {
   skipLogin: boolean;
 };
 
+const TRANSIENT_GATEWAY_STATUSES = new Set([502, 503, 504]);
+const TRANSIENT_GATEWAY_MAX_ATTEMPTS = 6;
+const TRANSIENT_GATEWAY_RETRY_DELAY_MS = 3000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class KeycloakLoginPage {
   constructor(
     private readonly page: Page,
@@ -15,13 +23,38 @@ export class KeycloakLoginPage {
   ) {}
 
   async open(baseUrl: string): Promise<void> {
-    await this.page.goto(baseUrl, { waitUntil: "networkidle" });
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= TRANSIENT_GATEWAY_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await this.page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+        await this.page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
+        const transientReason = await this.transientGatewayReason(response?.status());
+        if (!transientReason) {
+          return;
+        }
+        lastError = new Error(transientReason);
+      } catch (error) {
+        lastError = error;
+      }
+
+      if (attempt < TRANSIENT_GATEWAY_MAX_ATTEMPTS) {
+        await sleep(TRANSIENT_GATEWAY_RETRY_DELAY_MS * attempt);
+      }
+    }
+
+    throw new Error(
+      `Portal login endpoint did not become available after ${TRANSIENT_GATEWAY_MAX_ATTEMPTS} attempts: ${
+        lastError instanceof Error ? lastError.message : String(lastError)
+      }`,
+    );
   }
 
   async loginIfNeeded(): Promise<void> {
     if (this.config.skipLogin) {
       return;
     }
+
+    await this.waitForGatewayRecovery();
 
     if ((await this.logoutControl().count()) > 0) {
       return;
@@ -38,6 +71,8 @@ export class KeycloakLoginPage {
         clickMarked(signInButton),
       ]);
     }
+
+    await this.waitForGatewayRecovery();
 
     const loginInputs = await this.resolveLoginInputs();
     if (!loginInputs) {
@@ -92,6 +127,39 @@ export class KeycloakLoginPage {
       if ((await usernameInput.count()) > 0 && (await passwordInput.count()) > 0) {
         return { usernameInput, passwordInput };
       }
+    }
+
+    return null;
+  }
+
+  private async waitForGatewayRecovery(): Promise<void> {
+    let lastReason = "";
+    for (let attempt = 1; attempt <= TRANSIENT_GATEWAY_MAX_ATTEMPTS; attempt += 1) {
+      const reason = await this.transientGatewayReason();
+      if (!reason) {
+        return;
+      }
+      lastReason = reason;
+      if (attempt < TRANSIENT_GATEWAY_MAX_ATTEMPTS) {
+        await sleep(TRANSIENT_GATEWAY_RETRY_DELAY_MS * attempt);
+        await this.page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => undefined);
+        await this.page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
+      }
+    }
+
+    throw new Error(
+      `Portal login page stayed behind a transient gateway error after ${TRANSIENT_GATEWAY_MAX_ATTEMPTS} attempts: ${lastReason}`,
+    );
+  }
+
+  private async transientGatewayReason(status?: number): Promise<string | null> {
+    if (status && TRANSIENT_GATEWAY_STATUSES.has(status)) {
+      return `HTTP ${status}`;
+    }
+
+    const bodyText = await this.page.locator("body").textContent({ timeout: 1000 }).catch(() => "");
+    if (/\b(502|503|504)\b/i.test(bodyText || "") || /Bad Gateway|Service Temporarily Unavailable|Gateway Time-?out/i.test(bodyText || "")) {
+      return (bodyText || "transient gateway error").replace(/\s+/g, " ").trim().slice(0, 160);
     }
 
     return null;

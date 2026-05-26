@@ -3,38 +3,38 @@ project: inesdata
 profile: read-only
 cases:
   - id: INESDATA-MOB-01
-    title: Acceso al portal de movilidad
+    title: Mobility portal access
     type: playwright
     profile: read-only
     status: proposed
     coverage_status: scaffold_external_target
     mapping_status: external_project_scaffold
     execution_mode: read_only_target_scaffold
-    objective: Verificar que el portal de movilidad está disponible si el target lo habilita.
+    objective: Verify that the mobility portal is available when the target enables it.
     preconditions:
-      - Target externo configurado con `dataspaces[].name=mobility`.
-      - URL pública o validable definida para el portal de movilidad.
+      - External target configured with `dataspaces[].name=mobility`.
+      - Public or validatable URL defined for the mobility portal.
     evidence:
-      - Screenshot o trace de Playwright.
+      - Playwright screenshot or trace.
     automation:
       status: proposed
       mode: read_only_playwright
       enabled_by_default: false
       notes: Scaffold for external INESData targets. It is not part of Level 6 A5.2 default coverage until a target explicitly enables it.
   - id: INESDATA-MOB-02
-    title: Catálogo de movilidad visible
+    title: Mobility catalog is visible
     type: playwright
     profile: read-only
     status: proposed
     coverage_status: scaffold_external_target
     mapping_status: external_project_scaffold
     execution_mode: read_only_target_scaffold
-    objective: Verificar que el catálogo de movilidad muestra información pública o aprobada.
+    objective: Verify that the mobility catalog shows public or approved information.
     preconditions:
-      - Existen datasets públicos o aprobados para validación read-only.
+      - Public or approved datasets exist for read-only validation.
     evidence:
-      - Captura del catálogo.
-      - Conteo o texto visible no sensible.
+      - Catalog screenshot.
+      - Non-sensitive visible count or text.
     automation:
       status: proposed
       mode: read_only_playwright

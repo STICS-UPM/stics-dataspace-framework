@@ -25,7 +25,7 @@ class OntologyHubVocabFormPage {
       const currentPrefix = ((await prefixInput.inputValue().catch(() => "")) || "").trim();
       if (currentPrefix && currentPrefix !== prefix) {
         throw new Error(
-          `Se esperaba editar el vocabulario '${prefix}', pero el formulario cargo '${currentPrefix}'.`,
+          `Expected to edit vocabulary '${prefix}', but the form loaded '${currentPrefix}'.`,
         );
       }
     }

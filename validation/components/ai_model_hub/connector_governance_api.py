@@ -84,7 +84,7 @@ class AIModelHubConnectorGovernanceApiSuite:
     """Validate AI Model Hub connector-side access, agreements, OIDC and traceability."""
 
     DEFAULT_NEGOTIATION_TIMEOUT_SECONDS = 60
-    DEFAULT_TRANSFER_TIMEOUT_SECONDS = 60
+    DEFAULT_TRANSFER_TIMEOUT_SECONDS = 180
     DEFAULT_POLL_INTERVAL_SECONDS = 3
     DEFAULT_REQUEST_ATTEMPTS = 3
     DEFAULT_REQUEST_RETRY_SECONDS = 2

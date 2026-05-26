@@ -30,6 +30,8 @@ test("PT5-MH-04: model listing view renders a controlled model card", async ({
   await expect(async () => {
     await assetsPage.goto();
     await assetsPage.waitUntilReady();
+    // The ML Assets page can briefly render an empty state before connector data is hydrated.
+    await expect(assetsPage.assetCards.first()).toBeVisible({ timeout: 30000 });
     await assetsPage.search(assetName);
     await assetsPage.expectCardVisible(assetName);
   }).toPass({

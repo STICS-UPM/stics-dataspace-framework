@@ -23,7 +23,7 @@ export class AssetCreatePage {
     await fillMarked(materialInput(this.page, "Name"), `QA Asset ${assetId}`);
     await fillMarked(materialInput(this.page, "Version"), "1.0");
     await fillMarked(materialInput(this.page, "Short description"), 
-      "Validacion automatica con Playwright para subida de asset",
+      "Automated Playwright validation for asset upload",
     );
     await fillMarked(materialInput(this.page, "Keywords"), "qa,playwright,upload");
 
@@ -32,7 +32,7 @@ export class AssetCreatePage {
 
     const editor = this.page.locator(".ck-editor__editable[contenteditable='true']").first();
     await clickMarked(editor);
-    await fillMarked(editor, "Descripcion de prueba automatizada para subida de asset");
+    await fillMarked(editor, "Automated test description for asset upload");
 
     await clickMarked(this.page.getByRole("tab", { name: "Storage information" }));
     await expect(

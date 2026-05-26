@@ -7,7 +7,7 @@ test_cases:
   - id: PT5-OH-08
     component: ontology_hub
     case_group: pt5
-    description: Búsqueda de vocabularios por texto libre con contenido real indexado
+    description: Free-text vocabulary search with indexed real content
     type: api
     validation_type: functional
     dataspace_dimension: discovery
@@ -15,13 +15,13 @@ test_cases:
     coverage_status: automated
     mapping_status: mapped
     preconditions:
-      - Ontology Hub está desplegado y accesible.
-      - La API de búsqueda pública está disponible.
-      - La semilla de validación contiene el vocabulario esperado.
+      - Ontology Hub is deployed and accessible.
+      - The public search API is available.
+      - The validation seed contains the expected vocabulary.
     steps:
-      - Ejecutar una búsqueda por texto libre sobre la API pública.
-      - Validar que la respuesta contiene resultados coherentes con la consulta.
-    expected_result: La búsqueda devuelve resultados reales y coherentes con el vocabulario sembrado.
+      - Run a free-text search against the public API.
+      - Validate that the response contains results consistent with the query.
+    expected_result: The search returns real results consistent with the seeded vocabulary.
     traceability:
       - OntHub-33
     automation:
@@ -42,7 +42,7 @@ test_cases:
   - id: PT5-OH-09
     component: ontology_hub
     case_group: pt5
-    description: Filtrado de vocabularios mediante vocabulario y etiqueta
+    description: Vocabulary filtering by vocabulary and tag
     type: api
     validation_type: functional
     dataspace_dimension: discovery
@@ -50,12 +50,12 @@ test_cases:
     coverage_status: automated
     mapping_status: mapped
     preconditions:
-      - La API de búsqueda pública está disponible.
-      - El vocabulario sembrado expone metadatos consultables.
+      - The public search API is available.
+      - The seeded vocabulary exposes searchable metadata.
     steps:
-      - Ejecutar una búsqueda filtrada por vocabulario y etiqueta.
-      - Validar que la respuesta conserva coherencia con los filtros aplicados.
-    expected_result: La búsqueda filtrada devuelve resultados coherentes con el vocabulario y la etiqueta de ejemplo.
+      - Run a search filtered by vocabulary and tag.
+      - Validate that the response remains consistent with the applied filters.
+    expected_result: The filtered search returns results consistent with the example vocabulary and tag.
     traceability:
       - OntHub-34
       - OntHub-35
@@ -73,11 +73,11 @@ test_cases:
             - OH-APP-19
             - OH-APP-20
             - OH-APP-21
-          role: Evidencia UI sobre búsqueda, metadatos y gestión de etiquetas.
+          role: UI evidence for search, metadata and tag management.
         - suite: ontology_hub_integration
           cases:
             - PT5-OH-09
-          role: Validación técnica API filtrada por vocabulario y etiqueta.
+          role: Technical API validation filtered by vocabulary and tag.
       real_flow:
         method: GET
         path: /dataset/api/v2/term/search
@@ -86,12 +86,12 @@ test_cases:
           type: class
           vocab: saref4grid
           tag: Services
-      notes: Cobertura compuesta UI+API. La suite funcional aporta la evidencia de interfaz y esta suite conserva el equivalente técnico de integración.
+      notes: Composite UI+API coverage. The functional suite provides interface evidence and this suite keeps the technical integration equivalent.
 
   - id: PT5-OH-13
     component: ontology_hub
     case_group: pt5
-    description: Consulta SPARQL real sobre el recurso RDF de ejemplo sembrado
+    description: Real SPARQL query against the seeded RDF example resource
     type: api
     validation_type: interoperability
     dataspace_dimension: interoperability
@@ -99,16 +99,16 @@ test_cases:
     coverage_status: automated
     mapping_status: mapped
     preconditions:
-      - Ontology Hub está desplegado en Kubernetes.
-      - El endpoint SPARQL interno del componente está disponible dentro del clúster.
-      - El endpoint SPARQL público por ingress está publicado como superficie diagnóstica.
-      - La ontología sembrada está cargada en el almacén RDF.
+      - Ontology Hub is deployed in Kubernetes.
+      - The component internal SPARQL endpoint is available inside the cluster.
+      - The public SPARQL endpoint through ingress is exposed as a diagnostic surface.
+      - The seeded ontology is loaded in the RDF store.
     steps:
-      - Ejecutar una consulta SPARQL `ASK` sobre el recurso RDF esperado desde dentro del clúster.
-      - Ejecutar la misma consulta SPARQL por el endpoint público.
-      - Validar como criterio principal que la consulta interna devuelve HTTP 200 y `boolean=true`.
-      - Registrar la respuesta pública por ingress como evidencia diagnóstica de exposición.
-    expected_result: La consulta SPARQL interna devuelve un resultado válido sobre la ontología sembrada; la exposición pública queda trazada en el artefacto del caso.
+      - Run a SPARQL `ASK` query against the expected RDF resource from inside the cluster.
+      - Run the same SPARQL query through the public endpoint.
+      - Validate as the primary criterion that the internal query returns HTTP 200 and `boolean=true`.
+      - Record the public ingress response as diagnostic exposure evidence.
+    expected_result: The internal SPARQL query returns a valid result for the seeded ontology; public exposure is traced in the case artifact.
     traceability:
       - OntHub-26
     automation:
@@ -130,7 +130,7 @@ test_cases:
   - id: PT5-OH-14
     component: ontology_hub
     case_group: pt5
-    description: Acceso al servicio ontológico de patrones
+    description: Pattern ontology service access
     type: api
     validation_type: integration
     dataspace_dimension: services
@@ -138,12 +138,12 @@ test_cases:
     coverage_status: automated
     mapping_status: mapped
     preconditions:
-      - Los servicios ontológicos están desplegados.
-      - La ruta pública de patrones está publicada.
+      - Ontology services are deployed.
+      - The public patterns route is exposed.
     steps:
-      - Acceder a la página pública del servicio de patrones con el vocabulario de ejemplo.
-      - Validar que la página no renderiza un error de servidor.
-    expected_result: La página del servicio de patrones está publicada y accesible.
+      - Open the public pattern service page with the example vocabulary.
+      - Validate that the page does not render a server error.
+    expected_result: The pattern service page is published and accessible.
     traceability:
       - OntHub-52
       - OntHub-53
@@ -158,22 +158,22 @@ test_cases:
             - OH-APP-23
             - OH-APP-24
             - OH-APP-25
-          role: Evidencia UI de generación de patrones, FOOPS, Themis y Widoco.
+          role: UI evidence for pattern generation, FOOPS, Themis and Widoco.
         - suite: ontology_hub_integration
           cases:
             - PT5-OH-14
-          role: Check técnico de publicación del servicio de patrones.
+          role: Technical publication check for the pattern service.
       real_flow:
         method: GET
         path: /dataset/patterns
         query:
           q: saref4grid
-      notes: Cobertura compuesta UI+API. La generación funcional del ZIP se cubre en OH-APP-22; esta suite mantiene el acceso técnico al servicio.
+      notes: Composite UI+API coverage. Functional ZIP generation is covered in OH-APP-22; this suite keeps the technical service access check.
 
   - id: PT5-OH-15
     component: ontology_hub
     case_group: pt5
-    description: Acceso coordinado a UI pública y documentación API
+    description: Coordinated access to public UI and API documentation
     type: api
     validation_type: integration
     dataspace_dimension: integration
@@ -181,13 +181,13 @@ test_cases:
     coverage_status: automated
     mapping_status: mapped
     preconditions:
-      - La UI pública de Ontology Hub está publicada.
-      - La documentación API está publicada.
+      - The public Ontology Hub UI is published.
+      - API documentation is published.
     steps:
-      - Acceder a la UI pública.
-      - Acceder a la documentación API.
-      - Validar que ambas superficies responden sin errores de servidor.
-    expected_result: La UI pública y la documentación API están disponibles de forma coordinada.
+      - Open the public UI.
+      - Open the API documentation.
+      - Validate that both surfaces respond without server errors.
+    expected_result: The public UI and API documentation are available in a coordinated way.
     traceability:
       - OntHub-54
       - OntHub-55
@@ -200,15 +200,15 @@ test_cases:
           cases:
             - OH-APP-00
             - OH-APP-01
-          role: Evidencia UI de disponibilidad y navegación pública.
+          role: UI evidence for public availability and navigation.
         - suite: ontology_hub_integration
           cases:
             - PT5-OH-15
-          role: Check técnico coordinado de UI pública y documentación API.
+          role: Coordinated technical check for public UI and API documentation.
       real_flow:
         requests:
           - method: GET
             path: /dataset
           - method: GET
             path: /dataset/api
-      notes: Cobertura compuesta UI+API. La navegación UI completa se cubre en OH-APP-00/OH-APP-01; esta suite conserva el check HTTP/API técnico.
+      notes: Composite UI+API coverage. Complete UI navigation is covered in OH-APP-00/OH-APP-01; this suite keeps the technical HTTP/API check.

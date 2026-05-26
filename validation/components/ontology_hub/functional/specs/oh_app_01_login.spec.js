@@ -1,4 +1,4 @@
-// Excel traceability: Ontology Hub case 2 (Iniciar Sesion), adapted to the current UI.
+// Excel traceability: Ontology Hub case 2 (Sign In), adapted to the current UI.
 const { test, expect } = require("../../ui/fixtures");
 const { signInToEdition, signOut } = require("../support/excel-flows");
 

@@ -1,5 +1,5 @@
 project: inesdata
-description: Suites INESData para integración A5.2 y validaciones externas.
+description: INESData suites for A5.2 integration and external validations.
 suites:
   integration:
     default_profile: level6

@@ -717,7 +717,7 @@ def _run_ui_api_access_case(base_url: str) -> Tuple[Dict[str, Any], Dict[str, An
 
     case_result = _build_case_result(
         test_case_id="PT5-OH-15",
-        description="Acceso coordinado via UI y API",
+        description="Coordinated access through UI and API",
         case_type="api",
         metadata=API_CASE_METADATA["PT5-OH-15"],
         requests_payload=[
@@ -736,7 +736,7 @@ def _run_ui_api_access_case(base_url: str) -> Tuple[Dict[str, Any], Dict[str, An
                 "api_docs": api_evaluation,
             },
         },
-        expected_result="La UI principal y la documentacion API se publican de forma coordinada y accesible.",
+        expected_result="The main UI and API documentation are published in a coordinated and accessible way.",
     )
     raw_artifact = {
         "ui": {
@@ -903,7 +903,7 @@ def _run_sparql_access_case(base_url: str, runtime: Dict[str, Any]) -> Tuple[Dic
     )
     case_result = _build_case_result(
         test_case_id="PT5-OH-13",
-        description="Consulta SPARQL real sobre la ontologia de ejemplo sembrada",
+        description="Real SPARQL query against the seeded example ontology",
         case_type="api",
         metadata=API_CASE_METADATA["PT5-OH-13"],
         requests_payload=[
@@ -939,8 +939,8 @@ def _run_sparql_access_case(base_url: str, runtime: Dict[str, Any]) -> Tuple[Dic
         ],
         evaluation=evaluation,
         expected_result=(
-            "La consulta ASK sobre el recurso RDF sembrado devuelve true dentro del cluster. "
-            "La exposicion publica por ingress queda registrada como evidencia diagnostica."
+            "The ASK query against the seeded RDF resource returns true inside the cluster. "
+            "Public ingress exposure is recorded as diagnostic evidence."
         ),
     )
     raw_artifact = {
@@ -989,12 +989,12 @@ def run_ontology_hub_validation(
         pt5_oh_08, artifact_08 = _run_search_case(
             base_url=normalized_base_url,
             test_case_id="PT5-OH-08",
-            description="Busqueda de vocabularios por texto libre con contenido real indexado",
+            description="Free-text vocabulary search with indexed real content",
             query_params={
                 "q": runtime["expectedSearchTerm"],
                 "type": "class",
             },
-            expected_result="La busqueda devuelve al menos un termino indexado de ejemplo, con agregaciones y contenido coherentes.",
+            expected_result="The search returns at least one indexed example term, with coherent aggregations and content.",
             expected_vocab=runtime["expectedVocabularyPrefix"],
         )
         executed_cases.append(pt5_oh_08)
@@ -1004,14 +1004,14 @@ def run_ontology_hub_validation(
         pt5_oh_09, artifact_09 = _run_search_case(
             base_url=normalized_base_url,
             test_case_id="PT5-OH-09",
-            description="Filtrado de vocabularios mediante vocabulario y etiqueta",
+            description="Vocabulary filtering by vocabulary and tag",
             query_params={
                 "q": runtime["expectedSearchTerm"],
                 "type": "class",
                 "vocab": runtime["expectedVocabularyPrefix"],
                 "tag": runtime["expectedPrimaryTag"],
             },
-            expected_result="La busqueda filtrada devuelve resultados coherentes con el vocabulario y la etiqueta de ejemplo.",
+            expected_result="The filtered search returns results consistent with the example vocabulary and tag.",
             expected_vocab=runtime["expectedVocabularyPrefix"],
             expected_tag=runtime["expectedPrimaryTag"],
         )
@@ -1027,10 +1027,10 @@ def run_ontology_hub_validation(
         pt5_oh_14, artifact_14 = _run_html_case(
             base_url=normalized_base_url,
             test_case_id="PT5-OH-14",
-            description="Acceso al servicio de patrones",
+            description="Pattern service access",
             path=f"{PATTERNS_PATH}?{parse.urlencode({'q': runtime['expectedVocabularyPrefix']})}",
             required_markers=["selected vocabularies", f"checkbox_{runtime['expectedVocabularyPrefix']}"],
-            expected_result="La pagina del servicio de patrones esta publicada y accesible.",
+            expected_result="The pattern service page is published and accessible.",
         )
         executed_cases.append(pt5_oh_14)
         raw_artifacts.append(("PT5-OH-14", "pt5-oh-14-response.json", artifact_14))

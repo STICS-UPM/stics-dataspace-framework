@@ -261,11 +261,11 @@ async function ensureVocabularyTag(page, runtime) {
         .catch(() => ""),
     );
     if (createError) {
-      throw new Error(`No se pudo crear la etiqueta '${tagLabel}' en Ontology Hub: ${createError}`);
+      throw new Error(`Could not create tag '${tagLabel}' in Ontology Hub: ${createError}`);
     }
     if (createResponse && !createResponse.ok()) {
       throw new Error(
-        `La creacion de la etiqueta '${tagLabel}' devolvio HTTP ${createResponse.status()}.`,
+        `Tag creation for '${tagLabel}' returned HTTP ${createResponse.status()}.`,
       );
     }
 
@@ -299,7 +299,7 @@ async function ensureTextareaLanguages(page, fieldName, primaryLanguage, seconda
     try {
       await selectOptionMarked(selectLocator.first(), primary);
     } catch (error) {
-      throw new Error(`No se pudo seleccionar el idioma '${primary}' para ${fieldName}.`);
+      throw new Error(`Could not select language '${primary}' for ${fieldName}.`);
     }
   }
 
@@ -307,7 +307,7 @@ async function ensureTextareaLanguages(page, fieldName, primaryLanguage, seconda
     try {
       await selectOptionMarked(selectLocator.nth(1), secondary);
     } catch (error) {
-      throw new Error(`No se pudo seleccionar el idioma '${secondary}' para ${fieldName}.`);
+      throw new Error(`Could not select language '${secondary}' for ${fieldName}.`);
     }
   }
 }
@@ -337,8 +337,8 @@ async function submitVocabularyMetadata(page, runtime) {
 
   if (saveResponse && !saveResponse.ok()) {
     throw new Error(
-      `El guardado del vocabulario devolvio HTTP ${saveResponse.status()}.${
-        body ? ` Respuesta: ${normalizeText(body).slice(0, 240)}` : ""
+      `Vocabulary save returned HTTP ${saveResponse.status()}.${
+        body ? ` Response: ${normalizeText(body).slice(0, 240)}` : ""
       }`,
     );
   }
@@ -423,7 +423,7 @@ async function gotoEdition(page, runtime) {
           .catch(() => false);
         if (invalidCredentialsVisible) {
           throw new Error(
-            `El login de Ontology Hub fue rechazado por el entorno actual. ${loginErrorHint(runtime)}`,
+            `Ontology Hub login was rejected by the current environment. ${loginErrorHint(runtime)}`,
           );
         }
       }
@@ -445,8 +445,8 @@ async function gotoEdition(page, runtime) {
       const transientFailure = await pageShowsTransientAvailabilityFailure(page);
       if (!transientFailure || attempt >= 3) {
         throw new Error(
-          `No se pudo acceder al area de edicion de Ontology Hub desde ${page.url()}. ` +
-            `${String(formErrors || "").trim() || pageSignal || "No se detectaron errores visibles."}`,
+          `Could not access the Ontology Hub edition area from ${page.url()}. ` +
+            `${String(formErrors || "").trim() || pageSignal || "No visible errors were detected."}`,
         );
       }
       await page.waitForTimeout(2000);
@@ -458,7 +458,7 @@ async function gotoEdition(page, runtime) {
 
 async function ensurePublicDetail(page, runtime, prefix, title) {
   const detailUrl = `${runtime.baseUrl}/dataset/vocabs/${encodeURIComponent(prefix)}`;
-  let lastReason = `La vista detalle publica de '${prefix}' no estuvo lista a tiempo.`;
+  let lastReason = `The public detail view for '${prefix}' was not ready in time.`;
   const maxAttempts = 30;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -609,8 +609,8 @@ async function createVocabularyFromUri(page, runtime) {
     }
 
     throw new Error(
-      `No se pudo guardar el vocabulario '${runtime.creationPrefix}' en Ontology Hub. ${
-        saveOutcome.errorMessage || "No se recibio confirmacion valida del guardado."
+      `Could not save vocabulary '${runtime.creationPrefix}' in Ontology Hub. ${
+        saveOutcome.errorMessage || "No valid save confirmation was received."
       }`,
     );
   }
@@ -667,8 +667,8 @@ async function createVocabularyFromRepository(page, runtime) {
   }
 
   throw new Error(
-    `No se pudo crear un vocabulario desde el repositorio '${repositoryUri}'. ` +
-      "Ontology Hub no mostro el formulario de creacion esperado ni un error visible.",
+    `Could not create a vocabulary from repository '${repositoryUri}'. ` +
+      "Ontology Hub did not show the expected creation form or a visible error.",
   );
 }
 
@@ -912,8 +912,8 @@ async function buildBootstrapContext(page, runtime) {
       creationMethod = outcome.method || "repository";
     } else {
       throw new Error(
-        "No hay configuracion de creacion disponible para Ontology Hub. " +
-          "Define creationUri o creationRepositoryUri en la configuracion del chart.",
+        "No creation configuration is available for Ontology Hub. " +
+          "Define creationUri or creationRepositoryUri in the chart configuration.",
       );
     }
     source = outcome.created ? "created" : "reused";
@@ -945,8 +945,8 @@ async function buildBootstrapContext(page, runtime) {
           source = "reused";
         } else {
           throw new Error(
-            `Ontology Hub no pudo acceder al repositorio '${normalizeRepositoryUri(runtime.creationRepositoryUri)}', ` +
-              "y tampoco se pudo resolver un vocabulario publico reutilizable para continuar el flujo.",
+            `Ontology Hub could not access repository '${normalizeRepositoryUri(runtime.creationRepositoryUri)}', ` +
+              "and no reusable public vocabulary could be resolved to continue the flow.",
           );
         }
       }
@@ -972,8 +972,8 @@ async function buildBootstrapContext(page, runtime) {
           };
         } else {
           throw new Error(
-            `La URI '${creationRuntime.creationUri}' ya existe en Ontology Hub, ` +
-              "pero no se pudo resolver el vocabulario publico reutilizable.",
+            `URI '${creationRuntime.creationUri}' already exists in Ontology Hub, ` +
+              "but no reusable public vocabulary could be resolved.",
           );
         }
       }

@@ -48,7 +48,7 @@ class OntologyHubComponentValidationTests(unittest.TestCase):
         self.assertEqual(case["automation"]["mode"], "composite_ui_api")
         self.assertEqual(case["automation"]["runner_case"], "pt5_oh_14_patterns_access")
         self.assertIn("composite_evidence", case["automation"])
-        self.assertIn("generación funcional del ZIP", case["automation"]["notes"])
+        self.assertIn("Functional ZIP generation", case["automation"]["notes"])
 
     def test_evaluate_term_search_response_passes_on_valid_json_payload(self):
         payload = {

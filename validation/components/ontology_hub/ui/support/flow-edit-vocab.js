@@ -91,7 +91,7 @@ async function loginEditionRequestContext(request, runtime) {
   const loginPageBody = await loginPageResponse.text().catch(() => "");
   const csrfToken = extractInputValue(loginPageBody, "_csrf");
   if (!csrfToken) {
-    throw new Error("No se pudo resolver el token CSRF del login de Ontology Hub.");
+    throw new Error("Could not resolve the Ontology Hub login CSRF token.");
   }
 
   const sessionResponse = await request.post(new URL("/edition/session", runtime.baseUrl).toString(), {
@@ -109,7 +109,7 @@ async function loginEditionRequestContext(request, runtime) {
     /\/edition\/login\/?$/.test(sessionResponse.url())
   ) {
     throw new Error(
-      `El login HTTP de Ontology Hub fue rechazado para '${runtime.adminEmail}'.`,
+      `Ontology Hub HTTP login was rejected for '${runtime.adminEmail}'.`,
     );
   }
 }
@@ -117,7 +117,7 @@ async function loginEditionRequestContext(request, runtime) {
 async function editVocabularyForWorkflowHttp(request, runtime, bootstrapContext) {
   const prefix = normalizeText(bootstrapContext.prefix);
   if (!prefix) {
-    throw new Error("No hay un vocabulario bootstrap valido para editar.");
+    throw new Error("No valid bootstrap vocabulary is available for editing.");
   }
 
   await loginEditionRequestContext(request, runtime);
@@ -128,7 +128,7 @@ async function editVocabularyForWorkflowHttp(request, runtime, bootstrapContext)
   });
   const editHtml = await editResponse.text().catch(() => "");
   if (editResponse.status() >= 400 || /<h1>\s*Log in\s*<\/h1>/i.test(editHtml)) {
-    throw new Error(`No se pudo abrir por HTTP el formulario de edicion para '${prefix}'.`);
+    throw new Error(`Could not open the HTTP edition form for '${prefix}'.`);
   }
 
   const primaryLanguage = bootstrapContext.creationPrimaryLanguage || runtime.creationPrimaryLanguage || "en";
@@ -142,7 +142,7 @@ async function editVocabularyForWorkflowHttp(request, runtime, bootstrapContext)
 
   const csrfToken = extractInputValue(editHtml, "_csrf");
   if (!csrfToken) {
-    throw new Error(`No se pudo resolver el token CSRF del formulario de edicion para '${prefix}'.`);
+    throw new Error(`Could not resolve the edition form CSRF token for '${prefix}'.`);
   }
 
   const creatorIds = extractAllInputValues(editHtml, "creatorIds[]");
@@ -215,7 +215,7 @@ async function editVocabularyForWorkflowHttp(request, runtime, bootstrapContext)
 
   if (saveResponse.status() >= 400) {
     throw new Error(
-      `La edicion HTTP del vocabulario '${prefix}' devolvio HTTP ${saveResponse.status()}. ${
+      `HTTP vocabulary edition for '${prefix}' returned HTTP ${saveResponse.status()}. ${
         normalizeText(saveBody).slice(0, 240)
       }`,
     );
@@ -254,7 +254,7 @@ async function editVocabularyForWorkflowHttp(request, runtime, bootstrapContext)
 async function editVocabularyForWorkflow(page, runtime, bootstrapContext) {
   const prefix = normalizeText(bootstrapContext.prefix);
   if (!prefix) {
-    throw new Error("No hay un vocabulario bootstrap valido para editar.");
+    throw new Error("No valid bootstrap vocabulary is available for editing.");
   }
 
   await gotoEdition(page, runtime);
@@ -295,18 +295,18 @@ async function editVocabularyForWorkflow(page, runtime, bootstrapContext) {
   const formErrors = await formPage.readFormErrors();
 
   if (formErrors) {
-    throw new Error(`La edicion del vocabulario '${prefix}' mostro errores: ${formErrors}`);
+    throw new Error(`Vocabulary edition for '${prefix}' showed errors: ${formErrors}`);
   }
   if (saveOutcome.responseStatus && saveOutcome.responseStatus >= 400) {
     throw new Error(
-      `La edicion del vocabulario '${prefix}' devolvio HTTP ${saveOutcome.responseStatus}. ${
+      `Vocabulary edition for '${prefix}' returned HTTP ${saveOutcome.responseStatus}. ${
         normalizeText(saveOutcome.responseBody).slice(0, 240)
       }`,
     );
   }
   if (!saveOutcome.redirected && !/\/dataset\/vocabs\/[^/]+\/?$/.test(saveOutcome.finalUrl)) {
     throw new Error(
-      `La edicion del vocabulario '${prefix}' no redirigio a la vista publica esperada. URL final: ${saveOutcome.finalUrl}`,
+      `Vocabulary edition for '${prefix}' did not redirect to the expected public view. Final URL: ${saveOutcome.finalUrl}`,
     );
   }
 

@@ -18,7 +18,7 @@ function cachedRuntimeCapability(runtime, key) {
     source: "runtime",
     reason:
       (runtime.capabilityReasons || {})[key] ||
-      `La capacidad '${key}' no esta disponible en el entorno actual.`,
+      `Capability '${key}' is not available in the current environment.`,
   };
 }
 
@@ -156,7 +156,7 @@ async function probeVocabularyResourceApi(request, runtime, options = {}) {
   const resourceTypes = ["class", "property", "datatype"];
   let result = {
     available: false,
-    reason: `La API publica de recursos por vocabulario no devolvio recursos para '${targetPrefix}'.`,
+    reason: `The public vocabulary resource API did not return resources for '${targetPrefix}'.`,
   };
 
   for (const resourceType of resourceTypes) {
@@ -172,7 +172,7 @@ async function probeVocabularyResourceApi(request, runtime, options = {}) {
         reason: apiFailureReason(
           response,
           body,
-          `La API publica de recursos '${resourceType}' para '${targetPrefix}' no esta disponible.`,
+          `The public '${resourceType}' resource API for '${targetPrefix}' is not available.`,
         ),
       };
       continue;
@@ -231,7 +231,7 @@ async function probeVocabularyAutocomplete(request, runtime, options = {}) {
       reason: apiFailureReason(
         response,
         body,
-        "El autocomplete publico de vocabularios no esta disponible.",
+        "The public vocabulary autocomplete is not available.",
       ),
     };
   } else if (payload.error) {
@@ -253,7 +253,7 @@ async function probeVocabularyAutocomplete(request, runtime, options = {}) {
     if (!selected) {
       result = {
         available: false,
-        reason: `El autocomplete publico de vocabularios no devolvio resultados para '${query}'.`,
+        reason: `The public vocabulary autocomplete did not return results for '${query}'.`,
       };
     } else {
       result = {
@@ -303,7 +303,7 @@ async function probeTermSearchApi(request, runtime, options = {}) {
 async function _probeTermSearchApiOnce(request, runtime) {
   let result = {
     available: false,
-    reason: "La API publica de term search no devolvio resultados reutilizables.",
+    reason: "The public term search API did not return reusable results.",
   };
 
   for (const query of buildTermSearchQueries(runtime)) {
@@ -320,7 +320,7 @@ async function _probeTermSearchApiOnce(request, runtime) {
         reason: apiFailureReason(
           response,
           body,
-          "La API publica de term search no esta disponible.",
+          "The public term search API is not available.",
         ),
       };
       continue;
@@ -382,17 +382,17 @@ async function probeTermsPage(request, runtime) {
   if (response.status() !== 200) {
     result = {
       available: false,
-      reason: `La pagina publica de terminos devolvio HTTP ${response.status()}.`,
+      reason: `The public terms page returned HTTP ${response.status()}.`,
     };
   } else if (normalized.includes("oops! something went wrong") || normalized.includes("500 -")) {
     result = {
       available: false,
-      reason: "La pagina publica de terminos devuelve un error 500 en el entorno actual.",
+      reason: "The public terms page returns a 500 error in the current environment.",
     };
   } else if (!normalized.includes("searchinput")) {
     result = {
       available: false,
-      reason: "La pagina publica de terminos no muestra el buscador esperado.",
+      reason: "The public terms page does not show the expected search box.",
     };
   } else {
     result = {
@@ -430,7 +430,7 @@ async function probeVocabularyDetail(
     result = {
       available: false,
       prefix,
-      reason: `La vista detalle de '${prefix}' devolvio HTTP ${response.status()}.`,
+      reason: `The detail view for '${prefix}' returned HTTP ${response.status()}.`,
       versionHistory: false,
       statistics: false,
     };
@@ -438,7 +438,7 @@ async function probeVocabularyDetail(
     result = {
       available: false,
       prefix,
-      reason: `La vista detalle de '${prefix}' devuelve un error 500.`,
+      reason: `The detail view for '${prefix}' returns a 500 error.`,
       versionHistory: false,
       statistics: false,
     };
@@ -461,7 +461,7 @@ async function probeVocabularyDetail(
       prefix,
       reason: hasMetadata
         ? ""
-        : `La vista detalle de '${prefix}' no muestra la seccion Metadata esperada.`,
+        : `The detail view for '${prefix}' does not show the expected Metadata section.`,
       versionHistory: hasVersionHistory,
       statistics: hasStatistics,
     };

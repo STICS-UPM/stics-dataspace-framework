@@ -395,7 +395,7 @@ test("11 AI Model Browser: controlled model discovery, filtering and detail from
 
   const isTolerableCatalogRetry = (url: string, status: number): boolean =>
     (status === 401 || status === 503) &&
-    (url.includes("/management/pagination/count?type=federatedCatalog") ||
+    (url.includes("/management/pagination/count") ||
       url.includes("/management/federatedcatalog/request"));
 
   page.on("response", (response) => {

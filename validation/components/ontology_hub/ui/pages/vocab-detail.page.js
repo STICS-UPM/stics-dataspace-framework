@@ -43,7 +43,7 @@ class OntologyHubVocabDetailPage {
           );
 
           if (!hasBodyMarker) {
-            const detail = headingText || bodyText.slice(0, 320) || "No se pudo obtener diagnostico adicional.";
+            const detail = headingText || bodyText.slice(0, 320) || "No additional diagnostics could be collected.";
             throw new Error(`Vocabulary detail page is not ready for '${prefix}': ${detail}`);
           }
         }
@@ -53,7 +53,7 @@ class OntologyHubVocabDetailPage {
         .replace(/\s+/g, " ")
         .trim()
         .slice(0, 320);
-      const detail = headingText || bodySnippet || "No se pudo obtener diagnostico adicional.";
+      const detail = headingText || bodySnippet || "No additional diagnostics could be collected.";
       throw new Error(`Vocabulary detail page is not ready for '${prefix}': ${detail}`);
     }
 
