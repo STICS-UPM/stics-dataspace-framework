@@ -88,6 +88,7 @@ class ReportViewerTests(unittest.TestCase):
             ],
         )
         (experiment / "level6_console.log").write_text(
+            "\x1b[33;1mInteroperability Playwright suite: INESData integration\x1b[0m\n"
             "Suite: INESData integration\n"
             "\x1b[36m›\x1b[0m 01 login readiness\n"
             "\x1b[32m✓\x1b[0m 01 login readiness\n"
@@ -199,6 +200,10 @@ class ReportViewerTests(unittest.TestCase):
         self.assertIn("Newman", content)
         self.assertIn("Kafka transfer", content)
         self.assertIn("Level 6 console log", content)
+        self.assertIn(
+            "<span class='ansi-bold ansi-fg-yellow'>Interoperability Playwright suite: INESData integration</span>",
+            content,
+        )
         self.assertIn("<span class='ansi-bold ansi-fg-cyan'>Suite: INESData integration</span>", content)
         self.assertIn("✓</span> 01 login readiness", content)
         self.assertNotIn("›</span> 01 login readiness", content)

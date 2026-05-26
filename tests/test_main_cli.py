@@ -265,6 +265,41 @@ class KafkaTransferConsoleOutputTests(unittest.TestCase):
         self.assertIn("Level 4 - Deploy Connectors: Succeeded (2 items)", output)
         self.assertNotIn("{", output)
 
+    def test_action_result_prints_level6_completed_with_validation_failures(self):
+        payload = {
+            "status": "completed_with_validation_failures",
+            "adapter": "inesdata",
+            "topology": "local",
+            "levels": [
+                {
+                    "level": 6,
+                    "name": "Run Validation Tests",
+                    "status": "completed_with_validation_failures",
+                    "result": {
+                        "validation_status": "failed",
+                        "level6_validation_summary": {
+                            "status": "failed",
+                            "failures": [
+                                {
+                                    "suite": "AI Model Hub functional",
+                                    "test": "PT5-MH-14",
+                                    "reason": "UI asset list did not stabilize",
+                                }
+                            ],
+                        },
+                    },
+                }
+            ],
+        }
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            main._print_action_result(payload)
+
+        output = stdout.getvalue()
+        self.assertIn("Result: Completed with validation failures", output)
+        self.assertIn("Level 6 - Run Validation Tests: Completed with validation failures", output)
+
     def test_action_result_prints_nested_level_hosts_summary(self):
         payload = {
             "status": "completed",
@@ -5867,7 +5902,11 @@ class MainCliTests(unittest.TestCase):
             os.environ,
             {"PIONERA_ENABLE_DEPLOYER_PLAYWRIGHT": "true"},
             clear=False,
-        ):
+        ), mock.patch.object(
+            main,
+            "print_interoperability_suite_header",
+            wraps=main.print_interoperability_suite_header,
+        ) as suite_header:
             result = main.main(
                 ["fake", "validate"],
                 adapter_registry=self.registry,
@@ -5879,6 +5918,7 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["playwright"]["status"], "passed")
         readiness_probe.assert_called_once()
         playwright_runner.assert_called_once()
+        suite_header.assert_any_call("INESData integration", "Playwright")
 
     def test_validate_command_runs_component_validation_after_playwright_when_enabled(self):
         events = []
@@ -5937,6 +5977,53 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["component_results"][0]["component"], "ontology-hub")
         self.assertEqual(result["component_results"][0]["status"], "passed")
         self.assertEqual(result["component_validation_summary"]["passed"], 1)
+        playwright_runner.assert_called_once()
+        component_runner.assert_called_once()
+
+    def test_validate_command_marks_validation_failed_when_component_validation_fails(self):
+        def fake_playwright(*args, **kwargs):
+            return {"status": "passed", "summary": {"total_specs": 3}}
+
+        def fake_component_validation(
+            components,
+            *,
+            infer_component_urls,
+            run_component_validations_fn,
+            experiment_dir,
+        ):
+            self.assertEqual(components, ["ontology-hub"])
+            return [{"component": "ontology-hub", "status": "failed"}]
+
+        with mock.patch.object(
+            FakeDeployer,
+            "get_validation_profile",
+            return_value={
+                "adapter": "fake",
+                "newman_enabled": True,
+                "playwright_enabled": True,
+                "playwright_config": "validation/ui/playwright.inesdata.config.ts",
+                "component_validation_enabled": True,
+                "component_groups": ["ontology-hub"],
+            },
+        ), mock.patch.object(
+            main,
+            "run_playwright_validation",
+            side_effect=fake_playwright,
+        ) as playwright_runner, mock.patch.object(
+            main,
+            "run_level6_component_validations",
+            side_effect=fake_component_validation,
+        ) as component_runner:
+            result = main.main(
+                ["fake", "validate"],
+                adapter_registry=self.registry,
+                deployer_registry=self.deployer_registry,
+                validation_engine_cls=FakeValidationEngine,
+                experiment_storage=FakeStorage,
+            )
+
+        self.assertEqual(result["validation_status"], "failed")
+        self.assertEqual(result["level6_validation_summary"]["status"], "failed")
         playwright_runner.assert_called_once()
         component_runner.assert_called_once()
 
@@ -6578,3 +6665,48 @@ class MainCliTests(unittest.TestCase):
             )
 
         self.assertEqual(buffer.getvalue().count("OH-APP-11"), 1)
+
+    def test_offer_open_level6_dashboard_opens_report_when_confirmed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dashboard_path = os.path.join(tmp, "framework-report", "index.html")
+            os.makedirs(os.path.dirname(dashboard_path), exist_ok=True)
+            with open(dashboard_path, "w", encoding="utf-8") as handle:
+                handle.write("<html></html>")
+
+            with mock.patch.object(sys.stdin, "isatty", return_value=True), mock.patch.object(
+                main,
+                "_interactive_confirm",
+                return_value=True,
+            ) as confirm_mock, mock.patch.object(
+                main,
+                "launch_static_report_server",
+                return_value={"url": "http://127.0.0.1:34567", "ready": True},
+            ) as server_mock, mock.patch.object(
+                main,
+                "open_local_url",
+                return_value={"opened": True, "method": "test-browser"},
+            ) as open_mock:
+                main._offer_open_level6_dashboard({"path": dashboard_path})
+
+        confirm_mock.assert_called_once_with("Open Level 6 dashboard report now?", default=False)
+        server_mock.assert_called_once_with(tmp)
+        open_mock.assert_called_once_with("http://127.0.0.1:34567/framework-report/index.html")
+
+    def test_offer_open_level6_dashboard_skips_non_interactive_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dashboard_path = os.path.join(tmp, "framework-report", "index.html")
+            os.makedirs(os.path.dirname(dashboard_path), exist_ok=True)
+            with open(dashboard_path, "w", encoding="utf-8") as handle:
+                handle.write("<html></html>")
+
+            with mock.patch.object(sys.stdin, "isatty", return_value=False), mock.patch.object(
+                main,
+                "_interactive_confirm",
+            ) as confirm_mock, mock.patch.object(
+                main,
+                "launch_static_report_server",
+            ) as server_mock:
+                main._offer_open_level6_dashboard({"path": dashboard_path})
+
+        confirm_mock.assert_not_called()
+        server_mock.assert_not_called()

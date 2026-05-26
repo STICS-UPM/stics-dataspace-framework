@@ -1451,6 +1451,53 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
         self.assertIn("Kafka transfer path did not relay", results[0]["retry_reason"])
         sleep_mock.assert_called_once_with(5)
 
+    def test_run_all_retries_when_negotiation_stays_initial(self):
+        kafka_manager = _FakeKafkaManager()
+        suite = KafkaEdcValidationSuite(
+            load_connector_credentials=lambda connector: {
+                "connector_user": {"user": "user", "passwd": "pass"}
+            },
+            load_deployer_config=lambda: {"KC_URL": "http://keycloak.local"},
+            kafka_runtime_loader=lambda: {},
+            ds_domain_resolver=lambda: "example.local",
+            ds_name_loader=lambda: "dataspace",
+            kafka_manager=kafka_manager,
+            session=_FakeSession(),
+        )
+
+        run_pair_results = [
+            {
+                "provider": "conn-a",
+                "consumer": "conn-b",
+                "status": "failed",
+                "error": {
+                    "type": "RuntimeError",
+                    "message": (
+                        "Negotiation neg-1 did not produce contractAgreementId in time "
+                        "(last_state=INITIAL, detail=None)"
+                    ),
+                },
+                "steps": [
+                    {"name": "start_negotiation", "status": "passed"},
+                    {"name": "suite_error", "status": "failed"},
+                ],
+            },
+            {"provider": "conn-a", "consumer": "conn-b", "status": "passed", "steps": []},
+            {"provider": "conn-b", "consumer": "conn-a", "status": "passed", "steps": []},
+        ]
+
+        with patch.object(suite, "run_pair", side_effect=run_pair_results) as run_pair_mock:
+            with patch("framework.kafka_edc_validation.time.sleep", return_value=None) as sleep_mock:
+                results = suite.run_all(["conn-a", "conn-b"], experiment_dir=None)
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(run_pair_mock.call_count, 3)
+        self.assertEqual(kafka_manager.stop_calls, 0)
+        self.assertTrue(results[0]["retry_attempted"])
+        self.assertEqual(results[0]["attempt_count"], 2)
+        self.assertIn("did not produce contractAgreementId", results[0]["retry_reason"])
+        sleep_mock.assert_called_once_with(5)
+
     def test_run_all_retries_when_first_attempt_consumes_no_messages(self):
         kafka_manager = _FakeKafkaManager()
         suite = KafkaEdcValidationSuite(

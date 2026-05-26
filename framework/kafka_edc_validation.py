@@ -2448,6 +2448,7 @@ class KafkaEdcValidationSuite:
             "failed with HTTP 401",
             "Request could not be authenticated",
             "Unable to obtain credentials",
+            "did not produce contractAgreementId in time",
             "Kafka transfer path did not relay a probe message in time",
             "No Kafka messages were consumed through the EDC transfer",
             "Kafka transfer consumed only",

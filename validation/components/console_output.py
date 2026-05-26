@@ -284,7 +284,7 @@ def print_component_validation_summary(component_results: Iterable[Mapping[str, 
     overall_status = "failed" if failed else "skipped" if skipped else "passed"
     label_color = {"passed": "32", "failed": "31", "skipped": "33"}.get(overall_status, "36")
     failed_color = "31" if failed else "32"
-    skipped_color = "33" if skipped else "32"
+    skipped_color = "33"
     print(
         "\n"
         f"{_color('Components:', label_color)} "

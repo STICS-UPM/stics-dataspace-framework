@@ -124,7 +124,7 @@ class ComponentConsoleOutputTests(unittest.TestCase):
         self.assertIn("\033[32mComponents:\033[0m", printed)
         self.assertIn("\033[32m1/1 passed\033[0m", printed)
         self.assertIn("\033[32m0 failed\033[0m", printed)
-        self.assertIn("\033[32m0 skipped\033[0m", printed)
+        self.assertIn("\033[33m0 skipped\033[0m", printed)
 
     def test_component_validation_summary_title_is_yellow_when_color_is_forced(self):
         component_results = [

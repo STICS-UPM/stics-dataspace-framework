@@ -3397,10 +3397,20 @@ def _dedupe_level6_failures(failures):
     return unique
 
 
-def _print_level6_validation_summary(
+def _playwright_interoperability_suite_name(validation_profile):
+    adapter_name = str(getattr(validation_profile, "adapter", "") or "").strip()
+    adapter_key = adapter_name.lower()
+    if adapter_key == "inesdata":
+        return "INESData integration"
+    if adapter_key == "edc":
+        return "EDC Playwright"
+    if adapter_name:
+        return f"{adapter_name} Playwright"
+    return "Playwright validation"
+
+
+def _collect_level6_validation_failures(
     *,
-    experiment_dir,
-    framework_report=None,
     validation_error=None,
     playwright_result=None,
     playwright_failure=None,
@@ -3428,6 +3438,26 @@ def _print_level6_validation_summary(
                 "reason": f"Playwright validation failed with status '{playwright_failure}'",
             }
         )
+    return failures
+
+
+def _print_level6_validation_summary(
+    *,
+    experiment_dir,
+    framework_report=None,
+    validation_error=None,
+    playwright_result=None,
+    playwright_failure=None,
+    component_results=None,
+    kafka_edc_results=None,
+):
+    failures = _collect_level6_validation_failures(
+        validation_error=validation_error,
+        playwright_result=playwright_result,
+        playwright_failure=playwright_failure,
+        component_results=component_results,
+        kafka_edc_results=kafka_edc_results,
+    )
 
     status = "failed" if failures else "passed"
     print(f"\n{_console_color('Level 6 validation summary', '36;1')}\n")
@@ -3442,6 +3472,10 @@ def _print_level6_validation_summary(
             print(f"    {_console_status_label('failed')} [{item['suite']}] {item['test']} - {item['reason']}")
     else:
         print(f"  Failed tests: {_console_status_label('passed')} none")
+    return {
+        "status": status,
+        "failures": failures,
+    }
 
 
 def run_interoperability_newman_tests(
@@ -6667,7 +6701,7 @@ def run_validate(
                 validation_profile=validation_profile,
             )
             framework_report = _generate_framework_dashboard(experiment_dir)
-            _print_level6_validation_summary(
+            level6_validation_summary = _print_level6_validation_summary(
                 experiment_dir=experiment_dir,
                 framework_report=framework_report,
                 validation_error=validation_error,
@@ -6676,6 +6710,7 @@ def run_validate(
                 component_results=component_results,
                 kafka_edc_results=kafka_edc_results,
             )
+            _offer_open_level6_dashboard(framework_report)
             raise validation_error
 
         kafka_edc_results = run_level6_kafka_edc_after_newman(
@@ -6757,6 +6792,10 @@ def run_validate(
                     )
                     if readiness.get("status") != "passed":
                         raise RuntimeError(_inesdata_portal_readiness_failure_message(readiness))
+                print_interoperability_suite_header(
+                    _playwright_interoperability_suite_name(validation_profile),
+                    "Playwright",
+                )
                 playwright_result = run_playwright_validation(
                     profile=validation_profile,
                     context=deployer_context,
@@ -6838,7 +6877,7 @@ def run_validate(
                         validation_profile=validation_profile,
                     )
                     framework_report = _generate_framework_dashboard(experiment_dir)
-                    _print_level6_validation_summary(
+                    level6_validation_summary = _print_level6_validation_summary(
                         experiment_dir=experiment_dir,
                         framework_report=framework_report,
                         validation_error=validation_error,
@@ -6847,6 +6886,7 @@ def run_validate(
                         component_results=component_results,
                         kafka_edc_results=kafka_edc_results,
                     )
+                    _offer_open_level6_dashboard(framework_report)
                     raise RuntimeError(
                         f"Playwright validation failed with status '{playwright_failure}'"
                     )
@@ -6860,7 +6900,7 @@ def run_validate(
             validation_profile=validation_profile,
         )
         framework_report = _generate_framework_dashboard(experiment_dir)
-        _print_level6_validation_summary(
+        level6_validation_summary = _print_level6_validation_summary(
             experiment_dir=experiment_dir,
             framework_report=framework_report,
             validation_error=validation_error,
@@ -6869,9 +6909,12 @@ def run_validate(
             component_results=component_results,
             kafka_edc_results=kafka_edc_results,
         )
+        _offer_open_level6_dashboard(framework_report)
 
         return {
             "experiment_dir": experiment_dir,
+            "validation_status": level6_validation_summary.get("status"),
+            "level6_validation_summary": level6_validation_summary,
             "validation": validation_result,
             "newman_request_metrics": newman_request_metrics,
             "kafka_edc_results": kafka_edc_results,
@@ -7444,7 +7487,15 @@ def run_level(
     payload = {
         "level": level_id,
         "name": level_name,
-        "status": "completed",
+        "status": (
+            "completed_with_validation_failures"
+            if (
+                level_id == 6
+                and isinstance(result, dict)
+                and str(result.get("validation_status") or "").strip().lower() == "failed"
+            )
+            else "completed"
+        ),
         "result": result,
     }
     if level_urls:
@@ -7500,8 +7551,18 @@ def run_levels(
             )
         )
 
+    status = (
+        "completed_with_validation_failures"
+        if any(
+            isinstance(item, dict)
+            and str(item.get("status") or "").strip().lower() == "completed_with_validation_failures"
+            for item in completed
+        )
+        else "completed"
+    )
+
     return {
-        "status": "completed",
+        "status": status,
         "adapter": adapter_name,
         "topology": topology,
         "levels": completed,
@@ -8390,6 +8451,8 @@ def _interactive_offer_hosts_plan_apply(
 def _print_action_result(result):
     def _console_result_label(status):
         normalized = str(status or "").strip().lower()
+        if normalized in {"completed_with_validation_failures", "completed-with-validation-failures"}:
+            return "Completed with validation failures"
         if (
             normalized in {
                 "completed",
@@ -8550,9 +8613,13 @@ def _print_action_result(result):
         elif isinstance(payload.get("result"), list):
             lines.append(f"Items: {len(payload['result'])}")
 
-        validation = payload.get("validation")
-        if isinstance(validation, dict) and validation:
-            lines.append("Validation: Succeeded")
+        validation_status = str(payload.get("validation_status") or "").strip().lower()
+        if validation_status:
+            lines.append(f"Validation: {_console_result_label(validation_status)}")
+        else:
+            validation = payload.get("validation")
+            if isinstance(validation, dict) and validation:
+                lines.append("Validation: Succeeded")
 
         playwright = payload.get("playwright")
         if isinstance(playwright, dict) and playwright.get("status") in {"passed", "failed", "skipped"}:
@@ -8999,6 +9066,49 @@ def _generate_framework_dashboard(experiment_dir):
         "status": "generated",
         "path": str(dashboard_path),
     }
+
+
+def _offer_open_level6_dashboard(framework_report):
+    if not _env_flag("PIONERA_LEVEL6_PROMPT_OPEN_REPORT", True):
+        return
+    if not getattr(sys.stdin, "isatty", lambda: False)():
+        return
+    if not isinstance(framework_report, dict):
+        return
+
+    dashboard_path = framework_report.get("path")
+    if not dashboard_path:
+        return
+    dashboard_path = os.path.abspath(str(dashboard_path))
+    if not os.path.exists(dashboard_path):
+        return
+    framework_report_dir = os.path.dirname(dashboard_path)
+    experiment_dir = os.path.dirname(framework_report_dir)
+    if not os.path.isdir(experiment_dir):
+        return
+    if not _interactive_confirm("Open Level 6 dashboard report now?", default=False):
+        return
+
+    try:
+        server = launch_static_report_server(experiment_dir)
+    except Exception as exc:
+        print(f"Could not open Level 6 dashboard report: {exc}")
+        return
+
+    url = f"{server['url']}/framework-report/index.html"
+    print()
+    print("Level 6 dashboard available at:")
+    print(url)
+    print(f"Dashboard file: {dashboard_path}")
+    print("The local server is bound to 127.0.0.1 and stays alive while this framework process is running.")
+    if not server.get("ready"):
+        print("The dashboard server is still starting. If the browser does not open, use the URL above.")
+    if server.get("ready"):
+        open_result = open_local_url(url)
+        if open_result.get("opened"):
+            print(f"Opened in the default browser through {open_result.get('method')}.")
+        else:
+            print(f"Could not open the browser automatically: {open_result.get('reason')}")
 
 
 def _open_experiment_dashboard_interactive(experiment):
