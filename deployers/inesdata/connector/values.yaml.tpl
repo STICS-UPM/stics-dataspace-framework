@@ -33,6 +33,24 @@ connectorInterface:
   image:
     name: ghcr.io/proyectopionera/inesdata-connector-interface
     tag: 20260309-2e7b345
+  branding:
+    name: {{ (keys.inesdata_brand_name | default('PIONERA', true)) | tojson }}
+    theme: {{ (keys.inesdata_brand_theme | default('theme-1', true)) | tojson }}
+    primaryColor: {{ (keys.inesdata_brand_primary_color | default('', true)) | tojson }}
+    secondaryColor: {{ (keys.inesdata_brand_secondary_color | default('', true)) | tojson }}
+    showMenuText: {{ (keys.inesdata_brand_show_menu_text | default('true', true)) | tojson }}
+    assetBaseUrl: {{ (keys.inesdata_brand_asset_base_url | default('/inesdata-connector-interface/assets/branding', true)) | tojson }}
+    logoFiles: {{ (keys.inesdata_brand_logo_files | default('', true)) | tojson }}
+    logoUrls: {{ (keys.inesdata_brand_logo_urls | default('', true)) | tojson }}
+    footerLogoFiles: {{ (keys.inesdata_brand_footer_logo_files | default('', true)) | tojson }}
+    footerLogoUrls: {{ (keys.inesdata_brand_footer_logo_urls | default('', true)) | tojson }}
+    poweredByText: {{ (keys.inesdata_brand_powered_by_text | default('Powered by:', true)) | tojson }}
+    poweredByLogoFiles: {{ (keys.inesdata_brand_powered_by_logo_files | default('', true)) | tojson }}
+    poweredByLogoUrls: {{ (keys.inesdata_brand_powered_by_logo_urls | default('', true)) | tojson }}
+    footerText: {{ (keys.inesdata_brand_footer_text | default('', true)) | tojson }}
+    localStoreLabel: {{ (keys.inesdata_local_store_label | default('InesDataStore', true)) | tojson }}
+    assetsConfigMapName: {{ (keys.inesdata_brand_assets_configmap_name | default('', true)) | tojson }}
+    assets: {{ (keys.inesdata_brand_assets | default([], true)) | tojson }}
   ontologyHub:
     url: {{ 'https' if keys.environment == 'PRO' else 'http' }}://ontology-hub-{{ keys.dataspace_name }}.{% if keys.environment == 'PRO' %}ds.dataspaceunit-project.eu{% else %}{{ keys.ds_domain_base | default('pionera.oeg.fi.upm.es') }}{% endif %}
   modelObserver:

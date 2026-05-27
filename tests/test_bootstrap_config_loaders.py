@@ -76,10 +76,16 @@ class BootstrapConfigLoaderTests(unittest.TestCase):
             root = Path(tmpdir)
             adapter_dir = root / "deployers" / "inesdata"
             infrastructure_dir = root / "deployers" / "infrastructure"
+            identity_dir = root / "identity"
             (adapter_dir / "topologies").mkdir(parents=True, exist_ok=True)
             (infrastructure_dir / "topologies").mkdir(parents=True, exist_ok=True)
+            identity_dir.mkdir(parents=True, exist_ok=True)
             (infrastructure_dir / "deployer.config").write_text(
                 "KC_URL=http://shared-keycloak\nVT_TOKEN=shared-token\n",
+                encoding="utf-8",
+            )
+            (identity_dir / "branding.config.example").write_text(
+                "INESDATA_BRAND_NAME=PIONERA\nINESDATA_LOCAL_STORE_LABEL=LocalStore\n",
                 encoding="utf-8",
             )
             (infrastructure_dir / "topologies" / "vm-single.config").write_text(
@@ -114,6 +120,48 @@ print(json.dumps(bootstrap.load_effective_deployer_config(), sort_keys=True))
         self.assertEqual(payload["VM_EXTERNAL_IP"], "192.0.2.10")
         self.assertEqual(payload["DS_1_NAME"], "demo")
         self.assertEqual(payload["VT_TOKEN"], "shared-token")
+        self.assertEqual(payload["INESDATA_BRAND_NAME"], "PIONERA")
+        self.assertEqual(payload["INESDATA_LOCAL_STORE_LABEL"], "LocalStore")
+
+    def test_inesdata_bootstrap_local_identity_branding_config_overrides_example(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            adapter_dir = root / "deployers" / "inesdata"
+            infrastructure_dir = root / "deployers" / "infrastructure"
+            identity_dir = root / "identity"
+            adapter_dir.mkdir(parents=True, exist_ok=True)
+            infrastructure_dir.mkdir(parents=True, exist_ok=True)
+            identity_dir.mkdir(parents=True, exist_ok=True)
+            (infrastructure_dir / "deployer.config").write_text("", encoding="utf-8")
+            (adapter_dir / "deployer.config").write_text("DS_1_NAME=demo\n", encoding="utf-8")
+            (identity_dir / "branding.config.example").write_text(
+                "INESDATA_BRAND_NAME=PIONERA\nINESDATA_LOCAL_STORE_LABEL=LocalStore\n",
+                encoding="utf-8",
+            )
+            (identity_dir / "branding.config").write_text(
+                "INESDATA_BRAND_NAME=CustomBrand\n",
+                encoding="utf-8",
+            )
+            code = f"""
+import json
+import sys
+sys.path.insert(0, {repr(str(root.parent))})
+sys.path.insert(0, {repr('/home/avargas/TEST_DSQA_AI_MODEL_HUB/Validation-Environment')})
+import deployers.inesdata.bootstrap as bootstrap
+bootstrap._bootstrap_root_dir = lambda: {repr(str(adapter_dir))}
+print(json.dumps(bootstrap.load_effective_deployer_config(), sort_keys=True))
+"""
+            completed = subprocess.run(
+                ["python3", "-c", code],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout.strip())
+        self.assertEqual(payload["INESDATA_BRAND_NAME"], "CustomBrand")
+        self.assertEqual(payload["INESDATA_LOCAL_STORE_LABEL"], "LocalStore")
 
     def test_inesdata_bootstrap_script_can_run_from_its_own_directory(self):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))

@@ -1,9 +1,12 @@
 import base64
+import html
+import importlib.util
 import json
 import os
 import re
 import shlex
 import socket
+import tempfile
 import time
 from types import SimpleNamespace
 from urllib.parse import urlparse
@@ -43,6 +46,7 @@ class INESDataConnectorsAdapter:
         self.config_adapter = config_adapter or INESDataConfigAdapter(self.config)
         self._management_token_cache = {}
         self._vault_management_token_verified = False
+        self._bootstrap_runtime_module = None
 
     def _auto_mode(self):
         return self.auto_mode_getter() if callable(self.auto_mode_getter) else bool(self.auto_mode_getter)
@@ -1534,6 +1538,283 @@ class INESDataConnectorsAdapter:
             print(f"Ontology validator URL patch skipped: {exc}")
             return False
 
+    def _connector_interface_source_path(self, root_dir, *parts):
+        return os.path.join(
+            root_dir,
+            "adapters",
+            "inesdata",
+            "sources",
+            "inesdata-connector-interface",
+            "src",
+            *parts,
+        )
+
+    @staticmethod
+    def _replace_or_append_css_block(source, marker, css_block):
+        begin = f"/* {marker}: begin */"
+        end = f"/* {marker}: end */"
+        block = f"{begin}\n{css_block.rstrip()}\n{end}\n"
+        pattern = re.compile(
+            rf"\n?/\* {re.escape(marker)}: begin \*/.*?/\* {re.escape(marker)}: end \*/\n?",
+            re.DOTALL,
+        )
+        if pattern.search(source):
+            return pattern.sub(f"\n{block}", source)
+        suffix = "" if source.endswith("\n") else "\n"
+        return f"{source}{suffix}\n{block}"
+
+    @staticmethod
+    def _replace_first_literal(source, old, new):
+        if old not in source:
+            return source
+        return source.replace(old, new, 1)
+
+    def _patch_connector_interface_branding_file(self, path, originals, transform):
+        if not os.path.isfile(path):
+            print(f"Connector interface branding source patch skipped; file not found: {path}")
+            return False
+        with open(path, "r", encoding="utf-8") as handle:
+            original = handle.read()
+        updated = transform(original)
+        if updated == original:
+            return False
+        originals[path] = original
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(updated)
+        return True
+
+    @staticmethod
+    def _branding_asset_filename(raw_name):
+        normalized = str(raw_name or "").strip().replace("\\", "/")
+        if not normalized or "/" in normalized:
+            return ""
+        return os.path.basename(normalized)
+
+    def _patch_connector_interface_branding_source_for_level4_build(self, root_dir):
+        source_root = self._connector_interface_source_path(root_dir)
+        if not os.path.isdir(source_root):
+            print(f"Connector interface branding source patch skipped; source root not found: {source_root}")
+            return {}
+
+        try:
+            bootstrap = self._bootstrap_runtime()
+            config = bootstrap.load_effective_deployer_config()
+            branding_keys = bootstrap._inesdata_branding_template_keys(config, "connector")
+        except Exception as exc:
+            print(f"Connector interface branding source patch skipped: {exc}")
+            return {}
+
+        brand_name = str(config.get("INESDATA_BRAND_NAME") or "PIONERA").strip() or "PIONERA"
+        primary_color = str(config.get("INESDATA_BRAND_PRIMARY_COLOR") or "#025B77").strip() or "#025B77"
+        secondary_color = str(config.get("INESDATA_BRAND_SECONDARY_COLOR") or "#2FA0B5").strip() or "#2FA0B5"
+        show_menu_text = self._is_truthy(config.get("INESDATA_BRAND_SHOW_MENU_TEXT", "true"))
+        local_store_label = str(config.get("INESDATA_LOCAL_STORE_LABEL") or "LocalStore").strip() or "LocalStore"
+        footer_text = str(config.get("INESDATA_BRAND_FOOTER_TEXT") or "").strip()
+
+        logo_files = [
+            self._branding_asset_filename(item)
+            for item in str(branding_keys.get("inesdata_brand_logo_files") or "").split(",")
+        ]
+        logo_files = [item for item in logo_files if item]
+        footer_logo_files = [
+            self._branding_asset_filename(item)
+            for item in str(branding_keys.get("inesdata_brand_footer_logo_files") or "").split(",")
+        ]
+        footer_logo_files = [item for item in footer_logo_files if item]
+        if not footer_logo_files:
+            footer_logo_files = logo_files
+
+        escaped_brand = html.escape(brand_name, quote=True)
+        escaped_local_store = html.escape(local_store_label, quote=True)
+        if footer_text:
+            escaped_footer_text = html.escape(footer_text, quote=False)
+        else:
+            escaped_footer_text = f"{escaped_brand} (c) {{{{ year }}}}"
+        primary_css = html.escape(primary_color, quote=True)
+        secondary_css = html.escape(secondary_color, quote=True)
+        brand_logo = logo_files[0] if logo_files else ""
+        brand_logo_html = ""
+        if brand_logo:
+            brand_logo_html = (
+                f'<img class="brand-logo" src="assets/branding/{html.escape(brand_logo, quote=True)}" '
+                f'alt="{escaped_brand} logo">'
+            )
+        if not brand_logo:
+            show_menu_text = True
+        brand_text_html = f'<span class="brand-name">{escaped_brand}</span>' if show_menu_text else ""
+
+        footer_logos_html = "\n".join(
+            f'      <img src="assets/branding/{html.escape(filename, quote=True)}" '
+            f'alt="{escaped_brand} branding">'
+            for filename in footer_logo_files
+        )
+        if not footer_logos_html:
+            footer_logos_html = f"      <span>{escaped_brand}</span>"
+
+        originals = {}
+        patched = []
+
+        nav_html = self._connector_interface_source_path(
+            root_dir,
+            "app",
+            "shared",
+            "components",
+            "navigation",
+            "navigation.component.html",
+        )
+        nav_toolbar = (
+            '      <mat-toolbar class="brand-toolbar">'
+            f"{brand_logo_html}{brand_text_html}"
+            "</mat-toolbar>"
+        )
+        if self._patch_connector_interface_branding_file(
+            nav_html,
+            originals,
+            lambda source: self._replace_first_literal(source, "      <mat-toolbar>INESData</mat-toolbar>", nav_toolbar),
+        ):
+            patched.append(nav_html)
+
+        nav_scss = self._connector_interface_source_path(
+            root_dir,
+            "app",
+            "shared",
+            "components",
+            "navigation",
+            "navigation.component.scss",
+        )
+        nav_css = """
+.sidenav .mat-toolbar.brand-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-logo {
+  max-width: 178px;
+  max-height: 44px;
+  object-fit: contain;
+}
+
+.brand-name {
+  white-space: nowrap;
+}
+"""
+        if self._patch_connector_interface_branding_file(
+            nav_scss,
+            originals,
+            lambda source: self._replace_or_append_css_block(source, "pionera-branding", nav_css),
+        ):
+            patched.append(nav_scss)
+
+        footer_html = self._connector_interface_source_path(
+            root_dir,
+            "app",
+            "shared",
+            "components",
+            "footer",
+            "footer.component.html",
+        )
+        footer_source = f"""<div class="footer-container">
+  <footer class="footer">
+    <div class="footer__logos">
+{footer_logos_html}
+    </div>
+  </footer>
+
+  <div class="footer__company">
+    <p>{escaped_footer_text}</p>
+  </div>
+</div>
+"""
+        if self._patch_connector_interface_branding_file(footer_html, originals, lambda _source: footer_source):
+            patched.append(footer_html)
+
+        app_module = self._connector_interface_source_path(root_dir, "app", "app.module.ts")
+        if self._patch_connector_interface_branding_file(
+            app_module,
+            originals,
+            lambda source: source.replace(
+                "{id: DATA_ADDRESS_TYPES.inesDataStore, name: DATA_ADDRESS_TYPES.inesDataStore}",
+                f"{{id: DATA_ADDRESS_TYPES.inesDataStore, name: '{escaped_local_store}'}}",
+            ),
+        ):
+            patched.append(app_module)
+
+        ai_model_browser_service = self._connector_interface_source_path(
+            root_dir,
+            "app",
+            "shared",
+            "services",
+            "ai-model-browser.service.ts",
+        )
+        if self._patch_connector_interface_branding_file(
+            ai_model_browser_service,
+            originals,
+            lambda source: source.replace("return 'InesDataStore';", f"return '{escaped_local_store}';"),
+        ):
+            patched.append(ai_model_browser_service)
+
+        styles_scss = self._connector_interface_source_path(root_dir, "styles.scss")
+
+        def patch_styles(source):
+            replacements = {
+                r"--brand-500:\s*#[0-9A-Fa-f]{3,6};": f"--brand-500: {primary_css};",
+                r"--secondary-500:\s*#[0-9A-Fa-f]{3,6};": f"--secondary-500: {secondary_css};",
+                r"--secondary-600:\s*#[0-9A-Fa-f]{3,6};": f"--secondary-600: {primary_css};",
+                r"--mdc-list-list-item-label-text-color:\s*#[0-9A-Fa-f]{3,6};": f"--mdc-list-list-item-label-text-color: {primary_css};",
+                r"--mdc-list-list-item-hover-label-text-color:\s*#[0-9A-Fa-f]{3,6};": f"--mdc-list-list-item-hover-label-text-color: {primary_css};",
+                r"--mdc-list-list-item-focus-label-text-color:\s*#[0-9A-Fa-f]{3,6};": f"--mdc-list-list-item-focus-label-text-color: {primary_css};",
+                r"--mat-mdc-button-persistent-ripple-color:\s*#[0-9A-Fa-f]{3,6};": f"--mat-mdc-button-persistent-ripple-color: {secondary_css};",
+            }
+            updated = source
+            for pattern, replacement in replacements.items():
+                updated = re.sub(pattern, replacement, updated)
+            return updated
+
+        if self._patch_connector_interface_branding_file(styles_scss, originals, patch_styles):
+            patched.append(styles_scss)
+
+        theme_scss = self._connector_interface_source_path(root_dir, "theme.scss")
+
+        def patch_theme(source):
+            replacements = {
+                r"500:\s*#[0-9A-Fa-f]{3,6},": f"500: {primary_css},",
+                r"600:\s*#[0-9A-Fa-f]{3,6},": f"600: {primary_css},",
+                r"\$primary:\s*#[0-9A-Fa-f]{3,6};": f"$primary: {primary_css};",
+            }
+            updated = source
+            for pattern, replacement in replacements.items():
+                updated = re.sub(pattern, replacement, updated)
+            return updated
+
+        if self._patch_connector_interface_branding_file(theme_scss, originals, patch_theme):
+            patched.append(theme_scss)
+
+        index_html = self._connector_interface_source_path(root_dir, "index.html")
+        if self._patch_connector_interface_branding_file(
+            index_html,
+            originals,
+            lambda source: self._replace_first_literal(source, "<title>INESData</title>", f"<title>{escaped_brand}</title>"),
+        ):
+            patched.append(index_html)
+
+        if patched:
+            print("Connector interface branding source patch applied for local image build.")
+        else:
+            print("Connector interface branding source patch did not change any files.")
+        return originals
+
+    def _restore_connector_interface_branding_source(self, originals):
+        restored = 0
+        for path, original_source in (originals or {}).items():
+            if not os.path.isfile(path):
+                continue
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(original_source)
+            restored += 1
+        if restored:
+            print("Connector interface branding source restored after local image build.")
+
     def _maybe_prepare_level4_local_connector_images(self, namespace):
         mode = self._level4_local_images_mode()
         policy = self._resolve_level4_local_image_policy(
@@ -1581,6 +1862,7 @@ class INESDataConnectorsAdapter:
         if validator_source_path is not None:
             original_validator_source = validator_source_path.read_text(encoding="utf-8")
             self._patch_ontology_validator_source_for_level4_build(root_dir)
+        original_connector_interface_sources = self._patch_connector_interface_branding_source_for_level4_build(root_dir)
 
         platform_dir = self.config.repo_dir()
         cluster_runtime = self._cluster_runtime()
@@ -1616,6 +1898,7 @@ class INESDataConnectorsAdapter:
                 if current_source != original_validator_source:
                     validator_source_path.write_text(original_validator_source, encoding="utf-8", newline="\n")
                     print("Ontology validator source restored after local image build.")
+            self._restore_connector_interface_branding_source(original_connector_interface_sources)
         if result is None:
             print("Error preparing local INESData connector images for Level 4.")
             return False
@@ -2606,6 +2889,75 @@ class INESDataConnectorsAdapter:
                 print(f"Warning: could not remove stale values file {values_file}: {exc}")
         return values_file
 
+    def _bootstrap_runtime(self):
+        if self._bootstrap_runtime_module is not None:
+            return self._bootstrap_runtime_module
+
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        bootstrap_path = os.path.join(root_dir, "deployers", "inesdata", "bootstrap.py")
+        spec = importlib.util.spec_from_file_location("_pionera_inesdata_bootstrap_runtime", bootstrap_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Could not load INESData bootstrap module from {bootstrap_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self._bootstrap_runtime_module = module
+        return module
+
+    def _apply_connector_interface_branding_assets(self, connector_name, namespace):
+        try:
+            bootstrap = self._bootstrap_runtime()
+            config = bootstrap.load_effective_deployer_config()
+            branding_keys = bootstrap._inesdata_branding_template_keys(config, "connector")
+            selected_files = list(branding_keys.get("inesdata_brand_asset_files") or [])
+            configmap_name = f"{connector_name}-interface-branding-assets"
+            if not selected_files:
+                self.run(
+                    f"kubectl delete configmap {shlex.quote(configmap_name)} "
+                    f"-n {shlex.quote(namespace)} --ignore-not-found",
+                    check=False,
+                )
+                return True
+
+            assets = bootstrap._load_branding_assets(config, selected_files)
+            manifest = {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {
+                    "name": configmap_name,
+                    "namespace": namespace,
+                    "labels": {"service": f"{connector_name}-interface"},
+                },
+                "binaryData": {
+                    str(asset["name"]): str(asset["contentBase64"])
+                    for asset in assets
+                },
+            }
+
+            tmp_path = ""
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                delete=False,
+                prefix=f"{connector_name}-branding-",
+                suffix=".yaml",
+            ) as handle:
+                yaml.safe_dump(manifest, handle, sort_keys=False)
+                tmp_path = handle.name
+
+            if not self.run_silent(f"kubectl get namespace {shlex.quote(namespace)}"):
+                self.run(f"kubectl create namespace {shlex.quote(namespace)}", check=False)
+            print(f"Applying connector interface branding assets: {configmap_name}")
+            return self.run(f"kubectl apply -f {shlex.quote(tmp_path)}", check=False) is not None
+        except Exception as exc:
+            print(f"Error applying connector interface branding assets: {exc}")
+            return False
+        finally:
+            if "tmp_path" in locals() and tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
     def _wait_for_connector_pods_deleted(self, connector_name, namespace, timeout=60, poll_interval=3):
         """Wait briefly for a previous connector release to stop holding DB sessions."""
         start = time.time()
@@ -2810,6 +3162,9 @@ class INESDataConnectorsAdapter:
         if explicit_image_override:
             values_files.append(explicit_image_override)
             print(f"Using explicit INESData connector image overrides: {explicit_image_override}")
+
+        if not self._apply_connector_interface_branding_assets(connector_name, target_namespace):
+            return False
 
         if not self.infrastructure.deploy_helm_release(
             release_name,

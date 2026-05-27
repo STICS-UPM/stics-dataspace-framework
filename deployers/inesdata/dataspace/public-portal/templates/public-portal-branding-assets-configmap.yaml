@@ -1,0 +1,14 @@
+{{- $branding := .Values.frontend.branding | default dict }}
+{{- $brandingAssets := (index $branding "assets") | default list }}
+{{- if $brandingAssets }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.dataspace.name }}-public-portal-branding-assets
+  labels:
+    service: {{ .Values.dataspace.name }}-public-portal-frontend
+binaryData:
+{{ range $asset := $brandingAssets }}
+  {{ index $asset "name" }}: {{ index $asset "contentBase64" | quote }}
+{{- end }}
+{{- end }}

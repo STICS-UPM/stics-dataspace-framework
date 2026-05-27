@@ -1,0 +1,14 @@
+{{- $branding := .Values.connectorInterface.branding | default dict }}
+{{- $brandingAssets := (index $branding "assets") | default list }}
+{{- if $brandingAssets }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.connector.name }}-interface-branding-assets
+  labels:
+    service: {{ .Values.connector.name }}-interface
+binaryData:
+{{ range $asset := $brandingAssets }}
+  {{ index $asset "name" }}: {{ index $asset "contentBase64" | quote }}
+{{- end }}
+{{- end }}

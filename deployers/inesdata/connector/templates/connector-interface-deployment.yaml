@@ -1,5 +1,8 @@
 {{- $layout := .Values.connector.layout | default dict }}
 {{- $modelObserver := .Values.connectorInterface.modelObserver | default dict }}
+{{- $branding := .Values.connectorInterface.branding | default dict }}
+{{- $brandingAssets := (index $branding "assets") | default list }}
+{{- $brandingAssetsConfigMapName := (index $branding "assetsConfigMapName") | default "" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -71,7 +74,35 @@ spec:
       containers:
         - env:
             - name: APP_THEME
-              value: theme-1
+              value: {{ (index $branding "theme" | default "theme-1") | quote }}
+            - name: APP_BRAND_NAME
+              value: {{ (index $branding "name" | default "PIONERA") | quote }}
+            - name: APP_PRIMARY_COLOR
+              value: {{ (index $branding "primaryColor" | default "") | quote }}
+            - name: APP_SECONDARY_COLOR
+              value: {{ (index $branding "secondaryColor" | default "") | quote }}
+            - name: APP_SHOW_MENU_TEXT
+              value: {{ (index $branding "showMenuText" | default "true") | quote }}
+            - name: APP_BRANDING_ASSET_BASE_URL
+              value: {{ (index $branding "assetBaseUrl" | default "/inesdata-connector-interface/assets/branding") | quote }}
+            - name: APP_LOGO_FILES
+              value: {{ (index $branding "logoFiles" | default "") | quote }}
+            - name: APP_LOGO_URLS
+              value: {{ (index $branding "logoUrls" | default "") | quote }}
+            - name: APP_FOOTER_LOGO_FILES
+              value: {{ (index $branding "footerLogoFiles" | default "") | quote }}
+            - name: APP_FOOTER_LOGO_URLS
+              value: {{ (index $branding "footerLogoUrls" | default "") | quote }}
+            - name: APP_POWERED_BY_TEXT
+              value: {{ (index $branding "poweredByText" | default "Powered by:") | quote }}
+            - name: APP_POWERED_BY_LOGO_FILES
+              value: {{ (index $branding "poweredByLogoFiles" | default "") | quote }}
+            - name: APP_POWERED_BY_LOGO_URLS
+              value: {{ (index $branding "poweredByLogoUrls" | default "") | quote }}
+            - name: APP_FOOTER_TEXT
+              value: {{ (index $branding "footerText" | default "") | quote }}
+            - name: APP_LOCAL_STORE_LABEL
+              value: {{ (index $branding "localStoreLabel" | default "InesDataStore") | quote }}
             - name: CATALOG_URL
               value: {{ .Values.connector.ingress.protocol }}://{{ .Values.connector.ingress.hostname }}/management/federatedcatalog
             - name: MANAGEMENT_API_URL
@@ -105,4 +136,16 @@ spec:
           ports:
             - containerPort: 8080
               protocol: TCP
+          {{ if or $brandingAssets $brandingAssetsConfigMapName }}
+          volumeMounts:
+            - name: branding-assets
+              mountPath: /usr/share/nginx/html/inesdata-connector-interface/assets/branding
+              readOnly: true
+          {{ end }}
+      {{ if or $brandingAssets $brandingAssetsConfigMapName }}
+      volumes:
+        - name: branding-assets
+          configMap:
+            name: {{ $brandingAssetsConfigMapName | default (printf "%s-interface-branding-assets" .Values.connector.name) }}
+      {{ end }}
       restartPolicy: Always

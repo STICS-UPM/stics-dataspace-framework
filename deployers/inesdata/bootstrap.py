@@ -18,6 +18,7 @@
 
 # WARNING: Script in draft state
 
+import base64
 import click
 import psycopg2
 from psycopg2 import sql
@@ -46,6 +47,135 @@ from deployers.infrastructure.lib.topology import normalize_topology
 
 URL_PRO = '.dataspaceunit-project.eu'
 URL_DEV = '.dev.ds.dataspaceunit.upm'
+BRANDING_DEFAULT_ASSETS_DIR = "identity"
+BRANDING_DEFAULT_CONNECTOR_ASSET_BASE_URL = "/inesdata-connector-interface/assets/branding"
+BRANDING_DEFAULT_PORTAL_ASSET_BASE_URL = "/assets/branding"
+BRANDING_MAX_TOTAL_ASSET_BYTES = 900 * 1024
+
+
+def _split_config_list(raw_value):
+    return [
+        item.strip()
+        for item in str(raw_value or "").split(",")
+        if item.strip()
+    ]
+
+
+def _safe_branding_asset_filename(raw_name):
+    name = str(raw_name or "").strip()
+    if not name or name in {".", ".."}:
+        raise click.ClickException("Branding asset filename cannot be empty.")
+    normalized = name.replace("\\", "/")
+    if "/" in normalized or normalized != os.path.basename(normalized):
+        raise click.ClickException(
+            f"Branding asset '{name}' must be a filename inside the configured identity directory."
+        )
+    return normalized
+
+
+def _branding_assets_dir(config):
+    raw_dir = str(config.get("INESDATA_BRAND_ASSETS_DIR") or BRANDING_DEFAULT_ASSETS_DIR).strip()
+    if not raw_dir:
+        raw_dir = BRANDING_DEFAULT_ASSETS_DIR
+    root = os.path.abspath(ROOT_DIR)
+    path = os.path.abspath(os.path.join(root, raw_dir))
+    if not (path == root or path.startswith(root + os.sep)):
+        raise click.ClickException(
+            "INESDATA_BRAND_ASSETS_DIR must point to a directory inside the repository."
+        )
+    return path
+
+
+def _branding_asset_url(base_url, filename):
+    base = str(base_url or "").strip().rstrip("/")
+    if not base:
+        return filename
+    return f"{base}/{filename}"
+
+
+def _load_branding_assets(config, selected_files):
+    asset_dir = _branding_assets_dir(config)
+    assets = []
+    total_bytes = 0
+    for raw_name in selected_files:
+        filename = _safe_branding_asset_filename(raw_name)
+        path = os.path.abspath(os.path.join(asset_dir, filename))
+        if not path.startswith(asset_dir + os.sep):
+            raise click.ClickException(
+                f"Branding asset '{filename}' must stay inside {asset_dir}."
+            )
+        if not os.path.isfile(path):
+            raise click.ClickException(
+                f"Branding asset '{filename}' was not found in {asset_dir}."
+            )
+        with open(path, "rb") as handle:
+            payload = handle.read()
+        total_bytes += len(payload)
+        if total_bytes > BRANDING_MAX_TOTAL_ASSET_BYTES:
+            raise click.ClickException(
+                "Selected branding assets exceed the safe ConfigMap payload size. "
+                "Use smaller optimized logo files or fewer assets."
+            )
+        encoded = base64.b64encode(payload).decode("ascii")
+        assets.append({"name": filename, "contentBase64": encoded})
+    return assets
+
+
+def _inesdata_branding_template_keys(config, target):
+    target_name = str(target or "").strip().lower()
+    if target_name == "connector":
+        base_url = str(
+            config.get("INESDATA_BRAND_CONNECTOR_ASSET_BASE_URL")
+            or BRANDING_DEFAULT_CONNECTOR_ASSET_BASE_URL
+        ).strip()
+    elif target_name == "portal":
+        base_url = str(
+            config.get("INESDATA_BRAND_PORTAL_ASSET_BASE_URL")
+            or BRANDING_DEFAULT_PORTAL_ASSET_BASE_URL
+        ).strip()
+    else:
+        raise click.ClickException(f"Unknown branding target: {target}")
+
+    logo_files = _split_config_list(config.get("INESDATA_BRAND_LOGO_FILES"))
+    footer_logo_files = _split_config_list(config.get("INESDATA_BRAND_FOOTER_LOGO_FILES"))
+    powered_by_logo_files = _split_config_list(config.get("INESDATA_BRAND_POWERED_BY_LOGO_FILES"))
+    explicit_logo_urls = str(config.get("INESDATA_BRAND_LOGO_URLS") or "").strip()
+    explicit_footer_logo_urls = str(config.get("INESDATA_BRAND_FOOTER_LOGO_URLS") or "").strip()
+    explicit_powered_by_logo_urls = str(config.get("INESDATA_BRAND_POWERED_BY_LOGO_URLS") or "").strip()
+
+    selected_files = []
+    for filename in logo_files + footer_logo_files + powered_by_logo_files:
+        safe_name = _safe_branding_asset_filename(filename)
+        if safe_name not in selected_files:
+            selected_files.append(safe_name)
+
+    logo_urls = explicit_logo_urls or ",".join(
+        _branding_asset_url(base_url, _safe_branding_asset_filename(filename))
+        for filename in logo_files
+    )
+    footer_logo_urls = explicit_footer_logo_urls or ",".join(
+        _branding_asset_url(base_url, _safe_branding_asset_filename(filename))
+        for filename in footer_logo_files
+    )
+    powered_by_logo_urls = explicit_powered_by_logo_urls or ",".join(
+        _branding_asset_url(base_url, _safe_branding_asset_filename(filename))
+        for filename in powered_by_logo_files
+    )
+
+    return {
+        "inesdata_brand_asset_base_url": base_url,
+        "inesdata_brand_show_menu_text": str(
+            config.get("INESDATA_BRAND_SHOW_MENU_TEXT") or "true"
+        ).strip(),
+        "inesdata_brand_logo_files": ",".join(logo_files),
+        "inesdata_brand_footer_logo_files": ",".join(footer_logo_files),
+        "inesdata_brand_powered_by_logo_files": ",".join(powered_by_logo_files),
+        "inesdata_brand_logo_urls": logo_urls,
+        "inesdata_brand_footer_logo_urls": footer_logo_urls,
+        "inesdata_brand_powered_by_logo_urls": powered_by_logo_urls,
+        "inesdata_brand_asset_files": selected_files,
+        "inesdata_brand_assets": [],
+    }
 
 
 def _vault_capabilities_allow_management(capabilities):
@@ -154,6 +284,15 @@ def _active_bootstrap_topology():
     return normalize_topology(os.getenv("PIONERA_TOPOLOGY") or "local")
 
 
+def _identity_branding_config_paths(root_dir):
+    repo_root = os.path.abspath(os.path.join(root_dir, "..", ".."))
+    identity_dir = os.path.join(repo_root, "identity")
+    return [
+        os.path.join(identity_dir, "branding.config.example"),
+        os.path.join(identity_dir, "branding.config"),
+    ]
+
+
 def load_effective_deployer_config(topology=None):
     """Load shared infrastructure first, then adapter overlay and env overrides."""
     root_dir = _bootstrap_root_dir()
@@ -161,6 +300,7 @@ def load_effective_deployer_config(topology=None):
     return load_layered_deployer_config(
         [
             os.path.abspath(os.path.join(root_dir, "..", "infrastructure", "deployer.config")),
+            *_identity_branding_config_paths(root_dir),
             os.path.join(root_dir, "deployer.config"),
         ],
         protected_keys=INFRASTRUCTURE_MANAGED_KEYS,
@@ -1548,8 +1688,10 @@ def create_dataspace_value_files(name, environment):
     keys = get_password_values(name, environment, 'dataspace', name)
     keys['dataspace_name'] = name
 
-    for key_name, value in load_effective_deployer_config().items():
+    config = load_effective_deployer_config()
+    for key_name, value in config.items():
         keys[key_name.lower()] = value
+    keys.update(_inesdata_branding_template_keys(config, "portal"))
 
     # Generate registration-service values file
     #   registration-service
@@ -1596,6 +1738,12 @@ def create_connector_value_files(dataspace_name, connector_name, environment):
 
     for key_name, value in config.items():
         keys[key_name.lower()] = value
+    keys.update(_inesdata_branding_template_keys(config, "connector"))
+    keys['inesdata_brand_assets_configmap_name'] = (
+        f'{connector_name}-interface-branding-assets'
+        if keys.get('inesdata_brand_asset_files')
+        else ''
+    )
 
     # Generate connector values file
     env = Environment(loader=FileSystemLoader('connector'))

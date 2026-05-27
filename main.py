@@ -8184,26 +8184,41 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
     adapter = dict(adapter_config or {})
     missing = []
     warnings = []
+    checks = []
 
-    for key in ("DOMAIN_BASE", "DS_DOMAIN_BASE"):
+    domain_keys = ("DOMAIN_BASE", "DS_DOMAIN_BASE")
+    missing_domain_keys = []
+    for key in domain_keys:
         if not str(infra.get(key) or "").strip():
             missing.append(key)
+            missing_domain_keys.append(key)
 
-    for key in ("VM_COMMON_IP", "VM_PROVIDER_IP", "VM_CONSUMER_IP"):
+    address_keys = ("VM_COMMON_IP", "VM_PROVIDER_IP", "VM_CONSUMER_IP")
+    missing_address_keys = []
+    for key in address_keys:
         if not str(topology.get(key) or topology.get("VM_EXTERNAL_IP") or "").strip():
             missing.append(key)
+            missing_address_keys.append(key)
 
-    for key in ("DS_1_NAME", "DS_1_CONNECTORS"):
+    adapter_required_keys = ("DS_1_NAME", "DS_1_CONNECTORS")
+    missing_adapter_keys = []
+    for key in adapter_required_keys:
         if not str(adapter.get(key) or "").strip():
             missing.append(key)
+            missing_adapter_keys.append(key)
 
-    for key in ("K3S_KUBECONFIG_COMMON", "K3S_KUBECONFIG_PROVIDER", "K3S_KUBECONFIG_CONSUMER"):
+    kubeconfig_keys = ("K3S_KUBECONFIG_COMMON", "K3S_KUBECONFIG_PROVIDER", "K3S_KUBECONFIG_CONSUMER")
+    missing_kubeconfig_keys = []
+    missing_kubeconfig_files = []
+    for key in kubeconfig_keys:
         kubeconfig = str(topology.get(key) or "").strip()
         if not kubeconfig:
+            missing_kubeconfig_keys.append(key)
             warnings.append(f"{key} is empty; vm-distributed will need a kubeconfig for that role.")
             continue
         expanded = os.path.abspath(os.path.expanduser(kubeconfig))
         if not os.path.isfile(expanded):
+            missing_kubeconfig_files.append(key)
             warnings.append(f"{key} does not exist locally: {kubeconfig}")
 
     dataspace_name = str(adapter.get("DS_1_NAME") or "").strip()
@@ -8261,20 +8276,101 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
 
     role_kubeconfigs = [
         str(topology.get(key) or "").strip()
-        for key in ("K3S_KUBECONFIG_COMMON", "K3S_KUBECONFIG_PROVIDER", "K3S_KUBECONFIG_CONSUMER")
+        for key in kubeconfig_keys
         if str(topology.get(key) or "").strip()
     ]
-    if len(set(role_kubeconfigs)) > 1:
+    multi_kubeconfig = len(set(role_kubeconfigs)) > 1
+    if multi_kubeconfig:
         warnings.append(
             "Level 4 currently requires common/provider/consumer to share one kubeconfig; "
             "multi-kubeconfig connector deployment is blocked safely."
         )
+
+    checks.append(
+        {
+            "name": "Domains",
+            "status": "missing" if missing_domain_keys else "ready",
+            "detail": "DOMAIN_BASE and DS_DOMAIN_BASE",
+        }
+    )
+    checks.append(
+        {
+            "name": "VM addresses",
+            "status": "missing" if missing_address_keys else "ready",
+            "detail": "common, provider and consumer IP/DNS values",
+        }
+    )
+    kubeconfig_status = "ready"
+    if missing_kubeconfig_keys:
+        kubeconfig_status = "missing"
+    elif missing_kubeconfig_files:
+        kubeconfig_status = "needs-review"
+    checks.append(
+        {
+            "name": "Kubeconfigs",
+            "status": kubeconfig_status,
+            "detail": "common, provider and consumer kubeconfig paths",
+        }
+    )
+    checks.append(
+        {
+            "name": "Connector inventory",
+            "status": "missing" if missing_adapter_keys else "ready",
+            "detail": "DS_1_NAME and DS_1_CONNECTORS",
+        }
+    )
+    mapping_status = "ready"
+    if invalid_mapping_tokens or unknown_mapping:
+        mapping_status = "needs-review"
+    elif not connector_namespaces and len(connectors) > 2:
+        mapping_status = "needs-review"
+    checks.append(
+        {
+            "name": "Connector placement",
+            "status": mapping_status,
+            "detail": "DS_1_CONNECTOR_NAMESPACES or default provider/consumer placement",
+        }
+    )
+    pairs_status = "ready"
+    if invalid_pair_tokens or unknown_pairs:
+        pairs_status = "needs-review"
+    elif not validation_pairs_raw and len(connectors) > 2:
+        pairs_status = "needs-review"
+    checks.append(
+        {
+            "name": "Validation pairs",
+            "status": pairs_status,
+            "detail": "DS_1_VALIDATION_PAIRS or default first-pair validation",
+        }
+    )
+    checks.append(
+        {
+            "name": "Level 4 reconciliation",
+            "status": "ready" if reconciliation_mode else "needs-review",
+            "detail": reconciliation_mode or "full/additive expected",
+        }
+    )
+    checks.append(
+        {
+            "name": "Level 4 cluster scope",
+            "status": "blocked" if multi_kubeconfig else "ready",
+            "detail": "single logical kubeconfig supported; multi-kubeconfig deployment is guarded",
+        }
+    )
+    checks.append(
+        {
+            "name": "Hosts plan",
+            "status": "ready" if not missing_domain_keys and not missing_address_keys else "missing",
+            "detail": "run hosts --topology vm-distributed --dry-run before deployment",
+        }
+    )
 
     status = "ready" if not missing and not warnings else ("incomplete" if missing else "needs-review")
     return {
         "status": status,
         "missing": missing,
         "warnings": warnings,
+        "checks": checks,
     }
 
 
@@ -8283,6 +8379,20 @@ def _print_vm_distributed_preflight(preflight):
     print()
     print("vm-distributed configuration preflight:")
     print(f"  Status: {status}")
+    checks = list((preflight or {}).get("checks") or [])
+    if checks:
+        print("  Checklist:")
+        for check in checks:
+            check_status = str(check.get("status") or "unknown")
+            marker = {
+                "ready": "[ok]",
+                "missing": "[missing]",
+                "needs-review": "[review]",
+                "blocked": "[blocked]",
+            }.get(check_status, "[?]")
+            detail = str(check.get("detail") or "").strip()
+            suffix = f": {detail}" if detail else ""
+            print(f"  - {marker} {check.get('name')}{suffix}")
     missing = list((preflight or {}).get("missing") or [])
     warnings = list((preflight or {}).get("warnings") or [])
     if missing:
@@ -8325,7 +8435,7 @@ def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_regis
     domain_base = _prompt_vm_distributed_value(
         "Base domain for common services",
         current=infrastructure_config.get("DOMAIN_BASE"),
-        default="stics.example.local",
+        default="validation.example.local",
         required=True,
         help_topic="common-domain",
     )

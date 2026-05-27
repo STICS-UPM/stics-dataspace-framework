@@ -1,3 +1,4 @@
+{{- $branding := .Values.frontend.branding | default dict }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,3 +7,17 @@ metadata:
     service: {{ .Values.dataspace.name }}-public-portal-frontend
 data:
   STRAPI_URL: {{ .Values.ingress.protocol }}://{{ .Values.ingress.backend.hostname }}
+  APP_THEME: {{ (index $branding "theme" | default "theme-1") | quote }}
+  APP_BRAND_NAME: {{ (index $branding "name" | default "PIONERA") | quote }}
+  APP_PRIMARY_COLOR: {{ (index $branding "primaryColor" | default "") | quote }}
+  APP_SECONDARY_COLOR: {{ (index $branding "secondaryColor" | default "") | quote }}
+  APP_SHOW_MENU_TEXT: {{ (index $branding "showMenuText" | default "true") | quote }}
+  APP_BRANDING_ASSET_BASE_URL: {{ (index $branding "assetBaseUrl" | default "/assets/branding") | quote }}
+  APP_LOGO_FILES: {{ (index $branding "logoFiles" | default "") | quote }}
+  APP_LOGO_URLS: {{ (index $branding "logoUrls" | default "") | quote }}
+  APP_FOOTER_LOGO_FILES: {{ (index $branding "footerLogoFiles" | default "") | quote }}
+  APP_FOOTER_LOGO_URLS: {{ (index $branding "footerLogoUrls" | default "") | quote }}
+  APP_POWERED_BY_TEXT: {{ (index $branding "poweredByText" | default "Powered by:") | quote }}
+  APP_POWERED_BY_LOGO_FILES: {{ (index $branding "poweredByLogoFiles" | default "") | quote }}
+  APP_POWERED_BY_LOGO_URLS: {{ (index $branding "poweredByLogoUrls" | default "") | quote }}
+  APP_FOOTER_TEXT: {{ (index $branding "footerText" | default "") | quote }}

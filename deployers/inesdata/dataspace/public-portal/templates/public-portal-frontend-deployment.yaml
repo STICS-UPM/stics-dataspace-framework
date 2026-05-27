@@ -1,3 +1,5 @@
+{{- $branding := .Values.frontend.branding | default dict }}
+{{- $brandingAssets := (index $branding "assets") | default list }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,4 +29,16 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ .Values.dataspace.name }}-public-portal-frontend-config
+          {{ if $brandingAssets }}
+          volumeMounts:
+            - name: branding-assets
+              mountPath: /usr/share/nginx/html/assets/branding
+              readOnly: true
+          {{ end }}
+      {{ if $brandingAssets }}
+      volumes:
+        - name: branding-assets
+          configMap:
+            name: {{ .Values.dataspace.name }}-public-portal-branding-assets
+      {{ end }}
       restartPolicy: Always

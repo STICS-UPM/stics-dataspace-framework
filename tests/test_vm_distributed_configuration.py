@@ -44,8 +44,8 @@ class VmDistributedConfigurationTests(unittest.TestCase):
 
             preflight = main._vm_distributed_configuration_preflight(
                 {
-                    "DOMAIN_BASE": "stics.example.local",
-                    "DS_DOMAIN_BASE": "ds.stics.example.local",
+                    "DOMAIN_BASE": "validation.example.local",
+                    "DS_DOMAIN_BASE": "ds.validation.example.local",
                 },
                 {
                     "VM_COMMON_IP": "10.0.0.10",
@@ -67,6 +67,10 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertEqual(preflight["status"], "ready")
         self.assertEqual(preflight["missing"], [])
         self.assertEqual(preflight["warnings"], [])
+        checks = {item["name"]: item["status"] for item in preflight["checks"]}
+        self.assertEqual(checks["Domains"], "ready")
+        self.assertEqual(checks["Kubeconfigs"], "ready")
+        self.assertEqual(checks["Level 4 cluster scope"], "ready")
 
     def test_preflight_warns_about_multi_kubeconfig_level4(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -79,8 +83,8 @@ class VmDistributedConfigurationTests(unittest.TestCase):
 
             preflight = main._vm_distributed_configuration_preflight(
                 {
-                    "DOMAIN_BASE": "stics.example.local",
-                    "DS_DOMAIN_BASE": "ds.stics.example.local",
+                    "DOMAIN_BASE": "validation.example.local",
+                    "DS_DOMAIN_BASE": "ds.validation.example.local",
                 },
                 {
                     "VM_COMMON_IP": "10.0.0.10",
@@ -103,6 +107,8 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertTrue(
             any("multi-kubeconfig connector deployment" in warning for warning in preflight["warnings"])
         )
+        checks = {item["name"]: item["status"] for item in preflight["checks"]}
+        self.assertEqual(checks["Level 4 cluster scope"], "blocked")
 
     def test_wizard_writes_ignored_config_files_with_dynamic_connector_defaults(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -131,8 +137,8 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 handle.write("DS_1_NAME=pionera\nDS_1_CONNECTORS=citycouncil,company\n")
 
             inputs = [
-                "stics.example.local",
-                "ds.stics.example.local",
+                "validation.example.local",
+                "ds.validation.example.local",
                 "",
                 "10.0.0.10",
                 "10.0.0.20",
@@ -205,6 +211,32 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertIn("VM_CONSUMER_IP", preflight["missing"])
         self.assertIn("DS_1_NAME", preflight["missing"])
         self.assertIn("DS_1_CONNECTORS", preflight["missing"])
+        checks = {item["name"]: item["status"] for item in preflight["checks"]}
+        self.assertEqual(checks["Domains"], "missing")
+        self.assertEqual(checks["VM addresses"], "missing")
+        self.assertEqual(checks["Hosts plan"], "missing")
+
+    def test_preflight_prints_readiness_checklist(self):
+        preflight = {
+            "status": "needs-review",
+            "missing": [],
+            "warnings": ["multi-kubeconfig connector deployment is blocked safely."],
+            "checks": [
+                {
+                    "name": "Level 4 cluster scope",
+                    "status": "blocked",
+                    "detail": "single logical kubeconfig supported",
+                }
+            ],
+        }
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            main._print_vm_distributed_preflight(preflight)
+
+        text = output.getvalue()
+        self.assertIn("Checklist:", text)
+        self.assertIn("[blocked] Level 4 cluster scope", text)
 
 
 if __name__ == "__main__":

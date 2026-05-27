@@ -355,7 +355,7 @@ def print_manual_actions():
     print("   minikube tunnel")
     print("\n2) Open another terminal and run:")
     print(
-        "   cd /home/edmundo/Validation-Environment && "
+        "   cd /path/to/Validation-Environment && "
         "kubectl -n ingress-nginx port-forward svc/ingress-nginx-controller 8080:80"
     )
     print("\nKeep both commands running during dataspace and connectors deployment.")

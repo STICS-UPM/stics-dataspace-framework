@@ -104,6 +104,7 @@ validation/ui/.env
 # =========================
 .DS_Store
 Thumbs.db
+*:Zone.Identifier
 
 # =========================
 # LOGS / TEMP
@@ -141,6 +142,10 @@ validation/components/ontology_hub/functional/generated
 validation/components/ontology_hub/functional/state/
 validation/datasets/sources/
 docs/INVENTARIO DE ENTORNO.docx
+!identity/
+!identity/**
+identity/branding.config
+identity/*old*
 
 
 validation/components/ai_model_hub/README.md
