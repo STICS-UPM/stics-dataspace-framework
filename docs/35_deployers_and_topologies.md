@@ -449,13 +449,14 @@ deployers/infrastructure/topologies/vm-distributed.config
 deployers/<adapter>/deployer.config
 ```
 
-El asistente pregunta por dominios, IP/DNS de VMs, kubeconfigs k3s, conectores,
-ubicación de conectores y pares de validación. Si no se conoce un dato, se puede
-escribir `?` en el campo para ver qué significa, cómo elegirlo y qué comandos de
-Ubuntu ayudan a descubrirlo. Para el inventario de conectores, el asistente
-propone una ubicación inicial alternando los grupos `provider` y `consumer`; ese
-valor se puede editar antes de guardar. El asistente solo escribe `.config`
-locales ignorados por Git y no ejecuta despliegues por sí mismo.
+El asistente pregunta por dominios, IP/DNS de VMs, usuario SSH opcional para
+sincronización remota de NGINX, kubeconfigs k3s, conectores, ubicación de
+conectores y pares de validación. Si no se conoce un dato, se puede escribir `?`
+en el campo para ver qué significa, cómo elegirlo y qué comandos de Ubuntu
+ayudan a descubrirlo. Para el inventario de conectores, el asistente propone una
+ubicación inicial alternando los grupos `provider` y `consumer`; ese valor se
+puede editar antes de guardar. El asistente solo escribe `.config` locales
+ignorados por Git y no ejecuta despliegues por sí mismo.
 
 Al guardar, el asistente imprime un preflight con checklist de dominios,
 direcciones, kubeconfigs, inventario de conectores, ubicación, pares de
@@ -463,6 +464,14 @@ validación, modo de reconciliación, alcance de nivel 4 y plan de hosts. Si el
 checklist marca `blocked` en el alcance de nivel 4, la configuración describe un
 despliegue multi-kubeconfig real y el framework lo bloquea de forma preventiva
 hasta que exista soporte multi-cluster completo.
+
+En `vm-distributed`, los niveles 2, 3 y 4 refrescan de forma idempotente la
+configuración de routing NGINX cuando `VM_COMMON_IP` y `DS_DOMAIN_BASE` están
+definidos. El framework genera routing HTTP para el dataspace, el servicio de
+registro y los conectores configurados, además de un proxy `stream` para
+servicios comunes. Si `VM_SSH_USER` está definido, también intenta sincronizar
+NGINX en las VMs remotas de conectores; si no lo está, omite esa parte con una
+advertencia y no aborta el nivel.
 
 Para despliegues con conectores externos o infraestructura distribuida, revisa
 [Preparación de conectores externos](./45_external_connector_readiness.md)

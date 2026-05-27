@@ -98,11 +98,12 @@ ningún valor en `deployer.config`: solo cambia el contexto interactivo entre
 `W - Configure vm-distributed deployment`
 
 Abre un asistente para preparar la configuración local de `vm-distributed`. El
-asistente pregunta por dominios, IP/DNS de las VMs, kubeconfigs k3s, inventario
-de conectores, ubicación de conectores y pares de validación. Si no sabes cómo
-obtener un dato, escribe `?` en el campo correspondiente para ver qué significa,
-cómo elegirlo y qué comandos de Ubuntu ayudan a descubrirlo. El asistente solo
-escribe ficheros `.config` locales ignorados por Git.
+asistente pregunta por dominios, IP/DNS de las VMs, usuario SSH opcional para
+sincronización remota de NGINX, kubeconfigs k3s, inventario de conectores,
+ubicación de conectores y pares de validación. Si no sabes cómo obtener un dato,
+escribe `?` en el campo correspondiente para ver qué significa, cómo elegirlo y
+qué comandos de Ubuntu ayudan a descubrirlo. El asistente solo escribe ficheros
+`.config` locales ignorados por Git.
 
 `P - Preview deployment plan`
 

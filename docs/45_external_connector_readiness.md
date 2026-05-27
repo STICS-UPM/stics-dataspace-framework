@@ -71,6 +71,7 @@ Antes de preparar una topología `vm-distributed`, se debe recopilar:
 | IP o DNS del lado consumer | `VM_CONSUMER_IP` |
 | IP o DNS de componentes | `VM_COMPONENTS_IP` |
 | IP o DNS público de ingress | `INGRESS_EXTERNAL_IP` |
+| Usuario SSH para sincronizar NGINX remoto | `VM_SSH_USER` |
 | kubeconfig de servicios comunes | `K3S_KUBECONFIG_COMMON` |
 | kubeconfig del lado provider | `K3S_KUBECONFIG_PROVIDER` |
 | kubeconfig del lado consumer | `K3S_KUBECONFIG_CONSUMER` |
@@ -83,7 +84,8 @@ Antes de preparar una topología `vm-distributed`, se debe recopilar:
 También se debe confirmar:
 
 - distribución Ubuntu o Linux compatible;
-- acceso SSH administrativo cuando la VM deba prepararse manualmente;
+- acceso SSH administrativo cuando la VM deba prepararse manualmente o cuando el
+  framework deba sincronizar NGINX remoto;
 - permisos `sudo` para instalación o revisión de k3s;
 - conectividad de red entre servicios comunes, conectores y componentes;
 - resolución DNS o entradas `/etc/hosts` coherentes con los dominios definidos;
