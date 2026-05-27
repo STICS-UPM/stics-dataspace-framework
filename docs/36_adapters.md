@@ -94,7 +94,31 @@ NAMESPACE_PROFILE=role-aligned
 DS_1_REGISTRATION_NAMESPACE=edc-control
 DS_1_PROVIDER_NAMESPACE=edc-provider
 DS_1_CONSUMER_NAMESPACE=edc-consumer
+DS_1_CONNECTORS=citycounciledc,companyedc
 ```
+
+Para más de dos conectores, el adapter acepta el mismo patrón que INESData:
+`DS_1_CONNECTORS` define el inventario, `DS_1_CONNECTOR_NAMESPACES` asigna cada
+conector a un namespace o grupo de despliegue, y `DS_1_VALIDATION_PAIRS` define
+los pares que se usarán en las validaciones. Los namespaces `edc-provider` y
+`edc-consumer` son grupos operativos del entorno de pruebas, no roles funcionales
+exclusivos del conector.
+
+Si `DS_1_CONNECTOR_NAMESPACES` y `DS_1_VALIDATION_PAIRS` se dejan vacías en el
+`deployer.config`, el framework mantiene el despliegue base: primer conector
+como origen de validación, segundo conector como destino de validación y
+ubicación derivada de los namespaces configurados para el adapter. Para controlar
+un despliegue con más conectores, usa el formato:
+
+```ini
+DS_1_CONNECTOR_NAMESPACES=citycounciledc:edc-provider,companyedc:edc-consumer,partneredc:edc-provider
+DS_1_VALIDATION_PAIRS=citycounciledc>companyedc,partneredc>citycounciledc
+```
+
+El modo `LEVEL4_CONNECTOR_RECONCILIATION_MODE=additive` permite añadir
+conectores nuevos preservando conectores existentes que ya están sanos. El modo
+por defecto es `full`, que mantiene la reconciliación limpia usada por las
+validaciones de cierre.
 
 El comportamiento operativo de `Level 3` debe ser equivalente al de INESData:
 ejecuta el bootstrap del dataspace del adapter activo aunque el namespace ya

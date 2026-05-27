@@ -62,8 +62,9 @@ vm-distributed
 `local` es la ruta de despliegue normal y usa Minikube. `vm-single` ya dispone
 de ejecución real para la ruta base del dataspace en `inesdata` y `edc`, y usa
 el mismo modelo `role-aligned` de namespaces. `vm-distributed` sigue formando
-parte del contexto del deployer y de la planificación de hosts, pero todavía
-permanece como topología planificada.
+parte del contexto del deployer y de la planificación de hosts; el menú incluye
+un asistente para preparar sus `.config` locales, aunque la ejecución completa de
+la topología se mantiene como evolución controlada.
 
 ## Inicio Rápido
 

@@ -95,6 +95,15 @@ Permite cambiar la topología activa para la sesión actual del menú. No escrib
 ningún valor en `deployer.config`: solo cambia el contexto interactivo entre
 `local`, `vm-single` y `vm-distributed` hasta que salgas del menú.
 
+`W - Configure vm-distributed deployment`
+
+Abre un asistente para preparar la configuración local de `vm-distributed`. El
+asistente pregunta por dominios, IP/DNS de las VMs, kubeconfigs k3s, inventario
+de conectores, ubicación de conectores y pares de validación. Si no sabes cómo
+obtener un dato, escribe `?` en el campo correspondiente para ver qué significa,
+cómo elegirlo y qué comandos de Ubuntu ayudan a descubrirlo. El asistente solo
+escribe ficheros `.config` locales ignorados por Git.
+
 `P - Preview deployment plan`
 
 Muestra un plan de despliegue sin modificar el entorno. Úsalo antes de ejecutar cambios destructivos o cuando quieras revisar dataspace, conectores, componentes, namespaces y hosts esperados. Si la operación necesita adapter y aún no se ha elegido uno, el menú lo pide en ese momento.

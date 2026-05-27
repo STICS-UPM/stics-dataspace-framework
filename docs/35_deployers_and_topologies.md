@@ -125,11 +125,50 @@ COMPONENTS_NAMESPACE=components
 | --- | --- |
 | `common-srvs` | Servicios comunes: Keycloak, MinIO, PostgreSQL y Vault |
 | `core-control` | Registration-service y control plane del dataspace |
-| `provider` | Conector proveedor |
-| `consumer` | Conector consumidor |
+| `provider` | Grupo/ubicación de conectores usado por los flujos base de validación |
+| `consumer` | Grupo/ubicación de conectores usado por los flujos base de validación |
 | `components` | Componentes opcionales: Ontology Hub, AI Model Hub y Semantic Virtualization |
 | `ingress-nginx` | Ingress controller del cluster |
 | `kube-system` | Infraestructura Kubernetes |
+
+Los nombres `provider` y `consumer` son convenciones del entorno de validación,
+no roles funcionales rígidos. Un conector puede actuar como proveedor o consumidor
+según el flujo de prueba. Para más de dos conectores, define el inventario en
+`DS_1_CONNECTORS` y, si necesitas controlar su ubicación, usa
+`DS_1_CONNECTOR_NAMESPACES`:
+
+```ini
+DS_1_CONNECTORS=citycouncil,company,partnera
+DS_1_CONNECTOR_NAMESPACES=citycouncil:provider,company:consumer,partnera:provider
+DS_1_VALIDATION_PAIRS=citycouncil>company,partnera>citycouncil
+LEVEL4_CONNECTOR_RECONCILIATION_MODE=full
+```
+
+En los archivos `deployer.config.example`, estas claves aparecen vacías de forma
+intencional para conservar el despliegue actual:
+
+```ini
+DS_1_CONNECTOR_NAMESPACES=
+DS_1_VALIDATION_PAIRS=
+```
+
+Con esos valores vacíos, el framework usa la convención histórica: el primer
+conector de `DS_1_CONNECTORS` queda asociado al grupo `provider`, el segundo al
+grupo `consumer` y los conectores adicionales al namespace del dataspace. Solo
+es necesario llenar estas variables cuando se quiera controlar explícitamente la
+ubicación de cada conector o ejecutar pares de validación distintos al par base.
+
+`DS_1_CONNECTOR_NAMESPACES` decide dónde se despliega cada conector.
+`DS_1_VALIDATION_PAIRS` decide qué pares se usan como origen/destino en las
+validaciones automatizadas. `LEVEL4_CONNECTOR_RECONCILIATION_MODE=full`
+conserva el comportamiento histórico de nivel 4: reconcilia el conjunto
+configurado y puede recrear conectores existentes para dejar un despliegue
+limpio. Para añadir conectores sin recrear los que ya están sanos, usa
+`LEVEL4_CONNECTOR_RECONCILIATION_MODE=additive`.
+
+Si las claves de mapeo no se definen, el framework conserva el comportamiento
+histórico: primer conector como origen de validación, segundo como destino de
+validación y conectores adicionales en el namespace del dataspace.
 
 Para Semantic Virtualization, el nivel 5 sincroniza las fuentes necesarias para
 la validación del componente: `morph-kgv`, `mapping-editor` y `Automap`.
@@ -361,7 +400,10 @@ deployers/infrastructure/topologies/vm-single.config
 
 ## VM Distributed
 
-`vm-distributed` representa una topología distribuida de validación. La primera interpretación recomendada es un único cluster Kubernetes lógico respaldado por tres nodos/VM:
+`vm-distributed` representa una topología distribuida de validación. El modelo
+de configuración actual permite preparar tanto un único cluster Kubernetes lógico
+con varios nodos/VM como una evolución multi-cluster basada en kubeconfigs por
+rol. La interpretación base sigue siendo:
 
 ```text
 common    servicios comunes
@@ -377,7 +419,43 @@ pionera.role=provider
 pionera.role=consumer
 ```
 
-Esto valida placement físico por rol y comunicación entre nodos manteniendo un único plano de control Kubernetes. Un modo multi-cluster puede añadirse en el futuro si se convierte en requisito explícito.
+Esto valida placement físico por rol y comunicación entre nodos manteniendo un
+único plano de control Kubernetes. Para despliegues tipo STICS, donde los
+conectores pueden vivir en VMs o servidores distintos, el asistente del menú
+también recoge kubeconfigs por rol (`common`, `provider`, `consumer`) para que la
+implementación operativa de `vm-distributed` pueda evolucionar sin reabrir el
+modelo de configuración.
+
+La ejecución real actual de `vm-distributed` está habilitada para el caso
+conservador de un cluster Kubernetes lógico distribuido. En ese modo,
+`K3S_KUBECONFIG_COMMON` debe apuntar a un kubeconfig que permita operar los
+namespaces de servicios comunes, dataspace, conectores y componentes. El nivel 5
+puede usar `K3S_KUBECONFIG_COMPONENTS` si se necesita dirigir los componentes a
+un contexto específico. En nivel 4, si `K3S_KUBECONFIG_PROVIDER` y
+`K3S_KUBECONFIG_CONSUMER` apuntan a API servers distintos de
+`K3S_KUBECONFIG_COMMON`, el framework aborta antes de desplegar conectores. Esa
+protección evita mezclar el bootstrap de servicios comunes con un Helm deploy de
+conectores en otro cluster mientras no esté implementado el flujo multi-cluster
+completo.
+
+### Asistente de Configuración
+
+En el menú interactivo, la opción `W - Configure vm-distributed deployment`
+prepara los ficheros locales necesarios para la topología:
+
+```text
+deployers/infrastructure/deployer.config
+deployers/infrastructure/topologies/vm-distributed.config
+deployers/<adapter>/deployer.config
+```
+
+El asistente pregunta por dominios, IP/DNS de VMs, kubeconfigs k3s, conectores,
+ubicación de conectores y pares de validación. Si no se conoce un dato, se puede
+escribir `?` en el campo para ver qué significa, cómo elegirlo y qué comandos de
+Ubuntu ayudan a descubrirlo. Para el inventario de conectores, el asistente
+propone una ubicación inicial alternando los grupos `provider` y `consumer`; ese
+valor se puede editar antes de guardar. El asistente solo escribe `.config`
+locales ignorados por Git y no ejecuta despliegues por sí mismo.
 
 ### Alineamiento Requerido con `main`
 
