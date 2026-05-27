@@ -168,9 +168,9 @@ frontend; si la interfaz necesita URLs externas, se pueden usar las variables
 
 La configuración base incluida para el cierre de A5.2 establece `PIONERA` como
 nombre visible, los colores inferidos del logotipo (`#025B77` y `#2FA0B5`),
-logos de proyecto/financiación en el pie, `Powered by:` como sección separada
-con el logo de INESData y `LocalStore` como etiqueta visual de la opción
-funcional cuyo valor técnico sigue siendo `InesDataStore`.
+logos de proyecto, financiación y grupo en el pie, `Powered by:` como sección
+separada con el logo de INESData y `LocalStore` como etiqueta visual de la
+opción funcional cuyo valor técnico sigue siendo `InesDataStore`.
 
 ## Checklist Antes de Ejecutar Niveles
 

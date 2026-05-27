@@ -18,11 +18,11 @@ class InesdataBrandingConfigTests(unittest.TestCase):
             "INESDATA_BRAND_ASSETS_DIR=identity",
             "INESDATA_BRAND_LOGO_FILES=pionera-logo.svg",
             "INESDATA_BRAND_LOGO_URLS=",
-            "INESDATA_BRAND_FOOTER_LOGO_FILES=pionera-logo.svg,funding-logos.png",
+            "INESDATA_BRAND_FOOTER_LOGO_FILES=pionera-logo.svg,funding-logos.png,oeg.png",
             "INESDATA_BRAND_FOOTER_LOGO_URLS=",
             "INESDATA_BRAND_FOOTER_TEXT=",
             "INESDATA_BRAND_POWERED_BY_TEXT=Powered by:",
-            "INESDATA_BRAND_POWERED_BY_LOGO_FILES=inesdata-logo.svg",
+            "INESDATA_BRAND_POWERED_BY_LOGO_FILES=inesdta.png",
             "INESDATA_BRAND_POWERED_BY_LOGO_URLS=",
             "INESDATA_BRAND_CONNECTOR_ASSET_BASE_URL=/inesdata-connector-interface/assets/branding",
             "INESDATA_BRAND_PORTAL_ASSET_BASE_URL=/assets/branding",
@@ -66,6 +66,14 @@ class InesdataBrandingConfigTests(unittest.TestCase):
         self.assertIn("localStoreLabel", values)
         self.assertIn("assetsConfigMapName", values)
         self.assertIn("assets:", values)
+
+    def test_connector_interface_branding_patch_keeps_balanced_footer_logos(self):
+        source = (ROOT / "adapters/inesdata/connectors.py").read_text(encoding="utf-8")
+
+        self.assertIn(".footer__logos {", source)
+        self.assertIn("display: flex;", source)
+        self.assertIn("gap: 24px;", source)
+        self.assertIn("margin: 8px 0;", source)
 
     def test_public_portal_receives_branding_environment(self):
         configmap = (

@@ -1644,7 +1644,7 @@ class INESDataConnectorsAdapter:
         if footer_text:
             escaped_footer_text = html.escape(footer_text, quote=False)
         else:
-            escaped_footer_text = f"{escaped_brand} (c) {{{{ year }}}}"
+            escaped_footer_text = f"{escaped_brand} © {{{{ year }}}}"
         primary_css = html.escape(primary_color, quote=True)
         secondary_css = html.escape(secondary_color, quote=True)
         brand_logo = logo_files[0] if logo_files else ""
@@ -1776,6 +1776,20 @@ class INESDataConnectorsAdapter:
             "footer.component.scss",
         )
         footer_css = """
+.footer__logos {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  justify-content: center;
+}
+
+.footer__logos img {
+  height: 60px;
+  margin: 8px 0;
+  object-fit: contain;
+}
+
 .footer__powered-by {
   color: var(--secondary-600);
   font-family: "Open Sans", sans-serif;

@@ -16,7 +16,9 @@ class IdentityAssetsTests(unittest.TestCase):
             "pionera-logo-square.jpg",
             "pionera-logo.pdf",
             "inesdata-logo.svg",
+            "inesdta.png",
             "funding-logos.png",
+            "oeg.png",
         }
 
         self.assertTrue(IDENTITY.is_dir())
