@@ -1,15 +1,15 @@
 # 17. Adapter EDC
 
-El adapter `edc` permite ejecutar el framework con conectores EDC genericos sin
+El adapter `edc` permite ejecutar el framework con conectores EDC genéricos sin
 reutilizar el runtime de conectores INESData. Mantiene la misma estructura de
 niveles y delega en `deployers/edc`.
 
 ## Repositorios Fuente
 
-| Elemento | Repositorio |
+| Elemento | Ubicación |
 | --- | --- |
-| Runtime del conector EDC | `https://github.com/luciamartinnunez/Connector` |
-| Dashboard EDC | `https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard` |
+| Runtime del conector EDC | `adapters/edc/sources/connector` |
+| Dashboard EDC | `adapters/edc/sources/dashboard` |
 
 El framework no versiona los repositorios fuente dentro del repo principal. Se
 gestionan como fuentes locales bajo `adapters/edc/sources/` y permanecen

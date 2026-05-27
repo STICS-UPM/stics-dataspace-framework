@@ -724,7 +724,7 @@ adapters/edc/sources/
 El runtime del conector EDC se sincroniza desde:
 
 ```text
-https://github.com/luciamartinnunez/Connector
+adapters/edc/sources/connector
 ```
 
 El dashboard EDC se sincroniza desde:

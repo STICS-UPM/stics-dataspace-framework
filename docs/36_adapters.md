@@ -57,6 +57,53 @@ deployers/inesdata/deployer.py
 
 Los componentes opcionales se configuran en el `deployer.config` del adapter y se despliegan en el nivel 5 cuando están habilitados.
 
+El adapter INESData también puede propagar variables de branding hacia la
+interfaz de conectores y el portal. La configuración recomendada vive en
+`identity/branding.config.example`. Para un despliegue concreto, copia ese
+archivo como `identity/branding.config` y ajusta los valores necesarios:
+
+```ini
+INESDATA_BRAND_NAME=PIONERA
+INESDATA_BRAND_SHOW_MENU_TEXT=false
+INESDATA_BRAND_THEME=theme-1
+INESDATA_BRAND_PRIMARY_COLOR=#025B77
+INESDATA_BRAND_SECONDARY_COLOR=#2FA0B5
+INESDATA_BRAND_ASSETS_DIR=identity
+INESDATA_BRAND_LOGO_FILES=pionera-logo.svg
+INESDATA_BRAND_LOGO_URLS=
+INESDATA_BRAND_FOOTER_LOGO_FILES=pionera-logo.svg,funding-logos.png
+INESDATA_BRAND_FOOTER_LOGO_URLS=
+INESDATA_BRAND_FOOTER_TEXT=
+INESDATA_BRAND_POWERED_BY_TEXT=Powered by:
+INESDATA_BRAND_POWERED_BY_LOGO_FILES=
+INESDATA_BRAND_POWERED_BY_LOGO_URLS=
+INESDATA_BRAND_CONNECTOR_ASSET_BASE_URL=/inesdata-connector-interface/assets/branding
+INESDATA_BRAND_PORTAL_ASSET_BASE_URL=/assets/branding
+INESDATA_LOCAL_STORE_LABEL=LocalStore
+```
+
+En despliegues locales, el nivel 4 recompila la interfaz del conector aplicando
+la personalización visual de forma temporal sobre los sources y restaura los
+archivos originales al finalizar el build. `INESDATA_BRAND_SHOW_MENU_TEXT=false`
+oculta el nombre textual del menú lateral cuando el logo ya incluye la marca.
+`InesDataStore` sigue siendo el tipo técnico usado por las APIs de transferencia;
+`INESDATA_LOCAL_STORE_LABEL=LocalStore` debe interpretarse como el nombre visual
+de esa opción funcional, no como reemplazo del valor técnico.
+
+Los activos visuales versionables viven en `identity/`. Para usar logos propios,
+añade archivos a esa carpeta y referencia sus nombres en
+`INESDATA_BRAND_LOGO_FILES`, `INESDATA_BRAND_FOOTER_LOGO_FILES` o
+`INESDATA_BRAND_POWERED_BY_LOGO_FILES`. El framework
+los empaqueta como ConfigMaps de Helm y los monta en los frontends en
+`/assets/branding` o en la ruta base configurada para la interfaz del conector.
+Si se necesitan URLs externas, se pueden indicar directamente en
+`INESDATA_BRAND_LOGO_URLS`, `INESDATA_BRAND_FOOTER_LOGO_URLS` o
+`INESDATA_BRAND_POWERED_BY_LOGO_URLS`.
+
+Por compatibilidad, las mismas variables también pueden definirse en
+`deployers/inesdata/deployer.config`; si aparecen ahí, sobrescriben la
+configuración de `identity/`.
+
 ## Adapter EDC
 
 El adapter EDC soporta un despliegue EDC genérico.

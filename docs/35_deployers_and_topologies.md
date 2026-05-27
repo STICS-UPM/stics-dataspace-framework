@@ -420,7 +420,7 @@ pionera.role=consumer
 ```
 
 Esto valida placement físico por rol y comunicación entre nodos manteniendo un
-único plano de control Kubernetes. Para despliegues tipo STICS, donde los
+único plano de control Kubernetes. Para despliegues con infraestructura externa, donde los
 conectores pueden vivir en VMs o servidores distintos, el asistente del menú
 también recoge kubeconfigs por rol (`common`, `provider`, `consumer`) para que la
 implementación operativa de `vm-distributed` pueda evolucionar sin reabrir el
@@ -456,6 +456,17 @@ Ubuntu ayudan a descubrirlo. Para el inventario de conectores, el asistente
 propone una ubicación inicial alternando los grupos `provider` y `consumer`; ese
 valor se puede editar antes de guardar. El asistente solo escribe `.config`
 locales ignorados por Git y no ejecuta despliegues por sí mismo.
+
+Al guardar, el asistente imprime un preflight con checklist de dominios,
+direcciones, kubeconfigs, inventario de conectores, ubicación, pares de
+validación, modo de reconciliación, alcance de nivel 4 y plan de hosts. Si el
+checklist marca `blocked` en el alcance de nivel 4, la configuración describe un
+despliegue multi-kubeconfig real y el framework lo bloquea de forma preventiva
+hasta que exista soporte multi-cluster completo.
+
+Para despliegues con conectores externos o infraestructura distribuida, revisa
+[Preparación de conectores externos](./45_external_connector_readiness.md)
+antes de ejecutar niveles de despliegue.
 
 ### Alineamiento Requerido con `main`
 

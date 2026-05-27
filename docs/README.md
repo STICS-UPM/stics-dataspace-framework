@@ -18,7 +18,8 @@ en `experiments/` y no forman parte de la documentación estable de `docs/`.
 5. [Validación](./37_validation.md)
 6. [Colecciones Newman y Postman](./31_postman_newman_collections.md)
 7. [Visor de reportes](./40_report_viewer.md)
-8. [Troubleshooting](./39_troubleshooting.md)
+8. [Preparación de conectores externos](./45_external_connector_readiness.md)
+9. [Troubleshooting](./39_troubleshooting.md)
 
 Esta ruta separa la documentación vigente de la trazabilidad histórica. Los
 documentos de trazabilidad siguen siendo útiles para revisar decisiones y
@@ -34,8 +35,9 @@ evolución técnica, pero no deben sustituir a la documentación operativa actua
 6. [Adapters](./36_adapters.md)
 7. [Validación](./37_validation.md)
 8. [Colecciones Newman y Postman](./31_postman_newman_collections.md)
-9. [Desarrollo y testing](./38_development_and_testing.md)
-10. [Troubleshooting](./39_troubleshooting.md)
+9. [Preparación de conectores externos](./45_external_connector_readiness.md)
+10. [Desarrollo y testing](./38_development_and_testing.md)
+11. [Troubleshooting](./39_troubleshooting.md)
 
 ## Entrada Principal
 
@@ -66,6 +68,7 @@ la entrada recomendada para automatización y ejecuciones reproducibles.
 | [Validación](./37_validation.md) | `Level 6`, Newman, Kafka, Playwright, componentes, métricas y reportes |
 | [31 Newman/Postman](./31_postman_newman_collections.md) | Colecciones ejecutadas por el framework e importables en Postman |
 | [Visor de reportes](./40_report_viewer.md) | Revisión local de experimentos generados |
+| [Preparación de conectores externos](./45_external_connector_readiness.md) | Datos, límites y checklist para topología distribuida y conectores externos |
 | [Targets externos](./29_inesdata_external_validation_targets.md) | Validación read-only de targets no desplegados por el framework |
 | [Flujo manual histórico INESData](./legacy_inesdata_manual/00_historical_inesdata_manual_flow.md) | Flujo manual histórico de INESData, conservado solo para trazabilidad |
 
@@ -119,6 +122,7 @@ operativa anteriores.
 | [42](./42_model_clearing_house_plan.md) | Plan de Model Clearing House |
 | [43](./43_model_observer_additive_backlog.md) | Backlog aditivo de Model Observer |
 | [44](./44_audit_navigation_guide.md) | Guía de navegación para auditoría |
+| [45](./45_external_connector_readiness.md) | Preparación de conectores externos |
 | [Inventario de entorno de pruebas](./test_environment_inventory.pdf) | Inventario público del entorno de pruebas |
 
 ## Diagramas
