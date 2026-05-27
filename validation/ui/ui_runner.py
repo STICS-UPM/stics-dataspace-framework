@@ -80,6 +80,10 @@ def _build_playwright_environment(
     if len(connectors) > 1:
         env["UI_CONSUMER_CONNECTOR"] = connectors[1]
 
+    local_store_label = str(config.get("INESDATA_LOCAL_STORE_LABEL") or "").strip()
+    if local_store_label:
+        env["UI_INESDATA_LOCAL_STORE_LABEL"] = local_store_label
+
     env["PLAYWRIGHT_OUTPUT_DIR"] = artifact_paths["output_dir"]
     env["PLAYWRIGHT_HTML_REPORT_DIR"] = artifact_paths["html_report_dir"]
     env["PLAYWRIGHT_BLOB_REPORT_DIR"] = artifact_paths["blob_report_dir"]

@@ -1610,6 +1610,7 @@ class INESDataConnectorsAdapter:
         show_menu_text = self._is_truthy(config.get("INESDATA_BRAND_SHOW_MENU_TEXT", "true"))
         local_store_label = str(config.get("INESDATA_LOCAL_STORE_LABEL") or "LocalStore").strip() or "LocalStore"
         footer_text = str(config.get("INESDATA_BRAND_FOOTER_TEXT") or "").strip()
+        powered_by_text = str(config.get("INESDATA_BRAND_POWERED_BY_TEXT") or "Powered by:").strip()
 
         logo_files = [
             self._branding_asset_filename(item)
@@ -1623,9 +1624,23 @@ class INESDataConnectorsAdapter:
         footer_logo_files = [item for item in footer_logo_files if item]
         if not footer_logo_files:
             footer_logo_files = logo_files
+        powered_by_logo_files = [
+            self._branding_asset_filename(item)
+            for item in str(branding_keys.get("inesdata_brand_powered_by_logo_files") or "").split(",")
+        ]
+        powered_by_logo_files = [item for item in powered_by_logo_files if item]
+        explicit_powered_by_logo_urls = str(config.get("INESDATA_BRAND_POWERED_BY_LOGO_URLS") or "").strip()
+        powered_by_logo_urls_source = explicit_powered_by_logo_urls
+        if not powered_by_logo_files and not powered_by_logo_urls_source:
+            powered_by_logo_urls_source = str(branding_keys.get("inesdata_brand_powered_by_logo_urls") or "").strip()
+        if explicit_powered_by_logo_urls:
+            powered_by_logo_files = []
+        powered_by_logo_urls = [str(item or "").strip() for item in powered_by_logo_urls_source.split(",")]
+        powered_by_logo_urls = [item for item in powered_by_logo_urls if item]
 
         escaped_brand = html.escape(brand_name, quote=True)
         escaped_local_store = html.escape(local_store_label, quote=True)
+        escaped_powered_by_text = html.escape(powered_by_text, quote=False)
         if footer_text:
             escaped_footer_text = html.escape(footer_text, quote=False)
         else:
@@ -1650,6 +1665,28 @@ class INESDataConnectorsAdapter:
         )
         if not footer_logos_html:
             footer_logos_html = f"      <span>{escaped_brand}</span>"
+        powered_by_images = [
+            (
+                f'        <img src="assets/branding/{html.escape(filename, quote=True)}" '
+                f'alt="{html.escape(os.path.splitext(filename)[0], quote=True)}">'
+            )
+            for filename in powered_by_logo_files
+        ]
+        powered_by_images.extend(
+            f'        <img src="{html.escape(url, quote=True)}" alt="{escaped_brand} powered by">'
+            for url in powered_by_logo_urls
+        )
+        powered_by_html = ""
+        if powered_by_images:
+            powered_by_html = (
+                '    <div class="footer__powered-by">\n'
+                f"      <span>{escaped_powered_by_text}</span>\n"
+                '      <div class="footer__powered-by-logos">\n'
+                + "\n".join(powered_by_images)
+                + "\n"
+                "      </div>\n"
+                "    </div>\n"
+            )
 
         originals = {}
         patched = []
@@ -1719,6 +1756,7 @@ class INESDataConnectorsAdapter:
     <div class="footer__logos">
 {footer_logos_html}
     </div>
+{powered_by_html.rstrip()}
   </footer>
 
   <div class="footer__company">
@@ -1728,6 +1766,46 @@ class INESDataConnectorsAdapter:
 """
         if self._patch_connector_interface_branding_file(footer_html, originals, lambda _source: footer_source):
             patched.append(footer_html)
+
+        footer_scss = self._connector_interface_source_path(
+            root_dir,
+            "app",
+            "shared",
+            "components",
+            "footer",
+            "footer.component.scss",
+        )
+        footer_css = """
+.footer__powered-by {
+  color: var(--secondary-600);
+  font-family: "Open Sans", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 2px 0 0;
+  text-align: center;
+}
+
+.footer__powered-by-logos {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.footer__powered-by-logos img {
+  height: 25px;
+  margin: 0;
+  object-fit: contain;
+}
+"""
+        if self._patch_connector_interface_branding_file(
+            footer_scss,
+            originals,
+            lambda source: self._replace_or_append_css_block(source, "pionera-powered-by-branding", footer_css),
+        ):
+            patched.append(footer_scss)
 
         app_module = self._connector_interface_source_path(root_dir, "app", "app.module.ts")
         if self._patch_connector_interface_branding_file(
@@ -2947,7 +3025,12 @@ class INESDataConnectorsAdapter:
             if not self.run_silent(f"kubectl get namespace {shlex.quote(namespace)}"):
                 self.run(f"kubectl create namespace {shlex.quote(namespace)}", check=False)
             print(f"Applying connector interface branding assets: {configmap_name}")
-            return self.run(f"kubectl apply -f {shlex.quote(tmp_path)}", check=False) is not None
+            existing = self.run_silent(
+                f"kubectl get configmap {shlex.quote(configmap_name)} "
+                f"-n {shlex.quote(namespace)} --ignore-not-found"
+            )
+            action = "replace" if existing else "create"
+            return self.run(f"kubectl {action} -f {shlex.quote(tmp_path)}", check=False) is not None
         except Exception as exc:
             print(f"Error applying connector interface branding assets: {exc}")
             return False

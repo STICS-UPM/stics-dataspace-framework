@@ -1,8 +1,9 @@
 import { expect, Page } from "@playwright/test";
 
 import { clickMarked } from "../../../../shared/utils/live-marker";
-import { materialSelect, snackBar } from "../../../../shared/utils/selectors";
+import { snackBar } from "../../../../shared/utils/selectors";
 import { waitForUiTransition } from "../../../../shared/utils/waiting";
+import { selectLocalStoreDestination } from "../storage-destination";
 
 export class ContractsPage {
   constructor(private readonly page: Page) {}
@@ -44,8 +45,7 @@ export class ContractsPage {
     const dialog = this.page.getByRole("dialog", { name: /Transfer/i });
     await expect(dialog).toBeVisible({ timeout: 15_000 });
 
-    await clickMarked(materialSelect(this.page, "Destination"));
-    await clickMarked(this.page.locator("mat-option").filter({ hasText: /InesDataStore/i }).first());
+    await selectLocalStoreDestination(this.page);
     await clickMarked(dialog.getByRole("button", { name: /start transfer/i }));
 
     const notification = snackBar(this.page);

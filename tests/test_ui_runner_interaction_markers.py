@@ -16,7 +16,10 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
             dataspace_name="demo",
             ds_domain_base="dev.ds.dataspaceunit.upm",
             connectors=["conn-citycouncil-demo", "conn-company-demo"],
-            config={"KC_URL": "http://keycloak.dev.ed.dataspaceunit.upm"},
+            config={
+                "KC_URL": "http://keycloak.dev.ed.dataspaceunit.upm",
+                "INESDATA_LOCAL_STORE_LABEL": "LocalStore",
+            },
         )
 
     def _profile(self):
@@ -46,6 +49,7 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
             self.assertEqual(env["UI_ONTOLOGY_HUB_INESDATA_DEMO"], "1")
             self.assertEqual(env["UI_AI_MODEL_HUB_HTTPDATA_DEMO"], "1")
             self.assertEqual(env["UI_AI_MODEL_OBSERVER_DEMO"], "1")
+            self.assertEqual(env["UI_INESDATA_LOCAL_STORE_LABEL"], "LocalStore")
 
     def test_playwright_validation_respects_explicit_marker_override(self):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(

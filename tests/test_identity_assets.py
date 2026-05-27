@@ -15,6 +15,7 @@ class IdentityAssetsTests(unittest.TestCase):
             "pionera-logo.jpg",
             "pionera-logo-square.jpg",
             "pionera-logo.pdf",
+            "inesdata-logo.svg",
             "funding-logos.png",
         }
 

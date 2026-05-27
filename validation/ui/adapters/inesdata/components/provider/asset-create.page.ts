@@ -2,6 +2,7 @@ import { expect, Page } from "@playwright/test";
 
 import { clickMarked, fillMarked, setInputFilesMarked } from "../../../../shared/utils/live-marker";
 import { materialInput, materialSelect, snackBar } from "../../../../shared/utils/selectors";
+import { selectLocalStoreDestination } from "../storage-destination";
 
 export class AssetCreatePage {
   constructor(private readonly page: Page) {}
@@ -39,8 +40,7 @@ export class AssetCreatePage {
       this.page.getByRole("tabpanel", { name: "Storage information" }),
     ).toBeVisible({ timeout: 15_000 });
 
-    await clickMarked(materialSelect(this.page, "Destination"));
-    await clickMarked(this.page.locator("mat-option").filter({ hasText: "InesDataStore" }).first());
+    await selectLocalStoreDestination(this.page);
     await fillMarked(materialInput(this.page, "Folder"), folderName);
   }
 

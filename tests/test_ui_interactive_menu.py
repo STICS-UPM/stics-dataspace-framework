@@ -28,6 +28,7 @@ class FakeInteractiveAdapter:
             "DS_1_NAME": "demo",
             "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
             "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+            "INESDATA_LOCAL_STORE_LABEL": "LocalStore",
         }
 
 
@@ -535,6 +536,7 @@ class UiInteractiveMenuTests(unittest.TestCase):
             mock_smoke.call_args.kwargs["extra_env"],
             {
                 "UI_KEYCLOAK_URL": "http://auth.dev.ed.dataspaceunit.upm",
+                "UI_INESDATA_LOCAL_STORE_LABEL": "LocalStore",
                 "PWDEBUG": "0",
             },
         )
@@ -543,6 +545,7 @@ class UiInteractiveMenuTests(unittest.TestCase):
             mock_dataspace.call_args.kwargs["extra_env"],
             {
                 "UI_KEYCLOAK_URL": "http://auth.dev.ed.dataspaceunit.upm",
+                "UI_INESDATA_LOCAL_STORE_LABEL": "LocalStore",
                 "PWDEBUG": "0",
             },
         )
@@ -551,6 +554,7 @@ class UiInteractiveMenuTests(unittest.TestCase):
             mock_ops.call_args.kwargs["extra_env"],
             {
                 "UI_KEYCLOAK_URL": "http://auth.dev.ed.dataspaceunit.upm",
+                "UI_INESDATA_LOCAL_STORE_LABEL": "LocalStore",
                 "PWDEBUG": "0",
             },
         )

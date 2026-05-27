@@ -45,6 +45,10 @@ def _ui_runtime_env_from_adapter(adapter):
     if keycloak_url:
         env.setdefault("UI_KEYCLOAK_URL", keycloak_url)
 
+    local_store_label = str(config.get("INESDATA_LOCAL_STORE_LABEL") or "").strip()
+    if local_store_label:
+        env.setdefault("UI_INESDATA_LOCAL_STORE_LABEL", local_store_label)
+
     return env
 
 
@@ -985,6 +989,8 @@ def _run_core_ui_tests(mode, adapter=None):
     runtime_extra_env = {}
     if runtime_env.get("UI_KEYCLOAK_URL"):
         runtime_extra_env["UI_KEYCLOAK_URL"] = runtime_env["UI_KEYCLOAK_URL"]
+    if runtime_env.get("UI_INESDATA_LOCAL_STORE_LABEL"):
+        runtime_extra_env["UI_INESDATA_LOCAL_STORE_LABEL"] = runtime_env["UI_INESDATA_LOCAL_STORE_LABEL"]
     mode = {
         **mode,
         "env": {
