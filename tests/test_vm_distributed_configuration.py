@@ -51,6 +51,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                     "VM_COMMON_IP": "10.0.0.10",
                     "VM_PROVIDER_IP": "10.0.0.20",
                     "VM_CONSUMER_IP": "10.0.0.30",
+                    "VM_SSH_USER": "ubuntu",
                     "K3S_KUBECONFIG_COMMON": common_kubeconfig,
                     "K3S_KUBECONFIG_PROVIDER": common_kubeconfig,
                     "K3S_KUBECONFIG_CONSUMER": common_kubeconfig,
@@ -145,6 +146,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 "10.0.0.30",
                 "10.0.0.40",
                 "10.0.0.10",
+                "ubuntu",
                 common_kubeconfig,
                 "",
                 "",
@@ -197,6 +199,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertIn("DS_1_CONNECTOR_NAMESPACES=alpha:provider,beta:consumer,gamma:provider", adapter_config)
         self.assertIn("DS_1_VALIDATION_PAIRS=alpha>beta", adapter_config)
         self.assertIn("LEVEL4_CONNECTOR_RECONCILIATION_MODE=additive", adapter_config)
+        self.assertIn("VM_SSH_USER=ubuntu", topology_config)
         self.assertIn("K3S_KUBECONFIG_COMPONENTS=", topology_config)
         self.assertIn(common_kubeconfig, topology_config)
 

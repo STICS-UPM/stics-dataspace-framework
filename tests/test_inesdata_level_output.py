@@ -192,6 +192,15 @@ class InesdataLevelOutputTests(unittest.TestCase):
             config_cls=self.config,
         )
 
+    def _make_shared_foundation_infrastructure(self):
+        return SharedFoundationInfrastructureAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+
     def test_setup_cluster_prints_header_once_and_complete_on_success(self):
         infrastructure = self._make_infrastructure()
         infrastructure.ensure_unix_environment = lambda: None
@@ -264,6 +273,80 @@ class InesdataLevelOutputTests(unittest.TestCase):
             check=False,
         )
         infrastructure.run_silent.assert_any_call("minikube -p vm-local addons enable ingress")
+
+    def test_shared_foundation_vm_distributed_level2_syncs_routing_after_deploy(self):
+        infrastructure = self._make_shared_foundation_infrastructure()
+        infrastructure._deploy_infrastructure_runtime = mock.Mock(return_value={"status": "deployed"})
+        infrastructure.sync_vm_distributed_routing = mock.Mock(return_value={"status": "synced"})
+
+        result = infrastructure.deploy_infrastructure_for_topology("vm-distributed")
+
+        self.assertEqual(result, {"status": "deployed"})
+        infrastructure._deploy_infrastructure_runtime.assert_called_once()
+        self.assertTrue(infrastructure._deploy_infrastructure_runtime.call_args.kwargs["skip_hosts"])
+        infrastructure.sync_vm_distributed_routing.assert_called_once()
+
+    def test_shared_foundation_vm_distributed_routing_writes_common_and_remote_nginx(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "VM_COMMON_IP": "10.0.0.10",
+                "VM_PROVIDER_IP": "10.0.0.20",
+                "VM_CONSUMER_IP": "10.0.0.30",
+                "VM_SSH_USER": "ubuntu",
+                "DS_DOMAIN_BASE": "dev.ds.example",
+                "DS_1_NAME": "pionera",
+                "K3S_INGRESS_HTTP_NODEPORT": "31667",
+                "VM_PROVIDER_INGRESS_HTTP_PORT": "80",
+                "VM_CONSUMER_INGRESS_HTTP_PORT": "80",
+                "VM_PROVIDER_CONNECTORS": "citycouncil",
+                "VM_CONSUMER_CONNECTORS": "company",
+            }
+        )
+        infrastructure = self._make_shared_foundation_infrastructure()
+        writes = []
+
+        def fake_write_file(path, content):
+            writes.append((path, content))
+            return True, ""
+
+        with mock.patch(
+            "adapters.shared.infrastructure._sudo_write_file",
+            side_effect=fake_write_file,
+        ), mock.patch(
+            "adapters.shared.infrastructure.subprocess.check_output",
+            return_value="10.96.0.10",
+        ), mock.patch(
+            "adapters.shared.infrastructure.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+        ) as run:
+            result = infrastructure.sync_vm_distributed_routing()
+
+        self.assertEqual(result["status"], "synced")
+        common_http = next(
+            content
+            for path, content in writes
+            if path.endswith("/pionera-vm-distributed-pionera.conf")
+        )
+        self.assertIn("listen 80;", common_http)
+        self.assertIn("registration-service-pionera.dev.ds.example", common_http)
+        self.assertIn("conn-citycouncil-pionera.dev.ds.example", common_http)
+        self.assertIn("proxy_pass http://10.0.0.20:80;", common_http)
+        self.assertIn("conn-company-pionera.dev.ds.example", common_http)
+        self.assertIn("proxy_pass http://10.0.0.30:80;", common_http)
+
+        remote_provider_writes = [
+            call
+            for call in run.call_args_list
+            if call.args
+            and call.args[0][:2] == ["ssh", "ubuntu@10.0.0.20"]
+            and "sudo tee" in call.args[0][2]
+        ]
+        self.assertEqual(len(remote_provider_writes), 1)
+        self.assertIn(
+            "conn-citycouncil-pionera.dev.ds.example",
+            remote_provider_writes[0].kwargs["input"],
+        )
+        self.assertIn("proxy_pass http://10.0.0.20:31667;", remote_provider_writes[0].kwargs["input"])
 
     def test_wsl_docker_config_repair_removes_desktop_exe_creds_store(self):
         docker_dir = os.path.join(self.tmpdir.name, ".docker")
@@ -1256,6 +1339,44 @@ minio:
             topology="vm-single",
         )
         self.assertFalse(any(call.args and call.args[0] == "minikube ip" for call in run.call_args_list))
+
+    def test_deploy_dataspace_for_vm_distributed_syncs_routing_after_success(self):
+        infrastructure = self._make_infrastructure()
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=infrastructure,
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+        deployment.connectors_adapter = FakeConnectorsAdapter()
+        infrastructure.ensure_local_infra_access = mock.Mock(return_value=True)
+        infrastructure.ensure_vault_unsealed = lambda: True
+        infrastructure.reconcile_vault_state_for_local_runtime = mock.Mock(return_value=True)
+        infrastructure.sync_common_credentials_from_kubernetes = mock.Mock(return_value=True)
+        infrastructure.sync_vm_distributed_routing = mock.Mock(return_value={"status": "synced"})
+        infrastructure.deploy_helm_release = lambda *_args, **_kwargs: True
+        infrastructure.wait_for_dataspace_level3_pods = lambda *_args, **_kwargs: True
+        infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
+        deployment.wait_for_keycloak_admin_ready = lambda *_args, **_kwargs: True
+        deployment.restart_registration_service = lambda: None
+        deployment.update_helm_values_with_host_aliases = mock.Mock()
+
+        with contextlib.redirect_stdout(io.StringIO()), mock.patch(
+            "adapters.inesdata.deployment.ensure_python_requirements",
+            lambda *_args, **_kwargs: None,
+        ), mock.patch(
+            "adapters.inesdata.deployment.requests.get",
+            return_value=mock.Mock(status_code=200),
+        ), mock.patch(
+            "adapters.shared.deployment.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+        ):
+            deployment.deploy_dataspace_for_topology("vm-distributed")
+
+        deployment.update_helm_values_with_host_aliases.assert_not_called()
+        infrastructure.sync_vm_distributed_routing.assert_called_once()
 
     def test_public_portal_connector_endpoints_replace_changeme_placeholders(self):
         self.config_adapter = LevelOutputConfigAdapter(

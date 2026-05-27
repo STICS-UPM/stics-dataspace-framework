@@ -7626,6 +7626,10 @@ def run_level(
         result = deploy_connectors()
         if not result:
             raise RuntimeError(f"Level 4 finished without deployed connectors for adapter '{resolved_deployer_name}'")
+        if normalized_topology == "vm-distributed":
+            sync_routing = _resolve_adapter_callable(adapter, "infrastructure.sync_vm_distributed_routing")
+            if callable(sync_routing):
+                sync_routing()
     elif level_id == 5:
         orchestrator = build_deployer_orchestrator(
             deployer_name=resolved_deployer_name,
@@ -7780,6 +7784,7 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "VM_CONNECTORS_IP",
     "VM_COMPONENTS_IP",
     "VM_OBSERVABILITY_IP",
+    "VM_SSH_USER",
     "INGRESS_EXTERNAL_IP",
     "CLUSTER_TYPE",
     "K3S_KUBECONFIG",
@@ -7872,6 +7877,12 @@ def _vm_distributed_discovery_commands(topic):
             "sudo ss -lntp",
             "sudo ufw status",
         ],
+        "ssh": [
+            "whoami",
+            "id -un",
+            "ssh <user>@<vm-ip-or-dns> hostname",
+            "ssh <user>@<vm-ip-or-dns> sudo -n true",
+        ],
         "connectors": [
             "Use short connector names, for example: citycouncil,company,partnera",
             "Map locations with connector:group, for example: citycouncil:provider,partnera:provider",
@@ -7892,6 +7903,7 @@ def _vm_distributed_help_topic_base(topic):
         "consumer-address": "address",
         "components-address": "address",
         "ingress-address": "ingress",
+        "ssh-user": "ssh",
         "common-kubeconfig": "kubeconfig",
         "provider-kubeconfig": "kubeconfig",
         "consumer-kubeconfig": "kubeconfig",
@@ -7985,6 +7997,16 @@ def _vm_distributed_discovery_details(topic):
             "choice": [
                 "Use the LoadBalancer, reverse proxy or VM address that actually receives HTTP/HTTPS traffic.",
                 "If there is no separate ingress endpoint, keep the common services address.",
+            ],
+        },
+        "ssh-user": {
+            "purpose": [
+                "Ubuntu user used only when the framework must synchronize NGINX on remote connector VMs.",
+                "If it is empty, remote NGINX files are not modified automatically.",
+            ],
+            "choice": [
+                "Use a user that can connect by SSH and run sudo for NGINX reloads on the target VMs.",
+                "Leave it empty when all routing is handled on the common VM or you prefer manual NGINX updates.",
             ],
         },
         "common-kubeconfig": {
@@ -8285,6 +8307,17 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
             "Level 4 currently requires common/provider/consumer to share one kubeconfig; "
             "multi-kubeconfig connector deployment is blocked safely."
         )
+    common_address = str(topology.get("VM_COMMON_IP") or "").strip()
+    provider_address = str(topology.get("VM_PROVIDER_IP") or "").strip()
+    consumer_address = str(topology.get("VM_CONSUMER_IP") or "").strip()
+    ssh_user = str(topology.get("VM_SSH_USER") or "").strip()
+    if not ssh_user and (
+        provider_address and provider_address != common_address
+        or consumer_address and consumer_address != common_address
+    ):
+        warnings.append(
+            "VM_SSH_USER is empty; remote connector VM NGINX synchronization will be skipped."
+        )
 
     checks.append(
         {
@@ -8489,6 +8522,13 @@ def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_regis
         required=False,
         help_topic="ingress-address",
     )
+    ssh_user = _prompt_vm_distributed_value(
+        "SSH user for remote NGINX sync",
+        current=topology_config.get("VM_SSH_USER"),
+        default="",
+        required=False,
+        help_topic="ssh-user",
+    )
 
     common_kubeconfig = _prompt_vm_distributed_value(
         "Common services kubeconfig path",
@@ -8568,6 +8608,7 @@ def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_regis
         "VM_CONNECTORS_IP": provider_ip,
         "VM_COMPONENTS_IP": components_ip or common_ip,
         "VM_OBSERVABILITY_IP": components_ip or common_ip,
+        "VM_SSH_USER": ssh_user,
         "INGRESS_EXTERNAL_IP": ingress_ip or common_ip,
         "CLUSTER_TYPE": "k3s",
         "K3S_KUBECONFIG": common_kubeconfig,

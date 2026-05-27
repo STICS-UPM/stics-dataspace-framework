@@ -3482,6 +3482,26 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["result"], ["conn-a", "conn-b"])
         self.assertEqual(adapter.calls, ["deploy_connectors"])
 
+    def test_run_level_four_vm_distributed_syncs_routing_after_connectors(self):
+        adapter = FakeAdapter()
+        adapter.infrastructure = mock.Mock()
+        adapter.infrastructure.sync_vm_distributed_routing = mock.Mock(return_value={"status": "synced"})
+
+        with mock.patch.object(
+            main,
+            "_configured_vm_distributed_role_kubeconfigs",
+            return_value={
+                "common": "/clusters/common.yaml",
+                "provider": "/clusters/common.yaml",
+                "consumer": "/clusters/common.yaml",
+            },
+        ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
+            result = main.run_level(adapter, 4, deployer_name="fake", topology="vm-distributed")
+
+        self.assertEqual(result["level"], 4)
+        self.assertEqual(result["status"], "completed")
+        adapter.infrastructure.sync_vm_distributed_routing.assert_called_once()
+
     def test_run_level_four_uses_vm_single_connector_deployment(self):
         adapter = FakeAdapter()
 

@@ -75,6 +75,7 @@ TOPOLOGY_OVERLAY_KEYS = {
             "VM_CONNECTORS_IP",
             "VM_COMPONENTS_IP",
             "VM_OBSERVABILITY_IP",
+            "VM_SSH_USER",
             "INGRESS_EXTERNAL_IP",
             "CLUSTER_TYPE",
             "K3S_KUBECONFIG",

@@ -997,8 +997,13 @@ class SharedDataspaceDeploymentAdapter:
                 f"Level 3 deploy_dataspace_for_topology() is not implemented for topology "
                 f"'{normalized_topology}' yet."
             )
-        return self._deploy_dataspace_runtime(
+        result = self._deploy_dataspace_runtime(
             topology=normalized_topology,
             require_tunnel_prompt=False,
             update_minikube_host_aliases=normalized_topology == VM_SINGLE_TOPOLOGY,
         )
+        if normalized_topology == VM_DISTRIBUTED_TOPOLOGY:
+            sync_routing = getattr(self.infrastructure, "sync_vm_distributed_routing", None)
+            if callable(sync_routing):
+                sync_routing()
+        return result
