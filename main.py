@@ -85,6 +85,11 @@ from deployers.shared.lib.cluster_runtime import (
     build_cluster_runtime,
     normalize_cluster_type,
 )
+from deployers.shared.lib.connectors import (
+    parse_connector_list,
+    parse_connector_mapping,
+    parse_connector_pairs,
+)
 from validation.core.test_data_cleanup import run_pre_validation_cleanup
 from validation.orchestration.hosts import (
     ensure_public_endpoints_accessible,
@@ -1472,6 +1477,51 @@ def _namespace_role_value(roles, key, default=""):
     return str(value or default).strip()
 
 
+def _context_connector_namespace_overrides(deployer_context, default_namespace=""):
+    config = getattr(deployer_context, "config", None) or {}
+    dataspace_name = str(getattr(deployer_context, "dataspace_name", "") or "").strip()
+    raw_mapping = (
+        config.get("DS_1_CONNECTOR_NAMESPACES")
+        or config.get("CONNECTOR_NAMESPACES")
+        or ""
+    )
+    parsed = parse_connector_mapping(raw_mapping, dataspace_name)
+    return {
+        connector: _resolve_context_connector_namespace(
+            deployer_context,
+            target,
+            default_namespace=default_namespace,
+        )
+        for connector, target in parsed.items()
+    }
+
+
+def _resolve_context_connector_namespace(deployer_context, target, default_namespace=""):
+    raw_target = str(target or "").strip()
+    normalized = raw_target.lower().replace("-", "_")
+    aliases = {
+        "provider": "provider_namespace",
+        "provider_namespace": "provider_namespace",
+        "consumer": "consumer_namespace",
+        "consumer_namespace": "consumer_namespace",
+        "registration": "registration_service_namespace",
+        "registration_service": "registration_service_namespace",
+        "core": "registration_service_namespace",
+        "dataspace": "",
+        "default": "",
+    }
+    role_field = aliases.get(normalized)
+    if role_field is None:
+        return raw_target
+    if role_field == "":
+        return default_namespace
+
+    roles = getattr(deployer_context, "namespace_roles", None)
+    if _context_namespace_profile(deployer_context) == "role-aligned":
+        roles = getattr(deployer_context, "planned_namespace_roles", None) or roles
+    return _namespace_role_value(roles, role_field, default_namespace)
+
+
 def _edc_dashboard_connector_namespaces(deployer_context):
     connectors = list(getattr(deployer_context, "connectors", []) or [])
     default_namespace = _edc_dashboard_namespace(deployer_context)
@@ -1508,6 +1558,16 @@ def _edc_dashboard_connector_namespaces(deployer_context):
         connector_namespaces[connectors[1]] = consumer_namespace
     for connector in connectors[2:]:
         connector_namespaces[connector] = default_namespace
+    connector_namespaces.update(
+        {
+            connector: namespace
+            for connector, namespace in _context_connector_namespace_overrides(
+                deployer_context,
+                default_namespace=default_namespace,
+            ).items()
+            if connector in connector_namespaces and namespace
+        }
+    )
     return connector_namespaces
 
 
@@ -1534,6 +1594,16 @@ def _inesdata_interface_connector_namespaces(deployer_context):
         connector_namespaces[connectors[1]] = consumer_namespace
     for connector in connectors[2:]:
         connector_namespaces[connector] = default_namespace
+    connector_namespaces.update(
+        {
+            connector: namespace
+            for connector, namespace in _context_connector_namespace_overrides(
+                deployer_context,
+                default_namespace=default_namespace,
+            ).items()
+            if connector in connector_namespaces and namespace
+        }
+    )
     return connector_namespaces
 
 
@@ -4894,6 +4964,13 @@ def _menu_action_requires_vm_single_address(choice):
     return normalized in {"3", "4", "5", "6"}
 
 
+def _menu_action_benefits_from_vm_distributed_configuration(choice):
+    normalized = str(choice or "").strip().upper()
+    if normalized in {"0", "P", "H", "U", "X"}:
+        return True
+    return normalized in {str(level_id) for level_id in LEVEL_DESCRIPTIONS}
+
+
 def _should_use_deployer_run():
     if _env_flag("PIONERA_DISABLE_DEPLOYER_RUN", default=False):
         return False
@@ -7286,9 +7363,38 @@ def run_run(
     )
 
 
-def _topology_runtime_environment_overrides(topology="local"):
+def _vm_distributed_level_runtime_role(level=None):
+    try:
+        level_id = int(level)
+    except (TypeError, ValueError):
+        level_id = 0
+    if level_id == 5:
+        return "components"
+    return "common"
+
+
+def _vm_distributed_runtime_kubeconfig(runtime, role="common"):
+    normalized_role = str(role or "common").strip().lower() or "common"
+    role_key = {
+        "common": "k3s_kubeconfig_common",
+        "registration_service": "k3s_kubeconfig_common",
+        "dataspace": "k3s_kubeconfig_common",
+        "provider": "k3s_kubeconfig_provider",
+        "consumer": "k3s_kubeconfig_consumer",
+        "connectors": "k3s_kubeconfig_common",
+        "components": "k3s_kubeconfig_components",
+    }.get(normalized_role, "k3s_kubeconfig_common")
+    return str(
+        (runtime or {}).get(role_key)
+        or (runtime or {}).get("k3s_kubeconfig_common")
+        or (runtime or {}).get("k3s_kubeconfig")
+        or ""
+    ).strip()
+
+
+def _topology_runtime_environment_overrides(topology="local", level=None, role=None):
     normalized_topology = normalize_topology(topology)
-    if normalized_topology != "vm-single":
+    if normalized_topology not in {"vm-single", "vm-distributed"}:
         return {}
     try:
         config = _load_effective_infrastructure_deployer_config(topology=normalized_topology)
@@ -7297,10 +7403,51 @@ def _topology_runtime_environment_overrides(topology="local"):
         return {}
     if runtime.get("cluster_type") != "k3s":
         return {}
-    kubeconfig = str(runtime.get("k3s_kubeconfig") or "").strip()
+    if normalized_topology == "vm-distributed":
+        kubeconfig = _vm_distributed_runtime_kubeconfig(
+            runtime,
+            role=role or _vm_distributed_level_runtime_role(level),
+        )
+    else:
+        kubeconfig = str(runtime.get("k3s_kubeconfig") or "").strip()
     if not kubeconfig:
         return {}
-    return {"KUBECONFIG": kubeconfig}
+    overrides = {"KUBECONFIG": kubeconfig}
+    if normalized_topology == "vm-distributed":
+        overrides["PIONERA_KUBECONFIG_ROLE"] = str(
+            role or _vm_distributed_level_runtime_role(level)
+        ).strip().lower() or "common"
+    return overrides
+
+
+def _configured_vm_distributed_role_kubeconfigs():
+    config = _load_effective_infrastructure_deployer_config(topology="vm-distributed")
+    runtime = build_cluster_runtime(config, topology="vm-distributed")
+    return {
+        "common": _vm_distributed_runtime_kubeconfig(runtime, "common"),
+        "provider": _vm_distributed_runtime_kubeconfig(runtime, "provider"),
+        "consumer": _vm_distributed_runtime_kubeconfig(runtime, "consumer"),
+        "components": _vm_distributed_runtime_kubeconfig(runtime, "components"),
+    }
+
+
+def _ensure_vm_distributed_level4_kubeconfig_supported():
+    kubeconfigs = _configured_vm_distributed_role_kubeconfigs()
+    connector_values = {
+        role: path
+        for role, path in kubeconfigs.items()
+        if role in {"common", "provider", "consumer"} and path
+    }
+    unique_values = sorted(set(connector_values.values()))
+    if len(unique_values) <= 1:
+        return
+    details = ", ".join(f"{role}={path}" for role, path in sorted(connector_values.items()))
+    raise RuntimeError(
+        "Level 4 vm-distributed multi-kubeconfig connector deployment is not enabled yet. "
+        "Current connector creation still bootstraps shared services and Helm deployment in one "
+        f"Kubernetes context. Configure a single logical cluster kubeconfig for common/provider/consumer "
+        f"or run connectors in a topology where those roles share one API server. Detected: {details}"
+    )
 
 
 def _context_components(context):
@@ -7378,7 +7525,7 @@ def run_level(
     level_name = LEVEL_DESCRIPTIONS[level_id]
     normalized_topology = str(topology or "local").strip().lower()
     if os.environ.get("PIONERA_LEVEL_RUNTIME_ENV_ACTIVE") != "true":
-        environment_overrides = _topology_runtime_environment_overrides(topology)
+        environment_overrides = _topology_runtime_environment_overrides(topology, level=level_id)
         if environment_overrides:
             environment_overrides["PIONERA_LEVEL_RUNTIME_ENV_ACTIVE"] = "true"
             with _temporary_environment(environment_overrides):
@@ -7396,7 +7543,7 @@ def run_level(
     level_context = None
     level_local_capacity = None
     if normalized_topology != "local" and not (
-        normalized_topology == "vm-single" and level_id in {1, 2, 3, 4, 5}
+        normalized_topology in {"vm-single", "vm-distributed"} and level_id in {1, 2, 3, 4, 5}
     ) and level_id in {1, 2, 3, 4, 5}:
         raise RuntimeError(
             f"Real Level {level_id} execution is not enabled for topology '{normalized_topology}' yet. "
@@ -7405,7 +7552,7 @@ def run_level(
         )
 
     if level_id == 1:
-        if normalized_topology == "vm-single":
+        if normalized_topology in {"vm-single", "vm-distributed"}:
             setup_cluster_preflight = _resolve_adapter_callable(adapter, "infrastructure.setup_cluster_preflight")
             if not callable(setup_cluster_preflight):
                 raise RuntimeError(
@@ -7419,7 +7566,7 @@ def run_level(
                 raise RuntimeError(f"Adapter '{resolved_deployer_name}' does not expose Level 1 setup_cluster()")
             result = setup_cluster()
     elif level_id == 2:
-        if normalized_topology == "vm-single":
+        if normalized_topology in {"vm-single", "vm-distributed"}:
             deploy_infrastructure = _resolve_adapter_callable(
                 adapter,
                 "infrastructure.deploy_infrastructure_for_topology",
@@ -7438,7 +7585,7 @@ def run_level(
                 )
             result = deploy_infrastructure()
     elif level_id == 3:
-        if normalized_topology == "vm-single":
+        if normalized_topology in {"vm-single", "vm-distributed"}:
             deploy_dataspace = _resolve_adapter_callable(
                 adapter,
                 "deployment.deploy_dataspace_for_topology",
@@ -7460,6 +7607,8 @@ def run_level(
                 raise RuntimeError(f"Adapter '{resolved_deployer_name}' does not expose Level 3 deploy_dataspace()")
             result = deploy_dataspace()
     elif level_id == 4:
+        if normalized_topology == "vm-distributed":
+            _ensure_vm_distributed_level4_kubeconfig_supported()
         level_local_capacity = _run_local_adapter_install_capacity_preflight(
             resolved_deployer_name,
             topology,
@@ -7620,6 +7769,800 @@ def _interactive_confirm(prompt, default=False):
     if not answer:
         return default
     return answer in {"y", "yes", "s", "si", "sí"}
+
+
+VM_DISTRIBUTED_TOPOLOGY_KEYS = (
+    "VM_EXTERNAL_IP",
+    "VM_COMMON_IP",
+    "VM_DATASPACE_IP",
+    "VM_PROVIDER_IP",
+    "VM_CONSUMER_IP",
+    "VM_CONNECTORS_IP",
+    "VM_COMPONENTS_IP",
+    "VM_OBSERVABILITY_IP",
+    "INGRESS_EXTERNAL_IP",
+    "CLUSTER_TYPE",
+    "K3S_KUBECONFIG",
+    "K3S_KUBECONFIG_COMMON",
+    "K3S_KUBECONFIG_PROVIDER",
+    "K3S_KUBECONFIG_CONSUMER",
+    "K3S_KUBECONFIG_COMPONENTS",
+    "K3S_INSTALL_EXEC",
+    "K3S_SERVICE_NAME",
+    "K3S_INGRESS_CONTROLLER",
+    "K3S_INGRESS_SERVICE_TYPE",
+    "K3S_REPAIR_ON_LEVEL1",
+    "K3S_WRITE_KUBECONFIG_MODE",
+    "TOPOLOGY_ROUTING_MODE",
+    "VM_PROVIDER_CONNECTORS",
+    "VM_CONSUMER_CONNECTORS",
+)
+
+VM_DISTRIBUTED_INFRA_KEYS = (
+    "DOMAIN_BASE",
+    "DS_DOMAIN_BASE",
+)
+
+VM_DISTRIBUTED_ADAPTER_KEYS = (
+    "DS_1_NAME",
+    "DS_1_NAMESPACE",
+    "DS_1_REGISTRATION_NAMESPACE",
+    "DS_1_PROVIDER_NAMESPACE",
+    "DS_1_CONSUMER_NAMESPACE",
+    "DS_1_CONNECTORS",
+    "DS_1_CONNECTOR_NAMESPACES",
+    "DS_1_VALIDATION_PAIRS",
+    "LEVEL4_CONNECTOR_RECONCILIATION_MODE",
+)
+
+
+def _adapter_deployer_config_path(adapter_name):
+    normalized = str(adapter_name or "").strip().lower()
+    if not normalized:
+        return ""
+    return os.path.join(os.path.dirname(__file__), "deployers", normalized, "deployer.config")
+
+
+def _adapter_deployer_config_example_path(adapter_name):
+    normalized = str(adapter_name or "").strip().lower()
+    if not normalized:
+        return ""
+    return os.path.join(os.path.dirname(__file__), "deployers", normalized, "deployer.config.example")
+
+
+def _seed_adapter_deployer_config_if_missing(adapter_name):
+    config_path = _adapter_deployer_config_path(adapter_name)
+    if not config_path:
+        return ""
+    if os.path.isfile(config_path):
+        return config_path
+
+    example_path = _adapter_deployer_config_example_path(adapter_name)
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    if os.path.isfile(example_path):
+        shutil.copy2(example_path, config_path)
+    else:
+        with open(config_path, "w", encoding="utf-8") as handle:
+            handle.write("")
+    return config_path
+
+
+def _vm_distributed_discovery_commands(topic):
+    normalized = _vm_distributed_help_topic_base(topic)
+    commands = {
+        "address": [
+            "hostname -I",
+            "ip -4 addr show",
+            "ip route get 1.1.1.1",
+            "getent hosts <dns-name>",
+        ],
+        "domain": [
+            "getent hosts <hostname>",
+            "dig +short <hostname>",
+            "curl -kI https://<hostname>",
+        ],
+        "kubeconfig": [
+            "sudo ls -l /etc/rancher/k3s/k3s.yaml",
+            "sudo cat /etc/rancher/k3s/k3s.yaml",
+            "kubectl --kubeconfig /path/to/k3s.yaml get nodes -o wide",
+        ],
+        "ingress": [
+            "kubectl --kubeconfig /path/to/k3s.yaml -n ingress-nginx get svc -o wide",
+            "kubectl --kubeconfig /path/to/k3s.yaml get ingress -A",
+            "sudo ss -lntp",
+            "sudo ufw status",
+        ],
+        "connectors": [
+            "Use short connector names, for example: citycouncil,company,partnera",
+            "Map locations with connector:group, for example: citycouncil:provider,partnera:provider",
+            "Map validation pairs with source>target, for example: citycouncil>company,partnera>citycouncil",
+        ],
+    }
+    return commands.get(normalized, [])
+
+
+def _vm_distributed_help_topic_base(topic):
+    normalized = str(topic or "").strip().lower().replace("_", "-")
+    aliases = {
+        "common-domain": "domain",
+        "dataspace-domain": "domain",
+        "routing": "ingress",
+        "common-address": "address",
+        "provider-address": "address",
+        "consumer-address": "address",
+        "components-address": "address",
+        "ingress-address": "ingress",
+        "common-kubeconfig": "kubeconfig",
+        "provider-kubeconfig": "kubeconfig",
+        "consumer-kubeconfig": "kubeconfig",
+        "components-kubeconfig": "kubeconfig",
+        "dataspace": "connectors",
+        "connector-inventory": "connectors",
+        "connector-locations": "connectors",
+        "validation-pairs": "connectors",
+        "reconciliation": "connectors",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _vm_distributed_discovery_details(topic):
+    normalized = str(topic or "").strip().lower().replace("_", "-")
+    details = {
+        "common-domain": {
+            "purpose": [
+                "Base DNS suffix used by common services such as Keycloak, MinIO, PostgreSQL and Vault.",
+                "The framework uses it to build public URLs and hosts entries for shared services.",
+            ],
+            "choice": [
+                "Keep the value in brackets if it already matches the target deployment.",
+                "Otherwise enter the DNS suffix that users and VMs will use to reach common services.",
+            ],
+        },
+        "dataspace-domain": {
+            "purpose": [
+                "Base DNS suffix used by the dataspace, connectors and validation components.",
+                "The framework uses it to build registration-service, connector and component URLs.",
+            ],
+            "choice": [
+                "Use a domain delegated to the distributed environment, often a subdomain of the common domain.",
+                "All machines that run validation should be able to resolve or map this domain through hosts entries.",
+            ],
+        },
+        "routing": {
+            "purpose": [
+                "Defines how the framework expects to reach public endpoints.",
+                "The current supported mode is host-based routing through DNS or /etc/hosts entries.",
+            ],
+            "choice": [
+                "Use host unless a new routing strategy has been explicitly implemented.",
+            ],
+        },
+        "common-address": {
+            "purpose": [
+                "IP or DNS of the VM that exposes common services: Keycloak, MinIO, PostgreSQL and Vault.",
+                "Levels 1 and 2 use this role as the shared foundation for the dataspace.",
+            ],
+            "choice": [
+                "Use an address reachable from the other VMs and from the machine running the framework.",
+                "On Ubuntu, hostname -I usually shows the candidate private address for the VM.",
+            ],
+        },
+        "provider-address": {
+            "purpose": [
+                "IP or DNS of the VM or node group where provider-side connectors are expected to be exposed.",
+                "This is a validation location label; a connector can still act as provider or consumer per flow.",
+            ],
+            "choice": [
+                "Use the address that should receive hostnames for connectors mapped to the provider group.",
+                "If all roles share one VM or one ingress, reuse the common services address.",
+            ],
+        },
+        "consumer-address": {
+            "purpose": [
+                "IP or DNS of the VM or node group where consumer-side connectors are expected to be exposed.",
+                "This is separate from business role: the same connector may consume or provide in different tests.",
+            ],
+            "choice": [
+                "Use the address that should receive hostnames for connectors mapped to the consumer group.",
+                "If all connectors share one ingress, reuse the provider or common services address.",
+            ],
+        },
+        "components-address": {
+            "purpose": [
+                "IP or DNS of the VM or node group that exposes Ontology Hub, AI Model Hub and Semantic Virtualization.",
+                "Level 5 and Level 6 use this value to plan component access URLs.",
+            ],
+            "choice": [
+                "Use the components VM address when components are separated from connectors.",
+                "If components run on the same ingress as common services, keep the default.",
+            ],
+        },
+        "ingress-address": {
+            "purpose": [
+                "Public IP or DNS where ingress hostnames should resolve.",
+                "The hosts planner uses it as the default address for generated entries.",
+            ],
+            "choice": [
+                "Use the LoadBalancer, reverse proxy or VM address that actually receives HTTP/HTTPS traffic.",
+                "If there is no separate ingress endpoint, keep the common services address.",
+            ],
+        },
+        "common-kubeconfig": {
+            "purpose": [
+                "Kubeconfig used by the framework to operate common services and the dataspace control plane.",
+                "In the currently supported vm-distributed execution, Level 4 must share this kubeconfig with connectors.",
+            ],
+            "choice": [
+                "Use a kubeconfig that can run kubectl and Helm against the target k3s cluster.",
+                "For a single logical k3s cluster, /etc/rancher/k3s/k3s.yaml is usually the source file.",
+            ],
+        },
+        "provider-kubeconfig": {
+            "purpose": [
+                "Future-ready kubeconfig slot for provider-side connector execution.",
+                "Today it is validated, but Level 4 safely blocks multi-kubeconfig connector deployment.",
+            ],
+            "choice": [
+                "For the supported single logical cluster path, reuse the common services kubeconfig.",
+            ],
+        },
+        "consumer-kubeconfig": {
+            "purpose": [
+                "Future-ready kubeconfig slot for consumer-side connector execution.",
+                "Today it is validated, but Level 4 safely blocks multi-kubeconfig connector deployment.",
+            ],
+            "choice": [
+                "For the supported single logical cluster path, reuse the provider/common kubeconfig.",
+            ],
+        },
+        "components-kubeconfig": {
+            "purpose": [
+                "Kubeconfig used by Level 5 when deploying validation components.",
+                "It can point to the same logical cluster or to a components context when supported by the deployment.",
+            ],
+            "choice": [
+                "Reuse the common services kubeconfig unless components are intentionally managed through another context.",
+            ],
+        },
+        "dataspace": {
+            "purpose": [
+                "Logical dataspace name used to build release names, connector names and validation URLs.",
+            ],
+            "choice": [
+                "Keep pionera unless the deployment intentionally uses a different dataspace identifier.",
+            ],
+        },
+        "connector-inventory": {
+            "purpose": [
+                "Comma-separated list of connector short names that Level 4 should reconcile.",
+                "The framework expands short names into conn-<name>-<dataspace>.",
+            ],
+            "choice": [
+                "Use only connector names you want this run to manage.",
+                "For adding a connector without recreating healthy ones, combine this with additive reconciliation.",
+            ],
+        },
+        "connector-locations": {
+            "purpose": [
+                "Maps each connector to a deployment location group: provider, consumer, dataspace or a custom namespace.",
+                "This controls placement/namespace, not the business role of the connector in every test.",
+            ],
+            "choice": [
+                "Use connector:provider or connector:consumer for role-aligned namespaces.",
+                "Leave a connector unmapped only if it should fall back to the dataspace namespace.",
+            ],
+        },
+        "validation-pairs": {
+            "purpose": [
+                "Defines which connector pairs are used by automated interoperability validations.",
+                "The left side is the source of the test flow and the right side is the target.",
+            ],
+            "choice": [
+                "Use source>target, separated by commas for multiple flows.",
+                "Example: citycouncil>company,partnera>citycouncil.",
+            ],
+        },
+        "reconciliation": {
+            "purpose": [
+                "Controls how Level 4 treats existing connectors.",
+                "full recreates the configured set; additive preserves healthy existing connectors and adds missing ones.",
+            ],
+            "choice": [
+                "Use full for clean validation evidence.",
+                "Use additive when adding connectors to an already running dataspace.",
+            ],
+        },
+    }
+    if normalized in details:
+        return details[normalized]
+    return details.get(_vm_distributed_help_topic_base(normalized), {})
+
+
+def _print_vm_distributed_discovery_help(topic):
+    commands = _vm_distributed_discovery_commands(topic)
+    details = _vm_distributed_discovery_details(topic)
+    if not commands and not details:
+        print("No command hints registered for this field.")
+        return
+    print()
+    if details:
+        print("What this value controls:")
+        for item in details.get("purpose") or []:
+            print(f"  {item}")
+        print()
+        print("How to choose it:")
+        for item in details.get("choice") or []:
+            print(f"  {item}")
+        print()
+    if commands:
+        print("Helpful Ubuntu commands / examples:")
+        for command in commands:
+            print(f"  {command}")
+    print()
+
+
+def _prompt_vm_distributed_value(label, current="", default="", required=False, help_topic=""):
+    current_text = str(current or "").strip()
+    default_text = str(default or "").strip()
+    while True:
+        suffix = ""
+        if current_text:
+            suffix = f" [{current_text}]"
+        elif default_text:
+            suffix = f" [{default_text}]"
+        prompt = f"{label}{suffix}: "
+        value = _interactive_read(prompt).strip()
+        if value == "?":
+            _print_vm_distributed_discovery_help(help_topic)
+            continue
+        if value:
+            return value
+        if current_text:
+            return current_text
+        if default_text:
+            return default_text
+        if not required:
+            return ""
+        print("This value is required for the distributed deployment configuration.")
+
+
+def _vm_distributed_connector_tokens(raw_value):
+    tokens = []
+    for token in str(raw_value or "").split(","):
+        item = token.strip()
+        if item and item not in tokens:
+            tokens.append(item)
+    return tokens
+
+
+def _default_vm_distributed_connector_locations(connectors_value):
+    connectors = _vm_distributed_connector_tokens(connectors_value)
+    roles = ("provider", "consumer")
+    return ",".join(
+        f"{connector}:{roles[index % len(roles)]}"
+        for index, connector in enumerate(connectors)
+    )
+
+
+def _default_vm_distributed_validation_pairs(connectors_value):
+    connectors = _vm_distributed_connector_tokens(connectors_value)
+    if len(connectors) < 2:
+        return ""
+    return f"{connectors[0]}>{connectors[1]}"
+
+
+def _connector_mapping_invalid_tokens(raw_value):
+    invalid = []
+    for token in str(raw_value or "").split(","):
+        item = token.strip()
+        if item and ":" not in item and "=" not in item:
+            invalid.append(item)
+    return invalid
+
+
+def _connector_pairs_invalid_tokens(raw_value):
+    invalid = []
+    for token in str(raw_value or "").split(","):
+        item = token.strip()
+        if item and "->" not in item and ">" not in item and "=" not in item:
+            invalid.append(item)
+    return invalid
+
+
+def _normalized_reconciliation_mode(raw_value):
+    mode = str(raw_value or "full").strip().lower().replace("_", "-")
+    if mode in {"additive", "add-only", "append", "preserve-existing"}:
+        return "additive"
+    if mode in {"full", "recreate", "reset"}:
+        return "full"
+    return ""
+
+
+def _vm_distributed_configuration_preflight(infrastructure_config, topology_config, adapter_config):
+    infra = dict(infrastructure_config or {})
+    topology = dict(topology_config or {})
+    adapter = dict(adapter_config or {})
+    missing = []
+    warnings = []
+
+    for key in ("DOMAIN_BASE", "DS_DOMAIN_BASE"):
+        if not str(infra.get(key) or "").strip():
+            missing.append(key)
+
+    for key in ("VM_COMMON_IP", "VM_PROVIDER_IP", "VM_CONSUMER_IP"):
+        if not str(topology.get(key) or topology.get("VM_EXTERNAL_IP") or "").strip():
+            missing.append(key)
+
+    for key in ("DS_1_NAME", "DS_1_CONNECTORS"):
+        if not str(adapter.get(key) or "").strip():
+            missing.append(key)
+
+    for key in ("K3S_KUBECONFIG_COMMON", "K3S_KUBECONFIG_PROVIDER", "K3S_KUBECONFIG_CONSUMER"):
+        kubeconfig = str(topology.get(key) or "").strip()
+        if not kubeconfig:
+            warnings.append(f"{key} is empty; vm-distributed will need a kubeconfig for that role.")
+            continue
+        expanded = os.path.abspath(os.path.expanduser(kubeconfig))
+        if not os.path.isfile(expanded):
+            warnings.append(f"{key} does not exist locally: {kubeconfig}")
+
+    dataspace_name = str(adapter.get("DS_1_NAME") or "").strip()
+    connectors = parse_connector_list(adapter.get("DS_1_CONNECTORS"), dataspace_name)
+    connector_namespaces = str(adapter.get("DS_1_CONNECTOR_NAMESPACES") or "").strip()
+    connector_set = set(connectors)
+    mapping = parse_connector_mapping(connector_namespaces, dataspace_name)
+    invalid_mapping_tokens = _connector_mapping_invalid_tokens(connector_namespaces)
+    if invalid_mapping_tokens:
+        warnings.append(
+            "DS_1_CONNECTOR_NAMESPACES contains invalid items: "
+            + ", ".join(invalid_mapping_tokens)
+        )
+    unknown_mapping = sorted(connector for connector in mapping if connector not in connector_set)
+    if unknown_mapping:
+        warnings.append(
+            "DS_1_CONNECTOR_NAMESPACES references unknown connectors: "
+            + ", ".join(unknown_mapping)
+        )
+    if connector_namespaces:
+        unmapped = sorted(connector for connector in connectors if connector not in mapping)
+        if unmapped:
+            warnings.append(
+                "Connectors without explicit namespace mapping will use the dataspace namespace: "
+                + ", ".join(unmapped)
+            )
+    elif len(connectors) > 2:
+        warnings.append("DS_1_CONNECTOR_NAMESPACES is recommended when more than two connectors are configured.")
+
+    validation_pairs_raw = str(adapter.get("DS_1_VALIDATION_PAIRS") or "").strip()
+    validation_pairs = parse_connector_pairs(validation_pairs_raw, dataspace_name)
+    invalid_pair_tokens = _connector_pairs_invalid_tokens(validation_pairs_raw)
+    if invalid_pair_tokens:
+        warnings.append(
+            "DS_1_VALIDATION_PAIRS contains invalid items: "
+            + ", ".join(invalid_pair_tokens)
+        )
+    unknown_pairs = sorted(
+        connector
+        for pair in validation_pairs
+        for connector in pair
+        if connector not in connector_set
+    )
+    if unknown_pairs:
+        warnings.append(
+            "DS_1_VALIDATION_PAIRS references unknown connectors: "
+            + ", ".join(dict.fromkeys(unknown_pairs))
+        )
+
+    reconciliation_mode = _normalized_reconciliation_mode(
+        adapter.get("LEVEL4_CONNECTOR_RECONCILIATION_MODE")
+    )
+    if not reconciliation_mode:
+        warnings.append("LEVEL4_CONNECTOR_RECONCILIATION_MODE should be full or additive.")
+
+    role_kubeconfigs = [
+        str(topology.get(key) or "").strip()
+        for key in ("K3S_KUBECONFIG_COMMON", "K3S_KUBECONFIG_PROVIDER", "K3S_KUBECONFIG_CONSUMER")
+        if str(topology.get(key) or "").strip()
+    ]
+    if len(set(role_kubeconfigs)) > 1:
+        warnings.append(
+            "Level 4 currently requires common/provider/consumer to share one kubeconfig; "
+            "multi-kubeconfig connector deployment is blocked safely."
+        )
+
+    status = "ready" if not missing and not warnings else ("incomplete" if missing else "needs-review")
+    return {
+        "status": status,
+        "missing": missing,
+        "warnings": warnings,
+    }
+
+
+def _print_vm_distributed_preflight(preflight):
+    status = str((preflight or {}).get("status") or "unknown")
+    print()
+    print("vm-distributed configuration preflight:")
+    print(f"  Status: {status}")
+    missing = list((preflight or {}).get("missing") or [])
+    warnings = list((preflight or {}).get("warnings") or [])
+    if missing:
+        print("  Missing required values:")
+        for item in missing:
+            print(f"  - {item}")
+    if warnings:
+        print("  Warnings:")
+        for item in warnings:
+            print(f"  - {item}")
+    if not missing and not warnings:
+        print("  Required values are present.")
+
+
+def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_registry=None):
+    registry = adapter_registry or ADAPTER_REGISTRY
+    selected_adapter = _interactive_require_adapter_selection(
+        current_adapter,
+        adapter_registry=registry,
+    )
+    if not selected_adapter:
+        return {"status": "cancelled", "topology": "vm-distributed"}
+
+    print()
+    print("=" * 50)
+    print("VM-DISTRIBUTED CONFIGURATION")
+    print("=" * 50)
+    print("Type ? in any field to show what the value means and Ubuntu discovery commands.")
+    print("Local .config files will be updated; versioned .example files are not overwritten.")
+    print()
+
+    _seed_infrastructure_deployer_config_if_missing()
+    topology_path = _seed_infrastructure_topology_config_if_missing("vm-distributed")
+    adapter_path = _seed_adapter_deployer_config_if_missing(selected_adapter)
+
+    infrastructure_config = load_raw_deployer_config(_infrastructure_deployer_config_path())
+    topology_config = load_raw_deployer_config(topology_path)
+    adapter_config = load_raw_deployer_config(adapter_path)
+
+    domain_base = _prompt_vm_distributed_value(
+        "Base domain for common services",
+        current=infrastructure_config.get("DOMAIN_BASE"),
+        default="stics.example.local",
+        required=True,
+        help_topic="common-domain",
+    )
+    ds_domain_base = _prompt_vm_distributed_value(
+        "Base domain for dataspace/connectors",
+        current=infrastructure_config.get("DS_DOMAIN_BASE"),
+        default=f"ds.{domain_base}" if domain_base else "",
+        required=True,
+        help_topic="dataspace-domain",
+    )
+    routing_mode = _prompt_vm_distributed_value(
+        "Topology routing mode",
+        current=topology_config.get("TOPOLOGY_ROUTING_MODE") or infrastructure_config.get("TOPOLOGY_ROUTING_MODE"),
+        default="host",
+        required=True,
+        help_topic="routing",
+    )
+
+    common_ip = _prompt_vm_distributed_value(
+        "Common services VM IP/DNS",
+        current=topology_config.get("VM_COMMON_IP"),
+        default=topology_config.get("VM_EXTERNAL_IP"),
+        required=True,
+        help_topic="common-address",
+    )
+    provider_ip = _prompt_vm_distributed_value(
+        "Provider-side connector VM IP/DNS",
+        current=topology_config.get("VM_PROVIDER_IP"),
+        default=topology_config.get("VM_CONNECTORS_IP"),
+        required=True,
+        help_topic="provider-address",
+    )
+    consumer_ip = _prompt_vm_distributed_value(
+        "Consumer-side connector VM IP/DNS",
+        current=topology_config.get("VM_CONSUMER_IP"),
+        default=provider_ip,
+        required=True,
+        help_topic="consumer-address",
+    )
+    components_ip = _prompt_vm_distributed_value(
+        "Components VM IP/DNS",
+        current=topology_config.get("VM_COMPONENTS_IP"),
+        default=common_ip,
+        required=False,
+        help_topic="components-address",
+    )
+    ingress_ip = _prompt_vm_distributed_value(
+        "Ingress/public IP or DNS",
+        current=topology_config.get("INGRESS_EXTERNAL_IP"),
+        default=common_ip,
+        required=False,
+        help_topic="ingress-address",
+    )
+
+    common_kubeconfig = _prompt_vm_distributed_value(
+        "Common services kubeconfig path",
+        current=topology_config.get("K3S_KUBECONFIG_COMMON") or topology_config.get("K3S_KUBECONFIG"),
+        default="/etc/rancher/k3s/k3s.yaml",
+        required=True,
+        help_topic="common-kubeconfig",
+    )
+    provider_kubeconfig = _prompt_vm_distributed_value(
+        "Provider-side kubeconfig path",
+        current=topology_config.get("K3S_KUBECONFIG_PROVIDER"),
+        default=common_kubeconfig,
+        required=True,
+        help_topic="provider-kubeconfig",
+    )
+    consumer_kubeconfig = _prompt_vm_distributed_value(
+        "Consumer-side kubeconfig path",
+        current=topology_config.get("K3S_KUBECONFIG_CONSUMER"),
+        default=provider_kubeconfig,
+        required=True,
+        help_topic="consumer-kubeconfig",
+    )
+    components_kubeconfig = _prompt_vm_distributed_value(
+        "Components kubeconfig path",
+        current=topology_config.get("K3S_KUBECONFIG_COMPONENTS"),
+        default=common_kubeconfig,
+        required=True,
+        help_topic="components-kubeconfig",
+    )
+
+    dataspace_name = _prompt_vm_distributed_value(
+        "Dataspace name",
+        current=adapter_config.get("DS_1_NAME"),
+        default="pionera",
+        required=True,
+        help_topic="dataspace",
+    )
+    connectors = _prompt_vm_distributed_value(
+        "Connector inventory (comma-separated short names)",
+        current=adapter_config.get("DS_1_CONNECTORS"),
+        default="citycounciledc,companyedc" if selected_adapter == "edc" else "citycouncil,company",
+        required=True,
+        help_topic="connector-inventory",
+    )
+    connector_namespaces = _prompt_vm_distributed_value(
+        "Connector locations (connector:group, comma-separated)",
+        current=adapter_config.get("DS_1_CONNECTOR_NAMESPACES"),
+        default=_default_vm_distributed_connector_locations(connectors),
+        required=False,
+        help_topic="connector-locations",
+    )
+    validation_pairs = _prompt_vm_distributed_value(
+        "Validation pairs (source>target, comma-separated)",
+        current=adapter_config.get("DS_1_VALIDATION_PAIRS"),
+        default=_default_vm_distributed_validation_pairs(connectors),
+        required=False,
+        help_topic="validation-pairs",
+    )
+    reconciliation_mode = _prompt_vm_distributed_value(
+        "Level 4 connector reconciliation mode (full/additive)",
+        current=adapter_config.get("LEVEL4_CONNECTOR_RECONCILIATION_MODE"),
+        default="full",
+        required=True,
+        help_topic="reconciliation",
+    )
+
+    infra_updates = {
+        "DOMAIN_BASE": domain_base,
+        "DS_DOMAIN_BASE": ds_domain_base,
+    }
+    topology_updates = {
+        "VM_EXTERNAL_IP": common_ip,
+        "VM_COMMON_IP": common_ip,
+        "VM_DATASPACE_IP": common_ip,
+        "VM_PROVIDER_IP": provider_ip,
+        "VM_CONSUMER_IP": consumer_ip,
+        "VM_CONNECTORS_IP": provider_ip,
+        "VM_COMPONENTS_IP": components_ip or common_ip,
+        "VM_OBSERVABILITY_IP": components_ip or common_ip,
+        "INGRESS_EXTERNAL_IP": ingress_ip or common_ip,
+        "CLUSTER_TYPE": "k3s",
+        "K3S_KUBECONFIG": common_kubeconfig,
+        "K3S_KUBECONFIG_COMMON": common_kubeconfig,
+        "K3S_KUBECONFIG_PROVIDER": provider_kubeconfig,
+        "K3S_KUBECONFIG_CONSUMER": consumer_kubeconfig,
+        "K3S_KUBECONFIG_COMPONENTS": components_kubeconfig,
+        "K3S_INSTALL_EXEC": topology_config.get("K3S_INSTALL_EXEC") or "--disable=traefik",
+        "K3S_SERVICE_NAME": topology_config.get("K3S_SERVICE_NAME") or "k3s",
+        "K3S_INGRESS_CONTROLLER": topology_config.get("K3S_INGRESS_CONTROLLER") or "ingress-nginx",
+        "K3S_INGRESS_SERVICE_TYPE": topology_config.get("K3S_INGRESS_SERVICE_TYPE") or "LoadBalancer",
+        "K3S_REPAIR_ON_LEVEL1": topology_config.get("K3S_REPAIR_ON_LEVEL1") or "prompt",
+        "K3S_WRITE_KUBECONFIG_MODE": topology_config.get("K3S_WRITE_KUBECONFIG_MODE") or "0644",
+        "TOPOLOGY_ROUTING_MODE": routing_mode,
+        "VM_PROVIDER_CONNECTORS": ",".join(
+            item.split(":", 1)[0].strip()
+            for item in connector_namespaces.split(",")
+            if ":" in item and item.split(":", 1)[1].strip().lower() == "provider"
+        ),
+        "VM_CONSUMER_CONNECTORS": ",".join(
+            item.split(":", 1)[0].strip()
+            for item in connector_namespaces.split(",")
+            if ":" in item and item.split(":", 1)[1].strip().lower() == "consumer"
+        ),
+    }
+    adapter_updates = {
+        "DS_1_NAME": dataspace_name,
+        "DS_1_CONNECTORS": connectors,
+        "DS_1_CONNECTOR_NAMESPACES": connector_namespaces,
+        "DS_1_VALIDATION_PAIRS": validation_pairs,
+        "LEVEL4_CONNECTOR_RECONCILIATION_MODE": _normalized_reconciliation_mode(reconciliation_mode) or "full",
+    }
+
+    if not _interactive_confirm("Save this vm-distributed configuration now?", default=True):
+        print("vm-distributed configuration not saved.")
+        return {"status": "cancelled", "adapter": selected_adapter, "topology": "vm-distributed"}
+
+    _write_key_value_updates(
+        _infrastructure_deployer_config_path(),
+        infra_updates,
+        VM_DISTRIBUTED_INFRA_KEYS,
+    )
+    _write_key_value_updates(
+        topology_path,
+        topology_updates,
+        VM_DISTRIBUTED_TOPOLOGY_KEYS,
+    )
+    _write_key_value_updates(
+        adapter_path,
+        adapter_updates,
+        VM_DISTRIBUTED_ADAPTER_KEYS,
+    )
+
+    preflight = _vm_distributed_configuration_preflight(
+        load_raw_deployer_config(_infrastructure_deployer_config_path()),
+        load_raw_deployer_config(topology_path),
+        load_raw_deployer_config(adapter_path),
+    )
+    _print_vm_distributed_preflight(preflight)
+    print()
+    print("Updated files:")
+    for path in (_infrastructure_deployer_config_path(), topology_path, adapter_path):
+        print(f"- {_framework_relative_path(path)}")
+
+    return {
+        "status": "prepared" if preflight["status"] == "ready" else preflight["status"],
+        "adapter": selected_adapter,
+        "topology": "vm-distributed",
+        "config_files": [
+            _framework_relative_path(_infrastructure_deployer_config_path()),
+            _framework_relative_path(topology_path),
+            _framework_relative_path(adapter_path),
+        ],
+        "preflight": preflight,
+    }
+
+
+def _vm_distributed_configuration_needs_attention(adapter_name=None):
+    topology_path = _infrastructure_topology_config_path("vm-distributed")
+    adapter_path = _adapter_deployer_config_path(adapter_name) if adapter_name else ""
+    infrastructure_config = load_raw_deployer_config(_infrastructure_deployer_config_path())
+    topology_config = load_raw_deployer_config(topology_path)
+    adapter_config = load_raw_deployer_config(adapter_path) if adapter_path else {}
+    preflight = _vm_distributed_configuration_preflight(
+        infrastructure_config,
+        topology_config,
+        adapter_config,
+    )
+    return preflight.get("status") != "ready"
+
+
+def _offer_vm_distributed_configuration(current_adapter=None, adapter_registry=None):
+    if not _vm_distributed_configuration_needs_attention(current_adapter):
+        return current_adapter, None
+    print()
+    print("vm-distributed configuration is incomplete or needs review.")
+    if not _interactive_confirm("Configure vm-distributed now?", default=True):
+        return current_adapter, None
+    result = _run_vm_distributed_configuration_wizard(
+        current_adapter=current_adapter,
+        adapter_registry=adapter_registry,
+    )
+    if isinstance(result, dict):
+        current_adapter = result.get("adapter") or current_adapter
+    return current_adapter, result
 
 
 def _shared_foundation_adapter_name(adapter_registry=None):
@@ -8010,6 +8953,7 @@ def _print_interactive_menu(adapter_name, adapter_registry=None, topology="local
     print("S - Select adapter")
     print("T - Select topology")
     print("K - Select cluster runtime")
+    print("W - Configure vm-distributed deployment")
     print("P - Preview deployment plan")
     print("H - Plan/apply hosts entries")
     print("U - Show available access URLs")
@@ -8060,6 +9004,8 @@ def _print_interactive_help():
     print("T - Use when you want to change the active topology for this menu session.")
     print("    It switches between local, vm-single and vm-distributed without editing configuration files.")
     print("K - Use when vm-single is active and you want to choose Minikube or k3s for this menu session.")
+    print("W - Use when vm-distributed is active, or before selecting it, to generate local distributed deployment configuration.")
+    print("    The wizard asks for Ubuntu/k3s values, accepts ? for discovery commands, and writes only ignored .config files.")
     print("P - Use before deploying to inspect the plan without changing the environment.")
     print("    If Levels 3-6 need an adapter and none has been chosen yet, the menu asks for one automatically.")
     print("H - Use to inspect or apply local hosts entries needed by the selected adapter.")
@@ -9440,6 +10386,13 @@ def run_interactive_menu(
                     _set_session_cluster_runtime_override(selected_runtime)
                     _offer_persist_vm_single_cluster_runtime(selected_runtime, previous_runtime=previous_runtime)
                     _interactive_offer_vm_single_address_configuration(required=False)
+                elif normalize_topology(topology) == "vm-distributed":
+                    current_adapter, config_result = _offer_vm_distributed_configuration(
+                        current_adapter=current_adapter,
+                        adapter_registry=registry,
+                    )
+                    if config_result is not None:
+                        _print_action_result(config_result)
 
         while True:
             _print_interactive_menu(current_adapter, adapter_registry=registry, topology=topology)
@@ -9484,6 +10437,13 @@ def run_interactive_menu(
                             _set_session_cluster_runtime_override(selected_runtime)
                             _offer_persist_vm_single_cluster_runtime(selected_runtime, previous_runtime=previous_runtime)
                             _interactive_offer_vm_single_address_configuration(required=False)
+                        elif normalize_topology(topology) == "vm-distributed":
+                            current_adapter, config_result = _offer_vm_distributed_configuration(
+                                current_adapter=current_adapter,
+                                adapter_registry=registry,
+                            )
+                            if config_result is not None:
+                                _print_action_result(config_result)
                     continue
 
                 if choice == "K":
@@ -9502,9 +10462,38 @@ def run_interactive_menu(
                         _offer_persist_vm_single_cluster_runtime(selected_runtime, previous_runtime=previous_runtime)
                     continue
 
+                if choice == "W":
+                    if normalize_topology(topology) != "vm-distributed":
+                        if _interactive_confirm("Switch active topology to vm-distributed for this configuration?", default=True):
+                            topology = "vm-distributed"
+                            print("Active topology set to vm-distributed.")
+                        else:
+                            print("vm-distributed configuration cancelled.")
+                            continue
+                    result = _run_vm_distributed_configuration_wizard(
+                        current_adapter=current_adapter,
+                        adapter_registry=registry,
+                    )
+                    if isinstance(result, dict):
+                        current_adapter = result.get("adapter") or current_adapter
+                        _print_action_result(result)
+                    continue
+
                 if normalize_topology(topology) == "vm-single" and _menu_action_requires_vm_single_address(choice):
                     if not _interactive_offer_vm_single_address_configuration(required=True):
                         continue
+
+                if (
+                    normalize_topology(topology) == "vm-distributed"
+                    and _menu_action_benefits_from_vm_distributed_configuration(choice)
+                    and _vm_distributed_configuration_needs_attention(current_adapter)
+                ):
+                    current_adapter, config_result = _offer_vm_distributed_configuration(
+                        current_adapter=current_adapter,
+                        adapter_registry=registry,
+                    )
+                    if config_result is not None:
+                        _print_action_result(config_result)
 
                 if choice == "B":
                     _run_legacy_menu_action("bootstrap")

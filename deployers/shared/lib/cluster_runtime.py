@@ -42,6 +42,10 @@ def build_cluster_runtime(config: dict[str, Any] | None = None, topology: str = 
     values = dict(config or {})
     cluster_type = normalize_cluster_type(values.get("CLUSTER_TYPE"), topology=topology)
     k3s_kubeconfig = str(values.get("K3S_KUBECONFIG") or DEFAULT_K3S_KUBECONFIG).strip()
+    k3s_kubeconfig_common = str(values.get("K3S_KUBECONFIG_COMMON") or k3s_kubeconfig).strip()
+    k3s_kubeconfig_provider = str(values.get("K3S_KUBECONFIG_PROVIDER") or k3s_kubeconfig_common).strip()
+    k3s_kubeconfig_consumer = str(values.get("K3S_KUBECONFIG_CONSUMER") or k3s_kubeconfig_common).strip()
+    k3s_kubeconfig_components = str(values.get("K3S_KUBECONFIG_COMPONENTS") or k3s_kubeconfig_common).strip()
     k3s_install_exec = str(values.get("K3S_INSTALL_EXEC") or DEFAULT_K3S_INSTALL_EXEC).strip()
     k3s_service_name = str(values.get("K3S_SERVICE_NAME") or DEFAULT_K3S_SERVICE_NAME).strip()
     k3s_ingress_controller = str(values.get("K3S_INGRESS_CONTROLLER") or DEFAULT_K3S_INGRESS_CONTROLLER).strip()
@@ -53,6 +57,10 @@ def build_cluster_runtime(config: dict[str, Any] | None = None, topology: str = 
     return {
         "cluster_type": cluster_type,
         "k3s_kubeconfig": k3s_kubeconfig or DEFAULT_K3S_KUBECONFIG,
+        "k3s_kubeconfig_common": k3s_kubeconfig_common or DEFAULT_K3S_KUBECONFIG,
+        "k3s_kubeconfig_provider": k3s_kubeconfig_provider or k3s_kubeconfig_common or DEFAULT_K3S_KUBECONFIG,
+        "k3s_kubeconfig_consumer": k3s_kubeconfig_consumer or k3s_kubeconfig_common or DEFAULT_K3S_KUBECONFIG,
+        "k3s_kubeconfig_components": k3s_kubeconfig_components or k3s_kubeconfig_common or DEFAULT_K3S_KUBECONFIG,
         "k3s_install_exec": k3s_install_exec or DEFAULT_K3S_INSTALL_EXEC,
         "k3s_service_name": k3s_service_name or DEFAULT_K3S_SERVICE_NAME,
         "k3s_ingress_controller": k3s_ingress_controller or DEFAULT_K3S_INGRESS_CONTROLLER,

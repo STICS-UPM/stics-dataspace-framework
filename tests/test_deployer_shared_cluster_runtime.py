@@ -58,7 +58,32 @@ class SharedClusterRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime["k3s_write_kubeconfig_mode"], "0640")
 
     def test_vm_distributed_defaults_to_k3s_runtime(self):
-        self.assertEqual(build_cluster_runtime(topology="vm-distributed")["cluster_type"], "k3s")
+        runtime = build_cluster_runtime(topology="vm-distributed")
+
+        self.assertEqual(runtime["cluster_type"], "k3s")
+        self.assertEqual(runtime["k3s_kubeconfig_common"], DEFAULT_K3S_KUBECONFIG)
+        self.assertEqual(runtime["k3s_kubeconfig_provider"], DEFAULT_K3S_KUBECONFIG)
+        self.assertEqual(runtime["k3s_kubeconfig_consumer"], DEFAULT_K3S_KUBECONFIG)
+        self.assertEqual(runtime["k3s_kubeconfig_components"], DEFAULT_K3S_KUBECONFIG)
+
+    def test_vm_distributed_resolves_role_kubeconfigs(self):
+        runtime = build_cluster_runtime(
+            {
+                "K3S_KUBECONFIG": "/clusters/default.yaml",
+                "K3S_KUBECONFIG_COMMON": "/clusters/common.yaml",
+                "K3S_KUBECONFIG_PROVIDER": "/clusters/provider.yaml",
+                "K3S_KUBECONFIG_CONSUMER": "/clusters/consumer.yaml",
+                "K3S_KUBECONFIG_COMPONENTS": "/clusters/components.yaml",
+            },
+            topology="vm-distributed",
+        )
+
+        self.assertEqual(runtime["cluster_type"], "k3s")
+        self.assertEqual(runtime["k3s_kubeconfig"], "/clusters/default.yaml")
+        self.assertEqual(runtime["k3s_kubeconfig_common"], "/clusters/common.yaml")
+        self.assertEqual(runtime["k3s_kubeconfig_provider"], "/clusters/provider.yaml")
+        self.assertEqual(runtime["k3s_kubeconfig_consumer"], "/clusters/consumer.yaml")
+        self.assertEqual(runtime["k3s_kubeconfig_components"], "/clusters/components.yaml")
 
     def test_unsupported_cluster_runtime_fails_fast(self):
         with self.assertRaisesRegex(ValueError, "Unsupported cluster runtime"):

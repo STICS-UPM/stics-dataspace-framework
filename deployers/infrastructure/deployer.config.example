@@ -19,5 +19,4 @@ VAULT_URL=http://common-srvs-vault.common-srvs.svc:8200
 VT_TOKEN=
 DOMAIN_BASE=dev.ed.dataspaceunit.upm
 DS_DOMAIN_BASE=dev.ds.dataspaceunit.upm
-TOPOLOGY_ROUTING_MODE=host
 NAMESPACE_PROFILE=compact

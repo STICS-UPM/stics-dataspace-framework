@@ -55,6 +55,30 @@ class MainMenuMigrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "exited")
         ai_model_hub.assert_called_once_with()
 
+    def test_vm_distributed_shortcut_switches_topology_and_runs_wizard(self):
+        with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch(
+            "builtins.input",
+            side_effect=["W", "Y", "Q"],
+        ), mock.patch.object(
+            main,
+            "_run_vm_distributed_configuration_wizard",
+            return_value={"status": "prepared", "adapter": "fake", "topology": "vm-distributed"},
+        ) as wizard:
+            result = main.main(
+                ["menu"],
+                adapter_registry=self.adapter_registry,
+                deployer_registry=self.deployer_registry,
+                validation_engine_cls=FakeValidationEngine,
+                metrics_collector_cls=FakeMetricsCollector,
+                experiment_storage=FakeStorage,
+            )
+
+        self.assertEqual(result["status"], "exited")
+        wizard.assert_called_once_with(
+            current_adapter="fake",
+            adapter_registry=self.adapter_registry,
+        )
+
     def test_semantic_virtualization_ui_shortcut_runs_migrated_action_without_inesdata_py(self):
         with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch(
             "builtins.input",

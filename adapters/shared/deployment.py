@@ -9,8 +9,10 @@ import yaml
 
 from adapters.shared.config import resolve_shared_level3_bootstrap_runtime
 from deployers.shared.lib.cluster_runtime import build_cluster_runtime
+from deployers.shared.lib.connectors import parse_connector_list
 from deployers.shared.lib.topology import (
     LOCAL_TOPOLOGY,
+    VM_DISTRIBUTED_TOPOLOGY,
     VM_SINGLE_TOPOLOGY,
     build_topology_profile,
     normalize_topology,
@@ -458,15 +460,6 @@ class SharedDataspaceDeploymentAdapter:
                 return 1
         return 1
 
-    @staticmethod
-    def _normalize_configured_connector_name(raw_name, ds_name):
-        connector = str(raw_name or "").strip()
-        if not connector:
-            return ""
-        if connector.startswith("conn-"):
-            return connector
-        return f"conn-{connector}-{ds_name}"
-
     def _configured_dataspace_connector_names(self, ds_name=None, ds_namespace=None):
         config = self._deployer_config()
         resolved_ds_name = str(ds_name or self._dataspace_name()).strip() or self._dataspace_name()
@@ -476,12 +469,7 @@ class SharedDataspaceDeploymentAdapter:
         if not raw_connectors and ds_index != 1:
             raw_connectors = str(config.get("DS_1_CONNECTORS") or "").strip()
 
-        connectors = []
-        for item in raw_connectors.split(","):
-            connector = self._normalize_configured_connector_name(item, resolved_ds_name)
-            if connector and connector not in connectors:
-                connectors.append(connector)
-        return connectors
+        return parse_connector_list(raw_connectors, resolved_ds_name)
 
     def _connector_namespace_for_public_portal(self, connector_name, ds_name=None, ds_namespace=None):
         resolved_ds_name = str(ds_name or self._dataspace_name()).strip() or self._dataspace_name()
@@ -1004,7 +992,7 @@ class SharedDataspaceDeploymentAdapter:
         normalized_topology = normalize_topology(topology)
         if normalized_topology == LOCAL_TOPOLOGY:
             return self.deploy_dataspace()
-        if normalized_topology != VM_SINGLE_TOPOLOGY:
+        if normalized_topology not in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
             raise RuntimeError(
                 f"Level 3 deploy_dataspace_for_topology() is not implemented for topology "
                 f"'{normalized_topology}' yet."
@@ -1012,5 +1000,5 @@ class SharedDataspaceDeploymentAdapter:
         return self._deploy_dataspace_runtime(
             topology=normalized_topology,
             require_tunnel_prompt=False,
-            update_minikube_host_aliases=True,
+            update_minikube_host_aliases=normalized_topology == VM_SINGLE_TOPOLOGY,
         )

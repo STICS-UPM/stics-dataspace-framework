@@ -3396,6 +3396,92 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(observed["kubeconfig"], "/etc/rancher/k3s/k3s.yaml")
         self.assertIsNone(restored_kubeconfig)
 
+    def test_topology_runtime_environment_overrides_use_vm_distributed_roles(self):
+        with mock.patch.object(
+            main,
+            "_load_effective_infrastructure_deployer_config",
+            return_value={
+                "CLUSTER_TYPE": "k3s",
+                "K3S_KUBECONFIG_COMMON": "/clusters/common.yaml",
+                "K3S_KUBECONFIG_COMPONENTS": "/clusters/components.yaml",
+            },
+        ):
+            level2_env = main._topology_runtime_environment_overrides("vm-distributed", level=2)
+            level5_env = main._topology_runtime_environment_overrides("vm-distributed", level=5)
+
+        self.assertEqual(level2_env["KUBECONFIG"], "/clusters/common.yaml")
+        self.assertEqual(level2_env["PIONERA_KUBECONFIG_ROLE"], "common")
+        self.assertEqual(level5_env["KUBECONFIG"], "/clusters/components.yaml")
+        self.assertEqual(level5_env["PIONERA_KUBECONFIG_ROLE"], "components")
+
+    def test_run_level_two_uses_vm_distributed_topology_deploy_infrastructure(self):
+        adapter = FakeAdapterWithInfrastructure()
+        adapter.infrastructure = mock.Mock()
+        adapter.infrastructure.deploy_infrastructure_for_topology = mock.Mock(
+            return_value={"status": "deployed", "mode": "vm-distributed"}
+        )
+
+        with mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
+            result = main.run_level(adapter, 2, deployer_name="fake", topology="vm-distributed")
+
+        self.assertEqual(result["level"], 2)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["result"]["mode"], "vm-distributed")
+        adapter.infrastructure.deploy_infrastructure_for_topology.assert_called_once_with(topology="vm-distributed")
+        self.assertEqual(adapter.calls, [])
+
+    def test_run_level_three_uses_vm_distributed_topology_deploy_dataspace(self):
+        adapter = FakeAdapterWithInfrastructure()
+        adapter.deployment = mock.Mock()
+        adapter.deployment.deploy_dataspace_for_topology = mock.Mock(
+            return_value={"status": "deployed", "mode": "vm-distributed"}
+        )
+
+        with mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
+            result = main.run_level(adapter, 3, deployer_name="fake", topology="vm-distributed")
+
+        self.assertEqual(result["level"], 3)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["result"]["mode"], "vm-distributed")
+        adapter.deployment.deploy_dataspace_for_topology.assert_called_once_with(topology="vm-distributed")
+        self.assertEqual(adapter.calls, [])
+
+    def test_run_level_four_vm_distributed_rejects_multi_kubeconfig_connectors(self):
+        adapter = FakeAdapter()
+
+        with mock.patch.object(
+            main,
+            "_configured_vm_distributed_role_kubeconfigs",
+            return_value={
+                "common": "/clusters/common.yaml",
+                "provider": "/clusters/provider.yaml",
+                "consumer": "/clusters/consumer.yaml",
+            },
+        ), mock.patch.object(main, "_topology_runtime_environment_overrides", return_value={}):
+            with self.assertRaisesRegex(RuntimeError, "multi-kubeconfig connector deployment is not enabled"):
+                main.run_level(adapter, 4, deployer_name="fake", topology="vm-distributed")
+
+        self.assertEqual(adapter.calls, [])
+
+    def test_run_level_four_vm_distributed_allows_single_logical_cluster(self):
+        adapter = FakeAdapter()
+
+        with mock.patch.object(
+            main,
+            "_configured_vm_distributed_role_kubeconfigs",
+            return_value={
+                "common": "/clusters/common.yaml",
+                "provider": "/clusters/common.yaml",
+                "consumer": "/clusters/common.yaml",
+            },
+        ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
+            result = main.run_level(adapter, 4, deployer_name="fake", topology="vm-distributed")
+
+        self.assertEqual(result["level"], 4)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["result"], ["conn-a", "conn-b"])
+        self.assertEqual(adapter.calls, ["deploy_connectors"])
+
     def test_run_level_four_uses_vm_single_connector_deployment(self):
         adapter = FakeAdapter()
 

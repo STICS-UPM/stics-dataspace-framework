@@ -1,7 +1,12 @@
 """Shared foundation infrastructure helpers reused by multiple adapters."""
 
 from adapters.inesdata.infrastructure import INESDataInfrastructureAdapter
-from deployers.shared.lib.topology import LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY, normalize_topology
+from deployers.shared.lib.topology import (
+    LOCAL_TOPOLOGY,
+    VM_DISTRIBUTED_TOPOLOGY,
+    VM_SINGLE_TOPOLOGY,
+    normalize_topology,
+)
 
 
 class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
@@ -12,19 +17,25 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
         normalized_topology = normalize_topology(topology)
         if normalized_topology == LOCAL_TOPOLOGY:
             return self.setup_cluster()
-        if normalized_topology != VM_SINGLE_TOPOLOGY:
+        if normalized_topology not in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
             raise RuntimeError(
                 f"Level 1 preflight is not implemented for topology '{normalized_topology}' yet."
             )
 
         cluster_runtime = self._cluster_runtime_config()
         cluster_type = cluster_runtime.get("cluster_type", "minikube")
-        print(
-            "Topology 'vm-single' uses a Kubernetes cluster managed on the VM.\n"
-            f"Level 1 will prepare the managed {cluster_type} cluster to keep runs reproducible."
-        )
-        self.setup_cluster()
-        print("Managed vm-single cluster recreated. Running cluster preflight checks.")
+        if normalized_topology == VM_SINGLE_TOPOLOGY:
+            print(
+                "Topology 'vm-single' uses a Kubernetes cluster managed on the VM.\n"
+                f"Level 1 will prepare the managed {cluster_type} cluster to keep runs reproducible."
+            )
+            self.setup_cluster()
+            print("Managed vm-single cluster recreated. Running cluster preflight checks.")
+        else:
+            print(
+                "Topology 'vm-distributed' uses an existing Kubernetes cluster/context.\n"
+                "Level 1 will run read-only preflight checks against the configured common kubeconfig."
+            )
 
         checks = []
 
@@ -119,11 +130,11 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
         self.complete_level(1)
         return {
             "status": "ready",
-            "mode": "managed-recreate",
+            "mode": "managed-recreate" if normalized_topology == VM_SINGLE_TOPOLOGY else "preflight-only",
             "topology": normalized_topology,
             "cluster_runtime": cluster_type,
             "current_context": current_context,
-            "cluster_creation": "recreated",
+            "cluster_creation": "recreated" if normalized_topology == VM_SINGLE_TOPOLOGY else "external",
             "checks": checks,
         }
 
@@ -132,7 +143,7 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
         normalized_topology = normalize_topology(topology)
         if normalized_topology == LOCAL_TOPOLOGY:
             return self.deploy_infrastructure()
-        if normalized_topology != VM_SINGLE_TOPOLOGY:
+        if normalized_topology not in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
             raise RuntimeError(
                 f"Level 2 deploy_infrastructure_for_topology() is not implemented for topology "
                 f"'{normalized_topology}' yet."
@@ -141,7 +152,7 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
         return self._deploy_infrastructure_runtime(
             skip_hosts=True,
             host_sync_message=(
-                "Skipping client-side hosts synchronization for topology 'vm-single'. "
+                f"Skipping client-side hosts synchronization for topology '{normalized_topology}'. "
                 "Use the dedicated hosts command if you need local name resolution."
             ),
         )
