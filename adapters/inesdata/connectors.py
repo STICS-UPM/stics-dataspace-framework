@@ -13,6 +13,11 @@ import yaml
 
 from deployers.infrastructure.lib.namespaces import resolve_namespace_profile_plan
 from deployers.shared.lib.components import ontology_validator_source_path, patch_ontology_validator_source
+from deployers.shared.lib.connectors import (
+    normalize_connector_name,
+    parse_connector_mapping,
+    parse_connector_pairs,
+)
 from deployers.shared.lib.topology import (
     LOCAL_TOPOLOGY,
     VM_SINGLE_TOPOLOGY,
@@ -217,6 +222,22 @@ class INESDataConnectorsAdapter:
             deployer_config.get("LEVEL4_ROLE_ALIGNED_CONNECTOR_NAMESPACES")
             or deployer_config.get("ROLE_ALIGNED_CONNECTOR_NAMESPACES_LEVEL4")
         )
+
+    def _level4_connector_reconciliation_mode(self):
+        raw_value = os.environ.get("PIONERA_LEVEL4_CONNECTOR_RECONCILIATION_MODE")
+        if raw_value is None:
+            try:
+                deployer_config = self.config_adapter.load_deployer_config() or {}
+            except Exception:
+                deployer_config = {}
+            raw_value = (
+                deployer_config.get("LEVEL4_CONNECTOR_RECONCILIATION_MODE")
+                or "full"
+            )
+        mode = str(raw_value or "full").strip().lower().replace("_", "-")
+        if mode in {"additive", "add-only", "append", "preserve-existing"}:
+            return "additive"
+        return "full"
 
     def _allow_connector_port_forward_fallback(self):
         env_value = os.environ.get("PIONERA_ALLOW_CONNECTOR_PORT_FORWARD_FALLBACK")
@@ -819,12 +840,96 @@ class INESDataConnectorsAdapter:
             )
 
     @staticmethod
-    def _connector_role_summary(connectors):
+    def _connector_role_summary(connectors, validation_pairs=None):
         ordered = [connector for connector in connectors or [] if connector]
+        first_pair = next(iter(validation_pairs or []), None)
+        if first_pair:
+            provider = first_pair[0] if first_pair[0] in ordered else None
+            consumer = first_pair[1] if first_pair[1] in ordered else None
+        else:
+            provider = ordered[0] if len(ordered) >= 1 else None
+            consumer = ordered[1] if len(ordered) >= 2 else None
         return {
-            "provider": ordered[0] if len(ordered) >= 1 else None,
-            "consumer": ordered[1] if len(ordered) >= 2 else None,
-            "additional": ordered[2:] if len(ordered) > 2 else [],
+            "provider": provider,
+            "consumer": consumer,
+            "additional": [
+                connector
+                for connector in ordered
+                if connector not in {provider, consumer}
+            ],
+        }
+
+    @staticmethod
+    def _scoped_deployer_config_value(config, ds_index, suffix, default=""):
+        try:
+            resolved_index = int(ds_index)
+        except (TypeError, ValueError):
+            resolved_index = 1
+        candidates = []
+        if resolved_index >= 1:
+            candidates.append(f"DS_{resolved_index}_{suffix}")
+        if resolved_index != 1:
+            candidates.append(f"DS_1_{suffix}")
+        candidates.append(suffix)
+        for key in candidates:
+            value = str((config or {}).get(key) or "").strip()
+            if value:
+                return value
+        return default
+
+    def _configured_validation_pairs(self, deployer_config, ds_name, ds_index):
+        raw_value = (
+            self._scoped_deployer_config_value(deployer_config, ds_index, "VALIDATION_PAIR")
+            or self._scoped_deployer_config_value(deployer_config, ds_index, "VALIDATION_PAIRS")
+        )
+        return parse_connector_pairs(raw_value, ds_name)
+
+    def _configured_connector_namespace_overrides(self, deployer_config, ds_name, ds_index, namespace_plan):
+        raw_value = self._scoped_deployer_config_value(
+            deployer_config,
+            ds_index,
+            "CONNECTOR_NAMESPACES",
+        )
+        raw_mapping = parse_connector_mapping(raw_value, ds_name)
+        return {
+            connector: self._resolve_connector_namespace_override(target, namespace_plan)
+            for connector, target in raw_mapping.items()
+        }
+
+    def _resolve_connector_namespace_override(self, target, namespace_plan):
+        raw_target = str(target or "").strip()
+        runtime_roles = namespace_plan["namespace_roles"]
+        planned_roles = namespace_plan["planned_namespace_roles"]
+        normalized = raw_target.lower().replace("-", "_")
+        aliases = {
+            "provider": "provider_namespace",
+            "provider_namespace": "provider_namespace",
+            "consumer": "consumer_namespace",
+            "consumer_namespace": "consumer_namespace",
+            "registration": "registration_service_namespace",
+            "registration_service": "registration_service_namespace",
+            "core": "registration_service_namespace",
+            "dataspace": "",
+            "default": "",
+        }
+        role_field = aliases.get(normalized)
+        if role_field:
+            active_namespace = self._namespace_role_value(runtime_roles, role_field)
+            planned_namespace = self._namespace_role_value(planned_roles, role_field, active_namespace)
+            namespace_role = normalized
+        elif role_field == "":
+            active_namespace = ""
+            planned_namespace = ""
+            namespace_role = normalized
+        else:
+            active_namespace = raw_target
+            planned_namespace = raw_target
+            namespace_role = "custom"
+        return {
+            "configured_namespace": raw_target,
+            "namespace_role": namespace_role,
+            "active_namespace": active_namespace,
+            "planned_namespace": planned_namespace,
         }
 
     @staticmethod
@@ -849,23 +954,49 @@ class INESDataConnectorsAdapter:
             "consumer_namespace": cls._namespace_role_value(roles, "consumer_namespace"),
         }
 
-    def _connector_namespace_details(self, connectors, runtime_namespace, namespace_plan):
+    def _connector_namespace_details(
+        self,
+        connectors,
+        runtime_namespace,
+        namespace_plan,
+        validation_pairs=None,
+        namespace_overrides=None,
+    ):
         runtime_roles = namespace_plan["namespace_roles"]
         planned_roles = namespace_plan["planned_namespace_roles"]
-        role_summary = self._connector_role_summary(connectors)
+        role_summary = self._connector_role_summary(connectors, validation_pairs=validation_pairs)
+        namespace_overrides = dict(namespace_overrides or {})
         details = []
 
-        for connector in connectors or []:
+        for index, connector in enumerate(connectors or []):
             if connector == role_summary["provider"]:
                 role = "provider"
-                active_namespace = self._namespace_role_value(runtime_roles, "provider_namespace", runtime_namespace)
-                planned_namespace = self._namespace_role_value(planned_roles, "provider_namespace", active_namespace)
             elif connector == role_summary["consumer"]:
                 role = "consumer"
+            else:
+                role = "additional"
+
+            override = namespace_overrides.get(connector)
+            if override:
+                namespace_role = override.get("namespace_role") or "custom"
+                active_namespace = (
+                    override.get("active_namespace")
+                    or runtime_namespace
+                )
+                planned_namespace = (
+                    override.get("planned_namespace")
+                    or active_namespace
+                )
+            elif index == 0:
+                namespace_role = "provider"
+                active_namespace = self._namespace_role_value(runtime_roles, "provider_namespace", runtime_namespace)
+                planned_namespace = self._namespace_role_value(planned_roles, "provider_namespace", active_namespace)
+            elif index == 1:
+                namespace_role = "consumer"
                 active_namespace = self._namespace_role_value(runtime_roles, "consumer_namespace", runtime_namespace)
                 planned_namespace = self._namespace_role_value(planned_roles, "consumer_namespace", active_namespace)
             else:
-                role = "additional"
+                namespace_role = "dataspace"
                 active_namespace = runtime_namespace
                 planned_namespace = runtime_namespace
 
@@ -873,6 +1004,8 @@ class INESDataConnectorsAdapter:
                 {
                     "name": connector,
                     "role": role,
+                    "validation_role": role,
+                    "namespace_role": namespace_role,
                     "runtime_namespace": runtime_namespace,
                     "active_namespace": active_namespace,
                     "planned_namespace": planned_namespace,
@@ -911,8 +1044,11 @@ class INESDataConnectorsAdapter:
                 for connector in connectors.split(","):
                     name = connector.strip()
                     if name:
-                        self.validate_connector_name(name)
-                        connector_list.append(f"conn-{name}-{ds_name}")
+                        if not name.startswith("conn-"):
+                            self.validate_connector_name(name)
+                        normalized_name = normalize_connector_name(name, ds_name)
+                        if normalized_name and normalized_name not in connector_list:
+                            connector_list.append(normalized_name)
 
             namespace_plan_getter = getattr(self.config_adapter, "namespace_plan_for_dataspace", None)
             if callable(namespace_plan_getter):
@@ -935,10 +1071,23 @@ class INESDataConnectorsAdapter:
                         "consumer_namespace": ds_namespace,
                     },
                 }
+            validation_pairs = self._configured_validation_pairs(
+                deployer_config,
+                ds_name,
+                i,
+            )
+            namespace_overrides = self._configured_connector_namespace_overrides(
+                deployer_config,
+                ds_name,
+                i,
+                namespace_plan,
+            )
             role_summary, connector_details = self._connector_namespace_details(
                 connector_list,
                 ds_namespace,
                 namespace_plan,
+                validation_pairs=validation_pairs,
+                namespace_overrides=namespace_overrides,
             )
 
             dataspaces.append({
@@ -950,6 +1099,10 @@ class INESDataConnectorsAdapter:
                 "planned_namespace_roles": self._namespace_roles_dict(namespace_plan["planned_namespace_roles"]),
                 "connector_roles": role_summary,
                 "connector_details": connector_details,
+                "validation_pairs": [
+                    {"provider": provider, "consumer": consumer}
+                    for provider, consumer in validation_pairs
+                ],
             })
             i += 1
 
@@ -2890,6 +3043,9 @@ class INESDataConnectorsAdapter:
         all_connectors = set()
         infra_ready = False
         vault_ready = False
+        reconciliation_mode = self._level4_connector_reconciliation_mode()
+        if reconciliation_mode == "additive":
+            print("Level 4 connector reconciliation mode: additive (existing connectors are preserved)")
 
         for ds in dataspaces:
             ds_name = ds["name"]
@@ -2914,26 +3070,32 @@ class INESDataConnectorsAdapter:
                     existing_namespaces.setdefault(connector_name, target_namespace)
             stale = sorted(set(existing_namespaces) - desired)
             if stale:
-                print(f"Found stale connectors for dataspace '{ds_name}': {stale}")
-                if not infra_ready:
-                    if not self._ensure_local_runtime_access_if_required():
-                        return []
-                    infra_ready = True
-                if not vault_ready:
-                    if not self.infrastructure.ensure_vault_unsealed():
-                        return []
-                    vault_ready = True
-                if not self._prepare_vault_management_access(ds_name=ds_name):
-                    return []
-                for stale_connector in stale:
-                    stale_namespace = existing_namespaces.get(stale_connector) or namespace
-                    self._cleanup_connector_state(
-                        stale_connector,
-                        repo_dir,
-                        ds_name,
-                        python_exec,
-                        namespace=stale_namespace,
+                if reconciliation_mode == "additive":
+                    print(
+                        f"Preserving connectors not listed in this Level 4 additive run "
+                        f"for dataspace '{ds_name}': {stale}"
                     )
+                else:
+                    print(f"Found stale connectors for dataspace '{ds_name}': {stale}")
+                    if not infra_ready:
+                        if not self._ensure_local_runtime_access_if_required():
+                            return []
+                        infra_ready = True
+                    if not vault_ready:
+                        if not self.infrastructure.ensure_vault_unsealed():
+                            return []
+                        vault_ready = True
+                    if not self._prepare_vault_management_access(ds_name=ds_name):
+                        return []
+                    for stale_connector in stale:
+                        stale_namespace = existing_namespaces.get(stale_connector) or namespace
+                        self._cleanup_connector_state(
+                            stale_connector,
+                            repo_dir,
+                            ds_name,
+                            python_exec,
+                            namespace=stale_namespace,
+                        )
 
             for connector in connectors:
                 all_connectors.add(connector)
@@ -2949,6 +3111,9 @@ class INESDataConnectorsAdapter:
                         and self.connector_database_credentials_valid(connector)
                     ):
                         print(f"Connector already running: {connector}")
+                        if reconciliation_mode == "additive":
+                            print("Preserving existing connector in additive Level 4 mode")
+                            continue
                         print("Recreating connector to ensure a clean Level 4 deployment")
                     else:
                         print(
@@ -2989,11 +3154,23 @@ class INESDataConnectorsAdapter:
     def get_cluster_connectors(self):
         connectors = set()
         dataspaces = self.load_dataspace_connectors() or []
+        configured_order = []
+        validation_order = []
 
         for dataspace in dataspaces:
             ds_name = str(dataspace.get("name") or "").strip()
             if not ds_name:
                 continue
+            for pair in dataspace.get("validation_pairs") or []:
+                for key in ("provider", "consumer"):
+                    connector = pair.get(key) if isinstance(pair, dict) else None
+                    if connector and connector not in validation_order:
+                        validation_order.append(connector)
+                if validation_order:
+                    break
+            for connector in dataspace.get("connectors") or []:
+                if connector and connector not in configured_order:
+                    configured_order.append(connector)
             for namespace in self._dataspace_connector_target_namespaces(dataspace, dataspaces=dataspaces):
                 connectors.update(
                     self._discover_existing_connectors(
@@ -3004,7 +3181,14 @@ class INESDataConnectorsAdapter:
                 )
 
         if connectors:
-            return sorted(connectors)
+            ordered = [connector for connector in validation_order if connector in connectors]
+            ordered.extend(
+                connector
+                for connector in configured_order
+                if connector in connectors and connector not in ordered
+            )
+            ordered.extend(sorted(connectors - set(ordered)))
+            return ordered
 
         for namespace in self._all_connector_scan_namespaces():
             output = self.run(f"kubectl get pods -n {namespace} --no-headers", capture=True)

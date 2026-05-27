@@ -74,6 +74,8 @@ class InesdataConnectorDataspaceMetadataTests(unittest.TestCase):
                 {
                     "name": "conn-citycouncil-pilot",
                     "role": "provider",
+                    "validation_role": "provider",
+                    "namespace_role": "provider",
                     "runtime_namespace": "pilot",
                     "active_namespace": "pilot",
                     "planned_namespace": "pilot-provider",
@@ -83,6 +85,8 @@ class InesdataConnectorDataspaceMetadataTests(unittest.TestCase):
                 {
                     "name": "conn-company-pilot",
                     "role": "consumer",
+                    "validation_role": "consumer",
+                    "namespace_role": "consumer",
                     "runtime_namespace": "pilot",
                     "active_namespace": "pilot",
                     "planned_namespace": "pilot-consumer",
@@ -91,6 +95,69 @@ class InesdataConnectorDataspaceMetadataTests(unittest.TestCase):
                 },
             ],
         )
+        self.assertEqual(dataspace["validation_pairs"], [])
+
+    def test_explicit_connector_namespaces_and_validation_pairs_are_decoupled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "deployers", "infrastructure"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "deployers", "inesdata"), exist_ok=True)
+            with open(
+                os.path.join(tmpdir, "deployers", "infrastructure", "deployer.config"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write("DS_DOMAIN_BASE=dev.ds.dataspaceunit.upm\n")
+            with open(
+                os.path.join(tmpdir, "deployers", "inesdata", "deployer.config"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write(
+                    "DS_1_NAME=pilot\n"
+                    "DS_1_NAMESPACE=pilot\n"
+                    "DS_1_CONNECTORS=citycouncil,company,partnera\n"
+                    "DS_1_CONNECTOR_NAMESPACES=citycouncil:provider,company:consumer,partnera:provider\n"
+                    "DS_1_VALIDATION_PAIRS=company>partnera,partnera>citycouncil\n"
+                    "NAMESPACE_PROFILE=role-aligned\n"
+                )
+
+            adapter = self._make_adapter(tmpdir)
+            dataspace = adapter.load_dataspace_connectors()[0]
+
+        self.assertEqual(
+            dataspace["connector_roles"],
+            {
+                "provider": "conn-company-pilot",
+                "consumer": "conn-partnera-pilot",
+                "additional": ["conn-citycouncil-pilot"],
+            },
+        )
+        self.assertEqual(
+            dataspace["validation_pairs"],
+            [
+                {
+                    "provider": "conn-company-pilot",
+                    "consumer": "conn-partnera-pilot",
+                },
+                {
+                    "provider": "conn-partnera-pilot",
+                    "consumer": "conn-citycouncil-pilot",
+                },
+            ],
+        )
+        details = {
+            entry["name"]: entry
+            for entry in dataspace["connector_details"]
+        }
+        self.assertEqual(details["conn-citycouncil-pilot"]["role"], "additional")
+        self.assertEqual(details["conn-citycouncil-pilot"]["namespace_role"], "provider")
+        self.assertEqual(details["conn-citycouncil-pilot"]["planned_namespace"], "pilot-provider")
+        self.assertEqual(details["conn-company-pilot"]["role"], "provider")
+        self.assertEqual(details["conn-company-pilot"]["namespace_role"], "consumer")
+        self.assertEqual(details["conn-company-pilot"]["planned_namespace"], "pilot-consumer")
+        self.assertEqual(details["conn-partnera-pilot"]["role"], "consumer")
+        self.assertEqual(details["conn-partnera-pilot"]["namespace_role"], "provider")
+        self.assertEqual(details["conn-partnera-pilot"]["planned_namespace"], "pilot-provider")
 
 
 if __name__ == "__main__":

@@ -93,6 +93,13 @@ class RoleAlignedConnectorRetryConfigAdapter(ConnectorRetryConfigAdapter):
         return config
 
 
+class AdditiveConnectorRetryConfigAdapter(ConnectorRetryConfigAdapter):
+    def load_deployer_config(self):
+        config = super().load_deployer_config()
+        config["LEVEL4_CONNECTOR_RECONCILIATION_MODE"] = "additive"
+        return config
+
+
 class ConnectorCreationRetryTests(unittest.TestCase):
     def test_bootstrap_connector_commands_include_active_topology(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2270,6 +2277,54 @@ class ConnectorCreationRetryTests(unittest.TestCase):
 
             self.assertEqual(deployed, ["conn-a-demo"])
             adapter.create_connector.assert_called_once_with("conn-a-demo", ["conn-a-demo"])
+            adapter.wait_for_all_connectors.assert_called_once_with(["conn-a-demo"])
+            self.assertEqual(infra.host_entries, [])
+
+    def test_deploy_connectors_additive_mode_preserves_healthy_existing_connectors(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = AdditiveConnectorRetryConfigAdapter(tmpdir)
+            os.makedirs(config.repo_dir(), exist_ok=True)
+            open(config.repo_requirements_path(), "w", encoding="utf-8").close()
+            os.makedirs(config.venv_path(), exist_ok=True)
+
+            class Infra:
+                def __init__(self):
+                    self.host_entries = None
+
+                def manage_hosts_entries(self, entries):
+                    self.host_entries = entries
+                    return None
+
+            infra = Infra()
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=infra,
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "demo",
+                    "namespace": "demo",
+                    "connectors": ["conn-a-demo"],
+                }
+            ]
+            adapter.connector_already_exists = lambda *_args, **_kwargs: True
+            adapter.connector_is_healthy = lambda *_args, **_kwargs: True
+            adapter.connector_database_credentials_valid = lambda *_args, **_kwargs: True
+            adapter.create_connector = mock.Mock()
+            adapter.wait_for_all_connectors = mock.Mock(return_value=True)
+            adapter.validate_connectors_with_stabilization = mock.Mock(return_value=True)
+
+            with mock.patch("adapters.inesdata.connectors.ensure_python_requirements", lambda *_args, **_kwargs: None):
+                deployed = adapter.deploy_connectors()
+
+            self.assertEqual(deployed, ["conn-a-demo"])
+            adapter.create_connector.assert_not_called()
             adapter.wait_for_all_connectors.assert_called_once_with(["conn-a-demo"])
             self.assertEqual(infra.host_entries, [])
 
