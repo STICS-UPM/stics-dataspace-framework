@@ -17,6 +17,13 @@ Recomendaciones:
 - no incluir metadatos locales del sistema operativo;
 - no incluir archivos antiguos si no forman parte de la identidad vigente.
 
+Assets versionados usados por la configuración base:
+
+- `pionera-logo.svg`;
+- `funding-logos.png`;
+- `oeg.png`;
+- `inesdta.png`.
+
 ## Uso en Branding
 
 El framework propaga variables de branding para INESData mediante Helm. La

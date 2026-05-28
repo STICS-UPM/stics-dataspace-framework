@@ -88,6 +88,32 @@ class SharedConfigLoaderTests(unittest.TestCase):
             ("vm-distributed", "vm-single"),
         )
 
+    def test_vm_distributed_ssh_access_keys_are_topology_scoped(self):
+        for key in (
+            "SSH_ACCESS_MODE",
+            "SSH_BASTION_HOST",
+            "SSH_BASTION_PORT",
+            "SSH_BASTION_USER",
+            "SSH_CONNECT_TIMEOUT_SECONDS",
+            "VM_DISTRIBUTED_DEPLOYMENT_MODE",
+            "VM_DISTRIBUTED_PREFLIGHT_DRY_RUN",
+            "VM_REMOTE_WORKDIR",
+            "VM_COMMON_REMOTE_WORKDIR",
+            "VM_PROVIDER_REMOTE_WORKDIR",
+            "VM_CONSUMER_REMOTE_WORKDIR",
+            "VM_COMMON_PUBLIC_URL",
+            "VM_PROVIDER_PUBLIC_URL",
+            "VM_CONSUMER_PUBLIC_URL",
+            "VM_COMMON_HTTP_URL",
+            "VM_PROVIDER_HTTP_URL",
+            "VM_CONSUMER_HTTP_URL",
+            "VM_COMMON_SSH_HOST",
+            "VM_PROVIDER_SSH_HOST",
+            "VM_CONSUMER_SSH_HOST",
+        ):
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
+            self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed",))
+
     def test_load_deployer_config_reads_key_value_pairs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "deployer.config")
@@ -215,7 +241,7 @@ class SharedConfigLoaderTests(unittest.TestCase):
             common_path = os.path.join(tmpdir, "common.config")
             adapter_path = os.path.join(tmpdir, "adapter.config")
             with open(common_path, "w", encoding="utf-8") as handle:
-                handle.write("VT_TOKEN=real-token\nKC_PASSWORD=real-password\nDS_1_NAME=shared\n")
+                handle.write("VT_TOKEN=example-token\nKC_PASSWORD=example-password\nDS_1_NAME=shared\n")
             with open(adapter_path, "w", encoding="utf-8") as handle:
                 handle.write("VT_TOKEN=X\nKC_PASSWORD=CHANGE_ME\nDS_1_NAME=adapter\n")
 
@@ -225,8 +251,8 @@ class SharedConfigLoaderTests(unittest.TestCase):
                 protected_keys=INFRASTRUCTURE_MANAGED_KEYS,
             )
 
-        self.assertEqual(config["VT_TOKEN"], "real-token")
-        self.assertEqual(config["KC_PASSWORD"], "real-password")
+        self.assertEqual(config["VT_TOKEN"], "example-token")
+        self.assertEqual(config["KC_PASSWORD"], "example-password")
         self.assertEqual(config["DS_1_NAME"], "adapter")
 
     def test_protected_empty_infrastructure_value_is_not_replaced_by_adapter_placeholder(self):

@@ -11,6 +11,7 @@ const {
   openVocabularyDetail,
   openVersionsPage,
   REPOSITORY_VOCAB_STATE_KEY,
+  URI_VOCAB_STATE_KEY,
   runtimeFromCreatedVocabulary,
   runIndexAllFromEdition,
   saveRunState,
@@ -90,17 +91,19 @@ test("OH-APP-10: edit ontology metadata and tags", async ({
   attachJson,
 }) => {
   test.setTimeout(300000);
-  const created = loadRunState(REPOSITORY_VOCAB_STATE_KEY);
+  const created = loadRunState(URI_VOCAB_STATE_KEY);
   const runtime = runtimeFromCreatedVocabulary(ontologyHubRuntime, created);
   const updatedDescription = "ADMIN TEST metadata update";
+  const updatedReview = "ADMIN TEST review update";
   const updatedTag = "Vocabularies";
 
   await updateVocabularyMetadata(page, runtime, created.prefix, {
     description: updatedDescription,
+    review: updatedReview,
     tag: updatedTag,
   });
   await runIndexAllFromEdition(page, runtime);
-  await waitForVocabularyDetailText(page, runtime, created.prefix, [updatedTag, updatedDescription]);
+  await waitForVocabularyDetailText(page, runtime, created.prefix, [updatedTag, updatedDescription, updatedReview]);
   await captureStep(page, "10-vocab-edited");
   await signOut(page, runtime);
 
@@ -108,6 +111,7 @@ test("OH-APP-10: edit ontology metadata and tags", async ({
     prefix: created.prefix,
     title: created.title,
     updatedDescription,
+    updatedReview,
     updatedTag,
   });
 });

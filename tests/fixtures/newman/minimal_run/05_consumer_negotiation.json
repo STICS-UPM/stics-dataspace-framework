@@ -1,0 +1,60 @@
+{
+  "collection": {
+    "info": {
+      "name": "05 Consumer Negotiation"
+    }
+  },
+  "run": {
+    "executions": [
+      {
+        "item": {
+          "name": "Direct DSP catalog"
+        },
+        "request": {
+          "method": "POST",
+          "url": {
+            "raw": "http://conn-b.example/management/v3/catalog/request"
+          }
+        },
+        "response": {
+          "code": 200,
+          "responseTime": 33,
+          "timestamp": "2026-01-01T00:01:01.000Z"
+        },
+        "cursor": {
+          "started": "2026-01-01T00:01:00.967Z"
+        },
+        "assertions": [
+          {
+            "assertion": "Catalog response includes dataset"
+          }
+        ]
+      },
+      {
+        "item": {
+          "name": "Contract negotiation"
+        },
+        "request": {
+          "method": "POST",
+          "url": {
+            "raw": "http://conn-b.example/management/v3/contractnegotiations"
+          }
+        },
+        "response": {
+          "code": 200,
+          "responseTime": 120,
+          "timestamp": "2026-01-01T00:01:05.000Z"
+        },
+        "cursor": {
+          "started": "2026-01-01T00:01:04.880Z"
+        },
+        "assertions": [
+          {
+            "assertion": "Negotiation reaches FINALIZED"
+          }
+        ]
+      }
+    ],
+    "failures": []
+  }
+}

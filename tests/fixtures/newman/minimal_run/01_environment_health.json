@@ -1,0 +1,60 @@
+{
+  "collection": {
+    "info": {
+      "name": "01 Environment Health"
+    }
+  },
+  "run": {
+    "executions": [
+      {
+        "item": {
+          "name": "Provider health"
+        },
+        "request": {
+          "method": "GET",
+          "url": {
+            "raw": "http://conn-a.example/health"
+          }
+        },
+        "response": {
+          "code": 200,
+          "responseTime": 21,
+          "timestamp": "2026-01-01T00:00:01.000Z"
+        },
+        "cursor": {
+          "started": "2026-01-01T00:00:00.900Z"
+        },
+        "assertions": [
+          {
+            "assertion": "Provider health is available"
+          }
+        ]
+      },
+      {
+        "item": {
+          "name": "Consumer health"
+        },
+        "request": {
+          "method": "GET",
+          "url": {
+            "raw": "http://conn-b.example/health"
+          }
+        },
+        "response": {
+          "code": 200,
+          "responseTime": 24,
+          "timestamp": "2026-01-01T00:00:02.000Z"
+        },
+        "cursor": {
+          "started": "2026-01-01T00:00:01.900Z"
+        },
+        "assertions": [
+          {
+            "assertion": "Consumer health is available"
+          }
+        ]
+      }
+    ],
+    "failures": []
+  }
+}

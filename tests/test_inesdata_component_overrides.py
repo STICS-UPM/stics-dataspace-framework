@@ -1621,6 +1621,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             release_name="demo-ai-model-hub",
             namespace="components",
             built_local_image=False,
+            deployer_config={},
         )
         adapter.verify_component_publication.assert_called_once_with(
             "ai-model-hub",

@@ -74,8 +74,10 @@ def _functional_run_id(artifact_paths: Dict[str, str]) -> str:
         experiment_name = Path(artifact_paths["base_dir"]).parents[2].name
     except IndexError:
         experiment_name = Path(artifact_paths["base_dir"]).name
-    normalized = re.sub(r"[^A-Za-z0-9]+", "-", experiment_name).strip("-").lower()
-    return normalized[:48] or "standalone"
+    normalized = re.sub(r"[^A-Za-z0-9]", "-", experiment_name).lower()
+    if not re.search(r"[a-z0-9]", normalized):
+        return "standalone"
+    return normalized[:48]
 
 
 def _iter_specs(suites: Iterable[Dict[str, Any]]) -> Iterable[Dict[str, Any]]:

@@ -438,10 +438,26 @@ protección evita mezclar el bootstrap de servicios comunes con un Helm deploy d
 conectores en otro cluster mientras no esté implementado el flujo multi-cluster
 completo.
 
-### Asistente de Configuración
+### Asistente de `vm-distributed`
 
-En el menú interactivo, la opción `W - Configure vm-distributed deployment`
-prepara los ficheros locales necesarios para la topología:
+En el menú interactivo, la opción `W - vm-distributed assistant` es el punto de
+entrada para preparar y revisar la topología distribuida. Si se invoca desde
+otra topología, mantiene la compatibilidad con el atajo anterior y abre
+directamente el wizard de configuración tras confirmar el cambio a
+`vm-distributed`. Cuando `vm-distributed` ya está activa, el asistente permite:
+
+- preparar los `.config` locales de infraestructura, topología y adapter;
+- derivar automáticamente `KC_URL`, `KC_INTERNAL_URL`, `KEYCLOAK_*` y
+  `MINIO_*` desde `DOMAIN_BASE` cuando esos valores están vacíos o todavía son
+  defaults generados, conservando cualquier valor personalizado;
+- mostrar el plan de VMs por rol (`common-services`, `provider-connectors`,
+  `consumer-connectors`);
+- ejecutar el preflight estático de dominios, direcciones, kubeconfigs,
+  conectores, reconciliación, SSH, modo de despliegue y hosts;
+- previsualizar el plan de despliegue y hosts sin modificar el entorno;
+- ejecutar, previa confirmación, comprobaciones SSH/HTTP no destructivas.
+
+Los ficheros locales que prepara son:
 
 ```text
 deployers/infrastructure/deployer.config
@@ -450,20 +466,26 @@ deployers/<adapter>/deployer.config
 ```
 
 El asistente pregunta por dominios, IP/DNS de VMs, usuario SSH opcional para
-sincronización remota de NGINX, kubeconfigs k3s, conectores, ubicación de
-conectores y pares de validación. Si no se conoce un dato, se puede escribir `?`
-en el campo para ver qué significa, cómo elegirlo y qué comandos de Ubuntu
-ayudan a descubrirlo. Para el inventario de conectores, el asistente propone una
-ubicación inicial alternando los grupos `provider` y `consumer`; ese valor se
-puede editar antes de guardar. El asistente solo escribe `.config` locales
-ignorados por Git y no ejecuta despliegues por sí mismo.
+sincronización remota de NGINX, metadatos SSH de preflight, kubeconfigs k3s,
+conectores, ubicación de conectores y pares de validación. Si no se conoce un
+dato, se puede escribir `?` en el campo para ver qué significa, cómo elegirlo y
+qué comandos de Ubuntu ayudan a descubrirlo. Para el inventario de conectores,
+el asistente propone una ubicación inicial alternando los grupos `provider` y
+`consumer`; ese valor se puede editar antes de guardar. El asistente solo escribe
+`.config` locales ignorados por Git y no ejecuta despliegues por sí mismo.
 
-Al guardar, el asistente imprime un preflight con checklist de dominios,
-direcciones, kubeconfigs, inventario de conectores, ubicación, pares de
-validación, modo de reconciliación, alcance de nivel 4 y plan de hosts. Si el
-checklist marca `blocked` en el alcance de nivel 4, la configuración describe un
-despliegue multi-kubeconfig real y el framework lo bloquea de forma preventiva
-hasta que exista soporte multi-cluster completo.
+La configuración versionada usa placeholders. Los valores reales de host, IP,
+usuario, kubeconfig, rutas de workspace remoto o dominios concretos deben vivir
+solo en `.config` locales ignorados por Git o en variables de entorno.
+
+El preflight remoto usa `ssh` con `BatchMode=yes`, timeout configurable y comandos
+de lectura como `hostname`, `id`, `/etc/os-release`, detección de runtime de
+contenedores, `kubectl`/`k3s`, puertos en escucha y `curl` local. No instala
+paquetes, no cambia firewall, no modifica certificados y no despliega recursos.
+
+Si el checklist marca `blocked` en el alcance de nivel 4, la configuración
+describe un despliegue multi-kubeconfig real y el framework lo bloquea de forma
+preventiva hasta que exista soporte multi-cluster completo.
 
 En `vm-distributed`, los niveles 2, 3 y 4 refrescan de forma idempotente la
 configuración de routing NGINX cuando `VM_COMMON_IP` y `DS_DOMAIN_BASE` están

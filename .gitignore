@@ -64,6 +64,9 @@ validation/ui/manual-runs/
 # =========================
 experiments/
 newman/
+!tests/fixtures/newman/
+!tests/fixtures/newman/minimal_run/
+!tests/fixtures/newman/minimal_run/*.json
 
 # =========================
 # SENSITIVE CONFIGURATION

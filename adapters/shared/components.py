@@ -83,6 +83,9 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         try:
             values = self._safe_load_yaml_file(values_file)
         except Exception:
+            legacy_infer = getattr(self, "_infer_component_hostname", None)
+            if callable(legacy_infer):
+                return legacy_infer(normalized_component, values_file, deployer_config)
             return None
 
         return infer_component_hostname(
@@ -289,7 +292,6 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         normalized = self._normalize_component_key(component)
         resolved_release_name = str(release_name or "").strip()
         resolved_namespace = str(namespace or "").strip()
-        resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
 
         if built_local_image:
             print(f"Restarting deployment/{resolved_release_name} to pick up local image...\n")
@@ -312,10 +314,18 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
 
         model_server = None
         if normalized == "ai-model-hub":
-            model_server = self._ensure_ai_model_hub_model_server(
-                resolved_namespace,
-                resolved_config,
-            )
+            if deployer_config is not None:
+                resolved_config = dict(deployer_config or {})
+            else:
+                try:
+                    resolved_config = dict(self.config_adapter.load_deployer_config() or {})
+                except Exception:
+                    resolved_config = {}
+            if resolved_config or deployer_config is not None:
+                model_server = self._ensure_ai_model_hub_model_server(
+                    resolved_namespace,
+                    resolved_config,
+                )
 
         result = {
             "component": normalized,

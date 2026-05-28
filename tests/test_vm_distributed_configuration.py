@@ -27,6 +27,41 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertIn("How to choose it", text)
         self.assertIn("hostname -I", text)
 
+    def test_common_service_public_updates_replace_generated_default_hostnames(self):
+        updates = main._vm_distributed_common_service_public_updates(
+            "pionera.example.test",
+            {
+                "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+                "KC_URL": "http://admin.auth.dev.ed.dataspaceunit.upm",
+                "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+                "KEYCLOAK_HOSTNAME": "auth.dev.ed.dataspaceunit.upm",
+                "KEYCLOAK_ADMIN_HOSTNAME": "admin.auth.dev.ed.dataspaceunit.upm",
+                "MINIO_HOSTNAME": "minio.dev.ed.dataspaceunit.upm",
+                "MINIO_CONSOLE_HOSTNAME": "console.minio-s3.dev.ed.dataspaceunit.upm",
+            },
+        )
+
+        self.assertEqual(updates["KC_URL"], "http://admin.auth.pionera.example.test")
+        self.assertEqual(updates["KC_INTERNAL_URL"], "http://auth.pionera.example.test")
+        self.assertEqual(updates["KEYCLOAK_HOSTNAME"], "auth.pionera.example.test")
+        self.assertEqual(updates["MINIO_HOSTNAME"], "minio.pionera.example.test")
+
+    def test_common_service_public_updates_preserve_custom_hostnames(self):
+        updates = main._vm_distributed_common_service_public_updates(
+            "pionera.example.test",
+            {
+                "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+                "KC_URL": "http://custom-admin.example.test",
+                "KC_INTERNAL_URL": "http://custom-auth.example.test",
+                "KEYCLOAK_HOSTNAME": "custom-auth.example.test",
+                "KEYCLOAK_ADMIN_HOSTNAME": "custom-admin.example.test",
+                "MINIO_HOSTNAME": "custom-minio.example.test",
+                "MINIO_CONSOLE_HOSTNAME": "custom-console.example.test",
+            },
+        )
+
+        self.assertEqual(updates, {})
+
     def test_connector_defaults_follow_user_inventory(self):
         connectors = "alpha,beta,gamma,delta"
 
@@ -111,6 +146,44 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         checks = {item["name"]: item["status"] for item in preflight["checks"]}
         self.assertEqual(checks["Level 4 cluster scope"], "blocked")
 
+    def test_preflight_reports_incomplete_ssh_metadata_without_running_ssh(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            common_kubeconfig = os.path.join(tmpdir, "common.yaml")
+            with open(common_kubeconfig, "w", encoding="utf-8") as handle:
+                handle.write("apiVersion: v1\n")
+
+            preflight = main._vm_distributed_configuration_preflight(
+                {
+                    "DOMAIN_BASE": "validation.example.local",
+                    "DS_DOMAIN_BASE": "ds.validation.example.local",
+                },
+                {
+                    "VM_COMMON_IP": "192.0.2.10",
+                    "VM_PROVIDER_IP": "192.0.2.20",
+                    "VM_CONSUMER_IP": "192.0.2.30",
+                    "K3S_KUBECONFIG_COMMON": common_kubeconfig,
+                    "K3S_KUBECONFIG_PROVIDER": common_kubeconfig,
+                    "K3S_KUBECONFIG_CONSUMER": common_kubeconfig,
+                    "SSH_ACCESS_MODE": "bastion",
+                    "SSH_BASTION_PORT": "2222",
+                    "VM_COMMON_SSH_HOST": "common.example.test",
+                    "VM_PROVIDER_SSH_HOST": "provider.example.test",
+                    "VM_CONSUMER_SSH_HOST": "consumer.example.test",
+                },
+                {
+                    "DS_1_NAME": "pionera",
+                    "DS_1_CONNECTORS": "citycouncil,company",
+                    "DS_1_CONNECTOR_NAMESPACES": "citycouncil:provider,company:consumer",
+                    "DS_1_VALIDATION_PAIRS": "citycouncil>company",
+                    "LEVEL4_CONNECTOR_RECONCILIATION_MODE": "full",
+                },
+            )
+
+        self.assertEqual(preflight["status"], "needs-review")
+        self.assertTrue(any("SSH_BASTION_HOST" in warning for warning in preflight["warnings"]))
+        checks = {item["name"]: item["status"] for item in preflight["checks"]}
+        self.assertEqual(checks["SSH access"], "needs-review")
+
     def test_wizard_writes_ignored_config_files_with_dynamic_connector_defaults(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             infra_path = os.path.join(tmpdir, "infrastructure", "deployer.config")
@@ -131,7 +204,16 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             with open(common_kubeconfig, "w", encoding="utf-8") as handle:
                 handle.write("apiVersion: v1\n")
             with open(infra_example_path, "w", encoding="utf-8") as handle:
-                handle.write("DOMAIN_BASE=\nDS_DOMAIN_BASE=\n")
+                handle.write(
+                    "DOMAIN_BASE=dev.ed.dataspaceunit.upm\n"
+                    "DS_DOMAIN_BASE=dev.ds.dataspaceunit.upm\n"
+                    "KC_URL=http://admin.auth.dev.ed.dataspaceunit.upm\n"
+                    "KC_INTERNAL_URL=http://auth.dev.ed.dataspaceunit.upm\n"
+                    "KEYCLOAK_HOSTNAME=auth.dev.ed.dataspaceunit.upm\n"
+                    "KEYCLOAK_ADMIN_HOSTNAME=admin.auth.dev.ed.dataspaceunit.upm\n"
+                    "MINIO_HOSTNAME=minio.dev.ed.dataspaceunit.upm\n"
+                    "MINIO_CONSOLE_HOSTNAME=console.minio-s3.dev.ed.dataspaceunit.upm\n"
+                )
             with open(topology_example_path, "w", encoding="utf-8") as handle:
                 handle.write("TOPOLOGY_ROUTING_MODE=host\n")
             with open(adapter_example_path, "w", encoding="utf-8") as handle:
@@ -147,6 +229,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 "10.0.0.40",
                 "10.0.0.10",
                 "ubuntu",
+                "",
                 common_kubeconfig,
                 "",
                 "",
@@ -194,14 +277,135 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 adapter_config = handle.read()
             with open(topology_path, encoding="utf-8") as handle:
                 topology_config = handle.read()
+            with open(infra_path, encoding="utf-8") as handle:
+                infra_config = handle.read()
 
+        self.assertIn("KC_URL=http://admin.auth.validation.example.local", infra_config)
+        self.assertIn("KC_INTERNAL_URL=http://auth.validation.example.local", infra_config)
+        self.assertIn("KEYCLOAK_HOSTNAME=auth.validation.example.local", infra_config)
+        self.assertIn("MINIO_HOSTNAME=minio.validation.example.local", infra_config)
+        self.assertIn("MINIO_CONSOLE_HOSTNAME=console.minio-s3.validation.example.local", infra_config)
         self.assertIn("DS_1_CONNECTORS=alpha,beta,gamma", adapter_config)
         self.assertIn("DS_1_CONNECTOR_NAMESPACES=alpha:provider,beta:consumer,gamma:provider", adapter_config)
         self.assertIn("DS_1_VALIDATION_PAIRS=alpha>beta", adapter_config)
         self.assertIn("LEVEL4_CONNECTOR_RECONCILIATION_MODE=additive", adapter_config)
         self.assertIn("VM_SSH_USER=ubuntu", topology_config)
         self.assertIn("K3S_KUBECONFIG_COMPONENTS=", topology_config)
+        self.assertIn("SSH_ACCESS_MODE=", topology_config)
+        self.assertIn("SSH_CONNECT_TIMEOUT_SECONDS=5", topology_config)
+        self.assertIn("VM_DISTRIBUTED_DEPLOYMENT_MODE=orchestrator", topology_config)
+        self.assertIn("VM_DISTRIBUTED_PREFLIGHT_DRY_RUN=true", topology_config)
+        self.assertIn("VM_COMMON_HTTP_URL=http://10.0.0.10", topology_config)
+        self.assertIn("VM_PROVIDER_HTTP_URL=http://10.0.0.20", topology_config)
+        self.assertIn("VM_CONSUMER_HTTP_URL=http://10.0.0.30", topology_config)
         self.assertIn(common_kubeconfig, topology_config)
+
+    def test_topology_plan_builds_bastion_ssh_commands_and_connector_locations(self):
+        plan = main._build_vm_distributed_topology_plan(
+            {
+                "DOMAIN_BASE": "validation.example.local",
+                "DS_DOMAIN_BASE": "ds.validation.example.local",
+            },
+            {
+                "VM_COMMON_IP": "192.0.2.10",
+                "VM_PROVIDER_IP": "192.0.2.20",
+                "VM_CONSUMER_IP": "192.0.2.30",
+                "K3S_KUBECONFIG_COMMON": "/tmp/common.yaml",
+                "K3S_KUBECONFIG_PROVIDER": "/tmp/common.yaml",
+                "K3S_KUBECONFIG_CONSUMER": "/tmp/common.yaml",
+                "SSH_ACCESS_MODE": "bastion",
+                "SSH_BASTION_HOST": "bastion.example.test",
+                "SSH_BASTION_PORT": "2222",
+                "SSH_BASTION_USER": "jump",
+                "SSH_CONNECT_TIMEOUT_SECONDS": "7",
+                "VM_COMMON_SSH_HOST": "common.example.test",
+                "VM_COMMON_SSH_USER": "operator",
+                "VM_PROVIDER_SSH_HOST": "provider.example.test",
+                "VM_CONSUMER_SSH_HOST": "consumer.example.test",
+                "VM_REMOTE_WORKDIR": "/srv/validation-environment",
+            },
+            {
+                "DS_1_NAME": "pionera",
+                "DS_1_CONNECTORS": "alpha,beta",
+                "DS_1_CONNECTOR_NAMESPACES": "alpha:provider,beta:consumer",
+                "DS_1_VALIDATION_PAIRS": "alpha>beta",
+                "LEVEL4_CONNECTOR_RECONCILIATION_MODE": "full",
+            },
+        )
+
+        self.assertEqual(plan["ssh"]["mode"], "bastion")
+        self.assertEqual(plan["ssh"]["connect_timeout_seconds"], 7)
+        common_vm = next(item for item in plan["vms"] if item["role"] == "common-services")
+        self.assertTrue(common_vm["ssh"]["configured"])
+        self.assertIn("-J jump@bastion.example.test:2222", common_vm["ssh"]["command"])
+        self.assertIn("operator@common.example.test", common_vm["ssh"]["command"])
+        self.assertEqual(common_vm["remote_workdir"], "/srv/validation-environment")
+        self.assertIn(
+            {"connector": "conn-alpha-pionera", "location": "provider"},
+            plan["connectors"],
+        )
+        self.assertEqual(
+            plan["validation_pairs"],
+            [{"source": "conn-alpha-pionera", "target": "conn-beta-pionera"}],
+        )
+
+    def test_remote_preflight_uses_injected_runner_and_parses_facts(self):
+        commands = []
+
+        def runner(command, timeout):
+            commands.append((command, timeout))
+            return mock.Mock(
+                returncode=0,
+                stdout="hostname=common-vm\nuser=operator\nos=Ubuntu 22.04\nhttp_local=200\n",
+                stderr="",
+            )
+
+        plan = {
+            "ssh": {
+                "mode": "direct",
+                "connect_timeout_seconds": 5,
+                "bastion": {},
+            },
+            "vms": [
+                {
+                    "role": "common-services",
+                    "remote_workdir": "/srv/validation-environment",
+                    "ssh": {
+                        "configured": True,
+                        "host": "common.example.test",
+                        "port": "22",
+                        "user": "operator",
+                    },
+                }
+            ],
+        }
+
+        result = main.run_vm_distributed_remote_preflight(plan, command_runner=runner)
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["vms"][0]["facts"]["hostname"], "common-vm")
+        self.assertEqual(result["vms"][0]["facts"]["http_local"], "200")
+        self.assertEqual(commands[0][1], 25)
+        self.assertIn("BatchMode=yes", commands[0][0])
+        self.assertIn("operator@common.example.test", commands[0][0])
+        self.assertEqual(commands[0][0][-1].split(" ", 2)[:2], ["sh", "-lc"])
+        self.assertNotIn("hostname_value", result["vms"][0]["command"])
+
+    def test_http_preflight_marks_http_responses_below_500_as_reachable(self):
+        seen = []
+
+        def getter(url, timeout, allow_redirects):
+            seen.append((url, timeout, allow_redirects))
+            return mock.Mock(status_code=404)
+
+        result = main.run_vm_distributed_http_preflight(
+            {"vms": [{"role": "common-services", "http_url": "http://192.0.2.10"}]},
+            request_get=getter,
+        )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["vms"][0]["status_code"], 404)
+        self.assertEqual(seen, [("http://192.0.2.10", 3, False)])
 
     def test_preflight_reports_incomplete_required_values(self):
         preflight = main._vm_distributed_configuration_preflight({}, {}, {})

@@ -9,9 +9,9 @@ framework tenga que reconstruir datos técnicos desde cero durante un despliegue
 
 ## Alcance Implementado
 
-El framework ya permite preparar la configuración local de `vm-distributed`
-desde el menú interactivo mediante la opción `W - Configure vm-distributed
-deployment`.
+El framework ya permite preparar, inspeccionar y prevalidar la configuración
+local de `vm-distributed` desde el menú interactivo mediante la opción
+`W - vm-distributed assistant`.
 
 La implementación actual cubre:
 
@@ -19,6 +19,9 @@ La implementación actual cubre:
 - generación asistida de
   `deployers/infrastructure/topologies/vm-distributed.config`;
 - generación asistida de `deployers/<adapter>/deployer.config`;
+- normalización automática de hostnames comunes (`KC_*`, `KEYCLOAK_*`,
+  `MINIO_*`) a partir de `DOMAIN_BASE` cuando están vacíos o siguen usando
+  defaults generados, conservando valores personalizados;
 - inventario configurable de conectores con `DS_1_CONNECTORS`;
 - asignación configurable de conectores a grupos o namespaces mediante
   `DS_1_CONNECTOR_NAMESPACES`;
@@ -26,6 +29,9 @@ La implementación actual cubre:
 - modo aditivo de nivel 4 mediante
   `LEVEL4_CONNECTOR_RECONCILIATION_MODE=additive`;
 - checklist de preparación al terminar el asistente;
+- plan de VMs por rol con SSH directo o vía bastion;
+- preflight SSH/HTTP no destructivo y siempre confirmado por la persona
+  operadora;
 - planificación de entradas de hosts con `hosts --topology vm-distributed
   --dry-run`;
 - propagación de variables de branding para la interfaz INESData.
@@ -80,6 +86,12 @@ Antes de preparar una topología `vm-distributed`, se debe recopilar:
 | Lista de conectores | `DS_1_CONNECTORS` |
 | Ubicación de cada conector | `DS_1_CONNECTOR_NAMESPACES` |
 | Pares origen/destino para validación | `DS_1_VALIDATION_PAIRS` |
+| Modo de acceso SSH | `SSH_ACCESS_MODE` |
+| Bastion opcional | `SSH_BASTION_HOST`, `SSH_BASTION_PORT`, `SSH_BASTION_USER` |
+| Host/puerto/usuario SSH por rol | `VM_COMMON_SSH_*`, `VM_PROVIDER_SSH_*`, `VM_CONSUMER_SSH_*` |
+| Ruta remota del workspace si aplica | `VM_REMOTE_WORKDIR` o `VM_<ROL>_REMOTE_WORKDIR` |
+| URLs HTTP internas para preflight | `VM_COMMON_HTTP_URL`, `VM_PROVIDER_HTTP_URL`, `VM_CONSUMER_HTTP_URL` |
+| Modo operativo de la topología | `VM_DISTRIBUTED_DEPLOYMENT_MODE` |
 
 También se debe confirmar:
 
@@ -90,6 +102,11 @@ También se debe confirmar:
 - conectividad de red entre servicios comunes, conectores y componentes;
 - resolución DNS o entradas `/etc/hosts` coherentes con los dominios definidos;
 - puertos de ingress y APIs internas permitidos por firewall o VPN.
+
+La configuración versionada debe usar solo placeholders o ejemplos reservados. Los
+valores reales de IP, hostnames internos, usuarios, rutas de kubeconfig, tokens,
+contraseñas o claves privadas deben quedar en ficheros `.config` locales
+ignorados por Git o en variables de entorno del operador.
 
 ## Uso del Asistente
 
@@ -102,12 +119,22 @@ python3 main.py menu
 Después selecciona:
 
 ```text
-W - Configure vm-distributed deployment
+W - vm-distributed assistant
 ```
 
-En cualquier campo se puede escribir `?` para ver qué significa el dato, cómo
-elegirlo y qué comandos de Ubuntu ayudan a descubrirlo. El asistente solo
-modifica ficheros `.config` locales ignorados por Git.
+Si `vm-distributed` todavía no está activa, `W` cambia a esa topología con
+confirmación y abre directamente el wizard de configuración. Con
+`vm-distributed` activa, usa la opción `1` para configurar los `.config`, la
+opción `2` para revisar el plan de VMs y el preflight estático, la opción `3`
+para previsualizar despliegue y hosts, y la opción `4` para ejecutar
+comprobaciones SSH/HTTP no destructivas. El asistente solo modifica ficheros
+`.config` locales ignorados por Git cuando se usa explícitamente la opción de
+configuración.
+
+Al guardar la configuración, el asistente también puede corregir hostnames
+comunes derivados de `DOMAIN_BASE`. Solo actualiza `KC_URL`, `KC_INTERNAL_URL`,
+`KEYCLOAK_*` y `MINIO_*` si están vacíos o si coinciden con valores generados
+por el framework; los valores personalizados se mantienen intactos.
 
 Al finalizar, revisa el checklist impreso. Si aparece `blocked` en el alcance de
 nivel 4, significa que se ha configurado un despliegue multi-kubeconfig real.

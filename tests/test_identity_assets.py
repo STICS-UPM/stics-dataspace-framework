@@ -10,12 +10,8 @@ class IdentityAssetsTests(unittest.TestCase):
     def test_identity_assets_use_stable_public_filenames(self):
         expected = {
             "README.md",
+            "branding.config.example",
             "pionera-logo.svg",
-            "pionera-logo.png",
-            "pionera-logo.jpg",
-            "pionera-logo-square.jpg",
-            "pionera-logo.pdf",
-            "inesdata-logo.svg",
             "inesdta.png",
             "funding-logos.png",
             "oeg.png",

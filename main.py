@@ -3,9 +3,11 @@ import contextlib
 import getpass
 import importlib
 import inspect
+import io
 import json
 import os
 import pty
+import shlex
 import shutil
 import socket
 import subprocess
@@ -74,6 +76,9 @@ from deployers.infrastructure.lib.config_loader import (
     topology_overlay_config_path,
 )
 from deployers.infrastructure.lib.public_hostnames import (
+    DEFAULT_COMMON_DOMAIN_BASE,
+    canonical_common_service_config_values,
+    legacy_common_service_hostnames,
     resolved_common_service_hostnames,
     resolved_common_service_urls,
 )
@@ -182,6 +187,10 @@ class _Level6ConsoleCapture:
         self._stdout_fd = None
         self._stderr_fd = None
         self._thread = None
+        self._previous_stdout = None
+        self._previous_stderr = None
+        self._capture_stdout = None
+        self._capture_stderr = None
         self._force_color_was_set = False
         self._previous_force_color = None
 
@@ -218,6 +227,24 @@ class _Level6ConsoleCapture:
             os.dup2(self._write_fd, 2)
             os.close(self._write_fd)
             self._write_fd = None
+            self._previous_stdout = sys.stdout
+            self._previous_stderr = sys.stderr
+            stdout_encoding = getattr(self._previous_stdout, "encoding", None) or "utf-8"
+            stderr_encoding = getattr(self._previous_stderr, "encoding", None) or stdout_encoding
+            self._capture_stdout = io.TextIOWrapper(
+                os.fdopen(os.dup(1), "wb", buffering=0),
+                encoding=stdout_encoding,
+                errors="replace",
+                line_buffering=True,
+            )
+            self._capture_stderr = io.TextIOWrapper(
+                os.fdopen(os.dup(2), "wb", buffering=0),
+                encoding=stderr_encoding,
+                errors="replace",
+                line_buffering=True,
+            )
+            sys.stdout = self._capture_stdout
+            sys.stderr = self._capture_stderr
             self._active = True
             print(f"{self.label}: {self.path}")
         except Exception:
@@ -247,6 +274,18 @@ class _Level6ConsoleCapture:
                 self._read_fd = None
 
     def _restore_after_failed_start(self):
+        if self._previous_stdout is not None:
+            sys.stdout = self._previous_stdout
+            self._previous_stdout = None
+        if self._previous_stderr is not None:
+            sys.stderr = self._previous_stderr
+            self._previous_stderr = None
+        for stream_attribute in ("_capture_stdout", "_capture_stderr"):
+            stream = getattr(self, stream_attribute)
+            if stream is not None:
+                with contextlib.suppress(Exception):
+                    stream.close()
+                setattr(self, stream_attribute, None)
         if self._stdout_fd is not None:
             with contextlib.suppress(OSError):
                 os.dup2(self._stdout_fd, 1)
@@ -285,6 +324,18 @@ class _Level6ConsoleCapture:
             sys.stdout.flush()
         with contextlib.suppress(Exception):
             sys.stderr.flush()
+        if self._previous_stdout is not None:
+            sys.stdout = self._previous_stdout
+            self._previous_stdout = None
+        if self._previous_stderr is not None:
+            sys.stderr = self._previous_stderr
+            self._previous_stderr = None
+        for stream_attribute in ("_capture_stdout", "_capture_stderr"):
+            stream = getattr(self, stream_attribute)
+            if stream is not None:
+                with contextlib.suppress(Exception):
+                    stream.close()
+                setattr(self, stream_attribute, None)
         if self._stdout_fd is not None:
             with contextlib.suppress(OSError):
                 os.dup2(self._stdout_fd, 1)
@@ -7801,6 +7852,32 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "TOPOLOGY_ROUTING_MODE",
     "VM_PROVIDER_CONNECTORS",
     "VM_CONSUMER_CONNECTORS",
+    "SSH_BASTION_HOST",
+    "SSH_BASTION_PORT",
+    "SSH_BASTION_USER",
+    "SSH_ACCESS_MODE",
+    "SSH_CONNECT_TIMEOUT_SECONDS",
+    "VM_DISTRIBUTED_DEPLOYMENT_MODE",
+    "VM_DISTRIBUTED_PREFLIGHT_DRY_RUN",
+    "VM_REMOTE_WORKDIR",
+    "VM_COMMON_REMOTE_WORKDIR",
+    "VM_PROVIDER_REMOTE_WORKDIR",
+    "VM_CONSUMER_REMOTE_WORKDIR",
+    "VM_COMMON_PUBLIC_URL",
+    "VM_PROVIDER_PUBLIC_URL",
+    "VM_CONSUMER_PUBLIC_URL",
+    "VM_COMMON_HTTP_URL",
+    "VM_PROVIDER_HTTP_URL",
+    "VM_CONSUMER_HTTP_URL",
+    "VM_COMMON_SSH_HOST",
+    "VM_COMMON_SSH_PORT",
+    "VM_COMMON_SSH_USER",
+    "VM_PROVIDER_SSH_HOST",
+    "VM_PROVIDER_SSH_PORT",
+    "VM_PROVIDER_SSH_USER",
+    "VM_CONSUMER_SSH_HOST",
+    "VM_CONSUMER_SSH_PORT",
+    "VM_CONSUMER_SSH_USER",
 )
 
 VM_DISTRIBUTED_INFRA_KEYS = (
@@ -7888,6 +7965,11 @@ def _vm_distributed_discovery_commands(topic):
             "Map locations with connector:group, for example: citycouncil:provider,partnera:provider",
             "Map validation pairs with source>target, for example: citycouncil>company,partnera>citycouncil",
         ],
+        "ssh": [
+            "ssh -J <bastion-user>@<bastion-host>:<port> <vm-user>@<vm-host>",
+            "ssh <vm-user>@<vm-host> -p <port>",
+            "ssh -G <vm-host>",
+        ],
     }
     return commands.get(normalized, [])
 
@@ -7913,6 +7995,14 @@ def _vm_distributed_help_topic_base(topic):
         "connector-locations": "connectors",
         "validation-pairs": "connectors",
         "reconciliation": "connectors",
+        "ssh": "ssh",
+        "ssh-access": "ssh",
+        "ssh-mode": "ssh",
+        "bastion": "ssh",
+        "jump-host": "ssh",
+        "common-ssh": "ssh",
+        "provider-ssh": "ssh",
+        "consumer-ssh": "ssh",
     }
     return aliases.get(normalized, normalized)
 
@@ -8094,6 +8184,17 @@ def _vm_distributed_discovery_details(topic):
                 "Use additive when adding connectors to an already running dataspace.",
             ],
         },
+        "ssh": {
+            "purpose": [
+                "Optional metadata for future remote preparation and non-destructive preflight commands.",
+                "It describes bastion or direct SSH access without storing passwords, keys or tokens.",
+            ],
+            "choice": [
+                "Leave empty when kubectl and helm are already configured on the host running the framework.",
+                "Use bastion when VMs are reached through a jump host; use direct when each VM is reachable directly.",
+                "Store only hostnames, ports and generic users in local .config files ignored by Git.",
+            ],
+        },
     }
     if normalized in details:
         return details[normalized]
@@ -8148,6 +8249,67 @@ def _prompt_vm_distributed_value(label, current="", default="", required=False, 
         print("This value is required for the distributed deployment configuration.")
 
 
+def _vm_distributed_legacy_common_service_config_values(domain_base):
+    hostnames = legacy_common_service_hostnames(domain_base)
+    return {
+        "KC_INTERNAL_URL": f"http://{hostnames['keycloak_hostname']}",
+        "KC_URL": f"http://{hostnames['keycloak_admin_hostname']}",
+        "KEYCLOAK_HOSTNAME": hostnames["keycloak_hostname"],
+        "KEYCLOAK_ADMIN_HOSTNAME": hostnames["keycloak_admin_hostname"],
+        "MINIO_HOSTNAME": hostnames["minio_hostname"],
+        "MINIO_CONSOLE_HOSTNAME": hostnames["minio_console_hostname"],
+    }
+
+
+def _vm_distributed_equivalent_config_value(key, left, right):
+    left_value = str(left or "").strip()
+    right_value = str(right or "").strip()
+    if key in {"KC_INTERNAL_URL", "KC_URL"}:
+        left_value = left_value.rstrip("/")
+        right_value = right_value.rstrip("/")
+    return left_value.lower() == right_value.lower()
+
+
+def _vm_distributed_common_service_public_updates(domain_base, existing_config):
+    target_domain = str(domain_base or "").strip()
+    if not target_domain:
+        return {}
+
+    existing = dict(existing_config or {})
+    desired = canonical_common_service_config_values(target_domain, protocol="http")
+    known_domains = []
+    for candidate in (
+        existing.get("DOMAIN_BASE"),
+        DEFAULT_COMMON_DOMAIN_BASE,
+        target_domain,
+    ):
+        normalized = str(candidate or "").strip()
+        if normalized and normalized not in known_domains:
+            known_domains.append(normalized)
+
+    generated_by_key = {key: set() for key in desired}
+    for candidate_domain in known_domains:
+        for generated in (
+            canonical_common_service_config_values(candidate_domain, protocol="http"),
+            _vm_distributed_legacy_common_service_config_values(candidate_domain),
+        ):
+            for key, value in generated.items():
+                generated_by_key.setdefault(key, set()).add(value)
+
+    updates = {}
+    for key, target_value in desired.items():
+        current_value = str(existing.get(key) or "").strip()
+        if not current_value:
+            updates[key] = target_value
+            continue
+        if any(
+            _vm_distributed_equivalent_config_value(key, current_value, generated_value)
+            for generated_value in generated_by_key.get(key, set())
+        ):
+            updates[key] = target_value
+    return updates
+
+
 def _vm_distributed_connector_tokens(raw_value):
     tokens = []
     for token in str(raw_value or "").split(","):
@@ -8198,6 +8360,462 @@ def _normalized_reconciliation_mode(raw_value):
     if mode in {"full", "recreate", "reset"}:
         return "full"
     return ""
+
+
+def _vm_distributed_ssh_access_preflight(topology_config):
+    topology = dict(topology_config or {})
+    ssh_identity_keys = (
+        "SSH_ACCESS_MODE",
+        "SSH_BASTION_HOST",
+        "SSH_BASTION_USER",
+        "VM_COMMON_SSH_HOST",
+        "VM_COMMON_SSH_USER",
+        "VM_PROVIDER_SSH_HOST",
+        "VM_PROVIDER_SSH_USER",
+        "VM_CONSUMER_SSH_HOST",
+        "VM_CONSUMER_SSH_USER",
+    )
+    has_metadata = any(str(topology.get(key) or "").strip() for key in ssh_identity_keys)
+    mode = str(topology.get("SSH_ACCESS_MODE") or "").strip().lower().replace("_", "-")
+    warnings = []
+
+    if not has_metadata:
+        return {
+            "status": "ready",
+            "detail": "optional SSH metadata not configured",
+            "warnings": [],
+        }
+
+    if mode not in {"direct", "bastion"}:
+        warnings.append("SSH_ACCESS_MODE should be direct or bastion when SSH metadata is configured.")
+
+    if mode == "bastion" and not str(topology.get("SSH_BASTION_HOST") or "").strip():
+        warnings.append("SSH_BASTION_HOST is required when SSH_ACCESS_MODE=bastion.")
+
+    role_specs = (
+        ("common", "VM_COMMON_SSH_HOST", "VM_COMMON_IP", "VM_COMMON_SSH_PORT"),
+        ("provider", "VM_PROVIDER_SSH_HOST", "VM_PROVIDER_IP", "VM_PROVIDER_SSH_PORT"),
+        ("consumer", "VM_CONSUMER_SSH_HOST", "VM_CONSUMER_IP", "VM_CONSUMER_SSH_PORT"),
+    )
+    missing_hosts = []
+    for role, host_key, fallback_ip_key, port_key in role_specs:
+        if not str(topology.get(host_key) or topology.get(fallback_ip_key) or "").strip():
+            missing_hosts.append(role)
+        port_value = str(topology.get(port_key) or "").strip()
+        if port_value and not _vm_distributed_valid_port(port_value):
+            warnings.append(f"{port_key} should be a TCP port number between 1 and 65535.")
+
+    if missing_hosts:
+        warnings.append(
+            "SSH metadata is missing a host/IP for roles: " + ", ".join(missing_hosts)
+        )
+
+    bastion_port = str(topology.get("SSH_BASTION_PORT") or "").strip()
+    if bastion_port and not _vm_distributed_valid_port(bastion_port):
+        warnings.append("SSH_BASTION_PORT should be a TCP port number between 1 and 65535.")
+
+    if warnings:
+        return {
+            "status": "needs-review",
+            "detail": "SSH metadata configured but incomplete",
+            "warnings": warnings,
+        }
+
+    return {
+        "status": "ready",
+        "detail": f"{mode or 'direct'} SSH metadata configured",
+        "warnings": [],
+    }
+
+
+def _vm_distributed_valid_port(value):
+    try:
+        port = int(str(value).strip())
+    except (TypeError, ValueError):
+        return False
+    return 1 <= port <= 65535
+
+
+def _vm_distributed_config_value(config, *keys, default=""):
+    for key in keys:
+        value = str((config or {}).get(key) or "").strip()
+        if value:
+            return value
+    return str(default or "").strip()
+
+
+def _vm_distributed_connect_timeout_seconds(topology_config):
+    raw_value = (
+        os.getenv("PIONERA_VM_DISTRIBUTED_SSH_CONNECT_TIMEOUT_SECONDS")
+        or _vm_distributed_config_value(topology_config, "SSH_CONNECT_TIMEOUT_SECONDS", default="5")
+    )
+    try:
+        timeout = int(str(raw_value).strip())
+    except (TypeError, ValueError):
+        return 5
+    return min(max(timeout, 1), 60)
+
+
+def _vm_distributed_ssh_target(user, host):
+    normalized_host = str(host or "").strip()
+    normalized_user = str(user or "").strip()
+    if normalized_user and normalized_host:
+        return f"{normalized_user}@{normalized_host}"
+    return normalized_host
+
+
+def _vm_distributed_format_command(command):
+    return " ".join(shlex.quote(str(part)) for part in list(command or []))
+
+
+def _vm_distributed_build_ssh_command(plan, vm, remote_command=None):
+    ssh = dict((vm or {}).get("ssh") or {})
+    host = str(ssh.get("host") or "").strip()
+    if not host:
+        return []
+
+    timeout = int((plan or {}).get("ssh", {}).get("connect_timeout_seconds") or 5)
+    command = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ConnectTimeout={timeout}",
+        "-p",
+        str(ssh.get("port") or "22").strip() or "22",
+    ]
+
+    access = dict((plan or {}).get("ssh") or {})
+    bastion = dict(access.get("bastion") or {})
+    if access.get("mode") == "bastion" and bastion.get("host"):
+        bastion_target = _vm_distributed_ssh_target(bastion.get("user"), bastion.get("host"))
+        bastion_port = str(bastion.get("port") or "").strip()
+        if bastion_port:
+            bastion_target = f"{bastion_target}:{bastion_port}"
+        command.extend(["-J", bastion_target])
+
+    command.append(_vm_distributed_ssh_target(ssh.get("user"), host))
+    if remote_command:
+        command.append(_vm_distributed_format_command(["sh", "-lc", remote_command]))
+    return command
+
+
+def _vm_distributed_public_ssh_command(command):
+    items = list(command or [])
+    if items and str(items[-1]).startswith("sh -lc "):
+        return items[:-1]
+    if "sh" in items:
+        return items[: items.index("sh")]
+    return items
+
+
+def _vm_distributed_role_plan_specs(topology_config):
+    topology = dict(topology_config or {})
+    shared_workdir = _vm_distributed_config_value(topology, "VM_REMOTE_WORKDIR")
+    return [
+        {
+            "role": "common-services",
+            "role_key": "common",
+            "address_key": "VM_COMMON_IP",
+            "fallback_address_key": "VM_EXTERNAL_IP",
+            "ssh_host_key": "VM_COMMON_SSH_HOST",
+            "ssh_port_key": "VM_COMMON_SSH_PORT",
+            "ssh_user_key": "VM_COMMON_SSH_USER",
+            "workdir_key": "VM_COMMON_REMOTE_WORKDIR",
+            "public_url_key": "VM_COMMON_PUBLIC_URL",
+            "http_url_key": "VM_COMMON_HTTP_URL",
+            "default_workdir": shared_workdir,
+            "levels": [1, 2, 3],
+        },
+        {
+            "role": "provider-connectors",
+            "role_key": "provider",
+            "address_key": "VM_PROVIDER_IP",
+            "fallback_address_key": "VM_CONNECTORS_IP",
+            "ssh_host_key": "VM_PROVIDER_SSH_HOST",
+            "ssh_port_key": "VM_PROVIDER_SSH_PORT",
+            "ssh_user_key": "VM_PROVIDER_SSH_USER",
+            "workdir_key": "VM_PROVIDER_REMOTE_WORKDIR",
+            "public_url_key": "VM_PROVIDER_PUBLIC_URL",
+            "http_url_key": "VM_PROVIDER_HTTP_URL",
+            "default_workdir": shared_workdir,
+            "levels": [4],
+        },
+        {
+            "role": "consumer-connectors",
+            "role_key": "consumer",
+            "address_key": "VM_CONSUMER_IP",
+            "fallback_address_key": "VM_CONNECTORS_IP",
+            "ssh_host_key": "VM_CONSUMER_SSH_HOST",
+            "ssh_port_key": "VM_CONSUMER_SSH_PORT",
+            "ssh_user_key": "VM_CONSUMER_SSH_USER",
+            "workdir_key": "VM_CONSUMER_REMOTE_WORKDIR",
+            "public_url_key": "VM_CONSUMER_PUBLIC_URL",
+            "http_url_key": "VM_CONSUMER_HTTP_URL",
+            "default_workdir": shared_workdir,
+            "levels": [4],
+        },
+    ]
+
+
+def _vm_distributed_connector_plan(adapter_config):
+    adapter = dict(adapter_config or {})
+    dataspace_name = str(adapter.get("DS_1_NAME") or "").strip()
+    connectors = parse_connector_list(adapter.get("DS_1_CONNECTORS"), dataspace_name)
+    mapping = parse_connector_mapping(adapter.get("DS_1_CONNECTOR_NAMESPACES"), dataspace_name)
+    return [
+        {
+            "connector": connector,
+            "location": str(mapping.get(connector) or "dataspace").strip() or "dataspace",
+        }
+        for connector in connectors
+    ]
+
+
+def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, adapter_config):
+    infra = dict(infrastructure_config or {})
+    topology = dict(topology_config or {})
+    adapter = dict(adapter_config or {})
+    preflight = _vm_distributed_configuration_preflight(infra, topology, adapter)
+    mode = str(topology.get("SSH_ACCESS_MODE") or "").strip().lower().replace("_", "-")
+    if mode not in {"direct", "bastion"}:
+        mode = ""
+    timeout = _vm_distributed_connect_timeout_seconds(topology)
+    access = {
+        "mode": mode or "not-configured",
+        "connect_timeout_seconds": timeout,
+        "bastion": {
+            "host": str(topology.get("SSH_BASTION_HOST") or "").strip(),
+            "port": str(topology.get("SSH_BASTION_PORT") or "2222").strip() or "2222",
+            "user": str(topology.get("SSH_BASTION_USER") or "").strip(),
+        },
+    }
+
+    vms = []
+    for spec in _vm_distributed_role_plan_specs(topology):
+        address = _vm_distributed_config_value(
+            topology,
+            spec["address_key"],
+            spec["fallback_address_key"],
+            "VM_EXTERNAL_IP",
+        )
+        ssh_host = _vm_distributed_config_value(topology, spec["ssh_host_key"], default=address)
+        ssh_port = _vm_distributed_config_value(topology, spec["ssh_port_key"], default="22") or "22"
+        ssh_user = _vm_distributed_config_value(topology, spec["ssh_user_key"])
+        public_url = _vm_distributed_config_value(topology, spec["public_url_key"])
+        http_url = _vm_distributed_config_value(topology, spec["http_url_key"], default=f"http://{address}" if address else "")
+        remote_workdir = _vm_distributed_config_value(
+            topology,
+            spec["workdir_key"],
+            default=spec.get("default_workdir") or "",
+        )
+        vm = {
+            "role": spec["role"],
+            "role_key": spec["role_key"],
+            "address": address,
+            "public_url": public_url,
+            "http_url": http_url,
+            "remote_workdir": remote_workdir,
+            "levels": spec["levels"],
+            "ssh": {
+                "mode": mode or "not-configured",
+                "host": ssh_host,
+                "port": ssh_port,
+                "user": ssh_user,
+                "configured": bool(mode and ssh_host),
+            },
+        }
+        vm["ssh"]["command"] = (
+            _vm_distributed_format_command(_vm_distributed_build_ssh_command({"ssh": access}, vm))
+            if vm["ssh"].get("configured")
+            else ""
+        )
+        vms.append(vm)
+
+    validation_pairs = [
+        {"source": source, "target": target}
+        for source, target in parse_connector_pairs(adapter.get("DS_1_VALIDATION_PAIRS"), adapter.get("DS_1_NAME"))
+    ]
+    return {
+        "status": preflight.get("status") or "unknown",
+        "topology": "vm-distributed",
+        "deployment_mode": _vm_distributed_config_value(topology, "VM_DISTRIBUTED_DEPLOYMENT_MODE", default="orchestrator"),
+        "dry_run_default": _vm_distributed_config_value(topology, "VM_DISTRIBUTED_PREFLIGHT_DRY_RUN", default="true"),
+        "domain_base": str(infra.get("DOMAIN_BASE") or "").strip(),
+        "dataspace_domain_base": str(infra.get("DS_DOMAIN_BASE") or "").strip(),
+        "dataspace": str(adapter.get("DS_1_NAME") or "").strip(),
+        "ssh": access,
+        "vms": vms,
+        "connectors": _vm_distributed_connector_plan(adapter),
+        "validation_pairs": validation_pairs,
+        "configuration_preflight": preflight,
+    }
+
+
+def _vm_distributed_remote_preflight_shell(workdir="", http_url="http://127.0.0.1/"):
+    safe_workdir = shlex.quote(str(workdir or ""))
+    safe_http_url = shlex.quote(str(http_url or "http://127.0.0.1/"))
+    return "\n".join(
+        [
+            "set +e",
+            f"workdir={safe_workdir}",
+            f"http_url={safe_http_url}",
+            "hostname_value=$(hostname 2>/dev/null || printf unknown)",
+            "user_value=$(id -un 2>/dev/null || whoami 2>/dev/null || printf unknown)",
+            "os_value=$(if [ -r /etc/os-release ]; then . /etc/os-release && printf '%s %s' \"$NAME\" \"$VERSION_ID\"; else uname -srm 2>/dev/null; fi)",
+            "ip_value=$(hostname -I 2>/dev/null | tr -s ' ' | sed 's/[[:space:]]*$//')",
+            "docker_value=$(command -v docker >/dev/null 2>&1 && docker --version 2>/dev/null || printf missing)",
+            "containerd_value=$(command -v containerd >/dev/null 2>&1 && containerd --version 2>/dev/null || printf missing)",
+            "kubectl_value=$(command -v kubectl >/dev/null 2>&1 && kubectl version --client=true --short 2>/dev/null || printf missing)",
+            "k3s_value=$(command -v k3s >/dev/null 2>&1 && k3s --version 2>/dev/null | head -n 1 || printf missing)",
+            "ports_value=$(ss -lntH 2>/dev/null | awk '{print $4}' | tr '\n' ',' | sed 's/,$//' || printf unavailable)",
+            "if [ -n \"$workdir\" ]; then if [ -d \"$workdir\" ]; then workdir_value=present; else workdir_value=missing; fi; else workdir_value=not-configured; fi",
+            "if command -v curl >/dev/null 2>&1; then http_value=$(curl -sS -m 3 -o /dev/null -w '%{http_code}' \"$http_url\" 2>/dev/null || printf failed); else http_value=curl-missing; fi",
+            "printf 'hostname=%s\\n' \"$hostname_value\"",
+            "printf 'user=%s\\n' \"$user_value\"",
+            "printf 'os=%s\\n' \"$os_value\"",
+            "printf 'ips=%s\\n' \"$ip_value\"",
+            "printf 'docker=%s\\n' \"$docker_value\"",
+            "printf 'containerd=%s\\n' \"$containerd_value\"",
+            "printf 'kubectl=%s\\n' \"$kubectl_value\"",
+            "printf 'k3s=%s\\n' \"$k3s_value\"",
+            "printf 'listening_ports=%s\\n' \"$ports_value\"",
+            "printf 'remote_workdir=%s\\n' \"$workdir_value\"",
+            "printf 'http_local=%s\\n' \"$http_value\"",
+        ]
+    )
+
+
+def _vm_distributed_parse_key_value_output(output):
+    parsed = {}
+    for raw_line in str(output or "").splitlines():
+        if "=" not in raw_line:
+            continue
+        key, value = raw_line.split("=", 1)
+        key = key.strip()
+        if key:
+            parsed[key] = value.strip()
+    return parsed
+
+
+def _vm_distributed_default_command_runner(command, timeout):
+    return subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def run_vm_distributed_remote_preflight(plan, command_runner=None):
+    vm_plan = dict(plan or {})
+    ssh_plan = dict(vm_plan.get("ssh") or {})
+    if ssh_plan.get("mode") not in {"direct", "bastion"}:
+        return {
+            "status": "skipped",
+            "reason": "ssh-not-configured",
+            "topology": "vm-distributed",
+            "vms": [],
+        }
+    if command_runner is None and not shutil.which("ssh"):
+        return {
+            "status": "failed",
+            "reason": "ssh-client-missing",
+            "topology": "vm-distributed",
+            "vms": [],
+        }
+
+    runner = command_runner or _vm_distributed_default_command_runner
+    timeout = int(ssh_plan.get("connect_timeout_seconds") or 5) + 20
+    results = []
+    for vm in list(vm_plan.get("vms") or []):
+        ssh = dict(vm.get("ssh") or {})
+        if not ssh.get("configured"):
+            results.append(
+                {
+                    "role": vm.get("role"),
+                    "status": "skipped",
+                    "reason": "missing-ssh-host-or-mode",
+                }
+            )
+            continue
+        remote_command = _vm_distributed_remote_preflight_shell(
+            workdir=vm.get("remote_workdir"),
+            http_url="http://127.0.0.1/",
+        )
+        command = _vm_distributed_build_ssh_command(vm_plan, vm, remote_command=remote_command)
+        try:
+            completed = runner(command, timeout=timeout)
+            returncode = int(getattr(completed, "returncode", 1) or 0)
+            stdout = getattr(completed, "stdout", "") or ""
+            stderr = getattr(completed, "stderr", "") or ""
+            results.append(
+                {
+                    "role": vm.get("role"),
+                    "host": ssh.get("host"),
+                    "status": "passed" if returncode == 0 else "failed",
+                    "returncode": returncode,
+                    "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+                    "facts": _vm_distributed_parse_key_value_output(stdout),
+                    "error": stderr.strip()[:500],
+                }
+            )
+        except subprocess.TimeoutExpired:
+            results.append(
+                {
+                    "role": vm.get("role"),
+                    "host": ssh.get("host"),
+                    "status": "failed",
+                    "reason": "timeout",
+                    "timeout_seconds": timeout,
+                }
+            )
+
+    statuses = {str(item.get("status") or "").strip().lower() for item in results}
+    overall = "passed" if statuses == {"passed"} else "failed" if "failed" in statuses else "skipped"
+    return {
+        "status": overall,
+        "topology": "vm-distributed",
+        "vms": results,
+    }
+
+
+def run_vm_distributed_http_preflight(plan, request_get=None):
+    getter = request_get or requests.get
+    results = []
+    for vm in list((plan or {}).get("vms") or []):
+        url = str(vm.get("http_url") or "").strip()
+        if not url:
+            results.append({"role": vm.get("role"), "status": "skipped", "reason": "missing-http-url"})
+            continue
+        try:
+            response = getter(url, timeout=3, allow_redirects=False)
+            status_code = int(getattr(response, "status_code", 0) or 0)
+            results.append(
+                {
+                    "role": vm.get("role"),
+                    "url": url,
+                    "status": "passed" if 100 <= status_code < 500 else "failed",
+                    "status_code": status_code,
+                }
+            )
+        except requests.RequestException as exc:
+            results.append(
+                {
+                    "role": vm.get("role"),
+                    "url": url,
+                    "status": "failed",
+                    "error": str(exc)[:500],
+                }
+            )
+    statuses = {str(item.get("status") or "").strip().lower() for item in results}
+    overall = "passed" if statuses == {"passed"} else "failed" if "failed" in statuses else "skipped"
+    return {
+        "status": overall,
+        "topology": "vm-distributed",
+        "vms": results,
+    }
 
 
 def _vm_distributed_configuration_preflight(infrastructure_config, topology_config, adapter_config):
@@ -8319,6 +8937,17 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
             "VM_SSH_USER is empty; remote connector VM NGINX synchronization will be skipped."
         )
 
+    ssh_preflight = _vm_distributed_ssh_access_preflight(topology)
+    warnings.extend(ssh_preflight.get("warnings") or [])
+
+    deployment_mode = _vm_distributed_config_value(
+        topology,
+        "VM_DISTRIBUTED_DEPLOYMENT_MODE",
+        default="orchestrator",
+    ).lower()
+    if deployment_mode not in {"orchestrator", "manual", "preflight-only"}:
+        warnings.append("VM_DISTRIBUTED_DEPLOYMENT_MODE should be orchestrator, manual or preflight-only.")
+
     checks.append(
         {
             "name": "Domains",
@@ -8388,6 +9017,20 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
             "name": "Level 4 cluster scope",
             "status": "blocked" if multi_kubeconfig else "ready",
             "detail": "single logical kubeconfig supported; multi-kubeconfig deployment is guarded",
+        }
+    )
+    checks.append(
+        {
+            "name": "SSH access",
+            "status": ssh_preflight.get("status") or "ready",
+            "detail": ssh_preflight.get("detail") or "optional SSH metadata",
+        }
+    )
+    checks.append(
+        {
+            "name": "Deployment mode",
+            "status": "ready" if deployment_mode in {"orchestrator", "manual", "preflight-only"} else "needs-review",
+            "detail": deployment_mode or "orchestrator",
         }
     )
     checks.append(
@@ -8530,6 +9173,113 @@ def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_regis
         help_topic="ssh-user",
     )
 
+    ssh_access_mode = _prompt_vm_distributed_value(
+        "SSH access mode (blank/direct/bastion)",
+        current=topology_config.get("SSH_ACCESS_MODE"),
+        default="",
+        required=False,
+        help_topic="ssh-access",
+    )
+    ssh_access_mode = str(ssh_access_mode or "").strip().lower().replace("_", "-")
+    ssh_bastion_host = topology_config.get("SSH_BASTION_HOST") or ""
+    ssh_bastion_port = topology_config.get("SSH_BASTION_PORT") or "2222"
+    ssh_bastion_user = topology_config.get("SSH_BASTION_USER") or ""
+    common_ssh_host = topology_config.get("VM_COMMON_SSH_HOST") or ""
+    common_ssh_port = topology_config.get("VM_COMMON_SSH_PORT") or "22"
+    common_ssh_user = topology_config.get("VM_COMMON_SSH_USER") or ""
+    provider_ssh_host = topology_config.get("VM_PROVIDER_SSH_HOST") or ""
+    provider_ssh_port = topology_config.get("VM_PROVIDER_SSH_PORT") or "22"
+    provider_ssh_user = topology_config.get("VM_PROVIDER_SSH_USER") or ""
+    consumer_ssh_host = topology_config.get("VM_CONSUMER_SSH_HOST") or ""
+    consumer_ssh_port = topology_config.get("VM_CONSUMER_SSH_PORT") or "22"
+    consumer_ssh_user = topology_config.get("VM_CONSUMER_SSH_USER") or ""
+    if ssh_access_mode in {"direct", "bastion"}:
+        if ssh_access_mode == "bastion":
+            ssh_bastion_host = _prompt_vm_distributed_value(
+                "SSH bastion host",
+                current=ssh_bastion_host,
+                default="",
+                required=True,
+                help_topic="bastion",
+            )
+            ssh_bastion_port = _prompt_vm_distributed_value(
+                "SSH bastion port",
+                current=ssh_bastion_port,
+                default="2222",
+                required=False,
+                help_topic="bastion",
+            )
+            ssh_bastion_user = _prompt_vm_distributed_value(
+                "SSH bastion user",
+                current=ssh_bastion_user,
+                default="",
+                required=False,
+                help_topic="bastion",
+            )
+        common_ssh_host = _prompt_vm_distributed_value(
+            "Common services SSH host/IP",
+            current=common_ssh_host,
+            default=common_ip,
+            required=True,
+            help_topic="common-ssh",
+        )
+        common_ssh_port = _prompt_vm_distributed_value(
+            "Common services SSH port",
+            current=common_ssh_port,
+            default="22",
+            required=False,
+            help_topic="common-ssh",
+        )
+        common_ssh_user = _prompt_vm_distributed_value(
+            "Common services SSH user",
+            current=common_ssh_user,
+            default="",
+            required=False,
+            help_topic="common-ssh",
+        )
+        provider_ssh_host = _prompt_vm_distributed_value(
+            "Provider VM SSH host/IP",
+            current=provider_ssh_host,
+            default=provider_ip,
+            required=True,
+            help_topic="provider-ssh",
+        )
+        provider_ssh_port = _prompt_vm_distributed_value(
+            "Provider VM SSH port",
+            current=provider_ssh_port,
+            default="22",
+            required=False,
+            help_topic="provider-ssh",
+        )
+        provider_ssh_user = _prompt_vm_distributed_value(
+            "Provider VM SSH user",
+            current=provider_ssh_user,
+            default="",
+            required=False,
+            help_topic="provider-ssh",
+        )
+        consumer_ssh_host = _prompt_vm_distributed_value(
+            "Consumer VM SSH host/IP",
+            current=consumer_ssh_host,
+            default=consumer_ip,
+            required=True,
+            help_topic="consumer-ssh",
+        )
+        consumer_ssh_port = _prompt_vm_distributed_value(
+            "Consumer VM SSH port",
+            current=consumer_ssh_port,
+            default="22",
+            required=False,
+            help_topic="consumer-ssh",
+        )
+        consumer_ssh_user = _prompt_vm_distributed_value(
+            "Consumer VM SSH user",
+            current=consumer_ssh_user,
+            default="",
+            required=False,
+            help_topic="consumer-ssh",
+        )
+
     common_kubeconfig = _prompt_vm_distributed_value(
         "Common services kubeconfig path",
         current=topology_config.get("K3S_KUBECONFIG_COMMON") or topology_config.get("K3S_KUBECONFIG"),
@@ -8599,6 +9349,9 @@ def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_regis
         "DOMAIN_BASE": domain_base,
         "DS_DOMAIN_BASE": ds_domain_base,
     }
+    infra_updates.update(
+        _vm_distributed_common_service_public_updates(domain_base, infrastructure_config)
+    )
     topology_updates = {
         "VM_EXTERNAL_IP": common_ip,
         "VM_COMMON_IP": common_ip,
@@ -8633,6 +9386,32 @@ def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_regis
             for item in connector_namespaces.split(",")
             if ":" in item and item.split(":", 1)[1].strip().lower() == "consumer"
         ),
+        "SSH_ACCESS_MODE": ssh_access_mode,
+        "SSH_BASTION_HOST": ssh_bastion_host,
+        "SSH_BASTION_PORT": ssh_bastion_port,
+        "SSH_BASTION_USER": ssh_bastion_user,
+        "SSH_CONNECT_TIMEOUT_SECONDS": topology_config.get("SSH_CONNECT_TIMEOUT_SECONDS") or "5",
+        "VM_DISTRIBUTED_DEPLOYMENT_MODE": topology_config.get("VM_DISTRIBUTED_DEPLOYMENT_MODE") or "orchestrator",
+        "VM_DISTRIBUTED_PREFLIGHT_DRY_RUN": topology_config.get("VM_DISTRIBUTED_PREFLIGHT_DRY_RUN") or "true",
+        "VM_REMOTE_WORKDIR": topology_config.get("VM_REMOTE_WORKDIR") or "",
+        "VM_COMMON_REMOTE_WORKDIR": topology_config.get("VM_COMMON_REMOTE_WORKDIR") or topology_config.get("VM_REMOTE_WORKDIR") or "",
+        "VM_PROVIDER_REMOTE_WORKDIR": topology_config.get("VM_PROVIDER_REMOTE_WORKDIR") or topology_config.get("VM_REMOTE_WORKDIR") or "",
+        "VM_CONSUMER_REMOTE_WORKDIR": topology_config.get("VM_CONSUMER_REMOTE_WORKDIR") or topology_config.get("VM_REMOTE_WORKDIR") or "",
+        "VM_COMMON_PUBLIC_URL": topology_config.get("VM_COMMON_PUBLIC_URL") or "",
+        "VM_PROVIDER_PUBLIC_URL": topology_config.get("VM_PROVIDER_PUBLIC_URL") or "",
+        "VM_CONSUMER_PUBLIC_URL": topology_config.get("VM_CONSUMER_PUBLIC_URL") or "",
+        "VM_COMMON_HTTP_URL": topology_config.get("VM_COMMON_HTTP_URL") or (f"http://{common_ip}" if common_ip else ""),
+        "VM_PROVIDER_HTTP_URL": topology_config.get("VM_PROVIDER_HTTP_URL") or (f"http://{provider_ip}" if provider_ip else ""),
+        "VM_CONSUMER_HTTP_URL": topology_config.get("VM_CONSUMER_HTTP_URL") or (f"http://{consumer_ip}" if consumer_ip else ""),
+        "VM_COMMON_SSH_HOST": common_ssh_host,
+        "VM_COMMON_SSH_PORT": common_ssh_port,
+        "VM_COMMON_SSH_USER": common_ssh_user,
+        "VM_PROVIDER_SSH_HOST": provider_ssh_host,
+        "VM_PROVIDER_SSH_PORT": provider_ssh_port,
+        "VM_PROVIDER_SSH_USER": provider_ssh_user,
+        "VM_CONSUMER_SSH_HOST": consumer_ssh_host,
+        "VM_CONSUMER_SSH_PORT": consumer_ssh_port,
+        "VM_CONSUMER_SSH_USER": consumer_ssh_user,
     }
     adapter_updates = {
         "DS_1_NAME": dataspace_name,
@@ -8714,6 +9493,243 @@ def _offer_vm_distributed_configuration(current_adapter=None, adapter_registry=N
     if isinstance(result, dict):
         current_adapter = result.get("adapter") or current_adapter
     return current_adapter, result
+
+
+def _load_vm_distributed_configuration_bundle(adapter_name=None):
+    topology_path = _infrastructure_topology_config_path("vm-distributed")
+    adapter_path = _adapter_deployer_config_path(adapter_name) if adapter_name else ""
+    return {
+        "infrastructure": load_raw_deployer_config(_infrastructure_deployer_config_path()),
+        "topology": load_raw_deployer_config(topology_path),
+        "adapter": load_raw_deployer_config(adapter_path) if adapter_path else {},
+        "paths": {
+            "infrastructure": _framework_relative_path(_infrastructure_deployer_config_path()),
+            "topology": _framework_relative_path(topology_path),
+            "adapter": _framework_relative_path(adapter_path) if adapter_path else "",
+        },
+    }
+
+
+def _current_vm_distributed_topology_plan(adapter_name=None):
+    bundle = _load_vm_distributed_configuration_bundle(adapter_name=adapter_name)
+    plan = _build_vm_distributed_topology_plan(
+        bundle["infrastructure"],
+        bundle["topology"],
+        bundle["adapter"],
+    )
+    plan["config_files"] = bundle["paths"]
+    return plan
+
+
+def _print_vm_distributed_topology_plan(plan):
+    vm_plan = dict(plan or {})
+    print()
+    print("vm-distributed topology plan:")
+    print(f"  Status: {vm_plan.get('status') or 'unknown'}")
+    print(f"  Deployment mode: {vm_plan.get('deployment_mode') or 'orchestrator'}")
+    print(f"  Dataspace: {vm_plan.get('dataspace') or '(not configured)'}")
+    print(f"  Common domain: {vm_plan.get('domain_base') or '(not configured)'}")
+    print(f"  Dataspace domain: {vm_plan.get('dataspace_domain_base') or '(not configured)'}")
+    ssh_plan = dict(vm_plan.get("ssh") or {})
+    print(f"  SSH mode: {ssh_plan.get('mode') or 'not-configured'}")
+    if ssh_plan.get("mode") == "bastion":
+        bastion = dict(ssh_plan.get("bastion") or {})
+        label = _vm_distributed_ssh_target(bastion.get("user"), bastion.get("host")) or "(missing)"
+        if bastion.get("port"):
+            label = f"{label}:{bastion.get('port')}"
+        print(f"  SSH bastion: {label}")
+
+    print("  VMs:")
+    for vm in list(vm_plan.get("vms") or []):
+        ssh = dict(vm.get("ssh") or {})
+        levels = ",".join(str(level) for level in list(vm.get("levels") or [])) or "-"
+        print(
+            f"  - {vm.get('role')}: address={vm.get('address') or '(missing)'}, "
+            f"http={vm.get('http_url') or '(missing)'}, levels={levels}"
+        )
+        if vm.get("public_url"):
+            print(f"    public: {vm.get('public_url')}")
+        if vm.get("remote_workdir"):
+            print(f"    remote workspace: {vm.get('remote_workdir')}")
+        print(
+            f"    ssh: {'configured' if ssh.get('configured') else 'not configured'}"
+            + (f" ({ssh.get('command')})" if ssh.get("command") else "")
+        )
+
+    connectors = list(vm_plan.get("connectors") or [])
+    if connectors:
+        print("  Connectors:")
+        for item in connectors:
+            print(f"  - {item.get('connector')} -> {item.get('location')}")
+    pairs = list(vm_plan.get("validation_pairs") or [])
+    if pairs:
+        print("  Validation pairs:")
+        for item in pairs:
+            print(f"  - {item.get('source')} > {item.get('target')}")
+
+    config_files = dict(vm_plan.get("config_files") or {})
+    configured_files = [value for value in config_files.values() if value]
+    if configured_files:
+        print("  Config files:")
+        for value in configured_files:
+            print(f"  - {value}")
+
+
+def _print_vm_distributed_preflight_results(title, result):
+    payload = dict(result or {})
+    print()
+    print(f"{title}: {payload.get('status') or 'unknown'}")
+    reason = payload.get("reason")
+    if reason:
+        print(f"  Reason: {reason}")
+    for item in list(payload.get("vms") or []):
+        line = f"  - {item.get('role')}: {item.get('status') or 'unknown'}"
+        if item.get("host"):
+            line += f" ({item.get('host')})"
+        if item.get("url"):
+            line += f" ({item.get('url')})"
+        if item.get("status_code"):
+            line += f" HTTP {item.get('status_code')}"
+        if item.get("reason"):
+            line += f" [{item.get('reason')}]"
+        print(line)
+        facts = dict(item.get("facts") or {})
+        if facts:
+            for key in ("hostname", "user", "os", "ips", "docker", "containerd", "kubectl", "k3s", "remote_workdir", "http_local"):
+                if facts.get(key):
+                    print(f"    {key}: {facts[key]}")
+        if item.get("error"):
+            print(f"    error: {item.get('error')}")
+
+
+def _print_vm_distributed_manual_commands(plan):
+    vm_plan = dict(plan or {})
+    print()
+    print("Non-destructive manual checks for vm-distributed:")
+    for vm in list(vm_plan.get("vms") or []):
+        ssh_command = str((vm.get("ssh") or {}).get("command") or "").strip()
+        print(f"- {vm.get('role')}:")
+        if ssh_command:
+            print(f"  {ssh_command}")
+        if vm.get("http_url"):
+            print(f"  curl -I {shlex.quote(str(vm.get('http_url')))}")
+    print("- Hosts plan:")
+    print("  python3 main.py <adapter> hosts --topology vm-distributed --dry-run")
+    print("- Deployment preview:")
+    print("  python3 main.py <adapter> deploy --topology vm-distributed --dry-run")
+
+
+def _print_vm_distributed_assistant_menu(current_adapter=None):
+    print()
+    print("=" * 50)
+    print("VM-DISTRIBUTED ASSISTANT")
+    print("=" * 50)
+    print(f"Adapter: {current_adapter or '(not selected)'}")
+    print("1 - Configure/update local vm-distributed .config files")
+    print("2 - Show configured topology and static preflight")
+    print("3 - Preview deployment and hosts plan")
+    print("4 - Run non-destructive SSH/HTTP preflight")
+    print("5 - Show manual check commands")
+    print("B/Q - Back")
+    print("=" * 50)
+
+
+def _run_vm_distributed_assistant(
+    current_adapter=None,
+    adapter_registry=None,
+    deployer_registry=None,
+    validation_engine_cls=ValidationEngine,
+    metrics_collector_cls=MetricsCollector,
+    experiment_storage=ExperimentStorage,
+):
+    registry = adapter_registry or ADAPTER_REGISTRY
+    while True:
+        _print_vm_distributed_assistant_menu(current_adapter=current_adapter)
+        choice = _interactive_read("\nSelection: ").strip().upper()
+        if not choice or choice in {"B", "Q"}:
+            return {"status": "completed", "adapter": current_adapter, "topology": "vm-distributed"}
+
+        if choice == "1":
+            result = _run_vm_distributed_configuration_wizard(
+                current_adapter=current_adapter,
+                adapter_registry=registry,
+            )
+            if isinstance(result, dict):
+                current_adapter = result.get("adapter") or current_adapter
+                _print_action_result(result)
+            continue
+
+        if choice == "2":
+            selected_adapter = _interactive_require_adapter_selection(
+                current_adapter,
+                adapter_registry=registry,
+            )
+            if not selected_adapter:
+                continue
+            current_adapter = selected_adapter
+            plan = _current_vm_distributed_topology_plan(adapter_name=current_adapter)
+            _print_vm_distributed_topology_plan(plan)
+            _print_vm_distributed_preflight(plan.get("configuration_preflight"))
+            continue
+
+        if choice == "3":
+            selected_adapter = _interactive_require_adapter_selection(
+                current_adapter,
+                adapter_registry=registry,
+            )
+            if not selected_adapter:
+                continue
+            current_adapter = selected_adapter
+            plan = _current_vm_distributed_topology_plan(adapter_name=current_adapter)
+            _print_vm_distributed_topology_plan(plan)
+            preview = build_dry_run_preview(
+                adapter_name=current_adapter,
+                command="deploy",
+                adapter_registry=registry,
+                deployer_registry=deployer_registry,
+                validation_engine_cls=validation_engine_cls,
+                metrics_collector_cls=metrics_collector_cls,
+                experiment_storage=experiment_storage,
+                topology="vm-distributed",
+                include_deployer_dry_run=True,
+            )
+            _print_action_result(preview)
+            continue
+
+        if choice == "4":
+            selected_adapter = _interactive_require_adapter_selection(
+                current_adapter,
+                adapter_registry=registry,
+            )
+            if not selected_adapter:
+                continue
+            current_adapter = selected_adapter
+            plan = _current_vm_distributed_topology_plan(adapter_name=current_adapter)
+            _print_vm_distributed_topology_plan(plan)
+            print()
+            print("This preflight uses SSH BatchMode and HTTP GET only. It does not install packages, change firewall rules or deploy resources.")
+            if not _interactive_confirm("Run remote vm-distributed preflight now?", default=False):
+                print("Remote preflight cancelled.")
+                continue
+            ssh_result = run_vm_distributed_remote_preflight(plan)
+            http_result = run_vm_distributed_http_preflight(plan)
+            _print_vm_distributed_preflight_results("SSH preflight", ssh_result)
+            _print_vm_distributed_preflight_results("HTTP preflight", http_result)
+            continue
+
+        if choice == "5":
+            selected_adapter = _interactive_require_adapter_selection(
+                current_adapter,
+                adapter_registry=registry,
+            )
+            if not selected_adapter:
+                continue
+            current_adapter = selected_adapter
+            plan = _current_vm_distributed_topology_plan(adapter_name=current_adapter)
+            _print_vm_distributed_manual_commands(plan)
+            continue
+
+        print("Invalid vm-distributed assistant selection.")
 
 
 def _shared_foundation_adapter_name(adapter_registry=None):
@@ -9104,7 +10120,7 @@ def _print_interactive_menu(adapter_name, adapter_registry=None, topology="local
     print("S - Select adapter")
     print("T - Select topology")
     print("K - Select cluster runtime")
-    print("W - Configure vm-distributed deployment")
+    print("W - vm-distributed assistant")
     print("P - Preview deployment plan")
     print("H - Plan/apply hosts entries")
     print("U - Show available access URLs")
@@ -9155,8 +10171,8 @@ def _print_interactive_help():
     print("T - Use when you want to change the active topology for this menu session.")
     print("    It switches between local, vm-single and vm-distributed without editing configuration files.")
     print("K - Use when vm-single is active and you want to choose Minikube or k3s for this menu session.")
-    print("W - Use when vm-distributed is active, or before selecting it, to generate local distributed deployment configuration.")
-    print("    The wizard asks for Ubuntu/k3s values, accepts ? for discovery commands, and writes only ignored .config files.")
+    print("W - Use before selecting vm-distributed to open the configuration wizard, or with vm-distributed active to open the assistant.")
+    print("    The assistant can write ignored .config files, show the VM plan, preview hosts/deployment, and run non-destructive SSH/HTTP checks.")
     print("P - Use before deploying to inspect the plan without changing the environment.")
     print("    If Levels 3-6 need an adapter and none has been chosen yet, the menu asks for one automatically.")
     print("H - Use to inspect or apply local hosts entries needed by the selected adapter.")
@@ -10621,13 +11637,24 @@ def run_interactive_menu(
                         else:
                             print("vm-distributed configuration cancelled.")
                             continue
-                    result = _run_vm_distributed_configuration_wizard(
+                        result = _run_vm_distributed_configuration_wizard(
+                            current_adapter=current_adapter,
+                            adapter_registry=registry,
+                        )
+                        if isinstance(result, dict):
+                            current_adapter = result.get("adapter") or current_adapter
+                            _print_action_result(result)
+                        continue
+                    result = _run_vm_distributed_assistant(
                         current_adapter=current_adapter,
                         adapter_registry=registry,
+                        deployer_registry=deployer_registry,
+                        validation_engine_cls=validation_engine_cls,
+                        metrics_collector_cls=metrics_collector_cls,
+                        experiment_storage=experiment_storage,
                     )
                     if isinstance(result, dict):
                         current_adapter = result.get("adapter") or current_adapter
-                        _print_action_result(result)
                     continue
 
                 if normalize_topology(topology) == "vm-single" and _menu_action_requires_vm_single_address(choice):

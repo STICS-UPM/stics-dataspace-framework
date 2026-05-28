@@ -154,6 +154,80 @@ class SharedHostsManagerTests(unittest.TestCase):
             ["192.0.2.13 ontology-hub-demoedc.dev.ds.dataspaceunit.upm"],
         )
 
+    def test_build_context_host_blocks_routes_connectors_to_provider_and_consumer_addresses(self):
+        context = DeploymentContext(
+            deployer="inesdata",
+            topology="vm-distributed",
+            environment="DEV",
+            dataspace_name="pionera",
+            ds_domain_base="ds.example.test",
+            connectors=["conn-citycouncil-pionera", "conn-company-pionera"],
+            namespace_roles=NamespaceRoles(
+                registration_service_namespace="core-control",
+                provider_namespace="provider",
+                consumer_namespace="consumer",
+            ),
+            topology_profile=build_topology_profile(
+                "vm-distributed",
+                {
+                    "VM_COMMON_IP": "192.0.2.10",
+                    "VM_PROVIDER_IP": "192.0.2.20",
+                    "VM_CONSUMER_IP": "192.0.2.30",
+                    "VM_CONNECTORS_IP": "192.0.2.40",
+                },
+            ),
+            config={
+                "DS_1_CONNECTOR_NAMESPACES": "citycouncil:provider,company:consumer",
+            },
+        )
+
+        rendered = blocks_as_dict(build_context_host_blocks(context))
+
+        self.assertEqual(
+            rendered["connectors inesdata pionera"],
+            [
+                "192.0.2.20 conn-citycouncil-pionera.ds.example.test",
+                "192.0.2.30 conn-company-pionera.ds.example.test",
+            ],
+        )
+
+    def test_build_context_host_blocks_keeps_historical_connector_placement_without_mapping(self):
+        context = DeploymentContext(
+            deployer="inesdata",
+            topology="vm-distributed",
+            environment="DEV",
+            dataspace_name="pionera",
+            ds_domain_base="ds.example.test",
+            connectors=[
+                "conn-citycouncil-pionera",
+                "conn-company-pionera",
+                "conn-partnera-pionera",
+            ],
+            topology_profile=build_topology_profile(
+                "vm-distributed",
+                {
+                    "VM_DATASPACE_IP": "192.0.2.10",
+                    "VM_PROVIDER_IP": "192.0.2.20",
+                    "VM_CONSUMER_IP": "192.0.2.30",
+                    "VM_CONNECTORS_IP": "192.0.2.40",
+                },
+            ),
+            config={
+                "DS_1_CONNECTORS": "citycouncil,company,partnera",
+            },
+        )
+
+        rendered = blocks_as_dict(build_context_host_blocks(context))
+
+        self.assertEqual(
+            rendered["connectors inesdata pionera"],
+            [
+                "192.0.2.20 conn-citycouncil-pionera.ds.example.test",
+                "192.0.2.30 conn-company-pionera.ds.example.test",
+                "192.0.2.10 conn-partnera-pionera.ds.example.test",
+            ],
+        )
+
     def test_apply_managed_blocks_updates_hosts_file_idempotently(self):
         context = DeploymentContext(
             deployer="edc",

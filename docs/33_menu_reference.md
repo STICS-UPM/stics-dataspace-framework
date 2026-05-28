@@ -95,15 +95,21 @@ Permite cambiar la topología activa para la sesión actual del menú. No escrib
 ningún valor en `deployer.config`: solo cambia el contexto interactivo entre
 `local`, `vm-single` y `vm-distributed` hasta que salgas del menú.
 
-`W - Configure vm-distributed deployment`
+`W - vm-distributed assistant`
 
-Abre un asistente para preparar la configuración local de `vm-distributed`. El
-asistente pregunta por dominios, IP/DNS de las VMs, usuario SSH opcional para
-sincronización remota de NGINX, kubeconfigs k3s, inventario de conectores,
+Si la topología activa todavía no es `vm-distributed`, conserva el atajo
+histórico: cambia de topología, con confirmación, y abre directamente el wizard
+de configuración. Cuando `vm-distributed` ya está activa, abre el asistente
+operativo para preparar configuración local, mostrar el plan de VMs, ejecutar el
+preflight estático, previsualizar despliegue/hosts y lanzar comprobaciones
+SSH/HTTP no destructivas con confirmación explícita. El asistente pregunta por
+dominios, IP/DNS de las VMs, usuario SSH opcional para sincronización remota de
+NGINX, metadatos SSH de preflight, kubeconfigs k3s, inventario de conectores,
 ubicación de conectores y pares de validación. Si no sabes cómo obtener un dato,
-escribe `?` en el campo correspondiente para ver qué significa, cómo elegirlo y
-qué comandos de Ubuntu ayudan a descubrirlo. El asistente solo escribe ficheros
-`.config` locales ignorados por Git.
+escribe `?` en el campo correspondiente. La configuración generada se escribe
+solo en ficheros `.config` locales ignorados por Git. Para `vm-distributed`, el
+wizard también actualiza hostnames comunes derivados de `DOMAIN_BASE` cuando
+detecta valores vacíos o defaults generados, sin pisar valores personalizados.
 
 `P - Preview deployment plan`
 

@@ -12,10 +12,13 @@ from .public_hostnames import (
     normalize_common_domain_base,
     resolved_common_service_hostnames,
 )
+from .connectors import normalize_connector_name, parse_connector_list, parse_connector_mapping
 from .topology import (
     ROLE_COMMON,
     ROLE_COMPONENTS,
     ROLE_CONNECTORS,
+    ROLE_CONSUMER,
+    ROLE_PROVIDER,
     ROLE_REGISTRATION_SERVICE,
 )
 
@@ -110,11 +113,17 @@ def build_context_host_blocks(
             )
         )
 
-    connector_entries = [
-        HostEntry(connector_address, f"{connector}.{ds_domain_base}")
-        for connector in connectors
-        if connector and ds_domain_base
-    ]
+    connector_entries = []
+    for connector in connectors:
+        if not connector or not ds_domain_base:
+            continue
+        address = _connector_address_for_context(
+            context,
+            connector,
+            dataspace_name=dataspace_name,
+            fallback=connector_address,
+        )
+        connector_entries.append(HostEntry(address, f"{connector}.{ds_domain_base}"))
     if connector_entries:
         blocks.append(
             HostBlock(
@@ -359,6 +368,100 @@ def _address_for_role(context: Any, role: str, override: str | None = None) -> s
         return address_for(role, fallback=DEFAULT_HOST_ADDRESS)
 
     return DEFAULT_HOST_ADDRESS
+
+
+def _connector_address_for_context(context: Any, connector: str, *, dataspace_name: str, fallback: str) -> str:
+    role = _connector_role_for_context(context, connector, dataspace_name=dataspace_name)
+    if not role:
+        return fallback
+
+    topology_profile = getattr(context, "topology_profile", None)
+    address_for = getattr(topology_profile, "address_for", None)
+    if callable(address_for):
+        return address_for(role, fallback=fallback)
+    return fallback
+
+
+def _connector_role_for_context(context: Any, connector: str, *, dataspace_name: str) -> str:
+    config = dict(getattr(context, "config", {}) or {})
+    normalized_connector = normalize_connector_name(connector, dataspace_name)
+    mapping = parse_connector_mapping(config.get("DS_1_CONNECTOR_NAMESPACES"), dataspace_name)
+    mapped_role = _role_from_connector_location(mapping.get(normalized_connector), context)
+    if mapped_role:
+        return mapped_role
+
+    if _connector_in_configured_role(config.get("VM_PROVIDER_CONNECTORS"), normalized_connector, dataspace_name):
+        return ROLE_PROVIDER
+    if _connector_in_configured_role(config.get("VM_CONSUMER_CONNECTORS"), normalized_connector, dataspace_name):
+        return ROLE_CONSUMER
+    return _historical_connector_role_for_context(context, normalized_connector, dataspace_name=dataspace_name)
+
+
+def _historical_connector_role_for_context(context: Any, connector: str, *, dataspace_name: str) -> str:
+    config = dict(getattr(context, "config", {}) or {})
+    connectors = parse_connector_list(config.get("DS_1_CONNECTORS"), dataspace_name)
+    if not connectors:
+        connectors = [
+            normalize_connector_name(item, dataspace_name)
+            for item in list(getattr(context, "connectors", []) or [])
+            if normalize_connector_name(item, dataspace_name)
+        ]
+
+    try:
+        position = connectors.index(connector)
+    except ValueError:
+        return ""
+
+    if position == 0:
+        return ROLE_PROVIDER
+    if position == 1:
+        return ROLE_CONSUMER
+    return ROLE_REGISTRATION_SERVICE
+
+
+def _role_from_connector_location(location: Any, context: Any) -> str:
+    normalized = str(location or "").strip().lower()
+    if not normalized:
+        return ""
+    if normalized == ROLE_PROVIDER:
+        return ROLE_PROVIDER
+    if normalized == ROLE_CONSUMER:
+        return ROLE_CONSUMER
+
+    for roles in (getattr(context, "namespace_roles", None), getattr(context, "planned_namespace_roles", None)):
+        provider_namespace = str(getattr(roles, "provider_namespace", "") or "").strip().lower()
+        consumer_namespace = str(getattr(roles, "consumer_namespace", "") or "").strip().lower()
+        registration_namespace = str(getattr(roles, "registration_service_namespace", "") or "").strip().lower()
+        if normalized and normalized == provider_namespace:
+            return ROLE_PROVIDER
+        if normalized and normalized == consumer_namespace:
+            return ROLE_CONSUMER
+        if normalized and normalized == registration_namespace:
+            return ROLE_REGISTRATION_SERVICE
+    if normalized in {"dataspace", "default", "registration", "registration_service", "core"}:
+        return ROLE_REGISTRATION_SERVICE
+    return ""
+
+
+def _connector_in_configured_role(raw_value: Any, connector: str, dataspace_name: str) -> bool:
+    configured = set(parse_connector_list(raw_value, dataspace_name))
+    if connector in configured:
+        return True
+
+    short_name = _connector_short_name(connector, dataspace_name)
+    raw_tokens = {str(token or "").strip().lower() for token in str(raw_value or "").split(",") if str(token or "").strip()}
+    return connector.lower() in raw_tokens or bool(short_name and short_name.lower() in raw_tokens)
+
+
+def _connector_short_name(connector: str, dataspace_name: str) -> str:
+    normalized_connector = normalize_connector_name(connector, dataspace_name)
+    prefix = "conn-"
+    suffix = f"-{dataspace_name}" if dataspace_name else ""
+    if normalized_connector.startswith(prefix) and suffix and normalized_connector.endswith(suffix):
+        return normalized_connector[len(prefix):-len(suffix)]
+    if normalized_connector.startswith(prefix):
+        return normalized_connector[len(prefix):]
+    return normalized_connector
 
 
 def _component_hostname(component: str, dataspace_name: str) -> str:

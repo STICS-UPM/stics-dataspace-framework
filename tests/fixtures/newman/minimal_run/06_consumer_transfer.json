@@ -1,0 +1,46 @@
+{
+  "collection": {
+    "info": {
+      "name": "06 Consumer Transfer"
+    }
+  },
+  "run": {
+    "executions": [
+      {
+        "item": {
+          "name": "Transfer Process Status"
+        },
+        "request": {
+          "method": "GET",
+          "url": {
+            "raw": "http://conn-b.example/management/v3/transferprocesses/transfer-1"
+          }
+        },
+        "response": {
+          "code": 200,
+          "responseTime": 116,
+          "timestamp": "2026-01-01T00:02:01.000Z"
+        },
+        "cursor": {
+          "started": "2026-01-01T00:02:00.884Z"
+        },
+        "assertions": [
+          {
+            "assertion": "Transfer process reaches completed state"
+          }
+        ]
+      }
+    ],
+    "failures": [
+      {
+        "source": {
+          "name": "Transfer Process Status"
+        },
+        "error": {
+          "test": "Transfer process reaches completed state",
+          "message": "expected COMPLETED but got IN_PROGRESS"
+        }
+      }
+    ]
+  }
+}
