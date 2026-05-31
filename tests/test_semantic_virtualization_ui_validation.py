@@ -3,9 +3,13 @@ import os
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from validation.components.semantic_virtualization.ui_runner import run_semantic_virtualization_ui_validation
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _playwright_payload():
@@ -52,6 +56,26 @@ def _playwright_payload():
 
 
 class SemanticVirtualizationUIValidationTests(unittest.TestCase):
+    def test_runtime_preserves_root_trailing_slash_for_mapping_editor_subpaths(self):
+        script = """
+const { joinUrl } = require('./validation/components/semantic_virtualization/ui/runtime');
+console.log(JSON.stringify({
+  root: joinUrl('https://org1.example.test/semantic-virtualization-editor', '/'),
+  query: joinUrl('https://org1.example.test/semantic-virtualization', '/openapi.json')
+}));
+"""
+        result = subprocess.run(
+            ["node", "-e", script],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(payload["root"], "https://org1.example.test/semantic-virtualization-editor/")
+        self.assertEqual(payload["query"], "https://org1.example.test/semantic-virtualization/openapi.json")
+
     def test_ui_runner_enables_mapping_editor_suite_by_default(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             payload = _playwright_payload()

@@ -459,6 +459,7 @@ class INESDataConfigAdapter:
         """Return centralized Kafka runtime settings sourced from deployer.config."""
         config = self.load_deployer_config()
         base_dir = self.config.script_dir()
+        topology = str(getattr(self, "topology", "local") or "local").strip().lower()
         configured_probe_namespaces = config.get("KAFKA_K8S_PROBE_NAMESPACES")
         default_probe_namespaces = ",".join(
             namespace
@@ -478,6 +479,18 @@ class INESDataConfigAdapter:
             if str(kafka_provisioner or "").strip().lower().startswith("kubernetes")
             else "python-client"
         )
+        default_nodeport = str(config.get("KAFKA_K8S_NODEPORT") or "32092").strip() or "32092"
+        default_cluster_bootstrap_servers = ""
+        if topology == "vm-distributed":
+            default_cluster_host = (
+                config.get("KAFKA_CLUSTER_ADVERTISED_HOST")
+                or config.get("VM_COMMON_IP")
+                or config.get("VM_COMPONENTS_IP")
+                or config.get("VM_EXTERNAL_IP")
+                or config.get("INGRESS_EXTERNAL_IP")
+            )
+            if default_cluster_host:
+                default_cluster_bootstrap_servers = f"{default_cluster_host}:{default_nodeport}"
 
         runtime = {
             "provisioner": kafka_provisioner,
@@ -491,6 +504,9 @@ class INESDataConfigAdapter:
             "k8s_probe_namespaces": configured_probe_namespaces or default_probe_namespaces,
             "k8s_service_name": config.get("KAFKA_K8S_SERVICE_NAME", "framework-kafka"),
             "k8s_local_port": config.get("KAFKA_K8S_LOCAL_PORT", "39092"),
+            "k8s_nodeport": default_nodeport,
+            "k8s_external_service_type": config.get("KAFKA_K8S_EXTERNAL_SERVICE_TYPE")
+            or ("NodePort" if topology == "vm-distributed" else "ClusterIP"),
             "minikube_profile": config.get("KAFKA_MINIKUBE_PROFILE", "minikube"),
             "topology": self.topology,
             "validation_backend": config.get(
@@ -498,6 +514,16 @@ class INESDataConfigAdapter:
                 default_validation_backend,
             ),
         }
+        if default_cluster_bootstrap_servers:
+            runtime["cluster_bootstrap_servers"] = config.get(
+                "KAFKA_CLUSTER_BOOTSTRAP_SERVERS",
+                default_cluster_bootstrap_servers,
+            )
+        if topology == "vm-distributed":
+            runtime["agreement_visibility_timeout_seconds"] = config.get(
+                "KAFKA_EDC_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS",
+                "90",
+            )
 
         optional_mapping = {
             "sasl_mechanism": "KAFKA_SASL_MECHANISM",
@@ -506,6 +532,7 @@ class INESDataConfigAdapter:
             "cluster_bootstrap_servers": "KAFKA_CLUSTER_BOOTSTRAP_SERVERS",
             "cluster_advertised_host": "KAFKA_CLUSTER_ADVERTISED_HOST",
             "k8s_nodeport": "KAFKA_K8S_NODEPORT",
+            "k8s_external_service_type": "KAFKA_K8S_EXTERNAL_SERVICE_TYPE",
             "message_count": "KAFKA_MESSAGE_COUNT",
             "message_size_bytes": "KAFKA_MESSAGE_SIZE_BYTES",
             "poll_timeout_seconds": "KAFKA_POLL_TIMEOUT_SECONDS",
@@ -516,6 +543,7 @@ class INESDataConfigAdapter:
             "consumer_request_timeout_ms": "KAFKA_CONSUMER_REQUEST_TIMEOUT_MS",
             "topic_ready_timeout_seconds": "KAFKA_TOPIC_READY_TIMEOUT_SECONDS",
             "validation_backend": "KAFKA_EDC_VALIDATION_BACKEND",
+            "agreement_visibility_timeout_seconds": "KAFKA_EDC_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS",
         }
         for key, config_key in optional_mapping.items():
             value = config.get(config_key)

@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from tests.dataset_test_helpers import create_flares_source
 from validation.components.ai_model_hub.model_execution_api import (
@@ -207,8 +208,69 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
             "http://model-server.components.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
         )
 
+    def test_default_model_url_uses_public_model_server_route_when_configured(self):
+        class Adapter:
+            @staticmethod
+            def load_deployer_config():
+                return {"COMPONENTS_PUBLIC_BASE_URL": "https://org1.example.test"}
+
+        self.assertEqual(
+            default_model_url(Adapter(), "/api/v1/nlp/twitter-sentiment"),
+            "https://org1.example.test/model-server/api/v1/nlp/twitter-sentiment",
+        )
+
+    def test_default_model_url_uses_connector_route_for_vm_distributed(self):
+        class Adapter:
+            topology = "vm-distributed"
+
+            @staticmethod
+            def load_deployer_config():
+                return {"COMPONENTS_PUBLIC_BASE_URL": "https://org1.example.test"}
+
+        self.assertEqual(
+            default_model_url(Adapter(), "/api/v1/nlp/twitter-sentiment"),
+            "http://org1.example.test/model-server/api/v1/nlp/twitter-sentiment",
+        )
+
+    def test_default_model_url_respects_explicit_connector_route(self):
+        class Adapter:
+            topology = "vm-distributed"
+
+            @staticmethod
+            def load_deployer_config():
+                return {
+                    "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL": "http://components.internal/model-server",
+                    "COMPONENTS_PUBLIC_BASE_URL": "https://org1.example.test",
+                }
+
+        self.assertEqual(
+            default_model_url(Adapter()),
+            "http://components.internal/model-server/api/v1/nlp/ecommerce-sentiment",
+        )
+
     def test_component_key_is_stable(self):
         self.assertEqual(COMPONENT_KEY, "ai-model-hub")
+
+    def test_runtime_prefers_level6_public_environment_over_internal_defaults(self):
+        suite = self._suite(FakeSession())
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_MODEL_HUB_KEYCLOAK_URL": "https://org1.example.test/auth",
+                "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID": "conn-provider",
+                "AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER": "conn-provider",
+                "AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL": "https://org2.example.test/management",
+            },
+            clear=False,
+        ):
+            runtime = suite._runtime()
+
+            self.assertEqual(runtime["keycloak_url"], "https://org1.example.test/auth")
+            self.assertEqual(
+                suite._management_url("conn-provider", "/management/v3/modelexecutions/execute"),
+                "https://org2.example.test/management/v3/modelexecutions/execute",
+            )
 
 
 if __name__ == "__main__":

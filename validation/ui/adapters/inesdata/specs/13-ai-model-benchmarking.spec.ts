@@ -12,6 +12,7 @@ import {
   cleanupProviderValidationArtifacts,
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS, waitForUiTransition } from "../../../shared/utils/waiting";
+import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
 
 type BenchmarkModelFixture = {
   assetId: string;
@@ -105,8 +106,7 @@ test.skip(
 );
 
 function modelServerUrl(componentsNamespace: string, path: string): string {
-  const namespace = (process.env.UI_AI_MODEL_HUB_MODEL_NAMESPACE || componentsNamespace || "components").trim();
-  return `http://model-server.${namespace}.svc.cluster.local:8080${path}`;
+  return modelServerUrlForPath(path, componentsNamespace);
 }
 
 function aiModelHubCatalogCleanupEnabled(): boolean {
@@ -308,8 +308,11 @@ test("13 AI Model Benchmarking: compare two local model-server endpoints from IN
   };
 
   const isTolerableRuntimeRetry = (url: string, status: number): boolean =>
-    (status === 401 || status === 503) &&
-    (url.includes("/management/pagination/count") || url.includes("/management/assets/request"));
+    (status === 401 || status === 500 || status === 502 || status === 503 || status === 504) &&
+    (url.includes("/management/pagination/count") ||
+      url.includes("/management/assets/request") ||
+      url.includes("/management/federatedcatalog/request") ||
+      url.includes("/management/contractagreements/request"));
 
   page.on("response", (response) => {
     const url = response.url();

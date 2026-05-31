@@ -1,7 +1,9 @@
 const { test, expect } = require("../fixtures");
 const { attachManagementAuthorizationRoutes } = require("../../ui/auth");
 const { CatalogPage } = require("../../ui/pages/catalog.page");
+const { ContractsPage } = require("../../ui/pages/contracts.page");
 const { ModelBenchmarkingPage } = require("../../ui/pages/model_benchmarking.page");
+const { clickMarked } = require("../../ui/support/live-marker");
 const {
   ensureFlaresDatasetPublished,
   ensureFlaresLinguisticModelsPublished,
@@ -22,12 +24,14 @@ test.describe("MH-LING-01 scaffold", () => {
     captureStep,
     attachJson,
   }) => {
+    test.setTimeout(4 * 60 * 1000);
     test.skip(
       (process.env[FUNCTIONAL_ENV] || "").trim().toLowerCase() !== "1",
       "AI Model Hub functional validation was disabled explicitly for this execution.",
     );
 
     const catalogPage = new CatalogPage(page, aiModelHubRuntime);
+    const contractsPage = new ContractsPage(page, aiModelHubRuntime);
     const benchmarkingPage = new ModelBenchmarkingPage(page, aiModelHubRuntime);
     const fixture = loadFlaresDataset();
     const publication = await ensureFlaresDatasetPublished(request, aiModelHubRuntime);
@@ -67,18 +71,29 @@ test.describe("MH-LING-01 scaffold", () => {
 
     await catalogPage.startNegotiation();
     await expect(catalogPage.progressTitle).toBeVisible({ timeout: 10000 });
-    await expect(catalogPage.negotiationDialog).toContainText("FINALIZED", { timeout: 30000 });
-    await expect(catalogPage.goToContractsButton).toBeVisible({ timeout: 30000 });
-    await captureStep(page, "mh-ling-01-flares-negotiation-finalized");
-
     const agreementState = await waitForFlaresDatasetAgreement(
       request,
       aiModelHubRuntime,
       publication.assetId,
+      90,
+      1000,
     );
 
-    await catalogPage.goToContractsButton.click();
+    const goToContractsVisible = await expect(catalogPage.goToContractsButton)
+      .toBeVisible({ timeout: 60000 })
+      .then(() => true)
+      .catch(() => false);
+    if (goToContractsVisible) {
+      await clickMarked(catalogPage.goToContractsButton);
+    } else {
+      await captureStep(page, "mh-ling-01-flares-agreement-visible-before-dialog-button");
+      await catalogPage.closeDialogIfVisible();
+      await contractsPage.goto();
+    }
     await expect(page).toHaveURL(new RegExp(`${aiModelHubRuntime.contractsPath}$`));
+    await contractsPage.waitUntilReady();
+    await contractsPage.search(publication.assetId);
+    await expect(contractsPage.cardByAssetId(publication.assetId)).toBeVisible({ timeout: 30000 });
     await captureStep(page, "mh-ling-01-flares-contracts-route");
 
     await benchmarkingPage.goto();

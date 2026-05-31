@@ -9,6 +9,14 @@ import main
 
 
 class VmDistributedConfigurationTests(unittest.TestCase):
+    def _running_ssh_process_result(self, pid=1234):
+        process = mock.Mock()
+        process.pid = pid
+        process.poll.return_value = None
+        process.terminate.return_value = None
+        process.wait.return_value = None
+        return mock.Mock(returncode=None, stdout="", stderr="", process=process)
+
     def test_discovery_commands_include_ubuntu_kubeconfig_checks(self):
         commands = "\n".join(main._vm_distributed_discovery_commands("kubeconfig"))
 
@@ -108,7 +116,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertEqual(checks["Kubeconfigs"], "ready")
         self.assertEqual(checks["Level 4 cluster scope"], "ready")
 
-    def test_preflight_warns_about_multi_kubeconfig_level4(self):
+    def test_preflight_accepts_multi_kubeconfig_level4(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             common_kubeconfig = os.path.join(tmpdir, "common.yaml")
             provider_kubeconfig = os.path.join(tmpdir, "provider.yaml")
@@ -126,6 +134,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                     "VM_COMMON_IP": "10.0.0.10",
                     "VM_PROVIDER_IP": "10.0.0.20",
                     "VM_CONSUMER_IP": "10.0.0.30",
+                    "VM_SSH_USER": "ubuntu",
                     "K3S_KUBECONFIG_COMMON": common_kubeconfig,
                     "K3S_KUBECONFIG_PROVIDER": provider_kubeconfig,
                     "K3S_KUBECONFIG_CONSUMER": consumer_kubeconfig,
@@ -139,12 +148,291 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 },
             )
 
-        self.assertEqual(preflight["status"], "needs-review")
-        self.assertTrue(
-            any("multi-kubeconfig connector deployment" in warning for warning in preflight["warnings"])
-        )
+        self.assertEqual(preflight["status"], "ready")
+        self.assertEqual(preflight["warnings"], [])
         checks = {item["name"]: item["status"] for item in preflight["checks"]}
-        self.assertEqual(checks["Level 4 cluster scope"], "blocked")
+        self.assertEqual(checks["Level 4 cluster scope"], "ready")
+        details = {item["name"]: item["detail"] for item in preflight["checks"]}
+        self.assertEqual(details["Level 4 cluster scope"], "multi-kubeconfig connector deployment enabled")
+
+    def test_level4_preflight_starts_missing_loopback_k3s_tunnel(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            provider_kubeconfig = os.path.join(tmpdir, "provider.yaml")
+            with open(provider_kubeconfig, "w", encoding="utf-8") as handle:
+                handle.write("apiVersion: v1\nclusters:\n- cluster:\n    server: https://127.0.0.1:26443\n")
+
+            config = {
+                "VM_PROVIDER_SSH_HOST": "pionera20",
+                "VM_PROVIDER_SSH_USER": "pionera",
+                "SSH_ACCESS_MODE": "bastion",
+                "SSH_BASTION_HOST": "orion.example.test",
+                "SSH_BASTION_USER": "jump",
+                "SSH_BASTION_PORT": "2222",
+                "SSH_IDENTITY_FILE": os.path.join(tmpdir, "id_ed25519_vm"),
+            }
+            tunnel_calls = []
+            kubectl_calls = []
+
+            def fake_start_tunnel(command, **_kwargs):
+                tunnel_calls.append(command)
+                return self._running_ssh_process_result()
+
+            def fake_run(command, **_kwargs):
+                kubectl_calls.append(command)
+                return mock.Mock(returncode=0, stdout='{"gitVersion":"v1"}', stderr="")
+
+            with mock.patch.object(
+                main,
+                "_load_effective_infrastructure_deployer_config",
+                return_value=config,
+            ), mock.patch.object(
+                main,
+                "_configured_vm_distributed_role_kubeconfigs",
+                return_value={"provider": provider_kubeconfig},
+            ), mock.patch.object(
+                main,
+                "_local_tcp_port_open",
+                side_effect=[False, True],
+            ), mock.patch.object(
+                main,
+                "_run_vm_distributed_background_ssh_command",
+                side_effect=fake_start_tunnel,
+            ), mock.patch.object(main.subprocess, "run", side_effect=fake_run):
+                result = main._ensure_vm_distributed_level4_kubeconfig_supported()
+
+            self.assertEqual(result["tunnels"][0]["status"], "started")
+            tunnel_command = tunnel_calls[0]
+            self.assertNotIn("-f", tunnel_command)
+            self.assertIn("-L", tunnel_command)
+            self.assertIn("127.0.0.1:26443:127.0.0.1:6443", tunnel_command)
+            proxy_option = next(item for item in tunnel_command if str(item).startswith("ProxyCommand="))
+            self.assertIn("-o IdentitiesOnly=yes", proxy_option)
+            self.assertIn("-p 2222", proxy_option)
+            self.assertIn(f"-i {os.path.join(tmpdir, 'id_ed25519_vm')}", proxy_option)
+            self.assertIn("-W %h:%p jump@orion.example.test", proxy_option)
+            self.assertEqual(kubectl_calls[0][:3], ["kubectl", "--kubeconfig", provider_kubeconfig])
+
+    def test_level4_preflight_starts_background_ssh_tunnel_with_popen(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            provider_kubeconfig = os.path.join(tmpdir, "provider.yaml")
+            with open(provider_kubeconfig, "w", encoding="utf-8") as handle:
+                handle.write("apiVersion: v1\nclusters:\n- cluster:\n    server: https://127.0.0.1:26443\n")
+
+            config = {
+                "VM_PROVIDER_SSH_HOST": "pionera20",
+                "VM_PROVIDER_SSH_USER": "pionera",
+                "VM_DISTRIBUTED_K3S_TUNNEL_MODE": "auto",
+            }
+
+            with mock.patch.object(
+                main,
+                "_load_effective_infrastructure_deployer_config",
+                return_value=config,
+            ), mock.patch.object(
+                main,
+                "_configured_vm_distributed_role_kubeconfigs",
+                return_value={"provider": provider_kubeconfig},
+            ), mock.patch.object(
+                main,
+                "_local_tcp_port_open",
+                side_effect=[False, True],
+            ), mock.patch.object(
+                main.subprocess,
+                "Popen",
+                return_value=self._running_ssh_process_result().process,
+            ) as popen, mock.patch.object(
+                main.subprocess,
+                "run",
+                return_value=mock.Mock(returncode=0, stdout='{"gitVersion":"v1"}', stderr=""),
+            ) as run, mock.patch.object(main.time, "sleep"):
+                main._ensure_vm_distributed_level4_kubeconfig_supported()
+
+            tunnel_kwargs = popen.call_args.kwargs
+            self.assertNotIn("capture_output", tunnel_kwargs)
+            self.assertIs(tunnel_kwargs["stdin"], main.subprocess.DEVNULL)
+            self.assertTrue(tunnel_kwargs["start_new_session"])
+            self.assertTrue(hasattr(tunnel_kwargs["stdout"], "write"))
+            self.assertTrue(hasattr(tunnel_kwargs["stderr"], "write"))
+            self.assertEqual(run.call_args.args[0][:3], ["kubectl", "--kubeconfig", provider_kubeconfig])
+
+    def test_level4_preflight_fails_before_kubectl_when_required_tunnel_cannot_start(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            provider_kubeconfig = os.path.join(tmpdir, "provider.yaml")
+            with open(provider_kubeconfig, "w", encoding="utf-8") as handle:
+                handle.write("apiVersion: v1\nclusters:\n- cluster:\n    server: https://127.0.0.1:26443\n")
+
+            config = {
+                "VM_PROVIDER_SSH_HOST": "pionera20",
+                "VM_PROVIDER_SSH_USER": "pionera",
+                "VM_DISTRIBUTED_K3S_TUNNEL_MODE": "auto",
+            }
+
+            with mock.patch.object(
+                main,
+                "_load_effective_infrastructure_deployer_config",
+                return_value=config,
+            ), mock.patch.object(
+                main,
+                "_configured_vm_distributed_role_kubeconfigs",
+                return_value={"provider": provider_kubeconfig},
+            ), mock.patch.object(
+                main,
+                "_local_tcp_port_open",
+                return_value=False,
+            ), mock.patch.object(
+                main,
+                "_run_vm_distributed_background_ssh_command",
+                return_value=mock.Mock(returncode=255, stdout="", stderr="Permission denied", process=None),
+            ), mock.patch.object(
+                main.subprocess,
+                "run",
+            ) as run:
+                with self.assertRaisesRegex(RuntimeError, "Kubernetes API tunnels are not available"):
+                    main._ensure_vm_distributed_level4_kubeconfig_supported()
+
+            self.assertEqual(run.call_count, 0)
+
+    def test_level4_preflight_reports_tunnel_timeout_without_leaking_subprocess_exception(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            provider_kubeconfig = os.path.join(tmpdir, "provider.yaml")
+            with open(provider_kubeconfig, "w", encoding="utf-8") as handle:
+                handle.write("apiVersion: v1\nclusters:\n- cluster:\n    server: https://127.0.0.1:26443\n")
+
+            config = {
+                "VM_PROVIDER_SSH_HOST": "pionera20",
+                "VM_PROVIDER_SSH_USER": "pionera",
+                "SSH_ACCESS_MODE": "bastion",
+                "SSH_BASTION_HOST": "orion.example.test",
+                "SSH_BASTION_USER": "jump",
+                "SSH_IDENTITY_FILE": os.path.join(tmpdir, "id_ed25519_vm"),
+            }
+
+            with mock.patch.object(
+                main,
+                "_load_effective_infrastructure_deployer_config",
+                return_value=config,
+            ), mock.patch.object(
+                main,
+                "_configured_vm_distributed_role_kubeconfigs",
+                return_value={"provider": provider_kubeconfig},
+            ), mock.patch.object(
+                main,
+                "_local_tcp_port_open",
+                return_value=False,
+            ), mock.patch.object(
+                main,
+                "_run_vm_distributed_background_ssh_command",
+                return_value=self._running_ssh_process_result(),
+            ), mock.patch.object(main.time, "time", side_effect=[0, 21]):
+                with self.assertRaisesRegex(RuntimeError, "ssh-tunnel-timeout") as raised:
+                    main._ensure_vm_distributed_level4_kubeconfig_supported()
+
+            self.assertNotIn("Command '['ssh'", str(raised.exception))
+
+    def test_level4_preflight_accepts_background_tunnel_when_port_opens(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            provider_kubeconfig = os.path.join(tmpdir, "provider.yaml")
+            with open(provider_kubeconfig, "w", encoding="utf-8") as handle:
+                handle.write("apiVersion: v1\nclusters:\n- cluster:\n    server: https://127.0.0.1:26443\n")
+
+            config = {
+                "VM_PROVIDER_SSH_HOST": "pionera20",
+                "VM_PROVIDER_SSH_USER": "pionera",
+                "VM_DISTRIBUTED_K3S_TUNNEL_MODE": "auto",
+            }
+
+            with mock.patch.object(
+                main,
+                "_load_effective_infrastructure_deployer_config",
+                return_value=config,
+            ), mock.patch.object(
+                main,
+                "_configured_vm_distributed_role_kubeconfigs",
+                return_value={"provider": provider_kubeconfig},
+            ), mock.patch.object(
+                main,
+                "_local_tcp_port_open",
+                side_effect=[False, True],
+            ), mock.patch.object(
+                main,
+                "_run_vm_distributed_background_ssh_command",
+                return_value=self._running_ssh_process_result(),
+            ), mock.patch.object(
+                main.subprocess,
+                "run",
+                return_value=mock.Mock(returncode=0, stdout='{"gitVersion":"v1"}', stderr=""),
+            ):
+                result = main._ensure_vm_distributed_level4_kubeconfig_supported()
+
+            self.assertEqual(result["tunnels"][0]["status"], "started")
+            self.assertEqual(result["tunnels"][0]["pid"], 1234)
+
+    def test_level4_preflight_recreates_managed_loopback_tunnel_when_kubectl_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            provider_kubeconfig = os.path.join(tmpdir, "provider.yaml")
+            with open(provider_kubeconfig, "w", encoding="utf-8") as handle:
+                handle.write("apiVersion: v1\nclusters:\n- cluster:\n    server: https://127.0.0.1:26443\n")
+
+            config = {
+                "VM_PROVIDER_SSH_HOST": "pionera20",
+                "VM_PROVIDER_SSH_USER": "pionera",
+                "VM_DISTRIBUTED_K3S_TUNNEL_MODE": "auto",
+                "VM_DISTRIBUTED_K3S_TUNNEL_RECREATE": "auto",
+            }
+            kubectl_results = [
+                mock.Mock(returncode=1, stdout="", stderr="stale tunnel"),
+                mock.Mock(returncode=0, stdout='{"gitVersion":"v1"}', stderr=""),
+            ]
+
+            def fake_run(command, **_kwargs):
+                if command and command[0] == "kubectl":
+                    return kubectl_results.pop(0)
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with mock.patch.object(
+                main,
+                "_load_effective_infrastructure_deployer_config",
+                return_value=config,
+            ), mock.patch.object(
+                main,
+                "_configured_vm_distributed_role_kubeconfigs",
+                return_value={"provider": provider_kubeconfig},
+            ), mock.patch.object(
+                main,
+                "_local_tcp_port_open",
+                side_effect=[True, False, True],
+            ), mock.patch.object(
+                main,
+                "_stop_vm_distributed_local_k3s_tunnel",
+                return_value={"status": "stopped", "local_port": 26443, "pids": [1234]},
+            ), mock.patch.object(
+                main,
+                "_run_vm_distributed_background_ssh_command",
+                return_value=self._running_ssh_process_result(),
+            ), mock.patch.object(main.subprocess, "run", side_effect=fake_run):
+                result = main._ensure_vm_distributed_level4_kubeconfig_supported()
+
+            self.assertEqual(result["checks"][0]["status"], "ready")
+            self.assertEqual(result["tunnels"][0]["status"], "ready")
+            self.assertEqual(result["tunnels"][1]["status"], "started")
+            self.assertEqual(result["tunnels"][1]["recreated_from_pids"], [1234])
+
+    def test_local_k3s_tunnel_process_detection_is_limited_to_ssh_forwarding(self):
+        ps_output = "\n".join(
+            [
+                " 100 ssh -f -N -L 127.0.0.1:36443:127.0.0.1:6443 pionera@pionera3",
+                " 101 ssh pionera@pionera3 hostname",
+                " 102 python something 127.0.0.1:36443:127.0.0.1:6443",
+            ]
+        )
+        with mock.patch.object(
+            main.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0, stdout=ps_output, stderr=""),
+        ):
+            processes = main._vm_distributed_local_k3s_tunnel_processes(36443, "6443")
+
+        self.assertEqual(processes, [{"pid": 100, "command": "ssh -f -N -L 127.0.0.1:36443:127.0.0.1:6443 pionera@pionera3"}])
 
     def test_preflight_reports_incomplete_ssh_metadata_without_running_ssh(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -293,12 +581,101 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertIn("K3S_KUBECONFIG_COMPONENTS=", topology_config)
         self.assertIn("SSH_ACCESS_MODE=", topology_config)
         self.assertIn("SSH_CONNECT_TIMEOUT_SECONDS=5", topology_config)
+        self.assertIn("VM_DISTRIBUTED_EXECUTION_HOST=external", topology_config)
+        self.assertIn("VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE=manual", topology_config)
+        self.assertIn("VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY=accept-new", topology_config)
         self.assertIn("VM_DISTRIBUTED_DEPLOYMENT_MODE=orchestrator", topology_config)
         self.assertIn("VM_DISTRIBUTED_PREFLIGHT_DRY_RUN=true", topology_config)
         self.assertIn("VM_COMMON_HTTP_URL=http://10.0.0.10", topology_config)
         self.assertIn("VM_PROVIDER_HTTP_URL=http://10.0.0.20", topology_config)
         self.assertIn("VM_CONSUMER_HTTP_URL=http://10.0.0.30", topology_config)
+        self.assertIn("VM_COMMON_PUBLIC_URL=https://org1.validation.example.local", topology_config)
+        self.assertIn("VM_PROVIDER_PUBLIC_URL=https://org2.ds.validation.example.local", topology_config)
+        self.assertIn("VM_CONSUMER_PUBLIC_URL=https://org3.ds.validation.example.local", topology_config)
+        self.assertIn("KEYCLOAK_FRONTEND_URL=https://org1.validation.example.local/auth", topology_config)
+        self.assertIn("MINIO_CONSOLE_PUBLIC_URL=https://org1.validation.example.local/s3-console", topology_config)
+        self.assertIn("COMPONENTS_PUBLIC_BASE_URL=https://org1.validation.example.local", topology_config)
+        self.assertIn("COMPONENTS_PUBLIC_PATH_REWRITE=true", topology_config)
         self.assertIn(common_kubeconfig, topology_config)
+
+    def test_offer_vm_distributed_configuration_uses_plain_yes_no_prompt(self):
+        with mock.patch.object(
+            main,
+            "_vm_distributed_configuration_needs_attention",
+            return_value=True,
+        ), mock.patch.object(
+            main,
+            "_interactive_read",
+            return_value="n",
+        ) as read_prompt, mock.patch.object(
+            main,
+            "_run_vm_distributed_configuration_wizard",
+        ) as wizard:
+            current_adapter, result = main._offer_vm_distributed_configuration(
+                current_adapter="inesdata",
+                adapter_registry={"inesdata": object()},
+            )
+
+        self.assertEqual(current_adapter, "inesdata")
+        self.assertIsNone(result)
+        wizard.assert_not_called()
+        read_prompt.assert_called_once_with("Configure vm-distributed now? (Y/n): ")
+
+    def test_offer_vm_distributed_configuration_waits_for_adapter_selection(self):
+        with mock.patch.object(
+            main,
+            "_vm_distributed_configuration_needs_attention",
+        ) as needs_attention, mock.patch.object(
+            main,
+            "_interactive_read",
+        ) as read_prompt, mock.patch.object(
+            main,
+            "_run_vm_distributed_configuration_wizard",
+        ) as wizard:
+            current_adapter, result = main._offer_vm_distributed_configuration(
+                current_adapter=None,
+                adapter_registry={"inesdata": object(), "edc": object()},
+            )
+
+        self.assertIsNone(current_adapter)
+        self.assertIsNone(result)
+        needs_attention.assert_not_called()
+        read_prompt.assert_not_called()
+        wizard.assert_not_called()
+
+    def test_wizard_intro_does_not_advertise_back_option(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            infra_path = os.path.join(tmpdir, "infrastructure", "deployer.config")
+            topology_path = os.path.join(tmpdir, "infrastructure", "topologies", "vm-distributed.config")
+            adapter_path = os.path.join(tmpdir, "inesdata", "deployer.config")
+            for path in (infra_path, topology_path, adapter_path):
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("")
+
+            output = io.StringIO()
+            with mock.patch("builtins.input", side_effect=KeyboardInterrupt), mock.patch.object(
+                main,
+                "_infrastructure_deployer_config_path",
+                return_value=infra_path,
+            ), mock.patch.object(
+                main,
+                "_infrastructure_topology_config_path",
+                return_value=topology_path,
+            ), mock.patch.object(
+                main,
+                "_adapter_deployer_config_path",
+                return_value=adapter_path,
+            ), redirect_stdout(output):
+                with self.assertRaises(KeyboardInterrupt):
+                    main._run_vm_distributed_configuration_wizard(
+                        current_adapter="inesdata",
+                        adapter_registry={"inesdata": object()},
+                    )
+
+        rendered = output.getvalue()
+        self.assertNotIn("Type b in any field to go back without saving.", rendered)
+        self.assertNotIn("b=back", rendered)
 
     def test_topology_plan_builds_bastion_ssh_commands_and_connector_locations(self):
         plan = main._build_vm_distributed_topology_plan(
@@ -348,6 +725,191 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             plan["validation_pairs"],
             [{"source": "conn-alpha-pionera", "target": "conn-beta-pionera"}],
         )
+
+    def test_topology_plan_includes_idempotent_ssh_bootstrap_and_common_execution_host(self):
+        plan = main._build_vm_distributed_topology_plan(
+            {
+                "DOMAIN_BASE": "validation.example.local",
+                "DS_DOMAIN_BASE": "ds.validation.example.local",
+            },
+            {
+                "VM_COMMON_IP": "192.0.2.10",
+                "VM_PROVIDER_IP": "192.0.2.20",
+                "VM_CONSUMER_IP": "192.0.2.30",
+                "K3S_KUBECONFIG_COMMON": "/tmp/common.yaml",
+                "K3S_KUBECONFIG_PROVIDER": "/tmp/common.yaml",
+                "K3S_KUBECONFIG_CONSUMER": "/tmp/common.yaml",
+                "SSH_ACCESS_MODE": "direct",
+                "SSH_IDENTITY_FILE": "/home/operator/.ssh/validation-env-vm",
+                "VM_DISTRIBUTED_EXECUTION_HOST": "common-services",
+                "VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE": "plan",
+                "VM_COMMON_REMOTE_WORKDIR": "/srv/validation-environment",
+                "VM_COMMON_SSH_HOST": "common.example.test",
+                "VM_COMMON_SSH_USER": "operator",
+                "VM_PROVIDER_SSH_HOST": "provider.example.test",
+                "VM_PROVIDER_SSH_USER": "operator",
+                "VM_CONSUMER_SSH_HOST": "consumer.example.test",
+                "VM_CONSUMER_SSH_USER": "operator",
+            },
+            {
+                "DS_1_NAME": "pionera",
+                "DS_1_CONNECTORS": "alpha,beta",
+                "DS_1_CONNECTOR_NAMESPACES": "alpha:provider,beta:consumer",
+                "LEVEL4_CONNECTOR_RECONCILIATION_MODE": "full",
+            },
+        )
+
+        self.assertEqual(plan["execution_host"], "common-services")
+        self.assertEqual(plan["ssh"]["identity_file"], "/home/operator/.ssh/validation-env-vm")
+        provider_vm = next(item for item in plan["vms"] if item["role"] == "provider-connectors")
+        self.assertIn("-i /home/operator/.ssh/validation-env-vm", provider_vm["ssh"]["command"])
+        self.assertEqual(plan["ssh_bootstrap"]["status"], "ready")
+        self.assertEqual(plan["ssh_bootstrap"]["mode"], "plan")
+        self.assertIn(
+            "prepare_common_services_execution_host",
+            [item["name"] for item in plan["ssh_bootstrap"]["actions"]],
+        )
+
+    def test_reconcile_vm_distributed_ssh_access_installs_key_and_verifies_batchmode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            identity_file = os.path.join(tmpdir, "validation-env")
+            public_key_file = f"{identity_file}.pub"
+            with open(identity_file, "w", encoding="utf-8") as handle:
+                handle.write("private\n")
+            with open(public_key_file, "w", encoding="utf-8") as handle:
+                handle.write("ssh-ed25519 AAAATEST validation\n")
+
+            commands = []
+
+            def runner(command, timeout):
+                commands.append((command, timeout))
+                rendered = " ".join(command)
+                if "authorized_keys" in rendered:
+                    return mock.Mock(returncode=0, stdout="authorized_keys=installed\n", stderr="")
+                return mock.Mock(returncode=0, stdout="ssh_ready=1\n", stderr="")
+
+            result = main._reconcile_vm_distributed_ssh_access(
+                {
+                    "execution_host": "external",
+                    "ssh": {
+                        "mode": "direct",
+                        "connect_timeout_seconds": 5,
+                        "known_hosts_strategy": "accept-new",
+                        "bastion": {},
+                    },
+                    "ssh_bootstrap": {
+                        "status": "ready",
+                        "identity_file": identity_file,
+                        "managed_marker": "validation-environment-vm-distributed",
+                        "targets": [
+                            {
+                                "role": "provider-connectors",
+                                "role_key": "provider",
+                                "host": "provider.example.test",
+                                "user": "operator",
+                                "port": "22",
+                                "identity_file": identity_file,
+                                "needs_public_key": True,
+                            }
+                        ],
+                    },
+                },
+                command_runner=runner,
+            )
+
+        self.assertEqual(result["status"], "synced")
+        self.assertEqual(result["keypair"]["status"], "present")
+        self.assertEqual(result["authorized_keys"][0]["state"], "installed")
+        self.assertEqual(result["verification"][0]["status"], "passed")
+        self.assertEqual(len(commands), 2)
+        self.assertIn("-i", commands[0][0])
+        self.assertIn(identity_file, commands[0][0])
+
+    def test_reconcile_vm_distributed_ssh_access_creates_missing_keypair_without_overwriting(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            identity_file = os.path.join(tmpdir, "validation-env")
+            public_key_file = f"{identity_file}.pub"
+
+            def runner(command, timeout):
+                if command[:3] == ["ssh-keygen", "-t", "ed25519"]:
+                    with open(identity_file, "w", encoding="utf-8") as handle:
+                        handle.write("private\n")
+                    with open(public_key_file, "w", encoding="utf-8") as handle:
+                        handle.write("ssh-ed25519 AAAATEST validation\n")
+                    return mock.Mock(returncode=0, stdout="", stderr="")
+                if "authorized_keys" in " ".join(command):
+                    return mock.Mock(returncode=0, stdout="authorized_keys=present\n", stderr="")
+                return mock.Mock(returncode=0, stdout="ssh_ready=1\n", stderr="")
+
+            result = main._reconcile_vm_distributed_ssh_access(
+                {
+                    "execution_host": "external",
+                    "ssh": {"mode": "direct", "connect_timeout_seconds": 5, "bastion": {}},
+                    "ssh_bootstrap": {
+                        "status": "ready",
+                        "identity_file": identity_file,
+                        "key_comment": "validation",
+                        "managed_marker": "validation",
+                        "targets": [
+                            {
+                                "role": "common-services",
+                                "host": "common.example.test",
+                                "user": "operator",
+                                "port": "22",
+                                "identity_file": identity_file,
+                                "needs_public_key": True,
+                            }
+                        ],
+                    },
+                },
+                command_runner=runner,
+            )
+
+            self.assertTrue(os.path.isfile(identity_file))
+            self.assertTrue(os.path.isfile(public_key_file))
+
+        self.assertEqual(result["status"], "synced")
+        self.assertEqual(result["keypair"]["status"], "created")
+        self.assertTrue(result["keypair"]["changed"])
+
+    def test_reconcile_vm_distributed_ssh_access_reports_initial_access_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            identity_file = os.path.join(tmpdir, "validation-env")
+            with open(identity_file, "w", encoding="utf-8") as handle:
+                handle.write("private\n")
+            with open(f"{identity_file}.pub", "w", encoding="utf-8") as handle:
+                handle.write("ssh-ed25519 AAAATEST validation\n")
+
+            result = main._reconcile_vm_distributed_ssh_access(
+                {
+                    "execution_host": "external",
+                    "ssh": {"mode": "direct", "connect_timeout_seconds": 5, "bastion": {}},
+                    "ssh_bootstrap": {
+                        "status": "ready",
+                        "identity_file": identity_file,
+                        "managed_marker": "validation",
+                        "targets": [
+                            {
+                                "role": "consumer-connectors",
+                                "host": "consumer.example.test",
+                                "user": "operator",
+                                "port": "22",
+                                "identity_file": identity_file,
+                                "needs_public_key": True,
+                            }
+                        ],
+                    },
+                },
+                command_runner=lambda _command, timeout: mock.Mock(
+                    returncode=255,
+                    stdout="",
+                    stderr="Permission denied",
+                ),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["authorized_keys"][0]["reason"], "authorized-keys-sync-failed")
+        self.assertIn("approved access path", result["authorized_keys"][0]["next_step"])
 
     def test_remote_preflight_uses_injected_runner_and_parses_facts(self):
         commands = []
@@ -425,14 +987,14 @@ class VmDistributedConfigurationTests(unittest.TestCase):
 
     def test_preflight_prints_readiness_checklist(self):
         preflight = {
-            "status": "needs-review",
+            "status": "ready",
             "missing": [],
-            "warnings": ["multi-kubeconfig connector deployment is blocked safely."],
+            "warnings": [],
             "checks": [
                 {
                     "name": "Level 4 cluster scope",
-                    "status": "blocked",
-                    "detail": "single logical kubeconfig supported",
+                    "status": "ready",
+                    "detail": "multi-kubeconfig connector deployment enabled",
                 }
             ],
         }
@@ -443,7 +1005,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
 
         text = output.getvalue()
         self.assertIn("Checklist:", text)
-        self.assertIn("[blocked] Level 4 cluster scope", text)
+        self.assertIn("[ok] Level 4 cluster scope", text)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ import json
 import os
 import requests
 import sys
+from urllib.parse import urlparse
 import urllib3
 import warnings
 
@@ -44,6 +45,7 @@ from deployers.infrastructure.lib.public_hostnames import (
     resolved_common_service_hostnames,
 )
 from deployers.infrastructure.lib.topology import normalize_topology
+from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls
 
 URL_PRO = '.dataspaceunit-project.eu'
 URL_DEV = '.dev.ds.dataspaceunit.upm'
@@ -51,6 +53,20 @@ BRANDING_DEFAULT_ASSETS_DIR = "identity"
 BRANDING_DEFAULT_CONNECTOR_ASSET_BASE_URL = "/inesdata-connector-interface/assets/branding"
 BRANDING_DEFAULT_PORTAL_ASSET_BASE_URL = "/assets/branding"
 BRANDING_MAX_TOTAL_ASSET_BYTES = 900 * 1024
+PUBLIC_COMMON_ACCESS_KEYS = (
+    "VM_COMMON_PUBLIC_URL",
+    "VM_COMMON_HTTP_URL",
+    "PUBLIC_PORTAL_PUBLIC_URL",
+    "PUBLIC_PORTAL_BACKEND_PUBLIC_URL",
+    "REGISTRATION_SERVICE_PUBLIC_URL",
+    "KEYCLOAK_FRONTEND_URL",
+    "KEYCLOAK_PUBLIC_URL",
+    "MINIO_API_PUBLIC_URL",
+    "MINIO_PUBLIC_URL",
+    "MINIO_CONSOLE_PUBLIC_URL",
+    "COMPONENTS_PUBLIC_BASE_URL",
+    "PUBLIC_HOSTNAME",
+)
 
 
 def _split_config_list(raw_value):
@@ -337,8 +353,8 @@ def cli(ctx, pg_user, pg_password, pg_host, pg_port, kc_user, kc_password, kc_ur
     # KEYCLOAK
     ctx.obj['kc_user'] = config.get('KC_USER', kc_user)
     ctx.obj['kc_password'] = config.get('KC_PASSWORD', kc_password)
-    ctx.obj['kc_url'] = config.get('KC_URL', kc_url)
-    ctx.obj['kc_internal_url'] = config.get('KC_INTERNAL_URL', kc_internal_url)
+    ctx.obj['kc_url'] = keycloak_client_base_url(keycloak_management_url_from_config(config, kc_url))
+    ctx.obj['kc_internal_url'] = keycloak_frontend_url_from_config(config) or config.get('KC_INTERNAL_URL', kc_internal_url)
 
     # HASHICORP VAULT
     ctx.obj['vt_token'] = config.get('VT_TOKEN', vt_token)
@@ -486,7 +502,8 @@ def create(ctx, name, dataspace):
 
     # Create keycloak configuration
     click.echo(f'- Creating {name} keycloak configuration')
-    keycloak_openid = KeycloakOpenID(server_url=ctx.obj['kc_url'],
+    keycloak_base_url = keycloak_client_base_url(ctx.obj['kc_url'])
+    keycloak_openid = KeycloakOpenID(server_url=keycloak_base_url,
                                    realm_name="master",
                                    client_id='admin-cli',
                                    verify=False)
@@ -507,7 +524,7 @@ def create(ctx, name, dataspace):
         click.echo(f"    - Error obtaining token: {e}")
         ctx.exit(1)
 
-    keycloak_admin = KeycloakAdmin(server_url=ctx.obj['kc_url'],
+    keycloak_admin = KeycloakAdmin(server_url=keycloak_base_url,
                                    token=token_obj,
                                    realm_name=dataspace,
                                    verify=False)
@@ -540,6 +557,21 @@ def create(ctx, name, dataspace):
         'access_urls',
         build_connector_access_urls(name, dataspace, environment, ctx.obj.get('config', {}))
     )
+    public_access_urls = build_connector_public_access_urls(
+        name,
+        dataspace,
+        environment,
+        ctx.obj.get('config', {}),
+    )
+    if public_access_urls:
+        register_password(
+            dataspace,
+            environment,
+            'connector',
+            name,
+            'public_access_urls',
+            public_access_urls,
+        )
 
     click.echo(f'Connector {name} created successfuly!')
 
@@ -832,13 +864,16 @@ def flatten_json(json_obj, parent_key='', sep='-'):
 
 
 def build_dataspace_access_urls(dataspace, environment, config):
-    protocol = access_protocol(environment)
-    ds_domain = dataspace_domain_base(config, environment)
-    urls = {
-        "public_portal_login": f"{protocol}://{dataspace}.{ds_domain}",
-        "public_portal_backend_admin": f"{protocol}://backend-{dataspace}.{ds_domain}/admin",
-        "registration_service": f"{protocol}://registration-service-{dataspace}.{ds_domain}",
-    }
+    if _is_vm_distributed_public_common_mode(config):
+        urls = dataspace_public_access_urls(dataspace, config)
+    else:
+        protocol = access_protocol(environment)
+        ds_domain = dataspace_domain_base(config, environment)
+        urls = {
+            "public_portal_login": f"{protocol}://{dataspace}.{ds_domain}",
+            "public_portal_backend_admin": f"{protocol}://backend-{dataspace}.{ds_domain}/admin",
+            "registration_service": f"{protocol}://registration-service-{dataspace}.{ds_domain}",
+        }
     urls.update(common_access_urls(dataspace, environment, config))
     return urls
 
@@ -856,6 +891,7 @@ def build_connector_access_urls(connector, dataspace, environment, config, dashb
         "connector_management_api": f"{connector_base}/management",
         "connector_protocol_api": f"{connector_base}/protocol",
         "connector_shared_api": f"{connector_base}/shared",
+        "minio_bucket": f"{dataspace}-{connector}",
     }
     if dashboard:
         dashboard_base_href = normalize_base_href(config.get("EDC_DASHBOARD_BASE_HREF", "/edc-dashboard/"))
@@ -884,6 +920,50 @@ def build_connector_access_urls(connector, dataspace, environment, config, dashb
     return urls
 
 
+def build_connector_public_access_urls(connector, dataspace, environment, config, dashboard=False):
+    connector_base = connector_public_base_url(connector, dataspace, config)
+    connector_interface_base_href = normalize_base_href(
+        config.get("INESDATA_CONNECTOR_INTERFACE_BASE_HREF", "/inesdata-connector-interface/")
+    )
+    urls = {}
+    if connector_base:
+        urls.update(
+            {
+                "connector_ingress": connector_base,
+                "connector_interface_login": f"{connector_base}{connector_interface_base_href}",
+                "connector_management_api": f"{connector_base}/management",
+                "connector_protocol_api": f"{connector_base}/protocol",
+                "connector_shared_api": f"{connector_base}/shared",
+                "minio_bucket": f"{dataspace}-{connector}",
+            }
+        )
+        if dashboard:
+            dashboard_base_href = normalize_base_href(config.get("EDC_DASHBOARD_BASE_HREF", "/edc-dashboard/"))
+            urls["edc_dashboard_login"] = f"{connector_base}{dashboard_base_href}"
+            if str(config.get("EDC_DASHBOARD_PROXY_AUTH_MODE", "")).strip().lower() == "oidc-bff":
+                urls["edc_dashboard_oidc_login"] = f"{connector_base}/edc-dashboard-api/auth/login"
+
+    keycloak_base = keycloak_frontend_url_from_config(config, dataspace)
+    if keycloak_base:
+        urls.update(
+            {
+                "keycloak_realm": f"{keycloak_base}/realms/{dataspace}",
+                "keycloak_account": f"{keycloak_base}/realms/{dataspace}/account",
+                "keycloak_admin_console": f"{keycloak_base}/admin/{dataspace}/console/",
+            }
+        )
+
+    minio_console = minio_console_public_url(config)
+    if minio_console:
+        urls["minio_console"] = minio_console
+
+    minio_api = minio_api_public_url(config)
+    if minio_api:
+        urls["minio_api"] = minio_api
+
+    return urls
+
+
 def common_access_urls(dataspace, environment, config):
     protocol = access_protocol(environment)
     resolved_hostnames = resolved_common_service_hostnames(config)
@@ -893,16 +973,170 @@ def common_access_urls(dataspace, environment, config):
         clean_hostname(config.get("MINIO_CONSOLE_HOSTNAME"))
         or resolved_hostnames["minio_console_hostname"]
     )
-    return {
+    minio_api_hostname = resolved_hostnames["minio_hostname"]
+    urls = {
         "keycloak_realm": f"{protocol}://{keycloak_hostname}/realms/{dataspace}",
         "keycloak_account": f"{protocol}://{keycloak_hostname}/realms/{dataspace}/account",
         "keycloak_admin_console": f"{protocol}://{keycloak_admin_hostname}/admin/{dataspace}/console/",
+        "minio_api": f"{protocol}://{minio_api_hostname}",
         "minio_console": f"{protocol}://{minio_console_hostname}",
     }
+    urls.update(common_public_access_urls(dataspace, config))
+    return urls
+
+
+def _is_vm_distributed_public_common_mode(config):
+    values = config or {}
+    topology = str(
+        values.get("TOPOLOGY")
+        or values.get("PIONERA_TOPOLOGY")
+        or values.get("INESDATA_TOPOLOGY")
+        or ""
+    ).strip().lower().replace("_", "-")
+    if topology == "vm-distributed":
+        return True
+    return any(str(values.get(key) or "").strip() for key in PUBLIC_COMMON_ACCESS_KEYS)
+
+
+def common_public_access_urls(dataspace, config):
+    if not _is_vm_distributed_public_common_mode(config):
+        return {}
+
+    urls = {}
+    keycloak_base = keycloak_frontend_url_from_config(config, dataspace)
+    if keycloak_base:
+        urls.update(
+            {
+                "keycloak_realm": f"{keycloak_base}/realms/{dataspace}",
+                "keycloak_account": f"{keycloak_base}/realms/{dataspace}/account",
+                "keycloak_admin_console": f"{keycloak_base}/admin/{dataspace}/console/",
+            }
+        )
+
+    minio_api = minio_api_public_url(config)
+    if minio_api:
+        urls["minio_api"] = minio_api
+
+    minio_console = minio_console_public_url(config)
+    if minio_console:
+        urls["minio_console"] = minio_console
+
+    return urls
+
+
+def dataspace_public_access_urls(dataspace, config):
+    if not _is_vm_distributed_public_common_mode(config):
+        return {}
+
+    values = {**dict(config or {}), **resolve_vm_distributed_public_urls(config)}
+    urls = {}
+
+    public_portal = normalize_public_url_with_trailing_slash(
+        values.get("PUBLIC_PORTAL_PUBLIC_URL")
+        or values.get("DATASPACE_PUBLIC_PORTAL_URL")
+    )
+    if public_portal:
+        urls["public_portal_login"] = public_portal
+
+    public_portal_backend = normalize_url(
+        values.get("PUBLIC_PORTAL_BACKEND_PUBLIC_URL")
+        or values.get("DATASPACE_PUBLIC_PORTAL_BACKEND_URL")
+    )
+    if public_portal_backend:
+        urls["public_portal_backend_admin"] = (
+            public_portal_backend
+            if public_portal_backend.rstrip("/").endswith("/admin")
+            else f"{public_portal_backend}/admin"
+        )
+
+    registration_service = normalize_url(
+        values.get("REGISTRATION_SERVICE_PUBLIC_URL")
+        or values.get("DATASPACE_REGISTRATION_SERVICE_PUBLIC_URL")
+    )
+    if registration_service:
+        urls["registration_service"] = registration_service
+
+    return urls
 
 
 def access_protocol(environment):
     return "https" if str(environment or "").strip().upper() == "PRO" else "http"
+
+
+def normalize_keycloak_frontend_url(value, realm_name=None):
+    frontend_url = str(value or "").strip().rstrip("/")
+    if not frontend_url:
+        return ""
+
+    realm = str(realm_name or "").strip().strip("/")
+    if realm:
+        for suffix in (
+            f"/realms/{realm}/.well-known/openid-configuration",
+            f"/realms/{realm}",
+        ):
+            if frontend_url.endswith(suffix):
+                frontend_url = frontend_url[: -len(suffix)].rstrip("/")
+                break
+
+    return frontend_url
+
+
+def keycloak_client_base_url(value):
+    """Return a python-keycloak-safe base URL."""
+
+    base_url = str(value or "").strip()
+    if not base_url:
+        return ""
+    return base_url.rstrip("/") + "/"
+
+
+def _url_scheme(value):
+    parsed = urlparse(str(value or "").strip())
+    return parsed.scheme if parsed.scheme in {"http", "https"} else ""
+
+
+def keycloak_frontend_url_from_config(config, realm_name=None):
+    """Resolve the browser-facing Keycloak base URL for realm metadata."""
+
+    public_urls = resolve_vm_distributed_public_urls(config)
+    explicit_url = (
+        config.get("KEYCLOAK_FRONTEND_URL")
+        or config.get("KEYCLOAK_PUBLIC_URL")
+        or public_urls.get("KEYCLOAK_FRONTEND_URL")
+        or public_urls.get("KEYCLOAK_PUBLIC_URL")
+        or ""
+    )
+    if explicit_url:
+        return normalize_keycloak_frontend_url(explicit_url, realm_name)
+
+    public_hostname = clean_public_hostname(config.get("PUBLIC_HOSTNAME"))
+    if public_hostname:
+        return f"https://{public_hostname}/auth"
+
+    public_scheme = (
+        _url_scheme(config.get("VM_COMMON_PUBLIC_URL"))
+        or _url_scheme(config.get("VM_COMMON_HTTP_URL"))
+    )
+    keycloak_hostname = clean_public_hostname(
+        config.get("KEYCLOAK_HOSTNAME") or config.get("KC_INTERNAL_URL")
+    )
+    if public_scheme and keycloak_hostname:
+        return f"{public_scheme}://{keycloak_hostname}"
+
+    return ""
+
+
+def keycloak_management_url_from_config(config, fallback=None):
+    """Resolve the Keycloak base URL used by bootstrap admin operations."""
+
+    explicit_url = (
+        (config or {}).get("KC_MANAGEMENT_URL")
+        or keycloak_frontend_url_from_config(config or {})
+        or (config or {}).get("KC_URL")
+        or fallback
+        or ""
+    )
+    return normalize_keycloak_frontend_url(explicit_url)
 
 
 def dataspace_domain_base(config, environment):
@@ -987,6 +1221,92 @@ def normalize_base_href(value):
     return base_href
 
 
+def normalize_url(value):
+    return str(value or "").strip().rstrip("/")
+
+
+def normalize_public_url_with_trailing_slash(value):
+    normalized = normalize_url(value)
+    if not normalized:
+        return ""
+    return f"{normalized}/"
+
+
+def connector_short_name(connector, dataspace):
+    value = str(connector or "").strip()
+    if value.startswith("conn-"):
+        value = value[len("conn-"):]
+    suffix = f"-{dataspace}"
+    if dataspace and value.endswith(suffix):
+        value = value[: -len(suffix)]
+    return value
+
+
+def split_config_list(raw_value):
+    return [
+        item.strip()
+        for item in str(raw_value or "").split(",")
+        if item.strip()
+    ]
+
+
+def connector_matches_configured_name(connector, dataspace, configured_name):
+    configured = str(configured_name or "").strip()
+    if not configured:
+        return False
+    aliases = {
+        str(connector or "").strip(),
+        connector_short_name(connector, dataspace),
+    }
+    if not configured.startswith("conn-") and dataspace:
+        aliases.add(f"conn-{configured}-{dataspace}")
+    return configured in aliases
+
+
+def connector_public_base_url(connector, dataspace, config):
+    public_urls = resolve_vm_distributed_public_urls(config)
+    role_options = (
+        ("VM_PROVIDER_CONNECTORS", "VM_PROVIDER_PUBLIC_URL", "VM_PROVIDER_HTTP_URL"),
+        ("VM_CONSUMER_CONNECTORS", "VM_CONSUMER_PUBLIC_URL", "VM_CONSUMER_HTTP_URL"),
+    )
+    for connectors_key, public_url_key, fallback_url_key in role_options:
+        for configured_connector in split_config_list(config.get(connectors_key)):
+            if connector_matches_configured_name(connector, dataspace, configured_connector):
+                return normalize_url(
+                    config.get(public_url_key)
+                    or public_urls.get(public_url_key)
+                    or config.get(fallback_url_key)
+                )
+    return ""
+
+
+def minio_console_public_url(config):
+    public_urls = resolve_vm_distributed_public_urls(config)
+    explicit_url = config.get("MINIO_CONSOLE_PUBLIC_URL") or public_urls.get("MINIO_CONSOLE_PUBLIC_URL")
+    if explicit_url:
+        return normalize_public_url_with_trailing_slash(explicit_url)
+
+    public_hostname = clean_hostname(config.get("PUBLIC_HOSTNAME"))
+    if public_hostname:
+        return f"https://{public_hostname}/s3-console/"
+
+    common_public_url = normalize_url(config.get("VM_COMMON_PUBLIC_URL") or config.get("VM_COMMON_HTTP_URL"))
+    if common_public_url:
+        return f"{common_public_url}/s3-console/"
+
+    return ""
+
+
+def minio_api_public_url(config):
+    public_urls = resolve_vm_distributed_public_urls(config)
+    return normalize_url(
+        config.get("MINIO_API_PUBLIC_URL")
+        or config.get("MINIO_PUBLIC_URL")
+        or public_urls.get("MINIO_API_PUBLIC_URL")
+        or public_urls.get("MINIO_PUBLIC_URL")
+    )
+
+
 import subprocess
 
 def create_connector_certificates(name, password, folder):
@@ -996,11 +1316,81 @@ def create_connector_certificates(name, password, folder):
     # Call the shell script
     subprocess.run(command, check=True)
 
+
+def dataspace_audience_value(config, keycloak_url, realm_name):
+    frontend_url = keycloak_frontend_url_from_config(config, realm_name)
+    if frontend_url:
+        return f"{frontend_url}/realms/{realm_name}"
+    return f"{str(keycloak_url or '').rstrip('/')}/realms/{realm_name}"
+
+
+def dataspace_audience_scope_payload(dataspace_name, realm_name, audience):
+    return {
+        "name": "dataspaceunit-dataspace-audience",
+        "description": f"Dataspaceunit: Add audience for {dataspace_name} dataspace",
+        "protocol": "openid-connect",
+        "attributes": {
+            "display.on.consent.screen": "false",
+            "include.in.token.scope": "false"
+        },
+        "protocolMappers": [
+            {
+                "name": "add-namespace-audience",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-audience-mapper",
+                "config": {
+                    "included.client.audience": "",
+                    "included.custom.audience": audience,
+                    "id.token.claim": "false",
+                    "access.token.claim": "true",
+                    "token.introspection.claim": "true"
+                }
+            }
+        ]
+    }
+
+
+def ensure_dataspace_audience_scope(keycloak_admin, dataspace_name, realm_name, audience):
+    scope_name = "dataspaceunit-dataspace-audience"
+    mapper_name = "add-namespace-audience"
+    client_scopes = keycloak_admin.get_client_scopes()
+    scope = next((item for item in client_scopes if item.get("name") == scope_name), None)
+    payload = dataspace_audience_scope_payload(dataspace_name, realm_name, audience)
+
+    if scope is None:
+        keycloak_admin.create_client_scope(payload=payload)
+        click.echo(f'    + Scope "{scope_name}" created with audience {audience}.')
+        return
+
+    scope_id = scope["id"]
+    mappers = keycloak_admin.get_mappers_from_client_scope(scope_id)
+    mapper_payload = payload["protocolMappers"][0]
+    mapper = next((item for item in mappers if item.get("name") == mapper_name), None)
+    if mapper is None:
+        keycloak_admin.add_mapper_to_client_scope(scope_id, mapper_payload)
+        click.echo(f'    + Mapper "{mapper_name}" added with audience {audience}.')
+        return
+
+    current_audience = ((mapper.get("config") or {}).get("included.custom.audience") or "").strip()
+    if current_audience == audience:
+        click.echo(f'    + Scope "{scope_name}" already uses audience {audience}.')
+        return
+
+    updated_mapper = dict(mapper)
+    updated_config = dict(updated_mapper.get("config") or {})
+    updated_config.update(mapper_payload["config"])
+    updated_mapper["config"] = updated_config
+    updated_mapper["protocol"] = mapper_payload["protocol"]
+    updated_mapper["protocolMapper"] = mapper_payload["protocolMapper"]
+    keycloak_admin.update_mapper_in_client_scope(scope_id, mapper["id"], updated_mapper)
+    click.echo(f'    + Scope "{scope_name}" audience updated: {current_audience} -> {audience}.')
+
 #######################################
 ### KEYCLOAK FUNCTIONS
 #######################################
 
 def create_realm(username, password, server_url, realm_name, dataspace_name, keycloak_url, environment):
+    server_url = keycloak_client_base_url(server_url)
     keycloak_admin = KeycloakAdmin(server_url=server_url,
                                     username=username,
                                     password=password,
@@ -1016,46 +1406,23 @@ def create_realm(username, password, server_url, realm_name, dataspace_name, key
             keycloak_admin.create_realm(payload={"realm": realm_name, "enabled": True})
     keycloak_admin.change_current_realm(realm_name)
 
-    # Set realm frontendUrl if PUBLIC_HOSTNAME is configured (enables external HTTPS access via nginx proxy)
+    # Set realm frontendUrl when a browser-facing Keycloak URL is configured.
     config = load_effective_deployer_config()
-    public_hostname = str(config.get("PUBLIC_HOSTNAME", "")).strip()
-    if public_hostname:
-        click.echo(f'  + Setting realm frontendUrl to https://{public_hostname}/auth')
+    keycloak_frontend_url = keycloak_frontend_url_from_config(config, realm_name)
+    if keycloak_frontend_url:
+        click.echo(f'  + Setting realm frontendUrl to {keycloak_frontend_url}')
         try:
             realm_rep = keycloak_admin.get_realm(realm_name)
-            realm_rep.setdefault("attributes", {})["frontendUrl"] = f"https://{public_hostname}/auth"
+            realm_rep.setdefault("attributes", {})["frontendUrl"] = keycloak_frontend_url
             keycloak_admin.update_realm(realm_name, payload=realm_rep)
         except Exception as e:
             click.echo(f'  ! Warning: could not set frontendUrl: {e}')
 
-    # Check if the client scope exists and create it if it doesn't
+    # Ensure the client scope exists and uses the current public OAuth audience.
     click.echo(f'  + Creating scope "dataspaceunit-dataspace-audience"' )
     client_scopes = keycloak_admin.get_client_scopes()
-    if not any(scope['name'] == 'dataspaceunit-dataspace-audience' for scope in client_scopes):
-        dataspace_audience_payload = {
-            "name": "dataspaceunit-dataspace-audience",
-            "description": f"Dataspaceunit: Add audience for {dataspace_name} dataspace",
-            "protocol": "openid-connect",
-            "attributes": {
-                "display.on.consent.screen": "false",
-                "include.in.token.scope": "false"
-            },
-            "protocolMappers": [
-                {
-                    "name": "add-namespace-audience",
-                    "protocol": "openid-connect",
-                    "protocolMapper": "oidc-audience-mapper",
-                    "config": {
-                        "included.client.audience": "",
-                        "included.custom.audience": f"{keycloak_url}/realms/{realm_name}",
-                        "id.token.claim": "false",
-                        "access.token.claim": "true",
-                        "token.introspection.claim": "true"
-                    }
-                }
-            ]
-        }
-        keycloak_admin.create_client_scope(payload=dataspace_audience_payload)
+    audience = dataspace_audience_value(config, keycloak_url, realm_name)
+    ensure_dataspace_audience_scope(keycloak_admin, dataspace_name, realm_name, audience)
 
     click.echo(f'  + Creating scope "dataspaceunit-nbf-claim"' )
     if not any(scope['name'] == 'dataspaceunit-nbf-claim' for scope in client_scopes):
@@ -1129,6 +1496,7 @@ def create_realm(username, password, server_url, realm_name, dataspace_name, key
     register_password(dataspace_name, environment, 'dataspace', realm_name, 'strapi_user', {'user': user_name, 'passwd': user_password})
 
 def delete_realm(username, password, server_url, realm_name):
+    server_url = keycloak_client_base_url(server_url)
     keycloak_admin = KeycloakAdmin(server_url=server_url,
                                    username=username,
                                    password=password,
@@ -1396,6 +1764,7 @@ def create_user(keycloak_admin, user_name, user_password):
         return user_id
 
 def delete_connector_keycloak(username, password, server_url, connector, dataspace):
+    server_url = keycloak_client_base_url(server_url)
     # Create keycloak configuration
     keycloak_openid = KeycloakOpenID(server_url=server_url,
                                      realm_name="master",

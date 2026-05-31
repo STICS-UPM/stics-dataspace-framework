@@ -1,5 +1,6 @@
 const { expect } = require("../fixtures");
 const { checkMarked, clickMarked } = require("../support/live-marker");
+const { gotoDashboardRoute } = require("./navigation");
 
 class ModelBenchmarkingPage {
   constructor(page, runtime) {
@@ -34,7 +35,7 @@ class ModelBenchmarkingPage {
   }
 
   async goto() {
-    await this.page.goto(`${this.runtime.baseUrl}${this.runtime.modelBenchmarkingPath}`);
+    await gotoDashboardRoute(this.page, this.runtime, this.runtime.modelBenchmarkingPath, "Model Benchmarking");
   }
 
   async waitUntilReady() {

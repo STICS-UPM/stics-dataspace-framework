@@ -6,6 +6,7 @@ import time
 import uuid
 from datetime import datetime
 from itertools import permutations
+from urllib.parse import urlparse
 
 import requests
 
@@ -49,6 +50,7 @@ class KafkaEdcValidationSuite:
     DEFAULT_STABILIZATION_LATE_CONFIRMATION_SECONDS = 30
     DEFAULT_TRANSFER_LATE_CONFIRMATION_SECONDS = 30
     DEFAULT_STABILIZATION_REQUEST_TIMEOUT_MS = 5000
+    DEFAULT_CONTINUE_AFTER_REQUESTED_TRANSFER_TIMEOUT = True
 
     def __init__(
         self,
@@ -129,6 +131,7 @@ class KafkaEdcValidationSuite:
             "message_sample_limit": "KAFKA_EDC_MESSAGE_SAMPLE_LIMIT",
             "late_transfer_confirmation_seconds": "KAFKA_EDC_LATE_TRANSFER_CONFIRMATION_SECONDS",
             "validation_backend": "KAFKA_EDC_VALIDATION_BACKEND",
+            "continue_after_requested_transfer_timeout": "KAFKA_EDC_CONTINUE_AFTER_REQUESTED_TRANSFER_TIMEOUT",
         }
         for key, config_key in optional_mapping.items():
             value = deployer.get(config_key)
@@ -144,6 +147,10 @@ class KafkaEdcValidationSuite:
         runtime.setdefault("consumer_group_prefix", "framework-edc-kafka")
         runtime.setdefault("startup_grace_seconds", self.DEFAULT_STARTUP_GRACE_SECONDS)
         runtime.setdefault("pre_run_settle_seconds", self.DEFAULT_PRE_RUN_SETTLE_SECONDS)
+        runtime.setdefault(
+            "continue_after_requested_transfer_timeout",
+            self.DEFAULT_CONTINUE_AFTER_REQUESTED_TRANSFER_TIMEOUT,
+        )
         runtime.setdefault(
             "agreement_visibility_timeout_seconds",
             self.DEFAULT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS,
@@ -224,6 +231,30 @@ class KafkaEdcValidationSuite:
             return self.ds_name_loader()
         return self.ds_name_loader or "demo"
 
+    @staticmethod
+    def _keycloak_base_url(config):
+        keycloak_url = (
+            config.get("KEYCLOAK_FRONTEND_URL")
+            or config.get("KEYCLOAK_PUBLIC_URL")
+            or config.get("KC_INTERNAL_URL")
+            or config.get("KC_URL")
+            or ""
+        )
+        keycloak_url = str(keycloak_url).strip()
+        if keycloak_url and not keycloak_url.startswith(("http://", "https://")):
+            keycloak_url = f"http://{keycloak_url}"
+        return keycloak_url.rstrip("/")
+
+    def _keycloak_realm_url(self, keycloak_url):
+        base_url = self._keycloak_base_url({"KEYCLOAK_FRONTEND_URL": keycloak_url})
+        dataspace = str(self._dataspace_name() or "").strip().strip("/")
+        if not base_url or not dataspace:
+            return base_url
+        realm_suffix = f"/realms/{dataspace}"
+        if base_url.endswith(realm_suffix):
+            return base_url
+        return f"{base_url}{realm_suffix}"
+
     def _login(self, connector, role_key):
         config = self._load_deployer_values()
         creds_loader = self._require_dependency(self.load_connector_credentials, "load_connector_credentials")
@@ -240,13 +271,11 @@ class KafkaEdcValidationSuite:
         if callable(resolver):
             keycloak_url = str(resolver() or "").strip()
         if not keycloak_url:
-            keycloak_url = config.get("KC_INTERNAL_URL") or config.get("KC_URL")
+            keycloak_url = self._keycloak_base_url(config)
         if not keycloak_url:
-            raise RuntimeError("Missing KC_INTERNAL_URL/KC_URL in deployer.config")
-        if not keycloak_url.startswith("http"):
-            keycloak_url = f"http://{keycloak_url}"
+            raise RuntimeError("Missing Keycloak URL in deployer.config")
 
-        login_url = f"{keycloak_url}/realms/{self._dataspace_name()}/protocol/openid-connect/token"
+        login_url = f"{self._keycloak_realm_url(keycloak_url)}/protocol/openid-connect/token"
         payload = {
             "grant_type": "password",
             "client_id": "dataspace-users",
@@ -353,7 +382,47 @@ class KafkaEdcValidationSuite:
             resolved = str(resolver(connector, path) or "").strip()
             if resolved:
                 return resolved
+        credential_url = self._management_url_from_credentials(connector, path)
+        if credential_url:
+            return credential_url
         return f"http://{connector}.{self._ds_domain()}{path}"
+
+    def _management_url_from_credentials(self, connector, path):
+        creds_loader = self.load_connector_credentials
+        if not callable(creds_loader):
+            return ""
+        try:
+            connector_creds = creds_loader(connector) or {}
+        except Exception:
+            return ""
+        if not isinstance(connector_creds, dict):
+            return ""
+
+        for section_name in ("public_access_urls", "access_urls"):
+            urls = connector_creds.get(section_name)
+            if not isinstance(urls, dict):
+                continue
+            base_url = str(
+                urls.get("connector_management_api")
+                or urls.get("connector_ingress")
+                or ""
+            ).strip()
+            if base_url:
+                return self._join_management_base_url(base_url, path)
+        return ""
+
+    @staticmethod
+    def _join_management_base_url(base_url, path):
+        base = str(base_url or "").strip().rstrip("/")
+        suffix = str(path or "").strip()
+        if not base:
+            return ""
+        if not suffix:
+            return base
+        parsed_path = urlparse(base).path.rstrip("/")
+        if parsed_path.endswith("/management") and suffix.startswith("/management/"):
+            suffix = suffix[len("/management"):]
+        return f"{base}/{suffix.lstrip('/')}"
 
     def _protocol_address(self, connector):
         resolver = self.protocol_address_resolver
@@ -1454,10 +1523,12 @@ class KafkaEdcValidationSuite:
         deadline = time.time() + int(runtime["transfer_timeout_seconds"])
         last_state = None
         last_detail = None
+        last_transfer = None
         success_states = {"STARTED", "COMPLETED", "FINALIZED", "ENDED", "DEPROVISIONED"}
         while time.time() <= deadline:
             transfer = self._query_transfer(consumer, consumer_jwt, transfer_id)
             if transfer:
+                last_transfer = transfer
                 state = transfer.get("state")
                 last_state = state
                 if state in success_states:
@@ -1469,6 +1540,17 @@ class KafkaEdcValidationSuite:
                     )
                 last_detail = transfer.get("errorDetail") or transfer.get("error")
             time.sleep(max(1, int(runtime["poll_interval_seconds"])))
+
+        if (
+            last_state == "REQUESTED"
+            and self._truthy(runtime.get("continue_after_requested_transfer_timeout", True))
+        ):
+            return {
+                "state": last_state,
+                "raw": last_transfer or {"@id": transfer_id, "state": last_state},
+                "continued_after_requested_timeout": True,
+                "timeout_seconds": int(runtime["transfer_timeout_seconds"]),
+            }
 
         raise RuntimeError(
             f"Transfer {transfer_id} did not reach a started/finalized state in time"
@@ -2755,6 +2837,9 @@ class KafkaEdcValidationSuite:
                 "wait_for_transfer_state",
                 "passed",
                 state=transfer_result["state"],
+                continued_after_requested_timeout=bool(
+                    transfer_result.get("continued_after_requested_timeout")
+                ),
             )
 
             stabilization = self._wait_for_transfer_runtime_stabilization(

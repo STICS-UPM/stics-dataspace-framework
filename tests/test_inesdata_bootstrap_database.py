@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from urllib.parse import urljoin
 from unittest import mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -80,6 +81,109 @@ class InesdataBootstrapDatabaseTests(unittest.TestCase):
             shared_url,
             "https://conn-citycouncil-pionera.ds.dataspaceunit-project.eu/shared",
         )
+
+    def test_keycloak_frontend_url_from_config_uses_explicit_base_url(self):
+        frontend_url = bootstrap.keycloak_frontend_url_from_config(
+            {"KEYCLOAK_FRONTEND_URL": "https://auth.example.test/"},
+            "pionera",
+        )
+
+        self.assertEqual(frontend_url, "https://auth.example.test")
+
+    def test_keycloak_frontend_url_from_config_preserves_proxy_path(self):
+        frontend_url = bootstrap.keycloak_frontend_url_from_config(
+            {"KEYCLOAK_FRONTEND_URL": "https://org1.example.test/auth/"},
+            "pionera",
+        )
+
+        self.assertEqual(frontend_url, "https://org1.example.test/auth")
+
+    def test_keycloak_client_base_url_preserves_proxy_path_for_python_keycloak(self):
+        client_base_url = bootstrap.keycloak_client_base_url(
+            "https://org1.example.test/auth"
+        )
+
+        self.assertEqual(client_base_url, "https://org1.example.test/auth/")
+        self.assertEqual(
+            urljoin(client_base_url, "realms/master/protocol/openid-connect/token"),
+            "https://org1.example.test/auth/realms/master/protocol/openid-connect/token",
+        )
+
+    def test_keycloak_frontend_url_from_config_normalizes_realm_url(self):
+        frontend_url = bootstrap.keycloak_frontend_url_from_config(
+            {"KEYCLOAK_FRONTEND_URL": "https://auth.example.test/realms/pionera"},
+            "pionera",
+        )
+
+        self.assertEqual(frontend_url, "https://auth.example.test")
+
+    def test_keycloak_frontend_url_from_config_derives_vm_distributed_public_url(self):
+        frontend_url = bootstrap.keycloak_frontend_url_from_config(
+            {
+                "VM_COMMON_PUBLIC_URL": "https://org1.pionera.oeg.fi.upm.es",
+                "KEYCLOAK_HOSTNAME": "auth.pionera.oeg.fi.upm.es",
+            },
+            "pionera",
+        )
+
+        self.assertEqual(frontend_url, "https://org1.pionera.oeg.fi.upm.es/auth")
+
+    def test_keycloak_management_url_from_config_prefers_public_frontend_url(self):
+        management_url = bootstrap.keycloak_management_url_from_config(
+            {
+                "KC_URL": "http://admin.auth.pionera.oeg.fi.upm.es",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+            },
+            "http://localhost:8080",
+        )
+
+        self.assertEqual(management_url, "https://org1.pionera.oeg.fi.upm.es/auth")
+
+    def test_common_access_urls_use_public_org1_routes_for_vm_distributed(self):
+        urls = bootstrap.common_access_urls(
+            "pionera",
+            "DEV",
+            {
+                "TOPOLOGY": "vm-distributed",
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+            },
+        )
+
+        self.assertEqual(
+            urls["keycloak_realm"],
+            "https://org1.pionera.oeg.fi.upm.es/auth/realms/pionera",
+        )
+        self.assertEqual(
+            urls["keycloak_admin_console"],
+            "https://org1.pionera.oeg.fi.upm.es/auth/admin/pionera/console/",
+        )
+        self.assertEqual(urls["minio_api"], "https://org1.pionera.oeg.fi.upm.es")
+        self.assertEqual(urls["minio_console"], "https://org1.pionera.oeg.fi.upm.es/s3-console/")
+
+    def test_dataspace_access_urls_omit_unconfigured_legacy_routes_for_vm_distributed(self):
+        urls = bootstrap.build_dataspace_access_urls(
+            "pionera",
+            "DEV",
+            {
+                "TOPOLOGY": "vm-distributed",
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+            },
+        )
+
+        self.assertNotIn("public_portal_login", urls)
+        self.assertNotIn("public_portal_backend_admin", urls)
+        self.assertNotIn("registration_service", urls)
+        self.assertEqual(urls["keycloak_realm"], "https://org1.pionera.oeg.fi.upm.es/auth/realms/pionera")
+
+    def test_keycloak_frontend_url_from_config_keeps_public_hostname_proxy_path(self):
+        frontend_url = bootstrap.keycloak_frontend_url_from_config(
+            {"PUBLIC_HOSTNAME": "gateway.example.test"},
+            "pionera",
+        )
+
+        self.assertEqual(frontend_url, "https://gateway.example.test/auth")
 
     def test_register_connector_database_inserts_public_ingress_urls_for_dev(self):
         cursor = FakeCursor(fetch_results=[])

@@ -260,6 +260,68 @@ class SemanticVirtualizationComponentValidationTests(unittest.TestCase):
         self.assertEqual(result["summary"]["total"], 13)
         self.assertEqual(result["pt5_summary"]["total"], 10)
 
+    def test_run_semantic_virtualization_validation_uses_api_only_mode_for_edc(self):
+        def fake_http_get(url, timeout=20, headers=None):
+            if url == "http://semantic.example.local":
+                return 200, "text/html", "<html><body>Semantic Virtualization</body></html>"
+            if url == "http://semantic.example.local/?query=SELECT%20WHERE%20%7B":
+                return 400, "application/json", json.dumps({"message": "Expected SelectQuery"})
+            if url == "http://semantic.example.local/openapi.json":
+                return 200, "application/json", json.dumps({"paths": {"/": {"get": {}}}})
+            if url.startswith("http://semantic.example.local/?query="):
+                return 200, "application/sparql-results+json", json.dumps({"head": {}, "results": {}})
+            raise AssertionError(f"Unexpected URL: {url}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch("validation.components.semantic_virtualization.runner._http_get", side_effect=fake_http_get),
+                mock.patch(
+                    "validation.components.semantic_virtualization.runner.run_morph_kgv_source_validation",
+                    return_value=self._suite_result("morph-kgv-source", "SV-MORPH-KGV-01", "support"),
+                ),
+                mock.patch(
+                    "validation.components.semantic_virtualization.runner.run_automap_source_validation",
+                    return_value=self._suite_result("automap-source", "SV-AUTOMAP-01", "support"),
+                ),
+                mock.patch(
+                    "validation.components.semantic_virtualization.runner.run_automap_deterministic_execution_validation",
+                    return_value=self._suite_result("automap-deterministic-execution", "SV-AUTOMAP-02"),
+                ),
+                mock.patch(
+                    "validation.components.semantic_virtualization.runner.run_semantic_virtualization_mapping_validation",
+                    return_value=self._suite_result("mapping-fixtures", "PT5-VS-01"),
+                ),
+                mock.patch(
+                    "validation.components.semantic_virtualization.runner.run_gtfs_bench_official_source_validation",
+                    return_value=self._suite_result("gtfs-bench-official-source", "SV-GTFS-BENCH-01", "support"),
+                ),
+                mock.patch(
+                    "validation.components.semantic_virtualization.runner.run_gtfs_bench_official_dataset_validation",
+                    return_value=self._suite_result("gtfs-bench-official-dataset", "SV-GTFS-BENCH-02", "support"),
+                ),
+                mock.patch(
+                    "validation.components.semantic_virtualization.runner.run_gtfs_bench_official_materialization_validation",
+                    return_value=self._suite_result("gtfs-bench-official-materialization", "SV-GTFS-BENCH-03", "support"),
+                ),
+                mock.patch(
+                    "validation.components.semantic_virtualization.runner.run_semantic_virtualization_ui_validation"
+                ) as ui,
+                mock.patch.dict(os.environ, {"PIONERA_ADAPTER": "edc"}, clear=True),
+            ):
+                result = run_semantic_virtualization_validation(
+                    "http://semantic.example.local",
+                    experiment_dir=tmpdir,
+                )
+
+        ui.assert_not_called()
+        self.assertEqual(result["validation_mode"], "api")
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["summary"]["total"], 12)
+        self.assertNotIn("ui", result["suites"])
+        self.assertEqual(result["phase_execution_channels"]["preflight"], ["api"])
+        self.assertEqual(result["phase_execution_channels"]["functional"], ["api"])
+        self.assertEqual(result["phase_execution_channels"]["integration"], ["api"])
+
     def test_semantic_virtualization_is_registered_for_component_level6(self):
         registration = get_component_registration("semantic_virtualization")
         runners = registered_component_runners()

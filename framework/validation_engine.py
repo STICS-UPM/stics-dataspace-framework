@@ -112,6 +112,34 @@ class ValidationEngine:
 
         return ""
 
+    @staticmethod
+    def _keycloak_base_url(config):
+        keycloak_url = (
+            config.get("KEYCLOAK_FRONTEND_URL")
+            or config.get("KEYCLOAK_PUBLIC_URL")
+            or config.get("KC_INTERNAL_URL")
+            or config.get("KC_URL")
+            or ""
+        )
+        keycloak_url = str(keycloak_url).strip()
+        if keycloak_url and not keycloak_url.startswith(("http://", "https://")):
+            keycloak_url = f"http://{keycloak_url}"
+        return keycloak_url.rstrip("/")
+
+    @staticmethod
+    def _connector_public_base_url(credentials):
+        if not isinstance(credentials, dict):
+            return ""
+        public_urls = credentials.get("public_access_urls") or {}
+        if not isinstance(public_urls, dict):
+            return ""
+        connector_url = str(public_urls.get("connector_ingress") or "").strip()
+        if not connector_url:
+            return ""
+        if not connector_url.startswith(("http://", "https://")):
+            connector_url = f"http://{connector_url}"
+        return connector_url.rstrip("/")
+
     def build_newman_env(self, provider, consumer):
         """Build Newman environment variables for dataspace validation."""
         load_connector_credentials = self._require_dependency(
@@ -143,10 +171,7 @@ class ValidationEngine:
 
         ds_domain = ds_domain_resolver()
         dataspace = self.ds_name
-        keycloak_url = config.get("KC_INTERNAL_URL") or config.get("KC_URL")
-
-        if not keycloak_url.startswith("http"):
-            keycloak_url = f"http://{keycloak_url}"
+        keycloak_url = self._keycloak_base_url(config)
 
         edc_http_pull = adapter_name == "edc" and self._edc_level6_uses_http_pull(config)
         transfer_type = "HttpData-PULL" if edc_http_pull else "AmazonS3-PUSH"
@@ -194,6 +219,12 @@ class ValidationEngine:
             "transferType": transfer_type,
             "transferDestinationType": transfer_destination_type,
         }
+        provider_base_url = self._connector_public_base_url(provider_creds)
+        consumer_base_url = self._connector_public_base_url(consumer_creds)
+        if provider_base_url:
+            env["providerBaseUrl"] = provider_base_url
+        if consumer_base_url:
+            env["consumerBaseUrl"] = consumer_base_url
         if adapter_name == "edc" and not edc_http_pull:
             env.update(
                 {

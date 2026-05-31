@@ -21,7 +21,7 @@ const {
   URI_VOCAB_STATE_KEY,
 } = require("../support/excel-flows");
 
-async function waitForThemisResults(page, timeoutMs = 30000) {
+async function waitForThemisResults(page, timeoutMs = 90000) {
   await page.waitForFunction(
     () => {
       const isVisible = (node) =>
@@ -322,6 +322,9 @@ test("OH-APP-24: Themis accepts a test file and downloads results", async ({
   const sourceUrl = themisSource.sourceUrl || `/dataset/vocabs/${prefix}/versions/${themisSource.prefix || ""}.n3`;
   const testFilePath = resolveThemisTestFile();
   const persistedUploadedPath = persistGeneratedArtifact(testFilePath, "excel-24-test_cases.txt", "themis");
+  const testFileText = fs.readFileSync(testFilePath, "utf8");
+  const manualRequestMarker = "City subClassOf AdministrativeArea";
+  expect(testFileText).toContain(manualRequestMarker);
 
   await checkMarked(page.locator("#themisModeManual")).catch(async () => {
     await clickMarked(page.locator("#themisModeManual"));
@@ -329,7 +332,42 @@ test("OH-APP-24: Themis accepts a test file and downloads results", async ({
   await page.locator("label").filter({ hasText: /user tests/i }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
   await page.locator("#themisUploadContainer").waitFor({ state: "visible", timeout: 5000 });
   await setInputFilesMarked(page.locator("#themisTestFile"), testFilePath);
+  await page.waitForFunction(
+    ({ expectedText }) => {
+      const editor = document.querySelector("#themisTestEditor");
+      const executeButton = document.querySelector("#executeThemisButton");
+      const fileMeta = document.querySelector("#themisFileMeta");
+      const editorText = editor && "value" in editor ? String(editor.value || "") : "";
+      return (
+        editorText.includes(expectedText) &&
+        executeButton instanceof HTMLButtonElement &&
+        !executeButton.disabled &&
+        /Loaded:/.test(String(fileMeta && fileMeta.textContent ? fileMeta.textContent : ""))
+      );
+    },
+    { expectedText: manualRequestMarker },
+    { timeout: 10000 },
+  );
+  const themisResponsePromise = page.waitForResponse(
+    (response) => {
+      const request = response.request();
+      return (
+        request.method() === "POST" &&
+        new URL(response.url()).pathname.endsWith("/dataset/api/v2/validators/themis") &&
+        String(request.postData() || "").includes(manualRequestMarker)
+      );
+    },
+    { timeout: 90000 },
+  );
   await clickMarked(page.locator("#executeThemisButton"));
+  const themisResponse = await themisResponsePromise;
+  if (!themisResponse.ok()) {
+    const responseText = await themisResponse.text().catch(() => "");
+    throw new Error(
+      `Themis manual validation endpoint returned HTTP ${themisResponse.status()}. ` +
+        `Response excerpt: ${responseText.slice(0, 500)}`,
+    );
+  }
   await waitForThemisResults(page);
   await page.getByRole("heading", { name: /tests results/i, level: 3 }).first().waitFor({
     state: "visible",

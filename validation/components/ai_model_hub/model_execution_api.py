@@ -7,6 +7,7 @@ import time
 import uuid
 from datetime import datetime
 from typing import Any, Callable
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -27,6 +28,31 @@ FLARES_DATASET_DIR = str(dataset_source_dir("flares-dataset"))
 FLARES_TRIAL_FILE = "5w1h_subtask_2_trial.json"
 FLARES_TEST_FILE = "5w1h_subtarea_2_test.json"
 FLARES_DATASET_NAME = "FLARES"
+
+
+def _env_first(*names: str) -> str:
+    for name in names:
+        value = str(os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _connector_matches(connector: str, *env_names: str) -> bool:
+    normalized = str(connector or "").strip()
+    return bool(normalized) and any(str(os.environ.get(name) or "").strip() == normalized for name in env_names)
+
+
+def _join_management_url(base_url: str, path: str) -> str:
+    base = str(base_url or "").strip().rstrip("/")
+    suffix = str(path or "").strip()
+    if not base:
+        return ""
+    if base.endswith("/management") and suffix.startswith("/management/"):
+        suffix = suffix[len("/management"):]
+    if not suffix.startswith("/"):
+        suffix = f"/{suffix}"
+    return f"{base}{suffix}"
 
 
 class AIModelHubModelExecutionApiSuite:
@@ -91,6 +117,8 @@ class AIModelHubModelExecutionApiSuite:
         if callable(self.keycloak_url_resolver):
             runtime["keycloak_url"] = str(self.keycloak_url_resolver() or "").strip()
         if not runtime["keycloak_url"]:
+            runtime["keycloak_url"] = _env_first("AI_MODEL_HUB_KEYCLOAK_URL")
+        if not runtime["keycloak_url"]:
             runtime["keycloak_url"] = str(config.get("KC_INTERNAL_URL") or config.get("KC_URL") or "").strip()
         if runtime["keycloak_url"] and not runtime["keycloak_url"].startswith("http"):
             runtime["keycloak_url"] = f"http://{runtime['keycloak_url']}"
@@ -101,6 +129,23 @@ class AIModelHubModelExecutionApiSuite:
         return runtime
 
     def _management_url(self, connector: str, path: str) -> str:
+        if _connector_matches(
+            connector,
+            "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID",
+            "AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER",
+            "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER",
+        ):
+            resolved = _join_management_url(_env_first("AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL"), path)
+            if resolved:
+                return resolved
+        if _connector_matches(
+            connector,
+            "AI_MODEL_HUB_CONSUMER_CONNECTOR_ID",
+            "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER",
+        ):
+            resolved = _join_management_url(_env_first("AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL"), path)
+            if resolved:
+                return resolved
         if callable(self.management_url_resolver):
             resolved = str(self.management_url_resolver(connector, path) or "").strip()
             if resolved:
@@ -721,11 +766,104 @@ def build_inesdata_ai_model_hub_model_execution_suite(topology: str = "local"):
     return build_ai_model_hub_model_execution_suite("inesdata", topology=topology)
 
 
+def _join_url_path(base_url: str | None, path_value: str | None) -> str:
+    base = str(base_url or "").strip().rstrip("/")
+    path = str(path_value or "").strip()
+    if not base:
+        return ""
+    if not path:
+        return base
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"{base}{path.rstrip('/')}"
+
+
+def _force_url_scheme(base_url: str | None, scheme: str) -> str:
+    raw_value = str(base_url or "").strip().rstrip("/")
+    if not raw_value:
+        return ""
+    parsed = urlsplit(raw_value if "://" in raw_value else f"{scheme}://{raw_value}")
+    if not parsed.netloc:
+        return ""
+    return urlunsplit((scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+
+
+def _configured_connector_model_server_base_url(config: dict[str, Any], topology: str | None = None) -> str:
+    explicit = str(
+        os.environ.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
+        or os.environ.get("MODEL_SERVER_CONNECTOR_BASE_URL")
+        or config.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
+        or config.get("MODEL_SERVER_CONNECTOR_BASE_URL")
+        or config.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_URL")
+        or config.get("MODEL_SERVER_CONNECTOR_URL")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit.rstrip("/")
+
+    if str(topology or "").strip().lower() != "vm-distributed":
+        return ""
+
+    public_path = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_PATH")
+        or config.get("MODEL_SERVER_PUBLIC_PATH")
+        or "/model-server"
+    ).strip()
+    for base_candidate in (
+        config.get("VM_COMMON_HTTP_URL"),
+        config.get("VM_COMMON_PUBLIC_URL"),
+        config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_BASE_URL"),
+        config.get("COMPONENTS_PUBLIC_BASE_URL"),
+    ):
+        base_url = _force_url_scheme(base_candidate, "http")
+        if base_url:
+            return _join_url_path(base_url, public_path)
+    return ""
+
+
+def _configured_model_server_base_url(config: dict[str, Any]) -> str:
+    explicit = str(
+        os.environ.get("AI_MODEL_HUB_MODEL_SERVER_BASE_URL")
+        or config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL")
+        or config.get("MODEL_SERVER_PUBLIC_URL")
+        or config.get("AI_MODEL_HUB_MODEL_SERVER_BASE_URL")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit.rstrip("/")
+
+    public_base = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_BASE_URL")
+        or config.get("COMPONENTS_PUBLIC_BASE_URL")
+        or ""
+    ).strip()
+    public_path = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_PATH")
+        or config.get("MODEL_SERVER_PUBLIC_PATH")
+        or "/model-server"
+    ).strip()
+    return _join_url_path(public_base, public_path)
+
+
 def default_model_url(adapter, model_path: str = DEFAULT_MODEL_PATH) -> str:
     config_loader = getattr(adapter, "load_deployer_config", None)
     config = config_loader() if callable(config_loader) else {}
     if not isinstance(config, dict):
         config = {}
+    normalized_path = f"/{str(model_path or DEFAULT_MODEL_PATH).lstrip('/')}"
+    topology = (
+        getattr(adapter, "topology", "")
+        or config.get("TOPOLOGY")
+        or os.environ.get("PIONERA_TOPOLOGY")
+        or os.environ.get("TOPOLOGY")
+        or ""
+    )
+    connector_base = _configured_connector_model_server_base_url(config, topology=topology)
+    if connector_base:
+        return _join_url_path(connector_base, normalized_path)
+    public_base = _configured_model_server_base_url(config)
+    if public_base:
+        return _join_url_path(public_base, normalized_path)
     namespace = (
         os.environ.get("AI_MODEL_HUB_MODEL_SERVER_NAMESPACE")
         or os.environ.get("UI_AI_MODEL_HUB_MODEL_NAMESPACE")
@@ -735,7 +873,6 @@ def default_model_url(adapter, model_path: str = DEFAULT_MODEL_PATH) -> str:
         or "components"
     )
     namespace = str(namespace or "components").strip() or "components"
-    normalized_path = f"/{str(model_path or DEFAULT_MODEL_PATH).lstrip('/')}"
     return f"http://model-server.{namespace}.svc.cluster.local:8080{normalized_path}"
 
 

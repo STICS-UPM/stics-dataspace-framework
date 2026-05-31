@@ -19,7 +19,19 @@ K8S_NAMESPACE="${K8S_NAMESPACE:-}"
 DATASPACE_NAME="${DATASPACE_NAME:-}"
 MINIKUBE_PROFILE="${MINIKUBE_PROFILE:-minikube}"
 CLUSTER_RUNTIME="${CLUSTER_RUNTIME:-minikube}"
+DOCKER_CMD="${DOCKER_CMD:-${PIONERA_DOCKER_CMD:-}}"
 K3S_IMAGE_IMPORT_COMMAND="${K3S_IMAGE_IMPORT_COMMAND:-sudo k3s ctr -n k8s.io images import}"
+K3S_REMOTE_IMPORT_HOST="${K3S_REMOTE_IMPORT_HOST:-}"
+K3S_REMOTE_IMPORT_USER="${K3S_REMOTE_IMPORT_USER:-}"
+K3S_REMOTE_IMPORT_PORT="${K3S_REMOTE_IMPORT_PORT:-22}"
+K3S_REMOTE_IMPORT_BASTION_HOST="${K3S_REMOTE_IMPORT_BASTION_HOST:-}"
+K3S_REMOTE_IMPORT_BASTION_USER="${K3S_REMOTE_IMPORT_BASTION_USER:-}"
+K3S_REMOTE_IMPORT_BASTION_PORT="${K3S_REMOTE_IMPORT_BASTION_PORT:-2222}"
+K3S_REMOTE_IMPORT_IDENTITY_FILE="${K3S_REMOTE_IMPORT_IDENTITY_FILE:-}"
+K3S_REMOTE_IMPORT_DIR="${K3S_REMOTE_IMPORT_DIR:-/tmp}"
+K3S_REMOTE_IMPORT_ALLOCATE_TTY="${K3S_REMOTE_IMPORT_ALLOCATE_TTY:-false}"
+K3S_REMOTE_PRUNE_IMPORTED_IMAGES="${K3S_REMOTE_PRUNE_IMPORTED_IMAGES:-false}"
+K3S_REMOTE_PRUNE_KEEP="${K3S_REMOTE_PRUNE_KEEP:-2}"
 LOCAL_REGISTRY_HOST="${LOCAL_REGISTRY_HOST:-local}"
 LOCAL_NAMESPACE="${LOCAL_NAMESPACE:-inesdata}"
 
@@ -71,7 +83,19 @@ Environment variables:
   DATASPACE_NAME
   MINIKUBE_PROFILE
   CLUSTER_RUNTIME
+  DOCKER_CMD / PIONERA_DOCKER_CMD
   K3S_IMAGE_IMPORT_COMMAND
+  K3S_REMOTE_IMPORT_HOST
+  K3S_REMOTE_IMPORT_USER
+  K3S_REMOTE_IMPORT_PORT
+  K3S_REMOTE_IMPORT_BASTION_HOST
+  K3S_REMOTE_IMPORT_BASTION_USER
+  K3S_REMOTE_IMPORT_BASTION_PORT
+  K3S_REMOTE_IMPORT_IDENTITY_FILE
+  K3S_REMOTE_IMPORT_DIR
+  K3S_REMOTE_IMPORT_ALLOCATE_TTY
+  K3S_REMOTE_PRUNE_IMPORTED_IMAGES
+  K3S_REMOTE_PRUNE_KEEP
   LOCAL_REGISTRY_HOST
   LOCAL_NAMESPACE
 EOF
@@ -194,6 +218,21 @@ normalize_cluster_runtime() {
       exit 1
       ;;
   esac
+}
+
+resolve_docker_cmd() {
+  if [[ -n "${DOCKER_CMD:-}" ]]; then
+    return
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    DOCKER_CMD="docker"
+    return
+  fi
+  if [[ -x "/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe" ]]; then
+    DOCKER_CMD="/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe"
+    return
+  fi
+  DOCKER_CMD="docker"
 }
 
 resolve_manifest() {
@@ -461,21 +500,297 @@ prune_replaced_images() {
   done < "$before_file"
 }
 
+shell_join() {
+  local arg
+  printf '%q' "$1"
+  shift || true
+  for arg in "$@"; do
+    printf ' %q' "$arg"
+  done
+}
+
+k3s_remote_import_enabled() {
+  [[ -n "${K3S_REMOTE_IMPORT_HOST:-}" ]]
+}
+
+k3s_remote_prune_enabled() {
+  case "$(printf '%s' "$K3S_REMOTE_PRUNE_IMPORTED_IMAGES" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|y|on|enabled|enable)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+k3s_remote_prune_keep() {
+  case "${K3S_REMOTE_PRUNE_KEEP:-2}" in
+    ''|*[!0-9]*)
+      echo "2"
+      ;;
+    *)
+      echo "$K3S_REMOTE_PRUNE_KEEP"
+      ;;
+  esac
+}
+
+k3s_remote_import_interactive_mode() {
+  case "$(printf '%s' "${K3S_REMOTE_IMPORT_INTERACTIVE:-false}" | tr '[:upper:]' '[:lower:]')" in
+    auto|fallback|if-needed|if_needed|prompt-if-needed|prompt_if_needed)
+      echo "auto"
+      ;;
+    1|true|yes|y|on|enabled|enable|always|interactive)
+      echo "always"
+      ;;
+    *)
+      echo "never"
+      ;;
+  esac
+}
+
+sudo_command_without_noninteractive_flag() {
+  local raw="$1"
+  case "$raw" in
+    "sudo -n "*)
+      printf 'sudo %s' "${raw#sudo -n }"
+      ;;
+    *)
+      printf '%s' "$raw"
+      ;;
+  esac
+}
+
+k3s_remote_import_target() {
+  if [[ -n "${K3S_REMOTE_IMPORT_USER:-}" ]]; then
+    printf '%s@%s' "$K3S_REMOTE_IMPORT_USER" "$K3S_REMOTE_IMPORT_HOST"
+  else
+    printf '%s' "$K3S_REMOTE_IMPORT_HOST"
+  fi
+}
+
+k3s_remote_import_bastion() {
+  local destination
+  if [[ -z "${K3S_REMOTE_IMPORT_BASTION_HOST:-}" ]]; then
+    return 0
+  fi
+
+  destination="$(k3s_remote_import_bastion_target)"
+
+  if [[ -n "${K3S_REMOTE_IMPORT_BASTION_PORT:-}" ]]; then
+    destination="${destination}:${K3S_REMOTE_IMPORT_BASTION_PORT}"
+  fi
+  printf '%s' "$destination"
+}
+
+k3s_remote_import_bastion_target() {
+  local destination
+  if [[ -z "${K3S_REMOTE_IMPORT_BASTION_HOST:-}" ]]; then
+    return 0
+  fi
+
+  if [[ -n "${K3S_REMOTE_IMPORT_BASTION_USER:-}" ]]; then
+    destination="${K3S_REMOTE_IMPORT_BASTION_USER}@${K3S_REMOTE_IMPORT_BASTION_HOST}"
+  else
+    destination="$K3S_REMOTE_IMPORT_BASTION_HOST"
+  fi
+  printf '%s' "$destination"
+}
+
+k3s_remote_import_bastion_proxy_command() {
+  local -a args
+  if [[ -z "${K3S_REMOTE_IMPORT_BASTION_HOST:-}" || -z "${K3S_REMOTE_IMPORT_IDENTITY_FILE:-}" ]]; then
+    return 0
+  fi
+
+  args=(ssh -o BatchMode=yes -o IdentitiesOnly=yes -i "$K3S_REMOTE_IMPORT_IDENTITY_FILE")
+  if [[ -n "${K3S_REMOTE_IMPORT_BASTION_PORT:-}" ]]; then
+    args+=(-p "$K3S_REMOTE_IMPORT_BASTION_PORT")
+  fi
+  args+=(-W "%h:%p" "$(k3s_remote_import_bastion_target)")
+  shell_join "${args[@]}"
+}
+
+remote_prune_imported_images_command() {
+  local full_image="$1"
+  local repo
+  local keep
+  local current_q
+  local repo_q
+  local keep_q
+
+  repo="${full_image%:*}"
+  if [[ -z "$repo" || "$repo" == "$full_image" ]]; then
+    return 0
+  fi
+
+  keep="$(k3s_remote_prune_keep)"
+  current_q="$(printf '%q' "$full_image")"
+  repo_q="$(printf '%q' "$repo")"
+  keep_q="$(printf '%q' "$keep")"
+
+  cat <<EOF
+repo=$repo_q; current=$current_q; keep=$keep_q; case "\$keep" in ''|*[!0-9]*) keep=2;; esac; echo "Pruning old k3s images for \$repo (keeping latest \$keep)"; in_use="\$(sudo k3s kubectl get pods -A -o jsonpath='{range .items[*]}{range .spec.initContainers[*]}{.image}{"\\n"}{end}{range .spec.containers[*]}{.image}{"\\n"}{end}{end}' 2>/dev/null || true)"; count=0; sudo k3s ctr -n k8s.io images ls -q 2>/dev/null | while IFS= read -r image; do case "\$image" in "\$repo":*|*/"\$repo":*) printf '%s\n' "\$image";; esac; done | sort -r | while IFS= read -r image; do without_docker="\${image#docker.io/}"; if [ "\$image" = "\$current" ] || [ "\$without_docker" = "\$current" ] || [ "\$image" = "docker.io/\$current" ]; then continue; fi; count=\$((count + 1)); if [ "\$count" -le "\$keep" ]; then continue; fi; if printf '%s\n' "\$in_use" | grep -Fxq "\$image" || printf '%s\n' "\$in_use" | grep -Fxq "\$without_docker"; then echo "Keeping in-use k3s image: \$image"; continue; fi; echo "Pruning old k3s image: \$image"; sudo k3s ctr -n k8s.io images rm "\$image" >/dev/null 2>&1 || echo "Warning: could not prune k3s image: \$image"; done
+EOF
+}
+
+remote_import_image_into_k3s() {
+  local archive_file="$1"
+  local full_image="${2:-}"
+  local remote_archive
+  local target
+  local bastion
+  local remote_archive_q
+  local remote_cmd
+  local prune_cmd
+  local scp_args
+  local ssh_args
+  local ssh_probe_args
+  local ssh_interactive_args
+  local bastion_proxy_command
+  local interactive_mode
+  local import_command
+  local interactive_import_command
+
+  remote_archive="${K3S_REMOTE_IMPORT_DIR%/}/$(basename "$archive_file")"
+  target="$(k3s_remote_import_target)"
+  bastion="$(k3s_remote_import_bastion)"
+  bastion_proxy_command="$(k3s_remote_import_bastion_proxy_command)"
+  interactive_mode="$(k3s_remote_import_interactive_mode)"
+
+  scp_args=(scp)
+  if [[ -n "${K3S_REMOTE_IMPORT_IDENTITY_FILE:-}" ]]; then
+    scp_args+=(-o BatchMode=yes -o IdentitiesOnly=yes -i "$K3S_REMOTE_IMPORT_IDENTITY_FILE")
+  fi
+  if [[ -n "${K3S_REMOTE_IMPORT_PORT:-}" ]]; then
+    scp_args+=(-P "$K3S_REMOTE_IMPORT_PORT")
+  fi
+  if [[ -n "$bastion_proxy_command" ]]; then
+    scp_args+=(-o "ProxyCommand=$bastion_proxy_command")
+  elif [[ -n "$bastion" ]]; then
+    scp_args+=(-o "ProxyJump=$bastion")
+  fi
+  scp_args+=("$archive_file" "$target:$remote_archive")
+
+  remote_archive_q="$(printf '%q' "$remote_archive")"
+  import_command="$K3S_IMAGE_IMPORT_COMMAND"
+  if [[ "$interactive_mode" == "always" ]]; then
+    import_command="$(sudo_command_without_noninteractive_flag "$import_command")"
+  fi
+  remote_cmd="$import_command $remote_archive_q; status=\$?; rm -f $remote_archive_q; if [ \$status -ne 0 ]; then exit \$status; fi"
+  if k3s_remote_prune_enabled && [[ -n "$full_image" ]]; then
+    prune_cmd="$(remote_prune_imported_images_command "$full_image")"
+    if [[ -n "$prune_cmd" ]]; then
+      remote_cmd="$remote_cmd; $prune_cmd"
+    fi
+  fi
+  ssh_args=(ssh)
+  case "$(printf '%s' "$K3S_REMOTE_IMPORT_ALLOCATE_TTY" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|y|on)
+      ssh_args+=(-t)
+      ;;
+  esac
+  if [[ "$interactive_mode" == "always" ]]; then
+    ssh_args+=(-t)
+  fi
+  if [[ -n "${K3S_REMOTE_IMPORT_IDENTITY_FILE:-}" ]]; then
+    ssh_args+=(-o BatchMode=yes -o IdentitiesOnly=yes -i "$K3S_REMOTE_IMPORT_IDENTITY_FILE")
+  fi
+  if [[ -n "${K3S_REMOTE_IMPORT_PORT:-}" ]]; then
+    ssh_args+=(-p "$K3S_REMOTE_IMPORT_PORT")
+  fi
+  if [[ -n "$bastion_proxy_command" ]]; then
+    ssh_args+=(-o "ProxyCommand=$bastion_proxy_command")
+  elif [[ -n "$bastion" ]]; then
+    ssh_args+=(-J "$bastion")
+  fi
+  ssh_args+=("$target" "$remote_cmd")
+
+  if [[ "$interactive_mode" == "auto" ]]; then
+    ssh_probe_args=(ssh)
+    if [[ -n "${K3S_REMOTE_IMPORT_IDENTITY_FILE:-}" ]]; then
+      ssh_probe_args+=(-o BatchMode=yes -o IdentitiesOnly=yes -i "$K3S_REMOTE_IMPORT_IDENTITY_FILE")
+    fi
+    if [[ -n "${K3S_REMOTE_IMPORT_PORT:-}" ]]; then
+      ssh_probe_args+=(-p "$K3S_REMOTE_IMPORT_PORT")
+    fi
+    if [[ -n "$bastion_proxy_command" ]]; then
+      ssh_probe_args+=(-o "ProxyCommand=$bastion_proxy_command")
+    elif [[ -n "$bastion" ]]; then
+      ssh_probe_args+=(-J "$bastion")
+    fi
+    ssh_probe_args+=("$target" "sudo -n k3s ctr -n k8s.io images ls -q >/dev/null")
+
+    interactive_import_command="$(sudo_command_without_noninteractive_flag "$K3S_IMAGE_IMPORT_COMMAND")"
+    remote_cmd="$interactive_import_command $remote_archive_q; status=\$?; rm -f $remote_archive_q; if [ \$status -ne 0 ]; then exit \$status; fi"
+    if k3s_remote_prune_enabled && [[ -n "$full_image" && -n "${prune_cmd:-}" ]]; then
+      remote_cmd="$remote_cmd; $prune_cmd"
+    fi
+
+    ssh_interactive_args=(ssh -t)
+    if [[ -n "${K3S_REMOTE_IMPORT_IDENTITY_FILE:-}" ]]; then
+      ssh_interactive_args+=(-o BatchMode=yes -o IdentitiesOnly=yes -i "$K3S_REMOTE_IMPORT_IDENTITY_FILE")
+    fi
+    if [[ -n "${K3S_REMOTE_IMPORT_PORT:-}" ]]; then
+      ssh_interactive_args+=(-p "$K3S_REMOTE_IMPORT_PORT")
+    fi
+    if [[ -n "$bastion_proxy_command" ]]; then
+      ssh_interactive_args+=(-o "ProxyCommand=$bastion_proxy_command")
+    elif [[ -n "$bastion" ]]; then
+      ssh_interactive_args+=(-J "$bastion")
+    fi
+    ssh_interactive_args+=("$target" "$remote_cmd")
+  fi
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    run_cmd "$(shell_join "${scp_args[@]}")"
+    if [[ "$interactive_mode" == "auto" ]]; then
+      run_cmd "$(shell_join "${ssh_probe_args[@]}")"
+      run_cmd "$(shell_join "${ssh_args[@]}")"
+      run_cmd "$(shell_join "${ssh_interactive_args[@]}") # fallback when sudo -n is not available"
+      return
+    fi
+    run_cmd "$(shell_join "${ssh_args[@]}")"
+    return
+  fi
+
+  "${scp_args[@]}"
+  if [[ "$interactive_mode" == "auto" ]]; then
+    if "${ssh_probe_args[@]}"; then
+      "${ssh_args[@]}"
+    else
+      echo "Remote k3s image import needs sudo password; retrying with an interactive prompt."
+      "${ssh_interactive_args[@]}"
+    fi
+    return
+  fi
+  "${ssh_args[@]}"
+}
+
 load_image_into_k3s() {
   local full_image="$1"
   local archive_file
+  local docker_cmd_q
 
   archive_file="$(mktemp "${TMPDIR:-/tmp}/inesdata-image-XXXXXX.tar")"
+  docker_cmd_q="$(printf '%q' "$DOCKER_CMD")"
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    run_cmd "docker save \"$full_image\" -o \"$archive_file\""
-    run_cmd "$K3S_IMAGE_IMPORT_COMMAND \"$archive_file\""
+    run_cmd "$docker_cmd_q save \"$full_image\" -o \"$archive_file\""
+    if k3s_remote_import_enabled; then
+      remote_import_image_into_k3s "$archive_file" "$full_image"
+    else
+      run_cmd "$K3S_IMAGE_IMPORT_COMMAND \"$archive_file\""
+    fi
     run_cmd "rm -f \"$archive_file\""
     return
   fi
 
-  docker save "$full_image" -o "$archive_file"
+  "$DOCKER_CMD" save "$full_image" -o "$archive_file"
+  if k3s_remote_import_enabled; then
+    if ! remote_import_image_into_k3s "$archive_file" "$full_image"; then
+      rm -f "$archive_file"
+      return 1
+    fi
   # shellcheck disable=SC2086
-  if ! $K3S_IMAGE_IMPORT_COMMAND "$archive_file"; then
+  elif ! $K3S_IMAGE_IMPORT_COMMAND "$archive_file"; then
     rm -f "$archive_file"
     return 1
   fi
@@ -509,16 +824,32 @@ if [[ -z "$DATASPACE_NAME" || -z "$K8S_NAMESPACE" ]]; then
   exit 1
 fi
 normalize_cluster_runtime
+resolve_docker_cmd
 
 echo "Mode: $([[ "$DRY_RUN" -eq 1 ]] && echo "dry-run" || echo "apply")"
 echo "Platform dir: $PLATFORM_DIR"
 echo "Dataspace name: $DATASPACE_NAME"
 echo "K8s namespace: $K8S_NAMESPACE"
 echo "Cluster runtime: $CLUSTER_RUNTIME"
+echo "Docker command: $DOCKER_CMD"
 if [[ "$CLUSTER_RUNTIME" == "minikube" ]]; then
   echo "Minikube profile: $MINIKUBE_PROFILE"
 else
   echo "K3s image import command: $K3S_IMAGE_IMPORT_COMMAND"
+  if k3s_remote_prune_enabled; then
+    echo "K3s remote prune imported images: yes"
+  else
+    echo "K3s remote prune imported images: no"
+  fi
+  if k3s_remote_prune_enabled; then
+    echo "K3s remote prune keep: $(k3s_remote_prune_keep)"
+  fi
+  if k3s_remote_import_enabled; then
+    echo "K3s remote import target: $(k3s_remote_import_target)"
+    if [[ -n "${K3S_REMOTE_IMPORT_BASTION_HOST:-}" ]]; then
+      echo "K3s remote import bastion: $(k3s_remote_import_bastion)"
+    fi
+  fi
 fi
 echo "Local image prefix: $LOCAL_REGISTRY_HOST/$LOCAL_NAMESPACE"
 echo "Target: $TARGET"
@@ -572,7 +903,12 @@ if [[ "$RUN_BUILD" -eq 1 ]]; then
   esac
 
   mkdir -p "$MANIFESTS_DIR"
-  MANIFEST_FILE="$MANIFESTS_DIR/images-local-build-load-deploy-$(date -u +%Y-%m-%dT%H-%M-%SZ).tsv"
+  if [[ -z "$MANIFEST_FILE" ]]; then
+    MANIFEST_FILE="$MANIFESTS_DIR/images-local-build-load-deploy-$(date -u +%Y-%m-%dT%H-%M-%SZ).tsv"
+  else
+    mkdir -p "$(dirname "$MANIFEST_FILE")"
+    rm -f "$MANIFEST_FILE"
+  fi
 
   for build_component in "${build_components[@]}"; do
     if [[ "$DRY_RUN" -eq 1 ]]; then

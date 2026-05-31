@@ -130,27 +130,27 @@ export class CatalogBrowserService {
 
   private mapCatalog(catalog: any) {
     const arr = Array<DataOffer>();
-    let datasets = catalog["http://www.w3.org/ns/dcat#dataset"];
-    if (!datasets) {
+    const datasets = this.toArray(this.firstNodeValue(catalog, [
+      'http://www.w3.org/ns/dcat#dataset',
+      'dcat:dataset',
+      'dataset'
+    ]));
+    if (datasets.length === 0) {
       return arr;
-    }
-
-    if (!Array.isArray(datasets)) {
-      datasets = [datasets];
     }
 
     for (const dataset of datasets) {
       const properties: { [key: string]: any; } = {
 				id: this.firstDatasetValue(dataset, ['id', '@id']),
-				name: this.firstDatasetValue(dataset, ['name', 'dcterms:title', 'http://purl.org/dc/terms/title']),
+				name: this.firstDatasetValue(dataset, ['name', 'dct:title', 'dcterms:title', 'http://purl.org/dc/terms/title']),
 				version: this.firstDatasetValue(dataset, ['version']),
 				assetType: this.firstDatasetValue(dataset, ['assetType', 'edc:assetType', 'https://w3id.org/edc/v0.0.1/ns/assetType']),
 				contenttype: this.firstDatasetValue(dataset, ['contenttype', 'edc:contenttype', 'https://w3id.org/edc/v0.0.1/ns/contenttype', 'dcat:mediaType', 'http://www.w3.org/ns/dcat#mediaType']),
 				assetData: this.firstDatasetValue(dataset, ['assetData', 'edc:assetData', 'https://w3id.org/edc/v0.0.1/ns/assetData']),
-				description: this.firstDatasetValue(dataset, ['description', 'dcterms:description', 'http://purl.org/dc/terms/description']),
+				description: this.firstDatasetValue(dataset, ['description', 'dct:description', 'dcterms:description', 'http://purl.org/dc/terms/description']),
 				shortDescription: this.firstDatasetValue(dataset, ['shortDescription', 'edc:shortDescription', 'https://w3id.org/edc/v0.0.1/ns/shortDescription']),
-				byteSize: this.firstDatasetValue(dataset, ['http://www.w3.org/ns/dcat#byteSize', 'byteSize']),
-				format: this.firstDatasetValue(dataset, ['format', 'dcterms:format', 'http://purl.org/dc/terms/format']),
+				byteSize: this.firstDatasetValue(dataset, ['http://www.w3.org/ns/dcat#byteSize', 'dcat:byteSize', 'byteSize']),
+				format: this.firstDatasetValue(dataset, ['format', 'dct:format', 'dcterms:format', 'http://purl.org/dc/terms/format']),
 				keywords: this.firstDatasetValue(dataset, ['keywords', 'dcat:keyword', 'http://www.w3.org/ns/dcat#keyword']),
         participantId: this.firstDatasetValue(dataset, ['participantId', 'originator', 'dspace:participantId']),
         storageType: this.findStorageType(dataset),
@@ -178,49 +178,68 @@ export class CatalogBrowserService {
   }
 
   private findEndpointUrl(dataset: any, catalog: any) {
-    const distributions = dataset['http://www.w3.org/ns/dcat#distribution'];
-    const distributionList = Array.isArray(distributions) ? distributions : distributions ? [distributions] : [];
-    const accessService = distributionList[0]?.['http://www.w3.org/ns/dcat#accessService'];
-    const serviceId = this.resolveTextValue(accessService?.['@id']);
+    const distributionList = this.readDistributions(dataset);
+    const firstDistribution = distributionList[0] || {};
+    const accessService = this.readAccessService(firstDistribution);
+    const serviceId = this.resolveTextValue(accessService?.['@id'] || accessService);
 
-    const services = catalog['http://www.w3.org/ns/dcat#service'];
-    const serviceList = Array.isArray(services) ? services : services ? [services] : [];
+    const serviceList = this.toArray(this.firstNodeValue(catalog, [
+      'http://www.w3.org/ns/dcat#service',
+      'dcat:service',
+      'service'
+    ]));
+    const endpointKeys = [
+      'http://www.w3.org/ns/dcat#endpointUrl',
+      'http://www.w3.org/ns/dcat#endpointURL',
+      'dcat:endpointUrl',
+      'dcat:endpointURL',
+      'endpointUrl',
+      'endpointURL'
+    ];
 
     if (!serviceId) {
-      return this.resolveTextValue(serviceList[0]?.['http://www.w3.org/ns/dcat#endpointUrl']);
+      return this.firstTextValue(serviceList[0], endpointKeys)
+        || this.firstTextValue(firstDistribution, endpointKeys)
+        || this.firstTextValue(accessService, endpointKeys);
     }
 
-    const service = serviceList.find(candidate => candidate?.['@id'] === serviceId);
-    return this.resolveTextValue(service?.['http://www.w3.org/ns/dcat#endpointUrl']);
+    const service = serviceList.find(candidate => this.resolveTextValue(candidate?.['@id'] || candidate?.id) === serviceId);
+    return this.firstTextValue(service, endpointKeys)
+      || this.firstTextValue(firstDistribution, endpointKeys)
+      || this.firstTextValue(accessService, endpointKeys);
   }
 
   private findStorageType(dataset: any): string {
-    const distributions = dataset?.['http://www.w3.org/ns/dcat#distribution'];
-    const distributionList = Array.isArray(distributions) ? distributions : distributions ? [distributions] : [];
-    const datasetStorageType = this.resolveTextValue(dataset?.storageType)
-      || this.resolveTextValue(dataset?.['edc:dataAddressType'])
-      || this.resolveTextValue(dataset?.['https://w3id.org/edc/v0.0.1/ns/dataAddressType'])
-      || this.resolveTextValue(dataset?.type)
-      || this.resolveTextValue(dataset?.['edc:type']);
+    const distributionList = this.readDistributions(dataset);
+    const dataAddressKeys = [
+      'storageType',
+      'edc:dataAddressType',
+      'https://w3id.org/edc/v0.0.1/ns/dataAddressType',
+      'dataAddressType',
+      'type',
+      'edc:type',
+      'https://w3id.org/edc/v0.0.1/ns/type'
+    ];
+    const representationKeys = [
+      ...dataAddressKeys,
+      'http://purl.org/dc/terms/format',
+      'dct:format',
+      'dcterms:format',
+      'format',
+      'http://www.w3.org/ns/dcat#mediaType',
+      'dcat:mediaType',
+      'mediaType'
+    ];
+    const datasetStorageType = this.firstTextValue(dataset, dataAddressKeys);
 
     if (datasetStorageType) {
       return datasetStorageType;
     }
 
     for (const distribution of distributionList) {
-      const accessService = distribution?.['http://www.w3.org/ns/dcat#accessService'] || {};
-      const distributionStorageType = this.resolveTextValue(distribution?.storageType)
-        || this.resolveTextValue(distribution?.['edc:dataAddressType'])
-        || this.resolveTextValue(distribution?.['https://w3id.org/edc/v0.0.1/ns/dataAddressType'])
-        || this.resolveTextValue(distribution?.type)
-        || this.resolveTextValue(distribution?.['edc:type'])
-        || this.resolveTextValue(distribution?.['http://purl.org/dc/terms/format'])
-        || this.resolveTextValue(distribution?.['http://www.w3.org/ns/dcat#mediaType'])
-        || this.resolveTextValue(accessService?.storageType)
-        || this.resolveTextValue(accessService?.['edc:dataAddressType'])
-        || this.resolveTextValue(accessService?.type)
-        || this.resolveTextValue(accessService?.['http://purl.org/dc/terms/format'])
-        || this.resolveTextValue(accessService?.['http://www.w3.org/ns/dcat#mediaType']);
+      const accessService = this.readAccessService(distribution);
+      const distributionStorageType = this.firstTextValue(distribution, representationKeys)
+        || this.firstTextValue(accessService, representationKeys);
 
       if (distributionStorageType) {
         return distributionStorageType;
@@ -231,8 +250,7 @@ export class CatalogBrowserService {
   }
 
   private findFileName(dataset: any): string {
-    const distributions = dataset?.['http://www.w3.org/ns/dcat#distribution'];
-    const distributionList = Array.isArray(distributions) ? distributions : distributions ? [distributions] : [];
+    const distributionList = this.readDistributions(dataset);
     const firstDistribution = distributionList[0] || {};
 
     return this.resolveTextValue(firstDistribution.fileName)
@@ -241,6 +259,22 @@ export class CatalogBrowserService {
       || this.resolveTextValue(firstDistribution.s3Key)
       || this.resolveTextValue(dataset?.fileName)
       || '';
+  }
+
+  private readDistributions(dataset: any): any[] {
+    return this.toArray(this.firstNodeValue(dataset, [
+      'http://www.w3.org/ns/dcat#distribution',
+      'dcat:distribution',
+      'distribution'
+    ]));
+  }
+
+  private readAccessService(distribution: any): any {
+    return this.firstNodeValue(distribution, [
+      'http://www.w3.org/ns/dcat#accessService',
+      'dcat:accessService',
+      'accessService'
+    ]) || {};
   }
 
   private findHttpPath(dataset: any): string {
@@ -262,6 +296,30 @@ export class CatalogBrowserService {
     }
 
     return '';
+  }
+
+  private firstNodeValue(node: any, keys: string[]): any {
+    for (const key of keys) {
+      const value = node?.[key];
+      if (value !== undefined && value !== null && value !== '') {
+        return value;
+      }
+    }
+
+    return undefined;
+  }
+
+  private firstTextValue(node: any, keys: string[]): string {
+    const value = this.firstNodeValue(node, keys);
+    return this.resolveTextValue(value);
+  }
+
+  private toArray(value: any): any[] {
+    if (value === undefined || value === null || value === '') {
+      return [];
+    }
+
+    return Array.isArray(value) ? value : [value];
   }
 
   private resolveTextValue(value: any): string {

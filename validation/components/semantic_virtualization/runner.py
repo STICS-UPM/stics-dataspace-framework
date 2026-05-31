@@ -11,6 +11,7 @@ from validation.components.console_output import (
     print_component_case_results,
     print_component_suite_header,
 )
+from validation.components.execution_mode import component_api_only_enabled
 from validation.components.semantic_virtualization.gtfs_bench_materialization import (
     run_gtfs_bench_official_materialization_validation,
 )
@@ -560,6 +561,7 @@ def run_semantic_virtualization_validation(
 ) -> Dict[str, Any]:
     started_at = datetime.now().isoformat()
     normalized_base_url = (base_url or "").rstrip("/")
+    api_only = component_api_only_enabled()
     checks = _api_checks()
 
     component_dir = _component_dir(experiment_dir)
@@ -676,21 +678,35 @@ def run_semantic_virtualization_validation(
         tagged_cases = _tag_suite_cases(suite_key, suite_result, "functional")
         executed_cases.extend(tagged_cases)
         print_component_case_results(tagged_cases)
-    print_component_suite_header("Virtualizador functional", "playwright")
-    ui_result = run_semantic_virtualization_ui_validation(
-        normalized_base_url,
-        experiment_dir=experiment_dir,
-    )
-    ui_result.setdefault("execution_channel", "playwright")
-    ui_cases = [
-        {**case, "source_phase": "functional"}
-        for case in list(ui_result.get("executed_cases") or [])
-    ]
-    executed_cases.extend(ui_cases)
+    ui_result: Dict[str, Any] = {
+        "component": COMPONENT_KEY,
+        "suite": "ui",
+        "status": "skipped",
+        "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
+        "executed_cases": [],
+        "evidence_index": [],
+        "artifacts": {},
+        "skip_reason": "component validation is running in API-only mode",
+        "execution_channel": "playwright",
+    }
+    if not api_only:
+        print_component_suite_header("Virtualizador functional", "playwright")
+        ui_result = run_semantic_virtualization_ui_validation(
+            normalized_base_url,
+            experiment_dir=experiment_dir,
+        )
+        ui_result.setdefault("execution_channel", "playwright")
+        ui_cases = [
+            {**case, "source_phase": "functional"}
+            for case in list(ui_result.get("executed_cases") or [])
+        ]
+        executed_cases.extend(ui_cases)
     run_api_phase("integration")
 
     summary = _summarize_cases(executed_cases)
-    status = "failed" if summary["failed"] or str(ui_result.get("status") or "").lower() in {"failed", "error"} else "passed"
+    status = "failed" if summary["failed"] or (
+        not api_only and str(ui_result.get("status") or "").lower() in {"failed", "error"}
+    ) else "passed"
     pt5_case_results = [case for case in executed_cases if case.get("case_group") == "pt5"]
     support_checks = [case for case in executed_cases if case.get("case_group") == "support"]
     findings = [
@@ -722,7 +738,8 @@ def run_semantic_virtualization_validation(
             }
         if phase == "functional":
             suite_results.update(functional_suite_results)
-            suite_results["ui"] = ui_result
+            if not api_only:
+                suite_results["ui"] = ui_result
         suite_statuses = [
             str(suite_result.get("status") or "").lower()
             for suite_result in suite_results.values()
@@ -760,6 +777,7 @@ def run_semantic_virtualization_validation(
         "timestamp": started_at,
         "status": status,
         "summary": summary,
+        "validation_mode": "api" if api_only else "mixed",
         "phase_order": phase_order,
         "phase_execution_channels": phase_execution_channels,
         "phases": phases,
@@ -772,7 +790,7 @@ def run_semantic_virtualization_validation(
                 "executed_cases": api_cases,
             },
             **functional_suite_results,
-            "ui": ui_result,
+            **({} if api_only else {"ui": ui_result}),
         },
         "executed_cases": executed_cases,
         "pt5_case_results": pt5_case_results,
@@ -796,11 +814,11 @@ def run_semantic_virtualization_validation(
                 "support_checks_json": support_checks_path,
                 "evidence_index_json": evidence_index_path,
                 "findings_json": findings_path,
-                "ui_report_json": (ui_result.get("artifacts") or {}).get("report_json", ""),
-                "ui_test_results_dir": (ui_result.get("artifacts") or {}).get("test_results_dir", ""),
-                "ui_html_report_dir": (ui_result.get("artifacts") or {}).get("html_report_dir", ""),
-                "ui_blob_report_dir": (ui_result.get("artifacts") or {}).get("blob_report_dir", ""),
-                "ui_json_report_file": (ui_result.get("artifacts") or {}).get("json_report_file", ""),
+                "ui_report_json": "" if api_only else (ui_result.get("artifacts") or {}).get("report_json", ""),
+                "ui_test_results_dir": "" if api_only else (ui_result.get("artifacts") or {}).get("test_results_dir", ""),
+                "ui_html_report_dir": "" if api_only else (ui_result.get("artifacts") or {}).get("html_report_dir", ""),
+                "ui_blob_report_dir": "" if api_only else (ui_result.get("artifacts") or {}).get("blob_report_dir", ""),
+                "ui_json_report_file": "" if api_only else (ui_result.get("artifacts") or {}).get("json_report_file", ""),
             }
         )
         result["artifacts"] = artifacts
@@ -808,10 +826,10 @@ def run_semantic_virtualization_validation(
             evidence
             for suite_result in functional_suite_results.values()
             for evidence in _suite_evidence(suite_result, "functional")
-        ] + [
+        ] + ([] if api_only else [
             {**evidence, "source_phase": "functional"}
             for evidence in list(ui_result.get("evidence_index") or [])
-        ] + [
+        ]) + [
             {"scope": "component", "suite": "component", "artifact_name": "report_json", "path": report_path},
             {
                 "scope": "component",
@@ -843,9 +861,9 @@ def run_semantic_virtualization_validation(
     else:
         result["artifacts"] = {
             **artifacts,
-            "ui_report_json": (ui_result.get("artifacts") or {}).get("report_json", ""),
+            "ui_report_json": "" if api_only else (ui_result.get("artifacts") or {}).get("report_json", ""),
         }
-        result["evidence_index"] = [
+        result["evidence_index"] = [] if api_only else [
             {**evidence, "source_phase": "functional"}
             for evidence in list(ui_result.get("evidence_index") or [])
         ]

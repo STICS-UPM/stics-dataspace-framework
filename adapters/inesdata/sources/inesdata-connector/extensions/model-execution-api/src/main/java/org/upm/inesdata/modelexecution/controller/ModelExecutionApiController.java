@@ -49,6 +49,8 @@ public class ModelExecutionApiController {
     private final String defaultCounterPartyAddress;
     private final String defaultProtocol;
     private final String defaultTransferType;
+    private final int edrAttempts;
+    private final long edrDelayMs;
     private final boolean observerEnabled;
     private final String observerTargetUrl;
     private final String observerSourceComponent;
@@ -63,6 +65,8 @@ public class ModelExecutionApiController {
                                        String defaultCounterPartyAddress,
                                        String defaultProtocol,
                                        String defaultTransferType,
+                                       int edrAttempts,
+                                       long edrDelayMs,
                                        boolean observerEnabled,
                                        String observerJournalBaseUrl,
                                        String observerJournalEventsPath,
@@ -76,6 +80,8 @@ public class ModelExecutionApiController {
         this.defaultCounterPartyAddress = defaultCounterPartyAddress;
         this.defaultProtocol = defaultProtocol;
         this.defaultTransferType = defaultTransferType;
+        this.edrAttempts = Math.max(1, edrAttempts);
+        this.edrDelayMs = Math.max(1, edrDelayMs);
         this.observerEnabled = observerEnabled;
         this.observerTargetUrl = buildObserverTargetUrl(observerJournalBaseUrl, observerJournalEventsPath);
         this.observerSourceComponent = firstNonBlank(observerSourceComponent, "inesdata-connector:model-execution-api");
@@ -467,7 +473,7 @@ public class ModelExecutionApiController {
     }
 
     private EdrInfo waitForEdr(String transferId, String managementAuthorization) throws Exception {
-        for (int attempt = 0; attempt < DEFAULT_EDR_ATTEMPTS; attempt++) {
+        for (int attempt = 0; attempt < edrAttempts; attempt++) {
             var edrNode = getJson("/v3/edrs/" + encodePathSegment(transferId) + "/dataaddress", managementAuthorization);
             if (edrNode != null && !edrNode.isNull()) {
                 var endpoint = firstNonBlank(textValue(edrNode, "endpoint", "edc:endpoint", "endpointUrl", "edc:endpointUrl"), null);
@@ -477,7 +483,7 @@ public class ModelExecutionApiController {
                     return new EdrInfo(endpoint, authorization, authHeader);
                 }
             }
-            Thread.sleep(DEFAULT_EDR_DELAY_MS);
+            Thread.sleep(edrDelayMs);
         }
 
         return null;

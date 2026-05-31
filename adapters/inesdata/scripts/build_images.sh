@@ -14,6 +14,7 @@ REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE:-inesdata}"
 GRADLE_MAX_WORKERS="${GRADLE_MAX_WORKERS:-1}"
 GRADLE_COMMON_ARGS="${GRADLE_COMMON_ARGS:---no-daemon --no-parallel -Dorg.gradle.workers.max=$GRADLE_MAX_WORKERS}"
 LOCAL_DOCKERFILE_FIXUPS="${INESDATA_LOCAL_DOCKERFILE_FIXUPS:-true}"
+DOCKER_CMD="${DOCKER_CMD:-${PIONERA_DOCKER_CMD:-}}"
 TEMP_DOCKERFILES=()
 EFFECTIVE_DOCKERFILE=""
 
@@ -49,6 +50,7 @@ Environment variables:
   GRADLE_MAX_WORKERS (default: 1)
   GRADLE_COMMON_ARGS (default: --no-daemon --no-parallel -Dorg.gradle.workers.max=<GRADLE_MAX_WORKERS>)
   INESDATA_LOCAL_DOCKERFILE_FIXUPS (default: true; use temporary Dockerfiles without modifying sources)
+  DOCKER_CMD / PIONERA_DOCKER_CMD (default: docker, or Docker Desktop docker.exe on WSL)
 
 Component keys:
   connector
@@ -195,6 +197,21 @@ run_cmd() {
   else
     eval "$@"
   fi
+}
+
+resolve_docker_cmd() {
+  if [[ -n "${DOCKER_CMD:-}" ]]; then
+    return
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    DOCKER_CMD="docker"
+    return
+  fi
+  if [[ -x "/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe" ]]; then
+    DOCKER_CMD="/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe"
+    return
+  fi
+  DOCKER_CMD="docker"
 }
 
 is_truthy() {
@@ -359,6 +376,8 @@ echo "Registry host: $REGISTRY_HOST"
 echo "Registry namespace: $REGISTRY_NAMESPACE"
 echo "Target: $TARGET"
 echo "Gradle args: $GRADLE_COMMON_ARGS"
+resolve_docker_cmd
+echo "Docker command: $DOCKER_CMD"
 
 if [[ "$TARGET" == "TODO" ]]; then
   selected_components=("${ALL_COMPONENTS[@]}")
@@ -409,7 +428,8 @@ for component in "${selected_components[@]}"; do
 
   dockerfile_for_build "$component" "$repo_dir" "$dockerfile"
   effective_dockerfile="$EFFECTIVE_DOCKERFILE"
-  build_cmd="docker build -f $effective_dockerfile -t $full_image $extra_args ."
+  docker_cmd_q="$(printf '%q' "$DOCKER_CMD")"
+  build_cmd="$docker_cmd_q build -f $effective_dockerfile -t $full_image $extra_args ."
   echo -e "$component\t$repo_dir\t$image\t$tag\t$full_image\t$build_cmd" >> "$MANIFEST_FILE"
 
   echo

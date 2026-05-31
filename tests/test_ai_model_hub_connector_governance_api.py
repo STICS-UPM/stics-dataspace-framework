@@ -254,6 +254,38 @@ class AIModelHubConnectorGovernanceApiTests(unittest.TestCase):
         self.assertEqual(result["summary"]["failed"], len(CASE_IDS))
         self.assertIn("provider OIDC login failed", result["error"]["message"])
 
+    def test_runtime_prefers_level6_public_environment_over_internal_defaults(self):
+        suite = self._suite(FakeSession())
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_MODEL_HUB_KEYCLOAK_URL": "https://org1.example.test/auth",
+                "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID": "conn-provider",
+                "AI_MODEL_HUB_CONSUMER_CONNECTOR_ID": "conn-consumer",
+                "AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL": "https://org2.example.test/management",
+                "AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL": "https://org3.example.test/management",
+                "AI_MODEL_HUB_PROVIDER_PROTOCOL_URL": "http://conn-provider.example.test/protocol",
+                "AI_MODEL_HUB_CONSUMER_PROTOCOL_URL": "http://conn-consumer.example.test/protocol",
+            },
+            clear=False,
+        ):
+            runtime = suite._runtime()
+
+            self.assertEqual(runtime["keycloak_url"], "https://org1.example.test/auth")
+            self.assertEqual(
+                suite._management_url("conn-provider", "/management/v3/assets"),
+                "https://org2.example.test/management/v3/assets",
+            )
+            self.assertEqual(
+                suite._management_url("conn-consumer", "/management/v3/catalog/request"),
+                "https://org3.example.test/management/v3/catalog/request",
+            )
+            self.assertEqual(
+                suite._protocol_address("conn-provider"),
+                "http://conn-provider.example.test/protocol",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

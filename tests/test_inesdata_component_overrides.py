@@ -117,6 +117,190 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             },
         )
 
+    def test_ontology_hub_override_payload_supports_org1_path_public_url(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+
+        payload = adapter._component_values_override_payload(
+            "ontology-hub",
+            {"COMPONENTS_PUBLIC_BASE_URL": "https://org1.pionera.oeg.fi.upm.es"},
+        )
+
+        self.assertEqual(
+            payload,
+            {
+                "ingress": {
+                    "enabled": True,
+                    "host": "org1.pionera.oeg.fi.upm.es",
+                    "path": "/ontology-hub(/|$)(.*)",
+                    "pathType": "ImplementationSpecific",
+                    "annotations": {
+                        "nginx.ingress.kubernetes.io/use-regex": "true",
+                        "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                    },
+                },
+                "env": {
+                    "SELF_HOST_URL": "http://org1.pionera.oeg.fi.upm.es/ontology-hub",
+                    "BASE_URL": "https://org1.pionera.oeg.fi.upm.es/ontology-hub",
+                },
+            },
+        )
+
+    def test_ontology_hub_override_payload_supports_explicit_self_host_url(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+
+        payload = adapter._component_values_override_payload(
+            "ontology-hub",
+            {
+                "COMPONENTS_PUBLIC_BASE_URL": "https://org1.pionera.oeg.fi.upm.es",
+                "ONTOLOGY_HUB_SELF_HOST_URL": "http://ontology-hub.internal:3333",
+            },
+        )
+
+        self.assertEqual(
+            payload["env"],
+            {
+                "SELF_HOST_URL": "http://ontology-hub.internal:3333",
+                "BASE_URL": "https://org1.pionera.oeg.fi.upm.es/ontology-hub",
+            },
+        )
+
+    def test_ontology_hub_public_root_alias_ingress_routes_absolute_app_paths(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+
+        ingress = adapter._ontology_hub_public_root_alias_ingress(
+            "pionera-ontology-hub",
+            "components",
+            {
+                "COMPONENTS_PUBLIC_BASE_URL": "https://org1.pionera.oeg.fi.upm.es",
+                "COMPONENTS_PUBLIC_PATH_REWRITE": "true",
+            },
+        )
+
+        self.assertIsNotNone(ingress)
+        self.assertEqual(ingress["metadata"]["name"], "pionera-ontology-hub-public-root-aliases")
+        self.assertEqual(ingress["metadata"]["namespace"], "components")
+        self.assertEqual(ingress["spec"]["rules"][0]["host"], "org1.pionera.oeg.fi.upm.es")
+        paths = ingress["spec"]["rules"][0]["http"]["paths"]
+        self.assertEqual(
+            [path["path"] for path in paths],
+            ["/dataset", "/edition", "/css", "/js", "/img"],
+        )
+        self.assertTrue(all(path["pathType"] == "Prefix" for path in paths))
+        self.assertTrue(all(path["backend"]["service"]["name"] == "pionera-ontology-hub" for path in paths))
+
+    def test_ontology_hub_public_root_alias_ingress_is_vm_distributed_only(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "local"
+
+        ingress = adapter._ontology_hub_public_root_alias_ingress(
+            "pionera-ontology-hub",
+            "components",
+            {"COMPONENTS_PUBLIC_BASE_URL": "https://org1.pionera.oeg.fi.upm.es"},
+        )
+
+        self.assertIsNone(ingress)
+
+    def test_ontology_hub_public_root_alias_apply_uses_components_kubeconfig_for_vm_distributed(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        adapter.config_adapter.cluster_runtime = lambda: {
+            "cluster_type": "k3s",
+            "k3s_kubeconfig_common": "/clusters/common.yaml",
+            "k3s_kubeconfig_components": "/clusters/components.yaml",
+        }
+        calls = []
+
+        def record_run(command, **_kwargs):
+            calls.append(
+                (
+                    command,
+                    os.environ.get("KUBECONFIG"),
+                    os.environ.get("PIONERA_KUBECONFIG_ROLE"),
+                )
+            )
+            return "ok"
+
+        adapter.run = record_run
+
+        with mock.patch.dict(
+            os.environ,
+            {"KUBECONFIG": "/clusters/common.yaml", "PIONERA_KUBECONFIG_ROLE": "common"},
+        ):
+            aliases = adapter._sync_ontology_hub_public_root_alias_ingress(
+                "pionera-ontology-hub",
+                "components",
+                {
+                    "COMPONENTS_PUBLIC_BASE_URL": "https://org1.pionera.oeg.fi.upm.es",
+                    "COMPONENTS_PUBLIC_PATH_REWRITE": "true",
+                },
+            )
+            restored = (os.environ.get("KUBECONFIG"), os.environ.get("PIONERA_KUBECONFIG_ROLE"))
+
+        self.assertTrue(aliases)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0][0].startswith("kubectl apply -f "))
+        self.assertEqual(calls[0][1], "/clusters/components.yaml")
+        self.assertEqual(calls[0][2], "components")
+        self.assertEqual(restored, ("/clusters/common.yaml", "common"))
+
+    def test_ontology_hub_public_root_alias_apply_skips_paths_owned_by_other_ingresses(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        adapter.config_adapter.cluster_runtime = lambda: {
+            "cluster_type": "k3s",
+            "k3s_kubeconfig_components": "/clusters/components.yaml",
+        }
+        applied = []
+
+        def fake_run(command, **_kwargs):
+            applied.append(command)
+            return "ok"
+
+        adapter.run = fake_run
+        adapter.run_silent = mock.Mock(
+            return_value="""{
+                "items": [
+                    {
+                        "metadata": {"namespace": "common-srvs", "name": "common-srvs-minio-console-public-root-aliases"},
+                        "spec": {
+                            "rules": [
+                                {
+                                    "host": "org1.pionera.oeg.fi.upm.es",
+                                    "http": {"paths": [{"path": "/favicon.ico"}]}
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }"""
+        )
+
+        aliases = adapter._sync_ontology_hub_public_root_alias_ingress(
+            "pionera-ontology-hub",
+            "components",
+            {
+                "COMPONENTS_PUBLIC_BASE_URL": "https://org1.pionera.oeg.fi.upm.es",
+                "COMPONENTS_PUBLIC_PATH_REWRITE": "true",
+                "ONTOLOGY_HUB_PUBLIC_ROOT_ALIASES": "/dataset,/edition,/css,/js,/img,/favicon.ico",
+            },
+        )
+
+        self.assertEqual(len(applied), 1)
+        self.assertNotIn("favicon.ico", aliases)
+        self.assertEqual(
+            aliases,
+            [
+                "https://org1.pionera.oeg.fi.upm.es/dataset",
+                "https://org1.pionera.oeg.fi.upm.es/edition",
+                "https://org1.pionera.oeg.fi.upm.es/css",
+                "https://org1.pionera.oeg.fi.upm.es/js",
+                "https://org1.pionera.oeg.fi.upm.es/img",
+            ],
+        )
+
     def test_ontology_hub_override_payload_adds_host_alias_for_public_self_url(self):
         adapter = self._make_adapter()
 
@@ -187,6 +371,40 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                     ]
                 },
             },
+        )
+
+    def test_ai_model_hub_override_payload_uses_public_management_and_internal_protocol_urls(self):
+        adapter = self._make_adapter()
+
+        payload = adapter._component_values_override_payload(
+            "ai-model-hub",
+            {
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_1_CONNECTORS": "org2,org3",
+                "VM_PROVIDER_PUBLIC_URL": "https://org2.pionera.oeg.fi.upm.es",
+                "VM_CONSUMER_PUBLIC_URL": "https://org3.pionera.oeg.fi.upm.es",
+                "CONNECTOR_PROTOCOL_ADDRESS_MODE": "internal",
+            },
+        )
+
+        self.assertEqual(
+            payload["config"]["edcConnectorConfig"],
+            [
+                {
+                    "connectorName": "Consumer",
+                    "managementUrl": "https://org3.pionera.oeg.fi.upm.es/management",
+                    "defaultUrl": "https://org3.pionera.oeg.fi.upm.es/api",
+                    "protocolUrl": "http://conn-org3-demo.pionera.oeg.fi.upm.es/protocol",
+                    "federatedCatalogEnabled": False,
+                },
+                {
+                    "connectorName": "Provider",
+                    "managementUrl": "https://org2.pionera.oeg.fi.upm.es/management",
+                    "defaultUrl": "https://org2.pionera.oeg.fi.upm.es/api",
+                    "protocolUrl": "http://conn-org2-demo.pionera.oeg.fi.upm.es/protocol",
+                    "federatedCatalogEnabled": False,
+                },
+            ],
         )
 
     def test_semantic_virtualization_override_payload_derives_public_url(self):
@@ -666,6 +884,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 "_prepare_semantic_virtualization_api_build_context",
                 return_value="/tmp/morph-kgv-build-context",
             ) as build_context_mock,
+            mock.patch.object(adapter, "_docker_cmd", return_value="docker"),
             mock.patch("adapters.inesdata.components.os.path.isfile", return_value=True),
             mock.patch("adapters.inesdata.components.shutil.rmtree") as rmtree_mock,
         ):
@@ -691,6 +910,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 "_mapping_editor_dockerfile",
                 return_value="/tmp/mapping-editor-wrapper/Dockerfile",
             ),
+            mock.patch.object(adapter, "_docker_cmd", return_value="docker"),
             mock.patch("adapters.inesdata.components.os.path.isfile", return_value=True),
         ):
             adapter._build_mapping_editor_image_on_host("mapping-editor:local", {})
@@ -703,7 +923,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
 
     def test_prepare_level6_local_image_builds_on_host_and_loads_into_minikube(self):
         adapter = self._make_adapter()
-        deployer_config = {"LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "false"}
+        deployer_config = {"LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true"}
 
         with (
             mock.patch.object(
@@ -725,12 +945,37 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         build_mock.assert_called_once_with("ontology-hub:local", deployer_config)
         load_mock.assert_called_once_with("minikube", "ontology-hub:local")
 
+    def test_prepare_level6_local_image_skips_ontology_hub_when_auto_build_disabled(self):
+        adapter = self._make_adapter()
+        deployer_config = {"LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "false"}
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_safe_load_yaml_file",
+                return_value={"image": {"repository": "ontology-hub", "tag": "local"}},
+            ),
+            mock.patch.object(adapter, "_minikube_is_available") as minikube_available_mock,
+            mock.patch.object(adapter, "_build_ontology_hub_image_on_host") as build_mock,
+            mock.patch.object(adapter, "_load_image_into_minikube") as load_mock,
+        ):
+            result = adapter._maybe_prepare_level6_local_image(
+                "ontology-hub",
+                "/tmp/ontology-values.yaml",
+                deployer_config,
+            )
+
+        self.assertFalse(result)
+        minikube_available_mock.assert_not_called()
+        build_mock.assert_not_called()
+        load_mock.assert_not_called()
+
     def test_prepare_level6_local_image_imports_ontology_hub_into_k3s(self):
         adapter = self._make_adapter()
         adapter.config_adapter.topology = "vm-single"
         deployer_config = {
             "CLUSTER_TYPE": "k3s",
-            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "false",
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true",
         }
 
         with (
@@ -753,8 +998,171 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertTrue(result)
         minikube_available_mock.assert_not_called()
         build_mock.assert_called_once_with("ontology-hub:local", deployer_config)
-        load_k3s_mock.assert_called_once_with("ontology-hub:local")
+        load_k3s_mock.assert_called_once_with("ontology-hub:local", deployer_config)
         load_minikube_mock.assert_not_called()
+
+    def test_prepare_level6_local_image_blocks_vm_distributed_local_k3s_import(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        deployer_config = {
+            "CLUSTER_TYPE": "k3s",
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true",
+        }
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_safe_load_yaml_file",
+                return_value={"image": {"repository": "ontology-hub", "tag": "local"}},
+            ),
+            mock.patch.object(adapter, "_build_ontology_hub_image_on_host") as build_mock,
+            mock.patch.object(adapter, "_load_image_into_k3s") as load_k3s_mock,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Remote k3s image import is not configured"):
+                adapter._maybe_prepare_level6_local_image(
+                    "ontology-hub",
+                    "/tmp/ontology-values.yaml",
+                    deployer_config,
+                )
+
+        build_mock.assert_not_called()
+        load_k3s_mock.assert_not_called()
+
+    def test_prepare_level6_local_image_checks_remote_sudo_before_build(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        adapter.run = mock.Mock(return_value=None)
+        deployer_config = {
+            "CLUSTER_TYPE": "k3s",
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+            "VM_COMPONENTS_SSH_HOST": "pionera40",
+            "VM_COMPONENTS_SSH_USER": "pionera",
+        }
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_safe_load_yaml_file",
+                return_value={"image": {"repository": "ontology-hub", "tag": "local"}},
+            ),
+            mock.patch.object(adapter, "_build_ontology_hub_image_on_host") as build_mock,
+            mock.patch.object(adapter, "_load_image_into_k3s") as load_k3s_mock,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "non-interactive sudo for k3s"):
+                adapter._maybe_prepare_level6_local_image(
+                    "ontology-hub",
+                    "/tmp/ontology-values.yaml",
+                    deployer_config,
+                )
+
+        probe_commands = [call.args[0] for call in adapter.run.call_args_list]
+        self.assertTrue(any("sudo -n k3s ctr -n k8s.io images ls -q" in command for command in probe_commands))
+        build_mock.assert_not_called()
+        load_k3s_mock.assert_not_called()
+
+    def test_prepare_level6_local_image_allows_interactive_remote_import(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        adapter.run = mock.Mock(return_value=None)
+        deployer_config = {
+            "CLUSTER_TYPE": "k3s",
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE": "true",
+            "VM_COMPONENTS_SSH_HOST": "pionera40",
+            "VM_COMPONENTS_SSH_USER": "pionera",
+        }
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_safe_load_yaml_file",
+                return_value={"image": {"repository": "ontology-hub", "tag": "local"}},
+            ),
+            mock.patch.object(adapter, "_build_ontology_hub_image_on_host") as build_mock,
+            mock.patch.object(adapter, "_load_image_into_k3s") as load_k3s_mock,
+        ):
+            result = adapter._maybe_prepare_level6_local_image(
+                "ontology-hub",
+                "/tmp/ontology-values.yaml",
+                deployer_config,
+            )
+
+        self.assertTrue(result)
+        adapter.run.assert_not_called()
+        build_mock.assert_called_once_with("ontology-hub:local", deployer_config)
+        load_k3s_mock.assert_called_once_with("ontology-hub:local", deployer_config)
+
+    def test_model_server_image_blocks_vm_distributed_local_k3s_import_before_build(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        deployer_config = {
+            "CLUSTER_TYPE": "k3s",
+            "AI_MODEL_HUB_MODEL_SERVER_IMAGE": "model-server:latest",
+        }
+
+        with mock.patch.object(adapter, "_ai_model_hub_model_server_source_dir", return_value="/tmp/model-server"):
+            with mock.patch("adapters.shared.components.os.path.isfile", return_value=True):
+                with self.assertRaisesRegex(RuntimeError, "Remote k3s image import is not configured"):
+                    adapter._prepare_ai_model_hub_model_server_image(
+                        "model-server:latest",
+                        deployer_config,
+                    )
+
+        adapter.run.assert_not_called()
+
+    def test_load_image_into_k3s_uses_remote_import_for_vm_distributed_components(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        deployer_config = {
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+            "SSH_ACCESS_MODE": "bastion",
+            "SSH_BASTION_HOST": "orion.example.test",
+            "SSH_BASTION_PORT": "2222",
+            "SSH_BASTION_USER": "jump",
+            "VM_COMPONENTS_SSH_HOST": "pionera40",
+            "VM_COMPONENTS_SSH_USER": "pionera",
+            "VM_COMPONENTS_SSH_PORT": "22",
+        }
+
+        with mock.patch.object(adapter, "_docker_cmd", return_value="docker"):
+            adapter._load_image_into_k3s("ontology-hub:local", deployer_config)
+
+        commands = [call.args[0] for call in adapter.run.call_args_list]
+        self.assertIn("docker save ontology-hub:local -o", commands[0])
+        self.assertIn("scp -P 22 -o ProxyJump=jump@orion.example.test:2222", commands[1])
+        self.assertIn("pionera@pionera40:/tmp/", commands[1])
+        self.assertIn("ssh -p 22 -J jump@orion.example.test:2222 pionera@pionera40", commands[2])
+        self.assertIn("sudo -n k3s ctr -n k8s.io images import", commands[2])
+        self.assertIn("status=$?", commands[2])
+        self.assertIn("exit $status", commands[2])
+
+    def test_load_image_into_k3s_auto_falls_back_to_interactive_sudo_prompt(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        adapter.run = mock.Mock(side_effect=["saved", "copied", None, "imported"])
+        deployer_config = {
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
+            "SSH_ACCESS_MODE": "bastion",
+            "SSH_BASTION_HOST": "orion.example.test",
+            "SSH_BASTION_PORT": "2222",
+            "SSH_BASTION_USER": "jump",
+            "VM_COMPONENTS_SSH_HOST": "pionera40",
+            "VM_COMPONENTS_SSH_USER": "pionera",
+            "VM_COMPONENTS_SSH_PORT": "22",
+        }
+
+        with mock.patch.object(adapter, "_docker_cmd", return_value="docker"):
+            adapter._load_image_into_k3s("ontology-hub:local", deployer_config)
+
+        commands = [call.args[0] for call in adapter.run.call_args_list]
+        self.assertIn("docker save ontology-hub:local -o", commands[0])
+        self.assertIn("scp -P 22 -o ProxyJump=jump@orion.example.test:2222", commands[1])
+        self.assertIn("sudo -n k3s ctr -n k8s.io images ls -q", commands[2])
+        self.assertIn("ssh -tt", commands[3])
+        self.assertIn("sudo k3s ctr -n k8s.io images import", commands[3])
 
     def test_prepare_level6_local_image_rebuilds_ontology_hub_without_consulting_host_cache(self):
         adapter = self._make_adapter()
@@ -1108,6 +1516,62 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         adapter._cleanup_components.assert_called_once_with(["ontology-hub"], "demo")
         adapter.run_silent.assert_called_once_with("helm status demo-ontology-hub -n demo")
 
+    def test_cleanup_vm_distributed_legacy_public_path_ingress_removes_framework_route(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        adapter.run_silent = mock.Mock(
+            return_value=(
+                '{"metadata":{"labels":{'
+                '"app.kubernetes.io/managed-by":"validation-environment",'
+                '"app.kubernetes.io/part-of":"vm-distributed",'
+                '"app.kubernetes.io/component":"ai-model-hub"}},'
+                '"spec":{"rules":[{"host":"org1.pionera.oeg.fi.upm.es",'
+                '"http":{"paths":[{"path":"/ai-model-hub(/|$)(.*)"}]}}]}}'
+            )
+        )
+        adapter.run = mock.Mock(return_value="ok")
+
+        removed = adapter._cleanup_vm_distributed_legacy_public_path_ingresses(
+            [{"normalized": "ai-model-hub", "release_name": "pionera-ai-model-hub"}],
+            namespace="components",
+            deployer_config={
+                "COMPONENTS_PUBLIC_BASE_URL": "https://org1.pionera.oeg.fi.upm.es",
+                "COMPONENTS_PUBLIC_PATH_REWRITE": "true",
+            },
+        )
+
+        self.assertEqual(removed, ["pionera-ai-model-hub-public-path"])
+        adapter.run.assert_called_once_with(
+            "kubectl delete ingress pionera-ai-model-hub-public-path -n components --ignore-not-found",
+            check=False,
+        )
+
+    def test_cleanup_vm_distributed_legacy_public_path_ingress_preserves_user_route(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        adapter.run_silent = mock.Mock(
+            return_value=(
+                '{"metadata":{"labels":{'
+                '"app.kubernetes.io/managed-by":"Helm",'
+                '"app.kubernetes.io/component":"ai-model-hub"}},'
+                '"spec":{"rules":[{"host":"org1.pionera.oeg.fi.upm.es",'
+                '"http":{"paths":[{"path":"/ai-model-hub(/|$)(.*)"}]}}]}}'
+            )
+        )
+        adapter.run = mock.Mock(return_value="ok")
+
+        removed = adapter._cleanup_vm_distributed_legacy_public_path_ingresses(
+            [{"normalized": "ai-model-hub", "release_name": "pionera-ai-model-hub"}],
+            namespace="components",
+            deployer_config={
+                "COMPONENTS_PUBLIC_BASE_URL": "https://org1.pionera.oeg.fi.upm.es",
+                "COMPONENTS_PUBLIC_PATH_REWRITE": "true",
+            },
+        )
+
+        self.assertEqual(removed, [])
+        adapter.run.assert_not_called()
+
     def test_shared_components_adapter_prepares_component_deployment_plan(self):
         adapter = self._make_shared_adapter()
         adapter.plan_component_override_values = mock.Mock(
@@ -1219,6 +1683,59 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         )
         self.assertFalse(os.path.exists(override_file))
 
+    def test_shared_components_adapter_reuses_prepared_ontology_hub_runtime(self):
+        infrastructure = FakeInfrastructure()
+        adapter = self._make_shared_adapter(infrastructure=infrastructure)
+        adapter._maybe_prepare_level6_local_image = mock.Mock(return_value=True)
+        adapter._wait_for_component_rollout = mock.Mock(return_value=True)
+        adapter.verify_component_publication = mock.Mock(return_value={"verified": True})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            values_file = os.path.join(tmpdir, "values-demo.yaml")
+            with open(values_file, "w", encoding="utf-8") as handle:
+                handle.write("ingress:\n  enabled: true\n")
+
+            result = adapter.deploy_shared_component_runtime(
+                "ontology-hub",
+                deployment_plan={
+                    "chart_dir": tmpdir,
+                    "values_file": values_file,
+                    "release_name": "demo-ontology-hub",
+                    "override_plan": {"has_override": False},
+                },
+                namespace="demo",
+                deployer_config={"DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm"},
+                prepared_execution={
+                    "component": "ontology-hub",
+                    "release_name": "demo-ontology-hub",
+                    "namespace": "demo",
+                    "deployer_config": {"DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm"},
+                    "built_local_image": False,
+                },
+            )
+
+        self.assertEqual(result["component"], "ontology-hub")
+        self.assertFalse(result["built_local_image"])
+        adapter._maybe_prepare_level6_local_image.assert_not_called()
+        self.assertEqual(len(infrastructure.deploy_calls), 1)
+        adapter.run.assert_not_called()
+        adapter._wait_for_component_rollout.assert_called_once_with(
+            "demo",
+            "demo-ontology-hub",
+            timeout_seconds=1800,
+            label="ontology-hub",
+        )
+        adapter.verify_component_publication.assert_called_once_with(
+            "ontology-hub",
+            deployment_plan={
+                "chart_dir": tmpdir,
+                "values_file": values_file,
+                "release_name": "demo-ontology-hub",
+                "override_plan": {"has_override": False},
+            },
+            namespace="demo",
+        )
+
     def test_verify_component_publication_accepts_ingress_and_public_routes(self):
         adapter = self._make_shared_adapter()
         adapter.run_silent = mock.Mock(return_value="ontology-hub-demo.dev.ds.dataspaceunit.upm")
@@ -1250,6 +1767,43 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         )
         adapter.run_silent.assert_called_once_with(
             "kubectl get ingress demo-ontology-hub -n components -o jsonpath='{.spec.rules[0].host}'"
+        )
+
+    def test_verify_component_publication_uses_path_public_url_when_configured(self):
+        adapter = self._make_shared_adapter()
+        adapter.run_silent = mock.Mock(return_value="org1.pionera.oeg.fi.upm.es")
+
+        dataset_response = mock.Mock(status_code=200, headers={})
+        edition_response = mock.Mock(status_code=302, headers={"Location": "/ontology-hub/edition/login"})
+
+        with mock.patch("adapters.shared.components.requests.get", side_effect=[dataset_response, edition_response]) as get_mock:
+            result = adapter.verify_component_publication(
+                "ontology-hub",
+                deployment_plan={
+                    "release_name": "pionera-ontology-hub",
+                    "host": "org1.pionera.oeg.fi.upm.es",
+                    "public_url": "https://org1.pionera.oeg.fi.upm.es/ontology-hub",
+                },
+                namespace="components",
+                timeout_seconds=1,
+                poll_interval_seconds=1,
+            )
+
+        self.assertTrue(result["verified"])
+        self.assertEqual(
+            result["dataset_url"],
+            "https://org1.pionera.oeg.fi.upm.es/ontology-hub/dataset",
+        )
+        self.assertEqual(
+            result["edition_url"],
+            "https://org1.pionera.oeg.fi.upm.es/ontology-hub/edition",
+        )
+        self.assertEqual(
+            [call.args[0] for call in get_mock.call_args_list],
+            [
+                "https://org1.pionera.oeg.fi.upm.es/ontology-hub/dataset",
+                "https://org1.pionera.oeg.fi.upm.es/ontology-hub/edition",
+            ],
         )
 
     def test_verify_component_publication_fails_when_ingress_is_missing(self):
@@ -1433,6 +1987,14 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 "override_plan": {"has_override": True},
             }
         )
+        prepared_execution = {
+            "component": "ontology-hub",
+            "release_name": "demo-ontology-hub",
+            "namespace": "components",
+            "deployer_config": {},
+            "built_local_image": False,
+        }
+        adapter.prepare_component_runtime_execution = mock.Mock(return_value=prepared_execution)
         adapter.deploy_shared_component_runtime = mock.Mock(return_value={"component": "ontology-hub"})
 
         with mock.patch("adapters.inesdata.components.os.path.exists", return_value=True):
@@ -1456,6 +2018,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             },
             namespace="components",
             deployer_config={},
+            prepared_execution=prepared_execution,
         )
         adapter._cleanup_legacy_component_releases.assert_called_once_with(
             ["ontology-hub"],
@@ -1465,6 +2028,49 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         )
         adapter._cleanup_components.assert_called_once_with(["ontology-hub"], "components")
         self.assertEqual(infrastructure.deploy_calls, [])
+
+    def test_components_does_not_cleanup_when_runtime_preparation_fails(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.load_deployer_config = mock.Mock(return_value={})
+        adapter._cleanup_components = mock.Mock()
+        adapter._cleanup_legacy_component_releases = mock.Mock(return_value=None)
+        adapter.prepare_component_runtime_metadata = mock.Mock(
+            return_value=[
+                {
+                    "component": "ontology-hub",
+                    "normalized_component": "ontology-hub",
+                    "excluded": False,
+                    "error": None,
+                    "chart_dir": "/tmp/chart",
+                    "values_file": "/tmp/chart/values-demo.yaml",
+                    "host": "ontology-hub-demo.dev.ds.dataspaceunit.upm",
+                    "release_name": "demo-ontology-hub",
+                }
+            ]
+        )
+        adapter.prepare_component_deployment_plan = mock.Mock(
+            return_value={
+                "component": "ontology-hub",
+                "normalized_component": "ontology-hub",
+                "chart_dir": "/tmp/chart",
+                "values_file": "/tmp/chart/values-demo.yaml",
+                "host": "ontology-hub-demo.dev.ds.dataspaceunit.upm",
+                "release_name": "demo-ontology-hub",
+                "override_plan": {"has_override": True},
+            }
+        )
+        adapter.prepare_component_runtime_execution = mock.Mock(
+            side_effect=RuntimeError("image import failed")
+        )
+        adapter.deploy_shared_component_runtime = mock.Mock(return_value={"component": "ontology-hub"})
+
+        with mock.patch("adapters.inesdata.components.os.path.exists", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "image import failed"):
+                adapter.COMPONENTS(["ontology-hub"])
+
+        adapter._cleanup_legacy_component_releases.assert_not_called()
+        adapter._cleanup_components.assert_not_called()
+        adapter.deploy_shared_component_runtime.assert_not_called()
 
     def test_components_sync_mapping_editor_hostname_when_enabled(self):
         infrastructure = FakeInfrastructure()
@@ -1502,6 +2108,15 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 "host": "semantic-virtualization-demo.dev.ds.dataspaceunit.upm",
                 "release_name": "demo-semantic-virtualization",
                 "override_plan": {"has_override": True},
+            }
+        )
+        adapter.prepare_component_runtime_execution = mock.Mock(
+            return_value={
+                "component": "semantic-virtualization",
+                "release_name": "demo-semantic-virtualization",
+                "namespace": "components",
+                "deployer_config": deployer_config,
+                "built_local_image": False,
             }
         )
         adapter.deploy_shared_component_runtime = mock.Mock(
@@ -1678,6 +2293,15 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 "host": "ontology-hub-demo.dev.ds.dataspaceunit.upm",
                 "release_name": "demo-ontology-hub",
                 "override_plan": {"has_override": True},
+            }
+        )
+        adapter.prepare_component_runtime_execution = mock.Mock(
+            return_value={
+                "component": "ontology-hub",
+                "release_name": "demo-ontology-hub",
+                "namespace": "components",
+                "deployer_config": {},
+                "built_local_image": False,
             }
         )
         adapter.deploy_shared_component_runtime = mock.Mock(return_value={"component": "ontology-hub"})

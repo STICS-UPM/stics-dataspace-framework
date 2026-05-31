@@ -304,6 +304,90 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertIn("model_observer", result["phases"]["integration"]["suites"])
             self.assertTrue(os.path.exists(result["artifacts"]["artifact_manifest_json"]))
 
+    def test_run_ai_model_hub_component_validation_uses_api_only_mode_for_edc(self):
+        def suite_result(suite, case_id, case_group="pt5", validation_type="functional"):
+            return {
+                "component": "ai-model-hub",
+                "suite": suite,
+                "status": "passed",
+                "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+                "executed_cases": [
+                    {
+                        "test_case_id": case_id,
+                        "type": "api",
+                        "case_group": case_group,
+                        "validation_type": validation_type,
+                        "dataspace_dimension": "test",
+                        "mapping_status": "phase_3",
+                        "coverage_status": "automated",
+                        "execution_mode": "api",
+                        "evaluation": {"status": "passed", "assertions": []},
+                    }
+                ],
+                "evidence_index": [],
+                "artifacts": {},
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_validation",
+                    return_value=suite_result("bootstrap", "MH-BOOTSTRAP-01", "support", "support"),
+                ) as bootstrap,
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_ui_validation"
+                ) as ui,
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_functional_validation"
+                ) as playwright_functional,
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_connector_governance_validation",
+                    return_value=suite_result("connector-governance-api", "PT5-MH-16", "pt5", "integration"),
+                ) as governance,
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_model_execution_validation",
+                    return_value=suite_result("model-execution-api", "PT5-MH-10", "pt5", "integration"),
+                ) as execution,
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_model_benchmarking_validation",
+                    return_value=suite_result("model-benchmarking-api", "PT5-MH-12"),
+                ) as benchmarking,
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_mobility_benchmarking_validation",
+                    return_value=suite_result("mobility-benchmarking-api", "MH-MOB-01", "functional_use_case"),
+                ) as mobility,
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_model_observer_validation",
+                    return_value=suite_result("model-observer-api", "MH-OBS-02", "observer", "non_functional"),
+                ) as observer,
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner._resolve_model_observer_base_url",
+                    return_value="http://observer.example.local",
+                ),
+                mock.patch.dict(os.environ, {"PIONERA_ADAPTER": "edc"}, clear=True),
+            ):
+                result = run_ai_model_hub_component_validation(
+                    "http://ai-model-hub.example.local",
+                    experiment_dir=tmpdir,
+                )
+
+        bootstrap.assert_called_once()
+        ui.assert_not_called()
+        playwright_functional.assert_not_called()
+        for api_runner in [governance, execution, benchmarking, mobility, observer]:
+            api_runner.assert_called_once()
+
+        self.assertEqual(result["validation_mode"], "api")
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["summary"]["total"], 6)
+        self.assertNotIn("ui", result["suites"])
+        self.assertNotIn("linguistic_functional", result["suites"])
+        self.assertEqual(result["phase_execution_channels"]["preflight"], ["api"])
+        self.assertEqual(result["phase_execution_channels"]["functional"], ["api"])
+        self.assertEqual(result["phase_execution_channels"]["integration"], ["api"])
+        self.assertIn("model_benchmarking", result["phases"]["functional"]["suites"])
+        self.assertIn("model_execution", result["phases"]["integration"]["suites"])
+
     def test_run_ai_model_hub_component_validation_can_include_connector_governance_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_result = {

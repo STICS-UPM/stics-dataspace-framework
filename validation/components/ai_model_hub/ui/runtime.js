@@ -43,6 +43,18 @@ function connectorFullName(connector, dataspace) {
   return `conn-${normalized}-${dataspace}`;
 }
 
+function appendUrlPath(baseUrl, pathValue) {
+  const base = (baseUrl || "").trim().replace(/\/$/, "");
+  if (!base) {
+    return "";
+  }
+  const pathPart = (pathValue || "").trim();
+  if (!pathPart) {
+    return base;
+  }
+  return `${base}${pathPart.startsWith("/") ? pathPart : `/${pathPart}`}`.replace(/\/$/, "");
+}
+
 function resolveAIModelHubRuntime() {
   const adapterName = resolveAdapterName();
   const deployerConfig = parseKeyValueFile(
@@ -67,6 +79,15 @@ function resolveAIModelHubRuntime() {
     process.env.UI_COMPONENTS_NAMESPACE ||
     adapterConfig.COMPONENTS_NAMESPACE ||
     "components"
+  ).trim();
+  const configuredModelServerBaseUrl = (
+    process.env.AI_MODEL_HUB_MODEL_SERVER_BASE_URL ||
+    adapterConfig.AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL ||
+    adapterConfig.MODEL_SERVER_PUBLIC_URL ||
+    appendUrlPath(
+      adapterConfig.AI_MODEL_HUB_MODEL_SERVER_PUBLIC_BASE_URL || adapterConfig.COMPONENTS_PUBLIC_BASE_URL,
+      adapterConfig.AI_MODEL_HUB_MODEL_SERVER_PUBLIC_PATH || adapterConfig.MODEL_SERVER_PUBLIC_PATH || "/model-server",
+    )
   ).trim();
   const keycloakBaseUrl = (
     process.env.AI_MODEL_HUB_KEYCLOAK_URL ||
@@ -137,7 +158,7 @@ function resolveAIModelHubRuntime() {
       process.env.AI_MODEL_HUB_CONSUMER_DEFAULT_URL ||
       `http://${consumerConnectorId}.${dsDomain}/api`,
     modelServerBaseUrl: (
-      process.env.AI_MODEL_HUB_MODEL_SERVER_BASE_URL ||
+      configuredModelServerBaseUrl ||
       `http://model-server.${componentsNamespace}.svc.cluster.local:8080`
     ).replace(/\/$/, ""),
     modelContentType: process.env.AI_MODEL_HUB_MODEL_CONTENT_TYPE || "application/json",

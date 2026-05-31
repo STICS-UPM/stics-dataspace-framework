@@ -94,9 +94,22 @@ class SharedConfigLoaderTests(unittest.TestCase):
             "SSH_BASTION_HOST",
             "SSH_BASTION_PORT",
             "SSH_BASTION_USER",
+            "SSH_BASTION_IDENTITY_FILE",
+            "SSH_IDENTITY_FILE",
             "SSH_CONNECT_TIMEOUT_SECONDS",
+            "VM_DISTRIBUTED_EXECUTION_HOST",
+            "VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE",
+            "VM_DISTRIBUTED_SSH_KEY_COMMENT",
+            "VM_DISTRIBUTED_SSH_MANAGED_MARKER",
+            "VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY",
             "VM_DISTRIBUTED_DEPLOYMENT_MODE",
             "VM_DISTRIBUTED_PREFLIGHT_DRY_RUN",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY",
+            "VM_DISTRIBUTED_SSH_IDENTITY_FILE",
             "VM_REMOTE_WORKDIR",
             "VM_COMMON_REMOTE_WORKDIR",
             "VM_PROVIDER_REMOTE_WORKDIR",
@@ -107,9 +120,29 @@ class SharedConfigLoaderTests(unittest.TestCase):
             "VM_COMMON_HTTP_URL",
             "VM_PROVIDER_HTTP_URL",
             "VM_CONSUMER_HTTP_URL",
+            "KEYCLOAK_BOOTSTRAP_PORT_FORWARD",
+            "KEYCLOAK_FRONTEND_URL",
+            "KEYCLOAK_PUBLIC_URL",
+            "VM_PUBLIC_PROXY_IP",
+            "MINIO_API_PUBLIC_URL",
+            "MINIO_CONSOLE_PUBLIC_URL",
+            "MINIO_PUBLIC_URL",
+            "COMPONENTS_PUBLIC_BASE_URL",
+            "COMPONENTS_PUBLIC_PATH_REWRITE",
+            "ONTOLOGY_HUB_PUBLIC_URL",
+            "AI_MODEL_HUB_PUBLIC_URL",
+            "SEMANTIC_VIRTUALIZATION_PUBLIC_URL",
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL",
+            "VM_PROVIDER_K8S_NODE",
+            "VM_CONSUMER_K8S_NODE",
             "VM_COMMON_SSH_HOST",
+            "VM_COMMON_SSH_IDENTITY_FILE",
+            "VM_COMPONENTS_SSH_HOST",
+            "VM_COMPONENTS_SSH_IDENTITY_FILE",
             "VM_PROVIDER_SSH_HOST",
+            "VM_PROVIDER_SSH_IDENTITY_FILE",
             "VM_CONSUMER_SSH_HOST",
+            "VM_CONSUMER_SSH_IDENTITY_FILE",
         ):
             self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
             self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed",))
@@ -241,9 +274,19 @@ class SharedConfigLoaderTests(unittest.TestCase):
             common_path = os.path.join(tmpdir, "common.config")
             adapter_path = os.path.join(tmpdir, "adapter.config")
             with open(common_path, "w", encoding="utf-8") as handle:
-                handle.write("VT_TOKEN=example-token\nKC_PASSWORD=example-password\nDS_1_NAME=shared\n")
+                handle.write(
+                    "VT_TOKEN=example-token\n"
+                    "KC_PASSWORD=example-password\n"
+                    "KEYCLOAK_FRONTEND_URL=https://auth.shared.example.test\n"
+                    "DS_1_NAME=shared\n"
+                )
             with open(adapter_path, "w", encoding="utf-8") as handle:
-                handle.write("VT_TOKEN=X\nKC_PASSWORD=CHANGE_ME\nDS_1_NAME=adapter\n")
+                handle.write(
+                    "VT_TOKEN=X\n"
+                    "KC_PASSWORD=CHANGE_ME\n"
+                    "KEYCLOAK_FRONTEND_URL=http://auth.adapter.example.test\n"
+                    "DS_1_NAME=adapter\n"
+                )
 
             config = load_layered_deployer_config(
                 [common_path, adapter_path],
@@ -253,6 +296,7 @@ class SharedConfigLoaderTests(unittest.TestCase):
 
         self.assertEqual(config["VT_TOKEN"], "example-token")
         self.assertEqual(config["KC_PASSWORD"], "example-password")
+        self.assertEqual(config["KEYCLOAK_FRONTEND_URL"], "https://auth.shared.example.test")
         self.assertEqual(config["DS_1_NAME"], "adapter")
 
     def test_protected_empty_infrastructure_value_is_not_replaced_by_adapter_placeholder(self):

@@ -1,4 +1,5 @@
 import base64
+from contextlib import contextmanager
 import html
 import importlib.util
 import json
@@ -21,12 +22,16 @@ from deployers.shared.lib.connectors import (
     parse_connector_mapping,
     parse_connector_pairs,
 )
+from deployers.shared.lib.public_hostnames import resolved_common_service_hostnames
+from deployers.shared.lib.remote_k3s_images import remote_k3s_image_import_target
 from deployers.shared.lib.topology import (
     LOCAL_TOPOLOGY,
+    VM_DISTRIBUTED_TOPOLOGY,
     VM_SINGLE_TOPOLOGY,
     build_topology_profile,
     normalize_topology,
 )
+from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls
 from deployers.shared.lib.cluster_runtime import build_cluster_runtime
 from .config import INESDataConfigAdapter, InesdataConfig
 from runtime_dependencies import ensure_python_requirements
@@ -61,8 +66,219 @@ class INESDataConnectorsAdapter:
     def _is_local_topology(self):
         return self._normalized_topology() == LOCAL_TOPOLOGY
 
+    def _vm_distributed_role_kubeconfig(self, role):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return ""
+
+        normalized_role = str(role or "common").strip().lower() or "common"
+        runtime = self._cluster_runtime()
+        key_by_role = {
+            "common": "k3s_kubeconfig_common",
+            "provider": "k3s_kubeconfig_provider",
+            "consumer": "k3s_kubeconfig_consumer",
+            "components": "k3s_kubeconfig_components",
+        }
+        key = key_by_role.get(normalized_role, "k3s_kubeconfig_common")
+        return str(runtime.get(key) or runtime.get("k3s_kubeconfig") or "").strip()
+
+    @contextmanager
+    def _temporary_kubeconfig_role(self, role):
+        normalized_role = str(role or "common").strip().lower() or "common"
+        kubeconfig = self._vm_distributed_role_kubeconfig(normalized_role)
+        if not kubeconfig:
+            yield
+            return
+
+        previous_kubeconfig = os.environ.get("KUBECONFIG")
+        previous_role = os.environ.get("PIONERA_KUBECONFIG_ROLE")
+        os.environ["KUBECONFIG"] = kubeconfig
+        os.environ["PIONERA_KUBECONFIG_ROLE"] = normalized_role
+        try:
+            yield
+        finally:
+            if previous_kubeconfig is None:
+                os.environ.pop("KUBECONFIG", None)
+            else:
+                os.environ["KUBECONFIG"] = previous_kubeconfig
+
+            if previous_role is None:
+                os.environ.pop("PIONERA_KUBECONFIG_ROLE", None)
+            else:
+                os.environ["PIONERA_KUBECONFIG_ROLE"] = previous_role
+
+    def _connector_kubeconfig_role(self, connector_name):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return "common"
+
+        layout = self._connector_layout_metadata(connector_name)
+        for key in ("role", "namespaceRole"):
+            role = str(layout.get(key) or "").strip().lower()
+            if role in {"provider", "consumer"}:
+                return role
+        return "common"
+
+    def _vm_distributed_uses_separate_connector_kubeconfigs(self):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return False
+        common = self._vm_distributed_role_kubeconfig("common")
+        provider = self._vm_distributed_role_kubeconfig("provider")
+        consumer = self._vm_distributed_role_kubeconfig("consumer")
+        return len({value for value in (common, provider, consumer) if value}) > 1
+
+    @contextmanager
+    def _temporary_connector_kubeconfig(self, connector_name):
+        with self._temporary_kubeconfig_role(self._connector_kubeconfig_role(connector_name)):
+            yield
+
+    @contextmanager
+    def _temporary_connector_cleanup_kubeconfig(self, connector_name, kubeconfig_role=None):
+        if kubeconfig_role:
+            with self._temporary_kubeconfig_role(kubeconfig_role):
+                yield
+            return
+        with self._temporary_connector_kubeconfig(connector_name):
+            yield
+
+    def _dataspace_by_name(self, ds_name):
+        target = str(ds_name or "").strip()
+        if not target:
+            return {}
+        for dataspace in self.load_dataspace_connectors() or []:
+            if str(dataspace.get("name") or "").strip() == target:
+                return dataspace
+        return {}
+
+    def _namespace_kubeconfig_role(self, namespace, dataspace=None):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return "common"
+
+        target_namespace = str(namespace or "").strip()
+        if not target_namespace:
+            return "common"
+
+        if dataspace:
+            candidate_dataspaces = [dataspace]
+        else:
+            try:
+                candidate_dataspaces = list(self.load_dataspace_connectors() or [])
+            except Exception:
+                candidate_dataspaces = []
+
+        for current in candidate_dataspaces:
+            for roles_key in ("planned_namespace_roles", "namespace_roles"):
+                roles = current.get(roles_key) or {}
+                provider_namespace = self._namespace_role_value(roles, "provider_namespace")
+                consumer_namespace = self._namespace_role_value(roles, "consumer_namespace")
+                if target_namespace and target_namespace == provider_namespace:
+                    return "provider"
+                if target_namespace and target_namespace == consumer_namespace:
+                    return "consumer"
+
+            for connector_layout in current.get("connector_details") or []:
+                if target_namespace not in {
+                    str(connector_layout.get("active_namespace") or "").strip(),
+                    str(connector_layout.get("planned_namespace") or "").strip(),
+                }:
+                    continue
+                namespace_role = str(connector_layout.get("namespace_role") or "").strip().lower()
+                validation_role = str(
+                    connector_layout.get("validation_role")
+                    or connector_layout.get("role")
+                    or ""
+                ).strip().lower()
+                if namespace_role in {"provider", "consumer"}:
+                    return namespace_role
+                if validation_role in {"provider", "consumer"}:
+                    return validation_role
+
+        if target_namespace == "provider":
+            return "provider"
+        if target_namespace == "consumer":
+            return "consumer"
+        return "common"
+
+    @contextmanager
+    def _temporary_namespace_kubeconfig(self, namespace, dataspace=None):
+        with self._temporary_kubeconfig_role(
+            self._namespace_kubeconfig_role(namespace, dataspace=dataspace)
+        ):
+            yield
+
     def _bootstrap_environment_prefix(self):
         return f"PIONERA_TOPOLOGY={shlex.quote(self._normalized_topology())} "
+
+    def _deployer_config_for_local_image_import(self):
+        try:
+            return dict(self.config_adapter.load_deployer_config() or {})
+        except Exception:
+            return {}
+
+    def _vm_distributed_remote_image_import_configured(self):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return False
+        deployer_config = self._deployer_config_for_local_image_import()
+        for role in ("provider", "consumer", "common"):
+            if remote_k3s_image_import_target(deployer_config, role=role):
+                return True
+        return False
+
+    def _remote_image_import_env_prefix_for_namespace(self, namespace, dataspace=None):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return ""
+        deployer_config = self._deployer_config_for_local_image_import()
+        role = self._namespace_kubeconfig_role(namespace, dataspace=dataspace)
+        target = remote_k3s_image_import_target(deployer_config, role=role)
+        if not target:
+            return ""
+        env_prefix = target.render_shell_env_prefix()
+        return f"{env_prefix} " if env_prefix else ""
+
+    def _new_level4_connector_manifest_path(self):
+        manifest_dir = os.path.join(tempfile.gettempdir(), "inesdata-manifests")
+        os.makedirs(manifest_dir, exist_ok=True)
+        return os.path.join(manifest_dir, f"images-level4-connectors-{time.time_ns()}.tsv")
+
+    def _prepare_level4_local_connector_images_for_namespaces(self, namespaces):
+        normalized_namespaces = []
+        seen = set()
+        for namespace in namespaces or []:
+            normalized = str(namespace or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            normalized_namespaces.append(normalized)
+
+        if not normalized_namespaces:
+            return True
+
+        if (
+            self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY
+            and self._vm_distributed_remote_image_import_configured()
+            and len(normalized_namespaces) > 1
+        ):
+            manifest_file = self._new_level4_connector_manifest_path()
+            first_namespace = normalized_namespaces[0]
+            if not self._maybe_prepare_level4_local_connector_images(
+                first_namespace,
+                manifest_file=manifest_file,
+            ):
+                return False
+            if not os.path.isfile(manifest_file):
+                print(f"Level 4 local connector image manifest was not generated: {manifest_file}")
+                return False
+            for namespace in normalized_namespaces[1:]:
+                if not self._maybe_prepare_level4_local_connector_images(
+                    namespace,
+                    manifest_file=manifest_file,
+                    skip_build=True,
+                ):
+                    return False
+            return True
+
+        for namespace in normalized_namespaces:
+            if not self._maybe_prepare_level4_local_connector_images(namespace):
+                return False
+        return True
 
     def _resolve_level4_local_image_policy(self, *, mode, label):
         normalized_mode = str(mode or "auto").strip().lower() or "auto"
@@ -77,6 +293,18 @@ class INESDataConnectorsAdapter:
                 "error": "",
             }
 
+        if topology == VM_DISTRIBUTED_TOPOLOGY and self._vm_distributed_remote_image_import_configured():
+            return {
+                "topology": topology,
+                "mode": normalized_mode,
+                "prepare_local_images": True,
+                "allow_local_image_overrides": True,
+                "message": (
+                    f"Preparing {label} local images for vm-distributed through remote k3s image import."
+                ),
+                "error": "",
+            }
+
         if normalized_mode == "required":
             supported = ", ".join(sorted(self.LEVEL4_LOCAL_IMAGE_TOPOLOGIES))
             return {
@@ -87,8 +315,10 @@ class INESDataConnectorsAdapter:
                 "message": "",
                 "error": (
                     f"{label} local image preparation mode 'required' is only supported in "
-                    f"topologies {supported}. Configure pullable image references before "
-                    f"running Level 4 on topology '{topology}'."
+                    f"topologies {supported}, or in vm-distributed when "
+                    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT=true and VM_*_SSH_HOST are configured. "
+                    f"Configure pullable image references before running Level 4 on topology '{topology}' "
+                    "or enable the remote import path."
                 ),
             }
 
@@ -326,10 +556,11 @@ class INESDataConnectorsAdapter:
             return False
         ingress_name = f"{connector_name}-ingress"
         sync_marker = str(int(time.time()))
-        result = self.run_silent(
-            f"kubectl annotate ingress {ingress_name} -n {namespace} "
-            f"validation-environment/forced-sync-at={sync_marker} --overwrite"
-        )
+        with self._temporary_connector_kubeconfig(connector_name):
+            result = self.run_silent(
+                f"kubectl annotate ingress {ingress_name} -n {namespace} "
+                f"validation-environment/forced-sync-at={sync_marker} --overwrite"
+            )
         if result is None:
             return False
         print(f"Requesting ingress resynchronization for connector: {connector_name}")
@@ -393,8 +624,38 @@ class INESDataConnectorsAdapter:
         normalized_path = f"/{str(path or '/protocol').lstrip('/')}"
         return f"http://{hostname}:{int(port)}{normalized_path}"
 
+    def _connector_protocol_address_mode(self):
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        raw_mode = (
+            os.environ.get("PIONERA_CONNECTOR_PROTOCOL_ADDRESS_MODE")
+            or os.environ.get("CONNECTOR_PROTOCOL_ADDRESS_MODE")
+            or deployer_config.get("PIONERA_CONNECTOR_PROTOCOL_ADDRESS_MODE")
+            or deployer_config.get("CONNECTOR_PROTOCOL_ADDRESS_MODE")
+            or ""
+        )
+        mode = str(raw_mode or "").strip().lower()
+        if mode in {"public", "external"}:
+            return "public"
+        if mode in {"internal", "private"}:
+            return "internal"
+        return "internal"
+
     def build_protocol_address(self, connector_name, path="/protocol"):
         normalized_path = f"/{str(path or '/protocol').lstrip('/')}"
+        if self._connector_protocol_address_mode() == "public":
+            return self.build_public_protocol_address(connector_name, path=normalized_path)
+
+        credentials_url = self._connector_access_url(connector_name, "connector_protocol_api")
+        if credentials_url:
+            return self._normalize_public_url(credentials_url)
+
+        return f"{self.connector_base_url(connector_name).rstrip('/')}{normalized_path}"
+
+    def build_public_protocol_address(self, connector_name, path="/protocol"):
+        normalized_path = f"/{str(path or '/protocol').lstrip('/')}"
+        credentials_url = self._connector_public_access_url(connector_name, "connector_protocol_api")
+        if credentials_url:
+            return self._normalize_public_url(credentials_url)
         return f"{self.connector_base_url(connector_name).rstrip('/')}{normalized_path}"
 
     def _dataspace_connector_target_namespaces(self, dataspace, dataspaces=None):
@@ -457,6 +718,17 @@ class INESDataConnectorsAdapter:
             "namespace": parts[1],
             "port": port,
         }
+
+    def _common_services_namespace(self):
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception:
+            deployer_config = {}
+        return str(
+            deployer_config.get("COMMON_SERVICES_NAMESPACE")
+            or getattr(self.config, "NS_COMMON", "common-srvs")
+            or "common-srvs"
+        ).strip() or "common-srvs"
 
     @staticmethod
     def _vault_management_token_paths(ds_name):
@@ -537,11 +809,12 @@ class INESDataConnectorsAdapter:
         if not service_ref:
             return False
 
-        port_forward = self._open_temporary_port_forward(
-            service_ref["namespace"],
-            service_ref["service"],
-            remote_port=service_ref["port"],
-        )
+        with self._temporary_kubeconfig_role("common"):
+            port_forward = self._open_temporary_port_forward(
+                service_ref["namespace"],
+                service_ref["service"],
+                remote_port=service_ref["port"],
+            )
         if not port_forward:
             print(
                 "Vault token validation fallback failed: could not open a temporary "
@@ -617,11 +890,12 @@ class INESDataConnectorsAdapter:
         if not service_ref:
             return {"vault_url": None, "port_forward": None}
 
-        port_forward = self._open_temporary_port_forward(
-            service_ref["namespace"],
-            service_ref["service"],
-            remote_port=service_ref["port"],
-        )
+        with self._temporary_kubeconfig_role("common"):
+            port_forward = self._open_temporary_port_forward(
+                service_ref["namespace"],
+                service_ref["service"],
+                remote_port=service_ref["port"],
+            )
         if not port_forward:
             print(
                 "Vault bootstrap fallback failed: could not open a temporary "
@@ -640,6 +914,223 @@ class INESDataConnectorsAdapter:
         if not bootstrap_access:
             return
         self._close_temporary_port_forward(bootstrap_access.get("port_forward"))
+
+    def _keycloak_admin_url(self, override_url=None):
+        if override_url:
+            return str(override_url).strip().rstrip("/")
+
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        keycloak_url = str(
+            deployer_config.get("KC_MANAGEMENT_URL") or deployer_config.get("KC_URL") or ""
+        ).strip()
+        if keycloak_url and not keycloak_url.startswith("http"):
+            keycloak_url = f"http://{keycloak_url}"
+        return keycloak_url.rstrip("/")
+
+    def _vm_distributed_keycloak_admin_port_forward_requested(self):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return False
+
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception:
+            deployer_config = {}
+
+        mode = str(deployer_config.get("KEYCLOAK_BOOTSTRAP_ACCESS") or "").strip().lower()
+        if mode in {"port-forward", "port_forward", "local-port-forward", "local_port_forward"}:
+            return True
+
+        for key in (
+            "KEYCLOAK_BOOTSTRAP_PORT_FORWARD",
+            "KEYCLOAK_PORT_FORWARD_BOOTSTRAP",
+            "FORCE_KEYCLOAK_BOOTSTRAP_PORT_FORWARD",
+        ):
+            value = deployer_config.get(key)
+            if value is not None:
+                return self._is_truthy(value)
+
+        return False
+
+    def _vm_distributed_keycloak_admin_needs_port_forward(self):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return False
+
+        if self._vm_distributed_keycloak_admin_port_forward_requested():
+            return True
+
+        keycloak_url = self._keycloak_admin_url()
+        if not keycloak_url:
+            return False
+
+        try:
+            parsed = urlparse(keycloak_url)
+        except ValueError:
+            return False
+
+        hostname = (parsed.hostname or "").strip()
+        if not hostname or hostname in {"127.0.0.1", "::1", "localhost"}:
+            return False
+
+        try:
+            socket.getaddrinfo(hostname, None)
+            return False
+        except OSError:
+            return True
+
+    def _start_keycloak_bootstrap_access(self):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return {"keycloak_url": None, "port_forward": None}
+
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        namespace = self._common_services_namespace()
+        pattern = str(
+            deployer_config.get("KEYCLOAK_PORT_FORWARD_POD_PATTERN")
+            or f"{namespace}-keycloak"
+        ).strip()
+        try:
+            remote_port = int(
+                deployer_config.get("KEYCLOAK_PORT_FORWARD_REMOTE_PORT")
+                or deployer_config.get("KEYCLOAK_POD_HTTP_PORT")
+                or 8080
+            )
+        except (TypeError, ValueError):
+            remote_port = 8080
+
+        with self._temporary_kubeconfig_role("common"):
+            port_forward = self._open_temporary_port_forward(
+                namespace,
+                pattern,
+                remote_port=remote_port,
+            )
+
+        if not port_forward:
+            print(
+                "Keycloak bootstrap fallback failed: could not open a temporary "
+                f"port-forward to {pattern} in namespace {namespace}."
+            )
+            return None
+
+        local_url = f"http://127.0.0.1:{port_forward['local_port']}"
+        print(
+            "Using temporary local Keycloak port-forward for Level 4 bootstrap commands "
+            f"({pattern}.{namespace} -> {local_url})."
+        )
+        return {"keycloak_url": local_url, "port_forward": port_forward}
+
+    def _stop_keycloak_bootstrap_access(self, bootstrap_access):
+        if not bootstrap_access:
+            return
+        self._close_temporary_port_forward(bootstrap_access.get("port_forward"))
+
+    def _start_postgres_bootstrap_access(self):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return {"pg_host": None, "pg_port": None, "port_forward": None}
+
+        if not callable(getattr(self.infrastructure, "port_forward_service", None)):
+            return {"pg_host": None, "pg_port": None, "port_forward": None}
+
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        namespace = self._common_services_namespace()
+        pattern = str(
+            deployer_config.get("POSTGRES_PORT_FORWARD_POD_PATTERN")
+            or f"{namespace}-postgresql"
+        ).strip()
+        try:
+            remote_port = int(
+                deployer_config.get("POSTGRES_PORT_FORWARD_REMOTE_PORT")
+                or deployer_config.get("PG_PORT")
+                or 5432
+            )
+        except (TypeError, ValueError):
+            remote_port = 5432
+
+        with self._temporary_kubeconfig_role("common"):
+            port_forward = self._open_temporary_port_forward(
+                namespace,
+                pattern,
+                remote_port=remote_port,
+            )
+
+        if not port_forward:
+            issue = str(getattr(self.infrastructure, "_last_port_forward_error", "") or "").strip()
+            detail = f" Last port-forward issue: {issue}" if issue else ""
+            print(
+                "PostgreSQL bootstrap fallback failed: could not open a temporary "
+                f"port-forward to {pattern} in namespace {namespace}.{detail}"
+            )
+            return None
+
+        local_port = str(port_forward["local_port"])
+        print(
+            "Using temporary local PostgreSQL port-forward for Level 4 bootstrap commands "
+            f"({pattern}.{namespace} -> 127.0.0.1:{local_port})."
+        )
+        return {"pg_host": "127.0.0.1", "pg_port": local_port, "port_forward": port_forward}
+
+    def _stop_postgres_bootstrap_access(self, bootstrap_access):
+        if not bootstrap_access:
+            return
+        self._close_temporary_port_forward(bootstrap_access.get("port_forward"))
+
+    def _start_level4_connector_bootstrap_access(self):
+        vault_bootstrap_access = self._start_vault_bootstrap_access()
+        if vault_bootstrap_access is None:
+            return None
+
+        postgres_bootstrap_access = self._start_postgres_bootstrap_access()
+        if postgres_bootstrap_access is None:
+            self._stop_vault_bootstrap_access(vault_bootstrap_access)
+            return None
+
+        keycloak_bootstrap_access = {"keycloak_url": None, "port_forward": None}
+        if (
+            self._vm_distributed_keycloak_admin_needs_port_forward()
+            and callable(getattr(self.infrastructure, "port_forward_service", None))
+        ):
+            keycloak_bootstrap_access = self._start_keycloak_bootstrap_access()
+            if keycloak_bootstrap_access is None:
+                self._stop_postgres_bootstrap_access(postgres_bootstrap_access)
+                self._stop_vault_bootstrap_access(vault_bootstrap_access)
+                return None
+
+        return {
+            "vault_access": vault_bootstrap_access,
+            "postgres_access": postgres_bootstrap_access,
+            "keycloak_access": keycloak_bootstrap_access,
+            "vault_url": vault_bootstrap_access.get("vault_url"),
+            "pg_host": postgres_bootstrap_access.get("pg_host"),
+            "pg_port": postgres_bootstrap_access.get("pg_port"),
+            "keycloak_url": keycloak_bootstrap_access.get("keycloak_url"),
+        }
+
+    def _stop_level4_connector_bootstrap_access(self, bootstrap_access):
+        if not bootstrap_access:
+            return
+        self._stop_keycloak_bootstrap_access(bootstrap_access.get("keycloak_access"))
+        self._stop_postgres_bootstrap_access(bootstrap_access.get("postgres_access"))
+        self._stop_vault_bootstrap_access(bootstrap_access.get("vault_access"))
+
+    def _ensure_level4_keycloak_ready(self, bootstrap_access, purpose):
+        keycloak_url = bootstrap_access.get("keycloak_url") if bootstrap_access else None
+        if self.wait_for_keycloak_admin_ready(keycloak_url=keycloak_url):
+            return True
+
+        if (
+            keycloak_url is None
+            and self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY
+            and callable(getattr(self.infrastructure, "port_forward_service", None))
+        ):
+            keycloak_bootstrap_access = self._start_keycloak_bootstrap_access()
+            if keycloak_bootstrap_access is not None:
+                bootstrap_access["keycloak_access"] = keycloak_bootstrap_access
+                bootstrap_access["keycloak_url"] = keycloak_bootstrap_access.get("keycloak_url")
+                keycloak_url = bootstrap_access.get("keycloak_url")
+
+        if keycloak_url and self.wait_for_keycloak_admin_ready(keycloak_url=keycloak_url):
+            return True
+
+        print(f"Keycloak admin API not ready for connector {purpose}")
+        return False
 
     def _prepare_vault_management_access(self, ds_name=None):
         if self._vault_management_token_verified:
@@ -680,7 +1171,8 @@ class INESDataConnectorsAdapter:
         namespace = str(namespace or self._connector_runtime_namespace(connector_name) or "").strip()
         if not namespace:
             namespace = self._default_connector_namespace()
-        result = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
+        with self._temporary_connector_kubeconfig(connector_name):
+            result = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
         if not result:
             return None
 
@@ -721,6 +1213,7 @@ class INESDataConnectorsAdapter:
             "namespace": namespace,
             "pod_name": pod_name,
             "local_port": local_port,
+            "kubeconfig_role": os.environ.get("PIONERA_KUBECONFIG_ROLE"),
         }
 
     def _close_temporary_port_forward(self, port_forward_info):
@@ -729,23 +1222,25 @@ class INESDataConnectorsAdapter:
 
         stop_port_forward_service = getattr(self.infrastructure, "stop_port_forward_service", None)
         if callable(stop_port_forward_service):
-            stop_port_forward_service(
-                port_forward_info["namespace"],
-                port_forward_info["pod_name"],
-                quiet=True,
-            )
+            with self._temporary_kubeconfig_role(port_forward_info.get("kubeconfig_role")):
+                stop_port_forward_service(
+                    port_forward_info["namespace"],
+                    port_forward_info["pod_name"],
+                    quiet=True,
+                )
 
     def _start_connector_interface_fallback(self, connector_name):
         namespace = self._connector_runtime_namespace(connector_name)
-        pod_name = self._connector_pod_name(connector_name, interface=True, namespace=namespace)
-        if not pod_name:
-            return None, None
+        with self._temporary_connector_kubeconfig(connector_name):
+            pod_name = self._connector_pod_name(connector_name, interface=True, namespace=namespace)
+            if not pod_name:
+                return None, None
 
-        port_forward = self._open_temporary_port_forward(
-            namespace,
-            pod_name,
-            remote_port=8080,
-        )
+            port_forward = self._open_temporary_port_forward(
+                namespace,
+                pod_name,
+                remote_port=8080,
+            )
         if not port_forward:
             return None, None
 
@@ -754,30 +1249,31 @@ class INESDataConnectorsAdapter:
 
     def _start_connector_management_api_fallback(self, connector_name):
         namespace = self._connector_runtime_namespace(connector_name)
-        pod_name = self._connector_pod_name(connector_name, interface=False, namespace=namespace)
-        if not pod_name:
-            return None, None
+        with self._temporary_connector_kubeconfig(connector_name):
+            pod_name = self._connector_pod_name(connector_name, interface=False, namespace=namespace)
+            if not pod_name:
+                return None, None
 
-        port_forward = self._open_temporary_port_forward(
-            namespace,
-            pod_name,
-            remote_port=19193,
-        )
+            port_forward = self._open_temporary_port_forward(
+                namespace,
+                pod_name,
+                remote_port=19193,
+            )
         if not port_forward:
             return None, None
 
         url = f"http://127.0.0.1:{port_forward['local_port']}/management/v3/assets/request"
         return url, port_forward
 
-    def wait_for_keycloak_admin_ready(self, timeout=120, poll_interval=3):
+    def wait_for_keycloak_admin_ready(self, timeout=120, poll_interval=3, keycloak_url=None):
         print("Waiting for Keycloak admin authentication to become ready...")
         deployer_config = self.config_adapter.load_deployer_config()
-        kc_url = deployer_config.get("KC_URL")
+        kc_url = self._keycloak_admin_url(keycloak_url)
         kc_user = deployer_config.get("KC_USER")
         kc_password = deployer_config.get("KC_PASSWORD")
 
         if not kc_url or not kc_user or not kc_password:
-            print("Keycloak admin readiness check skipped: KC_URL/KC_USER/KC_PASSWORD missing")
+            print("Keycloak admin readiness check skipped: KC_MANAGEMENT_URL/KC_URL/KC_USER/KC_PASSWORD missing")
             return False
 
         token_url = f"{kc_url.rstrip('/')}/realms/master/protocol/openid-connect/token"
@@ -813,21 +1309,51 @@ class INESDataConnectorsAdapter:
             print("Keycloak admin authentication did not become ready")
         return False
 
-    def _bootstrap_connector_environment_prefix(self, vault_url=None):
+    def _bootstrap_connector_environment_prefix(
+        self,
+        vault_url=None,
+        keycloak_url=None,
+        pg_host=None,
+        pg_port=None,
+    ):
         prefix = self._bootstrap_environment_prefix()
         if vault_url:
             prefix += f"PIONERA_VT_URL={shlex.quote(str(vault_url).rstrip('/'))} "
+        if keycloak_url:
+            prefix += f"PIONERA_KC_MANAGEMENT_URL={shlex.quote(str(keycloak_url).rstrip('/'))} "
+        if pg_host:
+            prefix += f"PIONERA_PG_HOST={shlex.quote(str(pg_host))} "
+        if pg_port:
+            prefix += f"PIONERA_PG_PORT={shlex.quote(str(pg_port))} "
         return prefix
 
-    def _bootstrap_connector_create_command(self, python_exec, connector_name, ds_name, vault_url=None):
+    def _bootstrap_connector_create_command(
+        self,
+        python_exec,
+        connector_name,
+        ds_name,
+        vault_url=None,
+        keycloak_url=None,
+        pg_host=None,
+        pg_port=None,
+    ):
         return (
-            f"{self._bootstrap_connector_environment_prefix(vault_url)}{python_exec} "
+            f"{self._bootstrap_connector_environment_prefix(vault_url, keycloak_url, pg_host, pg_port)}{python_exec} "
             f"bootstrap.py connector create {connector_name} {ds_name}"
         )
 
-    def _bootstrap_connector_delete_command(self, python_exec, connector_name, ds_name, vault_url=None):
+    def _bootstrap_connector_delete_command(
+        self,
+        python_exec,
+        connector_name,
+        ds_name,
+        vault_url=None,
+        keycloak_url=None,
+        pg_host=None,
+        pg_port=None,
+    ):
         return (
-            f"{self._bootstrap_connector_environment_prefix(vault_url)}{python_exec} "
+            f"{self._bootstrap_connector_environment_prefix(vault_url, keycloak_url, pg_host, pg_port)}{python_exec} "
             f"bootstrap.py connector delete {connector_name} {ds_name}"
         )
 
@@ -1117,8 +1643,9 @@ class INESDataConnectorsAdapter:
         suffix = f"-{ds_name}"
         return connector_name.endswith(suffix)
 
-    def _discover_existing_connectors(self, ds_name, namespace, include_runtime_artifacts=True):
+    def _discover_existing_connectors(self, ds_name, namespace, include_runtime_artifacts=True, dataspace=None):
         existing = set()
+        current_dataspace = dataspace or self._dataspace_by_name(ds_name)
 
         if include_runtime_artifacts:
             # Runtime credentials are useful as a fallback signal that a connector was bootstrapped,
@@ -1137,35 +1664,36 @@ class INESDataConnectorsAdapter:
                     if connector and self._connector_belongs_to_dataspace(connector, ds_name):
                         existing.add(connector)
 
-        # Helm releases-based detection.
-        releases = self.run_silent(f"helm list -n {namespace} --no-headers")
-        if releases:
-            suffix = f"-{ds_name}"
-            for line in releases.splitlines():
-                parts = line.split()
-                if not parts:
-                    continue
-                release = parts[0]
-                if release.startswith("conn-") and release.endswith(suffix):
-                    connector = release[:-len(suffix)]
-                    if connector and self._connector_belongs_to_dataspace(connector, ds_name):
-                        existing.add(connector)
+        with self._temporary_namespace_kubeconfig(namespace, dataspace=current_dataspace):
+            # Helm releases-based detection.
+            releases = self.run_silent(f"helm list -n {namespace} --no-headers")
+            if releases:
+                suffix = f"-{ds_name}"
+                for line in releases.splitlines():
+                    parts = line.split()
+                    if not parts:
+                        continue
+                    release = parts[0]
+                    if release.startswith("conn-") and release.endswith(suffix):
+                        connector = release[:-len(suffix)]
+                        if connector and self._connector_belongs_to_dataspace(connector, ds_name):
+                            existing.add(connector)
 
-        # Pod-based detection (best-effort).
-        pods = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
-        if pods:
-            for line in pods.splitlines():
-                cols = line.split()
-                if not cols:
-                    continue
-                pod_name = cols[0]
-                if not pod_name.startswith("conn-"):
-                    continue
-                base = pod_name.rsplit("-", 1)[0]
-                if base.endswith("-inteface") or base.endswith("-interface"):
-                    base = base.rsplit("-", 1)[0]
-                if base and self._connector_belongs_to_dataspace(base, ds_name):
-                    existing.add(base)
+            # Pod-based detection (best-effort).
+            pods = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
+            if pods:
+                for line in pods.splitlines():
+                    cols = line.split()
+                    if not cols:
+                        continue
+                    pod_name = cols[0]
+                    if not pod_name.startswith("conn-"):
+                        continue
+                    base = pod_name.rsplit("-", 1)[0]
+                    if base.endswith("-inteface") or base.endswith("-interface"):
+                        base = base.rsplit("-", 1)[0]
+                    if base and self._connector_belongs_to_dataspace(base, ds_name):
+                        existing.add(base)
 
         return existing
 
@@ -1205,6 +1733,25 @@ class INESDataConnectorsAdapter:
 
     def update_connector_host_aliases(self, values_file, connectors, connector_name=None, ds_name=None, ds_namespace=None):
         topology = self._normalized_topology()
+        if topology == VM_DISTRIBUTED_TOPOLOGY:
+            host_aliases = self._vm_distributed_connector_host_aliases(
+                connectors,
+                connector_name=connector_name,
+                ds_name=ds_name,
+                ds_namespace=ds_namespace,
+            )
+            if not host_aliases:
+                return
+
+            with open(values_file) as f:
+                values = yaml.safe_load(f) or {}
+
+            values["hostAliases"] = host_aliases
+
+            with open(values_file, "w") as f:
+                yaml.dump(values, f, sort_keys=False)
+            return
+
         if topology not in {LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
             return
 
@@ -1229,6 +1776,112 @@ class INESDataConnectorsAdapter:
 
         with open(values_file, "w") as f:
             yaml.dump(values, f, sort_keys=False)
+
+    def _vm_distributed_connector_host_aliases(self, connectors, connector_name=None, ds_name=None, ds_namespace=None):
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+            profile = build_topology_profile(VM_DISTRIBUTED_TOPOLOGY, deployer_config)
+        except Exception:
+            return []
+
+        role_addresses = dict(getattr(profile, "role_addresses", {}) or {})
+        common_ip = str(
+            role_addresses.get("common")
+            or role_addresses.get("registration_service")
+            or getattr(profile, "default_address", "")
+            or ""
+        ).strip()
+        provider_ip = str(role_addresses.get("provider") or role_addresses.get("connectors") or common_ip).strip()
+        consumer_ip = str(role_addresses.get("consumer") or common_ip).strip()
+        if not common_ip:
+            return []
+
+        resolved_ds_name = str(ds_name or self._dataspace_name()).strip() or self._dataspace_name()
+        ds_domain = str(
+            deployer_config.get("DS_DOMAIN_BASE")
+            or self.config_adapter.ds_domain_base()
+            or ""
+        ).strip()
+
+        grouped = {}
+
+        def add(ip, hostnames):
+            clean_ip = str(ip or "").strip()
+            if not clean_ip:
+                return
+            bucket = grouped.setdefault(clean_ip, [])
+            for hostname in hostnames or []:
+                clean_hostname = str(hostname or "").strip()
+                if clean_hostname and clean_hostname not in bucket:
+                    bucket.append(clean_hostname)
+
+        public_urls = resolve_vm_distributed_public_urls(deployer_config)
+        common_hostnames = list(resolved_common_service_hostnames(deployer_config).values())
+        common_hostnames.extend(
+            self._host_alias_domains_for_dataspace(
+                ds_name=resolved_ds_name,
+                ds_namespace=ds_namespace,
+                connector_name=connector_name,
+            )
+        )
+        for url_key in (
+            "VM_COMMON_PUBLIC_URL",
+            "PUBLIC_PORTAL_BACKEND_PUBLIC_URL",
+            "DATASPACE_PUBLIC_PORTAL_BACKEND_URL",
+        ):
+            public_hostname = urlparse(str(public_urls.get(url_key) or deployer_config.get(url_key) or "")).hostname
+            if public_hostname:
+                common_hostnames.append(public_hostname)
+        if ds_domain:
+            common_hostnames.extend(
+                [
+                    f"{resolved_ds_name}.{ds_domain}",
+                    f"backend-{resolved_ds_name}.{ds_domain}",
+                    f"registration-service-{resolved_ds_name}.{ds_domain}",
+                ]
+            )
+        common_hostnames.extend(
+            [
+                f"ontology-hub-{resolved_ds_name}.{ds_domain}",
+                f"ai-model-hub-{resolved_ds_name}.{ds_domain}",
+                f"semantic-virtualization-{resolved_ds_name}.{ds_domain}",
+            ]
+        )
+        common_hostnames = [
+            hostname
+            for hostname in common_hostnames
+            if hostname and not hostname.endswith(".")
+        ]
+        add(common_ip, common_hostnames)
+
+        for connector in connectors or []:
+            connector_hostname = f"{connector}.{ds_domain}" if ds_domain else ""
+            role = self._connector_kubeconfig_role(connector)
+            if role == "consumer":
+                add(consumer_ip, [connector_hostname, self._public_hostname_for_role("consumer", deployer_config)])
+            elif role == "provider":
+                add(provider_ip, [connector_hostname, self._public_hostname_for_role("provider", deployer_config)])
+            else:
+                add(common_ip, [connector_hostname])
+
+        return [
+            {"ip": ip, "hostnames": hostnames}
+            for ip, hostnames in grouped.items()
+            if ip and hostnames
+        ]
+
+    @staticmethod
+    def _public_hostname_for_role(role, deployer_config):
+        normalized_role = str(role or "").strip().lower()
+        key_by_role = {
+            "provider": "VM_PROVIDER_PUBLIC_URL",
+            "consumer": "VM_CONSUMER_PUBLIC_URL",
+        }
+        raw_url = str((deployer_config or {}).get(key_by_role.get(normalized_role, "")) or "").strip()
+        if not raw_url:
+            return ""
+        parsed = urlparse(raw_url)
+        return parsed.hostname or ""
 
     def _connector_host_alias_ip(self, topology=None):
         normalized_topology = normalize_topology(topology or self._normalized_topology())
@@ -1298,7 +1951,7 @@ class INESDataConnectorsAdapter:
             if entry.get("name")
         }
         connector_layout = connector_details.get(connector_name, {})
-        return {
+        metadata = {
             "role": connector_layout.get("role") or "",
             "namespaceProfile": dataspace.get("namespace_profile") or "compact",
             "runtimeNamespace": connector_layout.get("runtime_namespace") or resolved_namespace,
@@ -1314,6 +1967,9 @@ class INESDataConnectorsAdapter:
                 or resolved_namespace
             ),
         }
+        if connector_layout.get("namespace_role"):
+            metadata["namespaceRole"] = connector_layout.get("namespace_role")
+        return metadata
 
     def update_connector_service_discovery(self, values_file, connector_name):
         with open(values_file) as f:
@@ -1327,7 +1983,156 @@ class INESDataConnectorsAdapter:
             yaml.dump(values, f, sort_keys=False)
 
     @staticmethod
-    def _connector_model_observer_public_url(values, ds_name):
+    def _hostname_from_url_or_host(value):
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            return ""
+        try:
+            parsed = urlparse(raw_value if "://" in raw_value else f"http://{raw_value}")
+        except ValueError:
+            return ""
+        return (parsed.hostname or "").strip().lower()
+
+    @classmethod
+    def _is_cluster_service_reference(cls, value):
+        hostname = cls._hostname_from_url_or_host(value)
+        if not hostname:
+            return False
+        return (
+            hostname.endswith(".svc")
+            or ".svc." in hostname
+            or hostname.endswith(".cluster.local")
+        )
+
+    @staticmethod
+    def _url_with_replaced_host(value, host, default_port=None):
+        raw_value = str(value or "").strip()
+        if not raw_value or not host:
+            return raw_value
+        parsed = urlparse(raw_value if "://" in raw_value else f"http://{raw_value}")
+        scheme = parsed.scheme or "http"
+        port = parsed.port or default_port
+        netloc = str(host).strip()
+        if port:
+            netloc = f"{netloc}:{int(port)}"
+        path = parsed.path or ""
+        return f"{scheme}://{netloc}{path}"
+
+    def _vm_distributed_common_runtime_host(self, deployer_config):
+        for key in ("VM_COMMON_RUNTIME_HOST", "VM_COMMON_IP", "VM_EXTERNAL_IP", "INGRESS_EXTERNAL_IP"):
+            value = str((deployer_config or {}).get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _vm_distributed_public_registration_hostname(self, ds_name, deployer_config):
+        configured = str((deployer_config or {}).get("REGISTRATION_SERVICE_HOSTNAME") or "").strip()
+        if configured:
+            return configured
+        ds_domain = str(
+            (deployer_config or {}).get("DS_DOMAIN_BASE")
+            or self.config_adapter.ds_domain_base()
+            or ""
+        ).strip()
+        if not ds_domain:
+            return ""
+        return f"registration-service-{ds_name}.{ds_domain}"
+
+    def update_connector_multicluster_common_service_endpoints(self, values_file, connector_name, ds_name=None):
+        if not self._vm_distributed_uses_separate_connector_kubeconfigs():
+            return
+
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        common_host = self._vm_distributed_common_runtime_host(deployer_config)
+        if not common_host:
+            return
+
+        resolved_ds_name = str(ds_name or self._dataspace_name()).strip() or self._dataspace_name()
+        with open(values_file) as f:
+            values = yaml.safe_load(f) or {}
+
+        services = values.setdefault("services", {})
+        db = services.setdefault("db", {})
+        if self._is_cluster_service_reference(db.get("hostname")):
+            db["hostname"] = common_host
+
+        vault = services.setdefault("vault", {})
+        if self._is_cluster_service_reference(vault.get("url")):
+            vault["url"] = self._url_with_replaced_host(
+                vault.get("url"),
+                common_host,
+                default_port=8200,
+            )
+
+        registration_service = services.setdefault("registrationService", {})
+        registration_hostname = registration_service.get("hostname")
+        if self._is_cluster_service_reference(registration_hostname):
+            public_registration_hostname = self._vm_distributed_public_registration_hostname(
+                resolved_ds_name,
+                deployer_config,
+            )
+            if public_registration_hostname:
+                registration_service["hostname"] = public_registration_hostname
+
+        with open(values_file, "w") as f:
+            yaml.dump(values, f, sort_keys=False)
+
+    @staticmethod
+    def _strip_model_observer_api_path(url):
+        normalized = str(url or "").strip().rstrip("/")
+        suffix = "/api/model-observer"
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)].rstrip("/")
+        return normalized
+
+    @staticmethod
+    def _url_with_forced_scheme(url, scheme):
+        raw_url = str(url or "").strip().rstrip("/")
+        if not raw_url:
+            return ""
+        try:
+            parsed = urlparse(raw_url if "://" in raw_url else f"{scheme}://{raw_url}")
+        except ValueError:
+            return ""
+        if not parsed.netloc:
+            return ""
+        path = (parsed.path or "").rstrip("/")
+        return f"{scheme}://{parsed.netloc}{path}"
+
+    def _connector_model_observer_public_url(self, values, ds_name):
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception:
+            deployer_config = {}
+
+        explicit_proxy = str(
+            deployer_config.get("AI_MODEL_OBSERVER_PROXY_TARGET")
+            or deployer_config.get("MODEL_OBSERVER_PROXY_TARGET")
+            or ""
+        ).strip()
+        if explicit_proxy:
+            return self._strip_model_observer_api_path(explicit_proxy)
+
+        explicit_api = str(
+            deployer_config.get("AI_MODEL_OBSERVER_API_BASE_URL")
+            or deployer_config.get("AI_MODEL_HUB_OBSERVER_API_BASE_URL")
+            or ""
+        ).strip()
+        if explicit_api:
+            return self._strip_model_observer_api_path(explicit_api)
+
+        if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+            public_urls = resolve_vm_distributed_public_urls(deployer_config)
+            backend_url = str(
+                deployer_config.get("PUBLIC_PORTAL_BACKEND_PUBLIC_URL")
+                or deployer_config.get("DATASPACE_PUBLIC_PORTAL_BACKEND_URL")
+                or public_urls.get("PUBLIC_PORTAL_BACKEND_PUBLIC_URL")
+                or public_urls.get("DATASPACE_PUBLIC_PORTAL_BACKEND_URL")
+                or ""
+            ).strip()
+            if backend_url:
+                return self._strip_model_observer_api_path(backend_url)
+
         connector = values.get("connector") or {}
         ingress = connector.get("ingress") or {}
         protocol = str(ingress.get("protocol") or "http").strip() or "http"
@@ -1335,6 +2140,29 @@ class INESDataConnectorsAdapter:
         if hostname and "." in hostname:
             return f"{protocol}://backend-{ds_name}.{hostname.split('.', 1)[1]}"
         return ""
+
+    def _connector_model_observer_journal_url(self, public_url):
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception:
+            deployer_config = {}
+
+        explicit_url = str(
+            deployer_config.get("AI_MODEL_OBSERVER_JOURNAL_BASE_URL")
+            or deployer_config.get("AI_MODEL_HUB_OBSERVER_JOURNAL_BASE_URL")
+            or deployer_config.get("MODEL_OBSERVER_JOURNAL_BASE_URL")
+            or ""
+        ).strip()
+        if explicit_url:
+            return self._strip_model_observer_api_path(explicit_url)
+
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return ""
+
+        return self._url_with_forced_scheme(
+            self._strip_model_observer_api_path(public_url),
+            "http",
+        )
 
     def update_connector_model_observer_config(self, values_file, connector_name, ds_name=None, ds_namespace=None):
         with open(values_file) as f:
@@ -1347,6 +2175,9 @@ class INESDataConnectorsAdapter:
         if public_url:
             model_observer["proxyTarget"] = public_url
             model_observer["strapiUrl"] = public_url
+            journal_url = self._connector_model_observer_journal_url(public_url)
+            if journal_url:
+                model_observer["journalBaseUrl"] = journal_url
         else:
             model_observer.setdefault("proxyTarget", "http://127.0.0.1:9")
 
@@ -1359,6 +2190,134 @@ class INESDataConnectorsAdapter:
 
         connector = values.setdefault("connector", {})
         connector["layout"] = self._connector_layout_metadata(connector_name)
+
+        with open(values_file, "w") as f:
+            yaml.dump(values, f, sort_keys=False)
+
+    def update_connector_node_scheduling(self, values_file, connector_name):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return
+
+        layout = self._connector_layout_metadata(connector_name)
+        role = str(layout.get("role") or "").strip().lower()
+        node_key_by_role = {
+            "provider": "VM_PROVIDER_K8S_NODE",
+            "consumer": "VM_CONSUMER_K8S_NODE",
+        }
+        node_key = node_key_by_role.get(role)
+        if not node_key:
+            return
+
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        node_name = str(deployer_config.get(node_key) or "").strip()
+        if not node_name:
+            return
+
+        with open(values_file) as f:
+            values = yaml.safe_load(f) or {}
+
+        node_selector = values.setdefault("nodeSelector", {})
+        node_selector["kubernetes.io/hostname"] = node_name
+
+        with open(values_file, "w") as f:
+            yaml.dump(values, f, sort_keys=False)
+
+    @staticmethod
+    def _public_url_parts(raw_url):
+        parsed = urlparse(str(raw_url or "").strip())
+        if not parsed.scheme or not parsed.hostname:
+            return "", ""
+        hostname = parsed.hostname
+        if parsed.port:
+            hostname = f"{hostname}:{parsed.port}"
+        return parsed.scheme, hostname
+
+    @staticmethod
+    def _keycloak_public_url_parts(deployer_config):
+        public_urls = resolve_vm_distributed_public_urls(deployer_config)
+        parsed = urlparse(
+            str(
+                (deployer_config or {}).get("KEYCLOAK_FRONTEND_URL")
+                or (deployer_config or {}).get("KEYCLOAK_PUBLIC_URL")
+                or public_urls.get("KEYCLOAK_FRONTEND_URL")
+                or public_urls.get("KEYCLOAK_PUBLIC_URL")
+                or ""
+            ).strip()
+        )
+        if not parsed.scheme or not parsed.netloc:
+            return "", ""
+        public_external = parsed.netloc.strip()
+        public_path = parsed.path.strip().rstrip("/")
+        if public_path:
+            public_external = f"{public_external}{public_path}"
+        return parsed.scheme, public_external
+
+    def _connector_public_url_for_role(self, role, deployer_config):
+        normalized_role = str(role or "").strip().lower()
+        if normalized_role == "provider":
+            return (
+                (deployer_config or {}).get("VM_PROVIDER_PUBLIC_URL")
+                or (deployer_config or {}).get("VM_PROVIDER_HTTP_URL")
+                or ""
+            )
+        if normalized_role == "consumer":
+            return (
+                (deployer_config or {}).get("VM_CONSUMER_PUBLIC_URL")
+                or (deployer_config or {}).get("VM_CONSUMER_HTTP_URL")
+                or ""
+            )
+        return ""
+
+    def update_connector_public_ingress_config(self, values_file, connector_name):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return
+
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        layout = self._connector_layout_metadata(connector_name)
+        public_url = self._connector_public_url_for_role(layout.get("role"), deployer_config)
+        public_protocol, public_hostname = self._public_url_parts(public_url)
+        if not public_hostname:
+            return
+
+        with open(values_file) as f:
+            values = yaml.safe_load(f) or {}
+
+        connector = values.setdefault("connector", {})
+        ingress = connector.setdefault("ingress", {})
+        services = values.setdefault("services", {})
+        keycloak = services.setdefault("keycloak", {})
+        keycloak_public_protocol, keycloak_public_external = self._keycloak_public_url_parts(
+            deployer_config
+        )
+        if keycloak_public_protocol:
+            keycloak["publicProtocol"] = keycloak_public_protocol
+        elif public_protocol:
+            keycloak["publicProtocol"] = public_protocol
+        if keycloak_public_external:
+            keycloak["external"] = keycloak_public_external
+        primary_hostname = str(ingress.get("hostname") or "").strip()
+        if primary_hostname == public_hostname:
+            ingress["publicProtocol"] = public_protocol
+            ingress["publicHostname"] = public_hostname
+            with open(values_file, "w") as f:
+                yaml.dump(values, f, sort_keys=False)
+            return
+
+        ingress["publicProtocol"] = public_protocol
+        ingress["publicHostname"] = public_hostname
+        additional_hosts = ingress.setdefault("additionalHosts", [])
+        existing_hosts = {
+            str(item.get("hostname") or "").strip().lower()
+            for item in additional_hosts
+            if isinstance(item, dict)
+        }
+        if public_hostname.lower() not in existing_hosts:
+            additional_hosts.append(
+                {
+                    "hostname": public_hostname,
+                    "rootToInterface": True,
+                }
+            )
 
         with open(values_file, "w") as f:
             yaml.dump(values, f, sort_keys=False)
@@ -1658,8 +2617,25 @@ class INESDataConnectorsAdapter:
             show_menu_text = True
         brand_text_html = f'<span class="brand-name">{escaped_brand}</span>' if show_menu_text else ""
 
+        def footer_logo_class(filename):
+            normalized = str(filename or "").lower()
+            if "pionera" in normalized:
+                return "footer__logo footer__logo--pionera"
+            if "funding" in normalized:
+                return "footer__logo footer__logo--funding"
+            if "oeg" in normalized or "ontology" in normalized:
+                return "footer__logo footer__logo--oeg"
+            return "footer__logo"
+
+        def powered_by_logo_class(filename_or_url):
+            normalized = str(filename_or_url or "").lower()
+            if "inesd" in normalized:
+                return "footer__logo footer__logo--inesdata"
+            return "footer__logo footer__logo--powered-by"
+
         footer_logos_html = "\n".join(
-            f'      <img src="assets/branding/{html.escape(filename, quote=True)}" '
+            f'      <img class="{footer_logo_class(filename)}" '
+            f'src="assets/branding/{html.escape(filename, quote=True)}" '
             f'alt="{escaped_brand} branding">'
             for filename in footer_logo_files
         )
@@ -1667,13 +2643,15 @@ class INESDataConnectorsAdapter:
             footer_logos_html = f"      <span>{escaped_brand}</span>"
         powered_by_images = [
             (
-                f'        <img src="assets/branding/{html.escape(filename, quote=True)}" '
+                f'      <img class="{powered_by_logo_class(filename)}" '
+                f'src="assets/branding/{html.escape(filename, quote=True)}" '
                 f'alt="{html.escape(os.path.splitext(filename)[0], quote=True)}">'
             )
             for filename in powered_by_logo_files
         ]
         powered_by_images.extend(
-            f'        <img src="{html.escape(url, quote=True)}" alt="{escaped_brand} powered by">'
+            f'      <img class="{powered_by_logo_class(url)}" '
+            f'src="{html.escape(url, quote=True)}" alt="{escaped_brand} powered by">'
             for url in powered_by_logo_urls
         )
         powered_by_html = ""
@@ -1681,10 +2659,8 @@ class INESDataConnectorsAdapter:
             powered_by_html = (
                 '    <div class="footer__powered-by">\n'
                 f"      <span>{escaped_powered_by_text}</span>\n"
-                '      <div class="footer__powered-by-logos">\n'
                 + "\n".join(powered_by_images)
                 + "\n"
-                "      </div>\n"
                 "    </div>\n"
             )
 
@@ -1700,14 +2676,27 @@ class INESDataConnectorsAdapter:
             "navigation.component.html",
         )
         nav_toolbar = (
-            '      <mat-toolbar class="brand-toolbar">'
-            f"{brand_logo_html}{brand_text_html}"
-            "</mat-toolbar>"
+            '      <mat-toolbar class="sidenav-toolbar">\n'
+            f'        <span class="brand-label">{brand_logo_html}{brand_text_html}</span>\n'
+            "      </mat-toolbar>"
         )
+
+        def patch_nav_toolbar(source):
+            legacy = "      <mat-toolbar>INESData</mat-toolbar>"
+            if legacy in source:
+                return source.replace(legacy, nav_toolbar, 1)
+            return re.sub(
+                r"\s*<mat-toolbar class=\"sidenav-toolbar\">.*?</mat-toolbar>",
+                "\n" + nav_toolbar,
+                source,
+                count=1,
+                flags=re.DOTALL,
+            )
+
         if self._patch_connector_interface_branding_file(
             nav_html,
             originals,
-            lambda source: self._replace_first_literal(source, "      <mat-toolbar>INESData</mat-toolbar>", nav_toolbar),
+            patch_nav_toolbar,
         ):
             patched.append(nav_html)
 
@@ -1720,20 +2709,64 @@ class INESDataConnectorsAdapter:
             "navigation.component.scss",
         )
         nav_css = """
-.sidenav .mat-toolbar.brand-toolbar {
+.sidenav-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: flex-start;
+}
+
+.brand-label {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .brand-logo {
-  max-width: 178px;
+  display: block;
+  max-width: 170px;
   max-height: 44px;
   object-fit: contain;
 }
 
 .brand-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidenav a[mat-list-item] {
+  align-items: center;
+  display: flex;
+  --mdc-list-list-item-one-line-container-height: 42px;
+}
+
+.sidenav mat-icon {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 24px;
+  height: 24px;
+  justify-content: center;
+  line-height: 24px;
+  width: 24px;
+}
+
+:host ::ng-deep mat-nav-list .mat-mdc-list-item .mdc-list-item__content {
+  align-items: center;
+  display: flex;
+}
+
+:host ::ng-deep mat-nav-list .mat-mdc-list-item .mdc-list-item__start {
+  align-items: center;
+  align-self: center;
+  display: inline-flex;
+  height: 24px;
+  justify-content: center;
+  margin-bottom: 0;
+  margin-top: 0;
+  width: 24px;
 }
 """
         if self._patch_connector_interface_branding_file(
@@ -1779,39 +2812,59 @@ class INESDataConnectorsAdapter:
 .footer__logos {
   align-items: center;
   display: flex;
-  flex-wrap: wrap;
-  gap: 24px;
+  flex-wrap: nowrap;
+  gap: clamp(22px, 4vw, 64px);
   justify-content: center;
+  min-height: 58px;
+  overflow: hidden;
 }
 
 .footer__logos img {
-  height: 60px;
-  margin: 8px 0;
+  display: block;
+  height: auto;
+  margin: 0;
   object-fit: contain;
 }
 
+.footer__logo {
+  height: auto;
+  margin: 0;
+  object-fit: contain;
+}
+
+.footer__logo--pionera {
+  max-height: 52px;
+  max-width: 190px;
+}
+
+.footer__logo--funding {
+  max-height: 64px;
+  max-width: min(52vw, 760px);
+}
+
+.footer__logo--oeg {
+  max-height: 56px;
+  max-width: 150px;
+}
+
 .footer__powered-by {
+  align-items: center;
   color: var(--secondary-600);
+  display: flex;
+  flex-direction: column;
   font-family: "Open Sans", sans-serif;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
+  gap: 2px;
+  justify-content: center;
   line-height: 1.2;
   margin: 2px 0 0;
   text-align: center;
 }
 
-.footer__powered-by-logos {
-  align-items: center;
-  display: flex;
-  gap: 16px;
-  justify-content: center;
-  margin-top: 6px;
-}
-
-.footer__powered-by-logos img {
-  height: 25px;
-  margin: 0;
-  object-fit: contain;
+.footer__logo--inesdata {
+  max-height: 28px;
+  max-width: 180px;
 }
 """
         if self._patch_connector_interface_branding_file(
@@ -1907,7 +2960,7 @@ class INESDataConnectorsAdapter:
         if restored:
             print("Connector interface branding source restored after local image build.")
 
-    def _maybe_prepare_level4_local_connector_images(self, namespace):
+    def _maybe_prepare_level4_local_connector_images(self, namespace, manifest_file=None, skip_build=False):
         mode = self._level4_local_images_mode()
         policy = self._resolve_level4_local_image_policy(
             mode=mode,
@@ -1920,9 +2973,17 @@ class INESDataConnectorsAdapter:
             if policy["message"]:
                 print(policy["message"])
             return True
+        if policy["message"]:
+            print(policy["message"])
         if mode == "disabled":
             print("Level 4 local INESData connector images disabled by configuration.")
             return True
+        if skip_build and not manifest_file:
+            print("Level 4 connector image reuse requires a manifest file.")
+            return False
+        if skip_build and manifest_file and not os.path.isfile(manifest_file):
+            print(f"Level 4 connector image manifest not found: {manifest_file}")
+            return False
 
         root_dir = self._framework_root_dir()
         adapter_dir = os.path.join(root_dir, "adapters", "inesdata")
@@ -1951,37 +3012,46 @@ class INESDataConnectorsAdapter:
 
         validator_source_path = ontology_validator_source_path(root_dir)
         original_validator_source = None
-        if validator_source_path is not None:
+        if not skip_build and validator_source_path is not None:
             original_validator_source = validator_source_path.read_text(encoding="utf-8")
             self._patch_ontology_validator_source_for_level4_build(root_dir)
-        original_connector_interface_sources = self._patch_connector_interface_branding_source_for_level4_build(root_dir)
+        original_connector_interface_sources = {}
+        if not skip_build:
+            original_connector_interface_sources = self._patch_connector_interface_branding_source_for_level4_build(root_dir)
 
         platform_dir = self.config.repo_dir()
         cluster_runtime = self._cluster_runtime()
         cluster_type = str(cluster_runtime.get("cluster_type") or "minikube").strip().lower() or "minikube"
-        command = " ".join(
-            shlex.quote(part)
-            for part in [
-                "bash",
-                script_path,
-                "--apply",
-                "--platform-dir",
-                platform_dir,
-                "--namespace",
-                namespace,
-                "--minikube-profile",
-                self._local_minikube_profile(),
-                "--cluster-runtime",
-                cluster_type,
-                "--deploy-target",
-                "connectors",
-                "--skip-deploy",
-            ]
-        )
+        env_prefix = self._remote_image_import_env_prefix_for_namespace(namespace)
+        command_parts = [
+            "bash",
+            script_path,
+            "--apply",
+            "--platform-dir",
+            platform_dir,
+            "--namespace",
+            namespace,
+            "--minikube-profile",
+            self._local_minikube_profile(),
+            "--cluster-runtime",
+            cluster_type,
+            "--deploy-target",
+            "connectors",
+            "--skip-deploy",
+        ]
+        if manifest_file:
+            command_parts.extend(["--manifest", manifest_file])
+        if skip_build:
+            command_parts.append("--skip-build")
+        command = " ".join(shlex.quote(part) for part in command_parts)
+        command = f"{env_prefix}{command}"
 
         print("\nPreparing local INESData connector images for Level 4...")
         print(f"Cluster runtime: {cluster_type}")
-        print("This builds and loads inesdata-connector and inesdata-connector-interface before Helm deploy.")
+        if skip_build:
+            print("This reuses the existing Level 4 image manifest and imports the same images before Helm deploy.")
+        else:
+            print("This builds and loads inesdata-connector and inesdata-connector-interface before Helm deploy.")
         try:
             result = self.run(command, check=False)
         finally:
@@ -2000,7 +3070,8 @@ class INESDataConnectorsAdapter:
         return list(self._runtime_connector_pods_by_namespace(namespace).keys())
 
     def _runtime_connector_rows_by_namespace(self, namespace):
-        result = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
+        with self._temporary_namespace_kubeconfig(namespace):
+            result = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
         if not result:
             return []
 
@@ -2031,6 +3102,14 @@ class INESDataConnectorsAdapter:
         return connector_name in deployed
 
     def build_connector_url(self, connector_name):
+        if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+            credentials_url = self._connector_public_access_url(connector_name, "connector_interface_login")
+            if credentials_url:
+                return self._normalize_public_url(credentials_url, trailing_slash=True)
+            public_base_url = self._connector_public_base_url(connector_name)
+            if public_base_url:
+                return f"{public_base_url}/inesdata-connector-interface/"
+
         ds_domain = self.config_adapter.ds_domain_base()
         if not ds_domain:
             raise ValueError("DS_DOMAIN_BASE not defined in deployer.config")
@@ -2223,6 +3302,9 @@ class INESDataConnectorsAdapter:
 
     def wait_for_all_connectors(self, connectors):
         print("\nWaiting for all connectors to become ready...\n")
+        if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+            return self._vm_distributed_connector_pods_ready(connectors)
+
         for connector in connectors:
             if not self.wait_for_connector_ready(connector):
                 print(f"Connector not ready: {connector}")
@@ -2230,37 +3312,68 @@ class INESDataConnectorsAdapter:
 
         return True
 
+    def _vm_distributed_connector_pods_ready(self, connectors):
+        for connector in connectors:
+            namespace = self._connector_runtime_namespace(connector)
+            with self._temporary_connector_kubeconfig(connector):
+                pods = self.run_silent(f"kubectl get pods -n {shlex.quote(namespace)} --no-headers") or ""
+
+            runtime_running = False
+            interface_running = False
+            for line in pods.splitlines():
+                cols = line.split()
+                if len(cols) < 3:
+                    continue
+                pod_name, status = cols[0], cols[2]
+                if not pod_name.startswith(f"{connector}-"):
+                    continue
+                if self._is_connector_interface_pod(pod_name):
+                    interface_running = interface_running or status == "Running"
+                else:
+                    runtime_running = runtime_running or status == "Running"
+
+            if not runtime_running or not interface_running:
+                print(
+                    f"Connector pods not ready in vm-distributed: {connector} "
+                    f"(runtime={runtime_running}, interface={interface_running})"
+                )
+                return False
+
+        print("All vm-distributed connector pods are running")
+        return True
+
     def _wait_for_connector_deployments(self, connector_name, namespace=None, timeout=300):
         namespace = namespace or self._default_connector_namespace()
         rollout_waiter = getattr(self.infrastructure, "wait_for_deployment_rollout", None)
         timeout = max(int(timeout or 300), 1)
 
-        if callable(rollout_waiter):
-            deployment_targets = [
-                (connector_name, f"connector runtime '{connector_name}'"),
-                (f"{connector_name}-inteface", f"connector interface '{connector_name}'"),
-            ]
-            for deployment_name, label in deployment_targets:
-                if not rollout_waiter(
-                    namespace,
-                    deployment_name,
-                    timeout_seconds=timeout,
-                    label=label,
-                ):
-                    if not self._recover_connector_rollout_after_stalled_init(
+        with self._temporary_connector_kubeconfig(connector_name):
+            if callable(rollout_waiter):
+                deployment_targets = [
+                    (connector_name, f"connector runtime '{connector_name}'"),
+                    (f"{connector_name}-inteface", f"connector interface '{connector_name}'"),
+                ]
+                for deployment_name, label in deployment_targets:
+                    if not rollout_waiter(
                         namespace,
                         deployment_name,
-                        timeout=timeout,
+                        timeout_seconds=timeout,
                         label=label,
-                        rollout_waiter=rollout_waiter,
                     ):
-                        return False
-            return True
+                        if not self._recover_connector_rollout_after_stalled_init(
+                            namespace,
+                            deployment_name,
+                            timeout=timeout,
+                            label=label,
+                            rollout_waiter=rollout_waiter,
+                        ):
+                            return False
+                return True
 
-        wait_for_namespace_pods = getattr(self.infrastructure, "wait_for_namespace_pods", None)
-        if callable(wait_for_namespace_pods):
-            return bool(wait_for_namespace_pods(namespace, timeout=timeout))
-        return False
+            wait_for_namespace_pods = getattr(self.infrastructure, "wait_for_namespace_pods", None)
+            if callable(wait_for_namespace_pods):
+                return bool(wait_for_namespace_pods(namespace, timeout=timeout))
+            return False
 
     def _connector_rollout_recovery_enabled(self):
         value = os.environ.get("INESDATA_CONNECTOR_ROLLOUT_RECOVERY", "1").strip().lower()
@@ -2337,8 +3450,60 @@ class INESDataConnectorsAdapter:
         except (json.JSONDecodeError, IOError):
             return None
 
+    @staticmethod
+    def _normalize_public_url(url, trailing_slash=False):
+        raw_url = str(url or "").strip()
+        if not raw_url:
+            return ""
+        if not raw_url.startswith(("http://", "https://")):
+            raw_url = f"http://{raw_url}"
+        raw_url = raw_url.rstrip("/")
+        if trailing_slash:
+            return f"{raw_url}/"
+        return raw_url
+
+    def _connector_public_access_url(self, connector_name, key):
+        credentials = self.load_connector_credentials(connector_name) or {}
+        public_urls = credentials.get("public_access_urls") or {}
+        if not isinstance(public_urls, dict):
+            return ""
+        return str(public_urls.get(key) or "").strip()
+
+    def _connector_access_url(self, connector_name, key):
+        credentials = self.load_connector_credentials(connector_name) or {}
+        access_urls = credentials.get("access_urls") or {}
+        if not isinstance(access_urls, dict):
+            return ""
+        return str(access_urls.get(key) or "").strip()
+
+    def _connector_public_base_url(self, connector_name):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return ""
+
+        credentials_url = self._connector_public_access_url(connector_name, "connector_ingress")
+        if credentials_url:
+            return self._normalize_public_url(credentials_url)
+
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        layout = self._connector_layout_metadata(connector_name)
+        role = (
+            layout.get("namespace_role")
+            or layout.get("validation_role")
+            or layout.get("role")
+            or self._connector_kubeconfig_role(connector_name)
+        )
+        role_url = self._connector_public_url_for_role(role, deployer_config)
+        if role_url:
+            return self._normalize_public_url(role_url)
+
+        return ""
+
     def connector_base_url(self, connector):
         """Build base Management API URL for a connector."""
+        public_base_url = self._connector_public_base_url(connector)
+        if public_base_url:
+            return public_base_url
+
         domain = self.config.ds_domain_base()
 
         if not domain:
@@ -2358,14 +3523,33 @@ class INESDataConnectorsAdapter:
             creds["connector_user"]["passwd"]
         )
 
+    @staticmethod
+    def _keycloak_realm_url(base_url, dataspace):
+        normalized_base = INESDataConnectorsAdapter._normalize_public_url(base_url)
+        if not normalized_base:
+            return ""
+        normalized_dataspace = str(dataspace or "").strip().strip("/")
+        if not normalized_dataspace:
+            return normalized_base
+        realm_suffix = f"/realms/{normalized_dataspace}"
+        if normalized_base.endswith(realm_suffix):
+            return normalized_base
+        return f"{normalized_base}{realm_suffix}"
+
     def _keycloak_token_url(self):
         deployer_config = self.config_adapter.load_deployer_config()
-        keycloak_url = deployer_config.get("KC_INTERNAL_URL") or deployer_config.get("KC_URL")
+        keycloak_url = ""
+        if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+            keycloak_url = (
+                deployer_config.get("KEYCLOAK_FRONTEND_URL")
+                or deployer_config.get("KEYCLOAK_PUBLIC_URL")
+                or ""
+            )
+        keycloak_url = keycloak_url or deployer_config.get("KC_INTERNAL_URL") or deployer_config.get("KC_URL")
         if not keycloak_url:
             return None
-        if not keycloak_url.startswith("http"):
-            keycloak_url = f"http://{keycloak_url}"
-        return f"{keycloak_url}/realms/{self._dataspace_name()}/protocol/openid-connect/token"
+        realm_url = self._keycloak_realm_url(keycloak_url, self._dataspace_name())
+        return f"{realm_url}/protocol/openid-connect/token"
 
     def get_management_api_token(self, connector):
         """Get a Bearer token for the connector management user."""
@@ -2879,11 +4063,12 @@ class INESDataConnectorsAdapter:
             print("Warning: one or more MinIO policies could not be confirmed\n")
         return all_ok
 
-    def force_clean_postgres_db(self, db_name, db_user):
+    def force_clean_postgres_db(self, db_name, db_user, pg_host=None, pg_port=None):
         print(f"\nCleaning PostgreSQL database '{db_name}'...")
 
-        pg_host, pg_user, pg_password = self.config_adapter.get_pg_credentials()
-        pg_port = self._pg_port()
+        configured_pg_host, pg_user, pg_password = self.config_adapter.get_pg_credentials()
+        pg_host = pg_host or configured_pg_host
+        pg_port = pg_port or self._pg_port()
         terminate_sql = f"""
         SELECT pg_terminate_backend(pid)
         FROM pg_stat_activity
@@ -3003,11 +4188,12 @@ class INESDataConnectorsAdapter:
             selected_files = list(branding_keys.get("inesdata_brand_asset_files") or [])
             configmap_name = f"{connector_name}-interface-branding-assets"
             if not selected_files:
-                self.run(
-                    f"kubectl delete configmap {shlex.quote(configmap_name)} "
-                    f"-n {shlex.quote(namespace)} --ignore-not-found",
-                    check=False,
-                )
+                with self._temporary_namespace_kubeconfig(namespace):
+                    self.run(
+                        f"kubectl delete configmap {shlex.quote(configmap_name)} "
+                        f"-n {shlex.quote(namespace)} --ignore-not-found",
+                        check=False,
+                    )
                 return True
 
             assets = bootstrap._load_branding_assets(config, selected_files)
@@ -3036,15 +4222,16 @@ class INESDataConnectorsAdapter:
                 yaml.safe_dump(manifest, handle, sort_keys=False)
                 tmp_path = handle.name
 
-            if not self.run_silent(f"kubectl get namespace {shlex.quote(namespace)}"):
-                self.run(f"kubectl create namespace {shlex.quote(namespace)}", check=False)
-            print(f"Applying connector interface branding assets: {configmap_name}")
-            existing = self.run_silent(
-                f"kubectl get configmap {shlex.quote(configmap_name)} "
-                f"-n {shlex.quote(namespace)} --ignore-not-found"
-            )
-            action = "replace" if existing else "create"
-            return self.run(f"kubectl {action} -f {shlex.quote(tmp_path)}", check=False) is not None
+            with self._temporary_namespace_kubeconfig(namespace):
+                if not self.run_silent(f"kubectl get namespace {shlex.quote(namespace)}"):
+                    self.run(f"kubectl create namespace {shlex.quote(namespace)}", check=False)
+                print(f"Applying connector interface branding assets: {configmap_name}")
+                existing = self.run_silent(
+                    f"kubectl get configmap {shlex.quote(configmap_name)} "
+                    f"-n {shlex.quote(namespace)} --ignore-not-found"
+                )
+                action = "replace" if existing else "create"
+                return self.run(f"kubectl {action} -f {shlex.quote(tmp_path)}", check=False) is not None
         except Exception as exc:
             print(f"Error applying connector interface branding assets: {exc}")
             return False
@@ -3055,13 +4242,21 @@ class INESDataConnectorsAdapter:
                 except OSError:
                     pass
 
-    def _wait_for_connector_pods_deleted(self, connector_name, namespace, timeout=60, poll_interval=3):
+    def _wait_for_connector_pods_deleted(
+        self,
+        connector_name,
+        namespace,
+        timeout=60,
+        poll_interval=3,
+        kubeconfig_role=None,
+    ):
         """Wait briefly for a previous connector release to stop holding DB sessions."""
         start = time.time()
         reported_wait = False
 
         while time.time() - start < timeout:
-            pods = self.run_silent(f"kubectl get pods -n {namespace} --no-headers") or ""
+            with self._temporary_connector_cleanup_kubeconfig(connector_name, kubeconfig_role=kubeconfig_role):
+                pods = self.run_silent(f"kubectl get pods -n {namespace} --no-headers") or ""
             connector_pods = [
                 line.split()[0]
                 for line in pods.splitlines()
@@ -3080,37 +4275,71 @@ class INESDataConnectorsAdapter:
         print(f"Warning: previous connector pods still visible before cleanup: {connector_name}")
         return False
 
-    def _cleanup_connector_state(self, connector_name, repo_dir, ds_name, python_exec, namespace=None, vault_url=None):
+    def _cleanup_connector_state(
+        self,
+        connector_name,
+        repo_dir,
+        ds_name,
+        python_exec,
+        namespace=None,
+        dataspace=None,
+        kubeconfig_role=None,
+        vault_url=None,
+        keycloak_url=None,
+        pg_host=None,
+        pg_port=None,
+    ):
         values_file = self._remove_connector_values_file(connector_name)
         self.invalidate_management_api_token(connector_name)
 
         print(f"Cleaning connector: {connector_name}")
         release_name = f"{connector_name}-{ds_name}"
         ns = namespace or self.config.namespace_demo()
-        self.run(f"helm uninstall {release_name} -n {ns}", check=False)
-        self._wait_for_connector_pods_deleted(connector_name, ns)
+        effective_kubeconfig_role = kubeconfig_role
+        if effective_kubeconfig_role is None and ns:
+            effective_kubeconfig_role = self._namespace_kubeconfig_role(ns, dataspace=dataspace)
+
+        with self._temporary_connector_cleanup_kubeconfig(
+            connector_name,
+            kubeconfig_role=effective_kubeconfig_role,
+        ):
+            self.run(f"helm uninstall {release_name} -n {ns}", check=False)
+            self._wait_for_connector_pods_deleted(
+                connector_name,
+                ns,
+                kubeconfig_role=effective_kubeconfig_role,
+            )
 
         delete_cmd = self._bootstrap_connector_delete_command(
             python_exec,
             connector_name,
             ds_name,
             vault_url=vault_url,
+            keycloak_url=keycloak_url,
+            pg_host=pg_host,
+            pg_port=pg_port,
         )
         self.run(delete_cmd, cwd=repo_dir, check=False)
 
         connector_db = connector_name.replace("-", "_")
-        self.force_clean_postgres_db(connector_db, connector_db)
+        self.force_clean_postgres_db(
+            connector_db,
+            connector_db,
+            pg_host=pg_host,
+            pg_port=pg_port,
+        )
 
         print("Cleaning registration-service database...")
         sql_del = (
             f"DELETE FROM public.edc_participant "
             f"WHERE participant_id = '{connector_name}';"
         )
-        pg_host, pg_user, pg_pass = self.config_adapter.get_pg_credentials()
-        pg_port = self._pg_port()
+        configured_pg_host, pg_user, pg_pass = self.config_adapter.get_pg_credentials()
+        effective_pg_host = pg_host or configured_pg_host
+        effective_pg_port = pg_port or self._pg_port()
         self.run(
-            f"PGPASSWORD={shlex.quote(str(pg_pass))} psql -h {shlex.quote(str(pg_host))} "
-            f"-p {shlex.quote(str(pg_port))} -U {shlex.quote(str(pg_user))} "
+            f"PGPASSWORD={shlex.quote(str(pg_pass))} psql -h {shlex.quote(str(effective_pg_host))} "
+            f"-p {shlex.quote(str(effective_pg_port))} -U {shlex.quote(str(pg_user))} "
             f'-d {self.config.registration_db_name()} -c "{sql_del}"',
             check=False,
             silent=True,
@@ -3145,11 +4374,35 @@ class INESDataConnectorsAdapter:
         if vault_bootstrap_access is None:
             return False
         vault_bootstrap_url = vault_bootstrap_access.get("vault_url")
+        postgres_bootstrap_access = self._start_postgres_bootstrap_access()
+        if postgres_bootstrap_access is None:
+            self._stop_vault_bootstrap_access(vault_bootstrap_access)
+            return False
+        postgres_bootstrap_host = postgres_bootstrap_access.get("pg_host")
+        postgres_bootstrap_port = postgres_bootstrap_access.get("pg_port")
+        keycloak_bootstrap_access = {"keycloak_url": None, "port_forward": None}
+        if (
+            self._vm_distributed_keycloak_admin_needs_port_forward()
+            and callable(getattr(self.infrastructure, "port_forward_service", None))
+        ):
+            keycloak_bootstrap_access = self._start_keycloak_bootstrap_access()
+            if keycloak_bootstrap_access is None:
+                self._stop_postgres_bootstrap_access(postgres_bootstrap_access)
+                self._stop_vault_bootstrap_access(vault_bootstrap_access)
+                return False
+        keycloak_bootstrap_url = keycloak_bootstrap_access.get("keycloak_url")
 
         try:
-            if not self.wait_for_keycloak_admin_ready():
-                print("Keycloak admin API not ready for connector cleanup")
-                return False
+            if not self.wait_for_keycloak_admin_ready(keycloak_url=keycloak_bootstrap_url):
+                if keycloak_bootstrap_url is None and self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+                    keycloak_bootstrap_access = self._start_keycloak_bootstrap_access()
+                    if keycloak_bootstrap_access is not None:
+                        keycloak_bootstrap_url = keycloak_bootstrap_access.get("keycloak_url")
+                if not keycloak_bootstrap_url or not self.wait_for_keycloak_admin_ready(
+                    keycloak_url=keycloak_bootstrap_url,
+                ):
+                    print("Keycloak admin API not ready for connector cleanup")
+                    return False
 
             values_file = self._cleanup_connector_state(
                 connector_name,
@@ -3158,9 +4411,12 @@ class INESDataConnectorsAdapter:
                 python_exec,
                 namespace=target_namespace,
                 vault_url=vault_bootstrap_url,
+                keycloak_url=keycloak_bootstrap_url,
+                pg_host=postgres_bootstrap_host,
+                pg_port=postgres_bootstrap_port,
             )
 
-            if not self.wait_for_keycloak_admin_ready():
+            if not self.wait_for_keycloak_admin_ready(keycloak_url=keycloak_bootstrap_url):
                 print("Keycloak admin API not ready for connector provisioning")
                 return False
 
@@ -3170,6 +4426,9 @@ class INESDataConnectorsAdapter:
                 connector_name,
                 ds_name,
                 vault_url=vault_bootstrap_url,
+                keycloak_url=keycloak_bootstrap_url,
+                pg_host=postgres_bootstrap_host,
+                pg_port=postgres_bootstrap_port,
             )
             create_result = None
             creds_path = self.config.connector_credentials_path(connector_name)
@@ -3201,12 +4460,17 @@ class INESDataConnectorsAdapter:
                         python_exec,
                         namespace=target_namespace,
                         vault_url=vault_bootstrap_url,
+                        keycloak_url=keycloak_bootstrap_url,
+                        pg_host=postgres_bootstrap_host,
+                        pg_port=postgres_bootstrap_port,
                     )
-                    if not self.wait_for_keycloak_admin_ready():
+                    if not self.wait_for_keycloak_admin_ready(keycloak_url=keycloak_bootstrap_url):
                         print("Keycloak admin API not ready for connector provisioning retry")
                         return False
                     time.sleep(5)
         finally:
+            self._stop_keycloak_bootstrap_access(keycloak_bootstrap_access)
+            self._stop_postgres_bootstrap_access(postgres_bootstrap_access)
             self._stop_vault_bootstrap_access(vault_bootstrap_access)
 
         if create_result is None:
@@ -3240,7 +4504,14 @@ class INESDataConnectorsAdapter:
             ds_namespace=ds_namespace,
         )
         self.update_connector_service_discovery(values_file, connector_name)
+        self.update_connector_multicluster_common_service_endpoints(
+            values_file,
+            connector_name,
+            ds_name=ds_name,
+        )
         self.update_connector_layout_metadata(values_file, connector_name)
+        self.update_connector_node_scheduling(values_file, connector_name)
+        self.update_connector_public_ingress_config(values_file, connector_name)
         self.update_connector_model_observer_config(
             values_file,
             connector_name,
@@ -3260,32 +4531,34 @@ class INESDataConnectorsAdapter:
             values_files.append(explicit_image_override)
             print(f"Using explicit INESData connector image overrides: {explicit_image_override}")
 
-        if not self._apply_connector_interface_branding_assets(connector_name, target_namespace):
-            return False
+        with self._temporary_connector_kubeconfig(connector_name):
+            if not self._apply_connector_interface_branding_assets(connector_name, target_namespace):
+                return False
 
-        if not self.infrastructure.deploy_helm_release(
-            release_name,
-            target_namespace,
-            values_files,
-            cwd=self.config.connector_dir()
-        ):
-            print("Error deploying connector")
-            return False
+            if not self.infrastructure.deploy_helm_release(
+                release_name,
+                target_namespace,
+                values_files,
+                cwd=self.config.connector_dir()
+            ):
+                print("Error deploying connector")
+                return False
 
-        rollout_timeout = max(int(getattr(self.config, "TIMEOUT_POD_WAIT", 120)), 180)
-        if not self._wait_for_connector_deployments(
-            connector_name,
-            namespace=target_namespace,
-            timeout=rollout_timeout,
-        ):
-            print("Timeout waiting for connector deployment rollout")
-            return False
+            rollout_timeout = max(int(getattr(self.config, "TIMEOUT_POD_WAIT", 120)), 180)
+            if not self._wait_for_connector_deployments(
+                connector_name,
+                namespace=target_namespace,
+                timeout=rollout_timeout,
+            ):
+                print("Timeout waiting for connector deployment rollout")
+                return False
 
         print("\nCONNECTORS CREATED\n")
         return True
 
     def connector_is_healthy(self, connector_name, namespace):
-        result = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
+        with self._temporary_connector_kubeconfig(connector_name):
+            result = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
         if not result:
             return False
 
@@ -3342,7 +4615,8 @@ class INESDataConnectorsAdapter:
 
         namespace_outputs = []
         for namespace in self._all_connector_scan_namespaces():
-            pods = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
+            with self._temporary_namespace_kubeconfig(namespace):
+                pods = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
             if pods:
                 namespace_outputs.append((namespace, pods))
         if not namespace_outputs:
@@ -3359,7 +4633,8 @@ class INESDataConnectorsAdapter:
         if failed:
             print("\nSome connectors are not running\n")
             for namespace, _pods in namespace_outputs:
-                self.run(f"kubectl get pods -n {namespace}", check=False)
+                with self._temporary_namespace_kubeconfig(namespace):
+                    self.run(f"kubectl get pods -n {namespace}", check=False)
             return False
 
         print("All connector pods are running\n")
@@ -3456,9 +4731,11 @@ class INESDataConnectorsAdapter:
         follow = input("Follow logs in real-time? (Y/N): ").strip().upper()
 
         if follow == "Y":
-            self.run(f"kubectl logs -f {selected_pod} -n {selected_namespace}", check=False)
+            with self._temporary_namespace_kubeconfig(selected_namespace):
+                self.run(f"kubectl logs -f {selected_pod} -n {selected_namespace}", check=False)
         else:
-            self.run(f"kubectl logs {selected_pod} -n {selected_namespace}", check=False)
+            with self._temporary_namespace_kubeconfig(selected_namespace):
+                self.run(f"kubectl logs {selected_pod} -n {selected_namespace}", check=False)
 
     def deploy_connectors(self):
         print("\n========================================")
@@ -3489,7 +4766,21 @@ class INESDataConnectorsAdapter:
             return []
 
         first_namespace = dataspaces[0].get("namespace") or self.config.namespace_demo()
-        if not self._maybe_prepare_level4_local_connector_images(first_namespace):
+        local_image_namespaces = [first_namespace]
+        if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+            local_image_namespaces = []
+            seen_namespaces = set()
+            for ds in dataspaces:
+                for target_namespace in self._dataspace_connector_target_namespaces(ds, dataspaces=dataspaces):
+                    normalized_namespace = str(target_namespace or "").strip()
+                    if not normalized_namespace or normalized_namespace in seen_namespaces:
+                        continue
+                    seen_namespaces.add(normalized_namespace)
+                    local_image_namespaces.append(normalized_namespace)
+            if not local_image_namespaces:
+                local_image_namespaces = [first_namespace]
+
+        if not self._prepare_level4_local_connector_images_for_namespaces(local_image_namespaces):
             return []
 
         all_connectors = set()
@@ -3539,15 +4830,39 @@ class INESDataConnectorsAdapter:
                         vault_ready = True
                     if not self._prepare_vault_management_access(ds_name=ds_name):
                         return []
-                    for stale_connector in stale:
-                        stale_namespace = existing_namespaces.get(stale_connector) or namespace
-                        self._cleanup_connector_state(
-                            stale_connector,
-                            repo_dir,
-                            ds_name,
-                            python_exec,
-                            namespace=stale_namespace,
-                        )
+                    cleanup_bootstrap_access = None
+                    if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+                        cleanup_bootstrap_access = self._start_level4_connector_bootstrap_access()
+                        if cleanup_bootstrap_access is None:
+                            return []
+                        if not self._ensure_level4_keycloak_ready(cleanup_bootstrap_access, "cleanup"):
+                            self._stop_level4_connector_bootstrap_access(cleanup_bootstrap_access)
+                            return []
+                    try:
+                        for stale_connector in stale:
+                            stale_namespace = existing_namespaces.get(stale_connector) or namespace
+                            cleanup_kwargs = {"namespace": stale_namespace}
+                            if cleanup_bootstrap_access:
+                                cleanup_kwargs.update(
+                                    dataspace=ds,
+                                    kubeconfig_role=self._namespace_kubeconfig_role(
+                                        stale_namespace,
+                                        dataspace=ds,
+                                    ),
+                                    vault_url=cleanup_bootstrap_access.get("vault_url"),
+                                    keycloak_url=cleanup_bootstrap_access.get("keycloak_url"),
+                                    pg_host=cleanup_bootstrap_access.get("pg_host"),
+                                    pg_port=cleanup_bootstrap_access.get("pg_port"),
+                                )
+                            self._cleanup_connector_state(
+                                stale_connector,
+                                repo_dir,
+                                ds_name,
+                                python_exec,
+                                **cleanup_kwargs,
+                            )
+                    finally:
+                        self._stop_level4_connector_bootstrap_access(cleanup_bootstrap_access)
 
             for connector in connectors:
                 all_connectors.add(connector)
@@ -3559,6 +4874,11 @@ class INESDataConnectorsAdapter:
 
                 if self.connector_already_exists(connector, target_namespace):
                     if (
+                        reconciliation_mode != "additive"
+                        and self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY
+                    ):
+                        print("Recreating connector to ensure a clean vm-distributed Level 4 deployment")
+                    elif (
                         self.connector_is_healthy(connector, target_namespace)
                         and self.connector_database_credentials_valid(connector)
                     ):
@@ -3643,7 +4963,8 @@ class INESDataConnectorsAdapter:
             return ordered
 
         for namespace in self._all_connector_scan_namespaces():
-            output = self.run(f"kubectl get pods -n {namespace} --no-headers", capture=True)
+            with self._temporary_namespace_kubeconfig(namespace):
+                output = self.run(f"kubectl get pods -n {namespace} --no-headers", capture=True)
             if not output:
                 continue
             for line in output.splitlines():

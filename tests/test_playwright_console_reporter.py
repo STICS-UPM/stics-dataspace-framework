@@ -208,6 +208,10 @@ const tests = [
     location: { file: 'validation/ui/adapters/inesdata/specs/04-consumer-catalog.spec.ts' },
   },
   {
+    title: 'MinIO browser: provider bucket visible by direct URL',
+    location: { file: 'validation/ui/shared/specs/minio-bucket-visibility.ts' },
+  },
+  {
     title: '07 semantic virtualization: HTTP data is queryable',
     location: { file: 'validation/ui/adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts' },
   },
@@ -253,10 +257,12 @@ for (const test of tests) {
         self.assertEqual(
             completed.stdout.strip().splitlines(),
             [
-                "Suite: INESData integration (9 tests)",
+                "Suite: INESData integration (10 tests)",
                 "Group: Core (2 tests)",
                 "  ✓ 01 login readiness: authentication and shell loaded",
                 "  ✓ 04 consumer catalog: published asset is discoverable",
+                "Group: Operational Storage (1 test)",
+                "  ✓ MinIO browser: provider bucket visible by direct URL",
                 "Group: Semantic Virtualization (1 test)",
                 "  ✓ 07 semantic virtualization: HTTP data is queryable",
                 "Group: Ontology Hub (1 test)",

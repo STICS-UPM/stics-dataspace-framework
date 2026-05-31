@@ -55,6 +55,43 @@ type ConsumerTransferArtifacts = {
   assetId: string;
 };
 
+type ConsumerTransferReadinessProbe = {
+  status: "ready" | "timeout";
+  assetId: string;
+  agreementId: string;
+  transferCount: number;
+  readyTransferId?: string;
+  readyState?: string;
+  transfers: Array<{
+    transferId: string;
+    state: string;
+    assetId?: string;
+    contractId?: string;
+    transferType?: string;
+  }>;
+  error?: string;
+};
+
+type ConsumerEdrProbeTransfer = {
+  transferId: string;
+  state: string;
+  assetId?: string;
+  contractId?: string;
+  transferType?: string;
+  edrHttpStatus?: number;
+  edrEndpointPresent: boolean;
+  edrAuthorizationPresent: boolean;
+};
+
+type ConsumerEdrReadinessProbe = {
+  status: "ready" | "timeout";
+  assetId: string;
+  agreementId: string;
+  transferCount: number;
+  transfers: ConsumerEdrProbeTransfer[];
+  error?: string;
+};
+
 type CleanupEntityKind = "contractdefinitions" | "policydefinitions" | "assets";
 
 type CleanupEntityReport = {
@@ -76,10 +113,12 @@ type ProviderCleanupReport = {
 type TokenProvider = string | (() => Promise<string>);
 
 const TRANSIENT_HTTP_STATUSES = new Set([401, 502, 503, 504]);
+const TRANSIENT_FEDERATED_CATALOG_HTTP_STATUSES = new Set([401, 500, 502, 503, 504]);
 const TRANSIENT_HTTP_MAX_ATTEMPTS = 4;
 const TRANSIENT_HTTP_RETRY_DELAY_MS = 2000;
 const CLEANUP_ENTITY_ORDER: CleanupEntityKind[] = ["contractdefinitions", "policydefinitions", "assets"];
 const DEFAULT_CATALOG_READINESS_TIMEOUT_MS = 180_000;
+const ACCEPTED_CONSUMER_TRANSFER_STATES = new Set(["STARTED", "COMPLETED", "ENDED", "TERMINATED", "DEPROVISIONED"]);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -87,6 +126,15 @@ function sleep(ms: number): Promise<void> {
 
 function isTransientHttpStatus(status: number): boolean {
   return TRANSIENT_HTTP_STATUSES.has(status);
+}
+
+function isTransientFederatedCatalogReadinessError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = message.match(/Consumer federated catalog (?:request|count) failed with HTTP (\d+)/);
+  if (!match) {
+    return false;
+  }
+  return TRANSIENT_FEDERATED_CATALOG_HTTP_STATUSES.has(Number(match[1]));
 }
 
 function catalogReadinessTimeoutMs(): number {
@@ -375,6 +423,23 @@ async function createAsset(
       : sourceObjectNameOrOptions;
   const sourceObjectName = options.sourceObjectName || "todos";
   const keywords = options.keywords || ["validation", "ui", "negotiation"];
+  const dataAddress = {
+    type: "HttpData",
+    baseUrl: "https://jsonplaceholder.typicode.com/todos",
+    name: sourceObjectName,
+    ...(options.dataAddress || {}),
+  };
+  const dataAddressType =
+    typeof dataAddress.type === "string" && dataAddress.type.trim().length > 0
+      ? dataAddress.type.trim()
+      : undefined;
+  const storageMetadata = dataAddressType
+    ? {
+        storageType: dataAddressType,
+        "edc:dataAddressType": dataAddressType,
+        "https://w3id.org/edc/v0.0.1/ns/dataAddressType": dataAddressType,
+      }
+    : {};
 
   await executeRetriableRequest("Create asset", async () => {
     const token = await resolveToken(providerToken);
@@ -386,6 +451,7 @@ async function createAsset(
       data: {
         "@context": {
           "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+          edc: "https://w3id.org/edc/v0.0.1/ns/",
           dct: "http://purl.org/dc/terms/",
           dcat: "http://www.w3.org/ns/dcat#",
           daimo: "https://w3id.org/daimo/0.0.1/ns#",
@@ -401,14 +467,10 @@ async function createAsset(
           "dct:description": options.description || "Asset bootstrap for UI negotiation validation",
           "dcat:keyword": keywords,
           sourceObjectName,
+          ...storageMetadata,
           ...(options.properties || {}),
         },
-        dataAddress: {
-          type: "HttpData",
-          baseUrl: "https://jsonplaceholder.typicode.com/todos",
-          name: sourceObjectName,
-          ...(options.dataAddress || {}),
-        },
+        dataAddress,
       },
     });
   });
@@ -772,19 +834,28 @@ async function fetchConsumerFederatedCatalogDatasetWithOffer(
   const deadline = Date.now() + timeoutMs;
   let lastDatasetFound = false;
   let lastDatasetCount = 0;
+  let lastTransientError = "";
 
   while (Date.now() < deadline) {
-    const catalogResponse = await fetchConsumerFederatedCatalogResponse(request, runtime);
-    lastDatasetCount = federatedCatalogDatasetCount(catalogResponse);
-    const match = findFederatedCatalogDataset(catalogResponse, assetId);
-    if (match) {
-      lastDatasetFound = true;
-      if (federatedCatalogDatasetOffer(match.dataset)?.["@id"]) {
-        const datasetCount = await fetchConsumerFederatedCatalogCount(request, runtime);
-        if (datasetCount > 0) {
-          return { catalogResponse, dataset: match.dataset, datasetCount };
+    try {
+      const catalogResponse = await fetchConsumerFederatedCatalogResponse(request, runtime);
+      lastDatasetCount = federatedCatalogDatasetCount(catalogResponse);
+      const match = findFederatedCatalogDataset(catalogResponse, assetId);
+      if (match) {
+        lastDatasetFound = true;
+        if (federatedCatalogDatasetOffer(match.dataset)?.["@id"]) {
+          const datasetCount = await fetchConsumerFederatedCatalogCount(request, runtime);
+          if (datasetCount > 0) {
+            return { catalogResponse, dataset: match.dataset, datasetCount };
+          }
         }
       }
+      lastTransientError = "";
+    } catch (error) {
+      if (!isTransientFederatedCatalogReadinessError(error)) {
+        throw error;
+      }
+      lastTransientError = error instanceof Error ? error.message : String(error);
     }
     await sleep(2000);
   }
@@ -792,7 +863,8 @@ async function fetchConsumerFederatedCatalogDatasetWithOffer(
   throw new Error(
     `Federated catalog dataset '${assetId}' did not expose an offer policy in time. ` +
       `Last catalog state: ${lastDatasetFound ? "dataset without offer policy" : "dataset not found"}. ` +
-      `Last visible dataset count: ${lastDatasetCount}`,
+      `Last visible dataset count: ${lastDatasetCount}` +
+      (lastTransientError ? `. Last transient catalog error: ${lastTransientError}` : ""),
   );
 }
 
@@ -1288,4 +1360,210 @@ export async function bootstrapConsumerTransfer(
   }
 
   throw new Error(`Transfer '${transferId}' did not reach an active state in time`);
+}
+
+function transferReferencesAssetAgreement(transfer: any, assetId: string, agreementId: string): boolean {
+  const serialized = JSON.stringify(transfer || {});
+  return serialized.includes(assetId) && serialized.includes(agreementId);
+}
+
+function transferReferencesAsset(transfer: any, assetId: string): boolean {
+  return JSON.stringify(transfer || {}).includes(assetId);
+}
+
+function transferId(transfer: any): string {
+  return String(transfer?.["@id"] || transfer?.id || "").trim();
+}
+
+function transferState(transfer: any): string {
+  return String(transfer?.state || transfer?.["edc:state"] || "").trim().toUpperCase();
+}
+
+function transferAssetId(transfer: any): string | undefined {
+  const value = transfer?.assetId || transfer?.["edc:assetId"];
+  return value === undefined || value === null ? undefined : String(value).trim();
+}
+
+function transferContractId(transfer: any): string | undefined {
+  const value =
+    transfer?.contractId ||
+    transfer?.["edc:contractId"] ||
+    transfer?.contractAgreementId ||
+    transfer?.["edc:contractAgreementId"];
+  return value === undefined || value === null ? undefined : String(value).trim();
+}
+
+function transferType(transfer: any): string | undefined {
+  const value = transfer?.transferType || transfer?.["edc:transferType"];
+  return value === undefined || value === null ? undefined : String(value).trim();
+}
+
+export async function waitForConsumerTransferReadinessForAssetAgreement(
+  request: APIRequestContext,
+  runtime: DataspacePortalRuntime,
+  assetId: string,
+  agreementId: string,
+  timeoutMs = 180_000,
+): Promise<ConsumerTransferReadinessProbe> {
+  const deadline = Date.now() + timeoutMs;
+  let transfers: ConsumerTransferReadinessProbe["transfers"] = [];
+  let lastError: string | undefined;
+
+  while (Date.now() < deadline) {
+    try {
+      const consumerToken = await issueConsumerToken(request, runtime);
+      const transferResponse = await request.post(`${runtime.consumer.managementBaseUrl}/transferprocesses/request`, {
+        headers: {
+          Authorization: `Bearer ${consumerToken}`,
+          "Content-Type": "application/json",
+        },
+        data: {
+          "@context": {
+            "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+          },
+          "@type": "QuerySpec",
+          offset: 0,
+          limit: 300,
+          filterExpression: [],
+        },
+      });
+      await ensureOk(transferResponse, "Consumer transfer readiness lookup");
+      const transferBody = await transferResponse.json();
+      transfers = payloadItems(transferBody)
+        .filter((transfer) =>
+          agreementId
+            ? transferReferencesAssetAgreement(transfer, assetId, agreementId)
+            : transferReferencesAsset(transfer, assetId),
+        )
+        .map((transfer) => ({
+          transferId: transferId(transfer),
+          state: transferState(transfer),
+          assetId: transferAssetId(transfer),
+          contractId: transferContractId(transfer),
+          transferType: transferType(transfer),
+        }));
+
+      const readyTransfer = transfers.find((transfer) => ACCEPTED_CONSUMER_TRANSFER_STATES.has(transfer.state));
+      if (readyTransfer) {
+        return {
+          status: "ready",
+          assetId,
+          agreementId,
+          transferCount: transfers.length,
+          readyTransferId: readyTransfer.transferId,
+          readyState: readyTransfer.state,
+          transfers,
+        };
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+
+    await sleep(2000);
+  }
+
+  return {
+    status: "timeout",
+    assetId,
+    agreementId,
+    transferCount: transfers.length,
+    transfers,
+    error: lastError,
+  };
+}
+
+export async function probeConsumerEdrReadinessForAssetAgreement(
+  request: APIRequestContext,
+  runtime: DataspacePortalRuntime,
+  assetId: string,
+  agreementId: string,
+  timeoutMs = 60_000,
+): Promise<ConsumerEdrReadinessProbe> {
+  const deadline = Date.now() + timeoutMs;
+  const transfers: ConsumerEdrProbeTransfer[] = [];
+  let lastError: string | undefined;
+
+  while (Date.now() < deadline) {
+    try {
+      const consumerToken = await issueConsumerToken(request, runtime);
+      const transferResponse = await request.post(`${runtime.consumer.managementBaseUrl}/transferprocesses/request`, {
+        headers: {
+          Authorization: `Bearer ${consumerToken}`,
+          "Content-Type": "application/json",
+        },
+        data: {
+          "@context": {
+            "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+          },
+          offset: 0,
+          limit: 200,
+        },
+      });
+      await ensureOk(transferResponse, "Consumer transfer process EDR probe");
+      const transferBody = await transferResponse.json();
+      const matchingTransfers = payloadItems(transferBody).filter((transfer) =>
+        transferReferencesAssetAgreement(transfer, assetId, agreementId),
+      );
+
+      transfers.splice(0, transfers.length);
+      for (const transfer of matchingTransfers) {
+        const id = transferId(transfer);
+        const summary: ConsumerEdrProbeTransfer = {
+          transferId: id,
+          state: transferState(transfer),
+          assetId: transferAssetId(transfer),
+          contractId: transferContractId(transfer),
+          transferType: transferType(transfer),
+          edrEndpointPresent: false,
+          edrAuthorizationPresent: false,
+        };
+
+        if (id) {
+          const edrResponse = await request.get(
+            `${runtime.consumer.managementBaseUrl}/edrs/${encodeURIComponent(id)}/dataaddress`,
+            {
+              headers: {
+                Authorization: `Bearer ${consumerToken}`,
+              },
+            },
+          );
+          summary.edrHttpStatus = edrResponse.status();
+          if (edrResponse.ok()) {
+            const edrBody = await edrResponse.json();
+            summary.edrEndpointPresent = Boolean(
+              edrBody?.endpoint || edrBody?.["edc:endpoint"] || edrBody?.endpointUrl || edrBody?.["edc:endpointUrl"],
+            );
+            summary.edrAuthorizationPresent = Boolean(
+              edrBody?.authorization || edrBody?.["edc:authorization"] || edrBody?.authCode || edrBody?.["edc:authCode"],
+            );
+          }
+        }
+
+        transfers.push(summary);
+      }
+
+      if (transfers.some((transfer) => transfer.edrEndpointPresent && transfer.edrAuthorizationPresent)) {
+        return {
+          status: "ready",
+          assetId,
+          agreementId,
+          transferCount: transfers.length,
+          transfers: [...transfers],
+        };
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+
+    await sleep(2_000);
+  }
+
+  return {
+    status: "timeout",
+    assetId,
+    agreementId,
+    transferCount: transfers.length,
+    transfers: [...transfers],
+    error: lastError,
+  };
 }

@@ -141,6 +141,9 @@ def _catalog_entries_by_spec(catalog: Dict[str, Any]) -> Dict[str, Dict[str, Any
         spec_path = _normalize_spec_path((entry.get("automation") or {}).get("ui_spec"))
         if spec_path:
             mapping[spec_path] = entry
+        if entry.get("id") == "DS-UI-OPS-01":
+            mapping["adapters/inesdata/specs/06b-minio-bucket-visibility.spec.ts"] = entry
+            mapping["shared/specs/minio-bucket-visibility.ts"] = entry
     return mapping
 
 
@@ -644,12 +647,19 @@ def _extract_cases_from_payload(
 ) -> List[Dict[str, Any]]:
     executed_cases: List[Dict[str, Any]] = []
     selected_specs = {_normalize_spec_path(spec) for spec in list(result.get("specs") or [])}
+    selected_catalog_entry_ids = {
+        id(catalog_entry)
+        for spec_path in selected_specs
+        for catalog_entry in [catalog_cases_by_spec.get(spec_path)]
+        if catalog_entry
+    }
 
     for spec in _iter_specs(payload.get("suites") or []):
         spec_file = _normalize_spec_path(spec.get("file") or spec.get("_suite_file"))
-        if selected_specs and spec_file not in selected_specs:
-            continue
         catalog_entry = catalog_cases_by_spec.get(spec_file)
+        if selected_specs and spec_file not in selected_specs:
+            if not catalog_entry or id(catalog_entry) not in selected_catalog_entry_ids:
+                continue
         if not catalog_entry:
             continue
         status = _spec_result_status(spec)

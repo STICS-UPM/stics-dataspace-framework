@@ -9,6 +9,9 @@ connector:
     tag: 20260309-86a226e
   replicas: 1
   jvmArgs: "{% if keys.environment == 'PRO'%}-Djavax.net.ssl.trustStore=/opt/connector/tls-cacerts/cacerts.jks -Djavax.net.ssl.trustStorePassword=dataspaceunit{% endif %}"
+  modelExecution:
+    edrAttempts: {{ keys.connector_model_execution_edr_attempts | default(90, true) }}
+    edrDelayMs: {{ keys.connector_model_execution_edr_delay_ms | default(1000, true) }}
   configuration:
     configFilePath: /opt/connector/config/connector-configuration.properties
   ingress:
@@ -51,8 +54,13 @@ connectorInterface:
     localStoreLabel: {{ (keys.inesdata_local_store_label | default('InesDataStore', true)) | tojson }}
     assetsConfigMapName: {{ (keys.inesdata_brand_assets_configmap_name | default('', true)) | tojson }}
     assets: {{ (keys.inesdata_brand_assets | default([], true)) | tojson }}
+{% set ontology_public_url = keys.ontology_hub_public_url | default('', true) %}
+{% if not ontology_public_url and (keys.components_public_base_url | default('', true)) %}
+{% set ontology_public_path = keys.ontology_hub_public_path | default('/ontology-hub', true) %}
+{% set ontology_public_url = (keys.components_public_base_url.rstrip('/') ~ '/' ~ ontology_public_path.lstrip('/')).rstrip('/') %}
+{% endif %}
   ontologyHub:
-    url: {{ 'https' if keys.environment == 'PRO' else 'http' }}://ontology-hub-{{ keys.dataspace_name }}.{% if keys.environment == 'PRO' %}ds.dataspaceunit-project.eu{% else %}{{ keys.ds_domain_base | default('pionera.oeg.fi.upm.es') }}{% endif %}
+    url: {{ (ontology_public_url if ontology_public_url else (('https' if keys.environment == 'PRO' else 'http') ~ '://ontology-hub-' ~ keys.dataspace_name ~ '.' ~ ('ds.dataspaceunit-project.eu' if keys.environment == 'PRO' else (keys.ds_domain_base | default('pionera.oeg.fi.upm.es'))))) | tojson }}
   modelObserver:
     strapiUrl: {{ 'https' if keys.environment == 'PRO' else 'http' }}://backend-{{ keys.dataspace_name }}.{% if keys.environment == 'PRO' %}ds.dataspaceunit-project.eu{% else %}{{ keys.ds_domain_base | default('pionera.oeg.fi.upm.es') }}{% endif %}
     proxyTarget: {{ 'https' if keys.environment == 'PRO' else 'http' }}://backend-{{ keys.dataspace_name }}.{% if keys.environment == 'PRO' %}ds.dataspaceunit-project.eu{% else %}{{ keys.ds_domain_base | default('pionera.oeg.fi.upm.es') }}{% endif %}

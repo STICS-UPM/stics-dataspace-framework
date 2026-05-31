@@ -52,6 +52,12 @@ public class ModelExecutionApiExtension implements ServiceExtension {
     @Setting(value = "Fallback transfer type for transfer requests triggered by model execution.", defaultValue = DEFAULT_TRANSFER_TYPE)
     private static final String DEFAULT_EXECUTION_TRANSFER_TYPE = "asset.infer.transfer.type";
 
+    @Setting(value = "Maximum attempts to resolve the EDR created for a remote model execution transfer.", defaultValue = "20")
+    private static final String EDR_ATTEMPTS = "asset.infer.edr.attempts";
+
+    @Setting(value = "Delay in milliseconds between EDR resolution attempts for remote model execution.", defaultValue = "500")
+    private static final String EDR_DELAY_MS = "asset.infer.edr.delay.ms";
+
     @Inject
     private WebService webService;
 
@@ -92,11 +98,31 @@ public class ModelExecutionApiExtension implements ServiceExtension {
                 context.getSetting(DEFAULT_CONNECTOR_ID, ""),
                 context.getSetting(DEFAULT_COUNTER_PARTY_ADDRESS, ""),
                 context.getSetting(DEFAULT_EXECUTION_PROTOCOL, DEFAULT_PROTOCOL),
-            context.getSetting(DEFAULT_EXECUTION_TRANSFER_TYPE, DEFAULT_TRANSFER_TYPE),
-            Boolean.parseBoolean(String.valueOf(context.getSetting(OBSERVER_JOURNAL_ENABLED, "true"))),
-            context.getSetting(OBSERVER_JOURNAL_BASE_URL, ""),
-            context.getSetting(OBSERVER_JOURNAL_EVENTS_PATH, DEFAULT_OBSERVER_EVENTS_PATH),
-            context.getSetting(OBSERVER_SOURCE_COMPONENT, "inesdata-connector:model-execution-api")
+                context.getSetting(DEFAULT_EXECUTION_TRANSFER_TYPE, DEFAULT_TRANSFER_TYPE),
+                parsePositiveInt(context.getSetting(EDR_ATTEMPTS, "20"), 20),
+                parsePositiveLong(context.getSetting(EDR_DELAY_MS, "500"), 500),
+                Boolean.parseBoolean(String.valueOf(context.getSetting(OBSERVER_JOURNAL_ENABLED, "true"))),
+                context.getSetting(OBSERVER_JOURNAL_BASE_URL, ""),
+                context.getSetting(OBSERVER_JOURNAL_EVENTS_PATH, DEFAULT_OBSERVER_EVENTS_PATH),
+                context.getSetting(OBSERVER_SOURCE_COMPONENT, "inesdata-connector:model-execution-api")
         ));
+    }
+
+    private int parsePositiveInt(String value, int fallback) {
+        try {
+            var parsed = Integer.parseInt(String.valueOf(value).trim());
+            return parsed > 0 ? parsed : fallback;
+        } catch (RuntimeException ignored) {
+            return fallback;
+        }
+    }
+
+    private long parsePositiveLong(String value, long fallback) {
+        try {
+            var parsed = Long.parseLong(String.valueOf(value).trim());
+            return parsed > 0 ? parsed : fallback;
+        } catch (RuntimeException ignored) {
+            return fallback;
+        }
     }
 }

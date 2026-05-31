@@ -1,5 +1,6 @@
 const { expect } = require("../fixtures");
 const { checkMarked, clickMarked, fillMarked, selectOptionMarked } = require("../support/live-marker");
+const { gotoDashboardRoute } = require("./navigation");
 
 class AssetCreateDialog {
   constructor(page) {
@@ -280,7 +281,7 @@ class AssetsPage {
   }
 
   async goto() {
-    await this.page.goto(`${this.runtime.baseUrl}${this.runtime.assetsPath}`);
+    await gotoDashboardRoute(this.page, this.runtime, this.runtime.assetsPath, "Assets");
   }
 
   async waitUntilReady() {

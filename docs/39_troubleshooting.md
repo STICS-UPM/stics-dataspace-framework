@@ -1,5 +1,47 @@
 # Troubleshooting
 
+## Windows Llega al Bastion Pero WSL No
+
+En topología `vm-distributed`, una terminal WSL puede no heredar correctamente
+la conectividad de Windows hacia la VPN, red corporativa o red de laboratorio.
+El síntoma típico es que `Test-NetConnection` funciona en PowerShell, pero en
+WSL fallan la resolución DNS o la conexión TCP al bastion.
+
+Comprueba primero desde Windows:
+
+```powershell
+Test-NetConnection <bastion-host> -Port <bastion-port>
+```
+
+Después comprueba desde WSL:
+
+```bash
+getent hosts <bastion-host>
+nc -vz <bastion-host> <bastion-port>
+```
+
+Si Windows funciona y WSL falla, activa networking mirrored en
+`%UserProfile%\.wslconfig`:
+
+```ini
+[wsl2]
+networkingMode=mirrored
+dnsTunneling=true
+autoProxy=true
+firewall=true
+```
+
+Reinicia WSL desde PowerShell:
+
+```powershell
+wsl --shutdown
+```
+
+Al abrir de nuevo WSL, repite `getent` y `nc` antes de probar SSH. Para
+`vm-distributed`, usa una llave SSH dedicada al entorno VM; no reutilices llaves
+personales ni llaves privadas compartidas. La guía completa está en
+[Preparación de conectores externos](./45_external_connector_readiness.md#operación-desde-windows-y-wsl).
+
 ## Las Entradas de Hosts No Resuelven
 
 Previsualiza las entradas esperadas:

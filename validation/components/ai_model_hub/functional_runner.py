@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from validation.components.artifact_cleanup import cleanup_empty_experiment_artifact_dirs
+from validation.components.fail_fast import playwright_max_failures_args
 
 
 COMPONENT_KEY = "ai-model-hub"
@@ -16,6 +17,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_EXPERIMENTS_DIR = PROJECT_ROOT / "experiments" / "_standalone"
 PLAYWRIGHT_COMMAND = [os.path.join(".", "node_modules", ".bin", "playwright"), "test", "--config", PLAYWRIGHT_CONFIG_RELATIVE]
 FUNCTIONAL_VALIDATION_ENV = "AI_MODEL_HUB_ENABLE_FUNCTIONAL_VALIDATION"
+
+
+def _playwright_command() -> List[str]:
+    return [*PLAYWRIGHT_COMMAND, *playwright_max_failures_args()]
 
 
 FUNCTIONAL_CASE_METADATA: Dict[str, Dict[str, Any]] = {
@@ -262,7 +267,7 @@ def run_ai_model_hub_functional_validation(base_url: str, experiment_dir: str | 
     exit_code = None
     status = "skipped"
     try:
-        completed = subprocess.run(PLAYWRIGHT_COMMAND, cwd=str(PLAYWRIGHT_WORKDIR), env=env)
+        completed = subprocess.run(_playwright_command(), cwd=str(PLAYWRIGHT_WORKDIR), env=env)
         exit_code = completed.returncode
         status = "passed" if completed.returncode == 0 else "failed"
     except OSError as exc:

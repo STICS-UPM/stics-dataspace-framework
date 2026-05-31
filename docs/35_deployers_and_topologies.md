@@ -138,9 +138,9 @@ según el flujo de prueba. Para más de dos conectores, define el inventario en
 `DS_1_CONNECTOR_NAMESPACES`:
 
 ```ini
-DS_1_CONNECTORS=citycouncil,company,partnera
-DS_1_CONNECTOR_NAMESPACES=citycouncil:provider,company:consumer,partnera:provider
-DS_1_VALIDATION_PAIRS=citycouncil>company,partnera>citycouncil
+DS_1_CONNECTORS=org2,org3,partnera
+DS_1_CONNECTOR_NAMESPACES=org2:provider,org3:consumer,partnera:provider
+DS_1_VALIDATION_PAIRS=org2>org3,partnera>org2
 LEVEL4_CONNECTOR_RECONCILIATION_MODE=full
 ```
 
@@ -426,17 +426,28 @@ también recoge kubeconfigs por rol (`common`, `provider`, `consumer`) para que 
 implementación operativa de `vm-distributed` pueda evolucionar sin reabrir el
 modelo de configuración.
 
-La ejecución real actual de `vm-distributed` está habilitada para el caso
-conservador de un cluster Kubernetes lógico distribuido. En ese modo,
-`K3S_KUBECONFIG_COMMON` debe apuntar a un kubeconfig que permita operar los
-namespaces de servicios comunes, dataspace, conectores y componentes. El nivel 5
-puede usar `K3S_KUBECONFIG_COMPONENTS` si se necesita dirigir los componentes a
-un contexto específico. En nivel 4, si `K3S_KUBECONFIG_PROVIDER` y
-`K3S_KUBECONFIG_CONSUMER` apuntan a API servers distintos de
-`K3S_KUBECONFIG_COMMON`, el framework aborta antes de desplegar conectores. Esa
-protección evita mezclar el bootstrap de servicios comunes con un Helm deploy de
-conectores en otro cluster mientras no esté implementado el flujo multi-cluster
-completo.
+La ejecución real actual de `vm-distributed` está habilitada tanto para un
+cluster Kubernetes lógico distribuido como para clusters k3s separados por rol.
+`K3S_KUBECONFIG_COMMON` opera servicios comunes y el plano de control del
+dataspace. En nivel 4, `K3S_KUBECONFIG_PROVIDER` se usa para Helm, ConfigMaps,
+rollouts, logs y port-forward de conectores provider, y
+`K3S_KUBECONFIG_CONSUMER` se usa para las mismas operaciones de conectores
+consumer. El nivel 5 puede usar `K3S_KUBECONFIG_COMPONENTS` si se necesita
+dirigir los componentes a un contexto específico.
+
+En el modo multi-cluster, los conectores siguen necesitando llegar a los
+servicios comunes en tiempo de ejecución: Keycloak, Vault, MinIO, PostgreSQL y
+Registration Service deben estar expuestos por DNS, ingress, proxy o rutas
+válidas desde los clusters provider y consumer.
+
+Para que este modo compartido cumpla el diagrama de PIONERA, el cluster lógico
+debe incluir nodos Kubernetes para las VMs de conectores. Si el kubeconfig solo
+muestra el nodo común, los namespaces `provider` y `consumer` se crearán
+lógicamente, pero sus pods seguirán ejecutándose en la VM común. En
+`vm-distributed`, los charts de conectores aceptan `nodeSelector` y el adapter
+puede derivarlo de `VM_PROVIDER_K8S_NODE` y `VM_CONSUMER_K8S_NODE`; por ejemplo,
+`org2` puede quedar fijado a `pionera20` y `org3` a `pionera3` cuando esas VMs
+ya formen parte del cluster k3s.
 
 ### Asistente de `vm-distributed`
 
@@ -483,9 +494,10 @@ de lectura como `hostname`, `id`, `/etc/os-release`, detección de runtime de
 contenedores, `kubectl`/`k3s`, puertos en escucha y `curl` local. No instala
 paquetes, no cambia firewall, no modifica certificados y no despliega recursos.
 
-Si el checklist marca `blocked` en el alcance de nivel 4, la configuración
-describe un despliegue multi-kubeconfig real y el framework lo bloquea de forma
-preventiva hasta que exista soporte multi-cluster completo.
+Si el checklist marca `ready` con el detalle `multi-kubeconfig connector
+deployment enabled`, la configuración describe un despliegue multi-cluster real:
+antes de ejecutar el nivel 4 conviene comprobar que cada kubeconfig llega a su
+cluster y que los servicios comunes son resolubles desde provider y consumer.
 
 En `vm-distributed`, los niveles 2, 3 y 4 refrescan de forma idempotente la
 configuración de routing NGINX cuando `VM_COMMON_IP` y `DS_DOMAIN_BASE` están

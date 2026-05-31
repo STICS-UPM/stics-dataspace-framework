@@ -31,6 +31,18 @@ class Level6SuiteTaxonomyTests(unittest.TestCase):
             classify_playwright_spec("adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts"),
             {"audit_suite": "INESData integration", "audit_group": "Semantic Virtualization"},
         )
+        self.assertEqual(
+            classify_playwright_spec("adapters/inesdata/specs/06b-minio-bucket-visibility.spec.ts"),
+            {"audit_suite": "INESData integration", "audit_group": "Operational Storage"},
+        )
+        self.assertEqual(
+            classify_playwright_spec("ops/minio-bucket-visibility.spec.ts"),
+            {"audit_suite": "INESData integration", "audit_group": "Operational Storage"},
+        )
+        self.assertEqual(
+            classify_playwright_spec("shared/specs/minio-bucket-visibility.ts"),
+            {"audit_suite": "INESData integration", "audit_group": "Operational Storage"},
+        )
 
     def test_classifies_component_owned_specs(self):
         self.assertEqual(
@@ -76,6 +88,14 @@ class Level6SuiteTaxonomyTests(unittest.TestCase):
         self.assertEqual(
             classify_suite_artifact(kind="kafka", title="Kafka transfer", artifacts=["kafka_transfer_results.json"]),
             {"audit_suite": "INESData integration", "audit_group": "Kafka / streaming transfer"},
+        )
+        self.assertEqual(
+            classify_suite_artifact(
+                kind="ui",
+                title="UI ops MinIO",
+                artifacts=["ui-ops/minio-console/results.json"],
+            ),
+            {"audit_suite": "INESData integration", "audit_group": "Operational Storage"},
         )
         self.assertEqual(
             classify_suite_artifact(kind="une-0087", title="UNE 0087 alignment", artifacts=["une_0087_alignment.json"]),

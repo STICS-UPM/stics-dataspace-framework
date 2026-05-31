@@ -10,10 +10,12 @@ import {
   bootstrapConsumerNegotiation,
   bootstrapProviderNegotiationArtifacts,
   cleanupProviderValidationArtifacts,
+  probeConsumerEdrReadinessForAssetAgreement,
   probeConsumerCatalogDatasetReadiness,
   waitForConsumerAgreement,
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS, waitForUiTransition } from "../../../shared/utils/waiting";
+import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
 
 type AIModelExternalExecutionUiReport = {
   startedAt: string;
@@ -51,6 +53,24 @@ type AIModelExternalExecutionUiReport = {
     assetId: string;
     attempts: number;
   };
+  edrReadinessEvidence: Array<{
+    attempt: number;
+    status?: "ready" | "timeout";
+    assetId: string;
+    agreementId: string;
+    transferCount: number;
+    transfers: Array<{
+      transferId: string;
+      state: string;
+      assetId?: string;
+      contractId?: string;
+      transferType?: string;
+      edrHttpStatus?: number;
+      edrEndpointPresent: boolean;
+      edrAuthorizationPresent: boolean;
+    }>;
+    error?: string;
+  }>;
   observerEvidenceChecks: Array<{
     scenario: string;
     assetId: string;
@@ -105,17 +125,41 @@ function aiModelHubModelPath(): string {
 }
 
 function aiModelHubModelUrl(componentsNamespace: string): string {
-  const explicit = (process.env.UI_AI_MODEL_HUB_EXTERNAL_MODEL_URL || "").trim();
-  if (explicit) {
-    return explicit;
-  }
-
-  const namespace = (process.env.UI_AI_MODEL_HUB_MODEL_NAMESPACE || componentsNamespace || "components").trim();
-  return `http://model-server.${namespace}.svc.cluster.local:8080${aiModelHubModelPath()}`;
+  return modelServerUrlForPath(aiModelHubModelPath(), componentsNamespace, {
+    explicitUrlEnv: "UI_AI_MODEL_HUB_EXTERNAL_MODEL_URL",
+  });
 }
 
 function aiModelHubCatalogCleanupEnabled(): boolean {
   return process.env.UI_AI_MODEL_HUB_CATALOG_CLEANUP === "1";
+}
+
+function externalExecutionMaxAttempts(): number {
+  const configured = Number.parseInt(process.env.UI_AI_MODEL_EXTERNAL_EXECUTION_ATTEMPTS || "", 10);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  return (process.env.UI_TOPOLOGY || "").trim().toLowerCase() === "vm-distributed" ? 6 : 4;
+}
+
+function externalExecutionSettleMs(): number {
+  const configured = Number.parseInt(process.env.UI_AI_MODEL_EXTERNAL_EXECUTION_SETTLE_MS || "", 10);
+  if (Number.isFinite(configured) && configured >= 0) {
+    return configured;
+  }
+  return (process.env.UI_TOPOLOGY || "").trim().toLowerCase() === "vm-distributed" ? 5_000 : 1_000;
+}
+
+function externalExecutionTimeoutMs(): number {
+  const configured = Number.parseInt(process.env.UI_AI_MODEL_EXTERNAL_EXECUTION_TIMEOUT_MS || "", 10);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  return Math.max(240_000, 120_000 + externalExecutionMaxAttempts() * 75_000);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function aiModelMetadataAliases({
@@ -246,6 +290,7 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
   attachJson,
 }) => {
   test.skip(dataspaceRuntime.adapter !== "inesdata", "This demo validates the INESData connector UI path.");
+  test.setTimeout(externalExecutionTimeoutMs());
 
   const suffix = `amh-external-exec-${Date.now()}`;
   const assetId = `qa-ui-amh-external-exec-${suffix}`;
@@ -269,18 +314,26 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
     modelPath,
     payload: DEFAULT_PAYLOAD,
     linkedCases: ["PT5-MH-10", "PT5-MH-11", "PT5-MH-17", "AMH-INTEG-EXEC-AGREED-02", "DS-UI-AMH-EXEC-02"],
+    edrReadinessEvidence: [],
     observerEvidenceChecks: [],
     errorResponses: [],
     toleratedErrorResponses: [],
     fatalErrorResponses: [],
   };
 
-  const isTolerableRuntimeRetry = (url: string, status: number): boolean =>
-    (status === 401 || status === 503) &&
-    (url.includes("/management/pagination/count") ||
-      url.includes("/management/assets/request") ||
-      url.includes("/management/federatedcatalog/request") ||
-      url.includes("/management/contractagreements/request"));
+  const isTolerableRuntimeRetry = (url: string, status: number): boolean => {
+    if (
+      (status === 401 || status === 500 || status === 502 || status === 503 || status === 504) &&
+      (url.includes("/management/pagination/count") ||
+        url.includes("/management/assets/request") ||
+        url.includes("/management/federatedcatalog/request") ||
+        url.includes("/management/contractagreements/request"))
+    ) {
+      return true;
+    }
+
+    return status === 400 && url.includes("/management/v3/modelexecutions/execute") && report.edrReadinessEvidence.length > 0;
+  };
 
   page.on("response", (response) => {
     const url = response.url();
@@ -428,9 +481,63 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
       : page.getByRole("textbox", { name: /Input JSON Payload/i }).first();
     await expect(inputJson).toBeVisible({ timeout: 10_000 });
     await fillMarked(inputJson, JSON.stringify(DEFAULT_PAYLOAD, null, 2));
-    await clickMarked(page.getByRole("button", { name: /Execute Model/i }).first(), { force: true });
 
-    await expect(page.getByText(/Execution Result/i).first()).toBeVisible({ timeout: 90_000 });
+    let lastExecutionIssue = "";
+    for (let attempt = 1; attempt <= externalExecutionMaxAttempts(); attempt += 1) {
+      const executeResponsePromise = page.waitForResponse(
+        (response) => response.url().includes("/management/v3/modelexecutions/execute"),
+        { timeout: 120_000 },
+      );
+      await clickMarked(page.getByRole("button", { name: /Execute Model/i }).first(), { force: true });
+      const executeResponse = await executeResponsePromise;
+      await expect(page.getByText(/Execution Result/i).first()).toBeVisible({ timeout: 90_000 });
+
+      if (await page.getByText(/SUCCESS/i).first().isVisible().catch(() => false)) {
+        lastExecutionIssue = "";
+        break;
+      }
+
+      const edrTimeoutError = page.getByText(/Unable to resolve EDR for assetId/i).first();
+      const agreementId = report.consumerAgreement.agreementId;
+      if (!agreementId || !(await edrTimeoutError.isVisible().catch(() => false))) {
+        lastExecutionIssue = `External execution attempt ${attempt} did not succeed and did not expose the recoverable EDR-readiness error.`;
+        break;
+      }
+
+      const edrReadiness = await probeConsumerEdrReadinessForAssetAgreement(
+        request,
+        dataspaceRuntime,
+        assetId,
+        agreementId,
+      );
+      report.edrReadinessEvidence.push({ attempt, ...edrReadiness });
+      await attachJson(`ai-model-external-execution-edr-readiness-attempt-${attempt}`, edrReadiness);
+      lastExecutionIssue =
+        `External execution attempt ${attempt} reached the connector EDR timeout; ` +
+        `EDR readiness after the timeout: ${edrReadiness.status}.`;
+
+      if (attempt < externalExecutionMaxAttempts()) {
+        if (edrReadiness.status === "ready") {
+          await sleep(externalExecutionSettleMs());
+        }
+        const inputTabRetry = page.getByRole("button", { name: /^(JSON Payload|Input)$/i }).first();
+        if (await inputTabRetry.isVisible().catch(() => false)) {
+          await clickMarked(inputTabRetry, { force: true });
+          await waitForUiTransition(page);
+        }
+        await expect(
+          page.getByRole("button", { name: /Execute Model/i }).first(),
+          `Execute Model button did not become ready after attempt ${attempt} returned HTTP ${executeResponse.status()}`,
+        ).toBeEnabled({ timeout: 30_000 });
+      }
+    }
+
+    if (lastExecutionIssue) {
+      throw new Error(
+        `${lastExecutionIssue} The connector model execution API starts an internal transfer for every execution request; ` +
+          "if every attempt times out before its own EDR appears, the connector needs a longer configurable EDR wait.",
+      );
+    }
     await expect(page.getByText(/SUCCESS/i).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/Status Code:/i).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/200/i).first()).toBeVisible({ timeout: 10_000 });

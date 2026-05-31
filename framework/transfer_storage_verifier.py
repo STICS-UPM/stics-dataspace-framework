@@ -4,6 +4,9 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+DEFAULT_MINIO_CONNECT_TIMEOUT_SECONDS = 5.0
+DEFAULT_MINIO_READ_TIMEOUT_SECONDS = 30.0
+
 
 class TransferStorageVerifier:
     """Validate that a successful transfer produces observable objects in MinIO."""
@@ -115,7 +118,16 @@ class TransferStorageVerifier:
             raise RuntimeError("Missing load_deployer_config dependency")
 
         config = self.load_deployer_config() or {}
-        endpoint = config.get("MINIO_ENDPOINT")
+        endpoint = (
+            os.environ.get("PIONERA_LEVEL6_MINIO_ENDPOINT")
+            or os.environ.get("EDC_LEVEL6_MINIO_ENDPOINT")
+            or config.get("PIONERA_LEVEL6_MINIO_ENDPOINT")
+            or config.get("LEVEL6_MINIO_ENDPOINT")
+            or config.get("EDC_LEVEL6_MINIO_ENDPOINT")
+            or config.get("MINIO_API_PUBLIC_URL")
+            or config.get("MINIO_PUBLIC_URL")
+            or config.get("MINIO_ENDPOINT")
+        )
         hostname = config.get("MINIO_HOSTNAME")
 
         if endpoint:
@@ -163,12 +175,58 @@ class TransferStorageVerifier:
 
         from minio import Minio
 
+        minio_kwargs = {}
+        http_client = self._build_minio_http_client()
+        if http_client is not None:
+            minio_kwargs["http_client"] = http_client
+
         return Minio(
             endpoint,
             access_key=access_key,
             secret_key=secret_key,
             secure=runtime["secure"],
+            **minio_kwargs,
         )
+
+    def _build_minio_http_client(self):
+        try:
+            import urllib3
+        except Exception:
+            return None
+
+        config = self.load_deployer_config() if callable(self.load_deployer_config) else {}
+        config = config or {}
+        connect_timeout = self._minio_timeout_seconds(
+            config,
+            "PIONERA_LEVEL6_MINIO_CONNECT_TIMEOUT",
+            "LEVEL6_MINIO_CONNECT_TIMEOUT",
+            default=DEFAULT_MINIO_CONNECT_TIMEOUT_SECONDS,
+        )
+        read_timeout = self._minio_timeout_seconds(
+            config,
+            "PIONERA_LEVEL6_MINIO_READ_TIMEOUT",
+            "LEVEL6_MINIO_READ_TIMEOUT",
+            default=DEFAULT_MINIO_READ_TIMEOUT_SECONDS,
+        )
+        return urllib3.PoolManager(
+            timeout=urllib3.Timeout(connect=connect_timeout, read=read_timeout),
+        )
+
+    @staticmethod
+    def _minio_timeout_seconds(config, *keys, default):
+        for key in keys:
+            value = os.environ.get(key)
+            if value in (None, ""):
+                value = config.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                return parsed
+        return default
 
     def capture_consumer_bucket_snapshot(self, consumer_connector, bucket_name):
         client = self._build_minio_client(consumer_connector)

@@ -12,6 +12,7 @@ import {
   waitForConsumerAgreement,
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS } from "../../../shared/utils/waiting";
+import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
 
 type AIModelHubUiReport = {
   startedAt: string;
@@ -56,13 +57,8 @@ function aiModelHubModelPath(): string {
   return normalizePath(process.env.UI_AI_MODEL_HUB_MODEL_PATH || DEFAULT_MODEL_PATH);
 }
 
-function aiModelHubModelUrl(dataspace: string): string {
-  const explicit = (process.env.UI_AI_MODEL_HUB_MODEL_URL || "").trim();
-  if (explicit) {
-    return explicit;
-  }
-
-  return `http://model-server.${dataspace}.svc.cluster.local:8080${aiModelHubModelPath()}`;
+function aiModelHubModelUrl(componentsNamespace: string): string {
+  return modelServerUrlForPath(aiModelHubModelPath(), componentsNamespace);
 }
 
 function aiModelHubCatalogCleanupEnabled(): boolean {
@@ -81,7 +77,7 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
   const suffix = `amh-${Date.now()}`;
   const assetId = `qa-ui-amh-httpdata-${suffix}`;
   const modelPath = aiModelHubModelPath();
-  const modelUrl = aiModelHubModelUrl(dataspaceRuntime.dataspace);
+  const modelUrl = aiModelHubModelUrl(dataspaceRuntime.componentsNamespace);
   const modelName = `AI Model Hub HttpData model ${suffix}`;
   const browserDiagnostics = collectBrowserDiagnostics(page);
   const loginPage = new KeycloakLoginPage(page, {
@@ -106,7 +102,7 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
   };
 
   const isTolerableCatalogRetry = (url: string, status: number): boolean =>
-    (status === 401 || status === 503) &&
+    (status === 401 || status === 500 || status === 502 || status === 503 || status === 504) &&
     (url.includes("/management/pagination/count?type=federatedCatalog") ||
       url.includes("/management/federatedcatalog/request"));
 
@@ -184,14 +180,17 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
     await captureStep(page, "01-ai-model-hub-httpdata-after-login");
 
     await expect(async () => {
-      await catalogPage.goto(dataspaceRuntime.consumer.portalBaseUrl);
+      await catalogPage.goto(dataspaceRuntime.consumer.portalBaseUrl, {
+        catalogKind: "federated",
+        expectedAssetId: assetId,
+      });
       await shellPage.assertNoGateway403("AI Model Hub catalog page");
       await shellPage.assertNoServerErrorBanner("AI Model Hub catalog page");
       await catalogPage.expectReady();
-      await catalogPage.showLargestPageSize();
+      await catalogPage.showLargestPageSize({ catalogKind: "federated", expectedAssetId: assetId });
 
       let opened = await catalogPage.openDetailsForAsset(assetId);
-      while (!opened && (await catalogPage.goToNextPage())) {
+      while (!opened && (await catalogPage.goToNextPage({ catalogKind: "federated", expectedAssetId: assetId }))) {
         opened = await catalogPage.openDetailsForAsset(assetId);
       }
 

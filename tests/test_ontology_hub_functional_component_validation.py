@@ -19,6 +19,7 @@ from validation.components.ontology_hub.functional.ui_runner import (
     PROJECT_ROOT,
     PLAYWRIGHT_WORKDIR,
     _build_artifact_paths,
+    _build_playwright_command,
     _functional_run_id,
     _prepare_functional_runtime,
     run_ontology_hub_functional_validation,
@@ -28,6 +29,13 @@ from validation.components.ontology_hub.functional.ui_runner import (
 class OntologyHubFunctionalComponentValidationTests(unittest.TestCase):
     def test_functional_ui_runner_uses_validation_ui_as_workdir(self):
         self.assertEqual(PLAYWRIGHT_WORKDIR, PROJECT_ROOT / "validation" / "ui")
+
+    def test_functional_ui_runner_can_scope_playwright_by_grep(self):
+        with mock.patch.dict(os.environ, {"ONTOLOGY_HUB_FUNCTIONAL_GREP": "OH-APP-04|OH-APP-11"}, clear=False):
+            command = _build_playwright_command(1)
+
+        self.assertIn("--grep", command)
+        self.assertEqual(command[command.index("--grep") + 1], "OH-APP-04|OH-APP-11")
 
     def test_build_artifact_paths_resolves_relative_experiment_dir_under_project_root(self):
         experiment_dir = f"experiments/relative-ontology-hub-test-{uuid.uuid4().hex}"

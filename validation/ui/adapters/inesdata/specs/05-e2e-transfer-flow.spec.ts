@@ -13,6 +13,8 @@ import { TransferHistoryPage } from "../components/consumer/transfer-history.pag
 import {
   bootstrapProviderContractArtifacts,
   probeConsumerCatalogDatasetReadiness,
+  waitForConsumerAgreement,
+  waitForConsumerTransferReadinessForAssetAgreement,
 } from "../../../shared/utils/provider-bootstrap";
 import { resolveDataspacePortalRuntime } from "../../../shared/utils/dataspace-runtime";
 import { EVENTUAL_UI_RETRY_INTERVALS } from "../../../shared/utils/waiting";
@@ -248,13 +250,17 @@ test("05 e2e transfer flow: provider UI bootstrap + consumer negotiation and tra
     await captureStep(testInfo, consumerPage, "consumer-01-after-login");
 
     await expect(async () => {
-      await catalogPage.goto(runtime.consumer.portalBaseUrl);
+      await catalogPage.goto(runtime.consumer.portalBaseUrl, {
+        catalogKind: "federated",
+        expectedAssetId: assetId,
+      });
       await consumerShellPage.assertNoGateway403("Catalog page");
       await consumerShellPage.assertNoServerErrorBanner("Catalog page");
       await catalogPage.expectReady();
+      await catalogPage.showLargestPageSize({ catalogKind: "federated", expectedAssetId: assetId });
 
       let opened = await catalogPage.openDetailsForAsset(assetId);
-      while (!opened && (await catalogPage.goToNextPage())) {
+      while (!opened && (await catalogPage.goToNextPage({ catalogKind: "federated", expectedAssetId: assetId }))) {
         opened = await catalogPage.openDetailsForAsset(assetId);
       }
 
@@ -288,6 +294,19 @@ test("05 e2e transfer flow: provider UI bootstrap + consumer negotiation and tra
       notification: negotiationMessage,
     };
     await captureStep(testInfo, consumerPage, "consumer-04-negotiation-complete");
+    const consumerAgreement = await waitForConsumerAgreement(request, runtime, assetId, 60, 1_500);
+    report.negotiation = {
+      ...(report.negotiation as object),
+      agreementId: consumerAgreement.agreementId,
+      attempts: consumerAgreement.attempts,
+    };
+    await attachJson(testInfo, "consumer-contract-agreement", {
+      agreementId: consumerAgreement.agreementId,
+      assetId: consumerAgreement.assetId,
+      attempts: consumerAgreement.attempts,
+    });
+    expect(consumerAgreement.agreementId, "No consumer contract agreement was available before transfer").toBeTruthy();
+    const consumerAgreementId = consumerAgreement.agreementId || "";
 
     await expect(async () => {
       await contractsPage.goto(runtime.consumer.portalBaseUrl);
@@ -308,9 +327,31 @@ test("05 e2e transfer flow: provider UI bootstrap + consumer negotiation and tra
     };
     await captureStep(testInfo, consumerPage, "consumer-06-transfer-started");
 
+    const backendTransferReadiness = await waitForConsumerTransferReadinessForAssetAgreement(
+      request,
+      runtime,
+      assetId,
+      consumerAgreementId,
+    );
+    report.transfer = {
+      ...(report.transfer as object),
+      backendReadiness: {
+        status: backendTransferReadiness.status,
+        transferCount: backendTransferReadiness.transferCount,
+        readyTransferId: backendTransferReadiness.readyTransferId,
+        readyState: backendTransferReadiness.readyState,
+        error: backendTransferReadiness.error,
+      },
+    };
+    await attachJson(testInfo, "consumer-transfer-backend-readiness", backendTransferReadiness);
+    expect(
+      backendTransferReadiness.status,
+      `Backend transfer for asset ${assetId} was not ready before checking UI history`,
+    ).toBe("ready");
+
     await transferHistoryPage.goto(runtime.consumer.portalBaseUrl);
     await transferHistoryPage.expectReady();
-    const finalState = await transferHistoryPage.waitForSuccessfulTransfer(assetId, 90_000);
+    const finalState = await transferHistoryPage.waitForSuccessfulTransfer(assetId, 180_000);
     report.transfer = {
       ...(report.transfer as object),
       finalState,

@@ -218,6 +218,32 @@ class InesdataKafkaConfigurationTests(unittest.TestCase):
         self.assertEqual(config["k8s_namespace"], "core-control")
         self.assertEqual(config["k8s_probe_namespaces"], "provider,consumer,core-control")
 
+    def test_get_kafka_config_infers_vm_distributed_connector_visible_nodeport(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = self._write_deployer_config(
+                tmpdir,
+                [
+                    "DS_1_NAME=pionera",
+                    "DS_1_NAMESPACE=core-control",
+                    "DS_1_PROVIDER_NAMESPACE=provider",
+                    "DS_1_CONSUMER_NAMESPACE=consumer",
+                    "VM_COMMON_IP=192.0.2.10",
+                ],
+            )
+
+            with (
+                mock.patch.object(InesdataConfig, "script_dir", return_value=tmpdir),
+                mock.patch.object(InesdataConfig, "deployer_config_path", return_value=config_path),
+            ):
+                adapter = InesdataAdapter(topology="vm-distributed")
+                config = adapter.get_kafka_config()
+
+        self.assertEqual(config["k8s_namespace"], "core-control")
+        self.assertEqual(config["k8s_external_service_type"], "NodePort")
+        self.assertEqual(config["k8s_nodeport"], "32092")
+        self.assertEqual(config["cluster_bootstrap_servers"], "192.0.2.10:32092")
+        self.assertEqual(config["agreement_visibility_timeout_seconds"], "90")
+
     def test_is_kafka_available_uses_configured_container_name(self):
         commands = []
 

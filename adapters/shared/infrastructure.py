@@ -1,10 +1,17 @@
 """Shared foundation infrastructure helpers reused by multiple adapters."""
 
+import json
 import os
 import subprocess
 import tempfile
 
 from adapters.inesdata.infrastructure import INESDataInfrastructureAdapter
+from deployers.shared.lib.components import (
+    configured_component_host,
+    configured_component_public_path,
+    configured_optional_components,
+    resolve_component_release_name,
+)
 from deployers.shared.lib.topology import (
     LOCAL_TOPOLOGY,
     VM_DISTRIBUTED_TOPOLOGY,
@@ -192,6 +199,7 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
             return {"status": "skipped", "reason": "incomplete-config"}
 
         for sync_step in (
+            self._sync_common_service_external_ips_vm_distributed,
             self._ensure_ingress_nginx_forwarded_headers_vm_distributed,
             self._sync_nginx_stream_proxy_vm_distributed,
             self._sync_nginx_http_proxy_vm_distributed,
@@ -202,11 +210,328 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
                 print(f"Warning: vm-distributed routing sync step skipped: {exc}")
         return {"status": "synced"}
 
+    def sync_vm_distributed_public_access(self, topology=VM_DISTRIBUTED_TOPOLOGY):
+        """Reconcile the public entrypoints expected by vm-distributed."""
+        normalized_topology = normalize_topology(topology)
+        if normalized_topology != VM_DISTRIBUTED_TOPOLOGY:
+            raise RuntimeError(
+                f"public access reconciliation is only supported for topology '{VM_DISTRIBUTED_TOPOLOGY}'"
+            )
+
+        cluster_runtime = self._cluster_runtime_config()
+        ingress_service_type = str(cluster_runtime.get("k3s_ingress_service_type") or "").strip()
+        if str(cluster_runtime.get("cluster_type") or "").strip().lower() == "k3s" and ingress_service_type:
+            self._patch_k3s_ingress_nginx_service(ingress_service_type)
+
+        routing = self.sync_vm_distributed_routing()
+        common_paths = self._sync_vm_distributed_common_public_path_ingresses()
+        component_paths = self._sync_vm_distributed_component_public_path_ingresses()
+        status = "synced"
+        if any(
+            isinstance(item, dict) and item.get("status") == "failed"
+            for item in (common_paths, component_paths)
+        ):
+            status = "failed"
+        return {
+            "status": status,
+            "topology": normalized_topology,
+            "ingress_service_type": ingress_service_type,
+            "routing": routing,
+            "common_public_paths": common_paths,
+            "component_public_paths": component_paths,
+        }
+
+    def _vm_distributed_component_public_path_ingresses(self, config):
+        deployer_config = dict(config or {})
+        namespace = str(
+            deployer_config.get("COMPONENTS_NAMESPACE")
+            or getattr(self.config, "COMPONENTS_NAMESPACE", "")
+            or "components"
+        ).strip() or "components"
+        dataspace_name = self._vm_distributed_dataspace_name(deployer_config)
+        components = configured_optional_components(deployer_config)
+        ingresses = []
+
+        for component in components:
+            ingresses.append(
+                self._vm_distributed_component_public_path_ingress(
+                    component,
+                    deployer_config,
+                    namespace=namespace,
+                    dataspace_name=dataspace_name,
+                )
+            )
+
+        if (
+            "semantic-virtualization" in components
+            and self._parse_config_bool(
+                deployer_config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED")
+                if deployer_config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED") is not None
+                else deployer_config.get("MAPPING_EDITOR_ENABLED"),
+                default=False,
+            )
+        ):
+            ingresses.append(
+                self._vm_distributed_component_public_path_ingress(
+                    "semantic-virtualization-editor",
+                    deployer_config,
+                    namespace=namespace,
+                    dataspace_name=dataspace_name,
+                )
+            )
+
+        return [item for item in ingresses if item]
+
+    def _vm_distributed_component_public_path_ingress(
+        self,
+        component,
+        deployer_config,
+        *,
+        namespace,
+        dataspace_name,
+    ):
+        host = configured_component_host(
+            component,
+            deployer_config,
+            dataspace_name=dataspace_name,
+        )
+        public_path = configured_component_public_path(component, deployer_config)
+        if not host or not public_path:
+            return None
+
+        release_component = "semantic-virtualization" if component == "semantic-virtualization-editor" else component
+        release_name = resolve_component_release_name(release_component, dataspace_name=dataspace_name)
+        service_name = f"{release_name}-editor" if component == "semantic-virtualization-editor" else release_name
+        service_port = {
+            "ontology-hub": 3333,
+            "ai-model-hub": 8080,
+            "semantic-virtualization": 8000,
+            "semantic-virtualization-editor": 8501,
+        }.get(component)
+        if not service_port:
+            return None
+
+        env_key = str(component or "").strip().upper().replace("-", "_")
+        rewrite_enabled = self._parse_config_bool(
+            deployer_config.get(f"{env_key}_PUBLIC_PATH_REWRITE")
+            if deployer_config.get(f"{env_key}_PUBLIC_PATH_REWRITE") is not None
+            else deployer_config.get("COMPONENTS_PUBLIC_PATH_REWRITE"),
+            default=True,
+        )
+        annotations = {}
+        path = public_path
+        path_type = "Prefix"
+        if rewrite_enabled:
+            annotations = {
+                "nginx.ingress.kubernetes.io/use-regex": "true",
+                "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+            }
+            path = f"{public_path}(/|$)(.*)"
+            path_type = "ImplementationSpecific"
+
+        metadata = {
+            "name": self._k8s_name_with_suffix(service_name, "public-path"),
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/managed-by": "validation-environment",
+                "app.kubernetes.io/part-of": "vm-distributed",
+                "app.kubernetes.io/component": component,
+            },
+        }
+        if annotations:
+            metadata["annotations"] = annotations
+
+        return {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": metadata,
+            "spec": {
+                "ingressClassName": "nginx",
+                "rules": [
+                    {
+                        "host": host,
+                        "http": {
+                            "paths": [
+                                {
+                                    "path": path,
+                                    "pathType": path_type,
+                                    "backend": {
+                                        "service": {
+                                            "name": service_name,
+                                            "port": {"number": service_port},
+                                        }
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                ],
+            },
+        }
+
+    def _sync_vm_distributed_component_public_path_ingresses(self):
+        if not self._is_vm_distributed_topology():
+            return {"status": "skipped", "reason": "not-vm-distributed"}
+        config = self.config_adapter.load_deployer_config()
+        owner = str(
+            config.get("VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER")
+            or config.get("COMPONENTS_PUBLIC_PATH_INGRESS_OWNER")
+            or "level5"
+        ).strip().lower()
+        if owner not in {"infrastructure", "foundation", "level3"}:
+            return {"status": "skipped", "reason": "component-ingresses-owned-by-level5"}
+
+        ingresses = self._vm_distributed_component_public_path_ingresses(config)
+        if not ingresses:
+            return {"status": "skipped", "reason": "no-component-public-paths"}
+
+        existing_routes = self._existing_ingress_route_keys()
+        missing = [
+            item
+            for item in ingresses
+            if self._ingress_route_key(item) not in existing_routes
+        ]
+        if not missing:
+            return {
+                "status": "unchanged",
+                "routes": [self._public_path_route_summary(item) for item in ingresses],
+                "skipped_existing": [self._public_path_route_summary(item) for item in ingresses],
+            }
+
+        manifest = {
+            "apiVersion": "v1",
+            "kind": "List",
+            "items": missing,
+        }
+        temp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
+                temp_path = handle.name
+                json.dump(manifest, handle)
+            if self.run(f"kubectl apply -f {temp_path!r}", check=False) is None:
+                return {
+                    "status": "failed",
+                    "reason": "kubectl-apply-failed",
+                    "routes": [self._public_path_route_summary(item) for item in missing],
+                }
+            routes = ", ".join(
+                f"{item['spec']['rules'][0]['host']}{item['spec']['rules'][0]['http']['paths'][0]['path']}"
+                for item in missing
+            )
+            print(f"vm-distributed component public path ingresses synchronized: {routes}")
+            return {
+                "status": "synced",
+                "routes": [self._public_path_route_summary(item) for item in missing],
+                "skipped_existing": [
+                    self._public_path_route_summary(item)
+                    for item in ingresses
+                    if item not in missing
+                ],
+            }
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+
+    def _existing_ingress_route_keys(self):
+        raw = self.run_silent("kubectl get ingress -A -o json") or ""
+        if not raw:
+            return set()
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            return set()
+        route_keys = set()
+        for item in payload.get("items") or []:
+            for rule in ((item.get("spec") or {}).get("rules") or []):
+                host = str(rule.get("host") or "").strip()
+                paths = (((rule.get("http") or {}).get("paths")) or [])
+                for path in paths:
+                    route_path = str(path.get("path") or "").strip()
+                    if host and route_path:
+                        route_keys.add((host, route_path))
+        return route_keys
+
+    @staticmethod
+    def _ingress_route_key(item):
+        rule = item["spec"]["rules"][0]
+        return (
+            str(rule.get("host") or "").strip(),
+            str(rule["http"]["paths"][0].get("path") or "").strip(),
+        )
+
+    @staticmethod
+    def _public_path_route_summary(item):
+        rule = item["spec"]["rules"][0]
+        path = rule["http"]["paths"][0]
+        return {
+            "name": item["metadata"]["name"],
+            "namespace": item["metadata"]["namespace"],
+            "host": rule["host"],
+            "path": path["path"],
+            "service": path["backend"]["service"]["name"],
+            "port": path["backend"]["service"]["port"]["number"],
+        }
+
+    @staticmethod
+    def _k8s_name_with_suffix(name, suffix):
+        base = str(name or "").strip().strip("-")
+        resolved_suffix = str(suffix or "").strip().strip("-")
+        if not resolved_suffix:
+            return base[:63].strip("-")
+        max_base_length = 63 - len(resolved_suffix) - 1
+        return f"{base[:max_base_length].strip('-')}-{resolved_suffix}".strip("-")
+
+    @staticmethod
+    def _parse_config_bool(value, default=False):
+        if value is None:
+            return bool(default)
+        normalized = str(value).strip().lower()
+        if not normalized:
+            return bool(default)
+        return normalized in {"1", "true", "yes", "y", "on", "s", "si", "sí"}
+
     @staticmethod
     def _has_vm_distributed_routing_config(config):
         return bool(str((config or {}).get("VM_COMMON_IP") or "").strip()) and bool(
             str((config or {}).get("DS_DOMAIN_BASE") or "").strip()
         )
+
+    def _sync_common_service_external_ips_vm_distributed(self, deployer_config):
+        """Expose common services on the common VM IP for connector clusters."""
+        common_ip = str((deployer_config or {}).get("VM_COMMON_IP") or "").strip()
+        if not common_ip:
+            return
+
+        common_namespace = str(
+            (deployer_config or {}).get("NS_COMMON")
+            or (deployer_config or {}).get("COMMON_SERVICES_NAMESPACE")
+            or getattr(self.config, "NS_COMMON", "common-srvs")
+        ).strip() or "common-srvs"
+
+        for service in ("common-srvs-postgresql", "common-srvs-vault"):
+            proc = subprocess.run(
+                [
+                    "kubectl",
+                    "patch",
+                    "svc",
+                    service,
+                    "-n",
+                    common_namespace,
+                    "--type",
+                    "merge",
+                    "-p",
+                    json.dumps({"spec": {"externalIPs": [common_ip]}}),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "").strip()
+                print(f"Warning: could not expose {service} through {common_ip}: {detail}")
+        print(f"vm-distributed common service externalIPs synchronized: {common_ip}")
 
     def _vm_distributed_dataspace_name(self, deployer_config):
         for getter_name in ("primary_dataspace_name", "dataspace_name"):
@@ -275,6 +600,11 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
     def _sync_nginx_stream_proxy_vm_distributed(self, deployer_config):
         """Expose common-service ClusterIPs through local NGINX stream routing."""
         stream_conf = "/etc/nginx/pionera-stream.conf"
+        stream_dir = os.path.dirname(stream_conf)
+        if not os.path.isdir(stream_dir):
+            print(f"vm-distributed local NGINX stream sync skipped: {stream_dir} is not available.")
+            return
+
         common_namespace = str(
             (deployer_config or {}).get("NS_COMMON") or getattr(self.config, "NS_COMMON", "common-srvs")
         ).strip() or "common-srvs"
@@ -389,6 +719,11 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
             blocks.append(server_block(f"conn-{short}-{ds_name}.{ds_domain}", f"{target_host}:{consumer_http_port}"))
 
         conf_path = f"/etc/nginx/sites-enabled/pionera-vm-distributed-{ds_name}.conf"
+        conf_dir = os.path.dirname(conf_path)
+        if not os.path.isdir(conf_dir):
+            print(f"vm-distributed local NGINX HTTP sync skipped: {conf_dir} is not available.")
+            return
+
         content = "# Generated by Validation-Environment for vm-distributed routing\n" + "\n".join(blocks)
         ok, error = _sudo_write_file(conf_path, content)
         if not ok:

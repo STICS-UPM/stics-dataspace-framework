@@ -1,8 +1,14 @@
+from contextlib import contextmanager
+import json
 import os
 import shlex
 import shutil
+import socket
 import subprocess
+import sys
+import tempfile
 import time
+from urllib.parse import urlparse
 
 import requests
 import yaml
@@ -17,6 +23,7 @@ from deployers.shared.lib.topology import (
     build_topology_profile,
     normalize_topology,
 )
+from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls
 from runtime_dependencies import ensure_python_requirements
 
 
@@ -70,6 +77,9 @@ class SharedDataspaceDeploymentAdapter:
                 return str(namespace).strip()
         return self._dataspace_namespace()
 
+    def _common_services_namespace(self):
+        return str(getattr(self.config, "NS_COMMON", "common-srvs") or "common-srvs").strip() or "common-srvs"
+
     def _public_portal_namespace(self):
         return self._registration_service_namespace()
 
@@ -85,22 +95,87 @@ class SharedDataspaceDeploymentAdapter:
             return bootstrap_runtime["runtime_dir"]
         return os.path.join(self.config.repo_dir(), "deployments", "DEV", self._dataspace_name())
 
-    def _bootstrap_environment_prefix(self):
+    def _normalized_topology(self):
         topology = normalize_topology(
             getattr(self.config_adapter, "topology", None)
             or getattr(self, "topology", None)
+            or os.environ.get("PIONERA_TOPOLOGY")
             or LOCAL_TOPOLOGY
         )
-        return f"PIONERA_TOPOLOGY={shlex.quote(topology)} "
+        return topology
 
-    def _bootstrap_dataspace_command(self, action, dataspace=None):
+    def _bootstrap_environment_prefix(self, pg_host=None, pg_port=None):
+        prefix = f"PIONERA_TOPOLOGY={shlex.quote(self._normalized_topology())} "
+        if pg_host:
+            prefix += f"PIONERA_PG_HOST={shlex.quote(str(pg_host))} "
+        if pg_port:
+            prefix += f"PIONERA_PG_PORT={shlex.quote(str(pg_port))} "
+        return prefix
+
+    @contextmanager
+    def _temporary_level3_postgres_environment(self, pg_host=None, pg_port=None):
+        updates = {}
+        if pg_host:
+            updates["PIONERA_PG_HOST"] = str(pg_host)
+        if pg_port:
+            updates["PIONERA_PG_PORT"] = str(pg_port)
+
+        previous = {key: os.environ.get(key) for key in updates}
+        try:
+            for key, value in updates.items():
+                os.environ[key] = value
+            yield
+        finally:
+            for key, old_value in previous.items():
+                if old_value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old_value
+
+    @staticmethod
+    def _normalized_http_url(value):
+        normalized = str(value or "").strip().rstrip("/")
+        if not normalized:
+            return ""
+        if not normalized.startswith(("http://", "https://")):
+            normalized = f"http://{normalized}"
+        return normalized
+
+    @staticmethod
+    def _public_url_host_path(value):
+        normalized = str(value or "").strip().rstrip("/")
+        if not normalized:
+            return "", ""
+        parsed = urlparse(normalized)
+        host = parsed.hostname or ""
+        path = (parsed.path or "").rstrip("/")
+        return host, path
+
+    def _keycloak_runtime_url(self, config):
+        public_urls = resolve_vm_distributed_public_urls(config or {})
+        for raw_url in (
+            (config or {}).get("KC_MANAGEMENT_URL"),
+            (config or {}).get("KEYCLOAK_FRONTEND_URL"),
+            (config or {}).get("KEYCLOAK_PUBLIC_URL"),
+            public_urls.get("KEYCLOAK_FRONTEND_URL"),
+            public_urls.get("KEYCLOAK_PUBLIC_URL"),
+            (config or {}).get("KC_INTERNAL_URL"),
+            (config or {}).get("KC_URL"),
+        ):
+            normalized = self._normalized_http_url(raw_url)
+            if normalized:
+                return normalized
+        return ""
+
+    def _bootstrap_dataspace_command(self, action, dataspace=None, pg_host=None, pg_port=None):
         runtime = resolve_shared_level3_bootstrap_runtime(self.config) or {}
         command_getter = runtime.get("bootstrap_dataspace_command")
         resolved_dataspace = dataspace or self._dataspace_name()
         if callable(command_getter):
             return command_getter(action, dataspace=resolved_dataspace)
         return (
-            f"{self._bootstrap_environment_prefix()}{shlex.quote(self.config.python_exec())} bootstrap.py "
+            f"{self._bootstrap_environment_prefix(pg_host=pg_host, pg_port=pg_port)}"
+            f"{shlex.quote(self.config.python_exec())} bootstrap.py "
             f"dataspace {shlex.quote(str(action))} {shlex.quote(str(resolved_dataspace))}"
         )
 
@@ -265,6 +340,117 @@ class SharedDataspaceDeploymentAdapter:
                 return runtime
         return build_cluster_runtime(self._deployer_config(), topology=topology)
 
+    def _vm_distributed_role_kubeconfig(self, role):
+        runtime = self._cluster_runtime(VM_DISTRIBUTED_TOPOLOGY)
+        normalized_role = str(role or "common").strip().lower() or "common"
+        key_by_role = {
+            "common": "k3s_kubeconfig_common",
+            "provider": "k3s_kubeconfig_provider",
+            "consumer": "k3s_kubeconfig_consumer",
+            "components": "k3s_kubeconfig_components",
+        }
+        key = key_by_role.get(normalized_role, "k3s_kubeconfig_common")
+        return str(runtime.get(key) or runtime.get("k3s_kubeconfig") or "").strip()
+
+    @contextmanager
+    def _temporary_kubeconfig_role(self, role):
+        kubeconfig = self._vm_distributed_role_kubeconfig(role)
+        if not kubeconfig:
+            yield
+            return
+
+        normalized_role = str(role or "common").strip().lower() or "common"
+        previous_kubeconfig = os.environ.get("KUBECONFIG")
+        previous_role = os.environ.get("PIONERA_KUBECONFIG_ROLE")
+        os.environ["KUBECONFIG"] = kubeconfig
+        os.environ["PIONERA_KUBECONFIG_ROLE"] = normalized_role
+        try:
+            yield
+        finally:
+            if previous_kubeconfig is None:
+                os.environ.pop("KUBECONFIG", None)
+            else:
+                os.environ["KUBECONFIG"] = previous_kubeconfig
+
+            if previous_role is None:
+                os.environ.pop("PIONERA_KUBECONFIG_ROLE", None)
+            else:
+                os.environ["PIONERA_KUBECONFIG_ROLE"] = previous_role
+
+    @staticmethod
+    def _reserve_local_port():
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            return sock.getsockname()[1]
+
+    def _start_level3_postgres_access(self, topology):
+        if normalize_topology(topology) != VM_DISTRIBUTED_TOPOLOGY:
+            return {"pg_host": None, "pg_port": None, "port_forward": None}
+
+        port_forward_service = getattr(self.infrastructure, "port_forward_service", None)
+        if not callable(port_forward_service):
+            print("PostgreSQL Level 3 bootstrap access is not available: port-forward helper is missing.")
+            return None
+
+        deployer_config = self._deployer_config()
+        namespace = self._common_services_namespace()
+        pattern = str(
+            deployer_config.get("POSTGRES_PORT_FORWARD_POD_PATTERN")
+            or f"{namespace}-postgresql"
+        ).strip()
+        try:
+            remote_port = int(
+                deployer_config.get("POSTGRES_PORT_FORWARD_REMOTE_PORT")
+                or deployer_config.get("PG_PORT")
+                or 5432
+            )
+        except (TypeError, ValueError):
+            remote_port = 5432
+
+        local_port = self._reserve_local_port()
+        with self._temporary_kubeconfig_role("common"):
+            opened = port_forward_service(namespace, pattern, local_port, remote_port, quiet=True)
+
+        if not opened:
+            issue = str(getattr(self.infrastructure, "_last_port_forward_error", "") or "").strip()
+            detail = f" Last port-forward issue: {issue}" if issue else ""
+            print(
+                "PostgreSQL Level 3 bootstrap access failed: could not open a temporary "
+                f"port-forward to {pattern} in namespace {namespace}.{detail}"
+            )
+            return None
+
+        print(
+            "Using temporary local PostgreSQL port-forward for Level 3 bootstrap commands "
+            f"({pattern}.{namespace} -> 127.0.0.1:{local_port})."
+        )
+        return {
+            "pg_host": "127.0.0.1",
+            "pg_port": str(local_port),
+            "port_forward": {
+                "namespace": namespace,
+                "pattern": pattern,
+                "kubeconfig_role": "common",
+            },
+        }
+
+    def _stop_level3_postgres_access(self, postgres_access):
+        port_forward = (postgres_access or {}).get("port_forward")
+        if not port_forward:
+            return
+
+        stop_port_forward_service = getattr(self.infrastructure, "stop_port_forward_service", None)
+        if not callable(stop_port_forward_service):
+            return
+
+        with self._temporary_kubeconfig_role(port_forward.get("kubeconfig_role") or "common"):
+            stop_port_forward_service(
+                port_forward["namespace"],
+                port_forward["pattern"],
+                quiet=True,
+            )
+
     @staticmethod
     def _env_flag_enabled(name, default=True):
         raw_value = str(os.environ.get(name, "")).strip().lower()
@@ -351,12 +537,48 @@ class SharedDataspaceDeploymentAdapter:
                 "Check registry connectivity, image availability, and node disk space."
             ) from exc
 
-        if result.returncode != 0:
-            root_cause = (result.stderr or result.stdout or "").strip() or f"crictl exited with code {result.returncode}"
-            self._fail(
-                f"Could not pre-pull Level 3 image '{image}' into k3s",
-                root_cause=root_cause,
-            )
+        if result.returncode == 0:
+            return
+
+        root_cause = (result.stderr or result.stdout or "").strip() or f"crictl exited with code {result.returncode}"
+        if self._can_prompt_for_sudo_password() and self._sudo_failure_needs_password(root_cause):
+            print("Level 3 k3s image pre-pull needs sudo password; retrying with an interactive prompt.")
+            try:
+                retry = subprocess.run(
+                    ["sudo", "k3s", "crictl", "pull", image],
+                    text=True,
+                    timeout=timeout_seconds,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(
+                    f"Timed out after {timeout_seconds}s while pre-pulling Level 3 image '{image}' into k3s. "
+                    "Check registry connectivity, image availability, and node disk space."
+                ) from exc
+            if retry.returncode == 0:
+                return
+            root_cause = f"interactive sudo retry exited with code {retry.returncode}"
+
+        self._fail(
+            f"Could not pre-pull Level 3 image '{image}' into k3s",
+            root_cause=root_cause,
+        )
+
+    def _can_prompt_for_sudo_password(self):
+        return (not self._auto_mode()) and getattr(sys.stdin, "isatty", lambda: False)()
+
+    @staticmethod
+    def _sudo_failure_needs_password(message):
+        normalized = str(message or "").strip().lower()
+        if not normalized:
+            return False
+        markers = (
+            "a password is required",
+            "password is required",
+            "a terminal is required",
+            "no tty present",
+            "no password was provided",
+        )
+        return any(marker in normalized for marker in markers)
 
     def _prepull_level3_k3s_images_if_needed(self, topology, values_files):
         if not self._should_prepull_level3_images(topology):
@@ -399,6 +621,10 @@ class SharedDataspaceDeploymentAdapter:
 
         if normalized_topology == VM_SINGLE_TOPOLOGY and cluster_type == "k3s":
             profile = build_topology_profile(VM_SINGLE_TOPOLOGY, self._deployer_config())
+            return str(profile.ingress_external_ip or profile.default_address or "").strip()
+
+        if normalized_topology == VM_DISTRIBUTED_TOPOLOGY and cluster_type == "k3s":
+            profile = build_topology_profile(VM_DISTRIBUTED_TOPOLOGY, self._deployer_config())
             return str(profile.ingress_external_ip or profile.default_address or "").strip()
 
         return ""
@@ -607,7 +833,88 @@ class SharedDataspaceDeploymentAdapter:
             timeout_seconds=300,
         ):
             self._fail("Error deploying public portal")
+        if normalize_topology(topology) == VM_DISTRIBUTED_TOPOLOGY:
+            self._sync_vm_distributed_public_portal_backend_path_ingress()
         return True
+
+    def _vm_distributed_public_portal_backend_path_ingress(self):
+        config = self._deployer_config()
+        resolved = {**config, **resolve_vm_distributed_public_urls(config)}
+        public_url = (
+            resolved.get("PUBLIC_PORTAL_BACKEND_PUBLIC_URL")
+            or resolved.get("DATASPACE_PUBLIC_PORTAL_BACKEND_URL")
+            or ""
+        )
+        host, path = self._public_url_host_path(public_url)
+        if not host or path in {"", "/"}:
+            return None
+
+        ds_name = self._dataspace_name()
+        namespace = self._public_portal_namespace()
+        return {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": {
+                "name": f"{ds_name}-public-portal-backend-public-path",
+                "namespace": namespace,
+                "annotations": {
+                    "nginx.ingress.kubernetes.io/use-regex": "true",
+                    "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                },
+                "labels": {
+                    "app.kubernetes.io/managed-by": "validation-environment",
+                    "app.kubernetes.io/part-of": "vm-distributed",
+                    "app.kubernetes.io/route-kind": "public-path",
+                },
+            },
+            "spec": {
+                "ingressClassName": "nginx",
+                "rules": [
+                    {
+                        "host": host,
+                        "http": {
+                            "paths": [
+                                {
+                                    "path": f"{path}(/|$)(.*)",
+                                    "pathType": "ImplementationSpecific",
+                                    "backend": {
+                                        "service": {
+                                            "name": f"{ds_name}-public-portal-backend",
+                                            "port": {"number": 1337},
+                                        }
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                ],
+            },
+        }
+
+    def _sync_vm_distributed_public_portal_backend_path_ingress(self):
+        ingress = self._vm_distributed_public_portal_backend_path_ingress()
+        if not ingress:
+            print("vm-distributed public portal backend path ingress skipped: no path public URL configured.")
+            return {"status": "skipped", "reason": "no-path-public-url"}
+
+        fd, temp_path = tempfile.mkstemp(prefix="pionera-public-portal-backend-ingress-", suffix=".json")
+        os.close(fd)
+        try:
+            with open(temp_path, "w", encoding="utf-8") as handle:
+                json.dump(ingress, handle)
+            with self._temporary_kubeconfig_role("common"):
+                if self.run(f"kubectl apply -f {shlex.quote(temp_path)}", check=False) is None:
+                    return {"status": "failed", "reason": "kubectl-apply-failed"}
+        finally:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+        route = ingress["spec"]["rules"][0]
+        path = route["http"]["paths"][0]["path"]
+        print(f"vm-distributed public portal backend path ingress synchronized: {route['host']}{path}")
+        return {"status": "synced", "host": route["host"], "path": path}
 
     @staticmethod
     def _print_unique_lines(output):
@@ -627,23 +934,23 @@ class SharedDataspaceDeploymentAdapter:
     def _sql_identifier(value):
         return '"' + str(value).replace('"', '""') + '"'
 
-    def _postgres_runtime(self):
+    def _postgres_runtime(self, pg_host=None, pg_port=None):
         credentials_getter = getattr(self.config_adapter, "get_pg_credentials", None)
         if not callable(credentials_getter):
             return None
 
-        pg_host, pg_user, pg_password = credentials_getter()
+        configured_pg_host, pg_user, pg_password = credentials_getter()
         port_getter = getattr(self.config_adapter, "get_pg_port", None)
-        pg_port = port_getter() if callable(port_getter) else "5432"
+        configured_pg_port = port_getter() if callable(port_getter) else "5432"
         return {
-            "host": str(pg_host or "localhost"),
-            "port": str(pg_port or "5432"),
+            "host": str(pg_host or configured_pg_host or "localhost"),
+            "port": str(pg_port or configured_pg_port or "5432"),
             "user": str(pg_user or "postgres"),
             "password": str(pg_password or ""),
         }
 
-    def _run_postgres_admin_query(self, sql_text):
-        runtime = self._postgres_runtime()
+    def _run_postgres_admin_query(self, sql_text, pg_host=None, pg_port=None):
+        runtime = self._postgres_runtime(pg_host=pg_host, pg_port=pg_port)
         if not runtime:
             self._fail("PostgreSQL cleanup is not configured for Level 3")
 
@@ -671,7 +978,7 @@ class SharedDataspaceDeploymentAdapter:
             env=env,
         )
 
-    def _postgres_cleanup_residual_state(self, database_name, database_user):
+    def _postgres_cleanup_residual_state(self, database_name, database_user, pg_host=None, pg_port=None):
         checks = [
             (
                 "database",
@@ -684,7 +991,7 @@ class SharedDataspaceDeploymentAdapter:
         ]
         residual = []
         for label, sql_text in checks:
-            result = self._run_postgres_admin_query(sql_text)
+            result = self._run_postgres_admin_query(sql_text, pg_host=pg_host, pg_port=pg_port)
             if result.returncode != 0:
                 root_cause = (result.stderr or result.stdout or "").strip() or f"psql exited with code {result.returncode}"
                 self._fail("Could not verify PostgreSQL cleanup state", root_cause=root_cause)
@@ -692,7 +999,7 @@ class SharedDataspaceDeploymentAdapter:
                 residual.append(label)
         return residual
 
-    def _cleanup_postgres_database_and_role_directly(self, database_name, database_user):
+    def _cleanup_postgres_database_and_role_directly(self, database_name, database_user, pg_host=None, pg_port=None):
         statements = [
             (
                 "terminate active sessions",
@@ -711,7 +1018,7 @@ class SharedDataspaceDeploymentAdapter:
             ),
         ]
         for label, sql_text in statements:
-            result = self._run_postgres_admin_query(sql_text)
+            result = self._run_postgres_admin_query(sql_text, pg_host=pg_host, pg_port=pg_port)
             if result.returncode != 0:
                 root_cause = (result.stderr or result.stdout or "").strip() or f"psql exited with code {result.returncode}"
                 self._fail(
@@ -719,13 +1026,26 @@ class SharedDataspaceDeploymentAdapter:
                     root_cause=root_cause,
                 )
 
-    def _cleanup_level3_postgres_state(self, database_name, database_user, label):
+    def _cleanup_level3_postgres_state(self, database_name, database_user, label, pg_host=None, pg_port=None):
         connectors = getattr(self, "connectors_adapter", None)
         cleanup_getter = getattr(connectors, "force_clean_postgres_db", None)
         if callable(cleanup_getter):
-            cleanup_getter(database_name, database_user)
+            if pg_host or pg_port:
+                try:
+                    cleanup_getter(database_name, database_user, pg_host=pg_host, pg_port=pg_port)
+                except TypeError as exc:
+                    if "unexpected keyword argument" not in str(exc):
+                        raise
+                    cleanup_getter(database_name, database_user)
+            else:
+                cleanup_getter(database_name, database_user)
 
-        residual = self._postgres_cleanup_residual_state(database_name, database_user)
+        residual = self._postgres_cleanup_residual_state(
+            database_name,
+            database_user,
+            pg_host=pg_host,
+            pg_port=pg_port,
+        )
         if not residual:
             return
 
@@ -733,8 +1053,18 @@ class SharedDataspaceDeploymentAdapter:
             f"PostgreSQL cleanup for {label} left residual state "
             f"({', '.join(residual)}). Reconciling directly..."
         )
-        self._cleanup_postgres_database_and_role_directly(database_name, database_user)
-        residual = self._postgres_cleanup_residual_state(database_name, database_user)
+        self._cleanup_postgres_database_and_role_directly(
+            database_name,
+            database_user,
+            pg_host=pg_host,
+            pg_port=pg_port,
+        )
+        residual = self._postgres_cleanup_residual_state(
+            database_name,
+            database_user,
+            pg_host=pg_host,
+            pg_port=pg_port,
+        )
         if residual:
             self._fail(
                 f"PostgreSQL cleanup did not remove previous {label} state",
@@ -825,6 +1155,7 @@ class SharedDataspaceDeploymentAdapter:
     ):
         self.infrastructure.announce_level(3, "DATASPACE")
         normalized_topology = normalize_topology(topology)
+        self.topology = normalized_topology
 
         if require_tunnel_prompt:
             self._show_minikube_tunnel_prompt()
@@ -860,18 +1191,16 @@ class SharedDataspaceDeploymentAdapter:
 
         print("Verifying Keycloak access...")
         deployer_config = self.config_adapter.load_deployer_config()
-        kc_url = deployer_config.get("KC_URL")
-        kc_runtime_url = deployer_config.get("KC_INTERNAL_URL") or kc_url
+        kc_runtime_url = self._keycloak_runtime_url(deployer_config)
         kc_user = deployer_config.get("KC_USER")
         kc_password = deployer_config.get("KC_PASSWORD")
 
         if not kc_runtime_url:
             self._fail(
-                "KC_INTERNAL_URL/KC_URL not defined in deployer.config",
+                "Keycloak URL not defined in deployer.config",
                 root_cause=(
-                    "refresh deployers/infrastructure/deployer.config from "
-                    "deployers/infrastructure/deployer.config.example or rerun Level 2 "
-                    "from an updated checkout so shared Keycloak hostnames are synchronized"
+                    "set KC_MANAGEMENT_URL, KEYCLOAK_FRONTEND_URL, KEYCLOAK_PUBLIC_URL, "
+                    "KC_INTERNAL_URL or KC_URL, then rerun Level 3"
                 ),
             )
         if not kc_user or not kc_password:
@@ -907,30 +1236,51 @@ class SharedDataspaceDeploymentAdapter:
             quiet=quiet_requirements,
         )
 
-        print("Cleaning previous databases...")
-        self._cleanup_level3_postgres_state(
-            self.config.registration_db_name(),
-            self.config.registration_db_user(),
-            "registration-service",
-        )
-        self._cleanup_level3_postgres_state(
-            self.config.webportal_db_name(),
-            self.config.webportal_db_user(),
-            "web portal",
-        )
+        postgres_access = self._start_level3_postgres_access(normalized_topology)
+        if postgres_access is None:
+            self._fail(
+                "PostgreSQL access is not available for Level 3",
+                root_cause="could not create a temporary PostgreSQL port-forward for vm-distributed",
+            )
+        postgres_host = postgres_access.get("pg_host")
+        postgres_port = postgres_access.get("pg_port")
 
-        print("Creating dataspace...")
-        quiet_deployer_output = bool(getattr(self.config, "QUIET_SENSITIVE_DEPLOYER_OUTPUT", False))
-        create_result = self.run(
-            self._bootstrap_dataspace_command("create", dataspace=ds_name),
-            cwd=repo_dir,
-            capture=quiet_deployer_output,
-            silent=quiet_deployer_output,
-        )
-        if create_result is None:
-            self._fail("Error creating dataspace")
-        if quiet_deployer_output:
-            print("Dataspace bootstrap completed; sensitive deployer output suppressed")
+        try:
+            print("Cleaning previous databases...")
+            self._cleanup_level3_postgres_state(
+                self.config.registration_db_name(),
+                self.config.registration_db_user(),
+                "registration-service",
+                pg_host=postgres_host,
+                pg_port=postgres_port,
+            )
+            self._cleanup_level3_postgres_state(
+                self.config.webportal_db_name(),
+                self.config.webportal_db_user(),
+                "web portal",
+                pg_host=postgres_host,
+                pg_port=postgres_port,
+            )
+
+            print("Creating dataspace...")
+            quiet_deployer_output = bool(getattr(self.config, "QUIET_SENSITIVE_DEPLOYER_OUTPUT", False))
+            create_result = self.run(
+                self._bootstrap_dataspace_command(
+                    "create",
+                    dataspace=ds_name,
+                    pg_host=postgres_host,
+                    pg_port=postgres_port,
+                ),
+                cwd=repo_dir,
+                capture=quiet_deployer_output,
+                silent=quiet_deployer_output,
+            )
+            if create_result is None:
+                self._fail("Error creating dataspace")
+            if quiet_deployer_output:
+                print("Dataspace bootstrap completed; sensitive deployer output suppressed")
+        finally:
+            self._stop_level3_postgres_access(postgres_access)
 
         ensure_values_file = getattr(self.config, "ensure_registration_values_file", None)
         values_file = (
@@ -978,7 +1328,20 @@ class SharedDataspaceDeploymentAdapter:
         ):
             self._fail("Timeout waiting for dataspace pods")
 
-        dataspace_ready, root_cause = self.infrastructure.verify_dataspace_ready_for_level4()
+        readiness_postgres_access = self._start_level3_postgres_access(normalized_topology)
+        if readiness_postgres_access is None:
+            self._fail(
+                "PostgreSQL access is not available for Level 3 readiness verification",
+                root_cause="could not create a temporary PostgreSQL port-forward for vm-distributed",
+            )
+        try:
+            with self._temporary_level3_postgres_environment(
+                readiness_postgres_access.get("pg_host"),
+                readiness_postgres_access.get("pg_port"),
+            ):
+                dataspace_ready, root_cause = self.infrastructure.verify_dataspace_ready_for_level4()
+        finally:
+            self._stop_level3_postgres_access(readiness_postgres_access)
         if not dataspace_ready:
             self._fail("Level 3 did not leave the dataspace ready for Level 4", root_cause=root_cause)
 
@@ -1000,7 +1363,7 @@ class SharedDataspaceDeploymentAdapter:
         result = self._deploy_dataspace_runtime(
             topology=normalized_topology,
             require_tunnel_prompt=False,
-            update_minikube_host_aliases=normalized_topology == VM_SINGLE_TOPOLOGY,
+            update_minikube_host_aliases=normalized_topology in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY},
         )
         if normalized_topology == VM_DISTRIBUTED_TOPOLOGY:
             sync_routing = getattr(self.infrastructure, "sync_vm_distributed_routing", None)

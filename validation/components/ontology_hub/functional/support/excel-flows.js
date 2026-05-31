@@ -14,6 +14,7 @@ const {
   checkMarked,
   clickMarked,
   fillMarked,
+  highlightMarked,
   selectOptionMarked,
   setInputFilesMarked,
 } = require("../../ui/support/live-marker");
@@ -280,7 +281,28 @@ async function signInToEdition(page, runtime, credentials = {}) {
       if (/\/edition\/login\/?$/i.test(page.url())) {
         await fillMarked(page.getByPlaceholder("Email"), email);
         await fillMarked(page.getByPlaceholder("Password"), password);
-        await clickMarked(page.getByRole("button", { name: /log in it!?/i }));
+        const sessionResponse = page.waitForResponse(
+          (response) => {
+            const request = response.request();
+            try {
+              return request.method() === "POST" && new URL(response.url()).pathname === "/edition/session";
+            } catch {
+              return false;
+            }
+          },
+          { timeout: navigationTimeoutMs },
+        );
+        const submitButton = page.getByRole("button", { name: /log in it!?/i });
+        await highlightMarked(submitButton);
+        await submitButton.evaluate((button) => button.click());
+        const response = await sessionResponse;
+        if (![200, 302, 303].includes(response.status())) {
+          throw new Error(`Ontology Hub login returned HTTP ${response.status()} for '${email}'.`);
+        }
+        await page.goto(`${runtime.baseUrl}/edition`, {
+          waitUntil: "commit",
+          timeout: navigationTimeoutMs,
+        });
         await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
       }
 
@@ -311,15 +333,69 @@ async function signInToEdition(page, runtime, credentials = {}) {
   throw lastError || new Error(`Ontology Hub edition login did not stabilize for '${email}'.`);
 }
 
-async function signOut(page, runtime) {
-  const logoutLink = page.getByRole("link", { name: /logout/i }).first();
-  if ((await logoutLink.count()) > 0 && (await logoutLink.isVisible().catch(() => false))) {
-    await clickMarked(logoutLink);
-    await page.waitForLoadState("domcontentloaded");
+function isEditionPath(url, suffix) {
+  try {
+    const pathname = new URL(String(url)).pathname.replace(/\/+$/, "");
+    return pathname === suffix || pathname.endsWith(suffix);
+  } catch {
+    return false;
+  }
+}
+
+async function waitForEditionLogin(page, runtime) {
+  if (isEditionPath(page.url(), "/edition/login")) {
+    await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
     return;
   }
 
-  await page.goto(`${runtime.baseUrl}/edition/logout`, { waitUntil: "domcontentloaded" });
+  await page
+    .waitForURL((url) => isEditionPath(url, "/edition/login"), {
+      waitUntil: "domcontentloaded",
+      timeout: 5000,
+    })
+    .catch(async () => {
+      try {
+        await page.goto(`${runtime.baseUrl}/edition/login`, {
+          waitUntil: "domcontentloaded",
+          timeout: navigationTimeoutMs,
+        });
+      } catch (error) {
+        if (!isEditionPath(page.url(), "/edition/login")) {
+          throw error;
+        }
+      }
+    });
+}
+
+async function signOut(page, runtime) {
+  const logoutLink = page.getByRole("link", { name: /logout/i }).first();
+  if ((await logoutLink.count()) > 0 && (await logoutLink.isVisible().catch(() => false))) {
+    const logoutResponse = page.waitForResponse(
+      (response) => {
+        const request = response.request();
+        try {
+          return request.method() === "GET" && isEditionPath(response.url(), "/edition/logout");
+        } catch {
+          return false;
+        }
+      },
+      { timeout: navigationTimeoutMs },
+    ).catch(() => null);
+    await highlightMarked(logoutLink);
+    await logoutLink.evaluate((link) => link.click());
+    await logoutResponse;
+    await waitForEditionLogin(page, runtime);
+    return;
+  }
+
+  try {
+    await page.goto(`${runtime.baseUrl}/edition/logout`, { waitUntil: "domcontentloaded" });
+  } catch (error) {
+    if (!isEditionPath(page.url(), "/edition/login")) {
+      throw error;
+    }
+  }
+  await waitForEditionLogin(page, runtime);
 }
 
 async function ensureTagSelected(page, tagLabel) {
@@ -1247,6 +1323,9 @@ async function waitForThemisPanel(page) {
   await page.waitForFunction(
     () => {
       const tab = document.querySelector(".ontology-tab[data-onto-target='themis']");
+      const textTab = Array.from(document.querySelectorAll("[role='tab'], .ontology-tab, button, a")).find((node) =>
+        /themis/i.test(String(node.textContent || "")),
+      );
       const panel = document.querySelector(".ontology-tab-panel[data-onto-panel='themis']");
       const container = document.querySelector("#themisVocabContainer");
       const executeButton = document.querySelector("#executeThemisButton");
@@ -1260,6 +1339,7 @@ async function waitForThemisPanel(page) {
       );
       const tabActive =
         (tab instanceof HTMLElement && tab.getAttribute("aria-selected") === "true") ||
+        (textTab instanceof HTMLElement && textTab.getAttribute("aria-selected") === "true") ||
         (panel instanceof HTMLElement && panel.classList.contains("is-active"));
       const themisUiVisible =
         isVisible(executeButton) ||
@@ -1274,7 +1354,7 @@ async function waitForThemisPanel(page) {
             container.getAttribute("data-vocab-prefix"),
         );
 
-      return tabActive && themisUiVisible && themisMetadataReady;
+      return (tabActive || themisUiVisible) && themisUiVisible && themisMetadataReady;
     },
     { timeout: readyTimeoutMs },
   );
@@ -1289,7 +1369,35 @@ async function openThemisPanel(page) {
     });
   }
 
+  await page
+    .waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll("[role='tab'], .ontology-tab, button, a, li")).some((node) =>
+          /^themis$/i.test(String(node.textContent || "").trim()),
+        ) ||
+        Boolean(document.querySelector("#user-options img[src='/img/themis.png']")) ||
+        Boolean(document.querySelector(".tool-item.gradient img[src='/img/themis.png']")),
+      { timeout: readyTimeoutMs },
+    )
+    .catch(() => {});
+
   const entrypoints = [
+    {
+      name: "themis-tab",
+      locator: page.locator(".ontology-tab[data-onto-target='themis']").first(),
+    },
+    {
+      name: "accessible-themis-tab",
+      locator: page.getByRole("tab", { name: /themis/i }).first(),
+    },
+    {
+      name: "text-themis-tab",
+      locator: page.locator("[role='tab'], .ontology-tab, button, a").filter({ hasText: /themis/i }).first(),
+    },
+    {
+      name: "visible-themis-text",
+      locator: page.getByText(/^Themis$/i).first(),
+    },
     {
       name: "legacy-user-options",
       locator: page.locator("#user-options img[src='/img/themis.png']").first(),
@@ -1297,10 +1405,6 @@ async function openThemisPanel(page) {
     {
       name: "visible-tool-item",
       locator: page.locator(".tool-item.gradient img[src='/img/themis.png']").first(),
-    },
-    {
-      name: "themis-tab",
-      locator: page.locator(".ontology-tab[data-onto-target='themis']").first(),
     },
   ];
   const attempts = [];
@@ -1351,6 +1455,22 @@ async function openThemisPanel(page) {
       const tab = document.querySelector(".ontology-tab[data-onto-target='themis']");
       if (tab instanceof HTMLElement) {
         tab.click();
+        return true;
+      }
+
+      const textTab = Array.from(document.querySelectorAll("[role='tab'], .ontology-tab, button, a")).find((node) =>
+        /themis/i.test(String(node.textContent || "")),
+      );
+      if (textTab instanceof HTMLElement) {
+        textTab.click();
+        return true;
+      }
+
+      const visibleText = Array.from(document.querySelectorAll("button, a, li, span, div")).find((node) =>
+        /^themis$/i.test(String(node.textContent || "").trim()),
+      );
+      if (visibleText instanceof HTMLElement) {
+        visibleText.click();
         return true;
       }
 

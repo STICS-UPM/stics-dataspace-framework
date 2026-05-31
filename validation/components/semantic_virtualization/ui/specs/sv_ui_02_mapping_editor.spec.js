@@ -1,4 +1,6 @@
 const path = require("path");
+const http = require("http");
+const https = require("https");
 
 const { test, expect } = require("../fixtures");
 const { joinUrl } = require("../runtime");
@@ -66,9 +68,60 @@ async function openMappingEditor(page, semanticVirtualizationRuntime) {
 
   expect(response, `Expected browser navigation response from ${url}`).not.toBeNull();
   expect(status).toBe(200);
+
+  const streamUrl = streamlitWebSocketUrl(url);
+  const streamProbe = await probeWebSocketHandshake(streamUrl);
+  expect(
+    streamProbe,
+    `Expected Streamlit WebSocket ${streamUrl} to return HTTP 101 through the public route`,
+  ).toMatchObject({ upgraded: true, status: 101 });
   await expect(page).toHaveTitle(/Mapping Editor/i, { timeout: 60 * 1000 });
 
   return { url, status };
+}
+
+function streamlitWebSocketUrl(editorUrl) {
+  const normalizedEditorUrl = editorUrl.endsWith("/") ? editorUrl : `${editorUrl}/`;
+  const streamUrl = new URL("_stcore/stream", normalizedEditorUrl);
+  streamUrl.protocol = streamUrl.protocol === "https:" ? "wss:" : "ws:";
+  return streamUrl.toString();
+}
+
+function probeWebSocketHandshake(streamUrl) {
+  return new Promise((resolve) => {
+    const parsedUrl = new URL(streamUrl);
+    const transport = parsedUrl.protocol === "wss:" ? https : http;
+    const request = transport.request({
+      protocol: parsedUrl.protocol === "wss:" ? "https:" : "http:",
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || (parsedUrl.protocol === "wss:" ? 443 : 80),
+      path: `${parsedUrl.pathname}${parsedUrl.search}`,
+      method: "GET",
+      rejectUnauthorized: false,
+      headers: {
+        Connection: "Upgrade",
+        Upgrade: "websocket",
+        "Sec-WebSocket-Key": Buffer.from("pionera-ws-probe").toString("base64"),
+        "Sec-WebSocket-Version": "13",
+      },
+    });
+
+    request.on("upgrade", (response, socket) => {
+      socket.destroy();
+      resolve({ upgraded: true, status: response.statusCode, headers: response.headers });
+    });
+    request.on("response", (response) => {
+      response.resume();
+      resolve({ upgraded: false, status: response.statusCode, headers: response.headers });
+    });
+    request.on("error", (error) => {
+      resolve({ upgraded: false, status: 0, error: error.message });
+    });
+    request.setTimeout(15 * 1000, () => {
+      request.destroy(new Error("timeout"));
+    });
+    request.end();
+  });
 }
 
 async function waitForBodyText(page, expectedPattern) {

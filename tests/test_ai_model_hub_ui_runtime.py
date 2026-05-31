@@ -23,7 +23,7 @@ def parse_key_value_file(path):
 
 def resolve_runtime_with_node(env_overrides=None):
     env = dict(os.environ)
-    for key in ["AI_MODEL_HUB_KEYCLOAK_URL", "UI_DS_DOMAIN"]:
+    for key in ["AI_MODEL_HUB_KEYCLOAK_URL", "UI_DS_DOMAIN", "AI_MODEL_HUB_MODEL_SERVER_BASE_URL"]:
         env.pop(key, None)
     env.update(env_overrides or {})
     script = """
@@ -102,6 +102,13 @@ class AIModelHubUiRuntimeTests(unittest.TestCase):
             runtime["modelServerBaseUrl"],
             "http://model-server.components-a52.svc.cluster.local:8080",
         )
+
+    def test_runtime_uses_public_model_server_base_url_override(self):
+        runtime = resolve_runtime_with_node(
+            {"AI_MODEL_HUB_MODEL_SERVER_BASE_URL": "https://org1.example.test/model-server/"}
+        )
+
+        self.assertEqual(runtime["modelServerBaseUrl"], "https://org1.example.test/model-server")
 
     def test_runtime_uses_edc_connector_defaults_when_adapter_is_edc(self):
         runtime = resolve_runtime_with_node({"PIONERA_ADAPTER": "edc"})

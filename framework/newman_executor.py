@@ -203,6 +203,60 @@ class NewmanExecutor:
         text = str(value or "").strip()
         return not text or "{{" in text or "}}" in text
 
+    @staticmethod
+    def _runtime_base_url_replacements(env_vars):
+        replacements = {}
+        provider_base_url = str(env_vars.get("providerBaseUrl") or "").strip().rstrip("/")
+        consumer_base_url = str(env_vars.get("consumerBaseUrl") or "").strip().rstrip("/")
+        if provider_base_url:
+            replacements["http://{{provider}}.{{dsDomain}}"] = "{{providerBaseUrl}}"
+        if consumer_base_url:
+            replacements["http://{{consumer}}.{{dsDomain}}"] = "{{consumerBaseUrl}}"
+        return replacements
+
+    @classmethod
+    def _replace_runtime_collection_urls(cls, value, replacements):
+        if isinstance(value, dict):
+            if "raw" in value and isinstance(value.get("raw"), str):
+                raw = value["raw"]
+                replaced = raw
+                for source, target in replacements.items():
+                    replaced = replaced.replace(source, target)
+                if replaced != raw:
+                    return replaced
+            return {
+                key: cls._replace_runtime_collection_urls(item, replacements)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [cls._replace_runtime_collection_urls(item, replacements) for item in value]
+        if isinstance(value, str):
+            replaced = value
+            for source, target in replacements.items():
+                replaced = replaced.replace(source, target)
+            return replaced
+        return value
+
+    def _runtime_collection_path(self, collection_path, env_vars):
+        replacements = self._runtime_base_url_replacements(env_vars)
+        if not replacements:
+            return collection_path, None
+
+        with open(collection_path, "r", encoding="utf-8") as f:
+            collection = json.load(f)
+
+        rewritten = self._replace_runtime_collection_urls(collection, replacements)
+        handle = tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            suffix=f"-{os.path.basename(collection_path)}",
+            prefix="validation-newman-collection-",
+            delete=False,
+        )
+        with handle:
+            json.dump(rewritten, handle, indent=2)
+        return handle.name, handle.name
+
     def _require_environment_values(self, environment_path, required_keys, context):
         _, env_vars = self._read_environment_values(environment_path)
         missing = [
@@ -365,6 +419,14 @@ class NewmanExecutor:
     def _management_url(connector, ds_domain, path):
         normalized_path = f"/{str(path or '').lstrip('/')}"
         return f"http://{connector}.{ds_domain}{normalized_path}"
+
+    @staticmethod
+    def _management_url_for_role(env_vars, role, connector, ds_domain, path):
+        normalized_path = f"/{str(path or '').lstrip('/')}"
+        base_url = str(env_vars.get(f"{role}BaseUrl") or "").strip().rstrip("/")
+        if base_url:
+            return f"{base_url}{normalized_path}"
+        return NewmanExecutor._management_url(connector, ds_domain, normalized_path)
 
     @staticmethod
     def _response_preview(response, limit=300):
@@ -614,7 +676,13 @@ class NewmanExecutor:
             record_check("consumer-login", consumer_login_url, False, str(exc))
 
         if provider_token and provider and ds_domain:
-            url = self._management_url(provider, ds_domain, "/management/v3/assets/request")
+            url = self._management_url_for_role(
+                env_vars,
+                "provider",
+                provider,
+                ds_domain,
+                "/management/v3/assets/request",
+            )
             try:
                 response, body, provider_token = self._post_management_json_with_auth_refresh(
                     env_vars,
@@ -642,7 +710,13 @@ class NewmanExecutor:
                 record_check("provider-assets-request", url, False, str(exc))
 
         if consumer_token and consumer and ds_domain:
-            url = self._management_url(consumer, ds_domain, "/management/v3/contractnegotiations/request")
+            url = self._management_url_for_role(
+                env_vars,
+                "consumer",
+                consumer,
+                ds_domain,
+                "/management/v3/contractnegotiations/request",
+            )
             try:
                 response, body, consumer_token = self._post_management_json_with_auth_refresh(
                     env_vars,
@@ -669,7 +743,13 @@ class NewmanExecutor:
                 record_check("consumer-contractnegotiations-request", url, False, str(exc))
 
         if consumer_token and consumer and ds_domain and provider_protocol and provider_participant_id:
-            url = self._management_url(consumer, ds_domain, "/management/v3/catalog/request")
+            url = self._management_url_for_role(
+                env_vars,
+                "consumer",
+                consumer,
+                ds_domain,
+                "/management/v3/catalog/request",
+            )
             try:
                 response, body, consumer_token = self._post_management_json_with_auth_refresh(
                     env_vars,
@@ -756,13 +836,17 @@ class NewmanExecutor:
 
         return None
 
-    def _query_contract_agreement(self, connector, ds_domain, token, agreement_id):
-        direct_url = self._management_url(
+    def _query_contract_agreement(self, connector, ds_domain, token, agreement_id, env_vars=None, role=None):
+        direct_url = self._management_url_for_role(
+            env_vars or {},
+            role or "",
             connector,
             ds_domain,
             f"/management/v3/contractagreements/{agreement_id}",
         )
-        list_url = self._management_url(
+        list_url = self._management_url_for_role(
+            env_vars or {},
+            role or "",
             connector,
             ds_domain,
             "/management/v3/contractagreements/request",
@@ -891,6 +975,8 @@ class NewmanExecutor:
                     ds_domain,
                     token,
                     agreement_id,
+                    env_vars=env_vars,
+                    role=role,
                 )
                 if agreement is not None:
                     visible.add(role)
@@ -968,7 +1054,13 @@ class NewmanExecutor:
         if missing:
             return "provider diagnostics unavailable; missing " + ", ".join(missing)
 
-        url = f"http://{provider}.{ds_domain}/management/v3/contractnegotiations/request"
+        url = self._management_url_for_role(
+            env_vars,
+            "provider",
+            provider,
+            ds_domain,
+            "/management/v3/contractnegotiations/request",
+        )
         payload = {
             "@context": {
                 "@vocab": "https://w3id.org/edc/v0.0.1/ns/"
@@ -1052,8 +1144,20 @@ class NewmanExecutor:
                 + ", ".join(missing)
             )
 
-        direct_url = f"http://{consumer}.{ds_domain}/management/v3/contractnegotiations/{negotiation_id}"
-        list_url = f"http://{consumer}.{ds_domain}/management/v3/contractnegotiations/request"
+        direct_url = self._management_url_for_role(
+            env_vars,
+            "consumer",
+            consumer,
+            ds_domain,
+            f"/management/v3/contractnegotiations/{negotiation_id}",
+        )
+        list_url = self._management_url_for_role(
+            env_vars,
+            "consumer",
+            consumer,
+            ds_domain,
+            "/management/v3/contractnegotiations/request",
+        )
         payload = {
             "@context": {
                 "@vocab": "https://w3id.org/edc/v0.0.1/ns/"
@@ -1174,9 +1278,14 @@ class NewmanExecutor:
             print("Install with: npm install or npm install -g newman")
             return None
 
+        runtime_collection_path, temporary_collection_path = self._runtime_collection_path(
+            collection_path,
+            env_vars,
+        )
+
         cmd = newman_cmd + [
             "run",
-            collection_path,
+            runtime_collection_path,
             "--reporters",
             "cli,json",
             "--color",
@@ -1233,42 +1342,49 @@ class NewmanExecutor:
             self.TRANSIENT_AUTH_RETRY_DELAY_SECONDS,
         )
 
-        for attempt in range(1, max_attempts + 1):
-            if report_path and os.path.exists(report_path):
-                os.remove(report_path)
+        try:
+            for attempt in range(1, max_attempts + 1):
+                if report_path and os.path.exists(report_path):
+                    os.remove(report_path)
 
-            try:
-                result = subprocess.run(
-                    cmd,
-                    check=False,
-                    capture_output=True,
-                    text=True
-                )
-            except FileNotFoundError:
-                print("ERROR: Newman is not installed or not available locally")
-                print("Install with: npm install or npm install -g newman")
-                return None
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        check=False,
+                        capture_output=True,
+                        text=True
+                    )
+                except FileNotFoundError:
+                    print("ERROR: Newman is not installed or not available locally")
+                    print("Install with: npm install or npm install -g newman")
+                    return None
 
-            if result.returncode == 0:
+                if result.returncode == 0:
+                    self._emit_process_output(result)
+                    return report_path
+
+                transient_auth_detail = self._newman_auth_failure_detail(report_path)
+                if transient_auth_detail and attempt < max_attempts:
+                    print(
+                        "[INFO] Newman auth endpoint was temporarily unavailable: "
+                        f"{transient_auth_detail}. Retrying "
+                        f"{os.path.basename(collection_path)} in {retry_delay:g}s "
+                        f"({attempt + 1}/{max_attempts})"
+                    )
+                    time.sleep(retry_delay)
+                    continue
+
                 self._emit_process_output(result)
+                print(f"[WARNING] Newman returned exit code {result.returncode}")
                 return report_path
 
-            transient_auth_detail = self._newman_auth_failure_detail(report_path)
-            if transient_auth_detail and attempt < max_attempts:
-                print(
-                    "[INFO] Newman auth endpoint was temporarily unavailable: "
-                    f"{transient_auth_detail}. Retrying "
-                    f"{os.path.basename(collection_path)} in {retry_delay:g}s "
-                    f"({attempt + 1}/{max_attempts})"
-                )
-                time.sleep(retry_delay)
-                continue
-
-            self._emit_process_output(result)
-            print(f"[WARNING] Newman returned exit code {result.returncode}")
             return report_path
-
-        return report_path
+        finally:
+            if temporary_collection_path:
+                try:
+                    os.remove(temporary_collection_path)
+                except OSError:
+                    pass
 
     @staticmethod
     def _collection_report_path(report_dir, collection_name, suffix=""):

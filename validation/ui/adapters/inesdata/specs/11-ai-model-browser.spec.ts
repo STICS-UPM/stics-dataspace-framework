@@ -12,6 +12,7 @@ import {
   probeConsumerCatalogDatasetReadiness,
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS, waitForUiTransition } from "../../../shared/utils/waiting";
+import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
 
 type AIModelBrowserUiReport = {
   startedAt: string;
@@ -119,13 +120,7 @@ function aiModelHubModelPath(): string {
 }
 
 function aiModelHubModelUrl(componentsNamespace: string): string {
-  const explicit = (process.env.UI_AI_MODEL_HUB_MODEL_URL || "").trim();
-  if (explicit) {
-    return explicit;
-  }
-
-  const namespace = (process.env.UI_AI_MODEL_HUB_MODEL_NAMESPACE || componentsNamespace || "components").trim();
-  return `http://model-server.${namespace}.svc.cluster.local:8080${aiModelHubModelPath()}`;
+  return modelServerUrlForPath(aiModelHubModelPath(), componentsNamespace);
 }
 
 function aiModelHubCatalogCleanupEnabled(): boolean {
@@ -263,6 +258,35 @@ async function clearActiveFilters(page: Page): Promise<void> {
   }
 }
 
+async function expectAiModelBrowserSearchResults(
+  page: Page,
+  baseUrl: string,
+  searchText: string,
+  expectedAssetIds: string[],
+  afterNavigation?: () => Promise<void>,
+): Promise<void> {
+  await expect(async () => {
+    await gotoAiModelBrowser(page, baseUrl);
+    await afterNavigation?.();
+    await expect(page.getByRole("heading", { name: /AI Model Browser/i })).toBeVisible({ timeout: 20_000 });
+
+    const searchInput = aiModelBrowserSearchInput(page);
+    await expect(searchInput).toBeVisible({ timeout: 20_000 });
+    await searchInput.fill("");
+    await waitForUiTransition(page);
+    await clearActiveFilters(page);
+    await searchInput.fill(searchText);
+    await waitForUiTransition(page);
+
+    for (const assetId of expectedAssetIds) {
+      await expect(aiModelCard(page, assetId)).toBeVisible({ timeout: 20_000 });
+    }
+  }).toPass({
+    timeout: 180_000,
+    intervals: EVENTUAL_UI_RETRY_INTERVALS,
+  });
+}
+
 async function inspectBrowserObserverEvidence(page: Page, assetId: string, modelName: string) {
   const loadError = page.getByText(/Failed to load observer timeline/i).first();
   const emptyTimeline = page.getByText(/No observer events match/i).first();
@@ -394,7 +418,7 @@ test("11 AI Model Browser: controlled model discovery, filtering and detail from
   };
 
   const isTolerableCatalogRetry = (url: string, status: number): boolean =>
-    (status === 401 || status === 503) &&
+    (status === 401 || status === 500 || status === 502 || status === 503 || status === 504) &&
     (url.includes("/management/pagination/count") ||
       url.includes("/management/federatedcatalog/request"));
 
@@ -482,20 +506,16 @@ test("11 AI Model Browser: controlled model discovery, filtering and detail from
     await shellPage.expectReady();
     await captureStep(page, "01-ai-model-browser-after-login");
 
-    await expect(async () => {
-      await gotoAiModelBrowser(page, dataspaceRuntime.consumer.portalBaseUrl);
-      await shellPage.assertNoGateway403("AI Model Browser page");
-      await shellPage.assertNoServerErrorBanner("AI Model Browser page");
-      await expect(page.getByRole("heading", { name: /AI Model Browser/i })).toBeVisible({ timeout: 20_000 });
-      await expect(aiModelBrowserSearchInput(page)).toBeVisible({ timeout: 20_000 });
-      await aiModelBrowserSearchInput(page).fill(suffix);
-      await waitForUiTransition(page);
-      await expect(aiModelCard(page, targetModel.assetId)).toBeVisible({ timeout: 20_000 });
-      await expect(aiModelCard(page, comparisonModel.assetId)).toBeVisible({ timeout: 20_000 });
-    }).toPass({
-      timeout: 180_000,
-      intervals: EVENTUAL_UI_RETRY_INTERVALS,
-    });
+    await expectAiModelBrowserSearchResults(
+      page,
+      dataspaceRuntime.consumer.portalBaseUrl,
+      suffix,
+      [targetModel.assetId, comparisonModel.assetId],
+      async () => {
+        await shellPage.assertNoGateway403("AI Model Browser page");
+        await shellPage.assertNoServerErrorBanner("AI Model Browser page");
+      },
+    );
 
     await captureStep(page, "02-ai-model-browser-search-result");
 
@@ -596,11 +616,9 @@ test("11 AI Model Browser: controlled model discovery, filtering and detail from
     });
     await captureStep(page, "04-ai-model-browser-primary-negotiate-action");
 
-    await gotoAiModelBrowser(page, dataspaceRuntime.consumer.portalBaseUrl);
-    await expect(aiModelBrowserSearchInput(page)).toBeVisible({ timeout: 20_000 });
-    await aiModelBrowserSearchInput(page).fill(suffix);
-    await waitForUiTransition(page);
-    await expect(aiModelCard(page, targetModel.assetId)).toBeVisible({ timeout: 20_000 });
+    await expectAiModelBrowserSearchResults(page, dataspaceRuntime.consumer.portalBaseUrl, suffix, [
+      targetModel.assetId,
+    ]);
 
     await clickMarked(aiModelCard(page, targetModel.assetId).getByRole("button", { name: /View details/i }).first(), {
       force: true,

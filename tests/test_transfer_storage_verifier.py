@@ -151,6 +151,20 @@ def _build_provider_setup_report(report_path, *, object_name):
 
 
 class TransferStorageVerifierTests(unittest.TestCase):
+    def test_resolve_minio_runtime_prefers_public_api_url_over_internal_hostname(self):
+        verifier = TransferStorageVerifier(
+            load_deployer_config=lambda: {
+                "MINIO_API_PUBLIC_URL": "https://minio.public.example",
+                "MINIO_HOSTNAME": "minio.internal.example",
+            }
+        )
+
+        runtime = verifier._resolve_minio_runtime()
+
+        self.assertEqual(runtime["host"], "minio.public.example")
+        self.assertEqual(runtime["port"], 443)
+        self.assertTrue(runtime["secure"])
+
     def test_verify_consumer_transfer_persistence_marks_pending_without_baseline(self):
         verifier = TransferStorageVerifier(poll_attempts=1, poll_interval_seconds=0)
 

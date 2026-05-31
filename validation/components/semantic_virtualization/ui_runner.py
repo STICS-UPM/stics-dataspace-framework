@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from validation.components.artifact_cleanup import cleanup_empty_experiment_artifact_dirs
+from validation.components.fail_fast import playwright_max_failures_args
 
 
 COMPONENT_KEY = "semantic-virtualization"
@@ -17,6 +18,10 @@ DEFAULT_EXPERIMENTS_DIR = PROJECT_ROOT / "experiments" / "_standalone"
 PLAYWRIGHT_COMMAND = [os.path.join(".", "node_modules", ".bin", "playwright"), "test", "--config", PLAYWRIGHT_CONFIG_RELATIVE]
 UI_VALIDATION_ENV = "SEMANTIC_VIRTUALIZATION_ENABLE_UI_VALIDATION"
 MAPPING_EDITOR_ENV = "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI"
+
+
+def _playwright_command() -> List[str]:
+    return [*PLAYWRIGHT_COMMAND, *playwright_max_failures_args()]
 
 
 UI_CASE_METADATA: Dict[str, Dict[str, Any]] = {
@@ -384,7 +389,7 @@ def run_semantic_virtualization_ui_validation(base_url: str, experiment_dir: str
     exit_code = None
     status = "skipped"
     try:
-        completed = subprocess.run(PLAYWRIGHT_COMMAND, cwd=str(PLAYWRIGHT_WORKDIR), env=env)
+        completed = subprocess.run(_playwright_command(), cwd=str(PLAYWRIGHT_WORKDIR), env=env)
         exit_code = completed.returncode
         status = "passed" if completed.returncode == 0 else "failed"
     except OSError as exc:

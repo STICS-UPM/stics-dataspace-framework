@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from adapters.inesdata.deployment import INESDataDeploymentAdapter
 from adapters.inesdata.infrastructure import INESDataInfrastructureAdapter
+from adapters.shared.deployment import SharedDataspaceDeploymentAdapter
 from adapters.shared.infrastructure import SharedFoundationInfrastructureAdapter
 
 
@@ -313,6 +314,9 @@ class InesdataLevelOutputTests(unittest.TestCase):
             "adapters.shared.infrastructure._sudo_write_file",
             side_effect=fake_write_file,
         ), mock.patch(
+            "adapters.shared.infrastructure.os.path.isdir",
+            return_value=True,
+        ), mock.patch(
             "adapters.shared.infrastructure.subprocess.check_output",
             return_value="10.96.0.10",
         ), mock.patch(
@@ -347,6 +351,32 @@ class InesdataLevelOutputTests(unittest.TestCase):
             remote_provider_writes[0].kwargs["input"],
         )
         self.assertIn("proxy_pass http://10.0.0.20:31667;", remote_provider_writes[0].kwargs["input"])
+
+    def test_shared_foundation_vm_distributed_routing_skips_local_nginx_when_absent(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "VM_COMMON_IP": "10.0.0.10",
+                "VM_PROVIDER_IP": "10.0.0.20",
+                "DS_DOMAIN_BASE": "dev.ds.example",
+                "DS_1_NAME": "pionera",
+                "VM_PROVIDER_CONNECTORS": "citycouncil",
+            }
+        )
+        infrastructure = self._make_shared_foundation_infrastructure()
+
+        with mock.patch(
+            "adapters.shared.infrastructure.os.path.isdir",
+            return_value=False,
+        ), mock.patch(
+            "adapters.shared.infrastructure._sudo_write_file",
+        ) as write_file, mock.patch(
+            "adapters.shared.infrastructure.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+        ):
+            result = infrastructure.sync_vm_distributed_routing()
+
+        self.assertEqual(result["status"], "synced")
+        write_file.assert_not_called()
 
     def test_wsl_docker_config_repair_removes_desktop_exe_creds_store(self):
         docker_dir = os.path.join(self.tmpdir.name, ".docker")
@@ -1264,6 +1294,57 @@ minio:
             "secret",
         )
 
+    def test_deploy_dataspace_prefers_kc_management_url_for_local_readiness(self):
+        infrastructure = self._make_infrastructure()
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=infrastructure,
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+        deployment.connectors_adapter = FakeConnectorsAdapter()
+        infrastructure.ensure_local_infra_access = mock.Mock(return_value=True)
+        infrastructure.ensure_vault_unsealed = lambda: True
+        infrastructure.reconcile_vault_state_for_local_runtime = mock.Mock(return_value=True)
+        infrastructure.sync_common_credentials_from_kubernetes = mock.Mock(return_value=True)
+        infrastructure.deploy_helm_release = lambda *_args, **_kwargs: True
+        infrastructure.wait_for_dataspace_level3_pods = lambda *_args, **_kwargs: True
+        infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
+        deployment.restart_registration_service = lambda: None
+        deployment.update_helm_values_with_host_aliases = mock.Mock()
+        deployment.wait_for_keycloak_admin_ready = mock.Mock(return_value=True)
+        deployment.config_adapter.load_deployer_config = lambda: {
+            "KC_URL": "http://admin.auth.dev.ed.dataspaceunit.upm",
+            "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+            "KC_MANAGEMENT_URL": "http://127.0.0.1:18080",
+            "KC_USER": "admin",
+            "KC_PASSWORD": "secret",
+        }
+
+        with mock.patch(
+            "adapters.inesdata.deployment.ensure_python_requirements",
+            lambda *_args, **_kwargs: None,
+        ), mock.patch(
+            "adapters.inesdata.deployment.requests.get",
+            return_value=mock.Mock(status_code=200),
+        ) as mocked_get, mock.patch(
+            "adapters.shared.deployment.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+        ):
+            deployment.deploy_dataspace()
+
+        mocked_get.assert_called_once_with(
+            "http://127.0.0.1:18080/realms/master",
+            timeout=5,
+        )
+        deployment.wait_for_keycloak_admin_ready.assert_called_once_with(
+            "http://127.0.0.1:18080",
+            "admin",
+            "secret",
+        )
+
     def test_deploy_dataspace_reports_guidance_when_keycloak_urls_are_missing(self):
         infrastructure = self._make_infrastructure()
         deployment = INESDataDeploymentAdapter(
@@ -1288,8 +1369,8 @@ minio:
             deployment.deploy_dataspace()
 
         message = str(exc.exception)
-        self.assertIn("KC_INTERNAL_URL/KC_URL not defined in deployer.config", message)
-        self.assertIn("deployers/infrastructure/deployer.config.example", message)
+        self.assertIn("Keycloak URL not defined in deployer.config", message)
+        self.assertIn("KEYCLOAK_FRONTEND_URL", message)
 
     def test_deploy_dataspace_for_vm_single_skips_tunnel_prompt_and_updates_runtime_host_aliases(self):
         infrastructure = self._make_infrastructure()
@@ -1358,10 +1439,20 @@ minio:
         infrastructure.sync_vm_distributed_routing = mock.Mock(return_value={"status": "synced"})
         infrastructure.deploy_helm_release = lambda *_args, **_kwargs: True
         infrastructure.wait_for_dataspace_level3_pods = lambda *_args, **_kwargs: True
-        infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
+        readiness_env = {}
+
+        def verify_dataspace_ready():
+            readiness_env["pg_host"] = os.environ.get("PIONERA_PG_HOST")
+            readiness_env["pg_port"] = os.environ.get("PIONERA_PG_PORT")
+            return True, None
+
+        infrastructure.verify_dataspace_ready_for_level4 = verify_dataspace_ready
         deployment.wait_for_keycloak_admin_ready = lambda *_args, **_kwargs: True
         deployment.restart_registration_service = lambda: None
         deployment.update_helm_values_with_host_aliases = mock.Mock()
+        deployment._reserve_local_port = mock.Mock(return_value=15432)
+        infrastructure.port_forward_service = mock.Mock(return_value=True)
+        infrastructure.stop_port_forward_service = mock.Mock(return_value=True)
 
         with contextlib.redirect_stdout(io.StringIO()), mock.patch(
             "adapters.inesdata.deployment.ensure_python_requirements",
@@ -1375,8 +1466,71 @@ minio:
         ):
             deployment.deploy_dataspace_for_topology("vm-distributed")
 
-        deployment.update_helm_values_with_host_aliases.assert_not_called()
+        deployment.update_helm_values_with_host_aliases.assert_called_once_with(
+            self.config.registration_values_file(),
+            topology="vm-distributed",
+        )
         infrastructure.sync_vm_distributed_routing.assert_called_once()
+        self.assertEqual(readiness_env["pg_host"], "127.0.0.1")
+        self.assertEqual(readiness_env["pg_port"], "15432")
+        self.assertEqual(infrastructure.port_forward_service.call_count, 2)
+        self.assertEqual(infrastructure.stop_port_forward_service.call_count, 2)
+
+    def test_deploy_dataspace_for_vm_distributed_uses_public_keycloak_url(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "KC_INTERNAL_URL": "http://auth.pionera.oeg.fi.upm.es",
+                "KC_URL": "http://admin.auth.pionera.oeg.fi.upm.es",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                "VM_COMMON_IP": "192.168.122.64",
+                "VM_PROVIDER_IP": "192.168.122.134",
+                "VM_CONSUMER_IP": "192.168.122.9",
+            }
+        )
+        infrastructure = self._make_infrastructure()
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=infrastructure,
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+        deployment.connectors_adapter = FakeConnectorsAdapter()
+        infrastructure.ensure_vault_unsealed = lambda: True
+        infrastructure.sync_common_credentials_from_kubernetes = mock.Mock(return_value=True)
+        infrastructure.sync_vm_distributed_routing = mock.Mock(return_value={"status": "synced"})
+        infrastructure.deploy_helm_release = lambda *_args, **_kwargs: True
+        infrastructure.wait_for_dataspace_level3_pods = lambda *_args, **_kwargs: True
+        infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
+        deployment.wait_for_keycloak_admin_ready = mock.Mock(return_value=True)
+        deployment.restart_registration_service = lambda: None
+        deployment.update_helm_values_with_host_aliases = mock.Mock()
+        deployment._reserve_local_port = mock.Mock(return_value=15432)
+        infrastructure.port_forward_service = mock.Mock(return_value=True)
+        infrastructure.stop_port_forward_service = mock.Mock(return_value=True)
+
+        with contextlib.redirect_stdout(io.StringIO()), mock.patch(
+            "adapters.inesdata.deployment.ensure_python_requirements",
+            lambda *_args, **_kwargs: None,
+        ), mock.patch(
+            "adapters.inesdata.deployment.requests.get",
+            return_value=mock.Mock(status_code=200),
+        ) as get_request, mock.patch(
+            "adapters.shared.deployment.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+        ):
+            deployment.deploy_dataspace_for_topology("vm-distributed")
+
+        get_request.assert_called_with(
+            "https://org1.pionera.oeg.fi.upm.es/auth/realms/master",
+            timeout=5,
+        )
+        deployment.wait_for_keycloak_admin_ready.assert_called_with(
+            "https://org1.pionera.oeg.fi.upm.es/auth",
+            "admin",
+            "secret",
+        )
 
     def test_public_portal_connector_endpoints_replace_changeme_placeholders(self):
         self.config_adapter = LevelOutputConfigAdapter(
@@ -1731,6 +1885,45 @@ minio:
             ),
         ])
 
+    def test_level3_k3s_prepull_retries_interactively_only_when_sudo_requires_password(self):
+        deployment = SharedDataspaceDeploymentAdapter(
+            run=mock.Mock(),
+            run_silent=mock.Mock(),
+            auto_mode_getter=lambda: False,
+            infrastructure_adapter=None,
+            config_adapter=None,
+            config_cls=None,
+        )
+        stdin = mock.Mock()
+        stdin.isatty.return_value = True
+
+        calls = []
+
+        def subprocess_run(command, *_args, **kwargs):
+            calls.append((command, kwargs))
+            if command[:5] == ["sudo", "-n", "k3s", "crictl", "pull"]:
+                return mock.Mock(returncode=1, stdout="", stderr="sudo: a password is required")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), mock.patch(
+            "adapters.shared.deployment.subprocess.run",
+            side_effect=subprocess_run,
+        ), mock.patch(
+            "adapters.shared.deployment.sys.stdin",
+            stdin,
+        ):
+            deployment._prepull_k3s_image("ghcr.io/example/registration-service:1.0.0", 123)
+
+        self.assertEqual(
+            [call[0] for call in calls],
+            [
+                ["sudo", "-n", "k3s", "crictl", "pull", "ghcr.io/example/registration-service:1.0.0"],
+                ["sudo", "k3s", "crictl", "pull", "ghcr.io/example/registration-service:1.0.0"],
+            ],
+        )
+        self.assertIn("needs sudo password", output.getvalue())
+
     def test_update_registration_host_aliases_uses_vm_single_k3s_ingress_ip(self):
         self.config_adapter = LevelOutputConfigAdapter(
             {
@@ -1771,6 +1964,49 @@ minio:
         )
         run.assert_not_called()
 
+    def test_update_registration_host_aliases_uses_vm_distributed_k3s_ingress_ip(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "CLUSTER_TYPE": "k3s",
+                "INGRESS_EXTERNAL_IP": "192.168.122.64",
+                "VM_COMMON_IP": "192.168.122.64",
+                "VM_PROVIDER_IP": "192.168.122.134",
+                "VM_CONSUMER_IP": "192.168.122.9",
+            }
+        )
+        self.config_adapter.topology = "vm-distributed"
+        self.config_adapter.host_alias_domains = lambda **_kwargs: [
+            "auth.pionera.oeg.fi.upm.es",
+            "registration-service-pionera.pionera.oeg.fi.upm.es",
+        ]
+        run = mock.Mock(return_value="192.168.49.2")
+        deployment = INESDataDeploymentAdapter(
+            run=run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+
+        deployment.update_helm_values_with_host_aliases(
+            self.config.registration_values_file(),
+            topology="vm-distributed",
+        )
+
+        with open(self.config.registration_values_file(), encoding="utf-8") as handle:
+            values = yaml.safe_load(handle)
+
+        self.assertEqual(values["hostAliases"][0]["ip"], "192.168.122.64")
+        self.assertEqual(
+            values["hostAliases"][0]["hostnames"],
+            [
+                "auth.pionera.oeg.fi.upm.es",
+                "registration-service-pionera.pionera.oeg.fi.upm.es",
+            ],
+        )
+        run.assert_not_called()
+
     def test_level3_postgres_cleanup_reconciles_residual_role_directly(self):
         deployment = INESDataDeploymentAdapter(
             run=self._run,
@@ -1805,6 +2041,117 @@ minio:
             "demoedc_rsusr",
         )
         self.assertIn("Reconciling directly", output.getvalue())
+
+    def test_level3_postgres_cleanup_uses_forwarded_vm_distributed_endpoint(self):
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+        deployment.connectors_adapter = mock.Mock()
+        deployment.connectors_adapter.force_clean_postgres_db = mock.Mock()
+
+        subprocess_results = [
+            mock.Mock(returncode=0, stdout="", stderr=""),
+            mock.Mock(returncode=0, stdout="", stderr=""),
+        ]
+
+        with mock.patch(
+            "adapters.shared.deployment.subprocess.run",
+            side_effect=subprocess_results,
+        ) as run:
+            deployment._cleanup_level3_postgres_state(
+                "pionera_rs",
+                "pionera_rsusr",
+                "registration-service",
+                pg_host="127.0.0.1",
+                pg_port="15432",
+            )
+
+        deployment.connectors_adapter.force_clean_postgres_db.assert_called_once_with(
+            "pionera_rs",
+            "pionera_rsusr",
+            pg_host="127.0.0.1",
+            pg_port="15432",
+        )
+        first_command = run.call_args_list[0].args[0]
+        self.assertIn("-h", first_command)
+        self.assertIn("127.0.0.1", first_command)
+        self.assertIn("-p", first_command)
+        self.assertIn("15432", first_command)
+
+    def test_level3_vm_distributed_postgres_access_uses_common_kubeconfig(self):
+        infrastructure = self._make_infrastructure()
+
+        def fake_port_forward(namespace, pattern, local_port, remote_port, quiet=False):
+            self.assertEqual(namespace, "common")
+            self.assertEqual(pattern, "common-postgresql")
+            self.assertIsInstance(local_port, int)
+            self.assertEqual(remote_port, 5432)
+            self.assertTrue(quiet)
+            self.assertEqual(os.environ.get("KUBECONFIG"), "/tmp/common-kubeconfig.yaml")
+            self.assertEqual(os.environ.get("PIONERA_KUBECONFIG_ROLE"), "common")
+            return True
+
+        infrastructure.port_forward_service = mock.Mock(side_effect=fake_port_forward)
+        infrastructure.stop_port_forward_service = mock.Mock(return_value=True)
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=infrastructure,
+            config_adapter=LevelOutputConfigAdapter(
+                {
+                    "K3S_KUBECONFIG": "/tmp/default-kubeconfig.yaml",
+                    "K3S_KUBECONFIG_COMMON": "/tmp/common-kubeconfig.yaml",
+                    "PG_PORT": "5432",
+                }
+            ),
+            config_cls=self.config,
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            deployment,
+            "_reserve_local_port",
+            return_value=15432,
+        ):
+            access = deployment._start_level3_postgres_access("vm-distributed")
+            self.assertIsNone(os.environ.get("KUBECONFIG"))
+            self.assertIsNone(os.environ.get("PIONERA_KUBECONFIG_ROLE"))
+            deployment._stop_level3_postgres_access(access)
+
+        self.assertEqual(access["pg_host"], "127.0.0.1")
+        self.assertTrue(access["pg_port"].isdigit())
+        infrastructure.stop_port_forward_service.assert_called_once_with(
+            "common",
+            "common-postgresql",
+            quiet=True,
+        )
+
+    def test_bootstrap_dataspace_command_passes_postgres_forward_overrides(self):
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+        deployment.topology = "vm-distributed"
+
+        command = deployment._bootstrap_dataspace_command(
+            "create",
+            dataspace="pionera",
+            pg_host="127.0.0.1",
+            pg_port="15432",
+        )
+
+        self.assertIn("PIONERA_TOPOLOGY=vm-distributed", command)
+        self.assertIn("PIONERA_PG_HOST=127.0.0.1", command)
+        self.assertIn("PIONERA_PG_PORT=15432", command)
 
     def test_level3_postgres_cleanup_fails_when_residual_state_persists(self):
         deployment = INESDataDeploymentAdapter(
@@ -2039,6 +2386,177 @@ minio:
 
         self.assertEqual(updated["keycloak"]["proxy"], "edge")
 
+    def test_vm_distributed_common_public_path_ingresses_use_org1_paths(self):
+        infrastructure = self._make_infrastructure()
+
+        ingresses = infrastructure._vm_distributed_common_public_path_ingresses(
+            {
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                "MINIO_CONSOLE_PUBLIC_URL": "https://org1.pionera.oeg.fi.upm.es/s3-console",
+            }
+        )
+
+        self.assertEqual(
+            [item["metadata"]["name"] for item in ingresses],
+            ["common-srvs-keycloak-public-path", "common-srvs-minio-console-public-path"],
+        )
+        keycloak, minio = ingresses
+        self.assertEqual(keycloak["spec"]["rules"][0]["host"], "org1.pionera.oeg.fi.upm.es")
+        self.assertEqual(keycloak["spec"]["rules"][0]["http"]["paths"][0]["path"], "/auth(/|$)(.*)")
+        self.assertEqual(
+            keycloak["metadata"]["annotations"]["nginx.ingress.kubernetes.io/rewrite-target"],
+            "/$2",
+        )
+        self.assertEqual(
+            keycloak["metadata"]["annotations"][INESDataInfrastructureAdapter.KEYCLOAK_HTTP_COOKIE_ANNOTATION],
+            INESDataInfrastructureAdapter.KEYCLOAK_HTTP_COOKIE_SNIPPET,
+        )
+        self.assertEqual(minio["spec"]["rules"][0]["http"]["paths"][0]["path"], "/s3-console(/|$)(.*)")
+        self.assertEqual(
+            minio["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["port"]["number"],
+            9001,
+        )
+
+    def test_vm_distributed_common_public_path_ingresses_infer_default_org1_paths(self):
+        infrastructure = self._make_infrastructure()
+
+        ingresses = infrastructure._vm_distributed_common_public_path_ingresses(
+            {
+                "DOMAIN_BASE": "pionera.example.test",
+                "DS_DOMAIN_BASE": "pionera.example.test",
+            }
+        )
+
+        keycloak, minio_api, minio, minio_aliases = ingresses
+        self.assertEqual(keycloak["spec"]["rules"][0]["host"], "org1.pionera.example.test")
+        self.assertEqual(keycloak["spec"]["rules"][0]["http"]["paths"][0]["path"], "/auth(/|$)(.*)")
+        self.assertEqual(minio_api["metadata"]["name"], "common-srvs-minio-api-public-root")
+        self.assertEqual(minio_api["spec"]["rules"][0]["host"], "org1.pionera.example.test")
+        self.assertEqual(minio_api["spec"]["rules"][0]["http"]["paths"][0]["path"], "/")
+        self.assertEqual(
+            minio_api["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["port"]["number"],
+            9000,
+        )
+        self.assertEqual(minio["spec"]["rules"][0]["host"], "org1.pionera.example.test")
+        self.assertEqual(minio["spec"]["rules"][0]["http"]["paths"][0]["path"], "/s3-console(/|$)(.*)")
+        self.assertEqual(
+            minio_aliases["metadata"]["name"],
+            "common-srvs-minio-console-public-root-aliases",
+        )
+        self.assertEqual(minio_aliases["spec"]["rules"][0]["host"], "org1.pionera.example.test")
+        self.assertIn(
+            "/browser",
+            [path["path"] for path in minio_aliases["spec"]["rules"][0]["http"]["paths"]],
+        )
+        self.assertTrue(
+            all(
+                path["backend"]["service"]["name"] == "common-srvs-minio-console"
+                for path in minio_aliases["spec"]["rules"][0]["http"]["paths"]
+            )
+        )
+
+    def test_vm_distributed_public_portal_backend_path_ingress_uses_org1_path(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "DOMAIN_BASE": "pionera.example.test",
+                "DS_DOMAIN_BASE": "pionera.example.test",
+            }
+        )
+        deployment = INESDataDeploymentAdapter(
+            run=lambda *_args, **_kwargs: object(),
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+
+        ingress = deployment._vm_distributed_public_portal_backend_path_ingress()
+
+        self.assertEqual(ingress["metadata"]["name"], "demo-public-portal-backend-public-path")
+        self.assertEqual(ingress["metadata"]["namespace"], "demo-core-ns")
+        self.assertEqual(ingress["spec"]["rules"][0]["host"], "org1.pionera.example.test")
+        self.assertEqual(
+            ingress["spec"]["rules"][0]["http"]["paths"][0]["path"],
+            "/public-portal-backend(/|$)(.*)",
+        )
+        self.assertEqual(
+            ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"],
+            "demo-public-portal-backend",
+        )
+
+    def test_vm_distributed_component_public_path_ingresses_use_org1_paths(self):
+        infrastructure = self._make_shared_foundation_infrastructure()
+
+        ingresses = infrastructure._vm_distributed_component_public_path_ingresses(
+            {
+                "DS_1_NAME": "pionera",
+                "COMPONENTS_NAMESPACE": "components",
+                "COMPONENTS": "ontology-hub,ai-model-hub,semantic-virtualization",
+                "COMPONENTS_PUBLIC_BASE_URL": "https://org1.pionera.oeg.fi.upm.es",
+                "COMPONENTS_PUBLIC_PATH_REWRITE": "true",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED": "true",
+            }
+        )
+
+        by_component = {
+            item["metadata"]["labels"]["app.kubernetes.io/component"]: item
+            for item in ingresses
+        }
+
+        self.assertEqual(set(by_component), {
+            "ontology-hub",
+            "ai-model-hub",
+            "semantic-virtualization",
+            "semantic-virtualization-editor",
+        })
+        ai_model_hub = by_component["ai-model-hub"]
+        self.assertEqual(ai_model_hub["spec"]["rules"][0]["host"], "org1.pionera.oeg.fi.upm.es")
+        self.assertEqual(ai_model_hub["spec"]["rules"][0]["http"]["paths"][0]["path"], "/ai-model-hub(/|$)(.*)")
+        self.assertEqual(
+            ai_model_hub["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"],
+            "pionera-ai-model-hub",
+        )
+        self.assertEqual(
+            ai_model_hub["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["port"]["number"],
+            8080,
+        )
+        semantic = by_component["semantic-virtualization"]
+        self.assertEqual(semantic["spec"]["rules"][0]["http"]["paths"][0]["path"], "/semantic-virtualization(/|$)(.*)")
+        self.assertEqual(
+            semantic["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["port"]["number"],
+            8000,
+        )
+        editor = by_component["semantic-virtualization-editor"]
+        self.assertEqual(editor["spec"]["rules"][0]["http"]["paths"][0]["path"], "/semantic-virtualization-editor(/|$)(.*)")
+        self.assertEqual(
+            editor["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"],
+            "pionera-semantic-virtualization-editor",
+        )
+        self.assertEqual(
+            editor["metadata"]["annotations"]["nginx.ingress.kubernetes.io/rewrite-target"],
+            "/$2",
+        )
+
+    def test_vm_distributed_component_public_path_sync_skips_when_level5_owns_routes(self):
+        self.config_adapter.topology = "vm-distributed"
+        self.config_adapter.deployer_config.update(
+            {
+                "DS_1_NAME": "pionera",
+                "COMPONENTS_NAMESPACE": "components",
+                "COMPONENTS": "ai-model-hub",
+                "COMPONENTS_PUBLIC_BASE_URL": "https://org1.pionera.oeg.fi.upm.es",
+            }
+        )
+        infrastructure = self._make_shared_foundation_infrastructure()
+
+        result = infrastructure._sync_vm_distributed_component_public_path_ingresses()
+
+        self.assertEqual(
+            result,
+            {"status": "skipped", "reason": "component-ingresses-owned-by-level5"},
+        )
+
     def test_sync_vault_token_validates_artifact_before_updating_config(self):
         infrastructure = self._make_infrastructure()
         infrastructure.get_pod_by_name = mock.Mock(return_value="vault-0")
@@ -2088,6 +2606,35 @@ minio:
         self.assertFalse(result)
         with open(self.config.deployer_config_path(), encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "VT_TOKEN=stale-config-token\n")
+
+    def test_sync_vault_token_recovers_root_token_from_unseal_key_when_tokens_are_stale(self):
+        infrastructure = self._make_infrastructure()
+        infrastructure.get_pod_by_name = mock.Mock(return_value="vault-0")
+        infrastructure._vault_root_token_valid = mock.Mock(side_effect=[False, False, True])
+        infrastructure.run_silent = mock.Mock(
+            side_effect=[
+                "cancelled",
+                '{"nonce":"nonce-1","otp":"otp-1"}',
+                '{"complete":true,"encoded_token":"encoded-1"}',
+                "fresh-root-token",
+            ]
+        )
+        with open(self.config.vault_keys_path(), "w", encoding="utf-8") as handle:
+            handle.write('{"unseal_keys_hex":["unseal-1"],"root_token":"stale-artifact-token"}\n')
+        with open(self.config.deployer_config_path(), "w", encoding="utf-8") as handle:
+            handle.write("VT_TOKEN=stale-config-token\n")
+
+        result = infrastructure.sync_vault_token_to_deployer_config()
+
+        self.assertTrue(result)
+        with open(self.config.deployer_config_path(), encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "VT_TOKEN=fresh-root-token\n")
+        with open(self.config.vault_keys_path(), encoding="utf-8") as handle:
+            vault_data = json.load(handle)
+        self.assertEqual(vault_data["root_token"], "fresh-root-token")
+        called_commands = [call.args[0] for call in infrastructure.run_silent.call_args_list]
+        self.assertTrue(any("vault operator generate-root -init" in cmd for cmd in called_commands))
+        self.assertTrue(any("vault operator generate-root -decode=encoded-1 -otp=otp-1" in cmd for cmd in called_commands))
 
     def test_sync_common_credentials_from_kubernetes_replaces_local_placeholders(self):
         infrastructure = self._make_infrastructure()
@@ -2213,6 +2760,54 @@ minio:
 
         self.assertFalse(result)
 
+    def test_port_forward_service_retries_after_transient_process_exit(self):
+        infrastructure = self._make_infrastructure()
+        infrastructure.get_pod_by_name = lambda *_args, **_kwargs: "postgres-0"
+        infrastructure.run = mock.Mock(return_value=object())
+        first_process = mock.Mock()
+        first_process.poll.return_value = 1
+        second_process = mock.Mock()
+        second_process.poll.return_value = None
+
+        with mock.patch(
+            "adapters.inesdata.infrastructure.subprocess.Popen",
+            side_effect=[first_process, second_process],
+        ) as popen_mock, mock.patch.object(
+            infrastructure,
+            "_port_is_open",
+            side_effect=[True],
+        ), mock.patch(
+            "adapters.inesdata.infrastructure.time.sleep",
+            return_value=None,
+        ):
+            result = infrastructure.port_forward_service(
+                "common",
+                "postgresql",
+                15432,
+                5432,
+                quiet=True,
+                wait_timeout=1,
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(popen_mock.call_count, 2)
+
+    def test_stop_port_forward_service_terminates_tracked_process_before_pkill_fallback(self):
+        infrastructure = self._make_infrastructure()
+        infrastructure.get_pod_by_name = lambda *_args, **_kwargs: "postgres-0"
+        infrastructure.run = mock.Mock(return_value=object())
+        process = mock.Mock()
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        key = infrastructure._port_forward_process_key("common", "postgres-0", 15432, 5432)
+        infrastructure._port_forward_processes[key] = process
+
+        result = infrastructure.stop_port_forward_service("common", "postgresql", quiet=True)
+
+        self.assertTrue(result)
+        process.terminate.assert_called_once()
+        infrastructure.run.assert_not_called()
+
     def test_wait_for_registration_service_schema_quiet_probe_skips_timeout_diagnostics(self):
         infrastructure = self._make_infrastructure()
         infrastructure.run_silent = mock.Mock(return_value="")
@@ -2227,6 +2822,28 @@ minio:
 
         self.assertFalse(result)
         infrastructure.run.assert_not_called()
+
+    def test_wait_for_registration_service_schema_uses_forwarded_postgres_environment(self):
+        infrastructure = self._make_infrastructure()
+        infrastructure.run_silent = mock.Mock(return_value="edc_participant")
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_PG_HOST": "127.0.0.77",
+                "PIONERA_PG_PORT": "15432",
+            },
+        ):
+            result = infrastructure.wait_for_registration_service_schema(
+                timeout=1,
+                poll_interval=0,
+                quiet=True,
+            )
+
+        self.assertTrue(result)
+        command = infrastructure.run_silent.call_args.args[0]
+        self.assertIn("-h 127.0.0.77", command)
+        self.assertIn("-p 15432", command)
 
     def test_wait_for_registration_service_liquibase_uses_local_service_access_helper(self):
         infrastructure = self._make_infrastructure()

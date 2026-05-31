@@ -1,4 +1,5 @@
 import os
+import shlex
 import socket
 import subprocess
 import time
@@ -61,10 +62,22 @@ class KafkaManager:
     def _candidate_bootstrap_servers(self):
         candidates = []
         env_bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
-        adapter_bootstrap = self._load_adapter_config().get("bootstrap_servers")
+        env_cluster_bootstrap = os.getenv("KAFKA_CLUSTER_BOOTSTRAP_SERVERS")
+        adapter_config = self._load_adapter_config()
+        adapter_bootstrap = adapter_config.get("bootstrap_servers")
+        adapter_cluster_bootstrap = adapter_config.get("cluster_bootstrap_servers")
         runtime_bootstrap = self.runtime_config.get("bootstrap_servers")
+        runtime_cluster_bootstrap = self.runtime_config.get("cluster_bootstrap_servers")
 
-        for candidate in (env_bootstrap, runtime_bootstrap, adapter_bootstrap, self.bootstrap_servers):
+        for candidate in (
+            env_bootstrap,
+            runtime_bootstrap,
+            adapter_bootstrap,
+            self.bootstrap_servers,
+            env_cluster_bootstrap,
+            runtime_cluster_bootstrap,
+            adapter_cluster_bootstrap,
+        ):
             if candidate and candidate not in candidates:
                 candidates.append(candidate)
         return candidates
@@ -86,9 +99,40 @@ class KafkaManager:
         return str(self._load_manager_config().get("provisioner") or "kubernetes").strip().lower()
 
     @staticmethod
+    def _truthy(value):
+        return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    @staticmethod
     def _is_kubernetes_provisioner(provisioner):
         normalized = str(provisioner or "").strip().lower()
         return normalized in {"kubernetes", "kubernetes-split-kraft"}
+
+    def _has_connector_visible_bootstrap(self, config):
+        for candidate in (
+            os.getenv("KAFKA_BOOTSTRAP_SERVERS"),
+            os.getenv("KAFKA_CLUSTER_BOOTSTRAP_SERVERS"),
+            config.get("bootstrap_servers"),
+            config.get("cluster_bootstrap_servers"),
+        ):
+            if str(candidate or "").strip():
+                return True
+        return False
+
+    def _skips_vm_distributed_internal_autoprovision(self, config):
+        topology = str(config.get("topology") or "").strip().lower()
+        if topology != "vm-distributed":
+            return False
+        if not self._is_kubernetes_provisioner(config.get("provisioner")):
+            return False
+        external_service_type = str(config.get("k8s_external_service_type") or "").strip().lower()
+        if external_service_type in {"nodeport", "loadbalancer"} and self._has_connector_visible_bootstrap(config):
+            return False
+        if self._truthy(
+            config.get("allow_internal_clusterip")
+            or os.getenv("KAFKA_VM_DISTRIBUTED_ALLOW_INTERNAL_CLUSTERIP")
+        ):
+            return False
+        return True
 
     @staticmethod
     def _normalize_bootstrap_servers(bootstrap_servers):
@@ -165,6 +209,8 @@ class KafkaManager:
         namespace = str(config.get("k8s_namespace") or "demo").strip() or "demo"
         service_name = str(config.get("k8s_service_name") or "framework-kafka").strip() or "framework-kafka"
         local_port = int(str(config.get("k8s_local_port") or "39092").strip() or "39092")
+        nodeport = int(str(config.get("k8s_nodeport") or "32092").strip() or "32092")
+        external_service_type = str(config.get("k8s_external_service_type") or "ClusterIP").strip() or "ClusterIP"
         internal_bootstrap = f"{service_name}.{namespace}.svc.cluster.local:9092"
         external_bootstrap = f"127.0.0.1:{local_port}"
         probe_namespaces = self._normalize_kubernetes_probe_namespaces(
@@ -178,17 +224,46 @@ class KafkaManager:
             "probe_namespaces": probe_namespaces,
             "service_name": service_name,
             "external_service_name": f"{service_name}-external",
+            "external_service_type": external_service_type,
             "deployment_name": service_name,
             "controller_service_name": f"{service_name}-controller",
             "controller_deployment_name": f"{service_name}-controller",
             "controller_bootstrap": f"{service_name}-controller.{namespace}.svc.cluster.local:9093",
             "controller_node_id": int(str(config.get("k8s_controller_node_id") or "3000").strip() or "3000"),
             "broker_node_id": int(str(config.get("k8s_broker_node_id") or "1").strip() or "1"),
+            "nodeport": nodeport,
             "local_port": local_port,
             "internal_bootstrap": internal_bootstrap,
             "external_service_bootstrap": f"{service_name}-external.{namespace}.svc.cluster.local:9094",
             "external_bootstrap": external_bootstrap,
         }
+
+    def _kubernetes_external_advertised_bootstrap(self, config, ids):
+        configured = self._normalize_bootstrap_servers(config.get("cluster_bootstrap_servers"))
+        if configured:
+            return configured[0]
+        return ids["external_bootstrap"]
+
+    def _kubernetes_connector_bootstrap(self, config, ids):
+        configured = self._normalize_bootstrap_servers(config.get("cluster_bootstrap_servers"))
+        if configured:
+            return configured[0]
+        return ids["internal_bootstrap"]
+
+    @staticmethod
+    def _kubernetes_external_service_type(ids):
+        service_type = str(ids.get("external_service_type") or "ClusterIP").strip() or "ClusterIP"
+        normalized = service_type.lower()
+        if normalized == "nodeport":
+            return "NodePort"
+        if normalized == "loadbalancer":
+            return "LoadBalancer"
+        return "ClusterIP"
+
+    def _kubernetes_external_service_nodeport_yaml(self, ids):
+        if self._kubernetes_external_service_type(ids) != "NodePort":
+            return ""
+        return f"\n                nodePort: {ids['nodeport']}"
 
     @staticmethod
     def _normalize_kubernetes_probe_namespaces(raw_namespaces, kafka_namespace):
@@ -328,8 +403,10 @@ class KafkaManager:
         deployment_name = ids["deployment_name"]
         namespace = ids["namespace"]
         external_service_name = ids["external_service_name"]
-        external_bootstrap = ids["external_bootstrap"]
+        external_bootstrap = self._kubernetes_external_advertised_bootstrap(config, ids)
         internal_bootstrap = ids["internal_bootstrap"]
+        external_service_type = self._kubernetes_external_service_type(ids)
+        external_service_nodeport = self._kubernetes_external_service_nodeport_yaml(ids)
         cluster_id = self._kubernetes_cluster_id()
         return dedent(
             f"""
@@ -464,8 +541,8 @@ class KafkaManager:
               ports:
               - name: external
                 port: 9094
-                targetPort: 9094
-              type: ClusterIP
+                targetPort: 9094{external_service_nodeport}
+              type: {external_service_type}
             """
         ).strip()
 
@@ -478,11 +555,13 @@ class KafkaManager:
         controller_service_name = ids["controller_service_name"]
         controller_deployment_name = ids["controller_deployment_name"]
         external_service_name = ids["external_service_name"]
-        external_bootstrap = ids["external_bootstrap"]
+        external_bootstrap = self._kubernetes_external_advertised_bootstrap(config, ids)
         internal_bootstrap = ids["internal_bootstrap"]
         controller_bootstrap = ids["controller_bootstrap"]
         controller_node_id = ids["controller_node_id"]
         broker_node_id = ids["broker_node_id"]
+        external_service_type = self._kubernetes_external_service_type(ids)
+        external_service_nodeport = self._kubernetes_external_service_nodeport_yaml(ids)
         cluster_id = self._kubernetes_cluster_id()
         return dedent(
             f"""
@@ -709,8 +788,8 @@ class KafkaManager:
               ports:
               - name: external
                 port: 9094
-                targetPort: 9094
-              type: ClusterIP
+                targetPort: 9094{external_service_nodeport}
+              type: {external_service_type}
             """
         ).strip()
 
@@ -809,6 +888,26 @@ class KafkaManager:
             listener_label="external service listener",
         )
 
+    @staticmethod
+    def _kubernetes_listener_probe_script(host, port):
+        host_value = str(host)
+        port_value = str(int(port))
+        nc_host = shlex.quote(host_value)
+        bash_probe = shlex.quote(f"</dev/tcp/{host_value}/{port_value}")
+        return (
+            "if command -v nc >/dev/null 2>&1; then "
+            f"nc -vz -w 3 {nc_host} {port_value} >/dev/null 2>&1; "
+            "elif command -v bash >/dev/null 2>&1; then "
+            "if command -v timeout >/dev/null 2>&1; then "
+            f"timeout 3 bash -lc {bash_probe}; "
+            "else "
+            f"bash -lc {bash_probe}; "
+            "fi; "
+            "else "
+            "exit 127; "
+            "fi"
+        )
+
     def _wait_for_kubernetes_namespace_listener(self, ids, *, host, port, listener_label):
         deadline = time.time() + self.wait_timeout_seconds
         excluded_prefixes = self._kubernetes_probe_excluded_prefixes(ids)
@@ -833,9 +932,7 @@ class KafkaManager:
                 candidate_pods = preferred_pods or pods
 
                 for pod_name in candidate_pods:
-                    probe_command = (
-                        f"timeout 3 bash -lc '</dev/tcp/{host}/{port}'"
-                    )
+                    probe_command = self._kubernetes_listener_probe_script(host, port)
                     result = self.command_runner(
                         [
                             "kubectl",
@@ -844,7 +941,7 @@ class KafkaManager:
                             namespace,
                             pod_name,
                             "--",
-                            "bash",
+                            "sh",
                             "-lc",
                             probe_command,
                         ]
@@ -868,8 +965,9 @@ class KafkaManager:
         config = self._load_manager_config()
         manifest = self._build_kubernetes_manifest(config)
         ids = self._kubernetes_identifiers(config)
+        connector_bootstrap = self._kubernetes_connector_bootstrap(config, ids)
         self.bootstrap_servers = ids["external_bootstrap"]
-        self.cluster_bootstrap_servers = ids["internal_bootstrap"]
+        self.cluster_bootstrap_servers = connector_bootstrap
         self.provisioning_mode = ids["provisioner"]
         rollout_error = None
 
@@ -909,7 +1007,7 @@ class KafkaManager:
                 self.container = None
                 self.started_by_framework = True
                 self.bootstrap_servers = ids["external_bootstrap"]
-                self.cluster_bootstrap_servers = ids["internal_bootstrap"]
+                self.cluster_bootstrap_servers = connector_bootstrap
                 self.provisioning_mode = ids["provisioner"]
                 self.last_error = None
                 return ids["external_bootstrap"]
@@ -925,6 +1023,7 @@ class KafkaManager:
     def _recover_existing_kubernetes_runtime(self):
         config = self._load_manager_config()
         ids = self._kubernetes_identifiers(config)
+        connector_bootstrap = self._kubernetes_connector_bootstrap(config, ids)
         if not self._kubernetes_resources_exist(ids):
             return None
 
@@ -938,7 +1037,7 @@ class KafkaManager:
                 self.container = None
                 self.started_by_framework = True
                 self.bootstrap_servers = ids["external_bootstrap"]
-                self.cluster_bootstrap_servers = ids["internal_bootstrap"]
+                self.cluster_bootstrap_servers = connector_bootstrap
                 self.provisioning_mode = ids["provisioner"]
                 self.last_error = None
                 return ids["external_bootstrap"]
@@ -1000,7 +1099,10 @@ class KafkaManager:
         for candidate in self._candidate_bootstrap_servers():
             if self.is_kafka_available(candidate):
                 self.bootstrap_servers = candidate
-                explicit_cluster_bootstrap_servers = self._load_manager_config().get("cluster_bootstrap_servers")
+                explicit_cluster_bootstrap_servers = (
+                    os.getenv("KAFKA_CLUSTER_BOOTSTRAP_SERVERS")
+                    or self._load_manager_config().get("cluster_bootstrap_servers")
+                )
                 if explicit_cluster_bootstrap_servers:
                     self.cluster_bootstrap_servers = explicit_cluster_bootstrap_servers
                 elif candidate == previous_bootstrap_servers and previous_cluster_bootstrap_servers:
@@ -1022,6 +1124,25 @@ class KafkaManager:
                 )
                 self.last_error = None
                 return candidate
+
+        config = self._load_manager_config()
+        if self._skips_vm_distributed_internal_autoprovision(config):
+            if self._has_connector_visible_bootstrap(config):
+                self.last_error = (
+                    "vm-distributed Kafka validation requires a reachable connector-visible Kafka bootstrap server. "
+                    "A Kafka bootstrap was configured, but it was not reachable from this runner. Check "
+                    "KAFKA_BOOTSTRAP_SERVERS/KAFKA_CLUSTER_BOOTSTRAP_SERVERS and the network path from the "
+                    "validation runner and every connector VM/cluster."
+                )
+            else:
+                self.last_error = (
+                    "vm-distributed Kafka validation requires a connector-visible Kafka bootstrap server. "
+                    "Configure KAFKA_BOOTSTRAP_SERVERS or KAFKA_CLUSTER_BOOTSTRAP_SERVERS with an address "
+                    "reachable from every connector VM/cluster; the framework will not use an auto-provisioned "
+                    "Kubernetes ClusterIP because connector clusters cannot resolve it."
+                )
+            print(f"[WARNING] Kafka auto-provisioning skipped: {self.last_error}")
+            return None
 
         recovery_error = None
         framework_managed_kubernetes = self._is_kubernetes_provisioner(previous_provisioning_mode) and (

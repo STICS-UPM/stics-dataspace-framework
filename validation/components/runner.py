@@ -7,6 +7,7 @@ from validation.components.registry import (
     get_component_registration,
     registered_component_runners,
 )
+from validation.components.fail_fast import component_fail_fast_enabled
 
 
 COMPONENT_RUNNERS: Dict[str, ComponentRunner] = registered_component_runners()
@@ -44,20 +45,22 @@ def run_component_validations(component_urls: Dict[str, str], experiment_dir: st
             continue
 
         try:
-            results.append(runner(base_url, experiment_dir=experiment_dir))
+            result = runner(base_url, experiment_dir=experiment_dir)
+            results.append(result)
         except Exception as exc:  # pragma: no cover - defensive integration guard
-            results.append(
-                {
-                    "component": component,
-                    "base_url": base_url,
-                    "status": "failed",
-                    "error": {
-                        "type": type(exc).__name__,
-                        "message": str(exc),
-                    },
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
+            result = {
+                "component": component,
+                "base_url": base_url,
+                "status": "failed",
+                "error": {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+                "timestamp": datetime.now().isoformat(),
+            }
+            results.append(result)
+        if component_fail_fast_enabled() and str((result or {}).get("status") or "").lower() == "failed":
+            break
     return results
 
 

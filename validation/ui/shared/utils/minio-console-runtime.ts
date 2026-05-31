@@ -54,6 +54,13 @@ function readJson(filePath: string): any {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
+function readJsonIfExists(filePath: string): any | undefined {
+  if (!fs.existsSync(filePath)) {
+    return undefined;
+  }
+  return readJson(filePath);
+}
+
 function requiredString(value: string | undefined, label: string): string {
   if (!value || value.trim().length === 0) {
     throw new Error(`Missing value for ${label}`);
@@ -71,18 +78,27 @@ function deploymentRoot(adapter: string): string {
   return path.join(root, "deployers", adapter, "deployments");
 }
 
+function connectorCredentialsPath(
+  adapter: string,
+  connectorName: string,
+  dataspace: string,
+  environment: string,
+): string {
+  return path.join(
+    deploymentRoot(adapter),
+    environment,
+    dataspace,
+    `credentials-connector-${connectorName}.json`,
+  );
+}
+
 function resolveConnectorMinioCredentials(
   adapter: string,
   connectorName: string,
   dataspace: string,
   environment: string,
 ): MinioUserCredentials {
-  const credentialsPath = path.join(
-    deploymentRoot(adapter),
-    environment,
-    dataspace,
-    `credentials-connector-${connectorName}.json`,
-  );
+  const credentialsPath = connectorCredentialsPath(adapter, connectorName, dataspace, environment);
   const credentials = readJson(credentialsPath);
 
   return {
@@ -93,6 +109,22 @@ function resolveConnectorMinioCredentials(
 
 function withNoTrailingSlash(value: string): string {
   return value.replace(/\/$/, "");
+}
+
+function publicMinioConsoleUrlFromCredentials(
+  adapter: string,
+  connectorName: string,
+  dataspace: string,
+  environment: string,
+): string | undefined {
+  const credentials = readJsonIfExists(
+    connectorCredentialsPath(adapter, connectorName, dataspace, environment),
+  );
+  const value = credentials?.public_access_urls?.minio_console;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+  return value.trim();
 }
 
 function buildBucketTarget(opts: {
@@ -136,7 +168,10 @@ export function resolveMinioConsoleRuntime(overrides?: {
   const providerConnector = process.env.UI_PROVIDER_CONNECTOR || "conn-citycouncil-demo";
   const consumerConnector = process.env.UI_CONSUMER_CONNECTOR || "conn-company-demo";
   const consoleBaseUrl =
-    process.env.UI_MINIO_CONSOLE_URL || `http://console.minio-s3.${domainBase}`;
+    process.env.UI_MINIO_CONSOLE_URL ||
+    deployerConfig.MINIO_CONSOLE_PUBLIC_URL ||
+    publicMinioConsoleUrlFromCredentials(adapter, providerConnector, dataspace, environment) ||
+    `http://console.minio-s3.${domainBase}`;
 
   return {
     adapter,

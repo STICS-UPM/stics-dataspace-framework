@@ -72,11 +72,52 @@ function readJson(filePath: string): any {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
+function readJsonIfExists(filePath: string): any | undefined {
+  if (!fs.existsSync(filePath)) {
+    return undefined;
+  }
+  return readJson(filePath);
+}
+
 function requiredString(value: string | undefined, label: string): string {
   if (!value || value.trim().length === 0) {
     throw new Error(`Missing value for ${label}`);
   }
   return value.trim();
+}
+
+function stringMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const result: Record<string, string> = {};
+  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof rawValue === "string" && rawValue.trim().length > 0) {
+      result[key] = rawValue.trim();
+    }
+  }
+  return result;
+}
+
+function withoutTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function optionalUrl(value: string | undefined): string | undefined {
+  if (!value || value.trim().length === 0) {
+    return undefined;
+  }
+  return withoutTrailingSlash(value.trim());
+}
+
+function appendUrlPath(baseUrl: string | undefined, pathSuffix: string): string | undefined {
+  const base = optionalUrl(baseUrl);
+  if (!base) {
+    return undefined;
+  }
+  const suffix = pathSuffix.startsWith("/") ? pathSuffix : `/${pathSuffix}`;
+  return `${base}${suffix}`;
 }
 
 function normalizedAdapter(): string {
@@ -86,6 +127,55 @@ function normalizedAdapter(): string {
 
 function connectorEnvPrefix(connectorName: string): string {
   return connectorName.toUpperCase().replace(/-/g, "_");
+}
+
+function normalizeConnectorName(rawName: string | undefined, dataspace: string): string | undefined {
+  const connector = rawName?.trim();
+  if (!connector) {
+    return undefined;
+  }
+  if (connector.startsWith("conn-")) {
+    return connector;
+  }
+  return dataspace.trim() ? `conn-${connector}-${dataspace.trim()}` : connector;
+}
+
+function parseConnectorList(rawValue: string | undefined, dataspace: string): string[] {
+  const connectors: string[] = [];
+  for (const token of (rawValue || "").split(",")) {
+    const connector = normalizeConnectorName(token, dataspace);
+    if (connector && !connectors.includes(connector)) {
+      connectors.push(connector);
+    }
+  }
+  return connectors;
+}
+
+function parseConnectorPairs(rawValue: string | undefined, dataspace: string): Array<[string, string]> {
+  const pairs: Array<[string, string]> = [];
+  for (const token of (rawValue || "").split(",")) {
+    const item = token.trim();
+    if (!item) {
+      continue;
+    }
+
+    let left = "";
+    let right = "";
+    for (const separator of ["->", ">", "="]) {
+      if (item.includes(separator)) {
+        [left, right] = item.split(separator, 2);
+        break;
+      }
+    }
+
+    const source = normalizeConnectorName(left, dataspace);
+    const target = normalizeConnectorName(right, dataspace);
+    const isDuplicate = pairs.some(([knownSource, knownTarget]) => knownSource === source && knownTarget === target);
+    if (source && target && source !== target && !isDuplicate) {
+      pairs.push([source, target]);
+    }
+  }
+  return pairs;
 }
 
 function ingressBaseUrl(host: string): string {
@@ -143,13 +233,134 @@ function connectorCredentialsPath(
   );
 }
 
-function discoverConnectorNames(adapter: string, environment: string, dataspace: string): string[] {
-  const runtimeDir = path.join(deploymentRoot(adapter), environment, dataspace);
-  if (!fs.existsSync(runtimeDir)) {
-    return [];
+function publicAccessUrlsFromCredentials(credentials: any): Record<string, string> {
+  return stringMap(credentials?.public_access_urls);
+}
+
+function internalAccessUrlsFromCredentials(credentials: any): Record<string, string> {
+  return stringMap(credentials?.access_urls);
+}
+
+function connectorPublicPortalBaseUrl(
+  adapter: string,
+  accessUrls: Record<string, string>,
+): string | undefined {
+  return (
+    optionalUrl(accessUrls.connector_interface_login) ||
+    appendUrlPath(accessUrls.connector_ingress, defaultPortalPath(adapter))
+  );
+}
+
+function connectorPublicManagementBaseUrl(accessUrls: Record<string, string>): string | undefined {
+  const managementUrl = optionalUrl(accessUrls.connector_management_api);
+  if (managementUrl) {
+    return managementUrl.replace(/\/management\/?$/, "/management/v3");
+  }
+  return appendUrlPath(accessUrls.connector_ingress, "/management/v3");
+}
+
+function connectorPublicProtocolBaseUrl(accessUrls: Record<string, string>): string | undefined {
+  return optionalUrl(accessUrls.connector_protocol_api) || appendUrlPath(accessUrls.connector_ingress, "/protocol");
+}
+
+function connectorProtocolAddressMode(deployerConfig: Record<string, string>, envPrefix: string): string {
+  const explicitMode = (
+    process.env[`UI_${envPrefix}_PROTOCOL_ADDRESS_MODE`] ||
+    process.env.UI_CONNECTOR_PROTOCOL_ADDRESS_MODE ||
+    deployerConfig.UI_CONNECTOR_PROTOCOL_ADDRESS_MODE ||
+    ""
+  ).trim();
+  if (explicitMode) {
+    return explicitMode.toLowerCase();
   }
 
-  return fs
+  const configuredMode = (
+    deployerConfig.PIONERA_CONNECTOR_PROTOCOL_ADDRESS_MODE ||
+    deployerConfig.CONNECTOR_PROTOCOL_ADDRESS_MODE ||
+    ""
+  ).trim();
+  if (configuredMode) {
+    return configuredMode.toLowerCase();
+  }
+
+  const topology = (process.env.UI_TOPOLOGY || "").trim().toLowerCase();
+  if (topology === "vm-distributed") {
+    return "public";
+  }
+
+  return "public";
+}
+
+function keycloakBaseUrlFromPublicAccessUrl(
+  urlValue: string | undefined,
+  dataspace: string,
+): string | undefined {
+  const normalized = optionalUrl(urlValue);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const dataspaceNames = Array.from(new Set([dataspace, encodeURIComponent(dataspace)]));
+  const suffixes = dataspaceNames.flatMap((name) => [
+    `/realms/${name}/account`,
+    `/realms/${name}`,
+    `/admin/${name}/console`,
+  ]);
+
+  for (const suffix of suffixes) {
+    if (normalized.endsWith(suffix)) {
+      return withoutTrailingSlash(normalized.slice(0, -suffix.length));
+    }
+  }
+
+  return normalized;
+}
+
+function publicKeycloakUrlFromCredentials(credentials: any, dataspace: string): string | undefined {
+  const accessUrls = publicAccessUrlsFromCredentials(credentials);
+  return (
+    keycloakBaseUrlFromPublicAccessUrl(accessUrls.keycloak_realm, dataspace) ||
+    keycloakBaseUrlFromPublicAccessUrl(accessUrls.keycloak_account, dataspace) ||
+    keycloakBaseUrlFromPublicAccessUrl(accessUrls.keycloak_admin_console, dataspace)
+  );
+}
+
+function publicKeycloakUrlFromConnectorCredentials(
+  adapter: string,
+  environment: string,
+  dataspace: string,
+  connectorNames: string[],
+): string | undefined {
+  for (const connectorName of connectorNames) {
+    const credentials = readJsonIfExists(
+      connectorCredentialsPath(adapter, environment, dataspace, connectorName),
+    );
+    const keycloakUrl = publicKeycloakUrlFromCredentials(credentials, dataspace);
+    if (keycloakUrl) {
+      return keycloakUrl;
+    }
+  }
+  return undefined;
+}
+
+function configuredConnectorNames(adapter: string, dataspace: string): string[] {
+  const deployerConfig = parseKeyValueFile(deployerConfigPath(adapter));
+  return parseConnectorList(deployerConfig.DS_1_CONNECTORS, dataspace);
+}
+
+function configuredValidationPairs(adapter: string, dataspace: string): Array<[string, string]> {
+  const deployerConfig = parseKeyValueFile(deployerConfigPath(adapter));
+  return parseConnectorPairs(deployerConfig.DS_1_VALIDATION_PAIRS, dataspace);
+}
+
+function discoverConnectorNames(adapter: string, environment: string, dataspace: string): string[] {
+  const runtimeDir = path.join(deploymentRoot(adapter), environment, dataspace);
+  const configuredConnectors = configuredConnectorNames(adapter, dataspace);
+  if (!fs.existsSync(runtimeDir)) {
+    return configuredConnectors;
+  }
+
+  const discoveredConnectors = fs
     .readdirSync(runtimeDir)
     .map((entry) => {
       const match = entry.match(/^credentials-connector-(.+)\.json$/);
@@ -157,6 +368,15 @@ function discoverConnectorNames(adapter: string, environment: string, dataspace:
     })
     .filter((value): value is string => Boolean(value))
     .sort();
+
+  if (configuredConnectors.length === 0) {
+    return discoveredConnectors;
+  }
+
+  return [
+    ...configuredConnectors,
+    ...discoveredConnectors.filter((connector) => !configuredConnectors.includes(connector)),
+  ];
 }
 
 function resolveDataspaceDefaults(): DataspaceDefaults {
@@ -201,6 +421,8 @@ function resolveConnectorRuntime(
 ): ConnectorPortalRuntime {
   const credentialsPath = connectorCredentialsPath(adapter, environment, dataspace, connectorName);
   const credentials = readJson(credentialsPath);
+  const publicAccessUrls = publicAccessUrlsFromCredentials(credentials);
+  const internalAccessUrls = internalAccessUrlsFromCredentials(credentials);
   const username = requiredString(credentials?.connector_user?.user, `${connectorName} username`);
   const password = requiredString(credentials?.connector_user?.passwd, `${connectorName} password`);
   const host = `${connectorName}.${dsDomain}`;
@@ -216,6 +438,8 @@ function resolveConnectorRuntime(
     "eu-central-1";
   const endpointOverride = `${minioProtocol}://${minioHost}`;
   const envPrefix = connectorEnvPrefix(connectorName);
+  const protocolMode = connectorProtocolAddressMode(deployerConfig, envPrefix);
+  const protocolAccessUrls = protocolMode === "internal" ? internalAccessUrls : publicAccessUrls;
   const transferDestinationType =
     process.env[`UI_${envPrefix}_TRANSFER_DESTINATION_TYPE`] ||
     process.env.UI_TRANSFER_DESTINATION_TYPE ||
@@ -228,12 +452,15 @@ function resolveConnectorRuntime(
     connectorName,
     portalBaseUrl:
       process.env[`UI_${envPrefix}_PORTAL_URL`] ||
+      connectorPublicPortalBaseUrl(adapter, publicAccessUrls) ||
       `${baseUrl}${defaultPortalPath(adapter)}`,
     managementBaseUrl:
       process.env[`UI_${envPrefix}_MANAGEMENT_URL`] ||
+      connectorPublicManagementBaseUrl(publicAccessUrls) ||
       `${baseUrl}/management/v3`,
     protocolBaseUrl:
       process.env[`UI_${envPrefix}_PROTOCOL_URL`] ||
+      connectorPublicProtocolBaseUrl(protocolAccessUrls) ||
       `${baseUrl}/protocol`,
     transferStartPath: adapter === "edc" ? "transferprocesses" : "inesdatatransferprocesses",
     transferDestinationType,
@@ -281,21 +508,33 @@ export function resolveDataspacePortalRuntime(): DataspacePortalRuntime {
     defaults.environment,
     defaults.dataspace,
   );
+  const validationPair = configuredValidationPairs(defaults.adapter, defaults.dataspace)[0];
   const providerConnector =
     process.env.UI_PROVIDER_CONNECTOR ||
+    validationPair?.[0] ||
     discoveredConnectors[0] ||
     "conn-citycouncil-demo";
   const consumerConnector =
     process.env.UI_CONSUMER_CONNECTOR ||
+    validationPair?.[1] ||
     discoveredConnectors[1] ||
     "conn-company-demo";
+  const keycloakUrl =
+    process.env.UI_KEYCLOAK_URL ||
+    publicKeycloakUrlFromConnectorCredentials(
+      defaults.adapter,
+      defaults.environment,
+      defaults.dataspace,
+      [providerConnector, consumerConnector],
+    ) ||
+    defaults.keycloakUrl;
 
   return {
     adapter: defaults.adapter,
     dataspace: defaults.dataspace,
     componentsNamespace: defaults.componentsNamespace,
     dsDomain: defaults.dsDomain,
-    keycloakUrl: defaults.keycloakUrl,
+    keycloakUrl,
     keycloakClientId: defaults.keycloakClientId,
     provider: resolveConnectorRuntime(
       defaults.adapter,

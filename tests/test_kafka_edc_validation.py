@@ -1246,6 +1246,103 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
 
         self.assertEqual(url, "http://127.0.0.1:39193/management/v3/assets/request")
 
+    def test_management_url_uses_public_access_url_from_credentials(self):
+        suite = KafkaEdcValidationSuite(
+            load_connector_credentials=lambda connector: {
+                "connector_user": {"user": "user", "passwd": "pass"},
+                "public_access_urls": {
+                    "connector_management_api": "https://org2.example.test/management",
+                },
+                "access_urls": {
+                    "connector_management_api": "http://conn-org2.example.test/management",
+                },
+            },
+            load_deployer_config=lambda: {"KC_URL": "http://keycloak.local"},
+            kafka_runtime_loader=lambda: {},
+            ds_domain_resolver=lambda: "example.local",
+            ds_name_loader=lambda: "dataspace",
+        )
+
+        url = suite._management_url("conn-org2", "/management/v3/assets/request")
+
+        self.assertEqual(url, "https://org2.example.test/management/v3/assets/request")
+
+    def test_management_url_falls_back_to_internal_access_url_from_credentials(self):
+        suite = KafkaEdcValidationSuite(
+            load_connector_credentials=lambda connector: {
+                "connector_user": {"user": "user", "passwd": "pass"},
+                "access_urls": {
+                    "connector_management_api": "http://conn-org2.example.test/management",
+                },
+            },
+            load_deployer_config=lambda: {"KC_URL": "http://keycloak.local"},
+            kafka_runtime_loader=lambda: {},
+            ds_domain_resolver=lambda: "example.local",
+            ds_name_loader=lambda: "dataspace",
+        )
+
+        url = suite._management_url("conn-org2", "/management/v3/assets/request")
+
+        self.assertEqual(url, "http://conn-org2.example.test/management/v3/assets/request")
+
+    def test_wait_for_transfer_started_can_continue_from_requested_state_to_probe(self):
+        session = _FakeSession()
+        session.transfers["transfer-1"] = {"@id": "transfer-1", "state": "REQUESTED"}
+        suite = KafkaEdcValidationSuite(
+            load_connector_credentials=lambda connector: {
+                "connector_user": {"user": "user", "passwd": "pass"}
+            },
+            load_deployer_config=lambda: {"KC_URL": "http://keycloak.local"},
+            kafka_runtime_loader=lambda: {},
+            ds_domain_resolver=lambda: "example.local",
+            ds_name_loader=lambda: "dataspace",
+            session=session,
+        )
+
+        with patch("framework.kafka_edc_validation.time.time", side_effect=[0, 0, 4]):
+            with patch("framework.kafka_edc_validation.time.sleep", return_value=None):
+                result = suite._wait_for_transfer_started(
+                    "conn-consumer",
+                    "jwt",
+                    "transfer-1",
+                    {
+                        "transfer_timeout_seconds": 1,
+                        "poll_interval_seconds": 1,
+                        "continue_after_requested_transfer_timeout": True,
+                    },
+                )
+
+        self.assertEqual(result["state"], "REQUESTED")
+        self.assertTrue(result["continued_after_requested_timeout"])
+
+    def test_wait_for_transfer_started_can_keep_strict_requested_timeout(self):
+        session = _FakeSession()
+        session.transfers["transfer-1"] = {"@id": "transfer-1", "state": "REQUESTED"}
+        suite = KafkaEdcValidationSuite(
+            load_connector_credentials=lambda connector: {
+                "connector_user": {"user": "user", "passwd": "pass"}
+            },
+            load_deployer_config=lambda: {"KC_URL": "http://keycloak.local"},
+            kafka_runtime_loader=lambda: {},
+            ds_domain_resolver=lambda: "example.local",
+            ds_name_loader=lambda: "dataspace",
+            session=session,
+        )
+
+        with patch("framework.kafka_edc_validation.time.time", side_effect=[0, 0, 4]):
+            with patch("framework.kafka_edc_validation.time.sleep", return_value=None):
+                with self.assertRaises(RuntimeError):
+                    suite._wait_for_transfer_started(
+                        "conn-consumer",
+                        "jwt",
+                        "transfer-1",
+                        {
+                            "transfer_timeout_seconds": 1,
+                            "poll_interval_seconds": 1,
+                            "continue_after_requested_transfer_timeout": False,
+                        },
+                    )
+
     def test_post_json_retries_transient_bad_gateway_response(self):
         session = _RetryGatewaySession()
         suite = KafkaEdcValidationSuite(

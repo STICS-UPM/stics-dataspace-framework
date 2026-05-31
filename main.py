@@ -7,11 +7,13 @@ import io
 import json
 import os
 import pty
+import signal
 import shlex
 import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import types
@@ -84,7 +86,7 @@ from deployers.infrastructure.lib.public_hostnames import (
 )
 from deployers.infrastructure.lib.orchestrator import DeployerOrchestrator
 from deployers.infrastructure.lib.topology import SUPPORTED_TOPOLOGIES as DEPLOYER_SUPPORTED_TOPOLOGIES
-from deployers.infrastructure.lib.topology import LOCAL_TOPOLOGY, normalize_topology
+from deployers.infrastructure.lib.topology import LOCAL_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY, normalize_topology
 from deployers.shared.lib.cluster_runtime import (
     SUPPORTED_CLUSTER_TYPES,
     build_cluster_runtime,
@@ -95,6 +97,7 @@ from deployers.shared.lib.connectors import (
     parse_connector_mapping,
     parse_connector_pairs,
 )
+from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls
 from validation.core.test_data_cleanup import run_pre_validation_cleanup
 from validation.orchestration.hosts import (
     ensure_public_endpoints_accessible,
@@ -149,7 +152,17 @@ DEPLOYER_REGISTRY = {
     "edc": "deployers.edc.deployer:EdcDeployer",
 }
 
-SUPPORTED_COMMANDS = ("deploy", "validate", "metrics", "run", "hosts", "local-repair", "recreate-dataspace")
+SUPPORTED_COMMANDS = (
+    "deploy",
+    "validate",
+    "metrics",
+    "run",
+    "hosts",
+    "public-access",
+    "ssh-access",
+    "local-repair",
+    "recreate-dataspace",
+)
 SUPPORTED_TOPOLOGIES = DEPLOYER_SUPPORTED_TOPOLOGIES
 SUPPORTED_VALIDATION_MODES = ("auto", "stable", "fast")
 LEVEL_DESCRIPTIONS = {
@@ -372,6 +385,19 @@ def _env_flag(name, default=False):
     if raw_value is None:
         return default
     return str(raw_value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _level6_stop_after_playwright_failure_enabled(env=None):
+    env = env if env is not None else os.environ
+    for name in (
+        "PIONERA_LEVEL6_STOP_ON_PLAYWRIGHT_FAILURE",
+        "LEVEL6_STOP_ON_PLAYWRIGHT_FAILURE",
+    ):
+        raw_value = env.get(name)
+        if raw_value is not None:
+            return str(raw_value).strip().lower() in ("1", "true", "yes", "on")
+
+    return False
 
 
 def _argv_has_topology_option(argv):
@@ -1795,15 +1821,44 @@ def _edc_dashboard_public_base_url(connector_name, deployer_context):
     return normalize_public_endpoint_url(f"http://{connector}.{ds_domain}")
 
 
+def _keycloak_base_without_realm(url, dataspace_name):
+    normalized = normalize_public_endpoint_url(url)
+    if not normalized:
+        return None
+
+    dataspace = str(dataspace_name or "").strip()
+    if dataspace:
+        realm_suffix = f"/realms/{urllib.parse.quote(dataspace, safe='')}"
+        if normalized.rstrip("/").endswith(realm_suffix):
+            return normalized.rstrip("/")[: -len(realm_suffix)].rstrip("/")
+
+    return normalized.rstrip("/")
+
+
 def _public_keycloak_base_url(deployer_context):
     config = dict(getattr(deployer_context, "config", {}) or {})
+    dataspace = str(getattr(deployer_context, "dataspace_name", "") or "").strip()
+    public_urls = resolve_vm_distributed_public_urls(config)
+    for raw_url in (
+        config.get("KEYCLOAK_FRONTEND_URL"),
+        config.get("KEYCLOAK_PUBLIC_URL"),
+        public_urls.get("KEYCLOAK_FRONTEND_URL"),
+        public_urls.get("KEYCLOAK_PUBLIC_URL"),
+    ):
+        normalized = _keycloak_base_without_realm(raw_url, dataspace)
+        if normalized:
+            return normalized
+
     resolved_urls = resolved_common_service_urls(config)
-    for key in ("KC_INTERNAL_URL", "KC_URL"):
-        normalized = normalize_public_endpoint_url(_mapping_value(resolved_urls, key))
+    for key in ("KC_URL", "KC_INTERNAL_URL"):
+        normalized = _keycloak_base_without_realm(_mapping_value(resolved_urls, key), dataspace)
         if normalized:
             return normalized
     resolved_hostnames = resolved_common_service_hostnames(config)
-    normalized = normalize_public_endpoint_url(f"http://{resolved_hostnames['keycloak_hostname']}")
+    normalized = _keycloak_base_without_realm(
+        f"http://{resolved_hostnames['keycloak_hostname']}",
+        dataspace,
+    )
     if normalized:
         return normalized
     return None
@@ -1917,7 +1972,52 @@ def _edc_http_readiness_gate(label, url, expected_statuses, timeout_seconds):
     return _http_readiness_gate(label, url, expected_statuses, timeout_seconds)
 
 
+def _configured_public_connector_base_url(connector_name, deployer_context):
+    config = dict(getattr(deployer_context, "config", {}) or {})
+    dataspace = str(getattr(deployer_context, "dataspace_name", "") or "").strip()
+    connector = str(connector_name or "").strip()
+    if not connector:
+        return None
+
+    public_urls = resolve_vm_distributed_public_urls(config)
+    provider_connectors = set(parse_connector_list(config.get("VM_PROVIDER_CONNECTORS"), dataspace))
+    consumer_connectors = set(parse_connector_list(config.get("VM_CONSUMER_CONNECTORS"), dataspace))
+    if connector in provider_connectors:
+        return normalize_public_endpoint_url(public_urls.get("VM_PROVIDER_PUBLIC_URL"))
+    if connector in consumer_connectors:
+        return normalize_public_endpoint_url(public_urls.get("VM_CONSUMER_PUBLIC_URL"))
+    return None
+
+
+def _connector_portal_url_from_base(base_url):
+    normalized = normalize_public_endpoint_url(base_url)
+    if not normalized:
+        return None
+    return f"{normalized.rstrip('/')}/inesdata-connector-interface/"
+
+
 def _inesdata_connector_public_base_url(connector_name, deployer_context):
+    payload, _error = _load_inesdata_connector_credentials_payload(
+        deployer_context,
+        connector_name,
+    )
+    public_urls = payload.get("public_access_urls") if isinstance(payload, dict) else {}
+    if isinstance(public_urls, dict):
+        login_url = _normalize_readiness_url(
+            public_urls.get("connector_interface_login"),
+            preserve_trailing_slash=True,
+        )
+        if login_url:
+            return login_url
+        ingress_url = _connector_portal_url_from_base(public_urls.get("connector_ingress"))
+        if ingress_url:
+            return ingress_url
+
+    configured_base = _configured_public_connector_base_url(connector_name, deployer_context)
+    configured_portal = _connector_portal_url_from_base(configured_base)
+    if configured_portal:
+        return configured_portal
+
     ds_domain = str(getattr(deployer_context, "ds_domain_base", "") or "").strip()
     connector = str(connector_name or "").strip()
     if not connector or not ds_domain:
@@ -1933,19 +2033,32 @@ def _inesdata_connector_credentials_path(deployer_context, connector_name):
     return os.path.join(runtime_dir, f"credentials-connector-{connector}.json")
 
 
-def _load_inesdata_connector_user_credentials(deployer_context, connector_name):
+def _load_inesdata_connector_credentials_payload(deployer_context, connector_name):
     credentials_path = _inesdata_connector_credentials_path(deployer_context, connector_name)
     if not credentials_path:
-        return None, "runtime_dir is not configured"
+        return {}, "runtime_dir is not configured"
     if not os.path.isfile(credentials_path):
-        return None, f"credentials file not found: {credentials_path}"
+        return {}, f"credentials file not found: {credentials_path}"
 
     try:
         with open(credentials_path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
     except Exception as exc:
-        return None, f"failed to read {credentials_path}: {exc}"
+        return {}, f"failed to read {credentials_path}: {exc}"
 
+    if not isinstance(payload, dict):
+        return {}, f"credentials file is not a JSON object: {credentials_path}"
+
+    return payload, None
+
+
+def _load_inesdata_connector_user_credentials(deployer_context, connector_name):
+    payload, error = _load_inesdata_connector_credentials_payload(
+        deployer_context,
+        connector_name,
+    )
+    if error:
+        return None, error
     connector_user = payload.get("connector_user") if isinstance(payload, dict) else {}
     username = str((connector_user or {}).get("user") or "").strip()
     password = str((connector_user or {}).get("passwd") or "").strip()
@@ -2201,6 +2314,8 @@ def _probe_inesdata_portal_readiness(deployer_context):
         namespaces.append(registration_namespace)
     http_timeout = _positive_float_env("PIONERA_INESDATA_PORTAL_HTTP_TIMEOUT_SECONDS", 5)
     dataspace = str(getattr(deployer_context, "dataspace_name", "") or "").strip()
+    topology = normalize_topology(getattr(deployer_context, "topology", None) or LOCAL_TOPOLOGY)
+    check_internal_endpoints = topology == LOCAL_TOPOLOGY
     gates = []
 
     if not connectors:
@@ -2236,21 +2351,22 @@ def _probe_inesdata_portal_readiness(deployer_context):
         )
 
     for connector in connectors:
-        service_name = f"{connector}-interface"
-        connector_namespace = connector_namespaces.get(connector)
-        service_ready, service_detail = _kubectl_endpoint_ready(
-            connector_namespace,
-            service_name,
-        )
-        gates.append(
-            {
-                "gate": f"interface:{connector}",
-                "namespace": connector_namespace,
-                "service": service_name,
-                "ready": service_ready,
-                "detail": service_detail,
-            }
-        )
+        if check_internal_endpoints:
+            service_name = f"{connector}-interface"
+            connector_namespace = connector_namespaces.get(connector)
+            service_ready, service_detail = _kubectl_endpoint_ready(
+                connector_namespace,
+                service_name,
+            )
+            gates.append(
+                {
+                    "gate": f"interface:{connector}",
+                    "namespace": connector_namespace,
+                    "service": service_name,
+                    "ready": service_ready,
+                    "detail": service_detail,
+                }
+            )
         gates.append(
             _http_readiness_gate(
                 f"portal-route:{connector}",
@@ -2275,6 +2391,8 @@ def _probe_inesdata_portal_readiness(deployer_context):
         "namespaces": namespaces,
         "connector_namespaces": connector_namespaces,
         "connectors": connectors,
+        "topology": topology,
+        "check_internal_endpoints": check_internal_endpoints,
         "gates": gates,
     }
 
@@ -3952,7 +4070,9 @@ def build_dry_run_preview(
         "actions": [],
     }
 
-    if include_deployer_dry_run is None:
+    if command in {"public-access", "ssh-access"}:
+        include_deployer_dry_run = False
+    elif include_deployer_dry_run is None:
         include_deployer_dry_run = _env_flag(
             "PIONERA_ENABLE_DEPLOYER_DRY_RUN",
             default=str(topology or "local").strip().lower() != "local",
@@ -3968,7 +4088,7 @@ def build_dry_run_preview(
             deployer_registry=deployer_registry,
         )
 
-    adapter_preview = _resolve_adapter_preview(adapter, command)
+    adapter_preview = _resolve_adapter_preview_for_topology(adapter, command, topology=topology)
     if adapter_preview is not None:
         preview["preflight"] = adapter_preview
 
@@ -4035,6 +4155,35 @@ def build_dry_run_preview(
                 "status": "unavailable",
                 "reason": str(exc),
             }
+        return preview
+
+    if command == "public-access":
+        preview["actions"] = [
+            "reconcile_ingress_service_type",
+            "reconcile_vm_distributed_routing",
+            "reconcile_common_public_path_ingresses",
+            "reconcile_component_public_path_ingresses",
+        ]
+        preview["public_access"] = {
+            "status": "planned",
+            "topology": topology,
+            "supported": str(topology or "").strip().lower() == "vm-distributed",
+        }
+        return preview
+
+    if command == "ssh-access":
+        preview["actions"] = [
+            "build_idempotent_ssh_bootstrap_plan",
+            "self_test_temporary_ssh_key_creation",
+            "verify_dedicated_identity_file",
+            "plan_authorized_keys_reconciliation",
+            "plan_batchmode_ssh_checks",
+        ]
+        preview["ssh_access"] = {
+            "status": "planned",
+            "topology": topology,
+            "supported": str(topology or "").strip().lower() == "vm-distributed",
+        }
         return preview
 
     if command == "local-repair":
@@ -4128,6 +4277,14 @@ def _resolve_adapter_preview(adapter, command):
         return preview_method(command)
 
     return None
+
+
+def _resolve_adapter_preview_for_topology(adapter, command, topology="local"):
+    environment_overrides = _topology_runtime_environment_overrides(topology)
+    if environment_overrides:
+        with _temporary_environment(environment_overrides):
+            return _resolve_adapter_preview(adapter, command)
+    return _resolve_adapter_preview(adapter, command)
 
 
 def _build_deployer_dry_run_preview(
@@ -4355,29 +4512,55 @@ def _level6_public_endpoint_candidates(adapter, connectors, deployer_context):
     resolved_hostnames = resolved_common_service_hostnames(config)
     ds_domain = str(getattr(deployer_context, "ds_domain_base", "") or "").strip()
     dataspace = str(getattr(deployer_context, "dataspace_name", "") or "").strip()
+    topology = str(getattr(deployer_context, "topology", "") or "").strip().lower()
+    vm_distributed = topology == "vm-distributed"
 
-    _append_public_endpoint(endpoints, seen, "Keycloak admin", resolved_urls.get("KC_URL"))
-    _append_public_endpoint(endpoints, seen, "Keycloak public", resolved_urls.get("KC_INTERNAL_URL"))
-    _append_public_endpoint(
-        endpoints,
-        seen,
-        "Keycloak hostname",
-        resolved_hostnames.get("keycloak_hostname"),
-    )
-    _append_public_endpoint(
-        endpoints,
-        seen,
-        "MinIO API",
-        resolved_hostnames.get("minio_hostname"),
-    )
-
-    if dataspace and ds_domain:
+    if vm_distributed:
         _append_public_endpoint(
             endpoints,
             seen,
-            "Registration service",
-            f"http://registration-service-{dataspace}.{ds_domain}",
+            "Keycloak public",
+            config.get("KEYCLOAK_FRONTEND_URL") or config.get("KEYCLOAK_PUBLIC_URL"),
         )
+        _append_public_endpoint(
+            endpoints,
+            seen,
+            "MinIO console",
+            config.get("MINIO_CONSOLE_PUBLIC_URL") or config.get("MINIO_PUBLIC_URL"),
+        )
+        _append_public_endpoint(
+            endpoints,
+            seen,
+            "MinIO API",
+            config.get("PIONERA_LEVEL6_MINIO_ENDPOINT")
+            or config.get("LEVEL6_MINIO_ENDPOINT")
+            or config.get("EDC_LEVEL6_MINIO_ENDPOINT")
+            or config.get("MINIO_API_PUBLIC_URL")
+            or config.get("MINIO_PUBLIC_URL"),
+        )
+    else:
+        _append_public_endpoint(endpoints, seen, "Keycloak admin", resolved_urls.get("KC_URL"))
+        _append_public_endpoint(endpoints, seen, "Keycloak public", resolved_urls.get("KC_INTERNAL_URL"))
+        _append_public_endpoint(
+            endpoints,
+            seen,
+            "Keycloak hostname",
+            resolved_hostnames.get("keycloak_hostname"),
+        )
+        _append_public_endpoint(
+            endpoints,
+            seen,
+            "MinIO API",
+            resolved_hostnames.get("minio_hostname"),
+        )
+
+        if dataspace and ds_domain:
+            _append_public_endpoint(
+                endpoints,
+                seen,
+                "Registration service",
+                f"http://registration-service-{dataspace}.{ds_domain}",
+            )
 
     connector_adapter = getattr(adapter, "connectors", None)
     connector_base_url = getattr(connector_adapter, "connector_base_url", None)
@@ -4429,6 +4612,25 @@ def _level6_component_validation_environment(deployer_context, deployer_name):
     keycloak_url = _public_keycloak_base_url(deployer_context)
     provider = connectors[0] if connectors else ""
     consumer = connectors[1] if len(connectors) > 1 else ""
+    config = dict(getattr(deployer_context, "config", {}) or {})
+
+    def _connector_base_url(connector, role):
+        configured = _configured_public_connector_base_url(connector, deployer_context)
+        if configured:
+            return configured.rstrip("/")
+        if connector and ds_domain:
+            return f"http://{connector}.{ds_domain}"
+        return ""
+
+    def _connector_protocol_base_url(connector, role, public_base_url):
+        mode = str(
+            config.get("PIONERA_CONNECTOR_PROTOCOL_ADDRESS_MODE")
+            or config.get("CONNECTOR_PROTOCOL_ADDRESS_MODE")
+            or "public"
+        ).strip().lower()
+        if mode in {"internal", "private"} and connector and ds_domain:
+            return f"http://{connector}.{ds_domain}"
+        return public_base_url
 
     env = {
         "PIONERA_ADAPTER": adapter_name,
@@ -4440,8 +4642,13 @@ def _level6_component_validation_environment(deployer_context, deployer_name):
         "UI_DS_DOMAIN": ds_domain,
         "AI_MODEL_HUB_KEYCLOAK_URL": keycloak_url,
     }
+    if adapter_name == "edc":
+        env["PIONERA_COMPONENT_VALIDATION_MODE"] = "api"
+        env["LEVEL6_COMPONENT_VALIDATION_MODE"] = "api"
+    env.update(_topology_runtime_environment_overrides(topology=topology, level=5, role="components"))
     if provider:
-        provider_base_url = f"http://{provider}.{ds_domain}" if ds_domain else ""
+        provider_base_url = _connector_base_url(provider, "provider")
+        provider_protocol_base_url = _connector_protocol_base_url(provider, "provider", provider_base_url)
         env.update(
             {
                 "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID": provider,
@@ -4451,7 +4658,7 @@ def _level6_component_validation_environment(deployer_context, deployer_name):
                     f"{provider_base_url}/management" if provider_base_url else ""
                 ),
                 "AI_MODEL_HUB_PROVIDER_PROTOCOL_URL": (
-                    f"{provider_base_url}/protocol" if provider_base_url else ""
+                    f"{provider_protocol_base_url}/protocol" if provider_protocol_base_url else ""
                 ),
                 "AI_MODEL_HUB_PROVIDER_DEFAULT_URL": (
                     f"{provider_base_url}/api" if provider_base_url else ""
@@ -4459,13 +4666,17 @@ def _level6_component_validation_environment(deployer_context, deployer_name):
             }
         )
     if consumer:
-        consumer_base_url = f"http://{consumer}.{ds_domain}" if ds_domain else ""
+        consumer_base_url = _connector_base_url(consumer, "consumer")
+        consumer_protocol_base_url = _connector_protocol_base_url(consumer, "consumer", consumer_base_url)
         env.update(
             {
                 "AI_MODEL_HUB_CONSUMER_CONNECTOR_ID": consumer,
                 "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER": consumer,
                 "AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL": (
                     f"{consumer_base_url}/management" if consumer_base_url else ""
+                ),
+                "AI_MODEL_HUB_CONSUMER_PROTOCOL_URL": (
+                    f"{consumer_protocol_base_url}/protocol" if consumer_protocol_base_url else ""
                 ),
                 "AI_MODEL_HUB_CONSUMER_DEFAULT_URL": (
                     f"{consumer_base_url}/api" if consumer_base_url else ""
@@ -5324,6 +5535,21 @@ def _parse_hosts_addresses(content):
     return addresses
 
 
+def _is_windows_hosts_file(hosts_file):
+    normalized = str(hosts_file or "").replace("\\", "/").strip().lower()
+    return normalized.endswith("/windows/system32/drivers/etc/hosts")
+
+
+def _raise_if_windows_hosts_file_is_not_local(context, hosts_file):
+    topology = normalize_topology(getattr(context, "topology", "local"))
+    if topology == "local" or not _is_windows_hosts_file(hosts_file):
+        return
+    raise RuntimeError(
+        "Windows hosts sync is only supported for the local topology. "
+        "For vm-distributed, use the DNS/VPN domains exposed by the network instead of Windows hosts."
+    )
+
+
 def _sync_deployer_hosts_if_enabled(context, levels=None):
     plan = _build_shadow_host_sync_plan(context, levels=levels)
     if not _should_sync_deployer_hosts():
@@ -5335,10 +5561,17 @@ def _sync_deployer_hosts_if_enabled(context, levels=None):
 
     hosts_file = _deployer_hosts_file()
     if not hosts_file:
+        if normalize_topology(getattr(context, "topology", "local")) != "local":
+            raise RuntimeError(
+                "PIONERA_SYNC_HOSTS=true requires PIONERA_HOSTS_FILE to point to the hosts file to update. "
+                "For vm-distributed, prefer DNS/VPN domains exposed by the network and avoid Windows hosts."
+            )
         raise RuntimeError(
             "PIONERA_SYNC_HOSTS=true requires PIONERA_HOSTS_FILE to point to the hosts file to update. "
             "For Windows from WSL this is usually /mnt/c/Windows/System32/drivers/etc/hosts."
         )
+
+    _raise_if_windows_hosts_file_is_not_local(context, hosts_file)
 
     blocks = _filter_host_blocks_for_levels(
         build_context_host_blocks(context, address=_deployer_hosts_address_override()),
@@ -5361,8 +5594,8 @@ def _sync_deployer_hosts_if_enabled(context, levels=None):
     }
 
 
-def _resolve_shadow_deploy_preflight(adapter):
-    preview = _resolve_adapter_preview(adapter, "deploy")
+def _resolve_shadow_deploy_preflight(adapter, topology="local"):
+    preview = _resolve_adapter_preview_for_topology(adapter, "deploy", topology=topology)
     if isinstance(preview, dict):
         return _sanitize_preview_data(preview)
     return None
@@ -5442,7 +5675,7 @@ def _build_deployer_deploy_shadow_plan(adapter, deployer_name=None, deployer_reg
     )
     context = orchestrator.resolve_context(topology=topology)
     profile = orchestrator.get_validation_profile(context)
-    preflight = _resolve_shadow_deploy_preflight(adapter)
+    preflight = _resolve_shadow_deploy_preflight(adapter, topology=topology)
 
     return {
         "mode": "shadow",
@@ -5894,6 +6127,854 @@ def run_hosts(adapter, deployer_name=None, deployer_registry=None, topology="loc
         "config_migration_warnings": _infrastructure_config_migration_warnings(),
         "hosts_plan": plan,
         "hosts_sync": sync,
+    }
+
+
+def run_public_access(adapter, deployer_name=None, topology="local"):
+    """Reconcile public access artifacts for topology-aware deployments."""
+    normalized_topology = normalize_topology(topology or LOCAL_TOPOLOGY)
+    if normalized_topology != VM_DISTRIBUTED_TOPOLOGY:
+        raise ValueError("public-access is only supported with --topology vm-distributed")
+
+    sync_public_access = _resolve_adapter_callable(
+        adapter,
+        "infrastructure.sync_vm_distributed_public_access",
+    )
+    if not callable(sync_public_access):
+        raise ValueError(
+            f"Adapter '{deployer_name or _infer_deployer_name_from_adapter(adapter)}' "
+            "does not expose vm-distributed public access reconciliation."
+        )
+
+    result = sync_public_access(topology=normalized_topology)
+    if isinstance(result, dict):
+        result.setdefault("adapter", deployer_name or _infer_deployer_name_from_adapter(adapter))
+        result.setdefault("topology", normalized_topology)
+        return result
+    return {
+        "status": "synced",
+        "adapter": deployer_name or _infer_deployer_name_from_adapter(adapter),
+        "topology": normalized_topology,
+        "result": result,
+    }
+
+
+def run_ssh_access(adapter, deployer_name=None, topology="local", action="plan"):
+    """Build the idempotent SSH bootstrap plan for vm-distributed."""
+    normalized_topology = normalize_topology(topology or LOCAL_TOPOLOGY)
+    if normalized_topology != VM_DISTRIBUTED_TOPOLOGY:
+        raise ValueError("ssh-access is only supported with --topology vm-distributed")
+
+    normalized_action = str(action or "plan").strip().lower().replace("_", "-")
+    if normalized_action == "key-self-test":
+        normalized_action = "self-test"
+    if normalized_action not in {"plan", "reconcile", "self-test"}:
+        raise ValueError("ssh-access only supports plan, reconcile or self-test")
+
+    plan = _current_vm_distributed_topology_plan(adapter_name=deployer_name)
+    ssh_bootstrap = dict(plan.get("ssh_bootstrap") or {})
+    if normalized_action == "reconcile":
+        reconcile = _reconcile_vm_distributed_ssh_access(plan)
+        reconcile.setdefault("adapter", deployer_name or _infer_deployer_name_from_adapter(adapter))
+        reconcile.setdefault("topology", normalized_topology)
+        reconcile.setdefault("action", normalized_action)
+        return reconcile
+    if normalized_action == "self-test":
+        self_test = _vm_distributed_ssh_key_self_test(plan)
+        self_test.setdefault("adapter", deployer_name or _infer_deployer_name_from_adapter(adapter))
+        self_test.setdefault("topology", normalized_topology)
+        self_test.setdefault("action", normalized_action)
+        return self_test
+
+    return {
+        "status": "planned",
+        "adapter": deployer_name or _infer_deployer_name_from_adapter(adapter),
+        "topology": normalized_topology,
+        "action": normalized_action,
+        "message": "SSH bootstrap plan generated.",
+        "execution_host": plan.get("execution_host"),
+        "ssh": plan.get("ssh") or {},
+        "ssh_bootstrap": ssh_bootstrap,
+        "execution_location": _vm_distributed_ssh_access_execution_location(plan),
+        "manual_bootstrap_commands": _vm_distributed_manual_ssh_bootstrap_commands(plan),
+    }
+
+
+def _vm_distributed_ssh_access_step_title(command_name):
+    name = str(command_name or "").strip()
+    if name.startswith("check_bastion"):
+        return "Step 1 - Check the bastion"
+    if name.startswith("create_dedicated_key") or name.startswith("secure_") or name.startswith("optional_ssh_agent"):
+        return "Step 2 - Prepare the dedicated key"
+    if name.startswith("install_public_key"):
+        return "Step 3 - Install the public key"
+    if name.startswith("verify_"):
+        return "Step 4 - Verify passwordless SSH"
+    return "Other checks"
+
+
+def _vm_distributed_ssh_status_label(status):
+    normalized = str(status or "").strip().lower()
+    if normalized in {"planned", "ready", "synced", "passed", "present", "created"}:
+        return "Succeeded"
+    if normalized in {"failed", "error"} or normalized.endswith("-failed"):
+        return "Failed"
+    if normalized in {"needs-review", "needs-configuration"}:
+        return "Needs review"
+    if normalized in {"skipped", "not-applicable"}:
+        return "Skipped"
+    return str(status or "Unknown").strip().title() or "Unknown"
+
+
+def _vm_distributed_ssh_access_execution_location(plan_or_result):
+    payload = dict(plan_or_result or {})
+    ssh_bootstrap = dict(payload.get("ssh_bootstrap") or {})
+    execution_host = str(payload.get("execution_host") or ssh_bootstrap.get("execution_host") or "external").strip()
+    if execution_host == "common-services":
+        remote_workdir = str(ssh_bootstrap.get("remote_workdir") or payload.get("remote_workdir") or "").strip()
+        details = [
+            "Run these commands from the common-services VM, after the framework workspace is available there.",
+            "This mode prepares SSH from the common-services VM to the other distributed VMs.",
+        ]
+        if remote_workdir:
+            details.append(f"Use the framework workspace at: {remote_workdir}")
+        return {
+            "mode": "common-services",
+            "label": "common-services VM",
+            "details": details,
+        }
+    return {
+        "mode": "external",
+        "label": "operator workstation",
+        "details": [
+            "Run these commands from the same shell where you run this framework.",
+            "For the current WSL-based workflow, that means your WSL terminal, not inside the target VMs.",
+        ],
+    }
+
+
+def _vm_distributed_public_key_material(public_key_value):
+    parts = str(public_key_value or "").strip().split()
+    if len(parts) >= 2:
+        return " ".join(parts[:2])
+    return str(public_key_value or "").strip()
+
+
+def _vm_distributed_ssh_key_self_test_result(status, message, checks, plan):
+    vm_plan = dict(plan or {})
+    ssh_bootstrap = dict(vm_plan.get("ssh_bootstrap") or {})
+    return {
+        "status": status,
+        "message": message,
+        "scope": "local-temporary-key-only",
+        "remote_validation": "not-run",
+        "execution_host": vm_plan.get("execution_host"),
+        "ssh_bootstrap": {
+            "status": ssh_bootstrap.get("status"),
+            "mode": ssh_bootstrap.get("mode"),
+            "configured_identity_file": ssh_bootstrap.get("identity_file"),
+            "key_comment": ssh_bootstrap.get("key_comment"),
+        },
+        "checks": checks,
+        "next_step": (
+            "Run ssh-access assistant or ssh-access reconcile to install and verify the key on the VMs."
+            if status == "passed"
+            else "Fix the failed local SSH key check before preparing a new distributed environment."
+        ),
+    }
+
+
+def _vm_distributed_ssh_key_self_test(plan, command_runner=None):
+    """Validate local SSH keypair creation with an isolated temporary key."""
+    vm_plan = dict(plan or {})
+    ssh_bootstrap = dict(vm_plan.get("ssh_bootstrap") or {})
+    runner = command_runner or _vm_distributed_default_command_runner
+    checks = []
+
+    if command_runner is None and not shutil.which("ssh-keygen"):
+        checks.append(
+            {
+                "name": "ssh_keygen_available",
+                "status": "failed",
+                "reason": "ssh-keygen-not-found",
+            }
+        )
+        return _vm_distributed_ssh_key_self_test_result(
+            "failed",
+            "ssh-keygen is required to create SSH keys.",
+            checks,
+            vm_plan,
+        )
+
+    temp_identity_file = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="validation-env-ssh-self-test-") as temp_dir:
+            temp_identity_file = os.path.join(temp_dir, "id_ed25519")
+            temp_public_key_file = _vm_distributed_public_key_path(temp_identity_file)
+            test_bootstrap = dict(ssh_bootstrap)
+            test_bootstrap.update(
+                {
+                    "identity_file": temp_identity_file,
+                    "key_comment": str(
+                        ssh_bootstrap.get("key_comment") or "validation-environment-vm-distributed"
+                    ).strip()
+                    + "-self-test",
+                }
+            )
+
+            first = _vm_distributed_ensure_ssh_keypair(test_bootstrap, command_runner=runner)
+            if first.get("status") == "failed":
+                checks.append(
+                    {
+                        "name": "temporary_keypair_created",
+                        "status": "failed",
+                        "reason": first.get("reason") or "keypair-creation-failed",
+                        "error": first.get("error"),
+                    }
+                )
+                return _vm_distributed_ssh_key_self_test_result(
+                    "failed",
+                    "The temporary SSH keypair could not be created.",
+                    checks,
+                    vm_plan,
+                )
+            checks.append(
+                {
+                    "name": "temporary_keypair_created",
+                    "status": "passed",
+                    "state": first.get("status"),
+                    "changed": bool(first.get("changed")),
+                }
+            )
+
+            if not os.path.isfile(temp_identity_file) or not os.path.isfile(temp_public_key_file):
+                checks.append(
+                    {
+                        "name": "temporary_keypair_files_exist",
+                        "status": "failed",
+                        "private_key_exists": os.path.isfile(temp_identity_file),
+                        "public_key_exists": os.path.isfile(temp_public_key_file),
+                    }
+                )
+                return _vm_distributed_ssh_key_self_test_result(
+                    "failed",
+                    "The temporary SSH keypair files were not created as expected.",
+                    checks,
+                    vm_plan,
+                )
+            checks.append(
+                {
+                    "name": "temporary_keypair_files_exist",
+                    "status": "passed",
+                }
+            )
+
+            private_key_mode = oct(os.stat(temp_identity_file).st_mode & 0o777)
+            if private_key_mode != "0o600":
+                checks.append(
+                    {
+                        "name": "private_key_permissions",
+                        "status": "failed",
+                        "expected": "0o600",
+                        "actual": private_key_mode,
+                    }
+                )
+                return _vm_distributed_ssh_key_self_test_result(
+                    "failed",
+                    "The temporary private key was not restricted to owner-only access.",
+                    checks,
+                    vm_plan,
+                )
+            checks.append(
+                {
+                    "name": "private_key_permissions",
+                    "status": "passed",
+                    "actual": private_key_mode,
+                }
+            )
+
+            derive_command = ["ssh-keygen", "-y", "-f", temp_identity_file]
+            derived = runner(derive_command, timeout=30)
+            if int(getattr(derived, "returncode", 1) or 0) != 0:
+                checks.append(
+                    {
+                        "name": "public_key_derivable_from_private_key",
+                        "status": "failed",
+                        "reason": "public-key-derivation-failed",
+                        "error": str(getattr(derived, "stderr", "") or "").strip()[:500],
+                    }
+                )
+                return _vm_distributed_ssh_key_self_test_result(
+                    "failed",
+                    "The temporary public key could not be derived from the private key.",
+                    checks,
+                    vm_plan,
+                )
+
+            stored_public_key = _vm_distributed_read_public_key(temp_public_key_file)
+            derived_public_key = str(getattr(derived, "stdout", "") or "").strip()
+            if (
+                not stored_public_key
+                or not derived_public_key
+                or _vm_distributed_public_key_material(stored_public_key)
+                != _vm_distributed_public_key_material(derived_public_key)
+            ):
+                checks.append(
+                    {
+                        "name": "public_key_matches_private_key",
+                        "status": "failed",
+                    }
+                )
+                return _vm_distributed_ssh_key_self_test_result(
+                    "failed",
+                    "The temporary public key does not match the private key.",
+                    checks,
+                    vm_plan,
+                )
+            checks.append(
+                {
+                    "name": "public_key_matches_private_key",
+                    "status": "passed",
+                }
+            )
+
+            second = _vm_distributed_ensure_ssh_keypair(test_bootstrap, command_runner=runner)
+            if second.get("status") != "present" or second.get("changed"):
+                checks.append(
+                    {
+                        "name": "keypair_creation_is_idempotent",
+                        "status": "failed",
+                        "second_run_status": second.get("status"),
+                        "second_run_changed": bool(second.get("changed")),
+                    }
+                )
+                return _vm_distributed_ssh_key_self_test_result(
+                    "failed",
+                    "The temporary keypair creation is not idempotent.",
+                    checks,
+                    vm_plan,
+                )
+            checks.append(
+                {
+                    "name": "keypair_creation_is_idempotent",
+                    "status": "passed",
+                    "second_run_status": second.get("status"),
+                    "second_run_changed": bool(second.get("changed")),
+                }
+            )
+
+        if temp_identity_file and not os.path.exists(temp_identity_file) and not os.path.exists(
+            _vm_distributed_public_key_path(temp_identity_file)
+        ):
+            checks.append(
+                {
+                    "name": "temporary_files_removed",
+                    "status": "passed",
+                }
+            )
+        else:
+            checks.append(
+                {
+                    "name": "temporary_files_removed",
+                    "status": "failed",
+                }
+            )
+            return _vm_distributed_ssh_key_self_test_result(
+                "failed",
+                "The temporary SSH keypair was not cleaned up.",
+                checks,
+                vm_plan,
+            )
+    except Exception as exc:
+        checks.append(
+            {
+                "name": "unexpected_self_test_error",
+                "status": "failed",
+                "reason": type(exc).__name__,
+                "error": str(exc)[:500],
+            }
+        )
+        return _vm_distributed_ssh_key_self_test_result(
+            "failed",
+            "The SSH key self-test failed unexpectedly.",
+            checks,
+            vm_plan,
+        )
+
+    return _vm_distributed_ssh_key_self_test_result(
+        "passed",
+        "Temporary SSH key creation, validation and idempotency checks passed.",
+        checks,
+        vm_plan,
+    )
+
+
+def _print_vm_distributed_ssh_key_self_test_result(result):
+    payload = dict(result or {})
+    print()
+    print("=" * 50)
+    print("VM-DISTRIBUTED SSH KEY SELF-TEST")
+    print("=" * 50)
+    print(f"Status: {_vm_distributed_ssh_status_label(payload.get('status'))}")
+    print(f"Topology: {payload.get('topology') or 'vm-distributed'}")
+    print("Scope: temporary local key only")
+    print()
+    print("What this validates:")
+    print("- The framework can create a new dedicated SSH keypair from scratch.")
+    print("- The private key is restricted to owner-only access.")
+    print("- The public key can be derived from the private key.")
+    print("- Running the key creation again does not overwrite the existing key.")
+    print("- The temporary key files are removed after the test.")
+    print()
+    print("What this does not do:")
+    print("- It does not connect to the distributed VMs.")
+    print("- It does not modify authorized_keys.")
+    print("- It does not touch your existing SSH keys.")
+
+    checks = [item for item in list(payload.get("checks") or []) if isinstance(item, dict)]
+    if checks:
+        print()
+        print("Checks:")
+        for item in checks:
+            line = f"- {item.get('name')}: {_vm_distributed_ssh_status_label(item.get('status'))}"
+            if item.get("reason"):
+                line += f" ({item.get('reason')})"
+            print(line)
+
+    message = str(payload.get("message") or "").strip()
+    if message:
+        print()
+        print(message)
+    next_step = str(payload.get("next_step") or "").strip()
+    if next_step:
+        print()
+        print(f"Next: {next_step}")
+    print()
+    print("For machine-readable output, add --json.")
+
+
+def _print_vm_distributed_ssh_access_interactive_guide(result):
+    payload = dict(result or {})
+    adapter_name = str(payload.get("adapter") or "inesdata").strip()
+    print()
+    print("Recommended interactive guide:")
+    print("- Why it exists: SSH setup may ask for a one-time password and must run from the right machine.")
+    print("- What it does: it walks you through each step, asks before running commands, and verifies passwordless SSH.")
+    print("- How to use it: read each step, answer yes only when ready, and type passwords only into SSH prompts.")
+    print("Run:")
+    print(f"  python3 main.py {adapter_name} ssh-access assistant --topology vm-distributed")
+
+
+def _vm_distributed_host_aliases(hostname=None, fqdn=None):
+    aliases = {
+        str(hostname or socket.gethostname() or "").strip().lower(),
+        str(fqdn or socket.getfqdn() or "").strip().lower(),
+    }
+    return {alias for alias in aliases if alias}
+
+
+def _vm_distributed_detect_execution_environment(plan_or_result, environ=None, proc_version=None, hostname=None, fqdn=None):
+    payload = dict(plan_or_result or {})
+    ssh_plan = dict(payload.get("ssh") or {})
+    bastion = dict(ssh_plan.get("bastion") or {})
+    commands = [item for item in list(payload.get("manual_bootstrap_commands") or []) if isinstance(item, dict)]
+    command_names = {str(item.get("name") or "").strip() for item in commands}
+    bastion_enabled = bool(
+        ssh_plan.get("mode") == "bastion"
+        or bastion.get("host")
+        or any(name.startswith("check_bastion") or "bastion" in name for name in command_names)
+    )
+    bastion_host = str(bastion.get("host") or "").strip()
+    bastion_port = str(bastion.get("port") or "").strip()
+    bastion_user = str(bastion.get("user") or "").strip()
+    if bastion_enabled and not bastion_host:
+        for item in commands:
+            if str(item.get("name") or "").startswith("check_bastion_dns"):
+                parts = str(item.get("command") or "").split()
+                if parts:
+                    bastion_host = parts[-1]
+                break
+    env = environ if environ is not None else os.environ
+    if proc_version is None:
+        try:
+            with open("/proc/version", encoding="utf-8") as handle:
+                proc_version = handle.read()
+        except OSError:
+            proc_version = ""
+
+    is_wsl = bool(env.get("WSL_DISTRO_NAME") or env.get("WSL_INTEROP") or "microsoft" in str(proc_version).lower())
+    aliases = _vm_distributed_host_aliases(hostname=hostname, fqdn=fqdn)
+    targets = [item for item in list((payload.get("ssh_bootstrap") or {}).get("targets") or []) if isinstance(item, dict)]
+    matched_target = None
+    for target in targets:
+        target_host = str(target.get("host") or "").strip().lower()
+        if target_host and target_host in aliases:
+            matched_target = target
+            break
+
+    configured_execution_host = str(
+        payload.get("execution_host")
+        or (payload.get("ssh_bootstrap") or {}).get("execution_host")
+        or "external"
+    ).strip()
+
+    if is_wsl:
+        detected_mode = "operator-workstation"
+        detected_label = "WSL operator workstation"
+        confidence = "high"
+    elif matched_target and str(matched_target.get("role_key") or "").strip() == "common":
+        detected_mode = "common-services"
+        detected_label = "common-services VM"
+        confidence = "medium"
+    elif matched_target:
+        detected_mode = "target-vm"
+        detected_label = f"{matched_target.get('role') or 'target'} VM"
+        confidence = "medium"
+    else:
+        detected_mode = "operator-workstation"
+        detected_label = "operator workstation"
+        confidence = "low"
+
+    if configured_execution_host == "common-services":
+        expected_mode = "common-services"
+        expected_label = "common-services VM"
+    else:
+        expected_mode = "operator-workstation"
+        expected_label = "operator workstation"
+
+    if detected_mode == expected_mode:
+        alignment = "matched"
+        recommendation = "Continue from this shell."
+        needs_confirmation = False
+    elif confidence == "low":
+        alignment = "uncertain"
+        recommendation = "Continue only if this is the shell that should prepare SSH for the distributed environment."
+        needs_confirmation = True
+    else:
+        alignment = "mismatch"
+        recommendation = "Review the configured execution host before running commands."
+        needs_confirmation = True
+
+    route_warning = ""
+    if bastion_enabled and detected_mode in {"common-services", "target-vm"}:
+        alignment = "route-review" if alignment == "matched" else alignment
+        needs_confirmation = True
+        route_warning = (
+            "This shell appears to be inside a configured VM while SSH is configured through a bastion. "
+            "Continue only if this VM can reach the bastion and the bastion can reach the target VMs."
+        )
+        recommendation = route_warning
+
+    return {
+        "detected_mode": detected_mode,
+        "detected_label": detected_label,
+        "confidence": confidence,
+        "expected_mode": expected_mode,
+        "expected_label": expected_label,
+        "configured_execution_host": configured_execution_host,
+        "alignment": alignment,
+        "needs_confirmation": needs_confirmation,
+        "recommendation": recommendation,
+        "route_warning": route_warning,
+        "ssh_route": "bastion" if bastion_enabled else "direct",
+        "bastion": {
+            "enabled": bastion_enabled,
+            "host": bastion_host,
+            "port": bastion_port,
+            "user": bastion_user,
+        },
+        "hostname": next(iter(aliases), ""),
+    }
+
+
+def _print_vm_distributed_execution_detection(detection):
+    payload = dict(detection or {})
+    print()
+    print("Execution context check:")
+    print(f"- Detected: {payload.get('detected_label') or 'unknown'} ({payload.get('confidence') or 'unknown'} confidence)")
+    print(f"- Configured execution host: {payload.get('expected_label') or 'operator workstation'}")
+    print(f"- Recommendation: {payload.get('recommendation') or 'Continue if this shell is correct.'}")
+    bastion = dict(payload.get("bastion") or {})
+    if bastion.get("enabled"):
+        target = str(bastion.get("host") or "configured bastion").strip()
+        if bastion.get("user"):
+            target = f"{bastion.get('user')}@{target}"
+        if bastion.get("port"):
+            target = f"{target}:{bastion.get('port')}"
+        print(f"- SSH route from config: bastion via {target}")
+        print("- The guide will not ask whether there is a bastion; it uses the configured route.")
+        print("- It will check the bastion first, then use it to reach the VMs.")
+        if payload.get("route_warning"):
+            print(f"- Route warning: {payload.get('route_warning')}")
+    else:
+        print("- SSH route from config: direct SSH to the configured VMs")
+
+
+def _vm_distributed_ssh_route_label(detection):
+    payload = dict(detection or {})
+    bastion = dict(payload.get("bastion") or {})
+    if bastion.get("enabled"):
+        target = str(bastion.get("host") or "configured bastion").strip()
+        if bastion.get("user"):
+            target = f"{bastion.get('user')}@{target}"
+        if bastion.get("port"):
+            target = f"{target}:{bastion.get('port')}"
+        return f"bastion via {target}"
+    return "direct SSH to configured VMs"
+
+
+def _print_vm_distributed_ssh_access_assistant_intro(plan_result, detection, total_questions):
+    payload = dict(plan_result or {})
+    ssh_bootstrap = dict(payload.get("ssh_bootstrap") or {})
+    detected_label = str(detection.get("detected_label") or "unknown").strip()
+    expected_label = str(detection.get("expected_label") or "operator workstation").strip()
+    print()
+    print("=" * 50)
+    print("VM-DISTRIBUTED SSH ACCESS")
+    print("=" * 50)
+    print(f"Topology: {payload.get('topology') or 'vm-distributed'}")
+    if ssh_bootstrap.get("identity_file"):
+        print(f"Dedicated key: {ssh_bootstrap.get('identity_file')}")
+    print(f"Execution: {detected_label} -> configured {expected_label}")
+    print(f"SSH route from config: {_vm_distributed_ssh_route_label(detection)}")
+    if detection.get("route_warning"):
+        print(f"Warning: {detection.get('route_warning')}")
+    print(f"Questions: {total_questions}. Answer yes only when ready; Ctrl+C stops.")
+    print("Passwords, if requested, are typed into SSH prompts and are never stored.")
+
+
+def _interactive_confirm_with_progress(prompt, question_number, total_questions, default=False):
+    total = max(int(total_questions or 1), 1)
+    current = min(max(int(question_number or 1), 1), total)
+    return _interactive_confirm(f"Question {current}/{total}: {prompt}", default=default)
+
+
+def _print_vm_distributed_ssh_access_result(result, show_interactive_guide=True):
+    payload = dict(result or {})
+    ssh_bootstrap = dict(payload.get("ssh_bootstrap") or {})
+    adapter_name = str(payload.get("adapter") or "inesdata").strip()
+    commands = [item for item in list(payload.get("manual_bootstrap_commands") or []) if isinstance(item, dict)]
+    execution_location = dict(
+        payload.get("execution_location")
+        or _vm_distributed_ssh_access_execution_location(payload)
+    )
+
+    print()
+    print("=" * 50)
+    print("VM-DISTRIBUTED SSH ACCESS")
+    print("=" * 50)
+    print(f"Status: {_vm_distributed_ssh_status_label(payload.get('status'))}")
+    print(f"Topology: {payload.get('topology') or 'vm-distributed'}")
+    print(f"Execution host: {payload.get('execution_host') or ssh_bootstrap.get('execution_host') or 'external'}")
+    if ssh_bootstrap.get("identity_file"):
+        print(f"Dedicated key: {ssh_bootstrap.get('identity_file')}")
+    print()
+    print("What this prepares:")
+    print("- A dedicated SSH key for this validation environment.")
+    print("- The public half of that key on the bastion and target VMs.")
+    print("- A final BatchMode check, so later levels can run without password prompts.")
+    print()
+    print("Security rules:")
+    print("- Passwords are never stored by the framework.")
+    print("- Private keys are not written to versioned files.")
+    print("- ssh-copy-id may ask for a password once during the initial setup.")
+    print()
+    print("Where to run this:")
+    print(f"- Run location: {execution_location.get('label') or 'operator workstation'}")
+    for detail in list(execution_location.get("details") or []):
+        print(f"- {detail}")
+
+    status = str(payload.get("status") or "").strip().lower()
+    if status not in {"planned", "synced"}:
+        print()
+        print("What happened:")
+        message = str(payload.get("message") or "").strip()
+        if message:
+            print(f"- {message}")
+        failed_items = [
+            item for item in list(payload.get("authorized_keys") or []) + list(payload.get("verification") or [])
+            if isinstance(item, dict) and item.get("status") == "failed"
+        ]
+        for item in failed_items:
+            role = item.get("role") or "target"
+            reason = str(item.get("reason") or "failed").replace("-", " ")
+            print(f"- {role}: {reason}")
+            error = str(item.get("error") or "").strip().splitlines()
+            if error:
+                print(f"  Error: {error[0]}")
+            next_step = str(item.get("next_step") or "").strip()
+            if next_step:
+                print(f"  Next: {next_step}")
+
+    if commands and show_interactive_guide and status != "synced":
+        _print_vm_distributed_ssh_access_interactive_guide(payload)
+
+    if status == "planned" and show_interactive_guide:
+        print()
+        print("After the interactive guide succeeds, run:")
+        print(f"  python3 main.py {adapter_name} ssh-access reconcile --topology vm-distributed")
+    elif status == "synced":
+        print()
+        print("SSH access is ready. You can continue with the vm-distributed deployment levels.")
+
+    print()
+    print("For machine-readable output and planned commands, add --json.")
+
+
+def _vm_distributed_default_interactive_command_runner(command):
+    return subprocess.run(command, shell=True, check=False)
+
+
+def _run_vm_distributed_ssh_access_assistant(
+    adapter,
+    deployer_name=None,
+    topology="local",
+    command_runner=None,
+):
+    plan_result = run_ssh_access(
+        adapter,
+        deployer_name=deployer_name,
+        topology=topology,
+        action="plan",
+    )
+
+    commands = [
+        item
+        for item in list(plan_result.get("manual_bootstrap_commands") or [])
+        if isinstance(item, dict) and str(item.get("command") or "").strip()
+    ]
+    if not commands:
+        return {
+            "status": "needs-review",
+            "adapter": deployer_name or _infer_deployer_name_from_adapter(adapter),
+            "topology": topology,
+            "message": "No SSH setup commands were generated.",
+            "plan": plan_result,
+        }
+
+    detection = _vm_distributed_detect_execution_environment(plan_result)
+    needs_location_confirmation = bool(detection.get("needs_confirmation"))
+    total_questions = len(commands) + 1 + (1 if needs_location_confirmation else 0)
+    question_number = 1
+
+    _print_vm_distributed_ssh_access_assistant_intro(
+        plan_result,
+        detection,
+        total_questions,
+    )
+
+    if needs_location_confirmation:
+        if not _interactive_confirm_with_progress(
+            "This shell may not match the configured execution host. Continue from here?",
+            question_number,
+            total_questions,
+            default=False,
+        ):
+            print("Guided SSH setup cancelled before running commands.")
+            return {
+                "status": "cancelled",
+                "adapter": deployer_name or _infer_deployer_name_from_adapter(adapter),
+                "topology": topology,
+                "plan": plan_result,
+                "execution_detection": detection,
+                "executed": [],
+            }
+        question_number += 1
+
+    if not _interactive_confirm_with_progress(
+        "Start the guided SSH setup now?",
+        question_number,
+        total_questions,
+        default=False,
+    ):
+        print("Guided SSH setup cancelled before running commands.")
+        return {
+            "status": "cancelled",
+            "adapter": deployer_name or _infer_deployer_name_from_adapter(adapter),
+            "topology": topology,
+            "plan": plan_result,
+            "execution_detection": detection,
+            "executed": [],
+        }
+    question_number += 1
+
+    runner = command_runner or _vm_distributed_default_interactive_command_runner
+    executed = []
+    current_title = None
+    for item in commands:
+        title = _vm_distributed_ssh_access_step_title(item.get("name"))
+        if title != current_title:
+            current_title = title
+            print()
+            print(title)
+        command = str(item.get("command") or "").strip()
+        print(command)
+        note = str(item.get("note") or "").strip()
+        if note:
+            print(f"Note: {note}")
+
+        if not _interactive_confirm_with_progress(
+            "Run this command?",
+            question_number,
+            total_questions,
+            default=False,
+        ):
+            executed.append(
+                {
+                    "name": item.get("name"),
+                    "command": command,
+                    "status": "skipped",
+                }
+            )
+            question_number += 1
+            continue
+        question_number += 1
+
+        completed = runner(command)
+        returncode = int(getattr(completed, "returncode", 1) or 0)
+        status = "passed" if returncode == 0 else "failed"
+        executed.append(
+            {
+                "name": item.get("name"),
+                "command": command,
+                "status": status,
+                "returncode": returncode,
+            }
+        )
+        if returncode != 0:
+            print(f"Command failed with exit code {returncode}.")
+            if not _interactive_confirm("Continue with the next command?", default=False):
+                break
+
+    failed = [item for item in executed if item.get("status") == "failed"]
+    passed = [item for item in executed if item.get("status") == "passed"]
+    skipped = [item for item in executed if item.get("status") == "skipped"]
+    if failed:
+        status = "failed"
+    elif passed and len(passed) + len(skipped) == len(commands):
+        status = "completed"
+    elif passed:
+        status = "partial"
+    else:
+        status = "skipped"
+
+    print()
+    print("Guided SSH setup summary")
+    print(f"- Passed: {len(passed)}")
+    print(f"- Skipped: {len(skipped)}")
+    print(f"- Failed: {len(failed)}")
+    if status in {"completed", "partial"}:
+        print()
+        print("Next recommended check:")
+        print("  python3 main.py inesdata ssh-access reconcile --topology vm-distributed")
+
+    return {
+        "status": status,
+        "adapter": deployer_name or _infer_deployer_name_from_adapter(adapter),
+        "topology": topology,
+        "plan": plan_result,
+        "execution_detection": detection,
+        "executed": executed,
     }
 
 
@@ -6374,15 +7455,23 @@ def _level2_access_urls(urls):
     if keycloak_realm:
         parsed = urllib.parse.urlparse(keycloak_realm)
         if parsed.scheme and parsed.netloc:
-            level_urls["keycloak"] = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
+            path = parsed.path.rstrip("/")
+            marker = "/realms/"
+            if marker in path:
+                path = path[: path.rfind(marker)].rstrip("/")
+            level_urls["keycloak"] = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
     keycloak_admin_console = str(urls.get("keycloak_admin_console") or "").strip()
     if keycloak_admin_console:
         parsed = urllib.parse.urlparse(keycloak_admin_console)
         if parsed.scheme and parsed.netloc:
-            level_urls["keycloak_admin_console"] = urllib.parse.urlunparse(
-                (parsed.scheme, parsed.netloc, "/admin/", "", "", "")
-            )
+            path = parsed.path or "/admin/"
+            marker = "/admin/"
+            if marker in path:
+                path = path[: path.find(marker) + len(marker)]
+            else:
+                path = "/admin/"
+            level_urls["keycloak_admin_console"] = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
     minio_console = str(urls.get("minio_console") or "").strip()
     if minio_console:
@@ -6448,6 +7537,11 @@ def run_available_access_urls(adapter, deployer_name=None, deployer_registry=Non
     )
 
     config = dict(getattr(context, "config", {}) or {})
+    resolved_topology = normalize_topology(
+        getattr(context, "topology", None) or topology or LOCAL_TOPOLOGY
+    )
+    config.setdefault("TOPOLOGY", resolved_topology)
+    config.setdefault("PIONERA_TOPOLOGY", resolved_topology)
     dataspace_name = str(getattr(context, "dataspace_name", "") or "").strip()
     environment = str(getattr(context, "environment", "DEV") or "DEV").strip()
     connectors = list(getattr(context, "connectors", []) or [])
@@ -6457,6 +7551,7 @@ def run_available_access_urls(adapter, deployer_name=None, deployer_registry=Non
     if resolved_deployer_name == "inesdata":
         from deployers.inesdata.access_urls import (
             build_connector_access_urls as build_inesdata_connector_access_urls,
+            build_connector_public_access_urls as build_inesdata_connector_public_access_urls,
             build_dataspace_access_urls,
         )
 
@@ -6477,12 +7572,20 @@ def run_available_access_urls(adapter, deployer_name=None, deployer_registry=Non
 
         connector_urls = {}
         for connector in connectors:
-            access_urls = build_inesdata_connector_access_urls(
-                connector,
-                dataspace_name,
-                environment,
-                config,
-            )
+            if resolved_topology == "vm-distributed":
+                access_urls = build_inesdata_connector_public_access_urls(
+                    connector,
+                    dataspace_name,
+                    environment,
+                    config,
+                )
+            else:
+                access_urls = build_inesdata_connector_access_urls(
+                    connector,
+                    dataspace_name,
+                    environment,
+                    config,
+                )
             selected = {}
             for key in (
                 "connector_ingress",
@@ -6966,9 +8069,37 @@ def run_validate(
                 )
                 if playwright_result.get("status") != "passed":
                     playwright_failure = playwright_result.get("status")
+                    if _level6_stop_after_playwright_failure_enabled():
+                        local_stability_postflight = _run_level6_local_stability_postflight(
+                            validation_mode_info,
+                            resolved_deployer_name,
+                            deployer_context,
+                            experiment_dir,
+                            local_stability_preflight,
+                            validation_profile=validation_profile,
+                        )
+                        une_0087_alignment = _generate_level6_une_0087_alignment(experiment_dir)
+                        framework_report = _generate_framework_dashboard(experiment_dir)
+                        level6_validation_summary = _print_level6_validation_summary(
+                            experiment_dir=experiment_dir,
+                            framework_report=framework_report,
+                            validation_error=validation_error,
+                            playwright_result=playwright_result,
+                            playwright_failure=playwright_failure,
+                            component_results=component_results,
+                            kafka_edc_results=kafka_edc_results,
+                        )
+                        _offer_open_level6_dashboard(framework_report)
+                        raise RuntimeError(
+                            f"Playwright validation failed with status '{playwright_failure}'"
+                        )
 
             component_groups = list(getattr(validation_profile, "component_groups", []) or [])
             infer_component_urls = _resolve_adapter_callable(adapter, "components.infer_component_urls")
+            sync_component_public_routes = _resolve_adapter_callable(
+                adapter,
+                "components.sync_validation_public_routes",
+            )
             if getattr(validation_profile, "component_validation_enabled", False):
                 if deployer_context is None:
                     component_results = [
@@ -7009,6 +8140,17 @@ def run_validate(
                             resolved_deployer_name,
                         )
                         with _temporary_environment(component_env):
+                            if callable(sync_component_public_routes):
+                                try:
+                                    route_sync = sync_component_public_routes(
+                                        component_groups,
+                                        ds_name=getattr(deployer_context, "dataspace_name", ""),
+                                        deployer_config=getattr(deployer_context, "config", {}),
+                                    )
+                                    if route_sync:
+                                        print("Component public validation routes synchronized.")
+                                except Exception as exc:
+                                    print(f"Warning: component public route synchronization failed: {exc}")
                             component_results = run_level6_component_validations(
                                 component_groups,
                                 infer_component_urls=infer_component_urls,
@@ -7030,6 +8172,33 @@ def run_validate(
                     print_component_validation_summary(component_results)
                 if component_results:
                     component_validation_summary = summarize_component_results(component_results)
+                    component_failed = any(
+                        _level6_normalized_status(item.get("status")) == "failed"
+                        for item in component_results
+                        if isinstance(item, dict)
+                    )
+                    if component_failed and _level6_stop_after_playwright_failure_enabled():
+                        local_stability_postflight = _run_level6_local_stability_postflight(
+                            validation_mode_info,
+                            resolved_deployer_name,
+                            deployer_context,
+                            experiment_dir,
+                            local_stability_preflight,
+                            validation_profile=validation_profile,
+                        )
+                        une_0087_alignment = _generate_level6_une_0087_alignment(experiment_dir)
+                        framework_report = _generate_framework_dashboard(experiment_dir)
+                        level6_validation_summary = _print_level6_validation_summary(
+                            experiment_dir=experiment_dir,
+                            framework_report=framework_report,
+                            validation_error=validation_error,
+                            playwright_result=playwright_result,
+                            playwright_failure=playwright_failure,
+                            component_results=component_results,
+                            kafka_edc_results=kafka_edc_results,
+                        )
+                        _offer_open_level6_dashboard(framework_report)
+                        raise RuntimeError("Component validation failed")
                 if playwright_failure is not None:
                     local_stability_postflight = _run_level6_local_stability_postflight(
                         validation_mode_info,
@@ -7482,7 +8651,464 @@ def _configured_vm_distributed_role_kubeconfigs():
     }
 
 
+def _kubeconfig_server(kubeconfig_path):
+    try:
+        with open(kubeconfig_path, encoding="utf-8") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if stripped.startswith("server:"):
+                    return stripped.split(":", 1)[1].strip()
+    except OSError:
+        return ""
+    return ""
+
+
+def _local_tcp_port_open(port, host="127.0.0.1", timeout_seconds=0.5):
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout_seconds):
+            return True
+    except OSError:
+        return False
+
+
+def _kubeconfig_loopback_port(server):
+    parsed = urllib.parse.urlparse(str(server or "").strip())
+    hostname = str(parsed.hostname or "").strip().lower()
+    if hostname not in {"127.0.0.1", "localhost", "::1"}:
+        return None
+    return parsed.port
+
+
+def _vm_distributed_role_ssh_config(config, role):
+    normalized = str(role or "common").strip().upper()
+    return {
+        "host": _vm_distributed_config_value(
+            config,
+            f"VM_{normalized}_SSH_HOST",
+            f"VM_{normalized}_K8S_NODE",
+            f"VM_{normalized}_IP",
+            "VM_EXTERNAL_IP",
+        ),
+        "port": _vm_distributed_config_value(config, f"VM_{normalized}_SSH_PORT", default="22") or "22",
+        "user": _vm_distributed_config_value(config, f"VM_{normalized}_SSH_USER", "VM_SSH_USER"),
+        "identity_file": _vm_distributed_identity_file(config, normalized.lower()),
+    }
+
+
+def _vm_distributed_k3s_tunnel_command(config, role, local_port):
+    ssh_config = _vm_distributed_role_ssh_config(config, role)
+    if not ssh_config.get("host") or not ssh_config.get("user"):
+        return []
+
+    timeout = _vm_distributed_connect_timeout_seconds(config)
+    known_hosts_strategy = _vm_distributed_config_value(
+        config,
+        "VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY",
+        default="accept-new",
+    ) or "accept-new"
+    remote_port = _vm_distributed_k3s_api_remote_port(config)
+    command = [
+        "ssh",
+        "-N",
+        "-L",
+        f"127.0.0.1:{int(local_port)}:127.0.0.1:{remote_port}",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        f"ConnectTimeout={timeout}",
+        "-o",
+        f"StrictHostKeyChecking={known_hosts_strategy}",
+        "-p",
+        str(ssh_config.get("port") or "22"),
+    ]
+    if ssh_config.get("identity_file"):
+        command.extend(["-i", ssh_config["identity_file"]])
+
+    access_mode = _vm_distributed_config_value(config, "SSH_ACCESS_MODE").lower().replace("_", "-")
+    bastion_host = _vm_distributed_config_value(config, "SSH_BASTION_HOST")
+    if access_mode == "bastion" or (not access_mode and bastion_host):
+        bastion_target = _vm_distributed_ssh_target(
+            _vm_distributed_config_value(config, "SSH_BASTION_USER"),
+            bastion_host,
+        )
+        bastion_port = _vm_distributed_config_value(config, "SSH_BASTION_PORT", default="2222") or "2222"
+        bastion_identity_file = _vm_distributed_config_value(config, "SSH_BASTION_IDENTITY_FILE") or ssh_config.get(
+            "identity_file"
+        )
+        if bastion_target:
+            proxy_command = [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "IdentitiesOnly=yes",
+                "-o",
+                f"ConnectTimeout={timeout}",
+                "-o",
+                f"StrictHostKeyChecking={known_hosts_strategy}",
+                "-p",
+                bastion_port,
+                "-W",
+                "%h:%p",
+                bastion_target,
+            ]
+            if bastion_identity_file:
+                proxy_command[9:9] = ["-i", bastion_identity_file]
+            command.extend(["-o", f"ProxyCommand={_vm_distributed_format_command(proxy_command)}"])
+
+    command.append(_vm_distributed_ssh_target(ssh_config.get("user"), ssh_config.get("host")))
+    return command
+
+
+def _run_vm_distributed_background_ssh_command(command, timeout_seconds=20):
+    del timeout_seconds
+    stdout_file = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+    stderr_file = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            text=True,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        stdout_file.close()
+        stderr_file.close()
+        return types.SimpleNamespace(returncode=255, stdout="", stderr=str(exc), process=None)
+
+    return types.SimpleNamespace(
+        returncode=None,
+        stdout="",
+        stderr="",
+        process=process,
+        stdout_file=stdout_file,
+        stderr_file=stderr_file,
+    )
+
+
+def _close_vm_distributed_background_ssh_process_files(proc):
+    for name in ("stdout_file", "stderr_file"):
+        handle = getattr(proc, name, None)
+        if not handle:
+            continue
+        try:
+            handle.close()
+        except OSError:
+            pass
+        setattr(proc, name, None)
+
+
+def _vm_distributed_background_ssh_process_output(proc, timeout_seconds=1):
+    process = getattr(proc, "process", None)
+    if not process:
+        return proc
+    try:
+        process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        return proc
+    proc.returncode = process.returncode
+    stdout_file = getattr(proc, "stdout_file", None)
+    stderr_file = getattr(proc, "stderr_file", None)
+    if stdout_file:
+        stdout_file.seek(0)
+        proc.stdout = stdout_file.read() or ""
+    if stderr_file:
+        stderr_file.seek(0)
+        proc.stderr = stderr_file.read() or ""
+    _close_vm_distributed_background_ssh_process_files(proc)
+    return proc
+
+
+def _terminate_vm_distributed_background_ssh_process(proc):
+    process = getattr(proc, "process", None)
+    if not process:
+        _close_vm_distributed_background_ssh_process_files(proc)
+        return
+    if process.poll() is None:
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                process.kill()
+            except OSError:
+                pass
+    _close_vm_distributed_background_ssh_process_files(proc)
+
+
+def _vm_distributed_k3s_api_remote_port(config):
+    return _vm_distributed_config_value(
+        config,
+        "VM_DISTRIBUTED_K3S_API_REMOTE_PORT",
+        default="6443",
+    ) or "6443"
+
+
+def _vm_distributed_k3s_tunnel_recreate_enabled(config):
+    mode = _vm_distributed_config_value(
+        config,
+        "VM_DISTRIBUTED_K3S_TUNNEL_RECREATE",
+        default="auto",
+    ).lower()
+    return mode not in {"off", "disabled", "manual", "false", "0", "no"}
+
+
+def _vm_distributed_local_k3s_tunnel_processes(local_port, remote_port):
+    try:
+        proc = subprocess.run(
+            ["ps", "-eo", "pid=,args="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0:
+        return []
+
+    local = str(int(local_port))
+    remote = str(remote_port or "6443").strip() or "6443"
+    expected_specs = {
+        f"127.0.0.1:{local}:127.0.0.1:{remote}",
+        f"127.0.0.1:{local}:localhost:{remote}",
+        f"localhost:{local}:127.0.0.1:{remote}",
+        f"localhost:{local}:localhost:{remote}",
+        f"{local}:127.0.0.1:{remote}",
+        f"{local}:localhost:{remote}",
+    }
+    matches = []
+    for line in (proc.stdout or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            pid_text, args = stripped.split(None, 1)
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if pid == os.getpid():
+            continue
+        if "ssh" not in args or "-L" not in args:
+            continue
+        if any(spec in args for spec in expected_specs):
+            matches.append({"pid": pid, "command": args})
+    return matches
+
+
+def _stop_vm_distributed_local_k3s_tunnel(local_port, remote_port):
+    processes = _vm_distributed_local_k3s_tunnel_processes(local_port, remote_port)
+    if not processes:
+        return {
+            "status": "skipped",
+            "reason": "no-managed-k3s-ssh-tunnel-process",
+            "local_port": local_port,
+        }
+
+    stopped = []
+    errors = []
+    for process in processes:
+        pid = process.get("pid")
+        try:
+            os.kill(int(pid), signal.SIGTERM)
+            stopped.append(pid)
+        except (OSError, ValueError) as exc:
+            errors.append(f"{pid}: {exc}")
+
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if not _local_tcp_port_open(local_port):
+            return {
+                "status": "stopped",
+                "local_port": local_port,
+                "pids": stopped,
+                "errors": errors,
+            }
+        time.sleep(0.25)
+
+    return {
+        "status": "failed",
+        "reason": "managed-k3s-ssh-tunnel-still-listening",
+        "local_port": local_port,
+        "pids": stopped,
+        "errors": errors,
+    }
+
+
+def _recreate_vm_distributed_k3s_tunnel(role, kubeconfig_path, config):
+    server = _kubeconfig_server(kubeconfig_path)
+    local_port = _kubeconfig_loopback_port(server)
+    if not local_port:
+        return {"role": role, "status": "skipped", "reason": "non-loopback-kubeconfig", "server": server}
+    if not _vm_distributed_k3s_tunnel_recreate_enabled(config):
+        return {"role": role, "status": "skipped", "reason": "tunnel-recreate-disabled", "server": server}
+
+    remote_port = _vm_distributed_k3s_api_remote_port(config)
+    stop_result = _stop_vm_distributed_local_k3s_tunnel(local_port, remote_port)
+    if stop_result.get("status") == "failed":
+        return {
+            "role": role,
+            "status": "failed",
+            "server": server,
+            "local_port": local_port,
+            "reason": stop_result.get("reason") or "tunnel-stop-failed",
+        }
+    if stop_result.get("status") == "skipped" and _local_tcp_port_open(local_port):
+        return {
+            "role": role,
+            "status": "failed",
+            "server": server,
+            "local_port": local_port,
+            "reason": stop_result.get("reason") or "port-owned-by-unmanaged-process",
+        }
+
+    result = _ensure_vm_distributed_k3s_tunnel(role, kubeconfig_path, config)
+    if stop_result.get("pids"):
+        result = {**result, "recreated_from_pids": list(stop_result.get("pids") or [])}
+    return result
+
+
+def _ensure_vm_distributed_k3s_tunnel(role, kubeconfig_path, config):
+    server = _kubeconfig_server(kubeconfig_path)
+    local_port = _kubeconfig_loopback_port(server)
+    if not local_port:
+        return {"role": role, "status": "skipped", "reason": "non-loopback-kubeconfig", "server": server}
+    if _local_tcp_port_open(local_port):
+        return {"role": role, "status": "ready", "server": server, "local_port": local_port}
+
+    mode = _vm_distributed_config_value(config, "VM_DISTRIBUTED_K3S_TUNNEL_MODE", default="auto").lower()
+    if mode in {"off", "disabled", "manual", "false", "0", "no"}:
+        return {
+            "role": role,
+            "status": "missing",
+            "server": server,
+            "local_port": local_port,
+            "reason": "tunnel-mode-disabled",
+        }
+
+    command = _vm_distributed_k3s_tunnel_command(config, role, local_port)
+    if not command:
+        return {
+            "role": role,
+            "status": "failed",
+            "server": server,
+            "local_port": local_port,
+            "reason": "missing-ssh-config",
+        }
+
+    proc = _run_vm_distributed_background_ssh_command(command, timeout_seconds=20)
+    if proc.returncode not in {None, 0}:
+        return {
+            "role": role,
+            "status": "failed",
+            "server": server,
+            "local_port": local_port,
+            "reason": "ssh-tunnel-failed",
+            "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+            "error": (proc.stderr or proc.stdout or "").strip()[:500],
+        }
+
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        if _local_tcp_port_open(local_port):
+            _close_vm_distributed_background_ssh_process_files(proc)
+            return {
+                "role": role,
+                "status": "started",
+                "server": server,
+                "local_port": local_port,
+                "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+                "pid": getattr(getattr(proc, "process", None), "pid", None),
+            }
+        process = getattr(proc, "process", None)
+        if process and process.poll() is not None:
+            proc = _vm_distributed_background_ssh_process_output(proc)
+            return {
+                "role": role,
+                "status": "failed",
+                "server": server,
+                "local_port": local_port,
+                "reason": "ssh-tunnel-failed",
+                "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+                "error": (proc.stderr or proc.stdout or f"ssh exited with {proc.returncode}").strip()[:500],
+            }
+        time.sleep(0.25)
+
+    _terminate_vm_distributed_background_ssh_process(proc)
+    return {
+        "role": role,
+        "status": "failed",
+        "server": server,
+        "local_port": local_port,
+        "reason": "ssh-tunnel-timeout",
+        "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+    }
+
+
+def _ensure_vm_distributed_k3s_tunnels(kubeconfigs, config):
+    results = []
+    seen = set()
+    for role, path in (kubeconfigs or {}).items():
+        key = (str(path or ""), _kubeconfig_server(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append(_ensure_vm_distributed_k3s_tunnel(role, path, config))
+    return results
+
+
+def _vm_distributed_kubeconfig_check(role, kubeconfig_path, timeout_seconds=8):
+    path = str(kubeconfig_path or "").strip()
+    server = _kubeconfig_server(path) if path else ""
+    result = {
+        "role": role,
+        "path": path,
+        "server": server,
+    }
+    if not path:
+        return {**result, "status": "failed", "detail": "missing kubeconfig path"}
+    if not os.path.exists(path):
+        return {**result, "status": "failed", "detail": "kubeconfig file does not exist"}
+
+    try:
+        proc = subprocess.run(
+            ["kubectl", "--kubeconfig", path, "get", "--raw=/version"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return {**result, "status": "failed", "detail": f"timed out after {timeout_seconds}s"}
+    except OSError as exc:
+        return {**result, "status": "failed", "detail": str(exc)}
+
+    if proc.returncode == 0:
+        return {**result, "status": "ready", "detail": "reachable"}
+
+    detail = (proc.stderr or proc.stdout or f"kubectl exited with {proc.returncode}").strip()
+    return {**result, "status": "failed", "detail": detail}
+
+
+def _vm_distributed_check_role_kubeconfigs(connector_values):
+    checks = []
+    checked_paths = {}
+    for role, path in (connector_values or {}).items():
+        if path in checked_paths:
+            check = {**checked_paths[path], "role": role}
+        else:
+            check = _vm_distributed_kubeconfig_check(role, path)
+            checked_paths[path] = check
+        checks.append(check)
+    return checks
+
+
 def _ensure_vm_distributed_level4_kubeconfig_supported():
+    config = _load_effective_infrastructure_deployer_config(topology="vm-distributed")
     kubeconfigs = _configured_vm_distributed_role_kubeconfigs()
     connector_values = {
         role: path
@@ -7490,15 +9116,83 @@ def _ensure_vm_distributed_level4_kubeconfig_supported():
         if role in {"common", "provider", "consumer"} and path
     }
     unique_values = sorted(set(connector_values.values()))
-    if len(unique_values) <= 1:
-        return
-    details = ", ".join(f"{role}={path}" for role, path in sorted(connector_values.items()))
-    raise RuntimeError(
-        "Level 4 vm-distributed multi-kubeconfig connector deployment is not enabled yet. "
-        "Current connector creation still bootstraps shared services and Helm deployment in one "
-        f"Kubernetes context. Configure a single logical cluster kubeconfig for common/provider/consumer "
-        f"or run connectors in a topology where those roles share one API server. Detected: {details}"
-    )
+    tunnel_results = _ensure_vm_distributed_k3s_tunnels(connector_values, config)
+    tunnel_failures = [
+        item
+        for item in tunnel_results
+        if item.get("status") in {"failed", "missing"}
+    ]
+    if tunnel_failures:
+        details = []
+        for item in tunnel_failures:
+            role = item.get("role") or "unknown"
+            server = item.get("server") or "(server not found)"
+            reason = item.get("reason") or item.get("error") or "tunnel unavailable"
+            command = item.get("command")
+            suffix = f" Command: {command}" if command else ""
+            details.append(f"{role}: {server}: {reason}.{suffix}")
+        raise RuntimeError(
+            "Level 4 cannot continue because required vm-distributed Kubernetes API tunnels are not available. "
+            "The framework tried to prepare them before touching connector state. "
+            + " ".join(details)
+        )
+
+    checks = _vm_distributed_check_role_kubeconfigs(connector_values)
+
+    failed = [check for check in checks if check.get("status") != "ready"]
+    if failed and _vm_distributed_k3s_tunnel_recreate_enabled(config):
+        recreated = []
+        seen_recreate = set()
+        path_by_role = {role: path for role, path in connector_values.items()}
+        for check in failed:
+            role = check.get("role")
+            path = path_by_role.get(role)
+            server = check.get("server") or _kubeconfig_server(path)
+            if not path or not _kubeconfig_loopback_port(server):
+                continue
+            recreate_key = (path, server)
+            if recreate_key in seen_recreate:
+                continue
+            seen_recreate.add(recreate_key)
+            recreated.append(_recreate_vm_distributed_k3s_tunnel(role, path, config))
+        if recreated:
+            tunnel_results.extend(recreated)
+            checks = _vm_distributed_check_role_kubeconfigs(connector_values)
+            failed = [check for check in checks if check.get("status") != "ready"]
+
+    if failed:
+        tunnel_recreate_failures = [
+            item
+            for item in tunnel_results
+            if item.get("status") == "failed" and item.get("reason")
+        ]
+        details = []
+        for check in failed:
+            role = check.get("role") or "unknown"
+            path = check.get("path") or "(empty)"
+            server = check.get("server") or "(server not found)"
+            detail = check.get("detail") or "unreachable"
+            hint = ""
+            if "127.0.0.1" in server or "localhost" in server:
+                hint = " The kubeconfig points to a local tunnel; the framework tried to create or recreate it when safe."
+            details.append(f"{role}: {path} -> {server}: {detail}.{hint}")
+        for item in tunnel_recreate_failures:
+            details.append(
+                f"{item.get('role') or 'unknown'} tunnel recreate: "
+                f"{item.get('server') or '(server not found)'}: {item.get('reason')}"
+            )
+        raise RuntimeError(
+            "Level 4 cannot continue because one or more vm-distributed Kubernetes contexts are not reachable. "
+            "This check runs before changing connector credentials or deploying Helm releases. "
+            + " ".join(details)
+        )
+
+    return {
+        "mode": "multi-kubeconfig" if len(unique_values) > 1 else "single-kubeconfig",
+        "kubeconfigs": connector_values,
+        "checks": checks,
+        "tunnels": tunnel_results,
+    }
 
 
 def _context_components(context):
@@ -7849,16 +9543,38 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "K3S_INGRESS_SERVICE_TYPE",
     "K3S_REPAIR_ON_LEVEL1",
     "K3S_WRITE_KUBECONFIG_MODE",
+    "KEYCLOAK_FRONTEND_URL",
+    "KEYCLOAK_PUBLIC_URL",
+    "MINIO_API_PUBLIC_URL",
+    "MINIO_CONSOLE_PUBLIC_URL",
+    "MINIO_PUBLIC_URL",
+    "COMPONENTS_PUBLIC_BASE_URL",
+    "COMPONENTS_PUBLIC_PATH_REWRITE",
+    "ONTOLOGY_HUB_PUBLIC_URL",
+    "AI_MODEL_HUB_PUBLIC_URL",
+    "SEMANTIC_VIRTUALIZATION_PUBLIC_URL",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL",
     "TOPOLOGY_ROUTING_MODE",
     "VM_PROVIDER_CONNECTORS",
     "VM_CONSUMER_CONNECTORS",
     "SSH_BASTION_HOST",
     "SSH_BASTION_PORT",
     "SSH_BASTION_USER",
+    "SSH_BASTION_IDENTITY_FILE",
+    "SSH_IDENTITY_FILE",
     "SSH_ACCESS_MODE",
     "SSH_CONNECT_TIMEOUT_SECONDS",
+    "VM_DISTRIBUTED_SSH_IDENTITY_FILE",
+    "VM_DISTRIBUTED_EXECUTION_HOST",
+    "VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE",
+    "VM_DISTRIBUTED_SSH_KEY_COMMENT",
+    "VM_DISTRIBUTED_SSH_MANAGED_MARKER",
+    "VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY",
     "VM_DISTRIBUTED_DEPLOYMENT_MODE",
     "VM_DISTRIBUTED_PREFLIGHT_DRY_RUN",
+    "VM_DISTRIBUTED_K3S_TUNNEL_MODE",
+    "VM_DISTRIBUTED_K3S_API_REMOTE_PORT",
+    "VM_DISTRIBUTED_K3S_TUNNEL_RECREATE",
     "VM_REMOTE_WORKDIR",
     "VM_COMMON_REMOTE_WORKDIR",
     "VM_PROVIDER_REMOTE_WORKDIR",
@@ -7872,12 +9588,19 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "VM_COMMON_SSH_HOST",
     "VM_COMMON_SSH_PORT",
     "VM_COMMON_SSH_USER",
+    "VM_COMMON_SSH_IDENTITY_FILE",
+    "VM_COMPONENTS_SSH_HOST",
+    "VM_COMPONENTS_SSH_PORT",
+    "VM_COMPONENTS_SSH_USER",
+    "VM_COMPONENTS_SSH_IDENTITY_FILE",
     "VM_PROVIDER_SSH_HOST",
     "VM_PROVIDER_SSH_PORT",
     "VM_PROVIDER_SSH_USER",
+    "VM_PROVIDER_SSH_IDENTITY_FILE",
     "VM_CONSUMER_SSH_HOST",
     "VM_CONSUMER_SSH_PORT",
     "VM_CONSUMER_SSH_USER",
+    "VM_CONSUMER_SSH_IDENTITY_FILE",
 )
 
 VM_DISTRIBUTED_INFRA_KEYS = (
@@ -7961,9 +9684,9 @@ def _vm_distributed_discovery_commands(topic):
             "ssh <user>@<vm-ip-or-dns> sudo -n true",
         ],
         "connectors": [
-            "Use short connector names, for example: citycouncil,company,partnera",
-            "Map locations with connector:group, for example: citycouncil:provider,partnera:provider",
-            "Map validation pairs with source>target, for example: citycouncil>company,partnera>citycouncil",
+            "Use short connector names, for example: org2,org3,partnera",
+            "Map locations with connector:group, for example: org2:provider,partnera:provider",
+            "Map validation pairs with source>target, for example: org2>org3,partnera>org2",
         ],
         "ssh": [
             "ssh -J <bastion-user>@<bastion-host>:<port> <vm-user>@<vm-host>",
@@ -8102,29 +9825,29 @@ def _vm_distributed_discovery_details(topic):
         "common-kubeconfig": {
             "purpose": [
                 "Kubeconfig used by the framework to operate common services and the dataspace control plane.",
-                "In the currently supported vm-distributed execution, Level 4 must share this kubeconfig with connectors.",
+                "Level 4 keeps common bootstrap work on this context even when connector roles use separate kubeconfigs.",
             ],
             "choice": [
-                "Use a kubeconfig that can run kubectl and Helm against the target k3s cluster.",
+                "Use a kubeconfig that can run kubectl and Helm against the common-services k3s cluster.",
                 "For a single logical k3s cluster, /etc/rancher/k3s/k3s.yaml is usually the source file.",
             ],
         },
         "provider-kubeconfig": {
             "purpose": [
-                "Future-ready kubeconfig slot for provider-side connector execution.",
-                "Today it is validated, but Level 4 safely blocks multi-kubeconfig connector deployment.",
+                "Kubeconfig used by Level 4 for provider-side connector Helm and kubectl operations.",
+                "It may equal the common kubeconfig in a single logical cluster, or point to the provider cluster in a multi-cluster setup.",
             ],
             "choice": [
-                "For the supported single logical cluster path, reuse the common services kubeconfig.",
+                "Use the provider cluster kubeconfig when the provider connector runs on its own k3s server.",
             ],
         },
         "consumer-kubeconfig": {
             "purpose": [
-                "Future-ready kubeconfig slot for consumer-side connector execution.",
-                "Today it is validated, but Level 4 safely blocks multi-kubeconfig connector deployment.",
+                "Kubeconfig used by Level 4 for consumer-side connector Helm and kubectl operations.",
+                "It may equal the common/provider kubeconfig in a single logical cluster, or point to the consumer cluster in a multi-cluster setup.",
             ],
             "choice": [
-                "For the supported single logical cluster path, reuse the provider/common kubeconfig.",
+                "Use the consumer cluster kubeconfig when the consumer connector runs on its own k3s server.",
             ],
         },
         "components-kubeconfig": {
@@ -8171,7 +9894,7 @@ def _vm_distributed_discovery_details(topic):
             ],
             "choice": [
                 "Use source>target, separated by commas for multiple flows.",
-                "Example: citycouncil>company,partnera>citycouncil.",
+                "Example: org2>org3,partnera>org2.",
             ],
         },
         "reconciliation": {
@@ -8456,6 +10179,51 @@ def _vm_distributed_connect_timeout_seconds(topology_config):
     return min(max(timeout, 1), 60)
 
 
+def _vm_distributed_identity_file(topology_config, role_key=None):
+    role = str(role_key or "").strip().upper().replace("-", "_")
+    role_identity_key = f"VM_{role}_SSH_IDENTITY_FILE" if role else ""
+    return _vm_distributed_config_value(
+        topology_config,
+        role_identity_key,
+        "VM_DISTRIBUTED_SSH_IDENTITY_FILE",
+        "SSH_IDENTITY_FILE",
+    )
+
+
+def _normalized_vm_distributed_execution_host(topology_config):
+    raw_value = _vm_distributed_config_value(
+        topology_config,
+        "VM_DISTRIBUTED_EXECUTION_HOST",
+        default="external",
+    ).lower().replace("_", "-")
+    aliases = {
+        "local": "external",
+        "operator": "external",
+        "orchestrator": "external",
+        "common": "common-services",
+        "common-vm": "common-services",
+        "common-services-vm": "common-services",
+    }
+    return aliases.get(raw_value, raw_value)
+
+
+def _normalized_vm_distributed_ssh_bootstrap_mode(topology_config):
+    raw_value = _vm_distributed_config_value(
+        topology_config,
+        "VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE",
+        default="manual",
+    ).lower().replace("_", "-")
+    aliases = {
+        "disabled": "manual",
+        "off": "manual",
+        "dry-run": "plan",
+        "preview": "plan",
+        "setup": "auto",
+        "reconcile": "auto",
+    }
+    return aliases.get(raw_value, raw_value)
+
+
 def _vm_distributed_ssh_target(user, host):
     normalized_host = str(host or "").strip()
     normalized_user = str(user or "").strip()
@@ -8474,25 +10242,48 @@ def _vm_distributed_build_ssh_command(plan, vm, remote_command=None):
     if not host:
         return []
 
-    timeout = int((plan or {}).get("ssh", {}).get("connect_timeout_seconds") or 5)
+    access = dict((plan or {}).get("ssh") or {})
+    timeout = int(access.get("connect_timeout_seconds") or 5)
+    known_hosts_strategy = str(access.get("known_hosts_strategy") or "accept-new").strip() or "accept-new"
     command = [
         "ssh",
         "-o",
         "BatchMode=yes",
         "-o",
         f"ConnectTimeout={timeout}",
+        "-o",
+        f"StrictHostKeyChecking={known_hosts_strategy}",
         "-p",
         str(ssh.get("port") or "22").strip() or "22",
     ]
 
-    access = dict((plan or {}).get("ssh") or {})
+    identity_file = str(ssh.get("identity_file") or "").strip()
+    if identity_file:
+        command.extend(["-i", identity_file])
+
     bastion = dict(access.get("bastion") or {})
     if access.get("mode") == "bastion" and bastion.get("host"):
         bastion_target = _vm_distributed_ssh_target(bastion.get("user"), bastion.get("host"))
         bastion_port = str(bastion.get("port") or "").strip()
-        if bastion_port:
-            bastion_target = f"{bastion_target}:{bastion_port}"
-        command.extend(["-J", bastion_target])
+        bastion_identity_file = str(bastion.get("identity_file") or "").strip()
+        if bastion_identity_file:
+            proxy_command = [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                f"ConnectTimeout={timeout}",
+                "-o",
+                f"StrictHostKeyChecking={known_hosts_strategy}",
+            ]
+            if bastion_port:
+                proxy_command.extend(["-p", bastion_port])
+            proxy_command.extend(["-i", bastion_identity_file, "-W", "%h:%p", bastion_target])
+            command.extend(["-o", f"ProxyCommand={_vm_distributed_format_command(proxy_command)}"])
+        else:
+            if bastion_port:
+                bastion_target = f"{bastion_target}:{bastion_port}"
+            command.extend(["-J", bastion_target])
 
     command.append(_vm_distributed_ssh_target(ssh.get("user"), host))
     if remote_command:
@@ -8572,11 +10363,564 @@ def _vm_distributed_connector_plan(adapter_config):
     ]
 
 
+def _build_vm_distributed_ssh_bootstrap_plan(infrastructure_config, topology_config, adapter_config):
+    topology = dict(topology_config or {})
+    adapter = dict(adapter_config or {})
+    execution_host = _normalized_vm_distributed_execution_host(topology)
+    bootstrap_mode = _normalized_vm_distributed_ssh_bootstrap_mode(topology)
+    identity_file = _vm_distributed_identity_file(topology)
+    key_comment = _vm_distributed_config_value(
+        topology,
+        "VM_DISTRIBUTED_SSH_KEY_COMMENT",
+        default="validation-environment-vm-distributed",
+    )
+    marker = _vm_distributed_config_value(
+        topology,
+        "VM_DISTRIBUTED_SSH_MANAGED_MARKER",
+        default="validation-environment-vm-distributed",
+    )
+    remote_workdir = _vm_distributed_config_value(
+        topology,
+        "VM_COMMON_REMOTE_WORKDIR",
+        "VM_REMOTE_WORKDIR",
+    )
+
+    target_roles = []
+    for spec in _vm_distributed_role_plan_specs(topology):
+        role_key = spec["role_key"]
+        address = _vm_distributed_config_value(
+            topology,
+            spec["address_key"],
+            spec["fallback_address_key"],
+            "VM_EXTERNAL_IP",
+        )
+        ssh_host = _vm_distributed_config_value(topology, spec["ssh_host_key"], default=address)
+        ssh_user = _vm_distributed_config_value(topology, spec["ssh_user_key"], "VM_SSH_USER")
+        target_roles.append(
+            {
+                "role": spec["role"],
+                "role_key": role_key,
+                "host": ssh_host,
+                "user": ssh_user,
+                "port": _vm_distributed_config_value(topology, spec["ssh_port_key"], default="22") or "22",
+                "identity_file": _vm_distributed_identity_file(topology, role_key) or identity_file,
+                "needs_public_key": bool(ssh_host and ssh_user),
+            }
+        )
+
+    actions = [
+        {
+            "name": "ensure_dedicated_keypair",
+            "status": "planned" if identity_file else "needs-configuration",
+            "idempotent_check": "create the key only when the private or public key is missing",
+        },
+        {
+            "name": "install_public_key_on_target_vms",
+            "status": "planned" if identity_file and any(item["needs_public_key"] for item in target_roles) else "needs-configuration",
+            "idempotent_check": "append the public key only when the managed marker is absent",
+        },
+        {
+            "name": "verify_batchmode_ssh",
+            "status": "planned",
+            "idempotent_check": "run ssh -o BatchMode=yes against each configured VM",
+        },
+    ]
+    if execution_host == "common-services":
+        actions.append(
+            {
+                "name": "prepare_common_services_execution_host",
+                "status": "planned" if remote_workdir else "needs-configuration",
+                "idempotent_check": "reuse or synchronize the framework workspace before running levels",
+            }
+        )
+
+    warnings = []
+    if bootstrap_mode not in {"manual", "plan", "auto"}:
+        warnings.append("VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE should be manual, plan or auto.")
+    if execution_host not in {"external", "common-services"}:
+        warnings.append("VM_DISTRIBUTED_EXECUTION_HOST should be external or common-services.")
+    if bootstrap_mode in {"plan", "auto"} and not identity_file:
+        warnings.append("A dedicated SSH identity file is required for automated SSH bootstrap.")
+    if execution_host == "common-services" and not remote_workdir:
+        warnings.append("VM_COMMON_REMOTE_WORKDIR or VM_REMOTE_WORKDIR is required when executing from common-services.")
+
+    return {
+        "status": "ready" if not warnings else "needs-review",
+        "mode": bootstrap_mode,
+        "execution_host": execution_host,
+        "identity_file": identity_file,
+        "key_comment": key_comment,
+        "managed_marker": marker,
+        "remote_workdir": remote_workdir,
+        "dataspace": str(adapter.get("DS_1_NAME") or "").strip(),
+        "targets": target_roles,
+        "actions": actions,
+        "warnings": warnings,
+        "security": [
+            "private keys are never written to versioned files",
+            "only public keys are installed on target VMs",
+            "BatchMode=yes is used for verification",
+            "managed authorized_keys entries must carry a marker for idempotent updates",
+        ],
+    }
+
+
+def _vm_distributed_public_key_path(identity_file):
+    value = str(identity_file or "").strip()
+    return f"{value}.pub" if value else ""
+
+
+def _vm_distributed_manual_command(name, command, note=""):
+    item = {
+        "name": name,
+        "command": command,
+    }
+    if note:
+        item["note"] = note
+    return item
+
+
+def _vm_distributed_manual_ssh_bootstrap_commands(plan):
+    vm_plan = dict(plan or {})
+    ssh_bootstrap = dict(vm_plan.get("ssh_bootstrap") or {})
+    identity_file = str(ssh_bootstrap.get("identity_file") or "").strip()
+    if not identity_file:
+        return []
+
+    public_key_file = _vm_distributed_public_key_path(identity_file)
+    key_comment = str(ssh_bootstrap.get("key_comment") or "validation-environment-vm-distributed").strip()
+    access = dict(vm_plan.get("ssh") or {})
+    bastion = dict(access.get("bastion") or {})
+    bastion_host = str(bastion.get("host") or "").strip()
+    bastion_port = str(bastion.get("port") or "").strip()
+    bastion_user = str(bastion.get("user") or "").strip()
+    bastion_target = _vm_distributed_ssh_target(bastion_user, bastion_host)
+    if bastion_target and bastion_port:
+        bastion_target_with_port = f"{bastion_target}:{bastion_port}"
+    else:
+        bastion_target_with_port = bastion_target
+
+    commands = []
+    if bastion_host:
+        commands.append(
+            _vm_distributed_manual_command(
+                "check_bastion_dns",
+                _vm_distributed_format_command(["getent", "hosts", bastion_host]),
+            )
+        )
+        if bastion_port:
+            commands.append(
+                _vm_distributed_manual_command(
+                    "check_bastion_port",
+                    _vm_distributed_format_command(["nc", "-vz", bastion_host, bastion_port]),
+                )
+            )
+
+    keygen = _vm_distributed_format_command(
+        [
+            "ssh-keygen",
+            "-t",
+            "ed25519",
+            "-f",
+            identity_file,
+            "-C",
+            key_comment,
+            "-N",
+            "",
+        ]
+    )
+    commands.append(
+        _vm_distributed_manual_command(
+            "create_dedicated_key_if_missing",
+            f"test -f {shlex.quote(identity_file)} || {keygen}",
+            "Does not overwrite an existing key.",
+        )
+    )
+    commands.extend(
+        [
+            _vm_distributed_manual_command("secure_ssh_directory", "chmod 700 ~/.ssh"),
+            _vm_distributed_manual_command(
+                "secure_private_key",
+                _vm_distributed_format_command(["chmod", "600", identity_file]),
+            ),
+            _vm_distributed_manual_command(
+                "secure_public_key",
+                _vm_distributed_format_command(["chmod", "644", public_key_file]),
+            ),
+            _vm_distributed_manual_command(
+                "optional_ssh_agent",
+                _vm_distributed_format_command(["ssh-add", identity_file]),
+                "Only needed when the key has a passphrase or the environment uses ssh-agent.",
+            ),
+        ]
+    )
+
+    if bastion_target:
+        copy_id = ["ssh-copy-id", "-i", public_key_file]
+        if bastion_port:
+            copy_id.extend(["-p", bastion_port])
+        copy_id.append(bastion_target)
+        commands.append(
+            _vm_distributed_manual_command(
+                "install_public_key_on_bastion",
+                _vm_distributed_format_command(copy_id),
+                "May ask for the approved SSH user password; the framework does not store it.",
+            )
+        )
+
+    for target in list(ssh_bootstrap.get("targets") or []):
+        target_host = str(target.get("host") or "").strip()
+        target_user = str(target.get("user") or "").strip()
+        if not target_host or not target_user:
+            continue
+        copy_id = ["ssh-copy-id", "-i", public_key_file]
+        if access.get("mode") == "bastion" and bastion_target_with_port:
+            copy_id.extend(["-o", f"ProxyJump={bastion_target_with_port}"])
+        copy_id.append(_vm_distributed_ssh_target(target_user, target_host))
+        commands.append(
+            _vm_distributed_manual_command(
+                f"install_public_key_on_{target.get('role_key') or target.get('role')}",
+                _vm_distributed_format_command(copy_id),
+                "May ask for the target VM password; the operation is idempotent.",
+            )
+        )
+
+    if bastion_target:
+        verify_bastion = ["ssh", "-o", "BatchMode=yes", "-i", identity_file]
+        if bastion_port:
+            verify_bastion.extend(["-p", bastion_port])
+        verify_bastion.extend([bastion_target, "hostname"])
+        commands.append(
+            _vm_distributed_manual_command(
+                "verify_bastion_batchmode",
+                _vm_distributed_format_command(verify_bastion),
+            )
+        )
+
+    for target in list(ssh_bootstrap.get("targets") or []):
+        target_vm = _vm_distributed_target_vm_from_bootstrap_target(vm_plan, target)
+        command = _vm_distributed_build_ssh_command(vm_plan, target_vm, remote_command="hostname")
+        if command:
+            commands.append(
+                _vm_distributed_manual_command(
+                    f"verify_{target.get('role_key') or target.get('role')}_batchmode",
+                    _vm_distributed_format_command(command),
+                )
+            )
+    return commands
+
+
+def _vm_distributed_ensure_ssh_keypair(ssh_bootstrap, command_runner=None):
+    bootstrap = dict(ssh_bootstrap or {})
+    identity_file = str(bootstrap.get("identity_file") or "").strip()
+    if not identity_file:
+        return {
+            "status": "failed",
+            "reason": "missing-identity-file",
+            "message": "SSH_IDENTITY_FILE or VM_DISTRIBUTED_SSH_IDENTITY_FILE is required.",
+        }
+
+    private_key = os.path.abspath(os.path.expanduser(identity_file))
+    public_key = _vm_distributed_public_key_path(private_key)
+    key_comment = str(bootstrap.get("key_comment") or "validation-environment-vm-distributed").strip()
+    runner = command_runner or _vm_distributed_default_command_runner
+
+    if os.path.isfile(private_key) and os.path.isfile(public_key):
+        try:
+            os.chmod(private_key, 0o600)
+        except OSError:
+            pass
+        return {
+            "status": "present",
+            "identity_file": private_key,
+            "public_key_file": public_key,
+            "changed": False,
+        }
+
+    if os.path.isfile(public_key) and not os.path.isfile(private_key):
+        return {
+            "status": "failed",
+            "reason": "public-key-without-private-key",
+            "identity_file": private_key,
+            "public_key_file": public_key,
+        }
+
+    os.makedirs(os.path.dirname(private_key) or ".", mode=0o700, exist_ok=True)
+    if not os.path.isfile(private_key):
+        command = [
+            "ssh-keygen",
+            "-t",
+            "ed25519",
+            "-f",
+            private_key,
+            "-C",
+            key_comment,
+            "-N",
+            "",
+        ]
+        completed = runner(command, timeout=30)
+        if int(getattr(completed, "returncode", 1) or 0) != 0:
+            return {
+                "status": "failed",
+                "reason": "ssh-keygen-failed",
+                "identity_file": private_key,
+                "command": _vm_distributed_format_command(command[:-2] + ["-N", "***"]),
+                "error": str(getattr(completed, "stderr", "") or "").strip()[:500],
+            }
+        try:
+            os.chmod(private_key, 0o600)
+        except OSError:
+            pass
+        return {
+            "status": "created",
+            "identity_file": private_key,
+            "public_key_file": public_key,
+            "changed": True,
+        }
+
+    command = ["ssh-keygen", "-y", "-f", private_key]
+    completed = runner(command, timeout=30)
+    if int(getattr(completed, "returncode", 1) or 0) != 0:
+        return {
+            "status": "failed",
+            "reason": "public-key-derivation-failed",
+            "identity_file": private_key,
+            "error": str(getattr(completed, "stderr", "") or "").strip()[:500],
+        }
+    public_value = str(getattr(completed, "stdout", "") or "").strip()
+    if not public_value:
+        return {
+            "status": "failed",
+            "reason": "empty-derived-public-key",
+            "identity_file": private_key,
+        }
+    with open(public_key, "w", encoding="utf-8") as handle:
+        handle.write(f"{public_value}\n")
+    try:
+        os.chmod(private_key, 0o600)
+        os.chmod(public_key, 0o644)
+    except OSError:
+        pass
+    return {
+        "status": "derived-public-key",
+        "identity_file": private_key,
+        "public_key_file": public_key,
+        "changed": True,
+    }
+
+
+def _vm_distributed_read_public_key(public_key_file):
+    path = str(public_key_file or "").strip()
+    if not path or not os.path.isfile(path):
+        return ""
+    with open(path, encoding="utf-8") as handle:
+        return handle.read().strip()
+
+
+def _vm_distributed_authorized_keys_script(public_key, marker):
+    safe_public_key = shlex.quote(str(public_key or "").strip())
+    safe_marker = shlex.quote(str(marker or "validation-environment-vm-distributed").strip())
+    return "\n".join(
+        [
+            "set -eu",
+            "mkdir -p \"$HOME/.ssh\"",
+            "chmod 700 \"$HOME/.ssh\"",
+            "touch \"$HOME/.ssh/authorized_keys\"",
+            "chmod 600 \"$HOME/.ssh/authorized_keys\"",
+            f"public_key={safe_public_key}",
+            f"marker={safe_marker}",
+            "if grep -F -- \"$public_key\" \"$HOME/.ssh/authorized_keys\" >/dev/null 2>&1; then",
+            "  status=present",
+            "else",
+            "  printf '%s # %s\\n' \"$public_key\" \"$marker\" >> \"$HOME/.ssh/authorized_keys\"",
+            "  status=installed",
+            "fi",
+            "printf 'authorized_keys=%s\\n' \"$status\"",
+        ]
+    )
+
+
+def _vm_distributed_target_vm_from_bootstrap_target(plan, target):
+    item = dict(target or {})
+    return {
+        "role": item.get("role"),
+        "ssh": {
+            "configured": bool(item.get("host")),
+            "host": item.get("host"),
+            "port": item.get("port") or "22",
+            "user": item.get("user"),
+            "identity_file": item.get("identity_file"),
+        },
+    }
+
+
+def _vm_distributed_sync_authorized_key(plan, target, public_key, marker, command_runner=None):
+    runner = command_runner or _vm_distributed_default_command_runner
+    target_vm = _vm_distributed_target_vm_from_bootstrap_target(plan, target)
+    command = _vm_distributed_build_ssh_command(
+        plan,
+        target_vm,
+        remote_command=_vm_distributed_authorized_keys_script(public_key, marker),
+    )
+    if not command:
+        return {
+            "role": target.get("role"),
+            "status": "skipped",
+            "reason": "missing-ssh-target",
+        }
+
+    completed = runner(command, timeout=int((plan.get("ssh") or {}).get("connect_timeout_seconds") or 5) + 20)
+    returncode = int(getattr(completed, "returncode", 1) or 0)
+    facts = _vm_distributed_parse_key_value_output(getattr(completed, "stdout", "") or "")
+    status_value = facts.get("authorized_keys")
+    if returncode == 0 and status_value in {"present", "installed"}:
+        return {
+            "role": target.get("role"),
+            "host": target.get("host"),
+            "status": "synced",
+            "state": status_value,
+            "changed": status_value == "installed",
+            "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+        }
+    return {
+        "role": target.get("role"),
+        "host": target.get("host"),
+        "status": "failed",
+        "reason": "authorized-keys-sync-failed",
+        "returncode": returncode,
+        "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+        "error": str(getattr(completed, "stderr", "") or "").strip()[:500],
+        "next_step": "Install the dedicated public key once with an approved access path, then rerun ssh-access reconcile.",
+    }
+
+
+def _vm_distributed_verify_ssh_target(plan, target, command_runner=None):
+    runner = command_runner or _vm_distributed_default_command_runner
+    target_vm = _vm_distributed_target_vm_from_bootstrap_target(plan, target)
+    command = _vm_distributed_build_ssh_command(
+        plan,
+        target_vm,
+        remote_command="printf 'ssh_ready=1\\n'",
+    )
+    if not command:
+        return {
+            "role": target.get("role"),
+            "status": "skipped",
+            "reason": "missing-ssh-target",
+        }
+
+    completed = runner(command, timeout=int((plan.get("ssh") or {}).get("connect_timeout_seconds") or 5) + 20)
+    returncode = int(getattr(completed, "returncode", 1) or 0)
+    facts = _vm_distributed_parse_key_value_output(getattr(completed, "stdout", "") or "")
+    if returncode == 0 and facts.get("ssh_ready") == "1":
+        return {
+            "role": target.get("role"),
+            "host": target.get("host"),
+            "status": "passed",
+            "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+        }
+    return {
+        "role": target.get("role"),
+        "host": target.get("host"),
+        "status": "failed",
+        "reason": "batchmode-ssh-failed",
+        "returncode": returncode,
+        "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+        "error": str(getattr(completed, "stderr", "") or "").strip()[:500],
+    }
+
+
+def _reconcile_vm_distributed_ssh_access(plan, command_runner=None):
+    vm_plan = dict(plan or {})
+    ssh_bootstrap = dict(vm_plan.get("ssh_bootstrap") or {})
+    manual_bootstrap_commands = _vm_distributed_manual_ssh_bootstrap_commands(vm_plan)
+    execution_location = _vm_distributed_ssh_access_execution_location(vm_plan)
+    if ssh_bootstrap.get("status") == "needs-review":
+        return {
+            "status": "needs-review",
+            "message": "SSH bootstrap plan needs review before reconciliation.",
+            "execution_host": vm_plan.get("execution_host"),
+            "ssh_bootstrap": ssh_bootstrap,
+            "execution_location": execution_location,
+            "manual_bootstrap_commands": manual_bootstrap_commands,
+        }
+
+    keypair = _vm_distributed_ensure_ssh_keypair(ssh_bootstrap, command_runner=command_runner)
+    if keypair.get("status") == "failed":
+        return {
+            "status": "failed",
+            "message": "Dedicated SSH keypair could not be prepared.",
+            "execution_host": vm_plan.get("execution_host"),
+            "keypair": keypair,
+            "ssh_bootstrap": ssh_bootstrap,
+            "execution_location": execution_location,
+            "manual_bootstrap_commands": manual_bootstrap_commands,
+        }
+
+    public_key = _vm_distributed_read_public_key(keypair.get("public_key_file"))
+    if not public_key:
+        return {
+            "status": "failed",
+            "message": "Dedicated SSH public key could not be read.",
+            "execution_host": vm_plan.get("execution_host"),
+            "keypair": keypair,
+            "ssh_bootstrap": ssh_bootstrap,
+            "execution_location": execution_location,
+            "manual_bootstrap_commands": manual_bootstrap_commands,
+        }
+
+    marker = str(ssh_bootstrap.get("managed_marker") or "validation-environment-vm-distributed").strip()
+    targets = [item for item in list(ssh_bootstrap.get("targets") or []) if item.get("needs_public_key")]
+    install_results = [
+        _vm_distributed_sync_authorized_key(vm_plan, target, public_key, marker, command_runner=command_runner)
+        for target in targets
+    ]
+    if any(item.get("status") == "failed" for item in install_results):
+        return {
+            "status": "failed",
+            "message": "Dedicated SSH public key could not be installed on every target VM.",
+            "execution_host": vm_plan.get("execution_host"),
+            "keypair": keypair,
+            "authorized_keys": install_results,
+            "ssh_bootstrap": ssh_bootstrap,
+            "execution_location": execution_location,
+            "manual_bootstrap_commands": manual_bootstrap_commands,
+        }
+
+    verify_results = [
+        _vm_distributed_verify_ssh_target(vm_plan, target, command_runner=command_runner)
+        for target in targets
+    ]
+    failed_verifications = [item for item in verify_results if item.get("status") == "failed"]
+    if failed_verifications:
+        status = "failed"
+        message = "BatchMode SSH verification failed for one or more target VMs."
+    elif targets:
+        status = "synced"
+        message = "Dedicated SSH access is reconciled and verified."
+    else:
+        status = "needs-review"
+        message = "No SSH targets were configured for reconciliation."
+
+    return {
+        "status": status,
+        "message": message,
+        "execution_host": vm_plan.get("execution_host"),
+        "keypair": keypair,
+        "authorized_keys": install_results,
+        "verification": verify_results,
+        "ssh_bootstrap": ssh_bootstrap,
+        "execution_location": execution_location,
+        "manual_bootstrap_commands": manual_bootstrap_commands,
+    }
+
+
 def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, adapter_config):
     infra = dict(infrastructure_config or {})
     topology = dict(topology_config or {})
     adapter = dict(adapter_config or {})
     preflight = _vm_distributed_configuration_preflight(infra, topology, adapter)
+    ssh_bootstrap = _build_vm_distributed_ssh_bootstrap_plan(infra, topology, adapter)
     mode = str(topology.get("SSH_ACCESS_MODE") or "").strip().lower().replace("_", "-")
     if mode not in {"direct", "bastion"}:
         mode = ""
@@ -8584,10 +10928,17 @@ def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, 
     access = {
         "mode": mode or "not-configured",
         "connect_timeout_seconds": timeout,
+        "identity_file": _vm_distributed_identity_file(topology),
+        "known_hosts_strategy": _vm_distributed_config_value(
+            topology,
+            "VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY",
+            default="accept-new",
+        ),
         "bastion": {
             "host": str(topology.get("SSH_BASTION_HOST") or "").strip(),
             "port": str(topology.get("SSH_BASTION_PORT") or "2222").strip() or "2222",
             "user": str(topology.get("SSH_BASTION_USER") or "").strip(),
+            "identity_file": str(topology.get("SSH_BASTION_IDENTITY_FILE") or "").strip(),
         },
     }
 
@@ -8602,6 +10953,7 @@ def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, 
         ssh_host = _vm_distributed_config_value(topology, spec["ssh_host_key"], default=address)
         ssh_port = _vm_distributed_config_value(topology, spec["ssh_port_key"], default="22") or "22"
         ssh_user = _vm_distributed_config_value(topology, spec["ssh_user_key"])
+        ssh_identity_file = _vm_distributed_identity_file(topology, spec["role_key"])
         public_url = _vm_distributed_config_value(topology, spec["public_url_key"])
         http_url = _vm_distributed_config_value(topology, spec["http_url_key"], default=f"http://{address}" if address else "")
         remote_workdir = _vm_distributed_config_value(
@@ -8622,6 +10974,7 @@ def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, 
                 "host": ssh_host,
                 "port": ssh_port,
                 "user": ssh_user,
+                "identity_file": ssh_identity_file,
                 "configured": bool(mode and ssh_host),
             },
         }
@@ -8639,6 +10992,7 @@ def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, 
     return {
         "status": preflight.get("status") or "unknown",
         "topology": "vm-distributed",
+        "execution_host": ssh_bootstrap["execution_host"],
         "deployment_mode": _vm_distributed_config_value(topology, "VM_DISTRIBUTED_DEPLOYMENT_MODE", default="orchestrator"),
         "dry_run_default": _vm_distributed_config_value(topology, "VM_DISTRIBUTED_PREFLIGHT_DRY_RUN", default="true"),
         "domain_base": str(infra.get("DOMAIN_BASE") or "").strip(),
@@ -8646,6 +11000,7 @@ def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, 
         "dataspace": str(adapter.get("DS_1_NAME") or "").strip(),
         "ssh": access,
         "vms": vms,
+        "ssh_bootstrap": ssh_bootstrap,
         "connectors": _vm_distributed_connector_plan(adapter),
         "validation_pairs": validation_pairs,
         "configuration_preflight": preflight,
@@ -8920,11 +11275,6 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
         if str(topology.get(key) or "").strip()
     ]
     multi_kubeconfig = len(set(role_kubeconfigs)) > 1
-    if multi_kubeconfig:
-        warnings.append(
-            "Level 4 currently requires common/provider/consumer to share one kubeconfig; "
-            "multi-kubeconfig connector deployment is blocked safely."
-        )
     common_address = str(topology.get("VM_COMMON_IP") or "").strip()
     provider_address = str(topology.get("VM_PROVIDER_IP") or "").strip()
     consumer_address = str(topology.get("VM_CONSUMER_IP") or "").strip()
@@ -8939,6 +11289,8 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
 
     ssh_preflight = _vm_distributed_ssh_access_preflight(topology)
     warnings.extend(ssh_preflight.get("warnings") or [])
+    ssh_bootstrap = _build_vm_distributed_ssh_bootstrap_plan(infra, topology, adapter)
+    warnings.extend(ssh_bootstrap.get("warnings") or [])
 
     deployment_mode = _vm_distributed_config_value(
         topology,
@@ -9015,8 +11367,12 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
     checks.append(
         {
             "name": "Level 4 cluster scope",
-            "status": "blocked" if multi_kubeconfig else "ready",
-            "detail": "single logical kubeconfig supported; multi-kubeconfig deployment is guarded",
+            "status": "ready",
+            "detail": (
+                "multi-kubeconfig connector deployment enabled"
+                if multi_kubeconfig
+                else "single logical kubeconfig"
+            ),
         }
     )
     checks.append(
@@ -9024,6 +11380,16 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
             "name": "SSH access",
             "status": ssh_preflight.get("status") or "ready",
             "detail": ssh_preflight.get("detail") or "optional SSH metadata",
+        }
+    )
+    checks.append(
+        {
+            "name": "SSH bootstrap",
+            "status": ssh_bootstrap.get("status") or "ready",
+            "detail": (
+                f"{ssh_bootstrap.get('mode') or 'manual'} bootstrap, "
+                f"execution host: {ssh_bootstrap.get('execution_host') or 'external'}"
+            ),
         }
     )
     checks.append(
@@ -9083,7 +11449,7 @@ def _print_vm_distributed_preflight(preflight):
         print("  Required values are present.")
 
 
-def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_registry=None):
+def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_registry=None):
     registry = adapter_registry or ADAPTER_REGISTRY
     selected_adapter = _interactive_require_adapter_selection(
         current_adapter,
@@ -9184,6 +11550,7 @@ def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_regis
     ssh_bastion_host = topology_config.get("SSH_BASTION_HOST") or ""
     ssh_bastion_port = topology_config.get("SSH_BASTION_PORT") or "2222"
     ssh_bastion_user = topology_config.get("SSH_BASTION_USER") or ""
+    ssh_bastion_identity_file = topology_config.get("SSH_BASTION_IDENTITY_FILE") or ""
     common_ssh_host = topology_config.get("VM_COMMON_SSH_HOST") or ""
     common_ssh_port = topology_config.get("VM_COMMON_SSH_PORT") or "22"
     common_ssh_user = topology_config.get("VM_COMMON_SSH_USER") or ""
@@ -9212,6 +11579,13 @@ def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_regis
             ssh_bastion_user = _prompt_vm_distributed_value(
                 "SSH bastion user",
                 current=ssh_bastion_user,
+                default="",
+                required=False,
+                help_topic="bastion",
+            )
+            ssh_bastion_identity_file = _prompt_vm_distributed_value(
+                "SSH bastion identity file",
+                current=ssh_bastion_identity_file,
                 default="",
                 required=False,
                 help_topic="bastion",
@@ -9319,7 +11693,7 @@ def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_regis
     connectors = _prompt_vm_distributed_value(
         "Connector inventory (comma-separated short names)",
         current=adapter_config.get("DS_1_CONNECTORS"),
-        default="citycounciledc,companyedc" if selected_adapter == "edc" else "citycouncil,company",
+        default="citycounciledc,companyedc" if selected_adapter == "edc" else "org2,org3",
         required=True,
         help_topic="connector-inventory",
     )
@@ -9351,6 +11725,14 @@ def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_regis
     }
     infra_updates.update(
         _vm_distributed_common_service_public_updates(domain_base, infrastructure_config)
+    )
+    public_url_updates = resolve_vm_distributed_public_urls(
+        {
+            **infrastructure_config,
+            **topology_config,
+            "DOMAIN_BASE": domain_base,
+            "DS_DOMAIN_BASE": ds_domain_base,
+        }
     )
     topology_updates = {
         "VM_EXTERNAL_IP": common_ip,
@@ -9390,16 +11772,43 @@ def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_regis
         "SSH_BASTION_HOST": ssh_bastion_host,
         "SSH_BASTION_PORT": ssh_bastion_port,
         "SSH_BASTION_USER": ssh_bastion_user,
+        "SSH_BASTION_IDENTITY_FILE": ssh_bastion_identity_file,
+        "SSH_IDENTITY_FILE": topology_config.get("SSH_IDENTITY_FILE") or "",
         "SSH_CONNECT_TIMEOUT_SECONDS": topology_config.get("SSH_CONNECT_TIMEOUT_SECONDS") or "5",
+        "VM_DISTRIBUTED_SSH_IDENTITY_FILE": topology_config.get("VM_DISTRIBUTED_SSH_IDENTITY_FILE") or "",
+        "VM_DISTRIBUTED_EXECUTION_HOST": topology_config.get("VM_DISTRIBUTED_EXECUTION_HOST") or "external",
+        "VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE": topology_config.get("VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE") or "manual",
+        "VM_DISTRIBUTED_SSH_KEY_COMMENT": (
+            topology_config.get("VM_DISTRIBUTED_SSH_KEY_COMMENT")
+            or "validation-environment-vm-distributed"
+        ),
+        "VM_DISTRIBUTED_SSH_MANAGED_MARKER": (
+            topology_config.get("VM_DISTRIBUTED_SSH_MANAGED_MARKER")
+            or "validation-environment-vm-distributed"
+        ),
+        "VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY": (
+            topology_config.get("VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY")
+            or "accept-new"
+        ),
         "VM_DISTRIBUTED_DEPLOYMENT_MODE": topology_config.get("VM_DISTRIBUTED_DEPLOYMENT_MODE") or "orchestrator",
         "VM_DISTRIBUTED_PREFLIGHT_DRY_RUN": topology_config.get("VM_DISTRIBUTED_PREFLIGHT_DRY_RUN") or "true",
+        "VM_DISTRIBUTED_K3S_TUNNEL_MODE": topology_config.get("VM_DISTRIBUTED_K3S_TUNNEL_MODE") or "auto",
+        "VM_DISTRIBUTED_K3S_API_REMOTE_PORT": topology_config.get("VM_DISTRIBUTED_K3S_API_REMOTE_PORT") or "6443",
+        "VM_DISTRIBUTED_K3S_TUNNEL_RECREATE": topology_config.get("VM_DISTRIBUTED_K3S_TUNNEL_RECREATE") or "auto",
         "VM_REMOTE_WORKDIR": topology_config.get("VM_REMOTE_WORKDIR") or "",
         "VM_COMMON_REMOTE_WORKDIR": topology_config.get("VM_COMMON_REMOTE_WORKDIR") or topology_config.get("VM_REMOTE_WORKDIR") or "",
         "VM_PROVIDER_REMOTE_WORKDIR": topology_config.get("VM_PROVIDER_REMOTE_WORKDIR") or topology_config.get("VM_REMOTE_WORKDIR") or "",
         "VM_CONSUMER_REMOTE_WORKDIR": topology_config.get("VM_CONSUMER_REMOTE_WORKDIR") or topology_config.get("VM_REMOTE_WORKDIR") or "",
-        "VM_COMMON_PUBLIC_URL": topology_config.get("VM_COMMON_PUBLIC_URL") or "",
-        "VM_PROVIDER_PUBLIC_URL": topology_config.get("VM_PROVIDER_PUBLIC_URL") or "",
-        "VM_CONSUMER_PUBLIC_URL": topology_config.get("VM_CONSUMER_PUBLIC_URL") or "",
+        "VM_COMMON_PUBLIC_URL": public_url_updates.get("VM_COMMON_PUBLIC_URL") or "",
+        "VM_PROVIDER_PUBLIC_URL": public_url_updates.get("VM_PROVIDER_PUBLIC_URL") or "",
+        "VM_CONSUMER_PUBLIC_URL": public_url_updates.get("VM_CONSUMER_PUBLIC_URL") or "",
+        "KEYCLOAK_FRONTEND_URL": public_url_updates.get("KEYCLOAK_FRONTEND_URL") or topology_config.get("KEYCLOAK_FRONTEND_URL") or "",
+        "KEYCLOAK_PUBLIC_URL": public_url_updates.get("KEYCLOAK_PUBLIC_URL") or topology_config.get("KEYCLOAK_PUBLIC_URL") or "",
+        "MINIO_API_PUBLIC_URL": topology_config.get("MINIO_API_PUBLIC_URL") or "",
+        "MINIO_CONSOLE_PUBLIC_URL": public_url_updates.get("MINIO_CONSOLE_PUBLIC_URL") or "",
+        "MINIO_PUBLIC_URL": topology_config.get("MINIO_PUBLIC_URL") or "",
+        "COMPONENTS_PUBLIC_BASE_URL": public_url_updates.get("COMPONENTS_PUBLIC_BASE_URL") or "",
+        "COMPONENTS_PUBLIC_PATH_REWRITE": topology_config.get("COMPONENTS_PUBLIC_PATH_REWRITE") or "true",
         "VM_COMMON_HTTP_URL": topology_config.get("VM_COMMON_HTTP_URL") or (f"http://{common_ip}" if common_ip else ""),
         "VM_PROVIDER_HTTP_URL": topology_config.get("VM_PROVIDER_HTTP_URL") or (f"http://{provider_ip}" if provider_ip else ""),
         "VM_CONSUMER_HTTP_URL": topology_config.get("VM_CONSUMER_HTTP_URL") or (f"http://{consumer_ip}" if consumer_ip else ""),
@@ -9465,7 +11874,16 @@ def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_regis
     }
 
 
+def _run_vm_distributed_configuration_wizard(current_adapter=None, adapter_registry=None):
+    return _run_vm_distributed_configuration_wizard_impl(
+        current_adapter=current_adapter,
+        adapter_registry=adapter_registry,
+    )
+
+
 def _vm_distributed_configuration_needs_attention(adapter_name=None):
+    if not str(adapter_name or "").strip():
+        return False
     topology_path = _infrastructure_topology_config_path("vm-distributed")
     adapter_path = _adapter_deployer_config_path(adapter_name) if adapter_name else ""
     infrastructure_config = load_raw_deployer_config(_infrastructure_deployer_config_path())
@@ -9479,12 +11897,26 @@ def _vm_distributed_configuration_needs_attention(adapter_name=None):
     return preflight.get("status") != "ready"
 
 
+def _interactive_confirm_vm_distributed_configuration(prompt, default=True):
+    default_label = "Y/n" if default else "y/N"
+    answer = _interactive_read(f"{prompt} ({default_label}): ").strip().lower()
+    if not answer:
+        return default
+    return answer in {"y", "yes", "s", "si", "sí"}
+
+
 def _offer_vm_distributed_configuration(current_adapter=None, adapter_registry=None):
+    if not str(current_adapter or "").strip():
+        return current_adapter, None
     if not _vm_distributed_configuration_needs_attention(current_adapter):
         return current_adapter, None
     print()
     print("vm-distributed configuration is incomplete or needs review.")
-    if not _interactive_confirm("Configure vm-distributed now?", default=True):
+    configure_now = _interactive_confirm_vm_distributed_configuration(
+        "Configure vm-distributed now?",
+        default=True,
+    )
+    if not configure_now:
         return current_adapter, None
     result = _run_vm_distributed_configuration_wizard(
         current_adapter=current_adapter,
@@ -9526,6 +11958,7 @@ def _print_vm_distributed_topology_plan(plan):
     print()
     print("vm-distributed topology plan:")
     print(f"  Status: {vm_plan.get('status') or 'unknown'}")
+    print(f"  Execution host: {vm_plan.get('execution_host') or 'external'}")
     print(f"  Deployment mode: {vm_plan.get('deployment_mode') or 'orchestrator'}")
     print(f"  Dataspace: {vm_plan.get('dataspace') or '(not configured)'}")
     print(f"  Common domain: {vm_plan.get('domain_base') or '(not configured)'}")
@@ -9555,6 +11988,14 @@ def _print_vm_distributed_topology_plan(plan):
             f"    ssh: {'configured' if ssh.get('configured') else 'not configured'}"
             + (f" ({ssh.get('command')})" if ssh.get("command") else "")
         )
+    ssh_bootstrap = dict(vm_plan.get("ssh_bootstrap") or {})
+    if ssh_bootstrap:
+        print(
+            f"  SSH bootstrap: {ssh_bootstrap.get('mode') or 'manual'} "
+            f"({ssh_bootstrap.get('status') or 'unknown'})"
+        )
+        if ssh_bootstrap.get("identity_file"):
+            print(f"    identity: {ssh_bootstrap.get('identity_file')}")
 
     connectors = list(vm_plan.get("connectors") or [])
     if connectors:
@@ -9630,6 +12071,8 @@ def _print_vm_distributed_assistant_menu(current_adapter=None):
     print("3 - Preview deployment and hosts plan")
     print("4 - Run non-destructive SSH/HTTP preflight")
     print("5 - Show manual check commands")
+    print("6 - Guided SSH access setup")
+    print("7 - Local SSH key self-test")
     print("B/Q - Back")
     print("=" * 50)
 
@@ -9727,6 +12170,38 @@ def _run_vm_distributed_assistant(
             current_adapter = selected_adapter
             plan = _current_vm_distributed_topology_plan(adapter_name=current_adapter)
             _print_vm_distributed_manual_commands(plan)
+            continue
+
+        if choice == "6":
+            selected_adapter = _interactive_require_adapter_selection(
+                current_adapter,
+                adapter_registry=registry,
+            )
+            if not selected_adapter:
+                continue
+            current_adapter = selected_adapter
+            _run_vm_distributed_ssh_access_assistant(
+                build_adapter(current_adapter, adapter_registry=registry, topology="vm-distributed"),
+                deployer_name=current_adapter,
+                topology="vm-distributed",
+            )
+            continue
+
+        if choice == "7":
+            selected_adapter = _interactive_require_adapter_selection(
+                current_adapter,
+                adapter_registry=registry,
+            )
+            if not selected_adapter:
+                continue
+            current_adapter = selected_adapter
+            result = run_ssh_access(
+                build_adapter(current_adapter, adapter_registry=registry, topology="vm-distributed"),
+                deployer_name=current_adapter,
+                topology="vm-distributed",
+                action="self-test",
+            )
+            _print_vm_distributed_ssh_key_self_test_result(result)
             continue
 
         print("Invalid vm-distributed assistant selection.")
@@ -10172,7 +12647,7 @@ def _print_interactive_help():
     print("    It switches between local, vm-single and vm-distributed without editing configuration files.")
     print("K - Use when vm-single is active and you want to choose Minikube or k3s for this menu session.")
     print("W - Use before selecting vm-distributed to open the configuration wizard, or with vm-distributed active to open the assistant.")
-    print("    The assistant can write ignored .config files, show the VM plan, preview hosts/deployment, and run non-destructive SSH/HTTP checks.")
+    print("    The assistant can write ignored .config files, show the VM plan, preview hosts/deployment, run non-destructive checks, and guide SSH setup.")
     print("P - Use before deploying to inspect the plan without changing the environment.")
     print("    If Levels 3-6 need an adapter and none has been chosen yet, the menu asks for one automatically.")
     print("H - Use to inspect or apply local hosts entries needed by the selected adapter.")
@@ -12110,6 +14585,11 @@ def create_parser(adapter_registry=None):
         action="store_true",
         help="With local-repair, restart connector runtimes after repairing local access.",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print raw JSON for commands that have a human-readable default output.",
+    )
     return parser
 
 
@@ -12201,7 +14681,16 @@ def main(
         parser.error(
             f"argument command: invalid choice: '{command}' (choose from {', '.join(SUPPORTED_COMMANDS)})"
         )
-    if args.extra:
+    if command == "public-access":
+        if len(args.extra) > 1 or (args.extra and args.extra[0] != "reconcile"):
+            parser.error("public-access only supports the optional 'reconcile' action")
+    elif command == "ssh-access":
+        if len(args.extra) > 1 or (
+            args.extra
+            and args.extra[0] not in {"plan", "reconcile", "assistant", "wizard", "self-test", "key-self-test"}
+        ):
+            parser.error("ssh-access only supports the optional 'plan', 'reconcile', 'assistant' or 'self-test' action")
+    elif args.extra:
         parser.error(f"unrecognized arguments: {' '.join(args.extra)}")
 
     if args.dry_run:
@@ -12293,6 +14782,50 @@ def main(
         except ValueError as exc:
             parser.error(str(exc))
         print(json.dumps(result, indent=2, default=str))
+        return result
+
+    if command == "public-access":
+        try:
+            result = run_public_access(
+                adapter,
+                deployer_name=args.adapter,
+                topology=args.topology,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        print(json.dumps(result, indent=2, default=str))
+        return result
+
+    if command == "ssh-access":
+        ssh_action = args.extra[0] if args.extra else "plan"
+        if ssh_action == "wizard":
+            ssh_action = "assistant"
+        if ssh_action == "key-self-test":
+            ssh_action = "self-test"
+        if ssh_action == "assistant":
+            result = _run_vm_distributed_ssh_access_assistant(
+                adapter,
+                deployer_name=args.adapter,
+                topology=args.topology,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2, default=str))
+            return result
+        try:
+            result = run_ssh_access(
+                adapter,
+                deployer_name=args.adapter,
+                topology=args.topology,
+                action=ssh_action,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+        elif ssh_action == "self-test":
+            _print_vm_distributed_ssh_key_self_test_result(result)
+        else:
+            _print_vm_distributed_ssh_access_result(result)
         return result
 
     if command == "local-repair":

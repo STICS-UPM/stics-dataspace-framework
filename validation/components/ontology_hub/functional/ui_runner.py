@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from validation.components.artifact_cleanup import cleanup_empty_experiment_artifact_dirs
+from validation.components.fail_fast import playwright_max_failures_args
 from validation.components.ontology_hub.functional.runtime_preparation import (
     prepare_ontology_hub_for_functional,
 )
@@ -66,7 +67,18 @@ def _build_artifact_paths(experiment_dir: str | None, *, create: bool = True) ->
 
 def _build_playwright_command(worker_count: int) -> List[str]:
     normalized_workers = worker_count if worker_count > 0 else 1
-    return [*PLAYWRIGHT_COMMAND_PREFIX, f"--workers={normalized_workers}"]
+    grep = (
+        os.environ.get("ONTOLOGY_HUB_FUNCTIONAL_GREP")
+        or os.environ.get("PIONERA_ONTOLOGY_HUB_FUNCTIONAL_GREP")
+        or ""
+    ).strip()
+    grep_args = ["--grep", grep] if grep else []
+    return [
+        *PLAYWRIGHT_COMMAND_PREFIX,
+        f"--workers={normalized_workers}",
+        *grep_args,
+        *playwright_max_failures_args(),
+    ]
 
 
 def _functional_run_id(artifact_paths: Dict[str, str]) -> str:

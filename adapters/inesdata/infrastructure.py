@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlparse
 import requests
 
 from ruamel.yaml import YAML
@@ -18,6 +19,7 @@ from deployers.infrastructure.lib.public_hostnames import (
     canonical_common_service_hostnames,
 )
 from deployers.shared.lib.cluster_runtime import build_cluster_runtime
+from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls
 from framework.local_capacity import LOCAL_COEXISTENCE_MEMORY_MB, parse_memory_quantity_mb
 from .config import INESDataConfigAdapter, InesdataConfig
 
@@ -58,6 +60,8 @@ class INESDataInfrastructureAdapter:
         self.config_adapter = config_adapter or INESDataConfigAdapter(self.config)
         self._last_registration_service_liquibase_issue = None
         self._vault_repair_temp_backup = None
+        self._port_forward_processes = {}
+        self._last_port_forward_error = None
         self._announced_levels = set()
         self._completed_levels = set()
 
@@ -190,6 +194,9 @@ class INESDataInfrastructureAdapter:
 
     def _is_vm_single_topology(self):
         return str(getattr(self.config_adapter, "topology", "local") or "local").strip().lower() == "vm-single"
+
+    def _is_vm_distributed_topology(self):
+        return str(getattr(self.config_adapter, "topology", "local") or "local").strip().lower() == "vm-distributed"
 
     def _common_services_startup_timeout(self):
         baseline = 600 if self._is_vm_single_topology() else 180
@@ -1039,42 +1046,103 @@ class INESDataInfrastructureAdapter:
 
             time.sleep(1)
 
+    @staticmethod
+    def _port_forward_process_key(namespace, pod, local_port, remote_port):
+        return (str(namespace), str(pod), int(local_port), int(remote_port))
+
+    def _terminate_port_forward_process(self, process):
+        if not process or process.poll() is not None:
+            return False
+
+        process.terminate()
+        try:
+            process.wait(timeout=2)
+            return True
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+            return True
+
+    def _stop_tracked_port_forward_processes(self, namespace, pod, local_port=None, remote_port=None):
+        stopped = False
+        for key, process in list(self._port_forward_processes.items()):
+            key_namespace, key_pod, key_local_port, key_remote_port = key
+            if key_namespace != str(namespace) or key_pod != str(pod):
+                continue
+            if local_port is not None and key_local_port != int(local_port):
+                continue
+            if remote_port is not None and key_remote_port != int(remote_port):
+                continue
+
+            self._port_forward_processes.pop(key, None)
+            stopped = self._terminate_port_forward_process(process) or stopped
+        return stopped
+
     def port_forward_service(self, namespace, pattern, local_port, remote_port, quiet=False, wait_timeout=None):
+        self._last_port_forward_error = None
         pod = self.get_pod_by_name(namespace, pattern)
 
         if not pod:
+            self._last_port_forward_error = f"Pod with pattern '{pattern}' not found in {namespace}"
             if not quiet:
-                print(f"Pod with pattern '{pattern}' not found in {namespace}")
+                print(self._last_port_forward_error)
             return False
 
+        self._stop_tracked_port_forward_processes(namespace, pod, local_port, remote_port)
         self.run(f"pkill -f 'kubectl port-forward {pod}'", check=False, silent=quiet)
 
-        process = subprocess.Popen(
-            ["kubectl", "port-forward", pod, "-n", namespace, f"{local_port}:{remote_port}"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        deadline = time.time() + max(float(wait_timeout or getattr(self.config, "TIMEOUT_PORT", 30)), 1.0)
+        try:
+            attempts = int(getattr(self.config, "PORT_FORWARD_ATTEMPTS", 2) or 2)
+        except (TypeError, ValueError):
+            attempts = 2
+        attempts = max(attempts, 1)
 
-        while time.time() <= deadline:
-            if process.poll() is not None:
+        for attempt in range(1, attempts + 1):
+            process = subprocess.Popen(
+                ["kubectl", "port-forward", pod, "-n", namespace, f"{local_port}:{remote_port}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            deadline = time.time() + max(float(wait_timeout or getattr(self.config, "TIMEOUT_PORT", 30)), 1.0)
+
+            while time.time() <= deadline:
+                if process.poll() is not None:
+                    self._last_port_forward_error = (
+                        f"Port-forward process for '{pod}' exited before local port "
+                        f"{local_port} became reachable"
+                    )
+                    if not quiet:
+                        print(self._last_port_forward_error)
+                    break
+
+                if self._port_is_open("127.0.0.1", local_port, connect_timeout=0.25):
+                    key = self._port_forward_process_key(namespace, pod, local_port, remote_port)
+                    self._port_forward_processes[key] = process
+                    return True
+
+                time.sleep(0.25)
+            else:
+                self._last_port_forward_error = (
+                    f"Timed out waiting for port-forward to '{pod}' on local port {local_port}"
+                )
                 if not quiet:
-                    print(f"Port-forward process for '{pod}' exited before local port {local_port} became reachable")
-                return False
+                    print(self._last_port_forward_error)
 
-            if self._port_is_open("127.0.0.1", local_port, connect_timeout=0.25):
-                return True
+            self._terminate_port_forward_process(process)
+            if attempt < attempts:
+                time.sleep(0.5)
 
-            time.sleep(0.25)
-
-        if not quiet:
-            print(f"Timed out waiting for port-forward to '{pod}' on local port {local_port}")
         return False
 
     def stop_port_forward_service(self, namespace, pattern, quiet=False):
         pod = self.get_pod_by_name(namespace, pattern)
         if not pod:
             return False
+        if self._stop_tracked_port_forward_processes(namespace, pod):
+            return True
         return self.run(f"pkill -f 'kubectl port-forward {pod}'", check=False, silent=quiet) is not None
 
     @staticmethod
@@ -1208,8 +1276,9 @@ class INESDataInfrastructureAdapter:
         return "Port owner details unavailable. Try: ss -ltnp 'sport = :%s'" % port
 
     def _ensure_local_postgres_access(self, full_timeout, probe_timeout):
-        pg_host, pg_user, pg_password = self.config_adapter.get_pg_credentials()
-        pg_port = self._configured_pg_port()
+        configured_pg_host, pg_user, pg_password = self.config_adapter.get_pg_credentials()
+        pg_host = os.environ.get("PIONERA_PG_HOST") or configured_pg_host
+        pg_port = os.environ.get("PIONERA_PG_PORT") or self._configured_pg_port()
         try:
             local_pg_port = int(pg_port)
         except (TypeError, ValueError):
@@ -1851,12 +1920,79 @@ class INESDataInfrastructureAdapter:
                 os.remove(vault_json_path)
             return False
 
+    def _recover_vault_root_token_with_unseal_key(self, pod_name, namespace, vault_data):
+        """Generate a fresh Vault root token from the stored unseal key.
+
+        Vault never exposes the original root token again. When the stored
+        token was revoked or drifted but the unseal key still belongs to the
+        running Vault, `operator generate-root` lets us recover without
+        deleting Vault data.
+        """
+        if not vault_data:
+            return None
+
+        unseal_keys = vault_data.get("unseal_keys_hex") or vault_data.get("unseal_keys_b64") or []
+        unseal_key = str(unseal_keys[0] or "").strip() if unseal_keys else ""
+        if not unseal_key:
+            return None
+
+        self.run_silent(
+            f"kubectl exec {pod_name} -n {namespace} -- "
+            "vault operator generate-root -cancel"
+        )
+
+        init_output = self.run_silent(
+            f"kubectl exec {pod_name} -n {namespace} -- "
+            "vault operator generate-root -init -format=json"
+        )
+        if not init_output:
+            return None
+
+        try:
+            init_payload = json.loads(init_output)
+        except json.JSONDecodeError:
+            return None
+
+        nonce = str(init_payload.get("nonce") or "").strip()
+        otp = str(init_payload.get("otp") or "").strip()
+        if not nonce or not otp:
+            return None
+
+        update_output = self.run_silent(
+            f"kubectl exec {pod_name} -n {namespace} -- "
+            "vault operator generate-root "
+            f"-nonce={shlex.quote(nonce)} -format=json {shlex.quote(unseal_key)}"
+        )
+        if not update_output:
+            return None
+
+        try:
+            update_payload = json.loads(update_output)
+        except json.JSONDecodeError:
+            return None
+
+        encoded_token = str(
+            update_payload.get("encoded_token")
+            or update_payload.get("encoded_root_token")
+            or ""
+        ).strip()
+        if not encoded_token:
+            return None
+
+        decoded_token = self.run_silent(
+            f"kubectl exec {pod_name} -n {namespace} -- "
+            "vault operator generate-root "
+            f"-decode={shlex.quote(encoded_token)} -otp={shlex.quote(otp)}"
+        )
+        return str(decoded_token or "").strip() or None
+
     def reconcile_vault_state_for_local_runtime(self, pod_name=None, namespace=None, quiet=False):
         """Keep the shared local Vault token artifact and deployer.config aligned.
 
         Vault does not expose the root token after initialization. This method
-        only reconciles already available local sources that validate against
-        the running Vault, and never logs token values.
+        first reconciles already available local sources that validate against
+        the running Vault. If both stored tokens are stale but the stored unseal
+        key is valid, it regenerates a root token. Token values are never logged.
         """
         namespace = namespace or self.config.NS_COMMON
         vault_json_path = self._vault_keys_artifact_path()
@@ -1907,6 +2043,29 @@ class INESDataInfrastructureAdapter:
                 return False
             if not quiet:
                 print("Vault token synchronized from deployer.config")
+            return True
+
+        recovered_token = self._recover_vault_root_token_with_unseal_key(
+            pod_name,
+            namespace,
+            vault_data,
+        )
+        if recovered_token:
+            repaired_data = dict(vault_data or {})
+            repaired_data["root_token"] = recovered_token
+            if not self._write_vault_keys_artifact_transactionally(
+                vault_json_path,
+                repaired_data,
+                pod_name,
+                namespace,
+            ):
+                if not quiet:
+                    print("Could not persist regenerated Vault root token transactionally")
+                return False
+            if not self._write_vault_token_to_deployer_config(config_path, recovered_token):
+                return False
+            if not quiet:
+                print("Vault root token regenerated from stored unseal key and synchronized")
             return True
 
         if not quiet:
@@ -2072,6 +2231,300 @@ class INESDataInfrastructureAdapter:
                 item["value"] = kc_password
 
         return values
+
+    @staticmethod
+    def _path_public_url_parts(raw_url):
+        parsed = urlparse(str(raw_url or "").strip())
+        host = parsed.hostname or ""
+        path = parsed.path.rstrip("/")
+        if not host or not path or path == "/":
+            return "", ""
+        return host, path
+
+    @staticmethod
+    def _public_url_host_path(raw_url):
+        parsed = urlparse(str(raw_url or "").strip())
+        host = parsed.hostname or ""
+        path = parsed.path.rstrip("/")
+        return host, path
+
+    @staticmethod
+    def _config_bool(config, key, default=False):
+        value = (config or {}).get(key)
+        if value is None or str(value).strip() == "":
+            return default
+        return str(value).strip().lower() in {"1", "true", "yes", "y", "on", "si", "sí"}
+
+    @staticmethod
+    def _public_root_alias_paths(config, key, default_value):
+        raw_aliases = str((config or {}).get(key) or default_value)
+        aliases = []
+        for token in raw_aliases.replace(";", ",").split(","):
+            path = token.strip()
+            if not path:
+                continue
+            if not path.startswith("/"):
+                path = f"/{path}"
+            path = path.rstrip("/") or "/"
+            if path != "/" and path not in aliases:
+                aliases.append(path)
+        return aliases
+
+    def _minio_console_public_root_alias_ingress(self, namespace, host, config):
+        aliases_enabled = self._config_bool(
+            config,
+            "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES_ENABLED",
+            default=True,
+        )
+        if not aliases_enabled:
+            return None
+
+        alias_paths = self._public_root_alias_paths(
+            config,
+            "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES",
+            "/api,/static,/ws,/browser,/login,/oauth,/screens,/favicon.ico,/manifest.json",
+        )
+        if not alias_paths:
+            return None
+
+        return {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": {
+                "name": "common-srvs-minio-console-public-root-aliases",
+                "namespace": namespace,
+                "labels": {
+                    "app.kubernetes.io/managed-by": "validation-environment",
+                    "app.kubernetes.io/part-of": "vm-distributed",
+                    "app.kubernetes.io/route-kind": "public-root-aliases",
+                },
+            },
+            "spec": {
+                "ingressClassName": "nginx",
+                "rules": [
+                    {
+                        "host": host,
+                        "http": {
+                            "paths": [
+                                {
+                                    "path": alias,
+                                    "pathType": "Prefix",
+                                    "backend": {
+                                        "service": {
+                                            "name": "common-srvs-minio-console",
+                                            "port": {"number": 9001},
+                                        }
+                                    },
+                                }
+                                for alias in alias_paths
+                            ]
+                        },
+                    }
+                ],
+            },
+        }
+
+    def _vm_distributed_common_public_path_ingresses(self, config):
+        namespace = self.config.NS_COMMON
+        public_urls = resolve_vm_distributed_public_urls(config)
+        resolved_config = {**dict(config or {}), **public_urls}
+        keycloak_host, keycloak_path = self._path_public_url_parts(
+            resolved_config.get("KEYCLOAK_FRONTEND_URL")
+            or resolved_config.get("KEYCLOAK_PUBLIC_URL")
+        )
+        minio_host, minio_path = self._path_public_url_parts(resolved_config.get("MINIO_CONSOLE_PUBLIC_URL"))
+        minio_api_host, minio_api_path = self._public_url_host_path(
+            resolved_config.get("MINIO_API_PUBLIC_URL")
+            or resolved_config.get("MINIO_PUBLIC_URL")
+        )
+        ingresses = []
+
+        if keycloak_host and keycloak_path:
+            ingresses.append(
+                {
+                    "apiVersion": "networking.k8s.io/v1",
+                    "kind": "Ingress",
+                    "metadata": {
+                        "name": "common-srvs-keycloak-public-path",
+                        "namespace": namespace,
+                        "annotations": {
+                            "nginx.ingress.kubernetes.io/use-regex": "true",
+                            "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                            self.KEYCLOAK_HTTP_COOKIE_ANNOTATION: self.KEYCLOAK_HTTP_COOKIE_SNIPPET,
+                        },
+                        "labels": {
+                            "app.kubernetes.io/managed-by": "validation-environment",
+                            "app.kubernetes.io/part-of": "vm-distributed",
+                        },
+                    },
+                    "spec": {
+                        "ingressClassName": "nginx",
+                        "rules": [
+                            {
+                                "host": keycloak_host,
+                                "http": {
+                                    "paths": [
+                                        {
+                                            "path": f"{keycloak_path}(/|$)(.*)",
+                                            "pathType": "ImplementationSpecific",
+                                            "backend": {
+                                                "service": {
+                                                    "name": "common-srvs-keycloak",
+                                                    "port": {"name": "http"},
+                                                }
+                                            },
+                                        }
+                                    ]
+                                },
+                            }
+                        ],
+                    },
+                }
+            )
+
+        if minio_api_host and minio_api_path in {"", "/"}:
+            ingresses.append(
+                {
+                    "apiVersion": "networking.k8s.io/v1",
+                    "kind": "Ingress",
+                    "metadata": {
+                        "name": "common-srvs-minio-api-public-root",
+                        "namespace": namespace,
+                        "labels": {
+                            "app.kubernetes.io/managed-by": "validation-environment",
+                            "app.kubernetes.io/part-of": "vm-distributed",
+                        },
+                    },
+                    "spec": {
+                        "ingressClassName": "nginx",
+                        "rules": [
+                            {
+                                "host": minio_api_host,
+                                "http": {
+                                    "paths": [
+                                        {
+                                            "path": "/",
+                                            "pathType": "Prefix",
+                                            "backend": {
+                                                "service": {
+                                                    "name": "common-srvs-minio",
+                                                    "port": {"number": 9000},
+                                                }
+                                            },
+                                        }
+                                    ]
+                                },
+                            }
+                        ],
+                    },
+                }
+            )
+
+        if minio_host and minio_path:
+            ingresses.append(
+                {
+                    "apiVersion": "networking.k8s.io/v1",
+                    "kind": "Ingress",
+                    "metadata": {
+                        "name": "common-srvs-minio-console-public-path",
+                        "namespace": namespace,
+                        "annotations": {
+                            "nginx.ingress.kubernetes.io/use-regex": "true",
+                            "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                        },
+                        "labels": {
+                            "app.kubernetes.io/managed-by": "validation-environment",
+                            "app.kubernetes.io/part-of": "vm-distributed",
+                        },
+                    },
+                    "spec": {
+                        "ingressClassName": "nginx",
+                        "rules": [
+                            {
+                                "host": minio_host,
+                                "http": {
+                                    "paths": [
+                                        {
+                                            "path": f"{minio_path}(/|$)(.*)",
+                                            "pathType": "ImplementationSpecific",
+                                            "backend": {
+                                                "service": {
+                                                    "name": "common-srvs-minio-console",
+                                                    "port": {"number": 9001},
+                                                }
+                                            },
+                                        }
+                                    ]
+                                },
+                            }
+                        ],
+                    },
+                }
+            )
+            if minio_api_host == minio_host and minio_api_path in {"", "/"}:
+                minio_console_root_alias = self._minio_console_public_root_alias_ingress(
+                    namespace,
+                    minio_host,
+                    resolved_config,
+                )
+                if minio_console_root_alias:
+                    ingresses.append(minio_console_root_alias)
+
+        return ingresses
+
+    def _sync_vm_distributed_common_public_path_ingresses(self):
+        if not self._is_vm_distributed_topology():
+            return {"status": "skipped", "reason": "not-vm-distributed"}
+        config = self.config_adapter.load_deployer_config()
+        ingresses = self._vm_distributed_common_public_path_ingresses(config)
+        if not ingresses:
+            return {"status": "skipped", "reason": "no-path-public-urls"}
+
+        manifest = {
+            "apiVersion": "v1",
+            "kind": "List",
+            "items": ingresses,
+        }
+        temp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
+                temp_path = handle.name
+                json.dump(manifest, handle)
+            if self.run(f"kubectl apply -f {shlex.quote(temp_path)}", check=False) is None:
+                return {
+                    "status": "failed",
+                    "reason": "kubectl-apply-failed",
+                    "routes": [
+                        {
+                            "name": item["metadata"]["name"],
+                            "host": item["spec"]["rules"][0]["host"],
+                            "path": item["spec"]["rules"][0]["http"]["paths"][0]["path"],
+                        }
+                        for item in ingresses
+                    ],
+                }
+            routes = ", ".join(
+                f"{item['spec']['rules'][0]['host']}{item['spec']['rules'][0]['http']['paths'][0]['path']}"
+                for item in ingresses
+            )
+            print(f"vm-distributed common public path ingresses synchronized: {routes}")
+            return {
+                "status": "synced",
+                "routes": [
+                    {
+                        "name": item["metadata"]["name"],
+                        "host": item["spec"]["rules"][0]["host"],
+                        "path": item["spec"]["rules"][0]["http"]["paths"][0]["path"],
+                    }
+                    for item in ingresses
+                ],
+            }
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
 
     def sync_common_values(self):
         ensure_values_file = getattr(self.config, "ensure_common_values_file", None)
@@ -2605,8 +3058,9 @@ class INESDataInfrastructureAdapter:
             print("\nWaiting for registration-service schema to be ready...")
         start = time.time()
         next_progress = start + max(float(poll_interval) * 5, 15)
-        pg_host, pg_user, pg_password = self.config_adapter.get_pg_credentials()
-        pg_port = self._configured_pg_port()
+        configured_pg_host, pg_user, pg_password = self.config_adapter.get_pg_credentials()
+        pg_host = os.environ.get("PIONERA_PG_HOST") or configured_pg_host
+        pg_port = os.environ.get("PIONERA_PG_PORT") or self._configured_pg_port()
         registration_db = self.config.registration_db_name()
         sql = "SELECT to_regclass('public.edc_participant');"
 
@@ -3324,6 +3778,8 @@ class INESDataInfrastructureAdapter:
                 "Level 2 could not recover common services Helm release",
                 root_cause="Helm release remained failed after runtime services became ready",
             )
+
+        self._sync_vm_distributed_common_public_path_ingresses()
 
         common_ready, root_cause = self.verify_common_services_ready_for_level3()
         if not common_ready:

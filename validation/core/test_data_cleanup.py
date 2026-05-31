@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
+from urllib.parse import urlparse
 
 import requests
 
@@ -15,6 +16,8 @@ DEFAULT_QUERY_LIMIT = 100
 DEFAULT_MAX_PAGES = 50
 DEFAULT_MANAGEMENT_TRANSIENT_RETRIES = 6
 DEFAULT_MANAGEMENT_TRANSIENT_RETRY_DELAY = 5.0
+DEFAULT_MINIO_CONNECT_TIMEOUT_SECONDS = 5.0
+DEFAULT_MINIO_READ_TIMEOUT_SECONDS = 30.0
 TRANSIENT_MANAGEMENT_STATUS_CODES = {502, 503, 504}
 AUTHENTICATION_STATUS_CODES = {401, 403}
 SUPPORTED_MODES = {"safe", "dry-run", "aggressive"}
@@ -109,6 +112,17 @@ def normalize_base_url(value: str | None) -> str:
     if not normalized.startswith(("http://", "https://")):
         normalized = f"http://{normalized}"
     return normalized
+
+
+def keycloak_realm_url(base_url: str | None, dataspace: str | None) -> str:
+    normalized_base = normalize_base_url(base_url)
+    normalized_dataspace = str(dataspace or "").strip().strip("/")
+    if not normalized_base or not normalized_dataspace:
+        return normalized_base
+    realm_suffix = f"/realms/{normalized_dataspace}"
+    if normalized_base.endswith(realm_suffix):
+        return normalized_base
+    return f"{normalized_base}{realm_suffix}"
 
 
 def extract_entity_id(entity: Any) -> str | None:
@@ -644,7 +658,7 @@ class ManagementApiTestDataCleaner:
 
         last_error = None
         for keycloak_url in keycloak_urls:
-            token_url = f"{keycloak_url}/realms/{self.dataspace}/protocol/openid-connect/token"
+            token_url = f"{keycloak_realm_url(keycloak_url, self.dataspace)}/protocol/openid-connect/token"
             try:
                 response = self.session.post(
                     token_url,
@@ -672,7 +686,13 @@ class ManagementApiTestDataCleaner:
 
     def _keycloak_token_base_urls(self) -> list[str]:
         candidates = []
-        for key in ("KC_INTERNAL_URL", "KC_URL", "KEYCLOAK_HOSTNAME"):
+        for key in (
+            "KEYCLOAK_FRONTEND_URL",
+            "KEYCLOAK_PUBLIC_URL",
+            "KC_INTERNAL_URL",
+            "KC_URL",
+            "KEYCLOAK_HOSTNAME",
+        ):
             value = self.config.get(key)
             if value:
                 candidates.append(value)
@@ -784,20 +804,34 @@ class ManagementApiTestDataCleaner:
 
         from minio import Minio
 
+        minio_kwargs = {}
+        http_client = self._build_minio_http_client()
+        if http_client is not None:
+            minio_kwargs["http_client"] = http_client
+
         return Minio(
             endpoint,
             access_key=access_key,
             secret_key=secret_key,
             secure=runtime["secure"],
+            **minio_kwargs,
         )
 
     def _resolve_minio_runtime(self) -> dict[str, Any]:
-        endpoint = self.config.get("MINIO_ENDPOINT")
+        endpoint = (
+            os.environ.get("PIONERA_LEVEL6_MINIO_ENDPOINT")
+            or os.environ.get("EDC_LEVEL6_MINIO_ENDPOINT")
+            or self.config.get("PIONERA_LEVEL6_MINIO_ENDPOINT")
+            or self.config.get("LEVEL6_MINIO_ENDPOINT")
+            or self.config.get("EDC_LEVEL6_MINIO_ENDPOINT")
+            or self.config.get("MINIO_API_PUBLIC_URL")
+            or self.config.get("MINIO_PUBLIC_URL")
+            or self.config.get("MINIO_ENDPOINT")
+        )
         hostname = self.config.get("MINIO_HOSTNAME")
 
         if endpoint:
             parsed_endpoint = normalize_base_url(str(endpoint))
-            from urllib.parse import urlparse
 
             parsed = urlparse(parsed_endpoint)
             return {
@@ -808,7 +842,6 @@ class ManagementApiTestDataCleaner:
 
         if hostname:
             parsed_hostname = str(hostname)
-            from urllib.parse import urlparse
 
             if "://" in parsed_hostname:
                 parsed = urlparse(parsed_hostname)
@@ -824,6 +857,41 @@ class ManagementApiTestDataCleaner:
 
         raise RuntimeError("missing-minio-endpoint")
 
+    def _build_minio_http_client(self):
+        try:
+            import urllib3
+        except Exception:
+            return None
+
+        connect_timeout = self._minio_timeout_seconds(
+            "PIONERA_LEVEL6_MINIO_CONNECT_TIMEOUT",
+            "LEVEL6_MINIO_CONNECT_TIMEOUT",
+            default=DEFAULT_MINIO_CONNECT_TIMEOUT_SECONDS,
+        )
+        read_timeout = self._minio_timeout_seconds(
+            "PIONERA_LEVEL6_MINIO_READ_TIMEOUT",
+            "LEVEL6_MINIO_READ_TIMEOUT",
+            default=DEFAULT_MINIO_READ_TIMEOUT_SECONDS,
+        )
+        return urllib3.PoolManager(
+            timeout=urllib3.Timeout(connect=connect_timeout, read=read_timeout),
+        )
+
+    def _minio_timeout_seconds(self, *keys: str, default: float) -> float:
+        for key in keys:
+            value = os.environ.get(key)
+            if value in (None, ""):
+                value = self.config.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                return parsed
+        return default
+
     @staticmethod
     def _list_storage_objects(client: Any, bucket_name: str) -> list[str]:
         return [
@@ -837,6 +905,16 @@ class ManagementApiTestDataCleaner:
         return str(object_name or "").startswith(SAFE_TEST_OBJECT_PREFIXES)
 
     def _management_base_url(self, connector: str) -> str:
+        credentials = self._load_connector_credentials(connector)
+        public_urls = credentials.get("public_access_urls") if isinstance(credentials, dict) else {}
+        if isinstance(public_urls, dict):
+            management_v3 = normalize_base_url(public_urls.get("connector_management_api_v3"))
+            if management_v3:
+                return management_v3
+            management = normalize_base_url(public_urls.get("connector_management_api"))
+            if management:
+                return f"{management}/v3"
+
         if not self.ds_domain_base:
             raise RuntimeError("Missing ds_domain_base for test data cleanup")
         return f"http://{connector}.{self.ds_domain_base}/management/v3"

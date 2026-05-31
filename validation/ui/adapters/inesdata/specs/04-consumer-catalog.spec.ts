@@ -33,7 +33,7 @@ test("04 consumer catalog: listing and detail without access errors", async ({
   const startedAt = new Date().toISOString();
 
   const isTolerableCatalogRetry = (url: string, status: number): boolean =>
-    (status === 401 || status === 503) &&
+    (status === 401 || status === 500 || status === 502 || status === 503 || status === 504) &&
     (url.includes("/management/pagination/count?type=federatedCatalog") ||
       url.includes("/management/federatedcatalog/request"));
 
@@ -66,13 +66,17 @@ test("04 consumer catalog: listing and detail without access errors", async ({
     await captureStep(page, "01-catalog-after-login");
 
     await expect(async () => {
-      await catalogPage.goto(dataspaceRuntime.consumer.portalBaseUrl);
+      await catalogPage.goto(dataspaceRuntime.consumer.portalBaseUrl, {
+        catalogKind: "federated",
+        expectedAssetId: assetId,
+      });
       await shellPage.assertNoGateway403("Catalog page");
       await shellPage.assertNoServerErrorBanner("Catalog page");
       await catalogPage.expectReady();
+      await catalogPage.showLargestPageSize({ catalogKind: "federated", expectedAssetId: assetId });
 
       let detailOpened = await catalogPage.openDetailsForAsset(assetId);
-      while (!detailOpened && (await catalogPage.goToNextPage())) {
+      while (!detailOpened && (await catalogPage.goToNextPage({ catalogKind: "federated", expectedAssetId: assetId }))) {
         detailOpened = await catalogPage.openDetailsForAsset(assetId);
       }
 

@@ -5,6 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from deployers.infrastructure.lib.contracts import DeploymentContext, ValidationProfile
 from validation.components.artifact_cleanup import cleanup_empty_experiment_artifact_dirs
@@ -47,6 +48,82 @@ def build_playwright_artifact_paths(experiment_dir: str, adapter: str) -> dict[s
     }
 
 
+def _join_url_path(base_url: str | None, path_value: str | None) -> str:
+    base = str(base_url or "").strip().rstrip("/")
+    path = str(path_value or "").strip()
+    if not base:
+        return ""
+    if not path:
+        return base
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"{base}{path.rstrip('/')}"
+
+
+def _force_url_scheme(base_url: str | None, scheme: str) -> str:
+    raw_value = str(base_url or "").strip().rstrip("/")
+    if not raw_value:
+        return ""
+    parsed = urlsplit(raw_value if "://" in raw_value else f"{scheme}://{raw_value}")
+    if not parsed.netloc:
+        return ""
+    return urlunsplit((scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+
+
+def _model_server_connector_base_url(config: dict[str, Any], topology: str | None = None) -> str:
+    explicit = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
+        or config.get("MODEL_SERVER_CONNECTOR_BASE_URL")
+        or config.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_URL")
+        or config.get("MODEL_SERVER_CONNECTOR_URL")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit.rstrip("/")
+
+    if str(topology or "").strip().lower() != "vm-distributed":
+        return ""
+
+    path_value = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_PATH")
+        or config.get("MODEL_SERVER_PUBLIC_PATH")
+        or "/model-server"
+    ).strip()
+    for base_candidate in (
+        config.get("VM_COMMON_HTTP_URL"),
+        config.get("VM_COMMON_PUBLIC_URL"),
+        config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_BASE_URL"),
+        config.get("COMPONENTS_PUBLIC_BASE_URL"),
+    ):
+        base_url = _force_url_scheme(base_candidate, "http")
+        if base_url:
+            return _join_url_path(base_url, path_value)
+    return ""
+
+
+def _model_server_public_base_url(config: dict[str, Any]) -> str:
+    explicit = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL")
+        or config.get("MODEL_SERVER_PUBLIC_URL")
+        or config.get("AI_MODEL_HUB_MODEL_SERVER_BASE_URL")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit.rstrip("/")
+
+    components_base = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_BASE_URL")
+        or config.get("COMPONENTS_PUBLIC_BASE_URL")
+        or ""
+    ).strip()
+    path_value = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_PATH")
+        or config.get("MODEL_SERVER_PUBLIC_PATH")
+        or "/model-server"
+    ).strip()
+    return _join_url_path(components_base, path_value)
+
+
 def _build_playwright_environment(
     *,
     context: DeploymentContext,
@@ -56,22 +133,60 @@ def _build_playwright_environment(
     env = dict(os.environ)
     config = dict(context.config or {})
     adapter = profile.adapter or context.deployer or "unknown"
+    keycloak_url = str(
+        config.get("KEYCLOAK_FRONTEND_URL")
+        or config.get("KEYCLOAK_PUBLIC_URL")
+        or config.get("KC_INTERNAL_URL")
+        or config.get("KC_URL")
+        or env.get("UI_KEYCLOAK_URL")
+        or ""
+    ).strip()
 
     env["UI_ADAPTER"] = adapter
     env["UI_DATASPACE"] = context.dataspace_name
     env["UI_ENVIRONMENT"] = context.environment
     env["UI_DS_DOMAIN"] = context.ds_domain_base
-    env["UI_KEYCLOAK_URL"] = str(
-        config.get("KC_INTERNAL_URL")
-        or config.get("KC_URL")
-        or env.get("UI_KEYCLOAK_URL")
-        or ""
-    ).strip()
+    env["UI_TOPOLOGY"] = context.topology
+    env["UI_KEYCLOAK_URL"] = keycloak_url
     env["UI_KEYCLOAK_CLIENT_ID"] = str(
         env.get("UI_KEYCLOAK_CLIENT_ID")
         or config.get("EDC_DASHBOARD_PROXY_CLIENT_ID")
         or "dataspace-users"
     ).strip()
+    components_namespace = str(
+        config.get("COMPONENTS_NAMESPACE")
+        or getattr(context.namespace_roles, "components_namespace", "")
+        or ""
+    ).strip()
+    if components_namespace:
+        env["UI_COMPONENTS_NAMESPACE"] = components_namespace
+    explicit_ui_protocol_address_mode = str(
+        env.get("UI_CONNECTOR_PROTOCOL_ADDRESS_MODE")
+        or config.get("UI_CONNECTOR_PROTOCOL_ADDRESS_MODE")
+        or ""
+    ).strip()
+    configured_protocol_address_mode = str(
+        config.get("PIONERA_CONNECTOR_PROTOCOL_ADDRESS_MODE")
+        or config.get("CONNECTOR_PROTOCOL_ADDRESS_MODE")
+        or ""
+    ).strip()
+    if explicit_ui_protocol_address_mode:
+        protocol_address_mode = explicit_ui_protocol_address_mode
+    elif configured_protocol_address_mode:
+        protocol_address_mode = configured_protocol_address_mode
+    elif str(context.topology or "").strip().lower() == "vm-distributed":
+        protocol_address_mode = "public"
+    else:
+        protocol_address_mode = ""
+    if protocol_address_mode:
+        env["UI_CONNECTOR_PROTOCOL_ADDRESS_MODE"] = protocol_address_mode
+    connector_model_server_url = _model_server_connector_base_url(config, topology=context.topology)
+    if connector_model_server_url:
+        env.setdefault("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL", connector_model_server_url)
+        env.setdefault("UI_AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL", connector_model_server_url)
+    model_server_url = connector_model_server_url or _model_server_public_base_url(config)
+    if model_server_url:
+        env.setdefault("AI_MODEL_HUB_MODEL_SERVER_BASE_URL", model_server_url)
 
     connectors = list(context.connectors or [])
     if connectors:
@@ -169,6 +284,11 @@ def run_playwright_validation(
     ui_dir = ui_root_dir()
     config_path = _normalize_playwright_config(profile.playwright_config)
 
+    env = _build_playwright_environment(
+        context=context,
+        profile=profile,
+        artifact_paths=artifact_paths,
+    )
     command = [
         "npx",
         "playwright",
@@ -176,11 +296,13 @@ def run_playwright_validation(
         "--config",
         config_path,
     ]
-    env = _build_playwright_environment(
-        context=context,
-        profile=profile,
-        artifact_paths=artifact_paths,
-    )
+    max_failures = str(
+        env.get("PIONERA_PLAYWRIGHT_MAX_FAILURES")
+        or env.get("PLAYWRIGHT_MAX_FAILURES")
+        or ""
+    ).strip()
+    if max_failures:
+        command.extend(["--max-failures", max_failures])
 
     error = None
     try:

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from validation.components.artifact_cleanup import cleanup_empty_experiment_artifact_dirs
+from validation.components.fail_fast import playwright_max_failures_args
 
 COMPONENT_KEY = "ai-model-hub"
 PLAYWRIGHT_CONFIG_RELATIVE = os.path.join("..", "components", "ai_model_hub", "ui", "playwright.config.js")
@@ -16,6 +17,10 @@ DEFAULT_EXPERIMENTS_DIR = Path(__file__).resolve().parents[3] / "experiments" / 
 PLAYWRIGHT_COMMAND = [os.path.join(".", "node_modules", ".bin", "playwright"), "test", "--config", PLAYWRIGHT_CONFIG_RELATIVE]
 UI_VALIDATION_ENV = "AI_MODEL_HUB_ENABLE_UI_VALIDATION"
 BENCHMARKING_UI_DEMO_ENV = "AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO"
+
+
+def _playwright_command() -> List[str]:
+    return [*PLAYWRIGHT_COMMAND, *playwright_max_failures_args()]
 
 UI_CASE_METADATA: Dict[str, Dict[str, Any]] = {
     "PT5-MH-01": {
@@ -417,7 +422,7 @@ def run_ai_model_hub_ui_validation(base_url: str, experiment_dir: str | None = N
     status = "skipped"
     try:
         result = subprocess.run(
-            PLAYWRIGHT_COMMAND,
+            _playwright_command(),
             cwd=str(PLAYWRIGHT_WORKDIR),
             env=env,
         )

@@ -1,5 +1,6 @@
 const { expect } = require("../fixtures");
 const { clickMarked, fillMarked } = require("../support/live-marker");
+const { gotoDashboardRoute } = require("./navigation");
 
 class ContractsPage {
   constructor(page, runtime) {
@@ -13,7 +14,7 @@ class ContractsPage {
   }
 
   async goto() {
-    await this.page.goto(`${this.runtime.baseUrl}${this.runtime.contractsPath}`);
+    await gotoDashboardRoute(this.page, this.runtime, this.runtime.contractsPath, "Contracts");
   }
 
   async waitUntilReady() {

@@ -51,6 +51,7 @@ validation/ui/node_modules/
 # Playwright outputs (standard)
 playwright-report/
 test-results/
+test-results*/
 blob-report/
 
 # Playwright outputs

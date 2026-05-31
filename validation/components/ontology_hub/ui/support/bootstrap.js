@@ -1,5 +1,5 @@
 const fs = require("fs");
-const { checkMarked, clickMarked, fillMarked, selectOptionMarked } = require("./live-marker");
+const { checkMarked, clickMarked, fillMarked, highlightMarked, selectOptionMarked } = require("./live-marker");
 const path = require("path");
 const { resolveOntologyHubTimeouts } = require("../runtime");
 
@@ -413,8 +413,28 @@ async function gotoEdition(page, runtime) {
       if (isEditionLoginUrl(page.url())) {
         await fillMarked(page.getByPlaceholder("Email"), runtime.adminEmail);
         await fillMarked(page.getByPlaceholder("Password"), runtime.adminPassword);
-        await clickMarked(page.getByRole("button", { name: /log in it!?/i }));
-        await page.waitForLoadState("domcontentloaded").catch(() => {});
+        const sessionResponse = page.waitForResponse(
+          (response) => {
+            const request = response.request();
+            try {
+              return request.method() === "POST" && new URL(response.url()).pathname === "/edition/session";
+            } catch {
+              return false;
+            }
+          },
+          { timeout: navigationTimeoutMs },
+        );
+        const submitButton = page.getByRole("button", { name: /log in it!?/i });
+        await highlightMarked(submitButton);
+        await submitButton.evaluate((button) => button.click());
+        const response = await sessionResponse;
+        if (![200, 302, 303].includes(response.status())) {
+          throw new Error(`Ontology Hub login returned HTTP ${response.status()}. ${loginErrorHint(runtime)}`);
+        }
+        await page.goto(`${runtime.baseUrl}/edition`, {
+          waitUntil: "domcontentloaded",
+          timeout: navigationTimeoutMs,
+        });
 
         const invalidCredentials = page.getByText("Invalid email or password.", { exact: true });
         const invalidCredentialsVisible = await invalidCredentials
@@ -440,7 +460,7 @@ async function gotoEdition(page, runtime) {
       return;
     } catch (error) {
       lastError = error;
-      const formErrors = await page.locator("#formErrors").textContent().catch(() => "");
+      const formErrors = await page.locator("#formErrors").first().textContent({ timeout: 1000 }).catch(() => "");
       const pageSignal = await readPageSignalText(page);
       const transientFailure = await pageShowsTransientAvailabilityFailure(page);
       if (!transientFailure || attempt >= 3) {

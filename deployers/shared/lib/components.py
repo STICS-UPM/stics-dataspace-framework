@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,101 @@ def strip_url_scheme(host_or_url: str | None) -> str:
     return value
 
 
+def _component_env_key(component: str | None) -> str:
+    return normalize_component_key(component).upper().replace("-", "_")
+
+
+def _host_from_host_or_url(host_or_url: str | None) -> str:
+    value = str(host_or_url or "").strip().rstrip("/")
+    if not value:
+        return ""
+    parsed = urlsplit(value if "://" in value else f"http://{value}")
+    return str(parsed.netloc or parsed.path.split("/", 1)[0]).strip()
+
+
+def _path_from_host_or_url(host_or_url: str | None) -> str:
+    value = str(host_or_url or "").strip()
+    if not value:
+        return ""
+    parsed = urlsplit(value if "://" in value else f"http://{value}")
+    return _normalize_public_path(parsed.path)
+
+
+def _normalize_public_path(path: str | None) -> str:
+    value = str(path or "").strip()
+    if not value or value == "/":
+        return ""
+    if not value.startswith("/"):
+        value = f"/{value}"
+    return value.rstrip("/")
+
+
+def configured_component_public_path(
+    component: str | None,
+    deployer_config: dict[str, Any] | None,
+) -> str:
+    normalized = normalize_component_key(component)
+    if not normalized:
+        return ""
+
+    config = dict(deployer_config or {})
+    env_key = _component_env_key(normalized)
+    explicit_path = (
+        config.get(f"{env_key}_PUBLIC_PATH")
+        or config.get(f"{env_key}_PATH")
+    )
+    if explicit_path:
+        return _normalize_public_path(explicit_path)
+
+    explicit_url = (
+        config.get(f"{env_key}_PUBLIC_URL")
+        or config.get(f"{env_key}_URL")
+    )
+    explicit_url_path = _path_from_host_or_url(explicit_url)
+    if explicit_url_path:
+        return explicit_url_path
+
+    if config.get(f"{env_key}_PUBLIC_BASE_URL") or config.get("COMPONENTS_PUBLIC_BASE_URL"):
+        return f"/{normalized}"
+
+    return ""
+
+
+def configured_component_public_url(
+    component: str | None,
+    deployer_config: dict[str, Any] | None,
+    *,
+    dataspace_name: str = "",
+) -> str:
+    normalized = normalize_component_key(component)
+    if not normalized:
+        return ""
+
+    config = dict(deployer_config or {})
+    env_key = _component_env_key(normalized)
+    explicit_url = str(config.get(f"{env_key}_PUBLIC_URL") or "").strip()
+    if explicit_url:
+        return explicit_url.rstrip("/")
+
+    public_path = configured_component_public_path(normalized, config)
+    public_base_url = str(
+        config.get(f"{env_key}_PUBLIC_BASE_URL")
+        or config.get("COMPONENTS_PUBLIC_BASE_URL")
+        or ""
+    ).strip().rstrip("/")
+    if public_base_url:
+        return f"{public_base_url}{public_path}"
+
+    host = configured_component_host(
+        normalized,
+        config,
+        dataspace_name=dataspace_name,
+    )
+    if host and public_path:
+        return f"{host}{public_path}"
+    return ""
+
+
 def configured_component_host(
     component: str | None,
     deployer_config: dict[str, Any] | None,
@@ -124,9 +220,12 @@ def configured_component_host(
     explicit = (
         config.get(f"{env_key}_HOST")
         or config.get(f"{env_key}_HOSTNAME")
+        or config.get(f"{env_key}_PUBLIC_URL")
+        or config.get(f"{env_key}_PUBLIC_BASE_URL")
+        or config.get("COMPONENTS_PUBLIC_BASE_URL")
         or config.get(f"{env_key}_URL")
     )
-    explicit_host = strip_url_scheme(explicit)
+    explicit_host = _host_from_host_or_url(explicit)
     if explicit_host:
         return explicit_host
 

@@ -307,6 +307,50 @@ class Level6UIReportingTests(unittest.TestCase):
             self.assertEqual(result["operation_summary"]["inspect_storage"]["passed"], 1)
             self.assertTrue(os.path.exists(report_json))
 
+    def test_enrich_level6_ui_result_maps_embedded_minio_spec_to_ops_case(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            json_report_file = os.path.join(tmpdir, "results.json")
+            report_json = os.path.join(tmpdir, "ui_dataspace_validation.json")
+            with open(json_report_file, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "stats": {"expected": 1, "unexpected": 0, "flaky": 0, "skipped": 0},
+                        "suites": [
+                            {
+                                "title": "adapters/inesdata/specs/06b-minio-bucket-visibility.spec.ts",
+                                "file": "adapters/inesdata/specs/06b-minio-bucket-visibility.spec.ts",
+                                "specs": [
+                                    {
+                                        "title": "MinIO browser: provider bucket visible by direct URL",
+                                        "file": "shared/specs/minio-bucket-visibility.ts",
+                                        "tests": [{"results": [{"status": "passed", "errors": [], "attachments": []}]}],
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    handle,
+                )
+
+            result = enrich_level6_ui_result(
+                {
+                    "test": "ui-core-dataspace",
+                    "status": "passed",
+                    "provider_connector": "conn-a",
+                    "consumer_connector": "conn-b",
+                    "specs": [os.path.join("adapters", "inesdata", "specs", "06b-minio-bucket-visibility.spec.ts")],
+                    "artifacts": {
+                        "json_report_file": json_report_file,
+                        "report_json": report_json,
+                    },
+                }
+            )
+
+            self.assertEqual(result["summary"]["total"], 1)
+            self.assertEqual(result["ops_summary"]["passed"], 1)
+            self.assertEqual(result["ops_checks"][0]["test_case_id"], "DS-UI-OPS-01")
+            self.assertEqual(result["operations_involved"], ["inspect_storage", "verify_bucket_visibility"])
+
     def test_aggregate_level6_ui_results_builds_experiment_level_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             core_json = os.path.join(tmpdir, "core-results.json")

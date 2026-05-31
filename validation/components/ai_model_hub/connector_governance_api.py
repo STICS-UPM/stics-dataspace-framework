@@ -80,6 +80,31 @@ CASE_METADATA: dict[str, dict[str, Any]] = {
 }
 
 
+def _env_first(*names: str) -> str:
+    for name in names:
+        value = str(os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _connector_matches(connector: str, *env_names: str) -> bool:
+    normalized = str(connector or "").strip()
+    return bool(normalized) and any(str(os.environ.get(name) or "").strip() == normalized for name in env_names)
+
+
+def _join_management_url(base_url: str, path: str) -> str:
+    base = str(base_url or "").strip().rstrip("/")
+    suffix = str(path or "").strip()
+    if not base:
+        return ""
+    if base.endswith("/management") and suffix.startswith("/management/"):
+        suffix = suffix[len("/management"):]
+    if not suffix.startswith("/"):
+        suffix = f"/{suffix}"
+    return f"{base}{suffix}"
+
+
 class AIModelHubConnectorGovernanceApiSuite:
     """Validate AI Model Hub connector-side access, agreements, OIDC and traceability."""
 
@@ -175,6 +200,8 @@ class AIModelHubConnectorGovernanceApiSuite:
         if callable(self.keycloak_url_resolver):
             runtime["keycloak_url"] = str(self.keycloak_url_resolver() or "").strip()
         if not runtime["keycloak_url"]:
+            runtime["keycloak_url"] = _env_first("AI_MODEL_HUB_KEYCLOAK_URL")
+        if not runtime["keycloak_url"]:
             runtime["keycloak_url"] = str(config.get("KC_INTERNAL_URL") or config.get("KC_URL") or "").strip()
         if runtime["keycloak_url"] and not runtime["keycloak_url"].startswith("http"):
             runtime["keycloak_url"] = f"http://{runtime['keycloak_url']}"
@@ -185,6 +212,23 @@ class AIModelHubConnectorGovernanceApiSuite:
         return runtime
 
     def _management_url(self, connector: str, path: str) -> str:
+        if _connector_matches(
+            connector,
+            "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID",
+            "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER",
+            "AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER",
+        ):
+            resolved = _join_management_url(_env_first("AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL"), path)
+            if resolved:
+                return resolved
+        if _connector_matches(
+            connector,
+            "AI_MODEL_HUB_CONSUMER_CONNECTOR_ID",
+            "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER",
+        ):
+            resolved = _join_management_url(_env_first("AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL"), path)
+            if resolved:
+                return resolved
         if callable(self.management_url_resolver):
             resolved = str(self.management_url_resolver(connector, path) or "").strip()
             if resolved:
@@ -192,6 +236,23 @@ class AIModelHubConnectorGovernanceApiSuite:
         return f"http://{connector}.{self.ds_domain_resolver()}{path}"
 
     def _protocol_address(self, connector: str) -> str:
+        if _connector_matches(
+            connector,
+            "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID",
+            "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER",
+            "AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER",
+        ):
+            resolved = _env_first("AI_MODEL_HUB_PROVIDER_PROTOCOL_URL")
+            if resolved:
+                return resolved
+        if _connector_matches(
+            connector,
+            "AI_MODEL_HUB_CONSUMER_CONNECTOR_ID",
+            "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER",
+        ):
+            resolved = _env_first("AI_MODEL_HUB_CONSUMER_PROTOCOL_URL")
+            if resolved:
+                return resolved
         if callable(self.protocol_address_resolver):
             resolved = str(self.protocol_address_resolver(connector) or "").strip()
             if resolved:

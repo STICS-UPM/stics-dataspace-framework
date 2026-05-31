@@ -72,8 +72,46 @@ class InesdataBrandingConfigTests(unittest.TestCase):
 
         self.assertIn(".footer__logos {", source)
         self.assertIn("display: flex;", source)
-        self.assertIn("gap: 24px;", source)
-        self.assertIn("margin: 8px 0;", source)
+        self.assertIn("gap: clamp(22px, 4vw, 64px);", source)
+        self.assertIn(".footer__logo--funding", source)
+        self.assertIn("max-height: 64px;", source)
+        self.assertIn("max-width: min(52vw, 760px);", source)
+        self.assertIn("flex-direction: column;", source)
+        self.assertIn("gap: 2px;", source)
+        self.assertIn(".footer__logo--pionera", source)
+        self.assertIn(".footer__logo--oeg", source)
+        self.assertIn("margin: 0;", source)
+
+    def test_connector_interface_source_uses_fixed_menu_and_sticky_footer_layout(self):
+        navigation_html = (
+            ROOT
+            / "adapters/inesdata/sources/inesdata-connector-interface/src/app/shared/components/navigation/navigation.component.html"
+        ).read_text(encoding="utf-8")
+        navigation_ts = (
+            ROOT
+            / "adapters/inesdata/sources/inesdata-connector-interface/src/app/shared/components/navigation/navigation.component.ts"
+        ).read_text(encoding="utf-8")
+        navigation_scss = (
+            ROOT
+            / "adapters/inesdata/sources/inesdata-connector-interface/src/app/shared/components/navigation/navigation.component.scss"
+        ).read_text(encoding="utf-8")
+        routing_ts = (
+            ROOT
+            / "adapters/inesdata/sources/inesdata-connector-interface/src/app/app-routing.module.ts"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('src="assets/branding/pionera-logo.svg"', navigation_html)
+        self.assertNotIn("collapse-button", navigation_html)
+        self.assertNotIn("isMenuCollapsed", navigation_html)
+        self.assertNotIn("toggleMenu", navigation_ts)
+        self.assertNotIn(".sidenav--collapsed", navigation_scss)
+        self.assertIn("flex: 1 0 auto;", navigation_scss)
+        self.assertIn("min-height: 0;", navigation_scss)
+        self.assertIn("--mdc-list-list-item-one-line-container-height: 42px;", navigation_scss)
+        self.assertIn("align-self: center;", navigation_scss)
+        self.assertIn("display: inline-flex;", navigation_scss)
+        self.assertIn("data: {title: 'AI Model Observer', icon: 'desktop_windows'}", routing_ts)
+        self.assertNotIn("icon: 'monitoring'", routing_ts)
 
     def test_public_portal_receives_branding_environment(self):
         configmap = (

@@ -1,0 +1,288 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import os
+import shlex
+
+
+DEFAULT_REMOTE_IMAGE_IMPORT_COMMAND = "sudo -n k3s ctr -n k8s.io images import"
+DEFAULT_REMOTE_IMAGE_IMPORT_DIR = "/tmp"
+DEFAULT_REMOTE_IMAGE_PRUNE_KEEP = "2"
+INTERACTIVE_AUTO = "auto"
+INTERACTIVE_ALWAYS = "always"
+INTERACTIVE_NEVER = "never"
+
+
+def parse_bool(value, *, default=False) -> bool:
+    if value is None:
+        return bool(default)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on", "enabled", "enable"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off", "disabled", "disable"}:
+        return False
+    return bool(default)
+
+
+@dataclass(frozen=True)
+class RemoteK3sImageImportTarget:
+    role: str
+    host: str
+    user: str = ""
+    port: str = "22"
+    bastion_host: str = ""
+    bastion_user: str = ""
+    bastion_port: str = "2222"
+    identity_file: str = ""
+    remote_dir: str = DEFAULT_REMOTE_IMAGE_IMPORT_DIR
+    import_command: str = DEFAULT_REMOTE_IMAGE_IMPORT_COMMAND
+    allocate_tty: bool = False
+    interactive: bool = False
+    interactive_mode: str = INTERACTIVE_NEVER
+    prune_imported_images: bool = False
+    prune_keep: str = DEFAULT_REMOTE_IMAGE_PRUNE_KEEP
+
+    def is_configured(self) -> bool:
+        return bool(self.host)
+
+    @property
+    def destination(self) -> str:
+        return f"{self.user}@{self.host}" if self.user else self.host
+
+    @property
+    def bastion_destination(self) -> str:
+        if not self.bastion_host:
+            return ""
+        destination = f"{self.bastion_user}@{self.bastion_host}" if self.bastion_user else self.bastion_host
+        if self.bastion_port:
+            destination = f"{destination}:{self.bastion_port}"
+        return destination
+
+    @property
+    def bastion_proxy_command(self) -> str:
+        if not self.bastion_host or not self.identity_file:
+            return ""
+        args = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "IdentitiesOnly=yes",
+            "-i",
+            self.identity_file,
+        ]
+        if self.bastion_port:
+            args.extend(["-p", str(self.bastion_port)])
+        args.extend(["-W", "%h:%p", self.bastion_destination.split(":", 1)[0]])
+        return shell_join(args)
+
+    def remote_archive_path(self, local_archive_path: str) -> str:
+        filename = os.path.basename(str(local_archive_path or "").strip()) or "pionera-image.tar"
+        return f"{self.remote_dir.rstrip('/')}/{filename}"
+
+    def scp_upload_args(self, local_archive_path: str, remote_archive_path: str) -> list[str]:
+        args = ["scp"]
+        if self.identity_file:
+            args.extend(["-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-i", self.identity_file])
+        if self.port:
+            args.extend(["-P", str(self.port)])
+        if self.bastion_proxy_command:
+            args.extend(["-o", f"ProxyCommand={self.bastion_proxy_command}"])
+        elif self.bastion_destination:
+            args.extend(["-o", f"ProxyJump={self.bastion_destination}"])
+        args.extend([local_archive_path, f"{self.destination}:{remote_archive_path}"])
+        return args
+
+    def interactive_import_command(self) -> str:
+        return _interactive_sudo_import_command(self.import_command)
+
+    def allows_interactive_fallback(self) -> bool:
+        return self.interactive_mode == INTERACTIVE_AUTO
+
+    def ssh_import_args(self, remote_archive_path: str, *, interactive: bool = False) -> list[str]:
+        remote_archive_q = shlex.quote(remote_archive_path)
+        import_command = self.interactive_import_command() if interactive else self.import_command
+        cleanup_command = f"{import_command} {remote_archive_q}; status=$?; rm -f {remote_archive_q}; exit $status"
+        return self.ssh_command_args(cleanup_command, force_tty=interactive)
+
+    def ssh_sudo_probe_args(self) -> list[str]:
+        return self.ssh_command_args("sudo -n k3s ctr -n k8s.io images ls -q >/dev/null")
+
+    def ssh_command_args(self, command: str, *, force_tty: bool = False) -> list[str]:
+        args = ["ssh"]
+        if force_tty or self.allocate_tty:
+            args.append("-tt")
+        if self.identity_file:
+            args.extend(["-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-i", self.identity_file])
+        if self.port:
+            args.extend(["-p", str(self.port)])
+        if self.bastion_proxy_command:
+            args.extend(["-o", f"ProxyCommand={self.bastion_proxy_command}"])
+        elif self.bastion_destination:
+            args.extend(["-J", self.bastion_destination])
+        remote_command = f"sh -c {shlex.quote(str(command or '').strip())}"
+        args.extend([self.destination, remote_command])
+        return args
+
+    def shell_env(self) -> dict[str, str]:
+        return {
+            "K3S_REMOTE_IMPORT_HOST": self.host,
+            "K3S_REMOTE_IMPORT_USER": self.user,
+            "K3S_REMOTE_IMPORT_PORT": self.port,
+            "K3S_REMOTE_IMPORT_BASTION_HOST": self.bastion_host,
+            "K3S_REMOTE_IMPORT_BASTION_USER": self.bastion_user,
+            "K3S_REMOTE_IMPORT_BASTION_PORT": self.bastion_port,
+            "K3S_REMOTE_IMPORT_IDENTITY_FILE": self.identity_file,
+            "K3S_REMOTE_IMPORT_DIR": self.remote_dir,
+            "K3S_IMAGE_IMPORT_COMMAND": self.import_command,
+            "K3S_REMOTE_IMPORT_ALLOCATE_TTY": "true" if self.allocate_tty else "false",
+            "K3S_REMOTE_IMPORT_INTERACTIVE": self.interactive_mode,
+            "K3S_REMOTE_PRUNE_IMPORTED_IMAGES": "true" if self.prune_imported_images else "false",
+            "K3S_REMOTE_PRUNE_KEEP": self.prune_keep,
+        }
+
+    def render_shell_env_prefix(self) -> str:
+        return " ".join(
+            f"{key}={shlex.quote(str(value))}"
+            for key, value in self.shell_env().items()
+            if str(value or "").strip()
+        )
+
+
+def remote_k3s_image_import_enabled(config: dict | None) -> bool:
+    values = dict(config or {})
+    return parse_bool(values.get("VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT"), default=False)
+
+
+def parse_interactive_mode(value, *, default=INTERACTIVE_NEVER) -> str:
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {"auto", "fallback", "if-needed", "if_needed", "prompt-if-needed", "prompt_if_needed"}:
+        return INTERACTIVE_AUTO
+    if normalized in {"1", "true", "yes", "y", "on", "enabled", "enable", "always", "interactive"}:
+        return INTERACTIVE_ALWAYS
+    if normalized in {"0", "false", "no", "n", "off", "disabled", "disable", "never", "none"}:
+        return INTERACTIVE_NEVER
+    return default
+
+
+def _interactive_sudo_import_command(command: str) -> str:
+    raw = str(command or "").strip()
+    if not raw:
+        return raw
+    try:
+        parts = shlex.split(raw)
+    except ValueError:
+        parts = raw.split()
+    if parts[:1] != ["sudo"] or "-n" not in parts:
+        return raw
+    cleaned = [parts[0]]
+    removed_noninteractive_flag = False
+    for part in parts[1:]:
+        if not removed_noninteractive_flag and part == "-n":
+            removed_noninteractive_flag = True
+            continue
+        cleaned.append(part)
+        if not part.startswith("-"):
+            cleaned.extend(parts[len(cleaned) + (1 if removed_noninteractive_flag else 0):])
+            break
+    else:
+        parts = cleaned
+        return shell_join(parts)
+    parts = cleaned
+    return shell_join(parts)
+
+
+def remote_k3s_image_import_target(config: dict | None, role: str = "common") -> RemoteK3sImageImportTarget | None:
+    values = dict(config or {})
+    if not remote_k3s_image_import_enabled(values):
+        return None
+
+    normalized_role = str(role or "common").strip().lower() or "common"
+    role_key = normalized_role.upper().replace("-", "_")
+    if normalized_role == "components":
+        host = _first_config_value(
+            values,
+            "VM_COMPONENTS_SSH_HOST",
+            "VM_COMMON_SSH_HOST",
+            "VM_COMPONENTS_IP",
+            "VM_COMMON_IP",
+        )
+        user = _first_config_value(values, "VM_COMPONENTS_SSH_USER", "VM_COMMON_SSH_USER", "VM_SSH_USER")
+        port = _first_config_value(values, "VM_COMPONENTS_SSH_PORT", "VM_COMMON_SSH_PORT") or "22"
+    else:
+        host = _first_config_value(values, f"VM_{role_key}_SSH_HOST", f"VM_{role_key}_IP")
+        user = _first_config_value(values, f"VM_{role_key}_SSH_USER", "VM_SSH_USER")
+        port = _first_config_value(values, f"VM_{role_key}_SSH_PORT") or "22"
+
+    if not user:
+        user = _first_config_value(values, "SSH_BASTION_USER")
+
+    if not host:
+        return None
+
+    access_mode = str(values.get("SSH_ACCESS_MODE") or "").strip().lower()
+    bastion_host = ""
+    bastion_user = ""
+    bastion_port = ""
+    if access_mode == "bastion" or (not access_mode and str(values.get("SSH_BASTION_HOST") or "").strip()):
+        bastion_host = _first_config_value(values, "SSH_BASTION_HOST")
+        bastion_user = _first_config_value(values, "SSH_BASTION_USER")
+        bastion_port = _first_config_value(values, "SSH_BASTION_PORT") or "2222"
+
+    interactive_mode = parse_interactive_mode(values.get("VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE"))
+    import_command = (
+        _first_config_value(values, "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND", "K3S_IMAGE_IMPORT_COMMAND")
+        or DEFAULT_REMOTE_IMAGE_IMPORT_COMMAND
+    )
+    if interactive_mode == INTERACTIVE_ALWAYS:
+        import_command = _interactive_sudo_import_command(import_command)
+    interactive = interactive_mode in {INTERACTIVE_ALWAYS, INTERACTIVE_AUTO}
+
+    return RemoteK3sImageImportTarget(
+        role=normalized_role,
+        host=host,
+        user=user,
+        port=port,
+        bastion_host=bastion_host,
+        bastion_user=bastion_user,
+        bastion_port=bastion_port,
+        identity_file=_first_config_value(
+            values,
+            f"VM_{role_key}_SSH_IDENTITY_FILE",
+            "VM_COMPONENTS_SSH_IDENTITY_FILE" if normalized_role == "components" else "",
+            "VM_COMMON_SSH_IDENTITY_FILE" if normalized_role == "components" else "",
+            "SSH_IDENTITY_FILE",
+            "VM_DISTRIBUTED_SSH_IDENTITY_FILE",
+        ),
+        remote_dir=_first_config_value(values, "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR") or DEFAULT_REMOTE_IMAGE_IMPORT_DIR,
+        import_command=import_command,
+        allocate_tty=parse_bool(
+            values.get("VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY"),
+            default=interactive_mode == INTERACTIVE_ALWAYS,
+        ),
+        interactive=interactive,
+        interactive_mode=interactive_mode,
+        prune_imported_images=parse_bool(values.get("VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE"), default=False),
+        prune_keep=(
+            _first_config_value(
+                values,
+                "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP_COUNT",
+            )
+            or DEFAULT_REMOTE_IMAGE_PRUNE_KEEP
+        ),
+    )
+
+
+def shell_join(args: list[str]) -> str:
+    return " ".join(shlex.quote(str(arg)) for arg in args)
+
+
+def _first_config_value(values: dict, *keys: str) -> str:
+    for key in keys:
+        value = str(values.get(key) or "").strip()
+        if value:
+            return value
+    return ""

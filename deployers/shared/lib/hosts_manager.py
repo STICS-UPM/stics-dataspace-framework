@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from .public_hostnames import (
     canonical_common_service_hostnames,
+    clean_public_hostname,
     legacy_common_service_hostnames,
     normalize_common_domain_base,
     resolved_common_service_hostnames,
@@ -64,20 +65,32 @@ def upsert_managed_block(existing_content: str, block_name: str, entries: list[H
     block = render_managed_block(block_name, entries)
     begin_marker = f"{_BEGIN_PREFIX}{block_name}"
     end_marker = f"{_END_PREFIX}{block_name}"
-    content = (existing_content or "").strip()
+    raw_content = existing_content or ""
+    lines = raw_content.splitlines()
 
-    if begin_marker in content and end_marker in content:
-        start = content.index(begin_marker)
-        end = content.index(end_marker) + len(end_marker)
-        updated = content[:start].rstrip()
-        suffix = content[end:].lstrip()
+    start_index = None
+    end_index = None
+    for index, line in enumerate(lines):
+        if line.strip() == begin_marker:
+            start_index = index
+            break
+
+    if start_index is not None:
+        for index in range(start_index + 1, len(lines)):
+            if lines[index].strip() == end_marker:
+                end_index = index
+                break
+
+    if start_index is not None and end_index is not None:
+        updated = "\n".join(lines[:start_index]).rstrip()
+        suffix = "\n".join(lines[end_index + 1 :]).lstrip()
         parts = [part for part in (updated, block, suffix) if part]
         return "\n\n".join(parts).rstrip() + "\n"
 
-    if not content:
+    if not raw_content.strip():
         return block + "\n"
 
-    return content.rstrip() + "\n\n" + block + "\n"
+    return raw_content.rstrip() + "\n\n" + block + "\n"
 
 
 def build_context_host_blocks(
@@ -101,7 +114,11 @@ def build_context_host_blocks(
 
     blocks: list[HostBlock] = []
     if include_common:
-        common_entries = _build_common_entries(config, address=common_address)
+        common_entries = _build_common_entries(
+            config,
+            address=common_address,
+            topology=getattr(context, "topology", ""),
+        )
         if common_entries:
             blocks.append(HostBlock("shared common", common_entries))
 
@@ -343,8 +360,10 @@ def parse_hostnames(content: str) -> set[str]:
     return hostnames
 
 
-def _build_common_entries(config: dict[str, Any], *, address: str) -> list[HostEntry]:
+def _build_common_entries(config: dict[str, Any], *, address: str, topology: str | None = None) -> list[HostEntry]:
     resolved_hostnames = resolved_common_service_hostnames(config)
+    public_address = _vm_distributed_public_proxy_address(config, topology=topology)
+    public_hostnames = _vm_distributed_public_endpoint_hostnames(config) if public_address else set()
     hostnames = [
         resolved_hostnames["keycloak_hostname"],
         resolved_hostnames["minio_hostname"],
@@ -353,8 +372,43 @@ def _build_common_entries(config: dict[str, Any], *, address: str) -> list[HostE
     ]
 
     return _dedupe_entries(
-        [HostEntry(address, hostname) for hostname in hostnames if hostname]
+        [HostEntry(address, hostname) for hostname in hostnames if hostname and hostname not in public_hostnames]
+        + [HostEntry(public_address, hostname) for hostname in sorted(public_hostnames) if hostname]
     )
+
+
+def _vm_distributed_public_proxy_address(config: dict[str, Any], *, topology: str | None = None) -> str:
+    if str(topology or "").strip().lower() != "vm-distributed":
+        return ""
+    execution_host = str(config.get("VM_DISTRIBUTED_EXECUTION_HOST") or "external").strip().lower()
+    if execution_host not in {"external", "operator", "workstation", "wsl"}:
+        return ""
+    return str(
+        config.get("VM_PUBLIC_PROXY_IP")
+        or config.get("PUBLIC_PROXY_IP")
+        or config.get("VM_PUBLIC_ACCESS_IP")
+        or ""
+    ).strip()
+
+
+def _vm_distributed_public_endpoint_hostnames(config: dict[str, Any]) -> set[str]:
+    hostnames = set()
+    for key in (
+        "VM_COMMON_PUBLIC_URL",
+        "KEYCLOAK_FRONTEND_URL",
+        "KEYCLOAK_PUBLIC_URL",
+        "MINIO_API_PUBLIC_URL",
+        "MINIO_PUBLIC_URL",
+        "MINIO_CONSOLE_PUBLIC_URL",
+        "PIONERA_LEVEL6_MINIO_ENDPOINT",
+        "LEVEL6_MINIO_ENDPOINT",
+        "EDC_LEVEL6_MINIO_ENDPOINT",
+        "COMPONENTS_PUBLIC_BASE_URL",
+    ):
+        hostname = clean_public_hostname(config.get(key))
+        if hostname:
+            hostnames.add(hostname)
+    return hostnames
 
 
 def _address_for_role(context: Any, role: str, override: str | None = None) -> str:

@@ -17,6 +17,7 @@ const semanticVirtualizationHttpDataDemo =
 const ontologyHubInesdataDemo = process.env.UI_ONTOLOGY_HUB_INESDATA_DEMO === "1";
 const aiModelHubHttpDataDemo = process.env.UI_AI_MODEL_HUB_HTTPDATA_DEMO === "1";
 const aiModelObserverDemo = process.env.UI_AI_MODEL_OBSERVER_DEMO === "1";
+const minioOpsDemo = process.env.UI_MINIO_OPS_DEMO !== "0";
 const launchArgs = [
   ...(headedGpuFix ? ["--disable-gpu"] : []),
   ...(hostResolverRules ? [`--host-resolver-rules=${hostResolverRules}`] : []),
@@ -39,6 +40,7 @@ export default defineConfig({
   testDir: ".",
   testMatch: ["adapters/inesdata/specs/**/*.spec.ts"],
   testIgnore: [
+    ...(minioOpsDemo ? [] : ["adapters/inesdata/specs/06b-minio-bucket-visibility.spec.ts"]),
     ...(semanticVirtualizationHttpDataDemo ? [] : ["adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts"]),
     ...(ontologyHubInesdataDemo ? [] : ["adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts"]),
     ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts"]),

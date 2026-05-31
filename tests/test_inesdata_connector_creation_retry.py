@@ -1,6 +1,8 @@
 import contextlib
 import io
+import json
 import os
+import shlex
 import sys
 import tempfile
 import unittest
@@ -100,7 +102,164 @@ class AdditiveConnectorRetryConfigAdapter(ConnectorRetryConfigAdapter):
         return config
 
 
+class VmDistributedConnectorRetryConfigAdapter(ConnectorRetryConfigAdapter):
+    topology = "vm-distributed"
+
+    def load_deployer_config(self):
+        config = super().load_deployer_config()
+        config.update(
+            {
+                "CLUSTER_TYPE": "k3s",
+                "K3S_KUBECONFIG_COMMON": "/clusters/common.yaml",
+                "K3S_KUBECONFIG_PROVIDER": "/clusters/provider.yaml",
+                "K3S_KUBECONFIG_CONSUMER": "/clusters/consumer.yaml",
+                "NAMESPACE_PROFILE": "role-aligned",
+                "LEVEL4_ROLE_ALIGNED_CONNECTOR_NAMESPACES": "true",
+                "VM_COMMON_IP": "192.168.122.64",
+            }
+        )
+        config.update(getattr(self, "extra_config", {}))
+        return config
+
+
 class ConnectorCreationRetryTests(unittest.TestCase):
+    def test_vm_distributed_connector_urls_prefer_public_access_urls(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connector_name = "conn-org2-pionera"
+            with open(os.path.join(tmpdir, f"credentials-connector-{connector_name}.json"), "w") as handle:
+                json.dump(
+                    {
+                        "connector_user": {"user": "org2-user", "passwd": "secret"},
+                        "public_access_urls": {
+                            "connector_ingress": "https://org2.pionera.oeg.fi.upm.es",
+                            "connector_interface_login": (
+                                "https://org2.pionera.oeg.fi.upm.es/inesdata-connector-interface/"
+                            ),
+                        },
+                    },
+                    handle,
+                )
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=VmDistributedConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+
+            self.assertEqual(
+                adapter.connector_base_url(connector_name),
+                "https://org2.pionera.oeg.fi.upm.es",
+            )
+            self.assertEqual(
+                adapter.build_connector_url(connector_name),
+                "https://org2.pionera.oeg.fi.upm.es/inesdata-connector-interface/",
+            )
+
+    def test_connector_protocol_address_prefers_internal_access_url_by_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connector_name = "conn-org2-pionera"
+            with open(os.path.join(tmpdir, f"credentials-connector-{connector_name}.json"), "w") as handle:
+                json.dump(
+                    {
+                        "connector_user": {"user": "org2-user", "passwd": "secret"},
+                        "access_urls": {
+                            "connector_protocol_api": (
+                                "http://conn-org2-pionera.pionera.oeg.fi.upm.es/protocol"
+                            ),
+                        },
+                        "public_access_urls": {
+                            "connector_protocol_api": "https://org2.pionera.oeg.fi.upm.es/protocol",
+                            "connector_ingress": "https://org2.pionera.oeg.fi.upm.es",
+                        },
+                    },
+                    handle,
+                )
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=VmDistributedConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+
+            self.assertEqual(
+                adapter.build_protocol_address(connector_name),
+                "http://conn-org2-pionera.pionera.oeg.fi.upm.es/protocol",
+            )
+            self.assertEqual(
+                adapter.build_public_protocol_address(connector_name),
+                "https://org2.pionera.oeg.fi.upm.es/protocol",
+            )
+
+    def test_connector_protocol_address_can_use_public_mode(self):
+        class PublicProtocolConfigAdapter(VmDistributedConnectorRetryConfigAdapter):
+            def load_deployer_config(self):
+                config = super().load_deployer_config()
+                config["CONNECTOR_PROTOCOL_ADDRESS_MODE"] = "public"
+                return config
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connector_name = "conn-org2-pionera"
+            with open(os.path.join(tmpdir, f"credentials-connector-{connector_name}.json"), "w") as handle:
+                json.dump(
+                    {
+                        "connector_user": {"user": "org2-user", "passwd": "secret"},
+                        "access_urls": {
+                            "connector_protocol_api": (
+                                "http://conn-org2-pionera.pionera.oeg.fi.upm.es/protocol"
+                            ),
+                        },
+                        "public_access_urls": {
+                            "connector_protocol_api": "https://org2.pionera.oeg.fi.upm.es/protocol",
+                            "connector_ingress": "https://org2.pionera.oeg.fi.upm.es",
+                        },
+                    },
+                    handle,
+                )
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=PublicProtocolConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+
+            self.assertEqual(
+                adapter.build_protocol_address(connector_name),
+                "https://org2.pionera.oeg.fi.upm.es/protocol",
+            )
+
+    def test_vm_distributed_keycloak_token_url_prefers_frontend_url(self):
+        class PublicKeycloakConfigAdapter(VmDistributedConnectorRetryConfigAdapter):
+            def load_deployer_config(self):
+                config = super().load_deployer_config()
+                config.update(
+                    {
+                        "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                        "KC_INTERNAL_URL": "http://auth.pionera.oeg.fi.upm.es",
+                    }
+                )
+                return config
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=PublicKeycloakConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+
+            self.assertEqual(
+                adapter._keycloak_token_url(),
+                "https://org1.pionera.oeg.fi.upm.es/auth/realms/demo/protocol/openid-connect/token",
+            )
+
     def test_bootstrap_connector_commands_include_active_topology(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             adapter = INESDataConnectorsAdapter(
@@ -150,6 +309,37 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         self.assertIn("PIONERA_VT_URL=http://127.0.0.1:19082", create_cmd)
         self.assertIn("bootstrap.py connector create conn-demo demo", create_cmd)
         self.assertIn("PIONERA_VT_URL=http://127.0.0.1:19082", delete_cmd)
+        self.assertIn("bootstrap.py connector delete conn-demo demo", delete_cmd)
+
+    def test_bootstrap_connector_commands_can_override_keycloak_management_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=ConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+            adapter.config_adapter.topology = "vm-distributed"
+
+            create_cmd = adapter._bootstrap_connector_create_command(
+                "python3",
+                "conn-demo",
+                "demo",
+                keycloak_url="http://127.0.0.1:18081/",
+            )
+            delete_cmd = adapter._bootstrap_connector_delete_command(
+                "python3",
+                "conn-demo",
+                "demo",
+                keycloak_url="http://127.0.0.1:18081/",
+            )
+
+        self.assertIn("PIONERA_TOPOLOGY=vm-distributed", create_cmd)
+        self.assertIn("PIONERA_KC_MANAGEMENT_URL=http://127.0.0.1:18081", create_cmd)
+        self.assertIn("bootstrap.py connector create conn-demo demo", create_cmd)
+        self.assertIn("PIONERA_KC_MANAGEMENT_URL=http://127.0.0.1:18081", delete_cmd)
         self.assertIn("bootstrap.py connector delete conn-demo demo", delete_cmd)
 
     def test_vault_dns_resolution_failure_from_ubuntu_triggers_local_fallback(self):
@@ -311,6 +501,72 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         )
         self.assertEqual(captured["connector_namespace"], "demo-provider")
 
+    def test_vm_distributed_multicluster_rewrites_common_service_endpoints(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+
+            class PioneraVmDistributedConfigAdapter(VmDistributedConnectorRetryConfigAdapter):
+                def load_deployer_config(self):
+                    values = super().load_deployer_config()
+                    values["DS_DOMAIN_BASE"] = "pionera.oeg.fi.upm.es"
+                    values["DOMAIN_BASE"] = "pionera.oeg.fi.upm.es"
+                    values["VM_PROVIDER_IP"] = "192.168.122.134"
+                    values["VM_CONSUMER_IP"] = "192.168.122.9"
+                    values["VM_PROVIDER_PUBLIC_URL"] = "https://org2.pionera.oeg.fi.upm.es"
+                    values["VM_CONSUMER_PUBLIC_URL"] = "https://org3.pionera.oeg.fi.upm.es"
+                    return values
+
+            config_adapter = PioneraVmDistributedConfigAdapter(tmpdir)
+            values_path = config.connector_values_file("conn-citycouncil-pionera")
+            with open(values_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(
+                    {
+                        "services": {
+                            "db": {
+                                "hostname": "common-srvs-postgresql.common-srvs.svc",
+                            },
+                            "vault": {
+                                "url": "http://common-srvs-vault.common-srvs.svc:8200",
+                            },
+                            "registrationService": {
+                                "hostname": "pionera-registration-service.core-control.svc.cluster.local:8080",
+                                "protocol": "http",
+                            },
+                            "keycloak": {
+                                "hostname": "auth.pionera.oeg.fi.upm.es",
+                            },
+                        }
+                    },
+                    handle,
+                    sort_keys=False,
+                )
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: False,
+                infrastructure_adapter=object(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+
+            adapter.update_connector_multicluster_common_service_endpoints(
+                values_path,
+                "conn-citycouncil-pionera",
+                ds_name="pionera",
+            )
+
+            with open(values_path, "r", encoding="utf-8") as handle:
+                rendered = yaml.safe_load(handle)
+
+        self.assertEqual(rendered["services"]["db"]["hostname"], "192.168.122.64")
+        self.assertEqual(rendered["services"]["vault"]["url"], "http://192.168.122.64:8200")
+        self.assertEqual(
+            rendered["services"]["registrationService"]["hostname"],
+            "registration-service-pionera.pionera.oeg.fi.upm.es",
+        )
+        self.assertEqual(rendered["services"]["keycloak"]["hostname"], "auth.pionera.oeg.fi.upm.es")
+
     def test_update_connector_host_aliases_uses_connector_dataspace_registration_hostname(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorRetryConfig(tmpdir)
@@ -363,14 +619,36 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             ],
         )
 
-    def test_update_connector_host_aliases_skips_vm_distributed_topology(self):
+    def test_update_connector_host_aliases_uses_vm_distributed_role_addresses(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorRetryConfig(tmpdir)
-            config_adapter = ConnectorRetryConfigAdapter(tmpdir)
-            config_adapter.topology = "vm-distributed"
+
+            class PioneraVmDistributedConfigAdapter(VmDistributedConnectorRetryConfigAdapter):
+                def load_deployer_config(self):
+                    values = super().load_deployer_config()
+                    values["DS_DOMAIN_BASE"] = "pionera.oeg.fi.upm.es"
+                    values["DOMAIN_BASE"] = "pionera.oeg.fi.upm.es"
+                    values["VM_PROVIDER_IP"] = "192.168.122.134"
+                    values["VM_CONSUMER_IP"] = "192.168.122.9"
+                    values["VM_PROVIDER_PUBLIC_URL"] = "https://org2.pionera.oeg.fi.upm.es"
+                    values["VM_CONSUMER_PUBLIC_URL"] = "https://org3.pionera.oeg.fi.upm.es"
+                    return values
+
+            config_adapter = PioneraVmDistributedConfigAdapter(tmpdir)
             values_path = config.connector_values_file("conn-a-pilot")
             with open(values_path, "w", encoding="utf-8") as handle:
-                yaml.safe_dump({"hostAliases": []}, handle, sort_keys=False)
+                yaml.safe_dump(
+                    {
+                        "hostAliases": [
+                            {
+                                "ip": "192.168.49.2",
+                                "hostnames": ["auth.pionera.oeg.fi.upm.es"],
+                            }
+                        ]
+                    },
+                    handle,
+                    sort_keys=False,
+                )
 
             run = mock.Mock(return_value="192.168.49.2")
             adapter = INESDataConnectorsAdapter(
@@ -381,17 +659,44 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                 config_adapter=config_adapter,
                 config_cls=config,
             )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "pionera",
+                    "namespace": "core-control",
+                    "connectors": ["conn-a-pionera", "conn-b-pionera"],
+                    "connector_details": [
+                        {
+                            "name": "conn-a-pionera",
+                            "role": "provider",
+                            "namespace_role": "provider",
+                        },
+                        {
+                            "name": "conn-b-pionera",
+                            "role": "consumer",
+                            "namespace_role": "consumer",
+                        },
+                    ],
+                }
+            ]
 
             adapter.update_connector_host_aliases(
                 values_path,
-                ["conn-a-pilot", "conn-b-pilot"],
-                connector_name="conn-a-pilot",
+                ["conn-a-pionera", "conn-b-pionera"],
+                connector_name="conn-a-pionera",
+                ds_name="pionera",
             )
 
             with open(values_path, "r", encoding="utf-8") as handle:
                 rendered = yaml.safe_load(handle)
 
-        self.assertEqual(rendered["hostAliases"], [])
+        aliases = {entry["ip"]: entry["hostnames"] for entry in rendered["hostAliases"]}
+        self.assertIn("auth.pionera.oeg.fi.upm.es", aliases["192.168.122.64"])
+        self.assertIn("registration-service-pionera.pionera.oeg.fi.upm.es", aliases["192.168.122.64"])
+        self.assertIn("ontology-hub-pionera.pionera.oeg.fi.upm.es", aliases["192.168.122.64"])
+        self.assertIn("conn-a-pionera.pionera.oeg.fi.upm.es", aliases["192.168.122.134"])
+        self.assertIn("org2.pionera.oeg.fi.upm.es", aliases["192.168.122.134"])
+        self.assertIn("conn-b-pionera.pionera.oeg.fi.upm.es", aliases["192.168.122.9"])
+        self.assertIn("org3.pionera.oeg.fi.upm.es", aliases["192.168.122.9"])
         run.assert_not_called()
 
     def test_update_connector_host_aliases_uses_vm_single_k3s_ingress_ip(self):
@@ -449,6 +754,41 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         self.assertIn("conn-a-demo.dev.ds.dataspaceunit.upm", rendered["hostAliases"][0]["hostnames"])
         run.assert_not_called()
 
+    def test_wait_for_all_connectors_vm_distributed_uses_pod_readiness(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = VmDistributedConnectorRetryConfigAdapter(tmpdir)
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: (
+                    "conn-a-pionera-abc 1/1 Running 0 1m\n"
+                    "conn-a-pionera-inteface-def 1/1 Running 0 1m\n"
+                ),
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=object(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "pionera",
+                    "namespace": "core-control",
+                    "connectors": ["conn-a-pionera"],
+                    "connector_details": [
+                        {
+                            "name": "conn-a-pionera",
+                            "role": "provider",
+                            "namespace_role": "provider",
+                        }
+                    ],
+                }
+            ]
+            adapter.wait_for_connector_ready = mock.Mock(return_value=False)
+
+            self.assertTrue(adapter.wait_for_all_connectors(["conn-a-pionera"]))
+
+        adapter.wait_for_connector_ready.assert_not_called()
+
     def test_update_connector_layout_metadata_persists_namespace_plan_for_connector(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorRetryConfig(tmpdir)
@@ -503,6 +843,258 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             },
         )
 
+    def test_update_connector_node_scheduling_pins_vm_distributed_provider(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+
+            class VmDistributedConfigAdapter(ConnectorRetryConfigAdapter):
+                topology = "vm-distributed"
+
+                def load_deployer_config(self):
+                    config_data = super().load_deployer_config()
+                    config_data.update(
+                        {
+                            "NAMESPACE_PROFILE": "role-aligned",
+                            "VM_PROVIDER_K8S_NODE": "pionera20",
+                            "VM_CONSUMER_K8S_NODE": "pionera3",
+                        }
+                    )
+                    return config_data
+
+            config_adapter = VmDistributedConfigAdapter(tmpdir)
+            values_path = config.connector_values_file("conn-a-pilot")
+            with open(values_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(
+                    {
+                        "connector": {"name": "conn-a-pilot"},
+                        "nodeSelector": {"disktype": "ssd"},
+                    },
+                    handle,
+                    sort_keys=False,
+                )
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: "192.168.49.2",
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=object(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "pilot",
+                    "namespace": "pilot",
+                    "namespace_profile": "role-aligned",
+                    "connectors": ["conn-a-pilot", "conn-b-pilot"],
+                    "connector_details": [
+                        {
+                            "name": "conn-a-pilot",
+                            "role": "provider",
+                            "active_namespace": "provider",
+                            "planned_namespace": "provider",
+                        }
+                    ],
+                }
+            ]
+
+            adapter.update_connector_node_scheduling(values_path, "conn-a-pilot")
+
+            with open(values_path, "r", encoding="utf-8") as handle:
+                rendered = yaml.safe_load(handle)
+
+        self.assertEqual(
+            rendered["nodeSelector"],
+            {
+                "disktype": "ssd",
+                "kubernetes.io/hostname": "pionera20",
+            },
+        )
+
+    def test_update_connector_node_scheduling_skips_local_topology(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = ConnectorRetryConfigAdapter(tmpdir)
+            values_path = config.connector_values_file("conn-a-pilot")
+            with open(values_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump({"connector": {"name": "conn-a-pilot"}}, handle, sort_keys=False)
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: "192.168.49.2",
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=object(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+
+            adapter.update_connector_node_scheduling(values_path, "conn-a-pilot")
+
+            with open(values_path, "r", encoding="utf-8") as handle:
+                rendered = yaml.safe_load(handle)
+
+        self.assertNotIn("nodeSelector", rendered)
+
+    def test_update_connector_public_ingress_config_adds_org_host_for_vm_distributed_provider(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+
+            class VmDistributedConfigAdapter(ConnectorRetryConfigAdapter):
+                topology = "vm-distributed"
+
+                def load_deployer_config(self):
+                    config_data = super().load_deployer_config()
+                    config_data.update(
+                        {
+                            "NAMESPACE_PROFILE": "role-aligned",
+                            "VM_PROVIDER_PUBLIC_URL": "https://org2.pionera.oeg.fi.upm.es",
+                        }
+                    )
+                    return config_data
+
+            config_adapter = VmDistributedConfigAdapter(tmpdir)
+            values_path = config.connector_values_file("conn-a-pilot")
+            with open(values_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(
+                    {
+                        "connector": {
+                            "name": "conn-a-pilot",
+                            "ingress": {
+                                "hostname": "conn-a-pilot.pionera.oeg.fi.upm.es",
+                                "protocol": "http",
+                            },
+                        },
+                        "services": {
+                            "keycloak": {
+                                "hostname": "auth.pionera.oeg.fi.upm.es",
+                                "external": "auth.pionera.oeg.fi.upm.es",
+                                "protocol": "http",
+                            }
+                        },
+                    },
+                    handle,
+                    sort_keys=False,
+                )
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: "192.168.49.2",
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=object(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "pilot",
+                    "namespace": "pilot",
+                    "namespace_profile": "role-aligned",
+                    "connectors": ["conn-a-pilot"],
+                    "connector_details": [
+                        {
+                            "name": "conn-a-pilot",
+                            "role": "provider",
+                            "active_namespace": "provider",
+                        }
+                    ],
+                }
+            ]
+
+            adapter.update_connector_public_ingress_config(values_path, "conn-a-pilot")
+
+            with open(values_path, "r", encoding="utf-8") as handle:
+                rendered = yaml.safe_load(handle)
+
+        ingress = rendered["connector"]["ingress"]
+        self.assertEqual(ingress["publicProtocol"], "https")
+        self.assertEqual(ingress["publicHostname"], "org2.pionera.oeg.fi.upm.es")
+        self.assertEqual(rendered["services"]["keycloak"]["protocol"], "http")
+        self.assertEqual(rendered["services"]["keycloak"]["publicProtocol"], "https")
+        self.assertEqual(rendered["services"]["keycloak"]["external"], "auth.pionera.oeg.fi.upm.es")
+        self.assertEqual(
+            ingress["additionalHosts"],
+            [
+                {
+                    "hostname": "org2.pionera.oeg.fi.upm.es",
+                    "rootToInterface": True,
+                }
+            ],
+        )
+
+    def test_update_connector_public_ingress_config_uses_explicit_keycloak_frontend_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+
+            class VmDistributedConfigAdapter(ConnectorRetryConfigAdapter):
+                topology = "vm-distributed"
+
+                def load_deployer_config(self):
+                    config_data = super().load_deployer_config()
+                    config_data.update(
+                        {
+                            "VM_PROVIDER_PUBLIC_URL": "https://org2.pionera.oeg.fi.upm.es",
+                            "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                        }
+                    )
+                    return config_data
+
+            config_adapter = VmDistributedConfigAdapter(tmpdir)
+            values_path = config.connector_values_file("conn-a-pilot")
+            with open(values_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(
+                    {
+                        "connector": {
+                            "name": "conn-a-pilot",
+                            "ingress": {
+                                "hostname": "conn-a-pilot.pionera.oeg.fi.upm.es",
+                                "protocol": "http",
+                            },
+                        },
+                        "services": {
+                            "keycloak": {
+                                "hostname": "auth.pionera.oeg.fi.upm.es",
+                                "external": "auth.pionera.oeg.fi.upm.es",
+                                "protocol": "http",
+                            }
+                        },
+                    },
+                    handle,
+                    sort_keys=False,
+                )
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: "192.168.49.2",
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=object(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "pilot",
+                    "namespace": "pilot",
+                    "connectors": ["conn-a-pilot"],
+                    "connector_details": [
+                        {
+                            "name": "conn-a-pilot",
+                            "role": "provider",
+                        }
+                    ],
+                }
+            ]
+
+            adapter.update_connector_public_ingress_config(values_path, "conn-a-pilot")
+
+            with open(values_path, "r", encoding="utf-8") as handle:
+                rendered = yaml.safe_load(handle)
+
+        keycloak = rendered["services"]["keycloak"]
+        self.assertEqual(keycloak["protocol"], "http")
+        self.assertEqual(keycloak["hostname"], "auth.pionera.oeg.fi.upm.es")
+        self.assertEqual(keycloak["publicProtocol"], "https")
+        self.assertEqual(keycloak["external"], "org1.pionera.oeg.fi.upm.es/auth")
+
     def test_keycloak_readiness_uses_configured_hostname_without_port_forward(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorRetryConfig(tmpdir)
@@ -534,6 +1126,37 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                 self.assertFalse(adapter.wait_for_keycloak_admin_ready(timeout=0.01, poll_interval=0))
 
             self.assertEqual(infra.calls, [])
+
+    def test_keycloak_readiness_prefers_management_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = ConnectorRetryConfigAdapter(tmpdir)
+            config_adapter.load_deployer_config = lambda: {
+                "KC_URL": "http://admin.auth.example.test",
+                "KC_MANAGEMENT_URL": "http://127.0.0.1:18081",
+                "KC_USER": "admin",
+                "KC_PASSWORD": "secret",
+            }
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+
+            with mock.patch(
+                "adapters.inesdata.connectors.requests.post",
+                return_value=mock.Mock(status_code=200, json=lambda: {"access_token": "token"}),
+            ) as mocked_post:
+                self.assertTrue(adapter.wait_for_keycloak_admin_ready(timeout=0.01, poll_interval=0))
+
+            mocked_post.assert_called_once()
+            self.assertEqual(
+                mocked_post.call_args.args[0],
+                "http://127.0.0.1:18081/realms/master/protocol/openid-connect/token",
+            )
 
     def test_cleanup_uninstalls_release_before_bootstrap_delete(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -750,6 +1373,174 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                     )
                 ],
             )
+
+    def test_vm_distributed_create_connector_uses_keycloak_port_forward_when_admin_hostname_unresolved(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            os.makedirs(config.repo_dir(), exist_ok=True)
+            open(config.repo_requirements_path(), "w", encoding="utf-8").close()
+            os.makedirs(config.venv_path(), exist_ok=True)
+            calls = []
+            readiness_urls = []
+
+            class ConfigAdapterWithVmDistributedKeycloak(VmDistributedConnectorRetryConfigAdapter):
+                def load_deployer_config(self):
+                    values = super().load_deployer_config()
+                    values.update(
+                        {
+                            "KC_URL": "http://admin.auth.pionera.oeg.fi.upm.es",
+                            "COMMON_SERVICES_NAMESPACE": "common-srvs",
+                        }
+                    )
+                    return values
+
+            class Infra:
+                def __init__(self):
+                    self.port_forwards = []
+                    self.stops = []
+
+                @staticmethod
+                def ensure_local_infra_access():
+                    return True
+
+                @staticmethod
+                def ensure_vault_unsealed():
+                    return True
+
+                @staticmethod
+                def deploy_helm_release(*_args, **_kwargs):
+                    return True
+
+                @staticmethod
+                def wait_for_namespace_pods(*_args, **_kwargs):
+                    return True
+
+                @staticmethod
+                def manage_hosts_entries(*_args, **_kwargs):
+                    return None
+
+                @staticmethod
+                def get_pod_by_name(*_args, **_kwargs):
+                    return "common-srvs-keycloak-0"
+
+                def port_forward_service(self, *args, **kwargs):
+                    self.port_forwards.append((args, kwargs, os.environ.get("KUBECONFIG")))
+                    return True
+
+                def stop_port_forward_service(self, *args, **kwargs):
+                    self.stops.append((args, kwargs, os.environ.get("KUBECONFIG")))
+                    return True
+
+            def fake_run(cmd, **_kwargs):
+                calls.append(cmd)
+                if "bootstrap.py connector create" in cmd:
+                    with open(config.connector_credentials_path("conn-a-demo"), "w", encoding="utf-8") as handle:
+                        handle.write(
+                            "{"
+                            '"database":{"name":"db","user":"db","passwd":"secret"},'
+                            '"certificates":{"path":"certs","passwd":"secret"},'
+                            '"connector_user":{"user":"user","passwd":"secret"},'
+                            '"vault":{"path":"secret/data/demo/conn-a-demo","token":"token"},'
+                            '"minio":{"user":"conn-a-demo","passwd":"secret","access_key":"access","secret_key":"secret"}'
+                            "}"
+                        )
+                    with open(config.connector_values_file("conn-a-demo"), "w", encoding="utf-8") as handle:
+                        handle.write("hostAliases: []\n")
+                return object()
+
+            infra = Infra()
+            adapter = INESDataConnectorsAdapter(
+                run=fake_run,
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=infra,
+                config_adapter=ConfigAdapterWithVmDistributedKeycloak(tmpdir),
+                config_cls=config,
+            )
+
+            def fake_wait(*_args, **kwargs):
+                readiness_urls.append(kwargs.get("keycloak_url"))
+                return True
+
+            adapter.wait_for_keycloak_admin_ready = fake_wait
+            adapter.setup_minio_bucket = lambda *_args, **_kwargs: True
+            adapter.force_clean_postgres_db = lambda *_args, **_kwargs: None
+            adapter.update_connector_host_aliases = lambda *_args, **_kwargs: None
+            adapter._prepare_vault_management_access = lambda *_args, **_kwargs: True
+
+            with (
+                mock.patch.object(adapter, "_reserve_local_port", side_effect=[15432, 18081]),
+                mock.patch("adapters.inesdata.connectors.socket.getaddrinfo", side_effect=OSError("not found")),
+                mock.patch("adapters.inesdata.connectors.ensure_python_requirements", lambda *_args, **_kwargs: None),
+            ):
+                self.assertTrue(adapter.create_connector("conn-a-demo", ["conn-a-demo", "conn-b-demo"]))
+
+            create_calls = [call for call in calls if "bootstrap.py connector create" in call]
+            delete_calls = [call for call in calls if "bootstrap.py connector delete" in call]
+            self.assertEqual(readiness_urls[0], "http://127.0.0.1:18081")
+            self.assertIn("PIONERA_PG_HOST=127.0.0.1", create_calls[0])
+            self.assertIn("PIONERA_PG_PORT=15432", create_calls[0])
+            self.assertIn("PIONERA_KC_MANAGEMENT_URL=http://127.0.0.1:18081", create_calls[0])
+            self.assertIn("PIONERA_PG_HOST=127.0.0.1", delete_calls[0])
+            self.assertIn("PIONERA_PG_PORT=15432", delete_calls[0])
+            self.assertIn("PIONERA_KC_MANAGEMENT_URL=http://127.0.0.1:18081", delete_calls[0])
+            self.assertEqual(
+                infra.port_forwards,
+                [
+                    (
+                        ("common-srvs", "common-srvs-postgresql", 15432, 5432),
+                        {"quiet": True},
+                        "/clusters/common.yaml",
+                    ),
+                    (
+                        ("common-srvs", "common-srvs-keycloak", 18081, 8080),
+                        {"quiet": True},
+                        "/clusters/common.yaml",
+                    )
+                ],
+            )
+            self.assertEqual(
+                infra.stops,
+                [
+                    (
+                        ("common-srvs", "common-srvs-keycloak"),
+                        {"quiet": True},
+                        "/clusters/common.yaml",
+                    ),
+                    (
+                        ("common-srvs", "common-srvs-postgresql"),
+                        {"quiet": True},
+                        "/clusters/common.yaml",
+                    )
+                ],
+            )
+
+    def test_vm_distributed_keycloak_bootstrap_port_forward_can_be_forced_by_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+
+            class ConfigAdapterWithForcedKeycloak(VmDistributedConnectorRetryConfigAdapter):
+                def load_deployer_config(self):
+                    values = super().load_deployer_config()
+                    values.update(
+                        {
+                            "KC_URL": "http://admin.auth.pionera.oeg.fi.upm.es",
+                            "KEYCLOAK_BOOTSTRAP_PORT_FORWARD": "true",
+                        }
+                    )
+                    return values
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=ConfigAdapterWithForcedKeycloak(tmpdir),
+                config_cls=config,
+            )
+
+            with mock.patch("adapters.inesdata.connectors.socket.getaddrinfo", return_value=[]):
+                self.assertTrue(adapter._vm_distributed_keycloak_admin_needs_port_forward())
 
     def test_connector_ready_uses_hostname_without_port_forward_by_default(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1567,6 +2358,143 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                 ],
             )
 
+    def test_vm_distributed_vault_bootstrap_access_uses_common_kubeconfig(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+
+            class ConfigAdapterWithVault(VmDistributedConnectorRetryConfigAdapter):
+                def load_deployer_config(self):
+                    values = super().load_deployer_config()
+                    values.update(
+                        {
+                            "VT_URL": "http://common-srvs-vault.common-srvs.svc:8200",
+                            "VT_TOKEN": "root-token",
+                        }
+                    )
+                    return values
+
+            class Infra:
+                def __init__(self):
+                    self.calls = []
+                    self.stops = []
+
+                def port_forward_service(self, *args, **kwargs):
+                    self.calls.append((args, kwargs, os.environ.get("KUBECONFIG")))
+                    return True
+
+                def stop_port_forward_service(self, *args, **kwargs):
+                    self.stops.append((args, kwargs, os.environ.get("KUBECONFIG")))
+                    return True
+
+            infra = Infra()
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "common-srvs-vault-0 1/1 Running 0 1m",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=infra,
+                config_adapter=ConfigAdapterWithVault(tmpdir),
+                config_cls=config,
+            )
+
+            with mock.patch.object(adapter, "_reserve_local_port", return_value=19082):
+                bootstrap_access = adapter._start_vault_bootstrap_access()
+                adapter._stop_vault_bootstrap_access(bootstrap_access)
+
+            self.assertEqual(bootstrap_access["vault_url"], "http://127.0.0.1:19082")
+            self.assertEqual(
+                infra.calls,
+                [
+                    (
+                        ("common-srvs", "common-srvs-vault", 19082, 8200),
+                        {"quiet": True},
+                        "/clusters/common.yaml",
+                    )
+                ],
+            )
+            self.assertEqual(
+                infra.stops,
+                [
+                    (
+                        ("common-srvs", "common-srvs-vault"),
+                        {"quiet": True},
+                        "/clusters/common.yaml",
+                    )
+                ],
+            )
+
+    def test_vault_token_sync_policy_uses_available_runtime_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            class ConfigWithDeployerPath(ConnectorRetryConfig):
+                def deployer_config_path(self):
+                    return os.path.join(self.root, "deployer.config")
+
+            config = ConfigWithDeployerPath(tmpdir)
+            with open(config.deployer_config_path(), "w", encoding="utf-8") as handle:
+                handle.write("VT_TOKEN=dummy-token\n")
+
+            for topology, expected in (
+                ("local", True),
+                ("vm-single", True),
+                ("vm-distributed", True),
+            ):
+                with self.subTest(topology=topology):
+                    config_adapter = ConnectorRetryConfigAdapter(tmpdir)
+                    config_adapter.topology = topology
+                    adapter = INESDataConnectorsAdapter(
+                        run=lambda *_args, **_kwargs: object(),
+                        run_silent=lambda *_args, **_kwargs: "",
+                        auto_mode_getter=lambda: True,
+                        infrastructure_adapter=mock.Mock(),
+                        config_adapter=config_adapter,
+                        config_cls=config,
+                    )
+
+                    self.assertEqual(adapter._should_sync_vault_token_to_deployer_config(), expected)
+
+    def test_prepare_vault_management_access_for_vm_distributed_reconciles_runtime_token(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            class ConfigWithDeployerPath(ConnectorRetryConfig):
+                def deployer_config_path(self):
+                    return os.path.join(self.root, "deployer.config")
+
+            config = ConfigWithDeployerPath(tmpdir)
+            with open(config.deployer_config_path(), "w", encoding="utf-8") as handle:
+                handle.write("VT_TOKEN=dummy-token\n")
+
+            class ConfigAdapterWithVault(ConnectorRetryConfigAdapter):
+                def __init__(self, root):
+                    super().__init__(root)
+                    self.topology = "vm-distributed"
+
+                def load_deployer_config(self):
+                    values = super().load_deployer_config()
+                    values.update(
+                        {
+                            "VT_URL": "http://common-srvs-vault.common-srvs.svc:8200",
+                            "VT_TOKEN": "root-token",
+                        }
+                    )
+                    return values
+
+            infrastructure = mock.Mock()
+            infrastructure.ensure_vault_unsealed.return_value = True
+            infrastructure.reconcile_vault_state_for_local_runtime.return_value = True
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=infrastructure,
+                config_adapter=ConfigAdapterWithVault(tmpdir),
+                config_cls=config,
+            )
+
+            with mock.patch.object(adapter, "_verify_vault_management_token", return_value=True):
+                self.assertTrue(adapter._prepare_vault_management_access(ds_name="demo"))
+
+            infrastructure.ensure_local_infra_access.assert_not_called()
+            infrastructure.ensure_vault_unsealed.assert_called_once()
+            infrastructure.reconcile_vault_state_for_local_runtime.assert_called_once()
+
     def test_prepare_vault_management_access_skips_local_infra_check_outside_local_topology(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorRetryConfig(tmpdir)
@@ -1821,6 +2749,94 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                 "http://backend-demo.dev.ds.dataspaceunit.upm",
             )
 
+    def test_update_connector_model_observer_config_uses_vm_distributed_org1_backend_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            values_file = os.path.join(tmpdir, "values-conn-org3-pionera.yaml")
+            with open(values_file, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "connector:\n"
+                    "  name: conn-org3-pionera\n"
+                    "  dataspace: pionera\n"
+                    "  ingress:\n"
+                    "    protocol: http\n"
+                    "    hostname: conn-org3-pionera.pionera.oeg.fi.upm.es\n"
+                    "connectorInterface: {}\n"
+                )
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=VmDistributedConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+
+            adapter.update_connector_model_observer_config(
+                values_file,
+                "conn-org3-pionera",
+                ds_name="pionera",
+                ds_namespace="pionera",
+            )
+
+            with open(values_file, encoding="utf-8") as handle:
+                values = yaml.safe_load(handle)
+
+            self.assertEqual(
+                values["connectorInterface"]["modelObserver"]["proxyTarget"],
+                "https://org1.dev.ds.dataspaceunit.upm/public-portal-backend",
+            )
+            self.assertEqual(
+                values["connectorInterface"]["modelObserver"]["strapiUrl"],
+                "https://org1.dev.ds.dataspaceunit.upm/public-portal-backend",
+            )
+            self.assertEqual(
+                values["connectorInterface"]["modelObserver"]["journalBaseUrl"],
+                "http://org1.dev.ds.dataspaceunit.upm/public-portal-backend",
+            )
+
+    def test_update_connector_model_observer_config_respects_explicit_journal_base_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            values_file = os.path.join(tmpdir, "values-conn-org2-pionera.yaml")
+            with open(values_file, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "connector:\n"
+                    "  name: conn-org2-pionera\n"
+                    "  dataspace: pionera\n"
+                    "  ingress:\n"
+                    "    protocol: http\n"
+                    "    hostname: conn-org2-pionera.pionera.oeg.fi.upm.es\n"
+                    "connectorInterface: {}\n"
+                )
+
+            config_adapter = VmDistributedConnectorRetryConfigAdapter(tmpdir)
+            config_adapter.extra_config = {
+                "AI_MODEL_OBSERVER_JOURNAL_BASE_URL": "http://observer.internal/public-portal-backend",
+            }
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=config_adapter,
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+
+            adapter.update_connector_model_observer_config(
+                values_file,
+                "conn-org2-pionera",
+                ds_name="pionera",
+                ds_namespace="pionera",
+            )
+
+            with open(values_file, encoding="utf-8") as handle:
+                values = yaml.safe_load(handle)
+
+            self.assertEqual(
+                values["connectorInterface"]["modelObserver"]["journalBaseUrl"],
+                "http://observer.internal/public-portal-backend",
+            )
+
     def test_level4_local_connector_images_fail_when_required_outside_managed_minikube_topology(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorRetryConfig(tmpdir)
@@ -1842,6 +2858,42 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                 self.assertFalse(adapter._maybe_prepare_level4_local_connector_images("demo"))
 
             root_dir_mock.assert_not_called()
+
+    def test_level4_local_connector_images_allow_vm_distributed_remote_import(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            class RemoteImportConfigAdapter(ConnectorRetryConfigAdapter):
+                topology = "vm-distributed"
+
+                def load_deployer_config(self):
+                    config = super().load_deployer_config()
+                    config.update(
+                        {
+                            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                            "VM_PROVIDER_SSH_HOST": "pionera20",
+                            "VM_PROVIDER_SSH_USER": "pionera",
+                            "VM_CONSUMER_SSH_HOST": "pionera3",
+                            "VM_CONSUMER_SSH_USER": "pionera",
+                        }
+                    )
+                    return config
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=RemoteImportConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+
+            policy = adapter._resolve_level4_local_image_policy(
+                mode="required",
+                label="INESData connector",
+            )
+
+            self.assertTrue(policy["prepare_local_images"])
+            self.assertTrue(policy["allow_local_image_overrides"])
+            self.assertEqual(policy["error"], "")
 
     def test_create_connector_retries_after_initial_failure(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1896,6 +2948,178 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             delete_calls = [call for call in calls if "bootstrap.py connector delete" in call]
             self.assertEqual(len(create_calls), 2)
             self.assertEqual(len(delete_calls), 2)
+
+    def test_vm_distributed_cleanup_uses_connector_kubeconfig_only_for_cluster_operations(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = VmDistributedConnectorRetryConfigAdapter(tmpdir)
+            calls = []
+
+            def record(label):
+                calls.append((label, os.environ.get("KUBECONFIG"), os.environ.get("PIONERA_KUBECONFIG_ROLE")))
+
+            def fake_run(cmd, **_kwargs):
+                if cmd.startswith("helm uninstall"):
+                    record("helm")
+                elif "bootstrap.py connector delete" in cmd:
+                    record("bootstrap-delete")
+                elif "psql" in cmd:
+                    record("registration-db")
+                return object()
+
+            adapter = INESDataConnectorsAdapter(
+                run=fake_run,
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "pionera",
+                    "namespace": "core-control",
+                    "namespace_profile": "role-aligned",
+                    "connectors": ["conn-citycouncil-pionera", "conn-company-pionera"],
+                    "connector_details": [
+                        {
+                            "name": "conn-citycouncil-pionera",
+                            "role": "provider",
+                            "namespace_role": "provider",
+                            "active_namespace": "provider",
+                            "planned_namespace": "provider",
+                        },
+                        {
+                            "name": "conn-company-pionera",
+                            "role": "consumer",
+                            "namespace_role": "consumer",
+                            "active_namespace": "consumer",
+                            "planned_namespace": "consumer",
+                        },
+                    ],
+                    "namespace_roles": {
+                        "provider_namespace": "provider",
+                        "consumer_namespace": "consumer",
+                    },
+                    "planned_namespace_roles": {
+                        "provider_namespace": "provider",
+                        "consumer_namespace": "consumer",
+                    },
+                }
+            ]
+            adapter.force_clean_postgres_db = lambda *_args, **_kwargs: record("postgres-clean")
+
+            with mock.patch.dict(
+                os.environ,
+                {"KUBECONFIG": "/clusters/common.yaml", "PIONERA_KUBECONFIG_ROLE": "common"},
+            ):
+                adapter._cleanup_connector_state(
+                    "conn-citycouncil-pionera",
+                    tmpdir,
+                    "pionera",
+                    "python3",
+                    namespace="provider",
+                )
+
+            self.assertIn(("helm", "/clusters/provider.yaml", "provider"), calls)
+            self.assertIn(("bootstrap-delete", "/clusters/common.yaml", "common"), calls)
+            self.assertIn(("postgres-clean", "/clusters/common.yaml", "common"), calls)
+            self.assertIn(("registration-db", "/clusters/common.yaml", "common"), calls)
+
+    def test_vm_distributed_create_connector_deploys_provider_release_with_provider_kubeconfig(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = VmDistributedConnectorRetryConfigAdapter(tmpdir)
+            os.makedirs(config.repo_dir(), exist_ok=True)
+            os.makedirs(config.venv_path(), exist_ok=True)
+            calls = []
+
+            def fake_run(cmd, **_kwargs):
+                if "bootstrap.py connector create" in cmd:
+                    calls.append(("bootstrap-create", os.environ.get("KUBECONFIG"), os.environ.get("PIONERA_KUBECONFIG_ROLE")))
+                    with open(config.connector_values_file("conn-citycouncil-pionera"), "w", encoding="utf-8") as handle:
+                        handle.write("hostAliases: []\n")
+                return object()
+
+            class RecordingInfra:
+                @staticmethod
+                def ensure_local_infra_access():
+                    return True
+
+                @staticmethod
+                def ensure_vault_unsealed():
+                    return True
+
+                def deploy_helm_release(self, *_args, **_kwargs):
+                    calls.append(("helm-deploy", os.environ.get("KUBECONFIG"), os.environ.get("PIONERA_KUBECONFIG_ROLE")))
+                    return True
+
+                def wait_for_deployment_rollout(self, *_args, **_kwargs):
+                    calls.append(("rollout", os.environ.get("KUBECONFIG"), os.environ.get("PIONERA_KUBECONFIG_ROLE")))
+                    return True
+
+                @staticmethod
+                def manage_hosts_entries(*_args, **_kwargs):
+                    return None
+
+                @staticmethod
+                def get_pod_by_name(*_args, **_kwargs):
+                    return "minio"
+
+            adapter = INESDataConnectorsAdapter(
+                run=fake_run,
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=RecordingInfra(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "pionera",
+                    "namespace": "core-control",
+                    "namespace_profile": "role-aligned",
+                    "connectors": ["conn-citycouncil-pionera", "conn-company-pionera"],
+                    "connector_details": [
+                        {
+                            "name": "conn-citycouncil-pionera",
+                            "role": "provider",
+                            "namespace_role": "provider",
+                            "active_namespace": "provider",
+                            "planned_namespace": "provider",
+                        }
+                    ],
+                    "namespace_roles": {
+                        "provider_namespace": "provider",
+                        "consumer_namespace": "consumer",
+                    },
+                    "planned_namespace_roles": {
+                        "provider_namespace": "provider",
+                        "consumer_namespace": "consumer",
+                    },
+                }
+            ]
+            adapter.wait_for_keycloak_admin_ready = lambda *_args, **_kwargs: True
+            adapter.setup_minio_bucket = lambda *_args, **_kwargs: True
+            adapter.force_clean_postgres_db = lambda *_args, **_kwargs: None
+            adapter.update_connector_host_aliases = lambda *_args, **_kwargs: None
+            adapter._prepare_vault_management_access = lambda *_args, **_kwargs: True
+
+            with mock.patch.dict(
+                os.environ,
+                {"KUBECONFIG": "/clusters/common.yaml", "PIONERA_KUBECONFIG_ROLE": "common"},
+            ):
+                created = adapter.create_connector(
+                    "conn-citycouncil-pionera",
+                    ["conn-citycouncil-pionera", "conn-company-pionera"],
+                )
+
+            self.assertTrue(created)
+            self.assertIn(("bootstrap-create", "/clusters/common.yaml", "common"), calls)
+            self.assertIn(("helm-deploy", "/clusters/provider.yaml", "provider"), calls)
+            self.assertTrue(
+                any(call == ("rollout", "/clusters/provider.yaml", "provider") for call in calls)
+            )
 
     def test_create_connector_retries_after_partial_credentials_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2529,6 +3753,205 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             adapter.wait_for_all_connectors.assert_called_once_with(["conn-a-demo"])
             adapter.validate_connectors_with_stabilization.assert_called_once()
 
+    def test_level4_vm_distributed_remote_import_env_targets_connector_namespace_role(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            class LocalImagesConfig(ConnectorRetryConfig):
+                def script_dir(self):
+                    return self.root
+
+            class RemoteImportConfigAdapter(ConnectorRetryConfigAdapter):
+                topology = "vm-distributed"
+
+                def load_deployer_config(self):
+                    config = super().load_deployer_config()
+                    config.update(
+                        {
+                            "CLUSTER_TYPE": "k3s",
+                            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                            "SSH_ACCESS_MODE": "bastion",
+                            "SSH_BASTION_HOST": "orion.example.test",
+                            "SSH_BASTION_PORT": "2222",
+                            "SSH_BASTION_USER": "jump",
+                            "VM_PROVIDER_SSH_HOST": "pionera20",
+                            "VM_PROVIDER_SSH_USER": "pionera",
+                            "VM_PROVIDER_SSH_PORT": "22",
+                            "VM_CONSUMER_SSH_HOST": "pionera3",
+                            "VM_CONSUMER_SSH_USER": "pionera",
+                            "VM_CONSUMER_SSH_PORT": "22",
+                        }
+                    )
+                    return config
+
+            config = LocalImagesConfig(tmpdir)
+            os.makedirs(config.repo_dir(), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "adapters", "inesdata", "scripts"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "adapters", "inesdata", "sources", "inesdata-connector"), exist_ok=True)
+            os.makedirs(
+                os.path.join(tmpdir, "adapters", "inesdata", "sources", "inesdata-connector-interface"),
+                exist_ok=True,
+            )
+            script_path = os.path.join(tmpdir, "adapters", "inesdata", "scripts", "local_build_load_deploy.sh")
+            open(script_path, "w", encoding="utf-8").close()
+            events = []
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda cmd, **_kwargs: events.append(cmd) or object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=RemoteImportConfigAdapter(tmpdir),
+                config_cls=config,
+            )
+
+            self.assertTrue(adapter._maybe_prepare_level4_local_connector_images("provider"))
+
+            self.assertEqual(len(events), 1)
+            self.assertIn("K3S_REMOTE_IMPORT_HOST=pionera20", events[0])
+            self.assertIn("K3S_REMOTE_IMPORT_USER=pionera", events[0])
+            self.assertIn("K3S_REMOTE_IMPORT_BASTION_HOST=orion.example.test", events[0])
+            self.assertIn("--cluster-runtime k3s", events[0])
+
+    def test_level4_vm_distributed_builds_once_and_reuses_manifest_for_second_cluster(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            class LocalImagesConfig(ConnectorRetryConfig):
+                def script_dir(self):
+                    return self.root
+
+            class RemoteImportConfigAdapter(ConnectorRetryConfigAdapter):
+                topology = "vm-distributed"
+
+                def load_deployer_config(self):
+                    config = super().load_deployer_config()
+                    config.update(
+                        {
+                            "CLUSTER_TYPE": "k3s",
+                            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                            "VM_PROVIDER_SSH_HOST": "pionera20",
+                            "VM_PROVIDER_SSH_USER": "pionera",
+                            "VM_CONSUMER_SSH_HOST": "pionera3",
+                            "VM_CONSUMER_SSH_USER": "pionera",
+                        }
+                    )
+                    return config
+
+            config = LocalImagesConfig(tmpdir)
+            os.makedirs(config.repo_dir(), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "adapters", "inesdata", "scripts"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "adapters", "inesdata", "sources", "inesdata-connector"), exist_ok=True)
+            os.makedirs(
+                os.path.join(tmpdir, "adapters", "inesdata", "sources", "inesdata-connector-interface"),
+                exist_ok=True,
+            )
+            script_path = os.path.join(tmpdir, "adapters", "inesdata", "scripts", "local_build_load_deploy.sh")
+            open(script_path, "w", encoding="utf-8").close()
+            events = []
+
+            def fake_run(cmd, **_kwargs):
+                events.append(cmd)
+                parts = shlex.split(cmd)
+                if "--manifest" in parts and "--skip-build" not in parts:
+                    manifest_path = parts[parts.index("--manifest") + 1]
+                    os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+                    with open(manifest_path, "w", encoding="utf-8") as handle:
+                        handle.write("component\trepo_dir\timage\ttag\tfull_image\tbuild_cmd\n")
+                        handle.write(
+                            "connector\t.\tlocal/inesdata/inesdata-connector\ttag1\t"
+                            "local/inesdata/inesdata-connector:tag1\tbuild\n"
+                        )
+                        handle.write(
+                            "connector-interface\t.\tlocal/inesdata/inesdata-connector-interface\ttag1\t"
+                            "local/inesdata/inesdata-connector-interface:tag1\tbuild\n"
+                        )
+                return object()
+
+            adapter = INESDataConnectorsAdapter(
+                run=fake_run,
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=RemoteImportConfigAdapter(tmpdir),
+                config_cls=config,
+            )
+
+            self.assertTrue(
+                adapter._prepare_level4_local_connector_images_for_namespaces(["provider", "consumer"])
+            )
+
+            self.assertEqual(len(events), 2)
+            first_parts = shlex.split(events[0])
+            second_parts = shlex.split(events[1])
+            first_manifest = first_parts[first_parts.index("--manifest") + 1]
+            second_manifest = second_parts[second_parts.index("--manifest") + 1]
+
+            self.assertEqual(first_manifest, second_manifest)
+            self.assertNotIn("--skip-build", first_parts)
+            self.assertIn("--skip-build", second_parts)
+            self.assertIn("K3S_REMOTE_IMPORT_HOST=pionera20", events[0])
+            self.assertIn("K3S_REMOTE_IMPORT_HOST=pionera3", events[1])
+
+    def test_deploy_connectors_prepares_vm_distributed_images_for_provider_and_consumer_clusters(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = VmDistributedConnectorRetryConfigAdapter(tmpdir)
+            os.makedirs(config.repo_dir(), exist_ok=True)
+            open(config.repo_requirements_path(), "w", encoding="utf-8").close()
+            os.makedirs(config.venv_path(), exist_ok=True)
+            prepared_namespaces = []
+
+            class Infra:
+                def manage_hosts_entries(self, _entries):
+                    return None
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=Infra(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "demo",
+                    "namespace": "demo-core",
+                    "namespace_profile": "role-aligned",
+                    "connectors": ["conn-a-demo", "conn-b-demo"],
+                    "planned_namespace_roles": {
+                        "provider_namespace": "demo-provider",
+                        "consumer_namespace": "demo-consumer",
+                    },
+                    "connector_details": [
+                        {
+                            "name": "conn-a-demo",
+                            "active_namespace": "demo-provider",
+                            "namespace_role": "provider",
+                        },
+                        {
+                            "name": "conn-b-demo",
+                            "active_namespace": "demo-consumer",
+                            "namespace_role": "consumer",
+                        },
+                    ],
+                }
+            ]
+            adapter._maybe_prepare_level4_local_connector_images = lambda namespace: prepared_namespaces.append(namespace) or True
+            adapter.connector_already_exists = lambda *_args, **_kwargs: False
+            adapter.wait_for_all_connectors = mock.Mock(return_value=True)
+            adapter.validate_connectors_with_stabilization = mock.Mock(return_value=True)
+
+            def create_connector(connector, _connectors):
+                with open(config.connector_values_file(connector), "w", encoding="utf-8") as handle:
+                    handle.write("hostAliases: []\n")
+                return True
+
+            adapter.create_connector = mock.Mock(side_effect=create_connector)
+
+            with mock.patch("adapters.inesdata.connectors.ensure_python_requirements", lambda *_args, **_kwargs: None):
+                deployed = adapter.deploy_connectors()
+
+            self.assertCountEqual(deployed, ["conn-a-demo", "conn-b-demo"])
+            self.assertEqual(prepared_namespaces, ["demo-provider", "demo-consumer"])
+
     def test_deploy_connectors_cleans_stale_connectors_in_discovered_target_namespace(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorRetryConfig(tmpdir)
@@ -2613,6 +4036,138 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             self.assertEqual(cleanup_calls, [("conn-stale-demo", "demo-provider")])
             adapter.create_connector.assert_called_once_with("conn-a-demo", ["conn-a-demo"])
             adapter.wait_for_all_connectors.assert_called_once_with(["conn-a-demo"])
+
+    def test_vm_distributed_stale_cleanup_uses_bootstrap_access_and_namespace_role(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = VmDistributedConnectorRetryConfigAdapter(tmpdir)
+            os.makedirs(config.repo_dir(), exist_ok=True)
+            open(config.repo_requirements_path(), "w", encoding="utf-8").close()
+            os.makedirs(config.venv_path(), exist_ok=True)
+
+            class Infra:
+                @staticmethod
+                def ensure_vault_unsealed():
+                    return True
+
+                @staticmethod
+                def manage_hosts_entries(_entries):
+                    return None
+
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=Infra(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+            dataspaces = [
+                {
+                    "name": "pionera",
+                    "namespace": "core-control",
+                    "namespace_profile": "role-aligned",
+                    "connectors": ["conn-org2-pionera", "conn-org3-pionera"],
+                    "connector_details": [
+                        {
+                            "name": "conn-org2-pionera",
+                            "role": "provider",
+                            "namespace_role": "provider",
+                            "active_namespace": "provider",
+                            "planned_namespace": "provider",
+                        },
+                        {
+                            "name": "conn-org3-pionera",
+                            "role": "consumer",
+                            "namespace_role": "consumer",
+                            "active_namespace": "consumer",
+                            "planned_namespace": "consumer",
+                        },
+                    ],
+                    "namespace_roles": {
+                        "provider_namespace": "provider",
+                        "consumer_namespace": "consumer",
+                    },
+                    "planned_namespace_roles": {
+                        "provider_namespace": "provider",
+                        "consumer_namespace": "consumer",
+                    },
+                }
+            ]
+            adapter.load_dataspace_connectors = lambda: dataspaces
+            adapter._maybe_prepare_level4_local_connector_images = lambda _namespace: True
+            adapter._prepare_vault_management_access = lambda *_args, **_kwargs: True
+            adapter._start_level4_connector_bootstrap_access = mock.Mock(
+                return_value={
+                    "vault_url": "http://127.0.0.1:19082",
+                    "keycloak_url": "http://127.0.0.1:18081",
+                    "pg_host": "127.0.0.1",
+                    "pg_port": "15432",
+                }
+            )
+            adapter._ensure_level4_keycloak_ready = mock.Mock(return_value=True)
+            adapter._stop_level4_connector_bootstrap_access = mock.Mock()
+
+            def discover_existing(_ds_name, namespace, include_runtime_artifacts=True):
+                if namespace == "provider":
+                    return {"conn-citycouncil-pionera"}
+                if namespace == "consumer":
+                    return {"conn-company-pionera"}
+                return set()
+
+            adapter._discover_existing_connectors = discover_existing
+            cleanup_calls = []
+
+            def cleanup(connector, repo_dir, ds_name, python_exec, **kwargs):
+                cleanup_calls.append((connector, kwargs))
+
+            adapter._cleanup_connector_state = cleanup
+            adapter.connector_already_exists = lambda *_args, **_kwargs: False
+
+            def create_connector(connector, _connectors):
+                with open(config.connector_values_file(connector), "w", encoding="utf-8") as handle:
+                    handle.write("hostAliases: []\n")
+                return True
+
+            adapter.create_connector = mock.Mock(side_effect=create_connector)
+            adapter.wait_for_all_connectors = mock.Mock(return_value=True)
+
+            with mock.patch("adapters.inesdata.connectors.ensure_python_requirements", lambda *_args, **_kwargs: None):
+                deployed = adapter.deploy_connectors()
+
+            self.assertCountEqual(deployed, ["conn-org2-pionera", "conn-org3-pionera"])
+            self.assertEqual(
+                cleanup_calls,
+                [
+                    (
+                        "conn-citycouncil-pionera",
+                        {
+                            "namespace": "provider",
+                            "dataspace": dataspaces[0],
+                            "kubeconfig_role": "provider",
+                            "vault_url": "http://127.0.0.1:19082",
+                            "keycloak_url": "http://127.0.0.1:18081",
+                            "pg_host": "127.0.0.1",
+                            "pg_port": "15432",
+                        },
+                    ),
+                    (
+                        "conn-company-pionera",
+                        {
+                            "namespace": "consumer",
+                            "dataspace": dataspaces[0],
+                            "kubeconfig_role": "consumer",
+                            "vault_url": "http://127.0.0.1:19082",
+                            "keycloak_url": "http://127.0.0.1:18081",
+                            "pg_host": "127.0.0.1",
+                            "pg_port": "15432",
+                        },
+                    ),
+                ],
+            )
+            adapter._start_level4_connector_bootstrap_access.assert_called_once()
+            adapter._ensure_level4_keycloak_ready.assert_called_once()
+            adapter._stop_level4_connector_bootstrap_access.assert_called_once()
 
     def test_discover_existing_connectors_can_ignore_runtime_artifacts_for_namespace_scoped_discovery(self):
         with tempfile.TemporaryDirectory() as tmpdir:

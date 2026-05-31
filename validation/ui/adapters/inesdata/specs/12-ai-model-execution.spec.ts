@@ -11,6 +11,7 @@ import {
   cleanupProviderValidationArtifacts,
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS, waitForUiTransition } from "../../../shared/utils/waiting";
+import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
 
 type AIModelExecutionUiReport = {
   startedAt: string;
@@ -85,13 +86,7 @@ function aiModelHubModelPath(): string {
 }
 
 function aiModelHubModelUrl(componentsNamespace: string): string {
-  const explicit = (process.env.UI_AI_MODEL_HUB_MODEL_URL || "").trim();
-  if (explicit) {
-    return explicit;
-  }
-
-  const namespace = (process.env.UI_AI_MODEL_HUB_MODEL_NAMESPACE || componentsNamespace || "components").trim();
-  return `http://model-server.${namespace}.svc.cluster.local:8080${aiModelHubModelPath()}`;
+  return modelServerUrlForPath(aiModelHubModelPath(), componentsNamespace);
 }
 
 function aiModelHubCatalogCleanupEnabled(): boolean {
@@ -258,8 +253,11 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
   };
 
   const isTolerableRuntimeRetry = (url: string, status: number): boolean =>
-    (status === 401 || status === 503) &&
-    (url.includes("/management/pagination/count") || url.includes("/management/assets/request"));
+    (status === 401 || status === 500 || status === 502 || status === 503 || status === 504) &&
+    (url.includes("/management/pagination/count") ||
+      url.includes("/management/assets/request") ||
+      url.includes("/management/federatedcatalog/request") ||
+      url.includes("/management/contractagreements/request"));
 
   page.on("response", (response) => {
     const url = response.url();

@@ -111,6 +111,28 @@ class FakeAdapterWithInfrastructure(FakeAdapter):
         self.infrastructure = object()
 
 
+class FakePublicAccessInfrastructure:
+    def __init__(self):
+        self.calls = []
+
+    def sync_vm_distributed_public_access(self, topology="local"):
+        self.calls.append(("sync_vm_distributed_public_access", topology))
+        return {
+            "status": "synced",
+            "topology": topology,
+            "common_public_paths": {"status": "synced"},
+            "component_public_paths": {"status": "synced"},
+        }
+
+
+class FakePublicAccessAdapter(FakeAdapter):
+    def __init__(self, dry_run=False, topology="local"):
+        super().__init__()
+        self.dry_run = dry_run
+        self.topology = topology
+        self.infrastructure = FakePublicAccessInfrastructure()
+
+
 class KafkaTransferConsoleOutputTests(unittest.TestCase):
     def test_level6_kafka_disabled_message_explains_how_to_enable(self):
         class KafkaReadyAdapter(FakeAdapter):
@@ -1139,6 +1161,70 @@ class InesdataPortalReadinessTests(unittest.TestCase):
             "http://auth.dev.ed.dataspaceunit.upm/realms/demo/protocol/openid-connect/token",
         )
 
+    def test_probe_inesdata_portal_readiness_vm_distributed_uses_configured_public_urls(self):
+        context = self._context()
+        context.topology = "vm-distributed"
+        context.dataspace_name = "pionera"
+        context.ds_domain_base = "pionera.oeg.fi.upm.es"
+        context.connectors = ["conn-org2-pionera", "conn-org3-pionera"]
+        context.config = {
+            "KC_INTERNAL_URL": "http://auth.pionera.oeg.fi.upm.es",
+            "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+            "VM_PROVIDER_CONNECTORS": "org2",
+            "VM_CONSUMER_CONNECTORS": "org3",
+            "VM_PROVIDER_PUBLIC_URL": "https://org2.pionera.oeg.fi.upm.es",
+            "VM_CONSUMER_PUBLIC_URL": "https://org3.pionera.oeg.fi.upm.es",
+        }
+        for connector in context.connectors:
+            with open(
+                os.path.join(context.runtime_dir, f"credentials-connector-{connector}.json"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                json.dump(
+                    {"connector_user": {"user": f"user-{connector}", "passwd": "change-me"}},
+                    handle,
+                )
+
+        probed_get_urls = []
+        probed_post_urls = []
+
+        def fake_http_get(url, **kwargs):
+            probed_get_urls.append(url)
+            return types.SimpleNamespace(status_code=200, headers={})
+
+        def fake_http_post(url, **kwargs):
+            probed_post_urls.append(url)
+            return types.SimpleNamespace(status_code=200, headers={})
+
+        with mock.patch.object(main, "_kubectl_endpoint_ready") as endpoint_ready, mock.patch.object(
+            main.requests,
+            "get",
+            side_effect=fake_http_get,
+        ), mock.patch.object(
+            main.requests,
+            "post",
+            side_effect=fake_http_post,
+        ):
+            readiness = main._probe_inesdata_portal_readiness(context)
+
+        self.assertEqual(readiness["status"], "passed")
+        self.assertFalse(readiness["check_internal_endpoints"])
+        endpoint_ready.assert_not_called()
+        self.assertIn(
+            "https://org1.pionera.oeg.fi.upm.es/auth/realms/pionera/.well-known/openid-configuration",
+            probed_get_urls,
+        )
+        self.assertIn("https://org2.pionera.oeg.fi.upm.es/inesdata-connector-interface/", probed_get_urls)
+        self.assertIn("https://org3.pionera.oeg.fi.upm.es/inesdata-connector-interface/", probed_get_urls)
+        self.assertEqual(
+            probed_post_urls,
+            [
+                "https://org1.pionera.oeg.fi.upm.es/auth/realms/pionera/protocol/openid-connect/token",
+                "https://org1.pionera.oeg.fi.upm.es/auth/realms/pionera/protocol/openid-connect/token",
+            ],
+        )
+
     def test_probe_inesdata_portal_readiness_uses_runtime_role_namespaces_in_role_aligned(self):
         context = self._role_aligned_context()
 
@@ -1403,6 +1489,88 @@ class InesdataPortalReadinessTests(unittest.TestCase):
             "http://registration-service-demo.dev.ds.dataspaceunit.upm",
         )
 
+    def test_run_available_access_urls_for_vm_distributed_uses_org1_common_routes(self):
+        adapter = FakeAdapter()
+        fake_context = types.SimpleNamespace(
+            config={
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+            },
+            dataspace_name="pionera",
+            environment="DEV",
+            connectors=[],
+            components=[],
+        )
+
+        with mock.patch.object(
+            main,
+            "_resolve_deployer_context",
+            return_value=("inesdata", fake_context),
+        ):
+            result = main.run_available_access_urls(adapter, deployer_name="inesdata", topology="vm-distributed")
+
+        self.assertEqual(
+            result["urls"]["keycloak_realm"],
+            "https://org1.pionera.oeg.fi.upm.es/auth/realms/pionera",
+        )
+        self.assertEqual(result["urls"]["minio_api"], "https://org1.pionera.oeg.fi.upm.es")
+        self.assertEqual(result["urls"]["minio_console"], "https://org1.pionera.oeg.fi.upm.es/s3-console/")
+        self.assertNotIn("public_portal_login", result["urls"])
+        self.assertEqual(
+            result["urls"]["public_portal_backend_admin"],
+            "https://org1.pionera.oeg.fi.upm.es/public-portal-backend/admin",
+        )
+        self.assertNotIn("registration_service", result["urls"])
+        self.assertNotIn("http://auth.pionera.oeg.fi.upm.es", result["urls"].values())
+
+    def test_run_available_access_urls_for_vm_distributed_uses_public_connector_routes(self):
+        adapter = FakeAdapter()
+        fake_context = types.SimpleNamespace(
+            config={
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "VM_PROVIDER_CONNECTORS": "org2",
+                "VM_CONSUMER_CONNECTORS": "org3",
+            },
+            dataspace_name="pionera",
+            environment="DEV",
+            connectors=["conn-org2-pionera", "conn-org3-pionera"],
+            components=[],
+        )
+
+        with mock.patch.object(
+            main,
+            "_resolve_deployer_context",
+            return_value=("inesdata", fake_context),
+        ):
+            result = main.run_available_access_urls(adapter, deployer_name="inesdata", topology="vm-distributed")
+
+        org2_urls = result["urls"]["connectors"]["conn-org2-pionera"]
+        org3_urls = result["urls"]["connectors"]["conn-org3-pionera"]
+        self.assertEqual(org2_urls["connector_ingress"], "https://org2.pionera.oeg.fi.upm.es")
+        self.assertEqual(
+            org2_urls["connector_interface_login"],
+            "https://org2.pionera.oeg.fi.upm.es/inesdata-connector-interface/",
+        )
+        self.assertEqual(org3_urls["connector_ingress"], "https://org3.pionera.oeg.fi.upm.es")
+        self.assertNotIn("http://conn-org2-pionera.pionera.oeg.fi.upm.es", org2_urls.values())
+        self.assertNotIn("http://conn-org3-pionera.pionera.oeg.fi.upm.es", org3_urls.values())
+
+    def test_level2_access_urls_preserve_keycloak_proxy_path(self):
+        urls = main._level2_access_urls(
+            {
+                "keycloak_realm": "https://org1.pionera.oeg.fi.upm.es/auth/realms/pionera",
+                "keycloak_admin_console": "https://org1.pionera.oeg.fi.upm.es/auth/admin/pionera/console/",
+                "minio_console": "https://org1.pionera.oeg.fi.upm.es/s3-console/",
+                "minio_api": "https://org1.pionera.oeg.fi.upm.es",
+            }
+        )
+
+        self.assertEqual(urls["keycloak"], "https://org1.pionera.oeg.fi.upm.es/auth")
+        self.assertEqual(urls["keycloak_admin_console"], "https://org1.pionera.oeg.fi.upm.es/auth/admin/")
+        self.assertEqual(urls["minio_console"], "https://org1.pionera.oeg.fi.upm.es/s3-console/")
+        self.assertEqual(urls["minio_api"], "https://org1.pionera.oeg.fi.upm.es")
+
     def test_run_available_access_urls_includes_vm_single_local_browser_access(self):
         adapter = FakeAdapter()
         fake_context = types.SimpleNamespace(
@@ -1625,6 +1793,21 @@ class PreviewAwareAdapter(FakeAdapter):
         }
 
 
+class EnvironmentPreviewAdapter(FakeAdapter):
+    def __init__(self, dry_run=False, topology="local"):
+        super().__init__()
+        self.dry_run = dry_run
+        self.topology = topology
+
+    def preview_deploy(self):
+        return {
+            "status": "ready",
+            "topology": self.topology,
+            "kubeconfig": os.environ.get("KUBECONFIG"),
+            "kubeconfig_role": os.environ.get("PIONERA_KUBECONFIG_ROLE"),
+        }
+
+
 class DeployShadowPreviewAdapter(FakeAdapter):
     def __init__(self, dry_run=False, topology="local"):
         super().__init__()
@@ -1738,7 +1921,9 @@ class MainCliTests(unittest.TestCase):
         self.fake_module.DryRunAwareAdapter = DryRunAwareAdapter
         self.fake_module.TopologyAwareAdapter = TopologyAwareAdapter
         self.fake_module.PreviewAwareAdapter = PreviewAwareAdapter
+        self.fake_module.EnvironmentPreviewAdapter = EnvironmentPreviewAdapter
         self.fake_module.DeployShadowPreviewAdapter = DeployShadowPreviewAdapter
+        self.fake_module.FakePublicAccessAdapter = FakePublicAccessAdapter
         self.fake_deployer_module = types.ModuleType("fake_deployer_module")
         self.fake_deployer_module.FakeDeployer = FakeDeployer
         self.fake_deployer_module.FakeVmDeployer = FakeVmDeployer
@@ -1839,6 +2024,35 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("Topology: vm-single", rendered)
         self.assertIn("Cluster runtime: k3s", rendered)
         vm_single_prompt.assert_called_once_with(required=False)
+
+    def test_menu_selecting_vm_distributed_without_adapter_does_not_report_incomplete_configuration(self):
+        registry = {
+            "fake": "fake_adapter_module:FakeAdapter",
+            "other": "fake_adapter_module:FakeAdapter",
+        }
+        stdout = io.StringIO()
+        with mock.patch(
+            "builtins.input",
+            side_effect=["T", "3", "Q"],
+        ), mock.patch.object(
+            main,
+            "_vm_distributed_configuration_needs_attention",
+            side_effect=AssertionError("configuration should wait for adapter selection"),
+        ), contextlib.redirect_stdout(stdout):
+            result = main.run_interactive_menu(
+                adapter_registry=registry,
+                deployer_registry=self.deployer_registry,
+                validation_engine_cls=FakeValidationEngine,
+                metrics_collector_cls=FakeMetricsCollector,
+                experiment_storage=FakeStorage,
+            )
+
+        self.assertEqual(result["status"], "exited")
+        self.assertIsNone(result["adapter"])
+        self.assertEqual(result["topology"], "vm-distributed")
+        rendered = stdout.getvalue()
+        self.assertIn("Active topology set to vm-distributed.", rendered)
+        self.assertNotIn("vm-distributed configuration is incomplete", rendered)
 
     def test_menu_vm_single_cluster_runtime_override_is_session_scoped(self):
         stdout = io.StringIO()
@@ -3446,7 +3660,7 @@ class MainCliTests(unittest.TestCase):
         adapter.deployment.deploy_dataspace_for_topology.assert_called_once_with(topology="vm-distributed")
         self.assertEqual(adapter.calls, [])
 
-    def test_run_level_four_vm_distributed_rejects_multi_kubeconfig_connectors(self):
+    def test_run_level_four_vm_distributed_allows_multi_kubeconfig_connectors(self):
         adapter = FakeAdapter()
 
         with mock.patch.object(
@@ -3457,11 +3671,12 @@ class MainCliTests(unittest.TestCase):
                 "provider": "/clusters/provider.yaml",
                 "consumer": "/clusters/consumer.yaml",
             },
-        ), mock.patch.object(main, "_topology_runtime_environment_overrides", return_value={}):
-            with self.assertRaisesRegex(RuntimeError, "multi-kubeconfig connector deployment is not enabled"):
-                main.run_level(adapter, 4, deployer_name="fake", topology="vm-distributed")
+        ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
+            result = main.run_level(adapter, 4, deployer_name="fake", topology="vm-distributed")
 
-        self.assertEqual(adapter.calls, [])
+        self.assertEqual(result["level"], 4)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(adapter.calls, ["deploy_connectors"])
 
     def test_run_level_four_vm_distributed_allows_single_logical_cluster(self):
         adapter = FakeAdapter()
@@ -4072,6 +4287,407 @@ class MainCliTests(unittest.TestCase):
             ],
         )
 
+    def test_public_access_command_reconciles_vm_distributed_entrypoints(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            result = main.main(
+                ["public", "public-access", "reconcile", "--topology", "vm-distributed"],
+                adapter_registry={"public": "fake_adapter_module:FakePublicAccessAdapter"},
+            )
+
+        self.assertEqual(result["status"], "synced")
+        self.assertEqual(result["topology"], "vm-distributed")
+        self.assertEqual(result["adapter"], "public")
+        self.assertIn("common_public_paths", result)
+        self.assertIn("component_public_paths", result)
+        self.assertIn('"status": "synced"', stdout.getvalue())
+
+    def test_public_access_command_requires_vm_distributed_topology(self):
+        with self.assertRaises(SystemExit):
+            main.main(
+                ["public", "public-access", "reconcile", "--topology", "local"],
+                adapter_registry={"public": "fake_adapter_module:FakePublicAccessAdapter"},
+            )
+
+    def test_public_access_dry_run_lists_reconcile_actions(self):
+        result = main.main(
+            ["public", "public-access", "--dry-run", "--topology", "vm-distributed"],
+            adapter_registry={"public": "fake_adapter_module:FakePublicAccessAdapter"},
+            experiment_storage=FakeStorage,
+        )
+
+        self.assertEqual(result["status"], "dry-run")
+        self.assertEqual(result["command"], "public-access")
+        self.assertEqual(
+            result["actions"],
+            [
+                "reconcile_ingress_service_type",
+                "reconcile_vm_distributed_routing",
+                "reconcile_common_public_path_ingresses",
+                "reconcile_component_public_path_ingresses",
+            ],
+        )
+        self.assertTrue(result["public_access"]["supported"])
+
+    def test_ssh_access_dry_run_lists_bootstrap_plan_actions(self):
+        result = main.main(
+            ["fake", "ssh-access", "--dry-run", "--topology", "vm-distributed"],
+            adapter_registry=self.registry,
+            experiment_storage=FakeStorage,
+        )
+
+        self.assertEqual(result["status"], "dry-run")
+        self.assertEqual(result["command"], "ssh-access")
+        self.assertIn("build_idempotent_ssh_bootstrap_plan", result["actions"])
+        self.assertTrue(result["ssh_access"]["supported"])
+
+    def test_ssh_access_plan_returns_idempotent_bootstrap_plan(self):
+        plan = {
+            "execution_host": "common-services",
+            "ssh": {
+                "mode": "bastion",
+                "bastion": {
+                    "host": "bastion.example.test",
+                    "port": "2222",
+                    "user": "jump",
+                },
+            },
+            "ssh_bootstrap": {
+                "status": "ready",
+                "mode": "plan",
+                "identity_file": "/home/operator/.ssh/validation-env-vm",
+                "key_comment": "validation-env",
+                "targets": [
+                    {
+                        "role": "common-services",
+                        "role_key": "common",
+                        "host": "common.example.test",
+                        "user": "operator",
+                        "port": "22",
+                        "identity_file": "/home/operator/.ssh/validation-env-vm",
+                        "needs_public_key": True,
+                    }
+                ],
+                "actions": [{"name": "ensure_dedicated_keypair"}],
+            },
+        }
+
+        stdout = io.StringIO()
+        with mock.patch.object(
+            main,
+            "_current_vm_distributed_topology_plan",
+            return_value=plan,
+        ), contextlib.redirect_stdout(stdout):
+            result = main.main(
+                ["fake", "ssh-access", "plan", "--topology", "vm-distributed"],
+                adapter_registry=self.registry,
+            )
+
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(result["execution_host"], "common-services")
+        self.assertEqual(result["execution_location"]["mode"], "common-services")
+        self.assertEqual(result["ssh_bootstrap"]["mode"], "plan")
+        self.assertEqual(
+            result["manual_bootstrap_commands"][0]["command"],
+            "getent hosts bastion.example.test",
+        )
+        self.assertTrue(
+            any(item["name"] == "install_public_key_on_common" for item in result["manual_bootstrap_commands"])
+        )
+        self.assertIn("VM-DISTRIBUTED SSH ACCESS", stdout.getvalue())
+        self.assertIn("Where to run this", stdout.getvalue())
+        self.assertIn("common-services VM", stdout.getvalue())
+        self.assertIn("Recommended interactive guide", stdout.getvalue())
+        self.assertIn("Why it exists", stdout.getvalue())
+        self.assertIn("python3 main.py fake ssh-access assistant --topology vm-distributed", stdout.getvalue())
+        self.assertNotIn("Human setup guide", stdout.getvalue())
+
+    def test_ssh_access_plan_can_print_raw_json(self):
+        plan = {
+            "execution_host": "external",
+            "ssh_bootstrap": {
+                "status": "ready",
+                "mode": "plan",
+                "identity_file": "/home/operator/.ssh/validation-env-vm",
+                "actions": [{"name": "ensure_dedicated_keypair"}],
+            },
+        }
+
+        stdout = io.StringIO()
+        with mock.patch.object(
+            main,
+            "_current_vm_distributed_topology_plan",
+            return_value=plan,
+        ), contextlib.redirect_stdout(stdout):
+            result = main.main(
+                ["fake", "ssh-access", "plan", "--topology", "vm-distributed", "--json"],
+                adapter_registry=self.registry,
+            )
+
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(result["execution_location"]["mode"], "external")
+        self.assertIn('"identity_file": "/home/operator/.ssh/validation-env-vm"', stdout.getvalue())
+        self.assertIn('"execution_location"', stdout.getvalue())
+        self.assertNotIn("Human setup guide", stdout.getvalue())
+        self.assertNotIn("Recommended interactive guide", stdout.getvalue())
+
+    def test_ssh_access_reconcile_runs_reconciliation_helper(self):
+        plan = {
+            "execution_host": "external",
+            "ssh_bootstrap": {
+                "status": "ready",
+                "mode": "auto",
+                "identity_file": "/home/operator/.ssh/validation-env-vm",
+            },
+        }
+        reconcile_result = {
+            "status": "synced",
+            "execution_host": "external",
+            "ssh_bootstrap": plan["ssh_bootstrap"],
+        }
+
+        stdout = io.StringIO()
+        with mock.patch.object(
+            main,
+            "_current_vm_distributed_topology_plan",
+            return_value=plan,
+        ), mock.patch.object(
+            main,
+            "_reconcile_vm_distributed_ssh_access",
+            return_value=reconcile_result,
+        ) as reconcile, contextlib.redirect_stdout(stdout):
+            result = main.main(
+                ["fake", "ssh-access", "reconcile", "--topology", "vm-distributed"],
+                adapter_registry=self.registry,
+            )
+
+        self.assertEqual(result["status"], "synced")
+        self.assertEqual(result["action"], "reconcile")
+        reconcile.assert_called_once_with(plan)
+        self.assertIn("VM-DISTRIBUTED SSH ACCESS", stdout.getvalue())
+        self.assertIn("SSH access is ready", stdout.getvalue())
+
+    def test_ssh_access_assistant_can_be_cancelled_before_commands(self):
+        plan = {
+            "execution_host": "external",
+            "ssh": {
+                "mode": "direct",
+                "bastion": {},
+            },
+            "ssh_bootstrap": {
+                "status": "ready",
+                "mode": "manual",
+                "identity_file": "/home/operator/.ssh/validation-env-vm",
+                "key_comment": "validation-env",
+                "targets": [
+                    {
+                        "role": "common-services",
+                        "role_key": "common",
+                        "host": "common.example.test",
+                        "user": "operator",
+                        "port": "22",
+                        "identity_file": "/home/operator/.ssh/validation-env-vm",
+                        "needs_public_key": True,
+                    }
+                ],
+            },
+        }
+
+        stdout = io.StringIO()
+        with mock.patch.object(
+            main,
+            "_current_vm_distributed_topology_plan",
+            return_value=plan,
+        ), mock.patch("builtins.input", side_effect=["n"]), contextlib.redirect_stdout(stdout):
+            result = main.main(
+                ["fake", "ssh-access", "assistant", "--topology", "vm-distributed"],
+                adapter_registry=self.registry,
+            )
+
+        self.assertEqual(result["status"], "cancelled")
+        self.assertEqual(result["executed"], [])
+        self.assertEqual(result["execution_detection"]["ssh_route"], "direct")
+        self.assertIn("SSH route from config: direct SSH", stdout.getvalue())
+        self.assertIn("Questions:", stdout.getvalue())
+        self.assertNotIn("What this prepares", stdout.getvalue())
+        self.assertNotIn("Execution context check", stdout.getvalue())
+        self.assertIn("Guided SSH setup cancelled", stdout.getvalue())
+
+    def test_interactive_confirm_with_progress_numbers_prompt(self):
+        with mock.patch.object(main, "_interactive_read", return_value="n") as read_prompt:
+            result = main._interactive_confirm_with_progress(
+                "Start the guided SSH setup now?",
+                1,
+                8,
+                default=False,
+            )
+
+        self.assertFalse(result)
+        read_prompt.assert_called_once_with("Question 1/8: Start the guided SSH setup now? (y/N): ")
+
+    def test_ssh_access_execution_detection_identifies_wsl_and_bastion(self):
+        plan = {
+            "execution_host": "external",
+            "ssh": {
+                "mode": "bastion",
+                "bastion": {
+                    "host": "bastion.example.test",
+                    "port": "2222",
+                    "user": "jump",
+                },
+            },
+            "ssh_bootstrap": {
+                "targets": [
+                    {
+                        "role": "common-services",
+                        "role_key": "common",
+                        "host": "common.example.test",
+                    }
+                ],
+            },
+            "manual_bootstrap_commands": [],
+        }
+
+        detection = main._vm_distributed_detect_execution_environment(
+            plan,
+            environ={"WSL_DISTRO_NAME": "Ubuntu"},
+            proc_version="",
+            hostname="operator-host",
+            fqdn="operator-host",
+        )
+
+        self.assertEqual(detection["detected_label"], "WSL operator workstation")
+        self.assertEqual(detection["alignment"], "matched")
+        self.assertFalse(detection["needs_confirmation"])
+        self.assertEqual(detection["ssh_route"], "bastion")
+        self.assertEqual(detection["bastion"]["host"], "bastion.example.test")
+        self.assertEqual(detection["bastion"]["port"], "2222")
+
+    def test_ssh_access_execution_detection_warns_when_running_inside_vm_with_bastion(self):
+        plan = {
+            "execution_host": "common-services",
+            "ssh": {
+                "mode": "bastion",
+                "bastion": {
+                    "host": "bastion.example.test",
+                    "port": "2222",
+                    "user": "jump",
+                },
+            },
+            "ssh_bootstrap": {
+                "targets": [
+                    {
+                        "role": "common-services",
+                        "role_key": "common",
+                        "host": "common-vm",
+                    },
+                    {
+                        "role": "provider-connectors",
+                        "role_key": "provider",
+                        "host": "provider-vm",
+                    },
+                ],
+            },
+            "manual_bootstrap_commands": [],
+        }
+
+        detection = main._vm_distributed_detect_execution_environment(
+            plan,
+            environ={},
+            proc_version="Linux",
+            hostname="common-vm",
+            fqdn="common-vm",
+        )
+
+        self.assertEqual(detection["detected_mode"], "common-services")
+        self.assertEqual(detection["alignment"], "route-review")
+        self.assertTrue(detection["needs_confirmation"])
+        self.assertEqual(detection["ssh_route"], "bastion")
+        self.assertIn("inside a configured VM", detection["route_warning"])
+
+    def test_ssh_access_self_test_validates_temporary_key_creation(self):
+        public_material = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey"
+
+        def fake_runner(command, timeout):
+            if command[:3] == ["ssh-keygen", "-t", "ed25519"]:
+                private_key = command[command.index("-f") + 1]
+                os.makedirs(os.path.dirname(private_key), exist_ok=True)
+                with open(private_key, "w", encoding="utf-8") as handle:
+                    handle.write("PRIVATE TEST KEY\n")
+                with open(f"{private_key}.pub", "w", encoding="utf-8") as handle:
+                    handle.write(f"{public_material} validation-env\n")
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            if command[:2] == ["ssh-keygen", "-y"]:
+                return types.SimpleNamespace(returncode=0, stdout=f"{public_material}\n", stderr="")
+            return types.SimpleNamespace(returncode=127, stdout="", stderr="unexpected command")
+
+        plan = {
+            "execution_host": "external",
+            "ssh_bootstrap": {
+                "status": "ready",
+                "mode": "plan",
+                "identity_file": "/home/operator/.ssh/validation-env-vm",
+                "key_comment": "validation-env",
+            },
+        }
+
+        result = main._vm_distributed_ssh_key_self_test(plan, command_runner=fake_runner)
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["scope"], "local-temporary-key-only")
+        self.assertEqual(result["remote_validation"], "not-run")
+        self.assertEqual(
+            [item["name"] for item in result["checks"]],
+            [
+                "temporary_keypair_created",
+                "temporary_keypair_files_exist",
+                "private_key_permissions",
+                "public_key_matches_private_key",
+                "keypair_creation_is_idempotent",
+                "temporary_files_removed",
+            ],
+        )
+        self.assertTrue(all(item["status"] == "passed" for item in result["checks"]))
+
+    def test_ssh_access_self_test_prints_human_summary(self):
+        plan = {
+            "execution_host": "external",
+            "ssh_bootstrap": {
+                "status": "ready",
+                "mode": "plan",
+                "identity_file": "/home/operator/.ssh/validation-env-vm",
+            },
+        }
+        self_test_result = {
+            "status": "passed",
+            "message": "Temporary SSH key creation, validation and idempotency checks passed.",
+            "scope": "local-temporary-key-only",
+            "remote_validation": "not-run",
+            "execution_host": "external",
+            "checks": [{"name": "temporary_keypair_created", "status": "passed"}],
+        }
+
+        stdout = io.StringIO()
+        with mock.patch.object(
+            main,
+            "_current_vm_distributed_topology_plan",
+            return_value=plan,
+        ), mock.patch.object(
+            main,
+            "_vm_distributed_ssh_key_self_test",
+            return_value=self_test_result,
+        ), contextlib.redirect_stdout(stdout):
+            result = main.main(
+                ["fake", "ssh-access", "self-test", "--topology", "vm-distributed"],
+                adapter_registry=self.registry,
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["action"], "self-test")
+        self.assertIn("VM-DISTRIBUTED SSH KEY SELF-TEST", stdout.getvalue())
+        self.assertIn("does not touch your existing SSH keys", stdout.getvalue())
+        self.assertIn("temporary_keypair_created: Succeeded", stdout.getvalue())
+
     def test_action_result_prints_hosts_plan_when_sync_is_disabled(self):
         payload = {
             "status": "planned",
@@ -4244,6 +4860,25 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["hosts_sync"]["hosts_file"], hosts_file.name)
         self.assertIn("127.0.0.1 registration-service-fake-ds.example.local", hosts_content)
         self.assertEqual(hosts_content.count("conn-a.example.local"), 1)
+
+    def test_hosts_command_rejects_windows_hosts_file_for_vm_distributed(self):
+        adapter = FakeAdapter()
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_SYNC_HOSTS": "true",
+                "PIONERA_HOSTS_FILE": "/mnt/c/Windows/System32/drivers/etc/hosts",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Windows hosts sync is only supported"):
+                main.run_hosts(
+                    adapter,
+                    deployer_name="fakevm",
+                    deployer_registry=self.deployer_registry,
+                    topology="vm-distributed",
+                )
 
     def test_hosts_command_reports_legacy_external_hostnames(self):
         adapter = FakeAdapter()
@@ -4816,7 +5451,7 @@ class MainCliTests(unittest.TestCase):
         provider_action = next(
             action for action in plan["namespace_actions"] if action["namespace"] == "provider"
         )
-        self.assertIn("conn-citycouncil-pionera-pionera", provider_action["expected_releases"])
+        self.assertIn("conn-org2-pionera-pionera", provider_action["expected_releases"])
 
     def test_local_adapter_switch_cleanup_readiness_requires_matching_helm_release(self):
         def fake_switch_command(command):
@@ -4830,7 +5465,7 @@ class MainCliTests(unittest.TestCase):
             result = main._local_switch_namespace_cleanup_readiness(
                 {
                     "namespace": "provider",
-                    "expected_releases": ["conn-citycouncil-pionera-pionera"],
+                    "expected_releases": ["conn-org2-pionera-pionera"],
                 }
             )
 
@@ -4844,7 +5479,7 @@ class MainCliTests(unittest.TestCase):
             if command[:3] == ["helm", "list", "-n"]:
                 return types.SimpleNamespace(
                     returncode=0,
-                    stdout="conn-citycouncil-pionera-pionera\n",
+                    stdout="conn-org2-pionera-pionera\n",
                     stderr="",
                 )
             raise AssertionError(f"Unexpected command: {command}")
@@ -4853,12 +5488,12 @@ class MainCliTests(unittest.TestCase):
             result = main._local_switch_namespace_cleanup_readiness(
                 {
                     "namespace": "provider",
-                    "expected_releases": ["conn-citycouncil-pionera-pionera"],
+                    "expected_releases": ["conn-org2-pionera-pionera"],
                 }
             )
 
         self.assertEqual(result["status"], "ready")
-        self.assertEqual(result["matching_releases"], ["conn-citycouncil-pionera-pionera"])
+        self.assertEqual(result["matching_releases"], ["conn-org2-pionera-pionera"])
 
     def test_level6_component_validation_environment_uses_edc_context(self):
         context = DeploymentContext.from_mapping(
@@ -4881,10 +5516,52 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(env["PIONERA_ADAPTER"], "edc")
         self.assertEqual(env["UI_ADAPTER"], "edc")
         self.assertEqual(env["AI_MODEL_HUB_COMPONENT_ADAPTER"], "edc")
+        self.assertEqual(env["PIONERA_COMPONENT_VALIDATION_MODE"], "api")
+        self.assertEqual(env["LEVEL6_COMPONENT_VALIDATION_MODE"], "api")
         self.assertEqual(env["UI_DATASPACE"], "pionera-edc")
         self.assertEqual(env["AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER"], "conn-citycounciledc-pionera-edc")
         self.assertEqual(env["AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER"], "conn-companyedc-pionera-edc")
         self.assertEqual(env["AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER"], "conn-citycounciledc-pionera-edc")
+
+    def test_level6_component_validation_environment_uses_vm_distributed_public_urls(self):
+        context = DeploymentContext.from_mapping(
+            {
+                "deployer": "inesdata",
+                "topology": "vm-distributed",
+                "environment": "DEV",
+                "dataspace_name": "pionera",
+                "ds_domain_base": "pionera.oeg.fi.upm.es",
+                "connectors": [
+                    "conn-org2-pionera",
+                    "conn-org3-pionera",
+                ],
+                "config": {
+                    "DS_1_CONNECTORS": "org2,org3",
+                    "VM_PROVIDER_CONNECTORS": "org2",
+                    "VM_CONSUMER_CONNECTORS": "org3",
+                    "VM_PROVIDER_PUBLIC_URL": "https://org2.pionera.oeg.fi.upm.es",
+                    "VM_CONSUMER_PUBLIC_URL": "https://org3.pionera.oeg.fi.upm.es",
+                    "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                    "CONNECTOR_PROTOCOL_ADDRESS_MODE": "internal",
+                },
+            }
+        )
+
+        env = main._level6_component_validation_environment(context, "inesdata")
+
+        self.assertEqual(env["AI_MODEL_HUB_KEYCLOAK_URL"], "https://org1.pionera.oeg.fi.upm.es/auth")
+        self.assertEqual(
+            env["AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL"],
+            "https://org2.pionera.oeg.fi.upm.es/management",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL"],
+            "https://org3.pionera.oeg.fi.upm.es/management",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_PROVIDER_PROTOCOL_URL"],
+            "http://conn-org2-pionera.pionera.oeg.fi.upm.es/protocol",
+        )
 
     def test_local_adapter_install_capacity_preflight_switches_when_explicitly_confirmed(self):
         nodes_payload = {
@@ -5635,6 +6312,51 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("http://registration-service-fake-ds.example.local", urls)
         self.assertIn("http://conn-a.example.local/interface", urls)
 
+    def test_level6_public_endpoint_preflight_uses_vm_distributed_public_urls(self):
+        class PublicConnectors(FakeConnectors):
+            @staticmethod
+            def connector_base_url(connector):
+                return {
+                    "conn-org2-pionera": "https://org2.pionera.oeg.fi.upm.es",
+                    "conn-org3-pionera": "https://org3.pionera.oeg.fi.upm.es",
+                }[connector]
+
+        adapter = FakeAdapterWithInfrastructure()
+        adapter.connectors = PublicConnectors()
+        context = types.SimpleNamespace(
+            topology="vm-distributed",
+            dataspace_name="pionera",
+            ds_domain_base="pionera.oeg.fi.upm.es",
+            config={
+                "KC_URL": "http://admin.auth.pionera.oeg.fi.upm.es",
+                "KC_INTERNAL_URL": "http://auth.pionera.oeg.fi.upm.es",
+                "MINIO_HOSTNAME": "minio-s3.pionera.oeg.fi.upm.es",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                "MINIO_CONSOLE_PUBLIC_URL": "https://org1.pionera.oeg.fi.upm.es/s3-console",
+            },
+        )
+
+        with mock.patch.object(
+            main,
+            "ensure_public_endpoints_accessible",
+            return_value={"status": "passed", "checked": []},
+        ) as preflight:
+            result = main._ensure_level6_public_endpoint_access(
+                adapter,
+                ["conn-org2-pionera", "conn-org3-pionera"],
+                context,
+            )
+
+        self.assertEqual(result["status"], "passed")
+        endpoints = preflight.call_args.args[0]
+        urls = {endpoint["url"] for endpoint in endpoints}
+        self.assertIn("https://org1.pionera.oeg.fi.upm.es/auth", urls)
+        self.assertIn("https://org1.pionera.oeg.fi.upm.es/s3-console", urls)
+        self.assertIn("https://org2.pionera.oeg.fi.upm.es", urls)
+        self.assertIn("https://org3.pionera.oeg.fi.upm.es", urls)
+        self.assertNotIn("http://auth.pionera.oeg.fi.upm.es", urls)
+        self.assertNotIn("http://registration-service-pionera.pionera.oeg.fi.upm.es", urls)
+
     def test_cleanup_failure_hint_explains_local_artifact_credential_mismatch(self):
         cleanup_result = {
             "connectors": [
@@ -6299,6 +7021,50 @@ class MainCliTests(unittest.TestCase):
         playwright_runner.assert_called_once()
         component_runner.assert_called_once()
 
+    def test_validate_command_stops_before_components_when_playwright_fail_fast_enabled(self):
+        events = []
+
+        def fake_playwright(*args, **kwargs):
+            events.append("playwright")
+            return {"status": "failed", "summary": {"total_specs": 3, "failed_specs": 1}}
+
+        with mock.patch.object(
+            FakeDeployer,
+            "get_validation_profile",
+            return_value={
+                "adapter": "fake",
+                "newman_enabled": True,
+                "playwright_enabled": True,
+                "playwright_config": "validation/ui/playwright.inesdata.config.ts",
+                "component_validation_enabled": True,
+                "component_groups": ["ontology-hub"],
+            },
+        ), mock.patch.object(
+            main,
+            "run_playwright_validation",
+            side_effect=fake_playwright,
+        ) as playwright_runner, mock.patch.object(
+            main,
+            "run_level6_component_validations",
+        ) as component_runner, mock.patch.dict(
+            os.environ,
+            {"PIONERA_LEVEL6_STOP_ON_PLAYWRIGHT_FAILURE": "1"},
+            clear=False,
+        ):
+            with self.assertRaises(RuntimeError) as exc:
+                main.main(
+                    ["fake", "validate"],
+                    adapter_registry=self.registry,
+                    deployer_registry=self.deployer_registry,
+                    validation_engine_cls=FakeValidationEngine,
+                    experiment_storage=FakeStorage,
+                )
+
+        self.assertEqual(events, ["playwright"])
+        self.assertIn("Playwright validation failed with status 'failed'", str(exc.exception))
+        playwright_runner.assert_called_once()
+        component_runner.assert_not_called()
+
     def test_validate_command_fails_clearly_when_inesdata_portal_is_not_ready(self):
         with mock.patch.object(
             FakeDeployer,
@@ -6564,6 +7330,30 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("preflight", result)
         self.assertEqual(result["preflight"]["status"], "ready")
         self.assertEqual(result["preflight"]["topology"], "local")
+
+    def test_deploy_command_dry_run_applies_topology_kubeconfig_to_adapter_preflight(self):
+        with mock.patch.object(
+            main,
+            "_topology_runtime_environment_overrides",
+            return_value={
+                "KUBECONFIG": "/clusters/common.yaml",
+                "PIONERA_KUBECONFIG_ROLE": "common",
+            },
+        ), mock.patch.dict(os.environ, {}, clear=True):
+            result = main.build_dry_run_preview(
+                adapter_name="preview",
+                command="deploy",
+                adapter_registry={"preview": "fake_adapter_module:EnvironmentPreviewAdapter"},
+                experiment_storage=FakeStorage,
+                topology="vm-distributed",
+                include_deployer_dry_run=False,
+            )
+            restored_kubeconfig = os.environ.get("KUBECONFIG")
+
+        self.assertEqual(result["status"], "dry-run")
+        self.assertEqual(result["preflight"]["kubeconfig"], "/clusters/common.yaml")
+        self.assertEqual(result["preflight"]["kubeconfig_role"], "common")
+        self.assertIsNone(restored_kubeconfig)
 
     def test_deploy_command_dry_run_can_include_deployer_orchestrator_preview_opt_in(self):
         with mock.patch.dict(os.environ, {"PIONERA_ENABLE_DEPLOYER_DRY_RUN": "true"}, clear=False):

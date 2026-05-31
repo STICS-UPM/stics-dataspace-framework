@@ -19,6 +19,7 @@ LEVEL6_UI_DATASPACE_SPECS = (
     os.path.join("adapters", "inesdata", "specs", "03c-provider-contract-definition-create.spec.ts"),
     os.path.join("adapters", "inesdata", "specs", "05-consumer-negotiation.spec.ts"),
     os.path.join("adapters", "inesdata", "specs", "06-consumer-transfer.spec.ts"),
+    os.path.join("adapters", "inesdata", "specs", "06b-minio-bucket-visibility.spec.ts"),
     os.path.join("adapters", "inesdata", "specs", "07-semantic-virtualization-httpdata.spec.ts"),
     os.path.join("adapters", "inesdata", "specs", "08-ontology-hub-inesdata-readonly.spec.ts"),
     os.path.join("adapters", "inesdata", "specs", "09-ai-model-hub-httpdata.spec.ts"),

@@ -1,5 +1,6 @@
 const { expect } = require("../fixtures");
 const { checkMarked, clickMarked, fillMarked, selectOptionMarked } = require("../support/live-marker");
+const { gotoDashboardRoute } = require("./navigation");
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -28,7 +29,7 @@ class MlAssetsPage {
   }
 
   async goto() {
-    await this.page.goto(`${this.runtime.baseUrl}${this.runtime.mlAssetsPath}`);
+    await gotoDashboardRoute(this.page, this.runtime, this.runtime.mlAssetsPath, "ML Assets");
   }
 
   async waitUntilReady() {

@@ -64,6 +64,26 @@ class SharedHostsManagerTests(unittest.TestCase):
         self.assertIn("# BEGIN Validation-Environment shared", updated)
         self.assertIn("127.0.0.1 auth.dev.ed.dataspaceunit.upm", updated)
 
+    def test_upsert_managed_block_does_not_replace_prefix_named_block(self):
+        existing = (
+            "# BEGIN Validation-Environment dataspace pionera-edc\n"
+            "127.0.0.1 registration-service-pionera-edc.dev.ds.dataspaceunit.upm\n"
+            "# END Validation-Environment dataspace pionera-edc\n"
+        )
+
+        updated = upsert_managed_block(
+            existing,
+            "dataspace pionera",
+            [HostEntry("192.168.122.64", "registration-service-pionera.pionera.oeg.fi.upm.es")],
+        )
+
+        self.assertIn("# BEGIN Validation-Environment dataspace pionera-edc", updated)
+        self.assertIn("127.0.0.1 registration-service-pionera-edc.dev.ds.dataspaceunit.upm", updated)
+        self.assertIn("# END Validation-Environment dataspace pionera-edc", updated)
+        self.assertIn("# BEGIN Validation-Environment dataspace pionera", updated)
+        self.assertIn("192.168.122.64 registration-service-pionera.pionera.oeg.fi.upm.es", updated)
+        self.assertNotIn("\n-edc\n", updated)
+
     def test_build_context_host_blocks_groups_entries_by_level(self):
         context = DeploymentContext(
             deployer="edc",
@@ -153,6 +173,63 @@ class SharedHostsManagerTests(unittest.TestCase):
             rendered["components demoedc"],
             ["192.0.2.13 ontology-hub-demoedc.dev.ds.dataspaceunit.upm"],
         )
+
+    def test_build_context_host_blocks_routes_external_public_common_urls_to_public_proxy(self):
+        context = DeploymentContext(
+            deployer="inesdata",
+            topology="vm-distributed",
+            environment="DEV",
+            dataspace_name="pionera",
+            ds_domain_base="pionera.oeg.fi.upm.es",
+            topology_profile=build_topology_profile(
+                "vm-distributed",
+                {
+                    "VM_COMMON_IP": "192.168.122.64",
+                },
+            ),
+            config={
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "MINIO_HOSTNAME": "minio.pionera.oeg.fi.upm.es",
+                "MINIO_API_PUBLIC_URL": "https://minio.pionera.oeg.fi.upm.es",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                "VM_DISTRIBUTED_EXECUTION_HOST": "external",
+                "VM_PUBLIC_PROXY_IP": "138.100.15.165",
+            },
+        )
+
+        rendered = blocks_as_dict(build_context_host_blocks(context))
+
+        self.assertIn("138.100.15.165 minio.pionera.oeg.fi.upm.es", rendered["shared common"])
+        self.assertIn("138.100.15.165 org1.pionera.oeg.fi.upm.es", rendered["shared common"])
+        self.assertNotIn("192.168.122.64 minio.pionera.oeg.fi.upm.es", rendered["shared common"])
+        self.assertIn("192.168.122.64 auth.pionera.oeg.fi.upm.es", rendered["shared common"])
+
+    def test_build_context_host_blocks_keeps_common_private_when_running_from_common_services_vm(self):
+        context = DeploymentContext(
+            deployer="inesdata",
+            topology="vm-distributed",
+            environment="DEV",
+            dataspace_name="pionera",
+            ds_domain_base="pionera.oeg.fi.upm.es",
+            topology_profile=build_topology_profile(
+                "vm-distributed",
+                {
+                    "VM_COMMON_IP": "192.168.122.64",
+                },
+            ),
+            config={
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "MINIO_HOSTNAME": "minio.pionera.oeg.fi.upm.es",
+                "MINIO_API_PUBLIC_URL": "https://minio.pionera.oeg.fi.upm.es",
+                "VM_DISTRIBUTED_EXECUTION_HOST": "common-services",
+                "VM_PUBLIC_PROXY_IP": "138.100.15.165",
+            },
+        )
+
+        rendered = blocks_as_dict(build_context_host_blocks(context))
+
+        self.assertIn("192.168.122.64 minio.pionera.oeg.fi.upm.es", rendered["shared common"])
+        self.assertNotIn("138.100.15.165 minio.pionera.oeg.fi.upm.es", rendered["shared common"])
 
     def test_build_context_host_blocks_routes_connectors_to_provider_and_consumer_addresses(self):
         context = DeploymentContext(

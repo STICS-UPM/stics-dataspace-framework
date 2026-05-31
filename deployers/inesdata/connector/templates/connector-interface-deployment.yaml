@@ -1,4 +1,11 @@
 {{- $layout := .Values.connector.layout | default dict }}
+{{- $ingress := .Values.connector.ingress | default dict }}
+{{- $connectorPublicProtocol := (index $ingress "publicProtocol" | default (index $ingress "protocol") | default "http") }}
+{{- $connectorPublicHostname := (index $ingress "publicHostname" | default (index $ingress "hostname")) }}
+{{- $connectorPublicBase := printf "%s://%s" $connectorPublicProtocol $connectorPublicHostname }}
+{{- $connectorIngressBase := printf "%s://%s" ((index $ingress "protocol") | default "http") (index $ingress "hostname") }}
+{{- $keycloak := .Values.services.keycloak | default dict }}
+{{- $keycloakPublicProtocol := (index $keycloak "publicProtocol" | default $connectorPublicProtocol | default (index $keycloak "protocol") | default "http") }}
 {{- $modelObserver := .Values.connectorInterface.modelObserver | default dict }}
 {{- $branding := .Values.connectorInterface.branding | default dict }}
 {{- $brandingAssets := (index $branding "assets") | default list }}
@@ -71,6 +78,18 @@ spec:
       hostAliases:
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - env:
             - name: APP_THEME
@@ -104,11 +123,11 @@ spec:
             - name: APP_LOCAL_STORE_LABEL
               value: {{ (index $branding "localStoreLabel" | default "InesDataStore") | quote }}
             - name: CATALOG_URL
-              value: {{ .Values.connector.ingress.protocol }}://{{ .Values.connector.ingress.hostname }}/management/federatedcatalog
+              value: {{ $connectorPublicBase }}/management/federatedcatalog
             - name: MANAGEMENT_API_URL
-              value: {{ .Values.connector.ingress.protocol }}://{{ .Values.connector.ingress.hostname }}/management
+              value: {{ $connectorPublicBase }}/management
             - name: SHARED_URL
-              value: {{ .Values.connector.ingress.protocol }}://{{ .Values.connector.ingress.hostname }}/shared
+              value: {{ $connectorPublicBase }}/shared
             - name: ONTOLOGY_URL
               value: {{ .Values.connectorInterface.ontologyHub.url | quote }}
             - name: STRAPI_URL
@@ -118,11 +137,11 @@ spec:
             - name: PARTICIPANT_ID
               value: {{ .Values.connector.name }}
             - name: OAUTH2_ALLOWED_URLS
-              value: {{ .Values.connector.ingress.protocol }}://{{ .Values.connector.ingress.hostname }},http://{{ .Values.connector.name }}:19193
+              value: {{ $connectorPublicBase }},{{ $connectorIngressBase }},http://{{ .Values.connector.name }}:19193
             - name: OAUTH2_CLIENT_ID
               value: {{ .Values.connectorInterface.oauth2.client }}
             - name: OAUTH2_ISSUER
-              value: {{ .Values.services.keycloak.protocol }}://{{ .Values.services.keycloak.external }}/realms/{{ .Values.connector.dataspace }}
+              value: {{ $keycloakPublicProtocol }}://{{ .Values.services.keycloak.external }}/realms/{{ .Values.connector.dataspace }}
             - name: OAUTH2_REDIRECT_PATH
               value: /inesdata-connector-interface
             - name: OAUTH2_RESPONSE_TYPE

@@ -1557,6 +1557,80 @@ class NewmanMetricsTests(unittest.TestCase):
             "http://conn-companyproof-roleedcprove.roleedcprove-provider.svc.cluster.local:19194/protocol",
         )
 
+    def test_validation_engine_prefers_public_keycloak_and_connector_urls_when_available(self):
+        def credentials(name):
+            public_url = {
+                "conn-org2-pionera": "https://org2.pionera.oeg.fi.upm.es",
+                "conn-org3-pionera": "https://org3.pionera.oeg.fi.upm.es",
+            }[name]
+            return {
+                "connector_user": {"user": name, "passwd": "secret"},
+                "public_access_urls": {"connector_ingress": public_url},
+            }
+
+        engine = ValidationEngine(
+            load_connector_credentials=credentials,
+            load_deployer_config=lambda: {
+                "KC_INTERNAL_URL": "http://auth.pionera.oeg.fi.upm.es",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+            },
+            ds_domain_resolver=lambda: "pionera.oeg.fi.upm.es",
+            ds_name="pionera",
+        )
+
+        env_vars = engine.build_newman_env("conn-org2-pionera", "conn-org3-pionera")
+
+        self.assertEqual(env_vars["keycloakUrl"], "https://org1.pionera.oeg.fi.upm.es/auth")
+        self.assertEqual(env_vars["providerBaseUrl"], "https://org2.pionera.oeg.fi.upm.es")
+        self.assertEqual(env_vars["consumerBaseUrl"], "https://org3.pionera.oeg.fi.upm.es")
+
+    def test_newman_runtime_collection_rewrites_internal_urls_to_public_base_variables(self):
+        executor = NewmanExecutor()
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(
+                {
+                    "item": [
+                        {
+                            "request": {
+                                "url": {
+                                    "raw": "http://{{provider}}.{{dsDomain}}/management/v3/assets/request",
+                                    "host": ["{{provider}}", "{{dsDomain}}"],
+                                }
+                            }
+                        },
+                        {
+                            "request": {
+                                "url": {
+                                    "raw": "http://{{consumer}}.{{dsDomain}}/management/v3/catalog/request",
+                                    "host": ["{{consumer}}", "{{dsDomain}}"],
+                                }
+                            }
+                        },
+                    ]
+                },
+                handle,
+            )
+            source_path = handle.name
+
+        try:
+            runtime_path, cleanup_path = executor._runtime_collection_path(
+                source_path,
+                {
+                    "providerBaseUrl": "https://org2.pionera.oeg.fi.upm.es",
+                    "consumerBaseUrl": "https://org3.pionera.oeg.fi.upm.es",
+                },
+            )
+            with open(runtime_path, encoding="utf-8") as f:
+                rewritten = json.load(f)
+
+            urls = [item["request"]["url"] for item in rewritten["item"]]
+            self.assertIn("{{providerBaseUrl}}/management/v3/assets/request", urls)
+            self.assertIn("{{consumerBaseUrl}}/management/v3/catalog/request", urls)
+        finally:
+            os.remove(source_path)
+            if cleanup_path and os.path.exists(cleanup_path):
+                os.remove(cleanup_path)
+
     def test_validation_engine_collects_transfer_storage_checks(self):
         fake_executor = mock.Mock()
         fake_executor.run_validation_collections.return_value = ["report.json"]

@@ -93,6 +93,13 @@ class ConsoleTestNameReporter {
       return "Semantic Virtualization";
     }
     if (
+      file.includes("06b-minio-bucket-visibility.spec") ||
+      file.includes("ops/minio-bucket-visibility.spec") ||
+      file.includes("shared/specs/minio-bucket-visibility")
+    ) {
+      return "Operational Storage";
+    }
+    if (
       file.includes("/ui/inesdata/") ||
       file.includes("validation/ui/adapters/inesdata/specs/") ||
       file.includes("validation/ui/core/") ||

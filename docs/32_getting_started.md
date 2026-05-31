@@ -201,6 +201,8 @@ Desde WSL, el fichero `hosts` de Windows suele estar en:
 /mnt/c/Windows/System32/drivers/etc/hosts
 ```
 
+Usa el `hosts` de Windows solo para topologías locales. En topologías distribuidas con dominios reales, como `vm-distributed`, la resolución debe venir de DNS/VPN y de las URLs públicas configuradas.
+
 La sincronización es idempotente: si una entrada ya existe fuera de los bloques gestionados, se omite en lugar de duplicarse.
 
 ## Niveles del Menú

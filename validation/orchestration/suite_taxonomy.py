@@ -59,6 +59,12 @@ def classify_playwright_spec(spec_file: Any, *, source_path: Any = "") -> dict[s
     if "07-semantic-virtualization-httpdata.spec" in blob:
         return _taxonomy(INTEGRATION_SUITE, "Semantic Virtualization")
     if (
+        "06b-minio-bucket-visibility.spec" in blob
+        or "ops/minio-bucket-visibility.spec" in blob
+        or "shared/specs/minio-bucket-visibility" in blob
+    ):
+        return _taxonomy(INTEGRATION_SUITE, "Operational Storage")
+    if (
         "/ui/inesdata/" in f"/{source}/"
         or "validation/ui/adapters/inesdata/specs/" in blob
         or "validation/ui/core/" in blob
@@ -108,6 +114,8 @@ def classify_suite_artifact(
     if kind_value == "une-0087":
         return _taxonomy(AUDIT_ASSURANCE_SUITE, "UNE-0087")
 
+    if "ui-ops/minio-console" in blob or "ui-ops-minio-console" in blob or "ops/minio-bucket-visibility.spec" in blob:
+        return _taxonomy(INTEGRATION_SUITE, "Operational Storage")
     if "ui/inesdata/" in blob:
         return _taxonomy(INTEGRATION_SUITE, "Combined Playwright")
     if "components/ontology-hub/" in blob:

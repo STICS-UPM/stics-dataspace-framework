@@ -71,18 +71,11 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
    * @throws NullPointerException if the catalog is null.
    */
   @Override
-  public void save(Catalog catalog) {
+  public synchronized void save(Catalog catalog) {
     Objects.requireNonNull(catalog);
     transactionContext.execute(() -> {
       try (var connection = getConnection()) {
         deleteRelatedCatalogData(connection, catalog);
-        return StoreResult.success();
-      } catch (Exception e) {
-        throw new EdcPersistenceException(e);
-      }
-    });
-    transactionContext.execute(() -> {
-      try (var connection = getConnection()) {
         insertCatalog(catalog, connection);
         insertDataServices(catalog, connection);
         insertDatasets(catalog, connection);
@@ -177,7 +170,7 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
   }
 
   private void deleteRelatedCatalogData(Connection connection, Catalog catalog) {
-    Catalog catalogByParticipantId = getCatalogByParticipantId(catalog.getParticipantId());
+    Catalog catalogByParticipantId = getCatalogByParticipantId(connection, catalog.getParticipantId());
 
     if (catalogByParticipantId != null && catalogByParticipantId.getId() != null) {
       String deleteDistributionsSql = databaseStatements.getDeleteDistributionsForCatalogTemplate();
@@ -197,8 +190,8 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
     }
   }
 
-  private boolean dataServiceExists(String dataServiceId) throws SQLException {
-    return getDataServiceById(dataServiceId) != null;
+  private boolean dataServiceExists(Connection connection, String dataServiceId) throws SQLException {
+    return getDataServiceById(connection, dataServiceId) != null;
   }
 
   private Catalog mapResultSetToCatalog(ResultSet resultSet) throws SQLException {
@@ -228,10 +221,11 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
     Map<String, Policy> offers = fromJson(resultSet.getString("offers"), new TypeReference<Map<String, Policy>>() {
     });
 
-    List<Distribution> distributions = getDistributionsForDataset(id);
+    String catalogId = resultSet.getString("catalog_id");
+    List<Distribution> distributions = getDistributionsForDataset(id, catalogId);
 
     if (withCatalogId) {
-      properties.put(INTERNAL_CATALOG_ID, resultSet.getString("catalog_id"));
+      properties.put(INTERNAL_CATALOG_ID, catalogId);
     }
     Dataset.Builder datasetBuilder = Dataset.Builder.newInstance().id(id).properties(properties)
             .distributions(distributions);
@@ -243,10 +237,11 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
     return datasetBuilder.build();
   }
 
-  private List<Distribution> getDistributionsForDataset(String datasetId) {
+  private List<Distribution> getDistributionsForDataset(String datasetId, String catalogId) {
     try (var connection = getConnection()) {
       String sql = databaseStatements.getSelectDistributionsForDatasetTemplate();
-      return queryExecutor.query(connection, false, this::mapResultSetToDistribution, sql, datasetId)
+      return queryExecutor.query(connection, false, this::mapResultSetToDistribution, sql, datasetId, catalogId)
+          .filter(Objects::nonNull)
           .collect(Collectors.toList());
     } catch (SQLException e) {
       throw new EdcPersistenceException(e);
@@ -256,8 +251,14 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
   private Distribution mapResultSetToDistribution(ResultSet resultSet) throws SQLException {
     String format = resultSet.getString("format");
     String dataServiceId = resultSet.getString("data_service_id");
+    if (dataServiceId == null || dataServiceId.isBlank()) {
+      return null;
+    }
 
     DataService dataService = getDataServiceById(dataServiceId);
+    if (dataService == null) {
+      return null;
+    }
 
     return Distribution.Builder.newInstance().format(format).dataService(dataService).build();
   }
@@ -272,14 +273,16 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
     }
   }
 
-  private Catalog getCatalogByParticipantId(String participantId) {
-    try (var connection = getConnection()) {
-      String selectCatalog = databaseStatements.getSelectCatalogForParticipantIdTemplate();
-      return queryExecutor.query(connection, false, this::mapResultSetToCatalogSimple, selectCatalog, participantId)
-          .findFirst().orElse(null);
-    } catch (SQLException e) {
-      throw new EdcPersistenceException(e);
-    }
+  private DataService getDataServiceById(Connection connection, String dataServiceId) throws SQLException {
+    String sql = databaseStatements.getSelectDataServicesForIdTemplate();
+    return queryExecutor.query(connection, false, this::mapResultSetToDataService, sql, dataServiceId).findFirst()
+        .orElse(null);
+  }
+
+  private Catalog getCatalogByParticipantId(Connection connection, String participantId) {
+    String selectCatalog = databaseStatements.getSelectCatalogForParticipantIdTemplate();
+    return queryExecutor.query(connection, false, this::mapResultSetToCatalogSimple, selectCatalog, participantId)
+        .findFirst().orElse(null);
   }
 
   private Catalog mapResultSetToCatalogSimple(ResultSet resultSet) throws SQLException {
@@ -318,12 +321,14 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
         catalog.getParticipantId(), toJson(catalog.getProperties()), false);
   }
 
-  private void insertDataServices(Catalog catalog, Connection connection) {
+  private void insertDataServices(Catalog catalog, Connection connection) throws SQLException {
     if (catalog.getDataServices() != null) {
       Set<DataService> dataServicesToSave = new HashSet<>(catalog.getDataServices());
       for (DataService dataService : dataServicesToSave) {
-        queryExecutor.execute(connection, databaseStatements.getInsertDataServiceTemplate(), dataService.getId(),
-            dataService.getEndpointDescription(), dataService.getEndpointUrl());
+        if (!dataServiceExists(connection, dataService.getId())) {
+          queryExecutor.execute(connection, databaseStatements.getInsertDataServiceTemplate(), dataService.getId(),
+              dataService.getEndpointDescription(), dataService.getEndpointUrl());
+        }
         queryExecutor.execute(connection, databaseStatements.getInsertCatalogDataServiceTemplate(), catalog.getId(),
             dataService.getId());
       }
@@ -346,7 +351,10 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
     if (dataset.getDistributions() != null) {
       for (Distribution distribution : dataset.getDistributions()) {
         DataService dataService = distribution.getDataService();
-        if (!dataServiceExists(dataService.getId())) {
+        if (dataService == null) {
+          continue;
+        }
+        if (!dataServiceExists(connection, dataService.getId())) {
           queryExecutor.execute(connection, databaseStatements.getInsertDataServiceTemplate(), dataService.getId(),
               dataService.getEndpointDescription(), dataService.getEndpointUrl());
         }

@@ -74,6 +74,14 @@ class Level6UiTests(unittest.TestCase):
             self.assertEqual(env["UI_AI_MODEL_OBSERVER_DEMO"], "1")
             self.assertEqual(env["PLAYWRIGHT_INTERACTION_MARKERS"], "1")
             self.assertEqual(env["PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS"], "150")
+            self.assertLess(
+                list(ui.LEVEL6_UI_DATASPACE_SPECS).index(
+                    os.path.join("adapters", "inesdata", "specs", "06b-minio-bucket-visibility.spec.ts")
+                ),
+                list(ui.LEVEL6_UI_DATASPACE_SPECS).index(
+                    os.path.join("adapters", "inesdata", "specs", "07-semantic-virtualization-httpdata.spec.ts")
+                ),
+            )
             self.assertEqual(result["status"], "failed")
             self.assertEqual(result["exit_code"], 1)
 

@@ -1,9 +1,17 @@
-import { expect, Locator, Page } from "@playwright/test";
+import { expect, Locator, Page, Response } from "@playwright/test";
 
 import { clickMarked } from "../../../../shared/utils/live-marker";
 import { waitForUiTransition } from "../../../../shared/utils/waiting";
 
 type AttachJson = (name: string, payload: unknown) => Promise<void>;
+
+type CatalogListKind = "any" | "direct" | "federated";
+
+type CatalogListWaitOptions = {
+  catalogKind?: CatalogListKind;
+  expectedAssetId?: string;
+  timeoutMs?: number;
+};
 
 type DetailExpectationOptions = {
   assetId?: string;
@@ -29,22 +37,42 @@ const DETAIL_MARKERS =
 export class CatalogPage {
   constructor(private readonly page: Page) {}
 
-  async goto(baseUrl: string): Promise<void> {
+  async goto(baseUrl: string, options: CatalogListWaitOptions = {}): Promise<void> {
+    const catalogKind = options.catalogKind || "any";
+    const catalogResponse = this.waitForCatalogListResponse(
+      options.timeoutMs ?? 15_000,
+      navigationCatalogWaitOptions(options),
+    );
     await this.page.goto(`${baseUrl.replace(/\/$/, "")}/catalog`, {
       waitUntil: "domcontentloaded",
     });
+    const responseObserved = await catalogResponse;
+    await waitForUiTransition(this.page);
+    if (!responseObserved && catalogKind !== "any") {
+      const expectedAsset = options.expectedAssetId ? ` containing asset ${options.expectedAssetId}` : "";
+      throw new Error(`Catalog ${catalogKind} list response${expectedAsset} was not observed after opening the catalog page`);
+    }
   }
 
   async expectReady(): Promise<void> {
     await expect(this.page).toHaveURL(/\/catalog/);
   }
 
-  async showLargestPageSize(): Promise<void> {
+  async showLargestPageSize(options: CatalogListWaitOptions = {}): Promise<void> {
+    if ((options.catalogKind || "any") === "federated") {
+      return;
+    }
+
     const pageSizeCombobox = this.page
       .getByRole("combobox", { name: /items per page/i })
       .first();
 
     if ((await pageSizeCombobox.count()) === 0) {
+      return;
+    }
+
+    const currentValue = normalizeText(await pageSizeCombobox.innerText({ timeout: 1_000 }).catch(() => ""));
+    if (/^20\b/.test(currentValue)) {
       return;
     }
 
@@ -60,7 +88,13 @@ export class CatalogPage {
       return;
     }
 
+    const catalogKind = options.catalogKind || "any";
+    const catalogResponse = this.waitForCatalogListResponse(
+      options.timeoutMs ?? 15_000,
+      navigationCatalogWaitOptions(options),
+    );
     await clickMarked(largestOption, { force: true });
+    const responseObserved = await catalogResponse;
     await this.page.waitForFunction(
       (previousRange) => {
         const range = document
@@ -74,6 +108,30 @@ export class CatalogPage {
       { timeout: 3_000 },
     ).catch(() => undefined);
     await waitForUiTransition(this.page);
+    if (!responseObserved && catalogKind !== "any") {
+      return;
+    }
+  }
+
+  async waitForCatalogListResponse(
+    timeoutMs = 10_000,
+    options: CatalogListWaitOptions = {},
+  ): Promise<boolean> {
+    return this.page
+      .waitForResponse(
+        async (response) => {
+          if (!this.isSuccessfulCatalogListResponse(response, options.catalogKind || "any")) {
+            return false;
+          }
+          if (!options.expectedAssetId) {
+            return true;
+          }
+          return this.catalogResponseContainsAsset(response, options.expectedAssetId);
+        },
+        { timeout: timeoutMs },
+      )
+      .then(() => true)
+      .catch(() => false);
   }
 
   async openFirstDetails(): Promise<boolean> {
@@ -92,10 +150,24 @@ export class CatalogPage {
   }
 
   async openDetailsForAsset(assetId: string): Promise<boolean> {
-    const clickedByDom = await this.clickAssetCardButtonByDom(assetId);
-    if (clickedByDom) {
+    await this.waitForAssetText(assetId, 3_000);
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const clickedByDom = await this.clickAssetCardButtonByDom(assetId);
+      if (clickedByDom && (await this.waitForDetailView())) {
+        await waitForUiTransition(this.page);
+        return true;
+      }
+
+      if (await this.waitForAssetText(assetId, 500)) {
+        break;
+      }
+
+      const scrolled = await this.scrollCatalogContentDown();
+      if (!scrolled) {
+        break;
+      }
       await waitForUiTransition(this.page);
-      return true;
     }
 
     const detailButton = this.page
@@ -107,8 +179,10 @@ export class CatalogPage {
     if ((await detailButton.count()) > 0) {
       try {
         await clickMarked(detailButton, { force: true });
-        await waitForUiTransition(this.page);
-        return true;
+        if (await this.waitForDetailView()) {
+          await waitForUiTransition(this.page);
+          return true;
+        }
       } catch {
         // Fall through to the DOM fallback below. Some Material card versions
         // expose the accessible button name inconsistently under test.
@@ -130,8 +204,10 @@ export class CatalogPage {
     if ((await fallbackButtonByText.count()) > 0) {
       try {
         await clickMarked(fallbackButtonByText, { force: true });
-        await waitForUiTransition(this.page);
-        return true;
+        if (await this.waitForDetailView()) {
+          await waitForUiTransition(this.page);
+          return true;
+        }
       } catch {
         // Fall through to the accessible-name fallback below.
       }
@@ -144,14 +220,25 @@ export class CatalogPage {
     if ((await fallbackButton.count()) > 0) {
       try {
         await clickMarked(fallbackButton, { force: true });
-        await waitForUiTransition(this.page);
-        return true;
+        if (await this.waitForDetailView()) {
+          await waitForUiTransition(this.page);
+          return true;
+        }
       } catch {
         // Fall through to the DOM fallback below.
       }
     }
 
     return false;
+  }
+
+  private async waitForAssetText(assetId: string, timeoutMs: number): Promise<boolean> {
+    return this.page
+      .getByText(assetId, { exact: true })
+      .first()
+      .waitFor({ state: "visible", timeout: timeoutMs })
+      .then(() => true)
+      .catch(() => false);
   }
 
   async hasNextPage(): Promise<boolean> {
@@ -164,7 +251,7 @@ export class CatalogPage {
     return nextButton.isEnabled().catch(() => false);
   }
 
-  async goToNextPage(): Promise<boolean> {
+  async goToNextPage(options: CatalogListWaitOptions = {}): Promise<boolean> {
     const nextButton = this.nextPageButton();
 
     if ((await nextButton.count()) === 0) {
@@ -176,13 +263,18 @@ export class CatalogPage {
     }
 
     const currentRange = await this.paginatorRangeText();
+    const catalogResponse = this.waitForCatalogListResponse(
+      options.timeoutMs ?? 15_000,
+      navigationCatalogWaitOptions(options),
+    );
     await clickMarked(nextButton, { force: true });
     let changed = await this.waitForPaginatorRangeChange(currentRange);
     if (!changed && (await this.clickNextPageButtonByDom())) {
       changed = await this.waitForPaginatorRangeChange(currentRange);
     }
+    const responseObserved = await catalogResponse;
     await waitForUiTransition(this.page);
-    return changed;
+    return changed && (options.catalogKind && options.catalogKind !== "any" ? responseObserved : true);
   }
 
   private nextPageButton(): Locator {
@@ -190,6 +282,30 @@ export class CatalogPage {
       .getByRole("button", { name: /next page/i })
       .or(this.page.locator("button.mat-paginator-navigation-next, button[aria-label*='Next page']"))
       .first();
+  }
+
+  private isSuccessfulCatalogListResponse(response: Response, catalogKind: CatalogListKind = "any"): boolean {
+    const url = response.url();
+    const isFederatedCatalog = url.includes("/management/federatedcatalog/request");
+    const isDirectCatalog =
+      url.includes("/management/catalog/request") ||
+      url.includes("/management/v3/catalog/request");
+
+    return (
+      response.request().method() === "POST" &&
+      response.status() >= 200 &&
+      response.status() < 300 &&
+      (catalogKind === "federated"
+        ? isFederatedCatalog
+        : catalogKind === "direct"
+          ? isDirectCatalog
+          : isFederatedCatalog || isDirectCatalog)
+    );
+  }
+
+  private async catalogResponseContainsAsset(response: Response, assetId: string): Promise<boolean> {
+    const body = await response.text().catch(() => "");
+    return body.includes(assetId);
   }
 
   private async paginatorRangeText(): Promise<string> {
@@ -218,32 +334,80 @@ export class CatalogPage {
 
   private async clickAssetCardButtonByDom(assetId: string): Promise<boolean> {
     return this.page.evaluate((targetAssetId) => {
-      const cards = Array.from(document.querySelectorAll(".card, mat-card, [class*='card']"));
-      const card = cards.find((candidate) => candidate.textContent?.includes(targetAssetId));
-      const button = card?.querySelector("button");
-      if (button instanceof HTMLElement) {
-        button.click();
-        return true;
+      const isDetailButton = (candidate: Element): candidate is HTMLElement =>
+        candidate instanceof HTMLElement &&
+        /view details and contract offers/i.test(candidate.textContent || "");
+
+      const clickButtonNearAssetLabel = (label: Element): boolean => {
+        let current: Element | null = label;
+        for (let depth = 0; current && depth < 10; depth += 1) {
+          if (!current.textContent?.includes(targetAssetId)) {
+            current = current.parentElement;
+            continue;
+          }
+
+          const detailButton = Array.from(current.querySelectorAll("button")).find(isDetailButton);
+          if (detailButton) {
+            detailButton.click();
+            return true;
+          }
+          current = current.parentElement;
+        }
+        return false;
+      };
+
+      const exactLabels = Array.from(document.querySelectorAll("body *")).filter(
+        (candidate) => candidate.textContent?.trim() === targetAssetId,
+      );
+      for (const label of exactLabels) {
+        if (clickButtonNearAssetLabel(label)) {
+          return true;
+        }
       }
 
       const textMatches = Array.from(document.querySelectorAll("body *")).filter((candidate) =>
         candidate.textContent?.includes(targetAssetId),
       );
       for (const match of textMatches) {
-        let current: Element | null = match;
-        for (let depth = 0; current && depth < 8; depth += 1) {
-          const detailButton = Array.from(current.querySelectorAll("button")).find((candidate) =>
-            /view details and contract offers/i.test(candidate.textContent || ""),
-          );
-          if (detailButton instanceof HTMLElement) {
-            detailButton.click();
-            return true;
-          }
-          current = current.parentElement;
+        if (clickButtonNearAssetLabel(match)) {
+          return true;
         }
       }
       return false;
     }, assetId);
+  }
+
+  private async scrollCatalogContentDown(): Promise<boolean> {
+    return this.page.evaluate(() => {
+      const candidates: Element[] = [
+        document.scrollingElement || document.documentElement,
+        ...Array.from(document.querySelectorAll("main, section, mat-sidenav-content, .mat-drawer-content, .mat-mdc-tab-body-content, div")),
+      ].filter((element, index, all): element is Element => {
+        if (!element || all.indexOf(element) !== index) {
+          return false;
+        }
+        return element.scrollHeight > element.clientHeight + 20;
+      });
+
+      let scrolled = false;
+      for (const element of candidates) {
+        const before = element.scrollTop;
+        const step = Math.max(Math.floor(element.clientHeight * 0.8), 240);
+        element.scrollTop = Math.min(element.scrollTop + step, element.scrollHeight - element.clientHeight);
+        if (element.scrollTop !== before) {
+          scrolled = true;
+        }
+      }
+      return scrolled;
+    });
+  }
+
+  private async waitForDetailView(timeoutMs = 5_000): Promise<boolean> {
+    await waitForUiTransition(this.page);
+    const markers = this.page.getByText(DETAIL_MARKERS).first();
+    return markers.waitFor({ state: "visible", timeout: timeoutMs })
+      .then(() => true)
+      .catch(() => this.page.url().includes("/catalog/datasets/view"));
   }
 
   private async clickNextPageButtonByDom(): Promise<boolean> {
@@ -336,6 +500,13 @@ export class CatalogPage {
     });
     return normalizeText(text).slice(0, 1_500);
   }
+}
+
+function navigationCatalogWaitOptions(options: CatalogListWaitOptions): CatalogListWaitOptions {
+  return {
+    ...options,
+    expectedAssetId: undefined,
+  };
 }
 
 function normalizeText(value: string): string {

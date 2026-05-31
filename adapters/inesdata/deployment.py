@@ -3,7 +3,13 @@ import shlex
 
 from adapters.shared import deployment as shared_deployment_module
 from adapters.shared.deployment import SharedDataspaceDeploymentAdapter
-from deployers.shared.lib.topology import LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY, normalize_topology
+from deployers.shared.lib.remote_k3s_images import remote_k3s_image_import_target
+from deployers.shared.lib.topology import (
+    LOCAL_TOPOLOGY,
+    VM_DISTRIBUTED_TOPOLOGY,
+    VM_SINGLE_TOPOLOGY,
+    normalize_topology,
+)
 
 from .config import INESDataConfigAdapter, InesdataConfig
 
@@ -14,7 +20,7 @@ ensure_python_requirements = shared_deployment_module.ensure_python_requirements
 class INESDataDeploymentAdapter(SharedDataspaceDeploymentAdapter):
     """Contains deployment logic for the INESData dataspace runtime."""
 
-    LEVEL3_LOCAL_IMAGE_TOPOLOGIES = {LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY}
+    LEVEL3_LOCAL_IMAGE_TOPOLOGIES = {LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}
 
     def __init__(self, run, run_silent, auto_mode_getter, infrastructure_adapter, config_adapter=None, config_cls=None):
         resolved_config = config_cls or InesdataConfig
@@ -183,6 +189,24 @@ class INESDataDeploymentAdapter(SharedDataspaceDeploymentAdapter):
 
         cluster_runtime = self._cluster_runtime(normalize_topology(topology))
         cluster_type = str(cluster_runtime.get("cluster_type") or "minikube").strip().lower() or "minikube"
+        env_prefix = ""
+        if normalize_topology(topology) == VM_DISTRIBUTED_TOPOLOGY and cluster_type == "k3s":
+            try:
+                deployer_config = self.config_adapter.load_deployer_config() or {}
+            except Exception:
+                deployer_config = {}
+            remote_target = remote_k3s_image_import_target(deployer_config, role="common")
+            if not remote_target or not remote_target.is_configured():
+                detail = (
+                    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT=true and VM_COMMON_SSH_HOST "
+                    "are required to load Level 3 local images into the common-services VM."
+                )
+                if mode == "required":
+                    print(detail)
+                    return False
+                print(f"Skipping Level 3 local dataspace image preparation for vm-distributed. {detail}")
+                return True
+            env_prefix = f"{remote_target.render_shell_env_prefix()} "
         command = " ".join(
             shlex.quote(part)
             for part in [
@@ -204,6 +228,8 @@ class INESDataDeploymentAdapter(SharedDataspaceDeploymentAdapter):
                 "--skip-deploy",
             ]
         )
+        if env_prefix:
+            command = f"{env_prefix}{command}"
 
         print("\nPreparing local INESData dataspace images for Level 3...")
         print(f"Cluster runtime: {cluster_type}")

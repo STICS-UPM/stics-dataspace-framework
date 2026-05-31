@@ -1,18 +1,20 @@
 .ai-browser-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
+  min-height: 0;
 }
 
 .page-header h1 {
   margin: 0;
-  font-size: 30px;
+  font-size: 24px;
   line-height: 1.2;
 }
 
 .page-header p {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   color: #5f6368;
+  font-size: 14px;
 }
 
 .search-row,
@@ -22,26 +24,28 @@
 
 .content-layout {
   display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 18px;
+  grid-template-columns: minmax(250px, 300px) 1fr;
+  gap: 14px;
+  min-height: 0;
 }
 
 .filters-panel {
   border: 1px solid #e5e7eb;
-  border-radius: 16px;
+  border-radius: 8px;
   background: #fafafa;
-  padding: 12px 0;
+  padding: 8px 0;
   height: fit-content;
+  max-height: calc(100vh - 210px);
   position: sticky;
-  top: 78px;
-  overflow: hidden;
+  top: 68px;
+  overflow-y: auto;
 }
 
 .filters-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 16px 12px;
+  padding: 0 12px 8px;
   margin-bottom: 4px;
   border-bottom: 1px solid #eceff1;
 }
@@ -68,7 +72,9 @@
 }
 
 .filter-panel mat-expansion-panel-header {
-  padding: 14px 16px;
+  min-height: 42px;
+  height: 42px;
+  padding: 0 12px;
 }
 
 .filter-panel mat-panel-title {
@@ -80,14 +86,15 @@
 .filter-options {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 4px 16px 16px;
-  max-height: 260px;
+  gap: 6px;
+  padding: 2px 12px 12px;
+  max-height: 180px;
   overflow-y: auto;
 }
 
 .models-panel {
   min-height: 320px;
+  min-width: 0;
 }
 
 .results-line {
@@ -110,11 +117,14 @@
 
 .models-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 12px;
 }
 
 .model-card {
+  width: auto !important;
+  max-width: 100%;
+  margin: 0 !important;
   border-radius: 10px;
   border: 1px solid #e5e7eb;
   padding: 11px 11px 9px;

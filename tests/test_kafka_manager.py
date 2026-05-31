@@ -306,6 +306,8 @@ class KafkaManagerTests(unittest.TestCase):
         self.assertEqual(result["port"], 9094)
         self.assertTrue(exec_calls)
         self.assertIn("framework-kafka-external.demo.svc.cluster.local", exec_calls[0][-1])
+        self.assertEqual(exec_calls[0][-3:-1], ["sh", "-lc"])
+        self.assertIn("command -v nc", exec_calls[0][-1])
 
     def test_wait_for_kubernetes_bootstrap_can_probe_connector_namespaces(self):
         exec_calls = []
@@ -344,6 +346,135 @@ class KafkaManagerTests(unittest.TestCase):
         self.assertEqual(result["host"], "framework-kafka.core-control.svc.cluster.local")
         self.assertTrue(exec_calls)
         self.assertEqual(exec_calls[0][:5], ["kubectl", "exec", "-n", "provider", "conn-provider"])
+        self.assertEqual(exec_calls[0][-3:-1], ["sh", "-lc"])
+
+    def test_vm_distributed_requires_connector_visible_bootstrap_before_autoprovisioning(self):
+        manager = KafkaManager(
+            runtime_config={
+                "topology": "vm-distributed",
+                "provisioner": "kubernetes",
+                "k8s_namespace": "core-control",
+                "k8s_probe_namespaces": "provider,consumer,core-control",
+            },
+            command_runner=mock.Mock(),
+            wait_timeout_seconds=1,
+            poll_interval_seconds=0.01,
+        )
+
+        with mock.patch.object(KafkaManager, "is_kafka_available", return_value=False):
+            with mock.patch.object(manager, "start_kafka", return_value="127.0.0.1:39092") as mocked_start:
+                bootstrap = manager.ensure_kafka_running()
+
+        self.assertIsNone(bootstrap)
+        mocked_start.assert_not_called()
+        self.assertIn("connector-visible Kafka bootstrap server", manager.last_error)
+
+    def test_vm_distributed_can_use_explicit_cluster_bootstrap_as_host_candidate(self):
+        manager = KafkaManager(
+            runtime_config={
+                "topology": "vm-distributed",
+                "provisioner": "kubernetes",
+                "cluster_bootstrap_servers": "192.0.2.10:9094",
+            },
+            command_runner=mock.Mock(),
+            wait_timeout_seconds=1,
+            poll_interval_seconds=0.01,
+        )
+
+        with mock.patch.object(
+            KafkaManager,
+            "is_kafka_available",
+            side_effect=lambda value: value == "192.0.2.10:9094",
+        ):
+            bootstrap = manager.ensure_kafka_running()
+
+        self.assertEqual(bootstrap, "192.0.2.10:9094")
+        self.assertEqual(manager.cluster_bootstrap_servers, "192.0.2.10:9094")
+
+    def test_vm_distributed_nodeport_manifest_advertises_connector_visible_bootstrap(self):
+        manager = KafkaManager(
+            runtime_config={
+                "topology": "vm-distributed",
+                "provisioner": "kubernetes",
+                "k8s_namespace": "core-control",
+                "k8s_service_name": "framework-kafka",
+                "k8s_external_service_type": "NodePort",
+                "k8s_nodeport": "32092",
+                "cluster_bootstrap_servers": "192.0.2.10:32092",
+            }
+        )
+
+        manifest = manager._build_kubernetes_manifest(manager._load_manager_config())
+
+        self.assertIn(
+            "KAFKA_ADVERTISED_LISTENERS\n"
+            "          value: \"INTERNAL://framework-kafka.core-control.svc.cluster.local:9092,EXTERNAL://192.0.2.10:32092\"",
+            manifest,
+        )
+        self.assertIn("nodePort: 32092", manifest)
+        self.assertIn("type: NodePort", manifest)
+
+    def test_vm_distributed_does_not_autoprovision_when_explicit_bootstrap_is_unreachable(self):
+        manager = KafkaManager(
+            runtime_config={
+                "topology": "vm-distributed",
+                "provisioner": "kubernetes",
+                "cluster_bootstrap_servers": "192.0.2.10:9094",
+            },
+            command_runner=mock.Mock(),
+            wait_timeout_seconds=1,
+            poll_interval_seconds=0.01,
+        )
+
+        with mock.patch.object(KafkaManager, "is_kafka_available", return_value=False):
+            with mock.patch.object(manager, "start_kafka", return_value="127.0.0.1:39092") as mocked_start:
+                bootstrap = manager.ensure_kafka_running()
+
+        self.assertIsNone(bootstrap)
+        mocked_start.assert_not_called()
+        self.assertIn("was not reachable from this runner", manager.last_error)
+
+    def test_vm_distributed_nodeport_config_can_autoprovision_when_unreachable(self):
+        manager = KafkaManager(
+            runtime_config={
+                "topology": "vm-distributed",
+                "provisioner": "kubernetes",
+                "k8s_external_service_type": "NodePort",
+                "cluster_bootstrap_servers": "192.0.2.10:32092",
+            },
+            command_runner=mock.Mock(),
+            wait_timeout_seconds=1,
+            poll_interval_seconds=0.01,
+        )
+
+        with mock.patch.object(KafkaManager, "is_kafka_available", return_value=False):
+            with mock.patch.object(manager, "start_kafka", return_value="127.0.0.1:39092") as mocked_start:
+                bootstrap = manager.ensure_kafka_running()
+
+        self.assertEqual(bootstrap, "127.0.0.1:39092")
+        mocked_start.assert_called_once()
+
+    def test_kubernetes_start_keeps_configured_connector_bootstrap(self):
+        manager = KafkaManager(
+            runtime_config={
+                "provisioner": "kubernetes",
+                "k8s_namespace": "core-control",
+                "k8s_service_name": "framework-kafka",
+                "k8s_external_service_type": "NodePort",
+                "k8s_nodeport": "32092",
+                "cluster_bootstrap_servers": "192.0.2.10:32092",
+            },
+            command_runner=mock.Mock(return_value=_FakeCompletedProcess(stdout="")),
+        )
+
+        with mock.patch.object(KafkaManager, "_start_kubernetes_port_forward", return_value=object()):
+            with mock.patch.object(KafkaManager, "_wait_for_kubernetes_internal_bootstrap", return_value={"pod": "conn-a"}):
+                with mock.patch.object(KafkaManager, "_wait_for_kubernetes_external_service_bootstrap", return_value={"pod": "conn-a"}):
+                    with mock.patch.object(KafkaManager, "is_kafka_available", side_effect=[False, True]):
+                        bootstrap = manager.ensure_kafka_running()
+
+        self.assertEqual(bootstrap, "127.0.0.1:32092")
+        self.assertEqual(manager.cluster_bootstrap_servers, "192.0.2.10:32092")
 
     def test_stop_kafka_only_stops_framework_managed_container(self):
         manager = KafkaManager(container_class=_FakeKafkaContainer)

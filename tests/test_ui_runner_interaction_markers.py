@@ -69,6 +69,139 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
             env = subprocess_run.call_args.kwargs["env"]
             self.assertEqual(env["PLAYWRIGHT_INTERACTION_MARKERS"], "0")
 
+    def test_playwright_validation_supports_fail_fast_max_failures(self):
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
+            os.environ,
+            {"PLAYWRIGHT_MAX_FAILURES": "1"},
+        ), mock.patch.object(
+            ui_runner.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0),
+        ) as subprocess_run:
+            ui_runner.run_playwright_validation(
+                profile=self._profile(),
+                context=self._context(),
+                experiment_dir=tmpdir,
+            )
+
+            command = subprocess_run.call_args.args[0]
+            self.assertIn("--max-failures", command)
+            self.assertEqual(command[command.index("--max-failures") + 1], "1")
+
+    def test_playwright_validation_prefers_public_keycloak_url(self):
+        context = self._context()
+        context.config.update(
+            {
+                "KEYCLOAK_FRONTEND_URL": "https://org1.example.test/auth",
+                "KC_INTERNAL_URL": "http://auth.internal.example.test",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            ui_runner.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0),
+        ) as subprocess_run:
+            ui_runner.run_playwright_validation(
+                profile=self._profile(),
+                context=context,
+                experiment_dir=tmpdir,
+            )
+
+            env = subprocess_run.call_args.kwargs["env"]
+            self.assertEqual(env["UI_KEYCLOAK_URL"], "https://org1.example.test/auth")
+
+    def test_playwright_validation_exports_vm_distributed_component_and_protocol_urls(self):
+        context = self._context()
+        context.topology = "vm-distributed"
+        context.config.update(
+            {
+                "COMPONENTS_NAMESPACE": "components",
+                "COMPONENTS_PUBLIC_BASE_URL": "https://org1.example.test",
+                "CONNECTOR_PROTOCOL_ADDRESS_MODE": "internal",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            ui_runner.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0),
+        ) as subprocess_run:
+            ui_runner.run_playwright_validation(
+                profile=self._profile(),
+                context=context,
+                experiment_dir=tmpdir,
+            )
+
+            env = subprocess_run.call_args.kwargs["env"]
+            self.assertEqual(env["UI_TOPOLOGY"], "vm-distributed")
+            self.assertEqual(env["UI_COMPONENTS_NAMESPACE"], "components")
+            self.assertEqual(env["UI_CONNECTOR_PROTOCOL_ADDRESS_MODE"], "internal")
+            self.assertEqual(env["AI_MODEL_HUB_MODEL_SERVER_BASE_URL"], "http://org1.example.test/model-server")
+            self.assertEqual(
+                env["AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL"],
+                "http://org1.example.test/model-server",
+            )
+
+    def test_playwright_validation_respects_explicit_connector_model_server_route(self):
+        context = self._context()
+        context.topology = "vm-distributed"
+        context.config.update(
+            {
+                "COMPONENTS_NAMESPACE": "components",
+                "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL": "http://components.internal/model-server",
+                "COMPONENTS_PUBLIC_BASE_URL": "https://org1.example.test",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            ui_runner.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0),
+        ) as subprocess_run:
+            ui_runner.run_playwright_validation(
+                profile=self._profile(),
+                context=context,
+                experiment_dir=tmpdir,
+            )
+
+            env = subprocess_run.call_args.kwargs["env"]
+            self.assertEqual(
+                env["AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL"],
+                "http://components.internal/model-server",
+            )
+            self.assertEqual(
+                env["AI_MODEL_HUB_MODEL_SERVER_BASE_URL"],
+                "http://components.internal/model-server",
+            )
+
+    def test_playwright_validation_respects_explicit_vm_distributed_protocol_mode(self):
+        context = self._context()
+        context.topology = "vm-distributed"
+        context.config.update(
+            {
+                "CONNECTOR_PROTOCOL_ADDRESS_MODE": "internal",
+                "COMPONENTS_PUBLIC_BASE_URL": "https://org1.example.test",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
+            os.environ,
+            {"UI_CONNECTOR_PROTOCOL_ADDRESS_MODE": "internal"},
+        ), mock.patch.object(
+            ui_runner.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0),
+        ) as subprocess_run:
+            ui_runner.run_playwright_validation(
+                profile=self._profile(),
+                context=context,
+                experiment_dir=tmpdir,
+            )
+
+            env = subprocess_run.call_args.kwargs["env"]
+            self.assertEqual(env["UI_CONNECTOR_PROTOCOL_ADDRESS_MODE"], "internal")
+
 
 if __name__ == "__main__":
     unittest.main()

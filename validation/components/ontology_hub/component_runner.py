@@ -4,6 +4,8 @@ from typing import Any, Dict, List
 
 from validation.components.artifact_contract import attach_component_artifact_manifest
 from validation.components.console_output import print_component_case_results, print_component_suite_header
+from validation.components.execution_mode import component_api_only_enabled
+from validation.components.fail_fast import component_fail_fast_enabled
 from validation.components.ontology_hub.functional.component_runner import (
     run_ontology_hub_component_validation as run_ontology_hub_functional_component_validation,
 )
@@ -150,11 +152,18 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
     started_at = datetime.now().isoformat()
     normalized_base_url = (base_url or "").rstrip("/")
     phases: Dict[str, Dict[str, Any]] = {}
+    api_only = component_api_only_enabled()
 
     phase_runners = [
         ("functional", run_ontology_hub_functional_component_validation),
         ("integration", run_ontology_hub_integration_component_validation),
     ]
+    if api_only:
+        phase_runners = [
+            (phase, runner)
+            for phase, runner in phase_runners
+            if PHASE_CHANNELS.get(phase) == "api"
+        ]
     for phase, runner in phase_runners:
         print_component_suite_header(_phase_label(phase), PHASE_CHANNELS.get(phase))
         try:
@@ -167,6 +176,8 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
         except Exception as exc:  # pragma: no cover - defensive integration guard
             phases[phase] = _phase_failure_result(phase, exc)
             phases[phase].setdefault("execution_channel", PHASE_CHANNELS.get(phase))
+        if component_fail_fast_enabled() and str(phases[phase].get("status") or "").lower() == "failed":
+            break
 
     executed_cases = [
         case
@@ -196,7 +207,8 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
         "timestamp": started_at,
         "status": _combine_status([phase_result.get("status", "skipped") for phase_result in phases.values()]),
         "summary": _summary_from_phases(phases),
-        "phase_order": ["functional", "integration"],
+        "validation_mode": "api" if api_only else "mixed",
+        "phase_order": [phase for phase, _ in phase_runners],
         "phase_display_names": {phase: _phase_label(phase) for phase in phases},
         "phase_execution_channels": {
             phase: [PHASE_CHANNELS.get(phase, "unknown")]

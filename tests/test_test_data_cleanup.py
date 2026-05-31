@@ -538,6 +538,27 @@ class TestDataCleanupTests(unittest.TestCase):
             ["todos-experiment-123.json", "manual-object.json"],
         )
 
+    def test_storage_cleanup_prefers_level6_minio_endpoint_over_internal_hostname(self):
+        context = fake_context()
+        context.config.update(
+            {
+                "PIONERA_LEVEL6_MINIO_ENDPOINT": "https://minio.public.example",
+                "MINIO_HOSTNAME": "minio.internal.example",
+            }
+        )
+        cleaner = ManagementApiTestDataCleaner(
+            adapter=FakeStorageAdapter(),
+            context=context,
+            connectors=["conn-a"],
+            experiment_dir=None,
+        )
+
+        runtime = cleaner._resolve_minio_runtime()
+
+        self.assertEqual(runtime["host"], "minio.public.example")
+        self.assertEqual(runtime["port"], 443)
+        self.assertTrue(runtime["secure"])
+
     def test_conflict_report_includes_references_that_block_asset_deletion(self):
         session = ConflictCleanupSession()
 

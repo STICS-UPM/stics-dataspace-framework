@@ -9,6 +9,10 @@ from validation.components.ai_model_hub.component_runner import (
 from validation.components.ontology_hub.component_runner import (
     run_ontology_hub_component_validation,
 )
+from validation.components.execution_mode import (
+    component_adapter_name,
+    component_api_only_enabled,
+)
 from validation.components.registry import COMPONENT_REGISTRY, get_component_registration
 from validation.components.runner import (
     COMPONENT_RUNNERS,
@@ -49,6 +53,29 @@ class ComponentValidationRunnerTests(unittest.TestCase):
         self.assertEqual(ai_model_registration.supported_adapters, ("inesdata", "edc"))
         self.assertEqual(ai_model_registration.deployable_adapters, ("inesdata", "edc"))
         self.assertEqual(COMPONENT_REGISTRY["ai-model-hub"].validation_groups, ("ai-model-hub",))
+
+    def test_component_execution_mode_defaults_to_api_for_edc(self):
+        self.assertEqual(component_adapter_name({"PIONERA_ADAPTER": "edc"}), "edc")
+        self.assertTrue(component_api_only_enabled({"PIONERA_ADAPTER": "edc"}))
+        self.assertFalse(component_api_only_enabled({"PIONERA_ADAPTER": "inesdata"}))
+
+    def test_component_execution_mode_honors_explicit_override(self):
+        self.assertTrue(
+            component_api_only_enabled(
+                {
+                    "PIONERA_ADAPTER": "inesdata",
+                    "PIONERA_COMPONENT_VALIDATION_MODE": "api-only",
+                }
+            )
+        )
+        self.assertFalse(
+            component_api_only_enabled(
+                {
+                    "PIONERA_ADAPTER": "edc",
+                    "PIONERA_COMPONENT_VALIDATION_MODE": "mixed",
+                }
+            )
+        )
 
     def test_unregistered_component_is_reported_as_skipped(self):
         results = run_component_validations(
@@ -183,6 +210,83 @@ class ComponentValidationRunnerTests(unittest.TestCase):
             [result["component"] for result in results],
             ["ontology-hub", "ai-model-hub", "semantic-virtualization"],
         )
+
+    def test_registered_components_stop_after_first_failure_when_fail_fast_enabled(self):
+        calls = []
+
+        def fake_runner(component, status):
+            def _run(base_url, experiment_dir=None):
+                calls.append(component)
+                return {
+                    "component": component,
+                    "base_url": base_url,
+                    "status": status,
+                    "summary": {"total": 1, "passed": int(status == "passed"), "failed": int(status == "failed"), "skipped": 0},
+                }
+
+            return _run
+
+        with mock.patch.dict(
+            "validation.components.runner.COMPONENT_RUNNERS",
+            {
+                "ai-model-hub": fake_runner("ai-model-hub", "passed"),
+                "ontology-hub": fake_runner("ontology-hub", "failed"),
+                "semantic-virtualization": fake_runner("semantic-virtualization", "passed"),
+            },
+            clear=False,
+        ), mock.patch.dict(os.environ, {"PIONERA_LEVEL6_STOP_ON_PLAYWRIGHT_FAILURE": "1"}, clear=False):
+            results = run_component_validations(
+                {
+                    "semantic-virtualization": "http://semantic.example.local",
+                    "ai-model-hub": "http://ai.example.local",
+                    "ontology-hub": "http://ontology.example.local",
+                },
+                experiment_dir="/tmp/fake-experiment",
+            )
+
+        self.assertEqual(calls, ["ontology-hub"])
+        self.assertEqual([result["component"] for result in results], ["ontology-hub"])
+        self.assertEqual(results[0]["status"], "failed")
+
+    def test_playwright_max_failures_does_not_stop_component_sequence(self):
+        calls = []
+
+        def fake_runner(component, status):
+            def _run(base_url, experiment_dir=None):
+                calls.append(component)
+                return {
+                    "component": component,
+                    "base_url": base_url,
+                    "status": status,
+                    "summary": {"total": 1, "passed": int(status == "passed"), "failed": int(status == "failed"), "skipped": 0},
+                }
+
+            return _run
+
+        with mock.patch.dict(
+            "validation.components.runner.COMPONENT_RUNNERS",
+            {
+                "ai-model-hub": fake_runner("ai-model-hub", "passed"),
+                "ontology-hub": fake_runner("ontology-hub", "failed"),
+                "semantic-virtualization": fake_runner("semantic-virtualization", "passed"),
+            },
+            clear=False,
+        ), mock.patch.dict(os.environ, {"PLAYWRIGHT_MAX_FAILURES": "1"}, clear=False):
+            results = run_component_validations(
+                {
+                    "semantic-virtualization": "http://semantic.example.local",
+                    "ai-model-hub": "http://ai.example.local",
+                    "ontology-hub": "http://ontology.example.local",
+                },
+                experiment_dir="/tmp/fake-experiment",
+            )
+
+        self.assertEqual(calls, ["ontology-hub", "ai-model-hub", "semantic-virtualization"])
+        self.assertEqual(
+            [result["component"] for result in results],
+            ["ontology-hub", "ai-model-hub", "semantic-virtualization"],
+        )
+        self.assertEqual(results[0]["status"], "failed")
 
     def test_summary_counts_statuses(self):
         summary = summarize_component_results(

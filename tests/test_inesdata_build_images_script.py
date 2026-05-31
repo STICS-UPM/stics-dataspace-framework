@@ -41,6 +41,7 @@ class InesdataBuildImagesScriptTests(unittest.TestCase):
             env = {
                 **os.environ,
                 "MANIFESTS_DIR": str(root / "manifests"),
+                "DOCKER_CMD": "docker",
             }
 
             completed = subprocess.run(

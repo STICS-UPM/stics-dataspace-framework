@@ -1,5 +1,6 @@
 const { expect } = require("../fixtures");
 const { checkMarked, clickMarked, fillMarked } = require("../support/live-marker");
+const { gotoDashboardRoute } = require("./navigation");
 
 class CatalogPage {
   constructor(page, runtime) {
@@ -28,7 +29,7 @@ class CatalogPage {
   }
 
   async goto() {
-    await this.page.goto(`${this.runtime.baseUrl}${this.runtime.catalogPath}`);
+    await gotoDashboardRoute(this.page, this.runtime, this.runtime.catalogPath, "Catalog");
   }
 
   async waitUntilReady() {
@@ -160,6 +161,20 @@ class CatalogPage {
     await expect(this.negotiateButton).toBeVisible();
     await expect(this.negotiateButton).toBeEnabled();
     await clickMarked(this.negotiateButton);
+  }
+
+  async closeDialogIfVisible() {
+    if (!(await this.negotiationDialog.isVisible().catch(() => false))) {
+      return;
+    }
+
+    const closeButton = this.negotiationDialog.locator("button").first();
+    if (await closeButton.isVisible().catch(() => false)) {
+      await clickMarked(closeButton);
+    } else {
+      await this.page.keyboard.press("Escape").catch(() => {});
+    }
+    await expect(this.negotiationDialog).toBeHidden({ timeout: 5000 }).catch(() => {});
   }
 }
 

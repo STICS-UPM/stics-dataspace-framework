@@ -178,7 +178,7 @@ public class BaseSqlDialectStatements implements SqlFederatedCatalogStatements {
      */
     @Override
     public String getSelectDistributionsForDatasetTemplate() {
-        return format("SELECT * FROM %s AS a WHERE dataset_id = ?", getDistributionTable());
+        return format("SELECT * FROM %s AS a WHERE dataset_id = ? AND catalog_id = ?", getDistributionTable());
     }
 
     /**

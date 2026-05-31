@@ -41,7 +41,13 @@ def _ui_runtime_env_from_adapter(adapter):
     if not isinstance(config, dict):
         config = {}
 
-    keycloak_url = str(config.get("KC_INTERNAL_URL") or config.get("KC_URL") or "").strip()
+    keycloak_url = str(
+        config.get("KEYCLOAK_FRONTEND_URL")
+        or config.get("KEYCLOAK_PUBLIC_URL")
+        or config.get("KC_INTERNAL_URL")
+        or config.get("KC_URL")
+        or ""
+    ).strip()
     if keycloak_url:
         env.setdefault("UI_KEYCLOAK_URL", keycloak_url)
 

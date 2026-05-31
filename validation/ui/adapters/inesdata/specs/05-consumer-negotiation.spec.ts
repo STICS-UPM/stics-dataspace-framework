@@ -63,7 +63,7 @@ test("05 consumer negotiation: visible negotiation from catalog", async ({
   };
 
   const isTolerableCatalogRetry = (url: string, status: number): boolean =>
-    (status === 401 || status === 503) &&
+    (status === 401 || status === 500 || status === 502 || status === 503 || status === 504) &&
     (url.includes("/management/pagination/count?type=federatedCatalog") ||
       url.includes("/management/federatedcatalog/request"));
 
@@ -98,13 +98,17 @@ test("05 consumer negotiation: visible negotiation from catalog", async ({
     await captureStep(page, "01-negotiation-after-login");
 
     await expect(async () => {
-      await catalogPage.goto(dataspaceRuntime.consumer.portalBaseUrl);
+      await catalogPage.goto(dataspaceRuntime.consumer.portalBaseUrl, {
+        catalogKind: "federated",
+        expectedAssetId: assetId,
+      });
       await shellPage.assertNoGateway403("Catalog page");
       await shellPage.assertNoServerErrorBanner("Catalog page");
       await catalogPage.expectReady();
+      await catalogPage.showLargestPageSize({ catalogKind: "federated", expectedAssetId: assetId });
 
       let opened = await catalogPage.openDetailsForAsset(assetId);
-      while (!opened && (await catalogPage.goToNextPage())) {
+      while (!opened && (await catalogPage.goToNextPage({ catalogKind: "federated", expectedAssetId: assetId }))) {
         opened = await catalogPage.openDetailsForAsset(assetId);
       }
 

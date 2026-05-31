@@ -14,6 +14,8 @@ from deployers.shared.lib.components import (
     component_values_file_candidates,
     components_for_adapter,
     configured_component_host,
+    configured_component_public_path,
+    configured_component_public_url,
     configured_optional_components,
     get_component_contract,
     infer_component_hostname,
@@ -155,6 +157,32 @@ class SharedComponentsContractTests(unittest.TestCase):
         )
 
         self.assertEqual(host, "semantic-virtualization-demo.custom.ds.example.org")
+
+    def test_component_public_url_can_use_common_base_path_strategy(self):
+        config = {"COMPONENTS_PUBLIC_BASE_URL": "https://org1.pionera.oeg.fi.upm.es"}
+
+        self.assertEqual(
+            configured_component_host("ontology-hub", config, dataspace_name="pionera"),
+            "org1.pionera.oeg.fi.upm.es",
+        )
+        self.assertEqual(configured_component_public_path("ontology-hub", config), "/ontology-hub")
+        self.assertEqual(
+            configured_component_public_url("ontology-hub", config, dataspace_name="pionera"),
+            "https://org1.pionera.oeg.fi.upm.es/ontology-hub",
+        )
+
+    def test_component_public_url_preserves_explicit_url_path_but_ingress_uses_host(self):
+        config = {"AI_MODEL_HUB_PUBLIC_URL": "https://org1.pionera.oeg.fi.upm.es/ai-model-hub"}
+
+        self.assertEqual(
+            configured_component_host("ai-model-hub", config, dataspace_name="pionera"),
+            "org1.pionera.oeg.fi.upm.es",
+        )
+        self.assertEqual(configured_component_public_path("ai-model-hub", config), "/ai-model-hub")
+        self.assertEqual(
+            configured_component_public_url("ai-model-hub", config, dataspace_name="pionera"),
+            "https://org1.pionera.oeg.fi.upm.es/ai-model-hub",
+        )
 
     def test_infer_component_hostname_prefers_configured_host_over_chart_values(self):
         host = infer_component_hostname(

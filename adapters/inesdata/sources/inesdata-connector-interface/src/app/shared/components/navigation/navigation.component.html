@@ -8,7 +8,12 @@
       [mode]="(isHandset$ | async) ? 'over' : 'side'"
       [opened]="(isHandset$ | async) === false"
     >
-      <mat-toolbar>INESData</mat-toolbar>
+      <mat-toolbar class="sidenav-toolbar">
+        <span class="brand-label">
+          <img class="brand-logo" src="assets/branding/pionera-logo.svg" alt="PIONERA logo">
+          <span class="brand-name">PIONERA</span>
+        </span>
+      </mat-toolbar>
       <mat-nav-list>
         <ng-container *ngFor="let route of routes">
           <a
@@ -17,7 +22,7 @@
             [routerLink]="[route.path]"
           >
             <mat-icon matListItemIcon>{{ route.data?.icon }}</mat-icon>
-            {{ route.data?.title ?? route.path }}
+            <span class="nav-label">{{ route.data?.title ?? route.path }}</span>
           </a>
         </ng-container>
       </mat-nav-list>
@@ -42,11 +47,12 @@
         </div>
       </mat-toolbar>
       <div class="scrollable-content">
-        <router-outlet></router-outlet>
-
+        <main class="page-content">
+          <router-outlet></router-outlet>
+        </main>
+        <app-footer class="footer-content"></app-footer>
       </div>
     </mat-sidenav-content>
   </mat-sidenav-container>
-  <app-footer class="footer-content"></app-footer>
   <app-spinner></app-spinner>
 </div>

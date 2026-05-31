@@ -31,8 +31,10 @@ function trimTrailingSlash(value) {
 
 function joinUrl(baseUrl, relativePath) {
   const normalizedBase = `${trimTrailingSlash(baseUrl)}/`;
-  const normalizedPath = String(relativePath || "/").replace(/^\//, "");
-  return new URL(normalizedPath, normalizedBase).toString().replace(/\/$/, "");
+  const rawPath = String(relativePath || "/");
+  const normalizedPath = rawPath.replace(/^\//, "");
+  const url = new URL(normalizedPath, normalizedBase).toString();
+  return rawPath.trim() === "/" ? url : url.replace(/\/$/, "");
 }
 
 function resolveSemanticVirtualizationRuntime() {

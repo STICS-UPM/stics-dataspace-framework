@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import shlex
@@ -11,10 +12,13 @@ from deployers.shared.lib.components import (
     resolve_component_release_name,
     component_values_file_candidates,
     configured_component_host,
+    configured_component_public_path,
+    configured_component_public_url,
     infer_component_hostname,
     strip_url_scheme,
 )
 from deployers.shared.lib.cluster_runtime import build_cluster_runtime
+from deployers.shared.lib.remote_k3s_images import remote_k3s_image_import_target, shell_join
 from deployers.infrastructure.lib.paths import shared_artifact_roots
 from .config import INESDataConfigAdapter, InesdataConfig
 
@@ -88,6 +92,26 @@ class INESDataComponentsAdapter:
         if value.startswith("https://"):
             return "http://" + value[len("https://"):]
         return f"http://{value}"
+
+    @staticmethod
+    def _to_public_url(host_or_url: str) -> str:
+        value = (host_or_url or "").strip()
+        if not value:
+            return ""
+        if value.startswith("http://") or value.startswith("https://"):
+            return value
+        return f"http://{value}"
+
+    def _ontology_hub_self_host_url(self, public_url: str, deployer_config: dict) -> str:
+        explicit = (
+            deployer_config.get("ONTOLOGY_HUB_SELF_HOST_URL")
+            or deployer_config.get("ONTOLOGY_HUB_INTERNAL_SELF_HOST_URL")
+        )
+        if explicit:
+            return str(explicit).strip().rstrip("/")
+        if self._is_vm_distributed_topology():
+            return self._to_http_url(public_url).rstrip("/")
+        return (public_url or "").strip().rstrip("/")
 
     def _component_chart_roots(self):
         return shared_artifact_roots("components")
@@ -418,6 +442,126 @@ class INESDataComponentsAdapter:
             self._cleanup_components(components, legacy_namespace)
             return legacy_namespace
         return None
+
+    def _component_public_path_for_ingress(self, normalized_component: str, deployer_config: dict) -> str:
+        public_path = configured_component_public_path(normalized_component, deployer_config)
+        if not public_path:
+            return ""
+        if self._component_public_path_rewrite_enabled(normalized_component, deployer_config, public_path):
+            return f"{public_path}(/|$)(.*)"
+        return public_path
+
+    @staticmethod
+    def _ingress_first_host_and_path(ingress: dict) -> tuple[str, str]:
+        try:
+            rule = (ingress.get("spec", {}).get("rules") or [])[0]
+            path = (rule.get("http", {}).get("paths") or [])[0]
+            return str(rule.get("host") or "").strip(), str(path.get("path") or "").strip()
+        except Exception:
+            return "", ""
+
+    def _is_framework_vm_distributed_public_path_ingress(
+        self,
+        ingress: dict,
+        *,
+        component: str,
+        deployer_config: dict,
+    ) -> bool:
+        metadata = ingress.get("metadata") or {}
+        labels = metadata.get("labels") or {}
+        if labels.get("app.kubernetes.io/managed-by") != "validation-environment":
+            return False
+        if labels.get("app.kubernetes.io/part-of") != "vm-distributed":
+            return False
+        if labels.get("app.kubernetes.io/component") != component:
+            return False
+
+        expected_host = configured_component_host(
+            component,
+            deployer_config,
+            dataspace_name=self._dataspace_name(),
+        )
+        expected_path = self._component_public_path_for_ingress(component, deployer_config)
+        actual_host, actual_path = self._ingress_first_host_and_path(ingress)
+        if expected_host and actual_host and actual_host != expected_host:
+            return False
+        if expected_path and actual_path and actual_path != expected_path:
+            return False
+        return True
+
+    def _delete_framework_public_path_ingress_if_present(
+        self,
+        *,
+        name: str,
+        namespace: str,
+        component: str,
+        deployer_config: dict,
+    ) -> bool:
+        name = str(name or "").strip()
+        namespace = str(namespace or "").strip()
+        if not name or not namespace:
+            return False
+
+        name_q = shlex.quote(name)
+        ns_q = shlex.quote(namespace)
+        raw = self.run_silent(f"kubectl get ingress {name_q} -n {ns_q} -o json")
+        if not raw:
+            return False
+        try:
+            ingress = json.loads(raw)
+        except Exception:
+            return False
+
+        if not self._is_framework_vm_distributed_public_path_ingress(
+            ingress,
+            component=component,
+            deployer_config=deployer_config,
+        ):
+            return False
+
+        print(f"- Removing legacy vm-distributed public path ingress {name}")
+        self.run(f"kubectl delete ingress {name_q} -n {ns_q} --ignore-not-found", check=False)
+        return True
+
+    def _cleanup_vm_distributed_legacy_public_path_ingresses(
+        self,
+        deployment_items,
+        *,
+        namespace: str,
+        deployer_config: dict,
+    ) -> list[str]:
+        if not self._is_vm_distributed_topology():
+            return []
+
+        namespace = str(namespace or "").strip()
+        if not namespace:
+            return []
+
+        resolved_config = dict(deployer_config or {})
+        removed = []
+        for item in list(deployment_items or []):
+            normalized = self._normalize_component_key(item.get("normalized") or item.get("component"))
+            if not normalized or normalized in self._LEVEL6_EXCLUDED_KEYS:
+                continue
+            release_name = str(item.get("release_name") or "").strip()
+            if not release_name:
+                continue
+
+            candidates = [(normalized, f"{release_name}-public-path")]
+            if normalized == "semantic-virtualization" and self._semantic_virtualization_mapping_editor_enabled(
+                resolved_config
+            ):
+                candidates.append(("semantic-virtualization-editor", f"{release_name}-editor-public-path"))
+
+            for route_component, ingress_name in candidates:
+                if self._delete_framework_public_path_ingress_if_present(
+                    name=ingress_name,
+                    namespace=namespace,
+                    component=route_component,
+                    deployer_config=resolved_config,
+                ):
+                    removed.append(ingress_name)
+        return removed
 
     @staticmethod
     def _safe_load_yaml_file(path: str) -> dict:
@@ -758,7 +902,92 @@ class INESDataComponentsAdapter:
 
     def _host_has_image(self, image_ref: str) -> bool:
         image_q = shlex.quote(image_ref)
-        return self.run_silent(f"docker image inspect {image_q}") is not None
+        docker_q = shlex.quote(self._docker_cmd())
+        return self.run_silent(f"{docker_q} image inspect {image_q}") is not None
+
+    @staticmethod
+    def _docker_cmd() -> str:
+        configured = os.environ.get("PIONERA_DOCKER_CMD") or os.environ.get("DOCKER_CMD")
+        if configured:
+            return configured.strip() or "docker"
+        resolved = shutil.which("docker")
+        if resolved:
+            return resolved
+        docker_desktop = "/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe"
+        if os.path.exists(docker_desktop):
+            return docker_desktop
+        return "docker"
+
+    def _is_vm_distributed_topology(self) -> bool:
+        topology = str(getattr(self.config_adapter, "topology", "") or "").strip().lower()
+        return topology == "vm-distributed"
+
+    def _remote_k3s_image_import_target(self, deployer_config: dict | None = None):
+        if not self._is_vm_distributed_topology():
+            return None
+        config = dict(deployer_config or {})
+        if not config:
+            try:
+                config = dict(self.config_adapter.load_deployer_config() or {})
+            except Exception:
+                config = {}
+        return remote_k3s_image_import_target(config, role="components")
+
+    @staticmethod
+    def _remote_import_command_uses_noninteractive_sudo(import_command: str) -> bool:
+        try:
+            parts = shlex.split(str(import_command or "").strip())
+        except ValueError:
+            parts = str(import_command or "").strip().split()
+        if not parts or parts[0] != "sudo":
+            return False
+        for part in parts[1:]:
+            if part == "-n":
+                return True
+            if not part.startswith("-"):
+                return False
+        return False
+
+    def _ensure_remote_k3s_image_import_prerequisites(self, remote_target, image_ref: str):
+        if not remote_target:
+            return
+        if remote_target.allows_interactive_fallback():
+            return
+        if not self._remote_import_command_uses_noninteractive_sudo(remote_target.import_command):
+            return
+
+        probe_command = shell_join(remote_target.ssh_sudo_probe_args())
+        if self.run(probe_command, check=False) is not None:
+            return
+
+        self._fail(
+            "Remote k3s image import requires non-interactive sudo for k3s",
+            root_cause=(
+                f"Image '{image_ref}' must be imported on '{remote_target.host}', but the configured "
+                f"command uses '{remote_target.import_command}' and a non-interactive k3s sudo probe "
+                "failed over SSH. Configure a registry image, run Level 5 from the k3s host, or ask the "
+                "administrator to allow the deployment user to run k3s image import commands without an "
+                "interactive password."
+            ),
+        )
+
+    def _ensure_k3s_local_image_import_supported(self, image_ref: str, deployer_config: dict | None = None):
+        if not self._is_vm_distributed_topology():
+            return
+        remote_target = self._remote_k3s_image_import_target(deployer_config)
+        if remote_target:
+            self._ensure_remote_k3s_image_import_prerequisites(remote_target, image_ref)
+            return
+        self._fail(
+            "Remote k3s image import is not configured for vm-distributed Level 5",
+            root_cause=(
+                f"Image '{image_ref}' must be available in the remote k3s runtime. "
+                "Publish the component image to a registry reachable by the cluster, "
+                "or set VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT=true with VM_COMPONENTS_SSH_HOST "
+                "(or VM_COMMON_SSH_HOST) so the framework can import it on pionera40. "
+                "A local 'sudo k3s ctr images import' would target the WSL host, not the remote cluster."
+            ),
+        )
 
     def _load_image_into_minikube(self, profile: str, image_ref: str):
         profile_q = shlex.quote(profile)
@@ -767,15 +996,40 @@ class INESDataComponentsAdapter:
         if self.run(f"minikube -p {profile_q} image load {image_q}", check=False) is None:
             self._fail("Failed to load image into minikube", root_cause=image_ref)
 
-    def _load_image_into_k3s(self, image_ref: str):
+    def _load_image_into_k3s(self, image_ref: str, deployer_config: dict | None = None):
         image_q = shlex.quote(image_ref)
+        docker_q = shlex.quote(self._docker_cmd())
         fd, archive_path = tempfile.mkstemp(prefix="pionera-component-image-", suffix=".tar")
         os.close(fd)
         archive_q = shlex.quote(archive_path)
         try:
-            print(f"\nLoading image into k3s containerd: {image_ref}")
-            if self.run(f"docker save {image_q} -o {archive_q}", check=False) is None:
+            remote_target = self._remote_k3s_image_import_target(deployer_config)
+            if remote_target:
+                print(f"\nLoading image into remote k3s containerd ({remote_target.host}): {image_ref}")
+            else:
+                print(f"\nLoading image into k3s containerd: {image_ref}")
+            if self.run(f"{docker_q} save {image_q} -o {archive_q}", check=False) is None:
                 self._fail("Failed to export local image for k3s", root_cause=image_ref)
+            if remote_target:
+                remote_archive_path = remote_target.remote_archive_path(archive_path)
+                scp_command = shell_join(remote_target.scp_upload_args(archive_path, remote_archive_path))
+                if self.run(scp_command, check=False) is None:
+                    self._fail("Failed to copy image archive to remote k3s node", root_cause=remote_target.host)
+                interactive_import = False
+                if remote_target.allows_interactive_fallback():
+                    probe_command = shell_join(remote_target.ssh_sudo_probe_args())
+                    if self.run(probe_command, check=False) is None:
+                        print(
+                            "Remote k3s image import needs sudo password; "
+                            "retrying with an interactive prompt."
+                        )
+                        interactive_import = True
+                ssh_command = shell_join(
+                    remote_target.ssh_import_args(remote_archive_path, interactive=interactive_import)
+                )
+                if self.run(ssh_command, check=False) is None:
+                    self._fail("Failed to import image into remote k3s containerd", root_cause=image_ref)
+                return
             if self.run(f"sudo k3s ctr -n k8s.io images import {archive_q}", check=False) is None:
                 self._fail("Failed to import image into k3s containerd", root_cause=image_ref)
         finally:
@@ -784,9 +1038,16 @@ class INESDataComponentsAdapter:
             except OSError:
                 pass
 
-    def _load_image_into_cluster_runtime(self, cluster_runtime: str, profile: str, image_ref: str):
+    def _load_image_into_cluster_runtime(
+        self,
+        cluster_runtime: str,
+        profile: str,
+        image_ref: str,
+        deployer_config: dict | None = None,
+    ):
         if cluster_runtime == "k3s":
-            self._load_image_into_k3s(image_ref)
+            self._ensure_k3s_local_image_import_supported(image_ref, deployer_config)
+            self._load_image_into_k3s(image_ref, deployer_config)
             return
         self._load_image_into_minikube(profile, image_ref)
 
@@ -812,6 +1073,7 @@ class INESDataComponentsAdapter:
             )
 
         image_q = shlex.quote(image_ref)
+        docker_q = shlex.quote(self._docker_cmd())
         arg_flags = " ".join(
             f"--build-arg {shlex.quote(f'{k}={v}')}"
             for k, v in build_args.items()
@@ -819,7 +1081,7 @@ class INESDataComponentsAdapter:
         )
 
         print(f"\nBuilding local image on host: {image_ref}")
-        cmd = f"docker build -t {image_q}"
+        cmd = f"{docker_q} build -t {image_q}"
         if arg_flags:
             cmd += f" {arg_flags}"
         cmd += " -f Dockerfile ."
@@ -839,8 +1101,9 @@ class INESDataComponentsAdapter:
             )
 
         image_q = shlex.quote(image_ref)
+        docker_q = shlex.quote(self._docker_cmd())
         print(f"\nBuilding local image on host: {image_ref}")
-        cmd = f"docker build -t {image_q} ."
+        cmd = f"{docker_q} build -t {image_q} ."
         if self.run(cmd, check=False, cwd=dashboard_dir) is None:
             self._fail("Failed to build AI Model Hub image on host", root_cause=image_ref)
 
@@ -887,10 +1150,11 @@ class INESDataComponentsAdapter:
 
         image_q = shlex.quote(image_ref)
         dockerfile_q = shlex.quote(dockerfile_path)
+        docker_q = shlex.quote(self._docker_cmd())
         build_context = self._prepare_semantic_virtualization_api_build_context(morph_kgv_dir)
         try:
             print(f"\nBuilding local image on host: {image_ref}")
-            cmd = f"docker build -t {image_q} -f {dockerfile_q} ."
+            cmd = f"{docker_q} build -t {image_q} -f {dockerfile_q} ."
             if self.run(cmd, check=False, cwd=build_context) is None:
                 self._fail("Failed to build Semantic Virtualization image on host", root_cause=image_ref)
         finally:
@@ -910,8 +1174,9 @@ class INESDataComponentsAdapter:
 
         image_q = shlex.quote(image_ref)
         dockerfile_q = shlex.quote(dockerfile_path)
+        docker_q = shlex.quote(self._docker_cmd())
         print(f"\nBuilding local image on host: {image_ref}")
-        cmd = f"docker build -t {image_q} -f {dockerfile_q} ."
+        cmd = f"{docker_q} build -t {image_q} -f {dockerfile_q} ."
         if self.run(cmd, check=False, cwd=mapping_editor_dir) is None:
             self._fail("Failed to build mapping-editor image on host", root_cause=image_ref)
 
@@ -942,6 +1207,10 @@ class INESDataComponentsAdapter:
             or getattr(self.config, "MINIKUBE_PROFILE", "minikube")
             or "minikube"
         ).strip() or "minikube"
+        auto_build_flag = deployer_config.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
+        if auto_build_flag is None:
+            auto_build_flag = deployer_config.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
+        auto_build_enabled = self._parse_bool(auto_build_flag, default=True)
 
         if normalized_component == "ontology-hub":
             if not image_ref:
@@ -954,20 +1223,24 @@ class INESDataComponentsAdapter:
                     "Ontology-Hub must use a local image in Level 5/6",
                     root_cause=f"Configured image: {image_ref}",
                 )
+            if not auto_build_enabled:
+                print(
+                    f"Local image auto-build disabled for '{normalized_component}'. "
+                    f"Using existing cluster image '{image_ref}'."
+                )
+                return False
             if cluster_type == "minikube" and not self._minikube_is_available(profile):
                 self._fail(
                     "Minikube profile is not available for Ontology-Hub local image deployment",
                     root_cause=profile,
                 )
+            if cluster_type == "k3s":
+                self._ensure_k3s_local_image_import_supported(image_ref, deployer_config)
             self._build_ontology_hub_image_on_host(image_ref, deployer_config)
-            self._load_image_into_cluster_runtime(cluster_type, profile, image_ref)
+            self._load_image_into_cluster_runtime(cluster_type, profile, image_ref, deployer_config)
             return True
 
-        auto_build_flag = deployer_config.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
-        if auto_build_flag is None:
-            auto_build_flag = deployer_config.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
-
-        if not self._parse_bool(auto_build_flag, default=True):
+        if not auto_build_enabled:
             return False
 
         if not image_ref:
@@ -983,14 +1256,17 @@ class INESDataComponentsAdapter:
             )
             return False
 
+        if cluster_type == "k3s":
+            self._ensure_k3s_local_image_import_supported(image_ref, deployer_config)
+
         if normalized_component == "ai-model-hub":
             self._build_ai_model_hub_image_on_host(image_ref, deployer_config)
-            self._load_image_into_cluster_runtime(cluster_type, profile, image_ref)
+            self._load_image_into_cluster_runtime(cluster_type, profile, image_ref, deployer_config)
             return True
 
         if normalized_component == "semantic-virtualization":
             self._build_semantic_virtualization_image_on_host(image_ref, deployer_config)
-            self._load_image_into_cluster_runtime(cluster_type, profile, image_ref)
+            self._load_image_into_cluster_runtime(cluster_type, profile, image_ref, deployer_config)
             if self._semantic_virtualization_mapping_editor_enabled(deployer_config):
                 editor_image_ref = self._extract_mapping_editor_image_ref(values)
                 if not editor_image_ref:
@@ -1000,7 +1276,7 @@ class INESDataComponentsAdapter:
                     )
                 if editor_image_ref.lower().endswith(":local"):
                     self._build_mapping_editor_image_on_host(editor_image_ref, deployer_config)
-                    self._load_image_into_cluster_runtime(cluster_type, profile, editor_image_ref)
+                    self._load_image_into_cluster_runtime(cluster_type, profile, editor_image_ref, deployer_config)
             return True
 
         if cluster_type == "minikube" and self._minikube_has_image(profile, image_ref):
@@ -1033,6 +1309,56 @@ class INESDataComponentsAdapter:
             dataspace_name=(getattr(self.config, "DS_NAME", "") or "").strip(),
         )
 
+    def _configured_component_public_path(self, normalized_component: str, deployer_config: dict) -> str:
+        return configured_component_public_path(normalized_component, deployer_config)
+
+    def _configured_component_public_url(self, normalized_component: str, deployer_config: dict) -> str:
+        return configured_component_public_url(
+            normalized_component,
+            deployer_config,
+            dataspace_name=(getattr(self.config, "DS_NAME", "") or "").strip(),
+        )
+
+    def _component_public_path_rewrite_enabled(
+        self,
+        normalized_component: str,
+        deployer_config: dict,
+        public_path: str,
+    ) -> bool:
+        if not public_path:
+            return False
+        env_key = self._normalize_component_key(normalized_component).upper().replace("-", "_")
+        value = deployer_config.get(f"{env_key}_PUBLIC_PATH_REWRITE")
+        if value is None:
+            value = deployer_config.get("COMPONENTS_PUBLIC_PATH_REWRITE")
+        return self._parse_bool(value, default=True)
+
+    def _component_ingress_override(
+        self,
+        normalized_component: str,
+        host: str,
+        deployer_config: dict,
+    ) -> dict:
+        ingress = {
+            "enabled": True,
+            "host": host,
+        }
+        public_path = self._configured_component_public_path(normalized_component, deployer_config)
+        if not public_path:
+            return ingress
+
+        if self._component_public_path_rewrite_enabled(normalized_component, deployer_config, public_path):
+            ingress["path"] = f"{public_path}(/|$)(.*)"
+            ingress["pathType"] = "ImplementationSpecific"
+            ingress["annotations"] = {
+                "nginx.ingress.kubernetes.io/use-regex": "true",
+                "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+            }
+        else:
+            ingress["path"] = public_path
+            ingress["pathType"] = "Prefix"
+        return ingress
+
     def _resolve_dataspace_connector_ids(self, *, ds_name=None, deployer_config=None):
         resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
         resolved_name = str(ds_name or self._dataspace_name() or "").strip() or self._dataspace_name()
@@ -1063,6 +1389,31 @@ class INESDataComponentsAdapter:
             return ""
         return self._to_http_url(f"{resolved_connector_id}.{resolved_domain}")
 
+    def _connector_external_base_url(self, connector_id: str, deployer_config: dict, *, role: str = "") -> str:
+        config = dict(deployer_config or {})
+        normalized_role = str(role or "").strip().lower()
+        role_key = {
+            "provider": "VM_PROVIDER_PUBLIC_URL",
+            "consumer": "VM_CONSUMER_PUBLIC_URL",
+        }.get(normalized_role)
+        if role_key:
+            explicit = str(config.get(role_key) or "").strip()
+            if explicit:
+                return explicit.rstrip("/")
+
+        return self._connector_public_base_url(connector_id, config)
+
+    def _connector_protocol_base_url(self, connector_id: str, deployer_config: dict, *, role: str = "") -> str:
+        config = dict(deployer_config or {})
+        mode = str(
+            config.get("PIONERA_CONNECTOR_PROTOCOL_ADDRESS_MODE")
+            or config.get("CONNECTOR_PROTOCOL_ADDRESS_MODE")
+            or "public"
+        ).strip().lower()
+        if mode in {"internal", "private"}:
+            return self._connector_public_base_url(connector_id, config)
+        return self._connector_external_base_url(connector_id, config, role=role)
+
     def _ai_model_hub_connector_config(self, *, ds_name=None, deployer_config=None) -> list[dict]:
         resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
         connector_ids = self._resolve_dataspace_connector_ids(
@@ -1077,27 +1428,37 @@ class INESDataComponentsAdapter:
         entries = []
 
         if consumer_id:
-            consumer_base = self._connector_public_base_url(consumer_id, resolved_config)
+            consumer_base = self._connector_external_base_url(consumer_id, resolved_config, role="consumer")
+            consumer_protocol_base = self._connector_protocol_base_url(
+                consumer_id,
+                resolved_config,
+                role="consumer",
+            )
             if consumer_base:
                 entries.append(
                     {
                         "connectorName": "Consumer",
                         "managementUrl": f"{consumer_base}/management",
                         "defaultUrl": f"{consumer_base}/api",
-                        "protocolUrl": f"{consumer_base}/protocol",
+                        "protocolUrl": f"{(consumer_protocol_base or consumer_base)}/protocol",
                         "federatedCatalogEnabled": False,
                     }
                 )
 
         if provider_id:
-            provider_base = self._connector_public_base_url(provider_id, resolved_config)
+            provider_base = self._connector_external_base_url(provider_id, resolved_config, role="provider")
+            provider_protocol_base = self._connector_protocol_base_url(
+                provider_id,
+                resolved_config,
+                role="provider",
+            )
             if provider_base:
                 entries.append(
                     {
                         "connectorName": "Provider",
                         "managementUrl": f"{provider_base}/management",
                         "defaultUrl": f"{provider_base}/api",
-                        "protocolUrl": f"{provider_base}/protocol",
+                        "protocolUrl": f"{(provider_protocol_base or provider_base)}/protocol",
                         "federatedCatalogEnabled": False,
                     }
                 )
@@ -1111,14 +1472,14 @@ class INESDataComponentsAdapter:
         if normalized == "ontology-hub":
             host = self._configured_component_host(normalized, deployer_config)
             if host:
-                base_url = self._to_http_url(host)
-                overrides["ingress"] = {
-                    "enabled": True,
-                    "host": host,
-                }
+                public_base_url = self._to_public_url(
+                    self._configured_component_public_url(normalized, deployer_config) or host
+                ).rstrip("/")
+                self_host_url = self._ontology_hub_self_host_url(public_base_url, deployer_config)
+                overrides["ingress"] = self._component_ingress_override(normalized, host, deployer_config)
                 overrides["env"] = {
-                    "SELF_HOST_URL": base_url,
-                    "BASE_URL": base_url,
+                    "SELF_HOST_URL": self_host_url,
+                    "BASE_URL": public_base_url,
                 }
                 host_alias_ip = self._resolve_ontology_hub_self_host_alias_ip(deployer_config)
                 if host_alias_ip:
@@ -1138,10 +1499,7 @@ class INESDataComponentsAdapter:
         if normalized == "ai-model-hub":
             host = self._configured_component_host(normalized, deployer_config)
             if host:
-                overrides["ingress"] = {
-                    "enabled": True,
-                    "host": host,
-                }
+                overrides["ingress"] = self._component_ingress_override(normalized, host, deployer_config)
 
             connector_config = self._ai_model_hub_connector_config(
                 ds_name=self._dataspace_name(),
@@ -1153,20 +1511,19 @@ class INESDataComponentsAdapter:
         if normalized == "semantic-virtualization":
             host = self._configured_component_host(normalized, deployer_config)
             if host:
-                overrides["ingress"] = {
-                    "enabled": True,
-                    "host": host,
-                }
-                overrides.setdefault("env", {})["SEMANTIC_VIRTUALIZATION_PUBLIC_URL"] = self._to_http_url(host)
+                public_url = self._configured_component_public_url(normalized, deployer_config) or host
+                overrides["ingress"] = self._component_ingress_override(normalized, host, deployer_config)
+                overrides.setdefault("env", {})["SEMANTIC_VIRTUALIZATION_PUBLIC_URL"] = self._to_public_url(public_url)
 
             if self._semantic_virtualization_mapping_editor_enabled(deployer_config):
                 editor_host = self._semantic_virtualization_mapping_editor_host(deployer_config)
                 mapping_editor = {"enabled": True}
                 if editor_host:
-                    mapping_editor["ingress"] = {
-                        "enabled": True,
-                        "host": editor_host,
-                    }
+                    mapping_editor["ingress"] = self._component_ingress_override(
+                        "semantic-virtualization-editor",
+                        editor_host,
+                        deployer_config,
+                    )
                 overrides["mappingEditor"] = mapping_editor
 
         return overrides
@@ -1180,6 +1537,10 @@ class INESDataComponentsAdapter:
 
     def _semantic_virtualization_mapping_editor_host(self, deployer_config: dict) -> str:
         config = dict(deployer_config or {})
+        public_url = self._configured_component_public_url("semantic-virtualization-editor", config)
+        if public_url:
+            return strip_url_scheme(public_url).split("/", 1)[0]
+
         explicit = (
             config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST")
             or config.get("MAPPING_EDITOR_HOST")
@@ -1194,6 +1555,9 @@ class INESDataComponentsAdapter:
         if ds_domain and ds_name:
             return f"semantic-virtualization-editor-{ds_name}.{ds_domain}"
         return ""
+
+    def _semantic_virtualization_mapping_editor_public_url(self, deployer_config: dict) -> str:
+        return self._configured_component_public_url("semantic-virtualization-editor", dict(deployer_config or {}))
 
     def _additional_component_public_hosts(self, normalized_component: str, deployer_config: dict) -> list[str]:
         normalized = self._normalize_component_key(normalized_component)
@@ -1218,7 +1582,10 @@ class INESDataComponentsAdapter:
             ):
                 editor_host = self._semantic_virtualization_mapping_editor_host(deployer_config)
                 if editor_host:
-                    resolved_hosts["semantic-virtualization-editor"] = editor_host
+                    resolved_hosts["semantic-virtualization-editor"] = (
+                        self._semantic_virtualization_mapping_editor_public_url(deployer_config)
+                        or editor_host
+                    )
         return resolved_hosts
 
     def _resolve_ontology_hub_self_host_alias_ip(self, deployer_config: dict) -> str:
@@ -1393,6 +1760,7 @@ class INESDataComponentsAdapter:
         runtime_resolver = getattr(self, "resolve_component_runtime_metadata", None)
 
         inferred_hosts = {}
+        inferred_urls = {}
         if callable(runtime_batch_resolver):
             prepared_metadata = runtime_batch_resolver(
                 components,
@@ -1405,7 +1773,12 @@ class INESDataComponentsAdapter:
                     continue
                 normalized = metadata.get("normalized_component")
                 host = metadata.get("host")
-                if normalized and host:
+                public_url = metadata.get("public_url") or (
+                    self._configured_component_public_url(normalized, deployer_config) if normalized else ""
+                )
+                if normalized and public_url:
+                    inferred_urls[normalized] = public_url
+                elif normalized and host:
                     inferred_hosts[normalized] = host
         else:
             for component in components:
@@ -1428,7 +1801,10 @@ class INESDataComponentsAdapter:
                 except Exception:
                     host = None
 
-                if host:
+                public_url = self._configured_component_public_url(normalized, deployer_config)
+                if public_url:
+                    inferred_urls[normalized] = public_url
+                elif host:
                     inferred_hosts[normalized] = host
 
         inferred_hosts = self._add_additional_component_url_hosts(
@@ -1436,7 +1812,9 @@ class INESDataComponentsAdapter:
             components,
             deployer_config,
         )
-        return {k: self._to_http_url(v) for k, v in inferred_hosts.items() if v}
+        urls = {k: self._to_public_url(v) for k, v in inferred_hosts.items() if v}
+        urls.update({k: self._to_public_url(v) for k, v in inferred_urls.items() if v})
+        return urls
 
     def COMPONENTS(self, components, *, ds_name=None, namespace=None, deployer_config=None):
         if not components:
@@ -1479,17 +1857,11 @@ class INESDataComponentsAdapter:
         runtime_finalizer = getattr(self, "finalize_component_runtime", None)
         publication_verifier = getattr(self, "verify_component_publication", None)
         shared_runtime_deployer = getattr(self, "deploy_shared_component_runtime", None)
-        self._cleanup_legacy_component_releases(
-            components,
-            active_namespace=namespace,
-            ds_name=ds_name,
-            deployer_config=deployer_config,
-        )
-        self._cleanup_components(components, namespace)
 
         prepared_metadata = None
         metadata_by_component = {}
         inferred_hosts = {}
+        inferred_urls = {}
         if callable(runtime_batch_resolver):
             prepared_metadata = runtime_batch_resolver(
                 components,
@@ -1504,7 +1876,12 @@ class INESDataComponentsAdapter:
                 if metadata.get("excluded") or metadata.get("error"):
                     continue
                 host = metadata.get("host")
-                if normalized and host:
+                public_url = metadata.get("public_url") or (
+                    self._configured_component_public_url(normalized, deployer_config) if normalized else ""
+                )
+                if normalized and public_url:
+                    inferred_urls[normalized] = public_url
+                elif normalized and host:
                     inferred_hosts[normalized] = host
         else:
             for component in components:
@@ -1528,7 +1905,10 @@ class INESDataComponentsAdapter:
                 except Exception:
                     host = None
 
-                if host:
+                public_url = self._configured_component_public_url(normalized, deployer_config)
+                if public_url:
+                    inferred_urls[normalized] = public_url
+                elif host:
                     inferred_hosts[normalized] = host
 
         hostnames_to_sync = set(inferred_hosts.values())
@@ -1551,7 +1931,7 @@ class INESDataComponentsAdapter:
             else:
                 print(f"Skipping component hosts synchronization for topology '{topology}'.")
 
-        deployed = []
+        deployment_items = []
         for component in components:
             normalized = self._normalize_component_key(component)
 
@@ -1622,26 +2002,40 @@ class INESDataComponentsAdapter:
                 "release_name": release_name,
                 "override_plan": override_plan,
             }
+            current_public_url = (
+                runtime_metadata.get("public_url")
+                if runtime_metadata
+                else self._configured_component_public_url(normalized, deployer_config)
+            )
+            if current_public_url:
+                current_deployment_plan["public_url"] = current_public_url
 
-            if callable(shared_runtime_deployer):
-                shared_runtime_result = shared_runtime_deployer(
-                    normalized,
-                    deployment_plan=current_deployment_plan,
-                    namespace=namespace,
-                    deployer_config=deployer_config,
-                )
-                if shared_runtime_result is not None:
-                    deployed.append(normalized)
-                    continue
+            deployment_items.append(
+                {
+                    "component": component,
+                    "normalized": normalized,
+                    "chart_dir": chart_dir,
+                    "values_file": values_file,
+                    "release_name": release_name,
+                    "override_plan": override_plan,
+                    "deployment_plan": current_deployment_plan,
+                }
+            )
+
+        prepared_runtime_executions = {}
+        for item in deployment_items:
+            normalized = item["normalized"]
+            deployment_plan = item["deployment_plan"]
+            values_file = item["values_file"]
+            release_name = item["release_name"]
 
             if callable(runtime_execution_preparer):
                 execution = runtime_execution_preparer(
                     normalized,
-                    deployment_plan=current_deployment_plan,
+                    deployment_plan=deployment_plan,
                     namespace=namespace,
                     deployer_config=deployer_config,
                 )
-                built_local_image = execution["built_local_image"]
             else:
                 built_local_image = False
                 try:
@@ -1651,6 +2045,51 @@ class INESDataComponentsAdapter:
                         f"Error preparing local images for component '{normalized}'",
                         root_cause=str(exc),
                     )
+                execution = {
+                    "component": normalized,
+                    "release_name": release_name,
+                    "namespace": namespace,
+                    "deployer_config": deployer_config,
+                    "built_local_image": built_local_image,
+                }
+            prepared_runtime_executions[normalized] = execution
+
+        self._cleanup_legacy_component_releases(
+            components,
+            active_namespace=namespace,
+            ds_name=ds_name,
+            deployer_config=deployer_config,
+        )
+        self._cleanup_components(components, namespace)
+        self._cleanup_vm_distributed_legacy_public_path_ingresses(
+            deployment_items,
+            namespace=namespace,
+            deployer_config=deployer_config,
+        )
+
+        deployed = []
+        for item in deployment_items:
+            component = item["component"]
+            normalized = item["normalized"]
+            chart_dir = item["chart_dir"]
+            values_file = item["values_file"]
+            release_name = item["release_name"]
+            override_plan = item["override_plan"]
+            current_deployment_plan = item["deployment_plan"]
+            execution = prepared_runtime_executions.get(normalized) or {}
+            built_local_image = bool(execution.get("built_local_image"))
+
+            if callable(shared_runtime_deployer):
+                shared_runtime_result = shared_runtime_deployer(
+                    normalized,
+                    deployment_plan=current_deployment_plan,
+                    namespace=namespace,
+                    deployer_config=deployer_config,
+                    prepared_execution=execution,
+                )
+                if shared_runtime_result is not None:
+                    deployed.append(normalized)
+                    continue
 
             if callable(component_release_deployer):
                 component_release_deployer(
@@ -1731,7 +2170,8 @@ class INESDataComponentsAdapter:
             components,
             deployer_config,
         )
-        urls = {k: self._to_http_url(v) for k, v in inferred_hosts.items() if v}
+        urls = {k: self._to_public_url(v) for k, v in inferred_hosts.items() if v}
+        urls.update({k: self._to_public_url(v) for k, v in inferred_urls.items() if v})
         return {"deployed": deployed, "urls": urls}
 
     def describe(self) -> str:
