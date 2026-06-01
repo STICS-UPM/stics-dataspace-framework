@@ -205,7 +205,12 @@ class INESDataConnectorsAdapter:
             yield
 
     def _bootstrap_environment_prefix(self):
-        return f"PIONERA_TOPOLOGY={shlex.quote(self._normalized_topology())} "
+        prefix = f"PIONERA_TOPOLOGY={shlex.quote(self._normalized_topology())} "
+        deployment_id_getter = getattr(self.config_adapter, "deployment_id", None)
+        deployment_id = deployment_id_getter() if callable(deployment_id_getter) else ""
+        if deployment_id:
+            prefix += f"PIONERA_DEPLOYMENT_ID={shlex.quote(str(deployment_id))} "
+        return prefix
 
     def _deployer_config_for_local_image_import(self):
         try:
@@ -1327,6 +1332,53 @@ class INESDataConnectorsAdapter:
             prefix += f"PIONERA_PG_PORT={shlex.quote(str(pg_port))} "
         return prefix
 
+    def _connector_credentials_file_path(self, connector_name, ds_name=None, for_write=False):
+        resolver = getattr(self.config_adapter, "connector_credentials_path", None)
+        if callable(resolver):
+            try:
+                return resolver(connector_name, ds_name=ds_name, for_write=for_write)
+            except TypeError as exc:
+                if "for_write" not in str(exc):
+                    raise
+                return resolver(connector_name, ds_name=ds_name)
+        return self.config.connector_credentials_path(connector_name)
+
+    def _bootstrap_repo_dir(self):
+        repo_dir = getattr(self.config, "repo_dir", None)
+        if callable(repo_dir):
+            return repo_dir()
+        repo_dir = getattr(self.config_adapter, "repo_dir", None)
+        if callable(repo_dir):
+            return repo_dir()
+        script_dir = getattr(self.config, "script_dir", None)
+        if callable(script_dir):
+            return script_dir()
+        return os.getcwd()
+
+    def _connector_certificates_dir(self, connector_name, ds_name=None):
+        resolver = getattr(self.config_adapter, "connector_certificates_dir", None)
+        if callable(resolver):
+            return resolver(connector_name=connector_name, ds_name=ds_name)
+        config = self.config_adapter.load_deployer_config() if self.config_adapter else {}
+        environment = str(config.get("ENVIRONMENT", "DEV") or "DEV").strip().upper() or "DEV"
+        return os.path.join(
+            self._bootstrap_repo_dir(),
+            "deployments",
+            environment,
+            ds_name or getattr(self.config, "DS_NAME", "dataspace"),
+            "certs",
+        )
+
+    def _connector_runtime_environment_prefix(self, connector_name, ds_name):
+        credentials_path = self._connector_credentials_file_path(connector_name, ds_name=ds_name, for_write=True)
+        certs_dir = self._connector_certificates_dir(connector_name, ds_name=ds_name)
+        repo_dir = self._bootstrap_repo_dir()
+        values = {
+            "PIONERA_CONNECTOR_CREDENTIALS_PATH": os.path.relpath(credentials_path, repo_dir),
+            "PIONERA_CONNECTOR_CERTS_DIR": os.path.relpath(certs_dir, repo_dir),
+        }
+        return "".join(f"{key}={shlex.quote(str(value))} " for key, value in values.items() if value)
+
     def _bootstrap_connector_create_command(
         self,
         python_exec,
@@ -1338,7 +1390,8 @@ class INESDataConnectorsAdapter:
         pg_port=None,
     ):
         return (
-            f"{self._bootstrap_connector_environment_prefix(vault_url, keycloak_url, pg_host, pg_port)}{python_exec} "
+            f"{self._bootstrap_connector_environment_prefix(vault_url, keycloak_url, pg_host, pg_port)}"
+            f"{self._connector_runtime_environment_prefix(connector_name, ds_name)}{python_exec} "
             f"bootstrap.py connector create {connector_name} {ds_name}"
         )
 
@@ -3440,7 +3493,7 @@ class INESDataConnectorsAdapter:
         )
 
     def load_connector_credentials(self, connector_name):
-        creds_file = self.config.connector_credentials_path(connector_name)
+        creds_file = self._connector_credentials_file_path(connector_name, for_write=False)
         if not os.path.exists(creds_file):
             return None
 
@@ -4431,7 +4484,7 @@ class INESDataConnectorsAdapter:
                 pg_port=postgres_bootstrap_port,
             )
             create_result = None
-            creds_path = self.config.connector_credentials_path(connector_name)
+            creds_path = self._connector_credentials_file_path(connector_name, ds_name=ds_name, for_write=True)
             max_attempts = 2
             for attempt in range(1, max_attempts + 1):
                 create_result = self.run(create_cmd, cwd=repo_dir, check=False)

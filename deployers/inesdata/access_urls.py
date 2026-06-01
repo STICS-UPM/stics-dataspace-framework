@@ -23,6 +23,8 @@ from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distrib
 
 URL_DEV = ".dev.ds.dataspaceunit.upm"
 PUBLIC_COMMON_ACCESS_KEYS = (
+    "VM_SINGLE_PUBLIC_URL",
+    "VM_SINGLE_HTTP_URL",
     "VM_COMMON_PUBLIC_URL",
     "VM_COMMON_HTTP_URL",
     "PUBLIC_PORTAL_PUBLIC_URL",
@@ -182,6 +184,8 @@ def _is_vm_distributed_public_common_mode(config):
         or ""
     ).strip().lower().replace("_", "-")
     if topology == "vm-distributed":
+        return True
+    if topology == "vm-single" and str(values.get("VM_SINGLE_HTTP_URL") or values.get("VM_SINGLE_PUBLIC_URL") or "").strip():
         return True
     return any(str(values.get(key) or "").strip() for key in PUBLIC_COMMON_ACCESS_KEYS)
 

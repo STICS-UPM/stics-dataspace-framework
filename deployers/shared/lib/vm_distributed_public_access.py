@@ -105,10 +105,21 @@ def resolve_vm_distributed_public_urls(config: dict[str, str] | None) -> dict[st
     configured domains with the conventional org1/org2/org3 defaults.
     """
     values = dict(config or {})
+    topology = str(
+        values.get("TOPOLOGY")
+        or values.get("PIONERA_TOPOLOGY")
+        or values.get("INESDATA_TOPOLOGY")
+        or ""
+    ).strip().lower().replace("_", "-")
     common_domain = _clean_domain(values.get("DOMAIN_BASE") or values.get("DS_DOMAIN_BASE"))
     connector_domain = _clean_domain(values.get("DS_DOMAIN_BASE") or values.get("DOMAIN_BASE"))
 
-    common_url = _clean_public_url(values.get("VM_COMMON_PUBLIC_URL")) or _default_role_url("org1", common_domain)
+    vm_single_url = _clean_public_url(values.get("VM_SINGLE_PUBLIC_URL") or values.get("VM_SINGLE_HTTP_URL"))
+    common_url = _clean_public_url(values.get("VM_COMMON_PUBLIC_URL"))
+    if not common_url and (topology == "vm-single" or vm_single_url):
+        common_url = vm_single_url
+    if not common_url:
+        common_url = _default_role_url("org1", common_domain)
     provider_url = _clean_public_url(values.get("VM_PROVIDER_PUBLIC_URL")) or _default_role_url("org2", connector_domain)
     consumer_url = _clean_public_url(values.get("VM_CONSUMER_PUBLIC_URL")) or _default_role_url("org3", connector_domain)
 

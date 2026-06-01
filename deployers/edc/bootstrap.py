@@ -116,12 +116,28 @@ def random_token(length: int) -> str:
 
 
 def runtime_dir(environment: str, dataspace: str) -> Path:
-    path = deployment_root() / "deployments" / environment / dataspace
+    topology = os.getenv("PIONERA_TOPOLOGY", "local").strip().lower().replace("_", "-") or "local"
+    deployment_id = os.getenv("PIONERA_DEPLOYMENT_ID", "").strip()
+    layout = os.getenv("PIONERA_RUNTIME_ARTIFACT_LAYOUT", "auto").strip().lower().replace("_", "-")
+    use_scoped = layout in {"scoped", "topology", "topology-scoped"} or (
+        layout not in {"legacy", "flat"} and (topology != "local" or bool(deployment_id))
+    )
+    parts = ["deployments", environment]
+    if use_scoped:
+        parts.append(topology)
+        if deployment_id:
+            parts.append(deployment_id)
+    parts.append(dataspace)
+    path = deployment_root().joinpath(*parts)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def credentials_path(environment: str, dataspace: str, source_type: str, name: str) -> Path:
+    if source_type == "connector":
+        configured = os.getenv("PIONERA_CONNECTOR_CREDENTIALS_PATH", "").strip()
+        if configured:
+            return Path(configured)
     return runtime_dir(environment, dataspace) / f"credentials-{source_type}-{name}.json"
 
 

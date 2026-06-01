@@ -88,8 +88,8 @@ class SharedConfigLoaderTests(unittest.TestCase):
             ("vm-distributed", "vm-single"),
         )
 
-    def test_vm_distributed_ssh_access_keys_are_topology_scoped(self):
-        for key in (
+    def test_vm_ssh_access_keys_are_topology_scoped(self):
+        shared_vm_keys = (
             "SSH_ACCESS_MODE",
             "SSH_BASTION_HOST",
             "SSH_BASTION_PORT",
@@ -97,6 +97,40 @@ class SharedConfigLoaderTests(unittest.TestCase):
             "SSH_BASTION_IDENTITY_FILE",
             "SSH_IDENTITY_FILE",
             "SSH_CONNECT_TIMEOUT_SECONDS",
+            "VM_SSH_USER",
+            "VM_REMOTE_WORKDIR",
+        )
+        for key in shared_vm_keys:
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
+            self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed", "vm-single"))
+
+        for key in (
+            "VM_SINGLE_SSH_HOST",
+            "VM_SINGLE_SSH_PORT",
+            "VM_SINGLE_SSH_USER",
+            "VM_SINGLE_SSH_IDENTITY_FILE",
+            "VM_SINGLE_SSH_BOOTSTRAP_MODE",
+            "VM_SINGLE_SSH_KEY_COMMENT",
+            "VM_SINGLE_SSH_MANAGED_MARKER",
+            "VM_SINGLE_SSH_KNOWN_HOSTS_STRATEGY",
+            "VM_SINGLE_LEVEL_EXECUTION_MODE",
+            "VM_SINGLE_REMOTE_PYTHON",
+            "VM_SINGLE_REMOTE_WORKDIR",
+            "VM_SINGLE_LOCAL_KUBECONFIG",
+            "VM_SINGLE_REMOTE_KUBECONFIG",
+            "VM_SINGLE_K3S_TUNNEL_MODE",
+            "VM_SINGLE_K3S_API_LOCAL_PORT",
+            "VM_SINGLE_K3S_API_REMOTE_PORT",
+            "VM_SINGLE_WORKSPACE_SYNC",
+            "VM_SINGLE_WORKSPACE_SYNC_DELETE",
+            "VM_SINGLE_WORKSPACE_SYNC_EXCLUDES",
+            "VM_SINGLE_HTTP_URL",
+        ):
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
+            self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-single",))
+
+        for key in (
             "VM_DISTRIBUTED_EXECUTION_HOST",
             "VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE",
             "VM_DISTRIBUTED_SSH_KEY_COMMENT",
@@ -110,7 +144,6 @@ class SharedConfigLoaderTests(unittest.TestCase):
             "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE",
             "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY",
             "VM_DISTRIBUTED_SSH_IDENTITY_FILE",
-            "VM_REMOTE_WORKDIR",
             "VM_COMMON_REMOTE_WORKDIR",
             "VM_PROVIDER_REMOTE_WORKDIR",
             "VM_CONSUMER_REMOTE_WORKDIR",

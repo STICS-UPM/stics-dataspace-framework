@@ -493,10 +493,15 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         vault_token = str(deployer_config.get("VT_TOKEN") or "").strip()
         return vault_url, vault_token
 
-    def _connector_credentials_file_path(self, connector_name, ds_name):
+    def _connector_credentials_file_path(self, connector_name, ds_name=None, for_write=False):
         resolver = getattr(self.config_adapter, "edc_connector_credentials_path", None)
         if callable(resolver):
-            return resolver(connector_name, ds_name=ds_name)
+            try:
+                return resolver(connector_name, ds_name=ds_name, for_write=for_write)
+            except TypeError as exc:
+                if "for_write" not in str(exc):
+                    raise
+                return resolver(connector_name, ds_name=ds_name)
         return self.config.connector_credentials_path(connector_name)
 
     def _connector_certificates_dir_from_credentials(self, credentials, ds_name):
@@ -576,7 +581,7 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
             json.dump(credentials, handle, indent=2)
 
     def _reconcile_connector_vault_secrets(self, connector_name, ds_name, credentials=None):
-        credentials_path = self._connector_credentials_file_path(connector_name, ds_name)
+        credentials_path = self._connector_credentials_file_path(connector_name, ds_name, for_write=True)
         credentials = credentials or self.load_connector_credentials(connector_name)
         if not credentials:
             print(f"Cannot reconcile Vault secrets for {connector_name}: credentials file is missing.")
@@ -1632,7 +1637,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
 
         self._stage_bootstrap_artifacts(connector_name, ds_name, repo_dir)
         self.invalidate_management_api_token(connector_name)
-        credentials_path = self.config.connector_credentials_path(connector_name)
+        credentials_path = self._connector_credentials_file_path(connector_name, ds_name)
         if os.path.exists(credentials_path):
             self.setup_minio_bucket(self.config.NS_COMMON, ds_name, connector_name, credentials_path)
         if not self._reconcile_connector_vault_secrets(connector_name, ds_name):

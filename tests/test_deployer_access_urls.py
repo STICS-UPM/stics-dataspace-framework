@@ -98,6 +98,29 @@ class DeployerAccessUrlsTests(unittest.TestCase):
         self.assertEqual(urls["minio_api"], "https://org1.pionera.oeg.fi.upm.es")
         self.assertEqual(urls["minio_console"], "https://org1.pionera.oeg.fi.upm.es/s3-console/")
 
+    def test_inesdata_vm_single_common_access_urls_use_configured_public_root_routes(self):
+        urls = inesdata_bootstrap.common_access_urls(
+            "pionera",
+            "DEV",
+            {
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+            },
+        )
+
+        self.assertEqual(
+            urls["keycloak_realm"],
+            "https://org4.pionera.oeg.fi.upm.es/auth/realms/pionera",
+        )
+        self.assertEqual(
+            urls["keycloak_admin_console"],
+            "https://org4.pionera.oeg.fi.upm.es/auth/admin/pionera/console/",
+        )
+        self.assertEqual(urls["minio_api"], "https://org4.pionera.oeg.fi.upm.es")
+        self.assertEqual(urls["minio_console"], "https://org4.pionera.oeg.fi.upm.es/s3-console/")
+
     def test_inesdata_vm_distributed_dataspace_urls_do_not_infer_legacy_public_hosts(self):
         urls = inesdata_bootstrap.build_dataspace_access_urls(
             "pionera",

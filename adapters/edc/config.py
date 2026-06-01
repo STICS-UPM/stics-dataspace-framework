@@ -8,6 +8,7 @@ from deployers.infrastructure.lib.config_loader import (
     load_deployer_config,
     resolve_deployer_config_layer_paths,
 )
+from deployers.shared.lib import runtime_artifacts
 
 
 class EdcConfig(InesdataConfig):
@@ -253,10 +254,16 @@ class EDCConfigAdapter(INESDataConfigAdapter):
         return os.path.join(self.edc_deployment_dir(), "deployments")
 
     def edc_dataspace_runtime_dir(self, ds_name=None):
-        return os.path.join(
-            self.edc_deployments_dir(),
-            self.deployment_environment_name(),
-            ds_name or self.primary_dataspace_name(),
+        config = self.load_deployer_config()
+        return str(
+            runtime_artifacts.dataspace_runtime_dir(
+                self.config.ADAPTER_NAME,
+                self.deployment_environment_name(),
+                ds_name or self.primary_dataspace_name(),
+                topology=self.topology,
+                config=config,
+                root=self.config.script_dir(),
+            )
         )
 
     def edc_connector_dir(self):
@@ -293,17 +300,41 @@ class EDCConfigAdapter(INESDataConfigAdapter):
             f"values-{connector_name}.yaml",
         )
 
-    def edc_connector_credentials_path(self, connector_name, ds_name=None):
-        return os.path.join(
-            self.edc_dataspace_runtime_dir(ds_name=ds_name),
-            f"credentials-connector-{connector_name}.json",
+    def edc_connector_credentials_path(self, connector_name, ds_name=None, for_write=False):
+        config = self.load_deployer_config()
+        return str(
+            runtime_artifacts.connector_credentials_path(
+                self.config.ADAPTER_NAME,
+                self.deployment_environment_name(),
+                ds_name or self.primary_dataspace_name(),
+                connector_name,
+                topology=self.topology,
+                config=config,
+                root=self.config.script_dir(),
+                prefer_existing=not for_write,
+            )
         )
 
+    def connector_credentials_path(self, connector_name, ds_name=None, for_write=False):
+        return self.edc_connector_credentials_path(connector_name, ds_name=ds_name, for_write=for_write)
+
     def edc_connector_certs_dir(self, ds_name=None):
-        return os.path.join(
-            self.edc_dataspace_runtime_dir(ds_name=ds_name),
-            "certs",
+        config = self.load_deployer_config()
+        return str(
+            runtime_artifacts.connector_certificates_dir(
+                self.config.ADAPTER_NAME,
+                self.deployment_environment_name(),
+                ds_name or self.primary_dataspace_name(),
+                None,
+                topology=self.topology,
+                config=config,
+                root=self.config.script_dir(),
+            )
         )
+
+    def connector_certificates_dir(self, connector_name=None, ds_name=None):
+        del connector_name
+        return self.edc_connector_certs_dir(ds_name=ds_name)
 
     def edc_dataspace_credentials_file(self, ds_name=None):
         return os.path.join(

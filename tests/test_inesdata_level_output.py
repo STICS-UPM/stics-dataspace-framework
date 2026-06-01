@@ -2455,6 +2455,50 @@ minio:
             )
         )
 
+    def test_vm_single_common_public_path_ingresses_use_configured_org4_root(self):
+        self.config_adapter.topology = "vm-single"
+        infrastructure = self._make_infrastructure()
+
+        ingresses = infrastructure._vm_distributed_common_public_path_ingresses(
+            {
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+            }
+        )
+
+        keycloak, minio_api, minio, minio_aliases = ingresses
+        self.assertEqual(keycloak["metadata"]["labels"]["app.kubernetes.io/part-of"], "vm-single")
+        self.assertEqual(keycloak["spec"]["rules"][0]["host"], "org4.pionera.oeg.fi.upm.es")
+        self.assertEqual(keycloak["spec"]["rules"][0]["http"]["paths"][0]["path"], "/auth(/|$)(.*)")
+        self.assertEqual(minio_api["spec"]["rules"][0]["host"], "org4.pionera.oeg.fi.upm.es")
+        self.assertEqual(minio_api["spec"]["rules"][0]["http"]["paths"][0]["path"], "/")
+        self.assertEqual(minio["spec"]["rules"][0]["host"], "org4.pionera.oeg.fi.upm.es")
+        self.assertEqual(minio["spec"]["rules"][0]["http"]["paths"][0]["path"], "/s3-console(/|$)(.*)")
+        self.assertEqual(minio_aliases["metadata"]["labels"]["app.kubernetes.io/part-of"], "vm-single")
+        self.assertEqual(minio_aliases["spec"]["rules"][0]["host"], "org4.pionera.oeg.fi.upm.es")
+
+    def test_vm_single_common_public_path_sync_uses_configured_kubeconfig(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "K3S_KUBECONFIG": "/tmp/pionera4.yaml",
+            }
+        )
+        self.config_adapter.topology = "vm-single"
+        infrastructure = self._make_infrastructure()
+        commands = []
+        infrastructure.run = lambda command, **_kwargs: commands.append(command) or object()
+
+        with mock.patch.dict(os.environ, {"KUBECONFIG": ""}):
+            result = infrastructure._sync_vm_distributed_common_public_path_ingresses()
+
+        self.assertEqual(result["status"], "synced")
+        self.assertTrue(commands)
+        self.assertTrue(commands[0].startswith("kubectl --kubeconfig /tmp/pionera4.yaml apply -f "))
+
     def test_vm_distributed_public_portal_backend_path_ingress_uses_org1_path(self):
         self.config_adapter = LevelOutputConfigAdapter(
             {
@@ -2635,6 +2679,58 @@ minio:
         called_commands = [call.args[0] for call in infrastructure.run_silent.call_args_list]
         self.assertTrue(any("vault operator generate-root -init" in cmd for cmd in called_commands))
         self.assertTrue(any("vault operator generate-root -decode=encoded-1 -otp=otp-1" in cmd for cmd in called_commands))
+
+    def test_vm_single_vault_keys_are_topology_scoped(self):
+        self.config_adapter.topology = "vm-single"
+        infrastructure = self._make_infrastructure()
+
+        self.assertEqual(
+            infrastructure._vault_keys_artifact_path(),
+            os.path.join(
+                self.config.script_dir(),
+                "deployers",
+                "shared",
+                "deployments",
+                "DEV",
+                "vm-single",
+                "common",
+                "init-keys-vault.json",
+            ),
+        )
+
+    def test_vm_distributed_vault_keys_use_topology_scoped_path(self):
+        self.config_adapter.topology = "vm-distributed"
+        infrastructure = self._make_infrastructure()
+
+        self.assertEqual(
+            infrastructure._vault_keys_artifact_path(),
+            os.path.join(
+                self.config.script_dir(),
+                "deployers",
+                "shared",
+                "deployments",
+                "DEV",
+                "vm-distributed",
+                "common",
+                "init-keys-vault.json",
+            ),
+        )
+
+    def test_vm_distributed_vault_keys_can_read_existing_legacy_artifact(self):
+        self.config_adapter.topology = "vm-distributed"
+        legacy_path = os.path.join(
+            self.config.script_dir(),
+            "deployers",
+            "shared",
+            "common",
+            "init-keys-vault.json",
+        )
+        os.makedirs(os.path.dirname(legacy_path), exist_ok=True)
+        with open(legacy_path, "w", encoding="utf-8") as handle:
+            handle.write("{}\n")
+        infrastructure = self._make_infrastructure()
+
+        self.assertEqual(infrastructure._vault_keys_artifact_path(), legacy_path)
 
     def test_sync_common_credentials_from_kubernetes_replaces_local_placeholders(self):
         infrastructure = self._make_infrastructure()

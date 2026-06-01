@@ -20,6 +20,7 @@ from deployers.infrastructure.lib.paths import (
     shared_artifact_dir,
     use_shared_deployer_artifacts,
 )
+from deployers.shared.lib import runtime_artifacts
 
 
 class InesdataConfig:
@@ -380,6 +381,65 @@ class INESDataConfigAdapter:
             ],
             protected_keys=INFRASTRUCTURE_MANAGED_KEYS,
             topology=self.topology,
+        )
+
+    def deployment_environment_name(self):
+        config = self.load_deployer_config()
+        environment = str(config.get("ENVIRONMENT", "DEV")).strip().upper()
+        return environment or "DEV"
+
+    def deployment_id(self):
+        return runtime_artifacts.deployment_id(self.load_deployer_config())
+
+    def deployment_runtime_dir(self, ds_name=None):
+        config = self.load_deployer_config()
+        return str(
+            runtime_artifacts.dataspace_runtime_dir(
+                self.config.adapter_name(),
+                self.deployment_environment_name(),
+                ds_name or self.primary_dataspace_name(),
+                topology=self.topology,
+                config=config,
+                root=self.config.script_dir(),
+            )
+        )
+
+    def connector_credentials_path(self, connector_name, ds_name=None, for_write=False):
+        config = self.load_deployer_config()
+        return str(
+            runtime_artifacts.connector_credentials_path(
+                self.config.adapter_name(),
+                self.deployment_environment_name(),
+                ds_name or self.primary_dataspace_name(),
+                connector_name,
+                topology=self.topology,
+                config=config,
+                root=self.config.script_dir(),
+                prefer_existing=not for_write,
+            )
+        )
+
+    def connector_certificates_dir(self, connector_name=None, ds_name=None):
+        config = self.load_deployer_config()
+        return str(
+            runtime_artifacts.connector_certificates_dir(
+                self.config.adapter_name(),
+                self.deployment_environment_name(),
+                ds_name or self.primary_dataspace_name(),
+                connector_name,
+                topology=self.topology,
+                config=config,
+                root=self.config.script_dir(),
+            )
+        )
+
+    def legacy_connector_credentials_path(self, connector_name, ds_name=None):
+        return os.path.join(
+            self.config.repo_dir(),
+            "deployments",
+            self.deployment_environment_name(),
+            ds_name or self.primary_dataspace_name(),
+            f"credentials-connector-{connector_name}.json",
         )
 
     @staticmethod

@@ -1916,6 +1916,13 @@ class FakeVmDeployer(FakeDeployer):
 
 class MainCliTests(unittest.TestCase):
     def setUp(self):
+        self.vm_single_execution_patch = mock.patch.dict(
+            os.environ,
+            {"PIONERA_VM_SINGLE_LEVEL_EXECUTION_MODE": "local"},
+            clear=False,
+        )
+        self.vm_single_execution_patch.start()
+        self.addCleanup(self.vm_single_execution_patch.stop)
         self.fake_module = types.ModuleType("fake_adapter_module")
         self.fake_module.FakeAdapter = FakeAdapter
         self.fake_module.DryRunAwareAdapter = DryRunAwareAdapter
@@ -3230,6 +3237,28 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["hosts_sync"]["status"], "skipped")
         self.assertEqual(adapter.calls, ["deploy_infrastructure"])
 
+    def test_level_command_runs_selected_level(self):
+        expected = {"status": "completed", "levels": [{"level": 1, "status": "completed"}]}
+
+        stdout = io.StringIO()
+        with mock.patch.object(
+            main,
+            "run_levels",
+            return_value=expected,
+        ) as run_levels, contextlib.redirect_stdout(stdout):
+            result = main.main(
+                ["fake", "level", "1", "--topology", "vm-single"],
+                adapter_registry=self.registry,
+                deployer_registry=self.deployer_registry,
+            )
+
+        self.assertEqual(result, expected)
+        run_levels.assert_called_once()
+        self.assertEqual(run_levels.call_args.args[0], "fake")
+        self.assertEqual(run_levels.call_args.kwargs["levels"], [1])
+        self.assertEqual(run_levels.call_args.kwargs["topology"], "vm-single")
+        self.assertIn("Result: Succeeded", stdout.getvalue())
+
     def test_run_local_repair_applies_hosts_reconciliation(self):
         adapter = FakeAdapter()
         doctor_report = {
@@ -3450,6 +3479,165 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["result"]["mode"], "preflight")
         adapter.infrastructure.setup_cluster_preflight.assert_called_once_with(topology="vm-single")
 
+    def test_run_level_one_vm_single_delegates_to_remote_when_configured_from_workstation(self):
+        adapter = FakeAdapterWithInfrastructure()
+        adapter.infrastructure = mock.Mock()
+        adapter.infrastructure.setup_cluster_preflight = mock.Mock(return_value={"status": "unexpected"})
+        bundle = {
+            "infrastructure": {"DOMAIN_BASE": "example.test"},
+            "topology": {
+                "VM_EXTERNAL_IP": "192.0.2.52",
+                "SSH_ACCESS_MODE": "direct",
+                "SSH_IDENTITY_FILE": "/home/operator/.ssh/validation-env-vm-single",
+                "VM_SINGLE_SSH_HOST": "192.0.2.52",
+                "VM_SINGLE_SSH_USER": "pionera",
+                "VM_SINGLE_REMOTE_WORKDIR": "/srv/validation-framework",
+                "VM_SINGLE_LEVEL_EXECUTION_MODE": "remote",
+            },
+            "adapter": {"DS_1_NAME": "pionera"},
+            "paths": {},
+        }
+
+        with mock.patch.dict(
+            os.environ,
+            {"PIONERA_VM_SINGLE_LEVEL_EXECUTION_MODE": "remote"},
+            clear=False,
+        ), mock.patch.object(
+            main,
+            "_load_vm_single_configuration_bundle",
+            return_value=bundle,
+        ), mock.patch.object(
+            main,
+            "_vm_single_running_on_target",
+            return_value=False,
+        ), mock.patch.object(
+            main.subprocess,
+            "run",
+            return_value=types.SimpleNamespace(returncode=0),
+        ) as run_command:
+            result = main.run_level(adapter, 1, deployer_name="fake", topology="vm-single")
+
+        self.assertEqual(result["level"], 1)
+        self.assertEqual(result["result"]["status"], "remote_completed")
+        self.assertEqual(result["result"]["workspace_sync"]["status"], "synced")
+        adapter.infrastructure.setup_cluster_preflight.assert_not_called()
+        command = run_command.call_args.args[0]
+        self.assertEqual(command[0:2], ["ssh", "-tt"])
+        rendered = " ".join(command)
+        self.assertIn("PIONERA_VM_SINGLE_REMOTE_LEVEL_ACTIVE=true", rendered)
+        self.assertIn("python3 main.py fake level 1 --topology vm-single", rendered)
+        rsync_commands = [
+            call.args[0] for call in run_command.call_args_list if call.args and call.args[0][0] == "rsync"
+        ]
+        self.assertEqual(len(rsync_commands), 1)
+        self.assertIn("--exclude", rsync_commands[0])
+        self.assertIn("experiments/", rsync_commands[0])
+        self.assertIn("context/deliverables/logs/", rsync_commands[0])
+
+    def test_run_level_one_vm_single_auto_runs_locally_when_already_inside_target(self):
+        adapter = FakeAdapterWithInfrastructure()
+        adapter.infrastructure = mock.Mock()
+        adapter.infrastructure.setup_cluster_preflight = mock.Mock(
+            return_value={
+                "status": "ready",
+                "mode": "preflight",
+                "topology": "vm-single",
+            }
+        )
+        bundle = {
+            "infrastructure": {"DOMAIN_BASE": "example.test"},
+            "topology": {
+                "VM_EXTERNAL_IP": "192.0.2.52",
+                "SSH_ACCESS_MODE": "direct",
+                "SSH_IDENTITY_FILE": "/home/operator/.ssh/validation-env-vm-single",
+                "VM_SINGLE_SSH_HOST": "192.0.2.52",
+                "VM_SINGLE_SSH_USER": "pionera",
+                "VM_SINGLE_REMOTE_WORKDIR": "/srv/validation-framework",
+                "VM_SINGLE_LEVEL_EXECUTION_MODE": "auto",
+            },
+            "adapter": {"DS_1_NAME": "pionera"},
+            "paths": {},
+        }
+
+        with mock.patch.dict(
+            os.environ,
+            {"PIONERA_VM_SINGLE_LEVEL_EXECUTION_MODE": "auto"},
+            clear=False,
+        ), mock.patch.object(
+            main,
+            "_load_vm_single_configuration_bundle",
+            return_value=bundle,
+        ), mock.patch.object(
+            main,
+            "_vm_single_running_on_target",
+            return_value=True,
+        ), mock.patch.object(
+            main,
+            "_resolve_level_access_urls",
+            return_value={},
+        ), mock.patch.object(
+            main,
+            "_synchronize_vm_single_addresses_after_level1",
+            return_value={"status": "unchanged"},
+        ), mock.patch.object(main.subprocess, "run") as run_command:
+            result = main.run_level(adapter, 1, deployer_name="fake", topology="vm-single")
+
+        self.assertEqual(result["level"], 1)
+        self.assertEqual(result["result"]["mode"], "preflight")
+        adapter.infrastructure.setup_cluster_preflight.assert_called_once_with(topology="vm-single")
+        run_command.assert_not_called()
+
+    def test_run_level_two_vm_single_auto_uses_tunneled_kubeconfig_from_workstation(self):
+        class VmSingleInfrastructure:
+            def __init__(self):
+                self.seen_kubeconfig = None
+
+            def deploy_infrastructure_for_topology(self, topology="local"):
+                self.seen_kubeconfig = os.environ.get("KUBECONFIG")
+                return {"status": "deployed", "topology": topology}
+
+        adapter = FakeAdapterWithInfrastructure()
+        adapter.infrastructure = VmSingleInfrastructure()
+        bundle = {
+            "infrastructure": {"DOMAIN_BASE": "example.test"},
+            "topology": {
+                "CLUSTER_TYPE": "k3s",
+                "VM_EXTERNAL_IP": "192.0.2.52",
+                "SSH_ACCESS_MODE": "direct",
+                "SSH_IDENTITY_FILE": "/home/operator/.ssh/validation-env-vm-single",
+                "VM_SINGLE_SSH_HOST": "192.0.2.52",
+                "VM_SINGLE_SSH_USER": "pionera",
+                "VM_SINGLE_LEVEL_EXECUTION_MODE": "auto",
+                "VM_SINGLE_LOCAL_KUBECONFIG": "/tmp/vm-single-k3s.yaml",
+            },
+            "adapter": {"DS_1_NAME": "pionera"},
+            "paths": {},
+        }
+
+        with mock.patch.dict(
+            os.environ,
+            {"PIONERA_VM_SINGLE_LEVEL_EXECUTION_MODE": "auto"},
+            clear=False,
+        ), mock.patch.object(
+            main,
+            "_load_vm_single_configuration_bundle",
+            return_value=bundle,
+        ), mock.patch.object(
+            main,
+            "_vm_single_running_on_target",
+            return_value=False,
+        ), mock.patch.object(
+            main,
+            "_ensure_vm_single_k3s_api_access",
+            return_value={"status": "ready", "kubeconfig": "/tmp/vm-single-k3s.yaml"},
+        ) as ensure_access:
+            result = main.run_level(adapter, 2, deployer_name="fake", topology="vm-single")
+
+        self.assertEqual(result["level"], 2)
+        self.assertEqual(result["result"]["status"], "deployed")
+        self.assertEqual(adapter.infrastructure.seen_kubeconfig, "/tmp/vm-single-k3s.yaml")
+        ensure_access.assert_called_once_with(adapter_name="fake")
+
     def test_run_level_one_vm_single_auto_syncs_minikube_ip_after_preflight(self):
         adapter = FakeAdapterWithInfrastructure()
         adapter.infrastructure = mock.Mock()
@@ -3598,6 +3786,10 @@ class MainCliTests(unittest.TestCase):
             main,
             "_topology_runtime_environment_overrides",
             return_value={"KUBECONFIG": "/etc/rancher/k3s/k3s.yaml"},
+        ), mock.patch.object(
+            main,
+            "_ensure_vm_single_k3s_api_access",
+            return_value={"status": "ready", "kubeconfig": "/etc/rancher/k3s/k3s.yaml"},
         ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}), mock.patch.dict(
             os.environ,
             {},
@@ -3671,6 +3863,10 @@ class MainCliTests(unittest.TestCase):
                 "provider": "/clusters/provider.yaml",
                 "consumer": "/clusters/consumer.yaml",
             },
+        ), mock.patch.object(
+            main,
+            "_ensure_vm_distributed_level4_kubeconfig_supported",
+            return_value=None,
         ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
             result = main.run_level(adapter, 4, deployer_name="fake", topology="vm-distributed")
 
@@ -3689,6 +3885,10 @@ class MainCliTests(unittest.TestCase):
                 "provider": "/clusters/common.yaml",
                 "consumer": "/clusters/common.yaml",
             },
+        ), mock.patch.object(
+            main,
+            "_ensure_vm_distributed_level4_kubeconfig_supported",
+            return_value=None,
         ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
             result = main.run_level(adapter, 4, deployer_name="fake", topology="vm-distributed")
 
@@ -3710,6 +3910,10 @@ class MainCliTests(unittest.TestCase):
                 "provider": "/clusters/common.yaml",
                 "consumer": "/clusters/common.yaml",
             },
+        ), mock.patch.object(
+            main,
+            "_ensure_vm_distributed_level4_kubeconfig_supported",
+            return_value=None,
         ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
             result = main.run_level(adapter, 4, deployer_name="fake", topology="vm-distributed")
 
@@ -4341,6 +4545,17 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("build_idempotent_ssh_bootstrap_plan", result["actions"])
         self.assertTrue(result["ssh_access"]["supported"])
 
+    def test_ssh_access_dry_run_supports_vm_single(self):
+        result = main.main(
+            ["fake", "ssh-access", "--dry-run", "--topology", "vm-single"],
+            adapter_registry=self.registry,
+            experiment_storage=FakeStorage,
+        )
+
+        self.assertEqual(result["status"], "dry-run")
+        self.assertEqual(result["command"], "ssh-access")
+        self.assertTrue(result["ssh_access"]["supported"])
+
     def test_ssh_access_plan_returns_idempotent_bootstrap_plan(self):
         plan = {
             "execution_host": "common-services",
@@ -4401,6 +4616,98 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("Why it exists", stdout.getvalue())
         self.assertIn("python3 main.py fake ssh-access assistant --topology vm-distributed", stdout.getvalue())
         self.assertNotIn("Human setup guide", stdout.getvalue())
+
+    def test_ssh_access_plan_supports_vm_single_target(self):
+        plan = {
+            "execution_host": "external",
+            "topology": "vm-single",
+            "ssh": {
+                "mode": "bastion",
+                "bastion": {
+                    "host": "bastion.example.test",
+                    "port": "2222",
+                    "user": "jump",
+                },
+            },
+            "ssh_bootstrap": {
+                "status": "ready",
+                "mode": "plan",
+                "identity_file": "/home/operator/.ssh/validation-env-vm-single",
+                "key_comment": "validation-env-vm-single",
+                "targets": [
+                    {
+                        "role": "vm-single",
+                        "role_key": "single",
+                        "host": "192.0.2.20",
+                        "user": "operator",
+                        "port": "22",
+                        "identity_file": "/home/operator/.ssh/validation-env-vm-single",
+                        "needs_public_key": True,
+                    }
+                ],
+                "actions": [{"name": "ensure_dedicated_keypair"}],
+            },
+        }
+
+        stdout = io.StringIO()
+        with mock.patch.object(
+            main,
+            "_current_vm_single_topology_plan",
+            return_value=plan,
+        ), contextlib.redirect_stdout(stdout):
+            result = main.main(
+                ["fake", "ssh-access", "plan", "--topology", "vm-single"],
+                adapter_registry=self.registry,
+            )
+
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(result["topology"], "vm-single")
+        self.assertTrue(
+            any(item["name"] == "install_public_key_on_single" for item in result["manual_bootstrap_commands"])
+        )
+        self.assertFalse(
+            any(item["name"] == "optional_ssh_agent" for item in result["manual_bootstrap_commands"])
+        )
+        self.assertIn("VM-SINGLE SSH ACCESS", stdout.getvalue())
+        self.assertIn("python3 main.py fake ssh-access assistant --topology vm-single", stdout.getvalue())
+
+    def test_vm_single_ssh_bootstrap_plan_is_ready_without_remote_workdir(self):
+        plan = main._build_vm_single_topology_plan(
+            {"DOMAIN_BASE": "example.test"},
+            {
+                "VM_EXTERNAL_IP": "192.0.2.52",
+                "SSH_ACCESS_MODE": "bastion",
+                "SSH_BASTION_HOST": "bastion.example.test",
+                "SSH_BASTION_PORT": "2222",
+                "SSH_BASTION_USER": "jump",
+                "SSH_IDENTITY_FILE": "/home/operator/.ssh/validation-env-vm-single",
+                "VM_SINGLE_SSH_USER": "pionera",
+            },
+            {"DS_1_NAME": "pionera"},
+        )
+
+        self.assertEqual(plan["ssh_bootstrap"]["status"], "ready")
+        self.assertEqual(plan["ssh_bootstrap"]["warnings"], [])
+        self.assertEqual(plan["ssh_bootstrap"]["remote_workdir"], "")
+        commands = main._vm_distributed_manual_ssh_bootstrap_commands(plan)
+        self.assertTrue(any(item["name"] == "install_public_key_on_single" for item in commands))
+
+    def test_vm_single_ssh_bootstrap_plan_reports_missing_required_ssh_metadata(self):
+        plan = main._build_vm_single_topology_plan(
+            {"DOMAIN_BASE": "example.test"},
+            {"VM_EXTERNAL_IP": "192.0.2.52"},
+            {"DS_1_NAME": "pionera"},
+        )
+
+        self.assertEqual(plan["ssh_bootstrap"]["status"], "needs-review")
+        self.assertIn(
+            "SSH_IDENTITY_FILE or VM_SINGLE_SSH_IDENTITY_FILE is required for SSH bootstrap.",
+            plan["ssh_bootstrap"]["warnings"],
+        )
+        self.assertIn(
+            "VM_SINGLE_SSH_USER or VM_SSH_USER is required for vm-single SSH bootstrap.",
+            plan["ssh_bootstrap"]["warnings"],
+        )
 
     def test_ssh_access_plan_can_print_raw_json(self):
         plan = {
@@ -4467,6 +4774,43 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("VM-DISTRIBUTED SSH ACCESS", stdout.getvalue())
         self.assertIn("SSH access is ready", stdout.getvalue())
 
+    def test_ssh_access_reconcile_supports_vm_single(self):
+        plan = {
+            "execution_host": "external",
+            "topology": "vm-single",
+            "ssh_bootstrap": {
+                "status": "ready",
+                "mode": "auto",
+                "identity_file": "/home/operator/.ssh/validation-env-vm-single",
+            },
+        }
+        reconcile_result = {
+            "status": "synced",
+            "topology": "vm-single",
+            "execution_host": "external",
+            "ssh_bootstrap": plan["ssh_bootstrap"],
+        }
+
+        stdout = io.StringIO()
+        with mock.patch.object(
+            main,
+            "_current_vm_single_topology_plan",
+            return_value=plan,
+        ), mock.patch.object(
+            main,
+            "_reconcile_vm_distributed_ssh_access",
+            return_value=reconcile_result,
+        ) as reconcile, contextlib.redirect_stdout(stdout):
+            result = main.main(
+                ["fake", "ssh-access", "reconcile", "--topology", "vm-single"],
+                adapter_registry=self.registry,
+            )
+
+        self.assertEqual(result["status"], "synced")
+        self.assertEqual(result["topology"], "vm-single")
+        reconcile.assert_called_once_with(plan)
+        self.assertIn("VM-SINGLE SSH ACCESS", stdout.getvalue())
+
     def test_ssh_access_assistant_can_be_cancelled_before_commands(self):
         plan = {
             "execution_host": "external",
@@ -4512,6 +4856,50 @@ class MainCliTests(unittest.TestCase):
         self.assertNotIn("What this prepares", stdout.getvalue())
         self.assertNotIn("Execution context check", stdout.getvalue())
         self.assertIn("Guided SSH setup cancelled", stdout.getvalue())
+
+    def test_ssh_access_assistant_reports_completed_when_all_commands_pass(self):
+        plan_result = {
+            "status": "planned",
+            "adapter": "fake",
+            "topology": "vm-single",
+            "execution_host": "external",
+            "ssh": {
+                "mode": "direct",
+                "bastion": {},
+            },
+            "ssh_bootstrap": {
+                "status": "ready",
+                "identity_file": "/home/operator/.ssh/validation-env-vm-single",
+                "targets": [],
+            },
+            "manual_bootstrap_commands": [
+                {
+                    "name": "verify_single_batchmode",
+                    "command": "true",
+                }
+            ],
+        }
+
+        stdout = io.StringIO()
+        with mock.patch.object(
+            main,
+            "run_ssh_access",
+            return_value=plan_result,
+        ), mock.patch.object(
+            main,
+            "_interactive_read",
+            side_effect=["y", "y"],
+        ), contextlib.redirect_stdout(stdout):
+            result = main._run_vm_distributed_ssh_access_assistant(
+                FakeAdapter(),
+                deployer_name="fake",
+                topology="vm-single",
+                command_runner=lambda command: types.SimpleNamespace(returncode=0),
+            )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("Result: SSH setup commands completed", stdout.getvalue())
+        self.assertIn("Next recommended check", stdout.getvalue())
 
     def test_interactive_confirm_with_progress_numbers_prompt(self):
         with mock.patch.object(main, "_interactive_read", return_value="n") as read_prompt:

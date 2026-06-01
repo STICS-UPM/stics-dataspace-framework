@@ -496,7 +496,7 @@ def create(ctx, name, dataspace):
     # Generate certificates
     click.echo(f'- Generating {name} connector certificates')
     certpassword = generate_password(16)
-    certs_path = f'deployments/{environment}/{dataspace}/certs'
+    certs_path = connector_certs_dir(dataspace, environment)
     create_connector_certificates(name, certpassword, certs_path)
     register_password(dataspace, environment, 'connector', name, 'certificates', {'path': certs_path, 'passwd': certpassword})
 
@@ -627,7 +627,7 @@ def minio(ctx, name, dataspace):
 @click.pass_context
 def checkdb(ctx, name, dataspace, environment):
     environment = ctx.obj['in_env']
-    filename = f'deployments/{environment}/{dataspace}/credentials-connector-{name}.json'
+    filename = credentials_file(dataspace, environment, 'connector', name)
 
     # Load the JSON file
     with open(filename, 'r') as f:
@@ -804,9 +804,43 @@ def generate_password(length):
             break
     return password
 
+def runtime_dir(datasource, environment):
+    topology = os.getenv("PIONERA_TOPOLOGY", "local").strip().lower().replace("_", "-") or "local"
+    deployment_id = os.getenv("PIONERA_DEPLOYMENT_ID", "").strip()
+    layout = os.getenv("PIONERA_RUNTIME_ARTIFACT_LAYOUT", "auto").strip().lower().replace("_", "-")
+    use_scoped = layout in {"scoped", "topology", "topology-scoped"} or (
+        layout not in {"legacy", "flat"} and (topology != "local" or bool(deployment_id))
+    )
+    parts = ["deployments", environment]
+    if use_scoped:
+        parts.append(topology)
+        if deployment_id:
+            parts.append(deployment_id)
+    parts.append(datasource)
+    return os.path.join(*parts)
+
+def credentials_file(datasource, environment, source_type, name):
+    if source_type == "connector":
+        configured = os.getenv("PIONERA_CONNECTOR_CREDENTIALS_PATH", "").strip()
+        if configured:
+            return configured
+    return os.path.join(runtime_dir(datasource, environment), f"credentials-{source_type}-{name}.json")
+
+def connector_certs_dir(dataspace, environment):
+    configured = os.getenv("PIONERA_CONNECTOR_CERTS_DIR", "").strip()
+    if configured:
+        return configured
+    return os.path.join(runtime_dir(dataspace, environment), "certs")
+
+def connector_cert_path(dataspace, environment, connector, filename):
+    base_dir = connector_certs_dir(dataspace, environment)
+    if not os.path.isabs(base_dir):
+        base_dir = os.path.join(os.path.dirname(__file__), base_dir)
+    return os.path.join(base_dir, filename.format(connector=connector))
+
 def create_password_file(datasource, environment, source_type, name):
     # Generate file name
-    filename = f'deployments/{environment}/{datasource}/credentials-{source_type}-{name}.json'
+    filename = credentials_file(datasource, environment, source_type, name)
     folder = os.path.dirname(filename)
     os.makedirs(folder, exist_ok=True)
 
@@ -819,7 +853,7 @@ def create_password_file(datasource, environment, source_type, name):
 
 def register_password(datasource, environment, source_type, name, credential_name, credentials_object):
     # Generate file name
-    filename = f'deployments/{environment}/{datasource}/credentials-{source_type}-{name}.json'
+    filename = credentials_file(datasource, environment, source_type, name)
     # Open the JSON file and load the data
     with open(filename, 'r+') as f:
         data = json.load(f)
@@ -839,7 +873,7 @@ def register_password(datasource, environment, source_type, name, credential_nam
 
 def get_password_values(datasource, environment, source_type, name):
     # Generate file name
-    filename = f'deployments/{environment}/{datasource}/credentials-{source_type}-{name}.json'
+    filename = credentials_file(datasource, environment, source_type, name)
 
     # Open the JSON file and load the data
     data = {}
@@ -1622,7 +1656,7 @@ def create_client(keycloak_admin, dataspace, client_name, environment):
 
     # Keep existing clients reproducible when connector certificates are regenerated.
     import os
-    cert_path = os.path.join(os.path.dirname(__file__), 'deployments', environment, dataspace, 'certs', f'{client_name}-public.crt')
+    cert_path = connector_cert_path(dataspace, environment, client_name, "{connector}-public.crt")
     with open(cert_path, 'rb') as f:
         cert_data = f.read()
     try:
@@ -1897,7 +1931,7 @@ path "secret/data/{dataspace}/{connector}/*" {{
 
     # Create secrets with connector certificates
     # Read the content of the file
-    cert_path = os.path.join(os.path.dirname(__file__), 'deployments', environment, dataspace, 'certs', f'{connector}-public.crt')
+    cert_path = connector_cert_path(dataspace, environment, connector, "{connector}-public.crt")
     with open(cert_path, 'rb') as file:
         file_content = file.read()
     client.secrets.kv.v2.create_or_update_secret(
@@ -1905,7 +1939,7 @@ path "secret/data/{dataspace}/{connector}/*" {{
         secret={"content": file_content.decode('utf-8')}
     )
 
-    cert_path = os.path.join(os.path.dirname(__file__), 'deployments', environment, dataspace, 'certs', f'{connector}-private.key')
+    cert_path = connector_cert_path(dataspace, environment, connector, "{connector}-private.key")
     with open(cert_path, 'rb') as file:
         file_content = file.read()
     client.secrets.kv.v2.create_or_update_secret(

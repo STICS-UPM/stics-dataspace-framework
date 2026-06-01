@@ -42,8 +42,9 @@ class InesdataDeployer:
             run_silent=run_silent,
             auto_mode_getter=auto_mode_getter,
             config_cls=self.config,
+            topology=topology,
         )
-        self.config_adapter = getattr(self.adapter, "config_adapter", None) or INESDataConfigAdapter(self.config)
+        self.config_adapter = getattr(self.adapter, "config_adapter", None) or INESDataConfigAdapter(self.config, topology=topology)
         self._components_adapter = components_adapter
         self.auto_mode_getter = auto_mode_getter
 
@@ -76,11 +77,16 @@ class InesdataDeployer:
         )
         topology_profile = build_topology_profile(topology, config)
 
-        runtime_dir = os.path.join(
-            self.config.repo_dir(),
-            "deployments",
-            "DEV",
-            dataspace_name,
+        runtime_dir_getter = getattr(self.config_adapter, "deployment_runtime_dir", None)
+        runtime_dir = (
+            runtime_dir_getter(ds_name=dataspace_name)
+            if callable(runtime_dir_getter)
+            else os.path.join(
+                self.config.repo_dir(),
+                "deployments",
+                config.get("ENVIRONMENT", "DEV") or "DEV",
+                dataspace_name,
+            )
         )
 
         return DeploymentContext(

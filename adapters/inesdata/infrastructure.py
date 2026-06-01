@@ -19,6 +19,7 @@ from deployers.infrastructure.lib.public_hostnames import (
     canonical_common_service_hostnames,
 )
 from deployers.shared.lib.cluster_runtime import build_cluster_runtime
+from deployers.shared.lib import runtime_artifacts
 from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls
 from framework.local_capacity import LOCAL_COEXISTENCE_MEMORY_MB, parse_memory_quantity_mb
 from .config import INESDataConfigAdapter, InesdataConfig
@@ -197,6 +198,16 @@ class INESDataInfrastructureAdapter:
 
     def _is_vm_distributed_topology(self):
         return str(getattr(self.config_adapter, "topology", "local") or "local").strip().lower() == "vm-distributed"
+
+    def _supports_common_public_path_ingresses(self):
+        return self._is_vm_distributed_topology() or self._is_vm_single_topology()
+
+    def _public_path_topology_label(self):
+        if self._is_vm_single_topology():
+            return "vm-single"
+        if self._is_vm_distributed_topology():
+            return "vm-distributed"
+        return "local"
 
     def _common_services_startup_timeout(self):
         baseline = 600 if self._is_vm_single_topology() else 180
@@ -1662,7 +1673,7 @@ class INESDataInfrastructureAdapter:
         if not self.wait_for_pod_running(pod_name, namespace):
             return False
 
-        vault_file_path = self.config.vault_keys_path()
+        vault_file_path = self._vault_keys_artifact_path()
         status_data, status_error = self._read_vault_status(pod_name, namespace)
         initialized = False
         sealed = True
@@ -1702,9 +1713,7 @@ class INESDataInfrastructureAdapter:
             print("Vault already initialized")
 
         if initialized:
-            ensure_vault_keys_file = getattr(self.config, "ensure_vault_keys_file", None)
-            if callable(ensure_vault_keys_file):
-                vault_file_path = ensure_vault_keys_file()
+            vault_file_path = self._vault_keys_artifact_path()
 
         try:
             with open(vault_file_path, "r") as f:
@@ -1748,7 +1757,7 @@ class INESDataInfrastructureAdapter:
             if not self._vault_root_token_valid(pod_name, namespace, root_token):
                 print(
                     "Error: local Vault root token is not valid for the running Vault. "
-                    "The Vault persistent state and deployers/shared/common/init-keys-vault.json "
+                    f"The Vault persistent state and {vault_file_path} "
                     "are out of sync. Recreate Level 2 common services or restore the current "
                     "Vault root token before continuing."
                 )
@@ -1864,6 +1873,30 @@ class INESDataInfrastructureAdapter:
         return None
 
     def _vault_keys_artifact_path(self):
+        topology = str(getattr(self.config_adapter, "topology", "local") or "local").strip().lower()
+        if topology in {
+            runtime_artifacts.VM_SINGLE_TOPOLOGY,
+            runtime_artifacts.VM_DISTRIBUTED_TOPOLOGY,
+        }:
+            use_shared_deployer_artifacts = getattr(self.config, "use_shared_deployer_artifacts", None)
+            if not callable(use_shared_deployer_artifacts) or use_shared_deployer_artifacts():
+                config = self.config_adapter.load_deployer_config() if self.config_adapter else {}
+                environment_getter = getattr(self.config_adapter, "deployment_environment_name", None)
+                if callable(environment_getter):
+                    environment = environment_getter()
+                else:
+                    deployment_environment_getter = getattr(self.config, "deployment_environment_name", None)
+                    environment = deployment_environment_getter() if callable(deployment_environment_getter) else "DEV"
+                prefer_existing = topology == runtime_artifacts.VM_DISTRIBUTED_TOPOLOGY and not runtime_artifacts.deployment_id(config)
+                return str(
+                    runtime_artifacts.vault_keys_path(
+                        environment,
+                        topology=topology,
+                        config=config,
+                        root=self.config.script_dir(),
+                        prefer_existing=prefer_existing,
+                    )
+                )
         ensure_vault_keys_file = getattr(self.config, "ensure_vault_keys_file", None)
         return ensure_vault_keys_file() if callable(ensure_vault_keys_file) else self.config.vault_keys_path()
 
@@ -2287,6 +2320,7 @@ class INESDataInfrastructureAdapter:
         if not alias_paths:
             return None
 
+        topology_label = self._public_path_topology_label()
         return {
             "apiVersion": "networking.k8s.io/v1",
             "kind": "Ingress",
@@ -2295,7 +2329,7 @@ class INESDataInfrastructureAdapter:
                 "namespace": namespace,
                 "labels": {
                     "app.kubernetes.io/managed-by": "validation-environment",
-                    "app.kubernetes.io/part-of": "vm-distributed",
+                    "app.kubernetes.io/part-of": topology_label,
                     "app.kubernetes.io/route-kind": "public-root-aliases",
                 },
             },
@@ -2328,6 +2362,7 @@ class INESDataInfrastructureAdapter:
         namespace = self.config.NS_COMMON
         public_urls = resolve_vm_distributed_public_urls(config)
         resolved_config = {**dict(config or {}), **public_urls}
+        topology_label = self._public_path_topology_label()
         keycloak_host, keycloak_path = self._path_public_url_parts(
             resolved_config.get("KEYCLOAK_FRONTEND_URL")
             or resolved_config.get("KEYCLOAK_PUBLIC_URL")
@@ -2354,7 +2389,7 @@ class INESDataInfrastructureAdapter:
                         },
                         "labels": {
                             "app.kubernetes.io/managed-by": "validation-environment",
-                            "app.kubernetes.io/part-of": "vm-distributed",
+                            "app.kubernetes.io/part-of": topology_label,
                         },
                     },
                     "spec": {
@@ -2392,7 +2427,7 @@ class INESDataInfrastructureAdapter:
                         "namespace": namespace,
                         "labels": {
                             "app.kubernetes.io/managed-by": "validation-environment",
-                            "app.kubernetes.io/part-of": "vm-distributed",
+                            "app.kubernetes.io/part-of": topology_label,
                         },
                     },
                     "spec": {
@@ -2434,7 +2469,7 @@ class INESDataInfrastructureAdapter:
                         },
                         "labels": {
                             "app.kubernetes.io/managed-by": "validation-environment",
-                            "app.kubernetes.io/part-of": "vm-distributed",
+                            "app.kubernetes.io/part-of": topology_label,
                         },
                     },
                     "spec": {
@@ -2473,8 +2508,8 @@ class INESDataInfrastructureAdapter:
         return ingresses
 
     def _sync_vm_distributed_common_public_path_ingresses(self):
-        if not self._is_vm_distributed_topology():
-            return {"status": "skipped", "reason": "not-vm-distributed"}
+        if not self._supports_common_public_path_ingresses():
+            return {"status": "skipped", "reason": "not-vm-public-path-topology"}
         config = self.config_adapter.load_deployer_config()
         ingresses = self._vm_distributed_common_public_path_ingresses(config)
         if not ingresses:
@@ -2490,7 +2525,7 @@ class INESDataInfrastructureAdapter:
             with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
                 temp_path = handle.name
                 json.dump(manifest, handle)
-            if self.run(f"kubectl apply -f {shlex.quote(temp_path)}", check=False) is None:
+            if self.run(f"{self._kubectl_apply_command(config)} -f {shlex.quote(temp_path)}", check=False) is None:
                 return {
                     "status": "failed",
                     "reason": "kubectl-apply-failed",
@@ -2507,7 +2542,7 @@ class INESDataInfrastructureAdapter:
                 f"{item['spec']['rules'][0]['host']}{item['spec']['rules'][0]['http']['paths'][0]['path']}"
                 for item in ingresses
             )
-            print(f"vm-distributed common public path ingresses synchronized: {routes}")
+            print(f"{self._public_path_topology_label()} common public path ingresses synchronized: {routes}")
             return {
                 "status": "synced",
                 "routes": [
@@ -2525,6 +2560,16 @@ class INESDataInfrastructureAdapter:
                     os.unlink(temp_path)
                 except OSError:
                     pass
+
+    def _kubectl_apply_command(self, config=None):
+        kubeconfig = ""
+        if self._is_vm_single_topology():
+            kubeconfig = str(os.environ.get("KUBECONFIG") or "").strip()
+            if not kubeconfig:
+                kubeconfig = str((config or {}).get("K3S_KUBECONFIG") or "").strip()
+        if kubeconfig:
+            return f"kubectl --kubeconfig {shlex.quote(os.path.expanduser(kubeconfig))} apply"
+        return "kubectl apply"
 
     def sync_common_values(self):
         ensure_values_file = getattr(self.config, "ensure_common_values_file", None)

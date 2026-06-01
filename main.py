@@ -18,6 +18,7 @@ import threading
 import time
 import types
 import urllib.parse
+import yaml
 
 from runtime_dependencies import ensure_runtime_dependencies
 
@@ -86,7 +87,12 @@ from deployers.infrastructure.lib.public_hostnames import (
 )
 from deployers.infrastructure.lib.orchestrator import DeployerOrchestrator
 from deployers.infrastructure.lib.topology import SUPPORTED_TOPOLOGIES as DEPLOYER_SUPPORTED_TOPOLOGIES
-from deployers.infrastructure.lib.topology import LOCAL_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY, normalize_topology
+from deployers.infrastructure.lib.topology import (
+    LOCAL_TOPOLOGY,
+    VM_DISTRIBUTED_TOPOLOGY,
+    VM_SINGLE_TOPOLOGY,
+    normalize_topology,
+)
 from deployers.shared.lib.cluster_runtime import (
     SUPPORTED_CLUSTER_TYPES,
     build_cluster_runtime,
@@ -154,6 +160,7 @@ DEPLOYER_REGISTRY = {
 
 SUPPORTED_COMMANDS = (
     "deploy",
+    "level",
     "validate",
     "metrics",
     "run",
@@ -2030,7 +2037,11 @@ def _inesdata_connector_credentials_path(deployer_context, connector_name):
     connector = str(connector_name or "").strip()
     if not runtime_dir or not connector:
         return None
-    return os.path.join(runtime_dir, f"credentials-connector-{connector}.json")
+    scoped_path = os.path.join(runtime_dir, "connectors", connector, "credentials.json")
+    legacy_path = os.path.join(runtime_dir, f"credentials-connector-{connector}.json")
+    if os.path.isfile(scoped_path) or not os.path.isfile(legacy_path):
+        return scoped_path
+    return legacy_path
 
 
 def _load_inesdata_connector_credentials_payload(deployer_context, connector_name):
@@ -4182,7 +4193,7 @@ def build_dry_run_preview(
         preview["ssh_access"] = {
             "status": "planned",
             "topology": topology,
-            "supported": str(topology or "").strip().lower() == "vm-distributed",
+            "supported": str(topology or "").strip().lower() in {"vm-single", "vm-distributed"},
         }
         return preview
 
@@ -5266,6 +5277,14 @@ def _should_execute_deployer_run(deployer_name=None, topology="local"):
     return normalized_deployer == "edc" and normalized_topology == "local"
 
 
+def _is_supported_level_token(value):
+    try:
+        level_id = int(str(value).strip())
+    except (TypeError, ValueError):
+        return False
+    return level_id in LEVEL_DESCRIPTIONS
+
+
 def _legacy_metrics_runtime(adapter):
     return {
         "connectors": _resolve_connectors(adapter),
@@ -6160,10 +6179,10 @@ def run_public_access(adapter, deployer_name=None, topology="local"):
 
 
 def run_ssh_access(adapter, deployer_name=None, topology="local", action="plan"):
-    """Build the idempotent SSH bootstrap plan for vm-distributed."""
+    """Build the idempotent SSH bootstrap plan for VM-backed topologies."""
     normalized_topology = normalize_topology(topology or LOCAL_TOPOLOGY)
-    if normalized_topology != VM_DISTRIBUTED_TOPOLOGY:
-        raise ValueError("ssh-access is only supported with --topology vm-distributed")
+    if normalized_topology not in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
+        raise ValueError("ssh-access is only supported with --topology vm-single or vm-distributed")
 
     normalized_action = str(action or "plan").strip().lower().replace("_", "-")
     if normalized_action == "key-self-test":
@@ -6171,7 +6190,10 @@ def run_ssh_access(adapter, deployer_name=None, topology="local", action="plan")
     if normalized_action not in {"plan", "reconcile", "self-test"}:
         raise ValueError("ssh-access only supports plan, reconcile or self-test")
 
-    plan = _current_vm_distributed_topology_plan(adapter_name=deployer_name)
+    if normalized_topology == VM_SINGLE_TOPOLOGY:
+        plan = _current_vm_single_topology_plan(adapter_name=deployer_name)
+    else:
+        plan = _current_vm_distributed_topology_plan(adapter_name=deployer_name)
     ssh_bootstrap = dict(plan.get("ssh_bootstrap") or {})
     if normalized_action == "reconcile":
         reconcile = _reconcile_vm_distributed_ssh_access(plan)
@@ -6186,12 +6208,18 @@ def run_ssh_access(adapter, deployer_name=None, topology="local", action="plan")
         self_test.setdefault("action", normalized_action)
         return self_test
 
+    bootstrap_status = str(ssh_bootstrap.get("status") or "").strip().lower()
+    status = "planned" if bootstrap_status in {"ready", "synced"} else "needs-review"
+    message = "SSH bootstrap plan generated."
+    if status != "planned":
+        message = "SSH bootstrap plan needs configuration before it can generate setup commands."
+
     return {
-        "status": "planned",
+        "status": status,
         "adapter": deployer_name or _infer_deployer_name_from_adapter(adapter),
         "topology": normalized_topology,
         "action": normalized_action,
-        "message": "SSH bootstrap plan generated.",
+        "message": message,
         "execution_host": plan.get("execution_host"),
         "ssh": plan.get("ssh") or {},
         "ssh_bootstrap": ssh_bootstrap,
@@ -6224,6 +6252,13 @@ def _vm_distributed_ssh_status_label(status):
     if normalized in {"skipped", "not-applicable"}:
         return "Skipped"
     return str(status or "Unknown").strip().title() or "Unknown"
+
+
+def _vm_ssh_access_title(payload, suffix="SSH ACCESS"):
+    topology = str((payload or {}).get("topology") or "vm-distributed").strip().upper().replace("-", "-")
+    if not topology:
+        topology = "VM-DISTRIBUTED"
+    return f"{topology} {suffix}".strip()
 
 
 def _vm_distributed_ssh_access_execution_location(plan_or_result):
@@ -6263,6 +6298,8 @@ def _vm_distributed_public_key_material(public_key_value):
 def _vm_distributed_ssh_key_self_test_result(status, message, checks, plan):
     vm_plan = dict(plan or {})
     ssh_bootstrap = dict(vm_plan.get("ssh_bootstrap") or {})
+    topology = str(vm_plan.get("topology") or "vm-distributed").strip()
+    target_label = "VM" if topology == "vm-single" else "VMs"
     return {
         "status": status,
         "message": message,
@@ -6277,7 +6314,7 @@ def _vm_distributed_ssh_key_self_test_result(status, message, checks, plan):
         },
         "checks": checks,
         "next_step": (
-            "Run ssh-access assistant or ssh-access reconcile to install and verify the key on the VMs."
+            f"Run ssh-access assistant or ssh-access reconcile to install and verify the key on the {target_label}."
             if status == "passed"
             else "Fix the failed local SSH key check before preparing a new distributed environment."
         ),
@@ -6513,7 +6550,7 @@ def _print_vm_distributed_ssh_key_self_test_result(result):
     payload = dict(result or {})
     print()
     print("=" * 50)
-    print("VM-DISTRIBUTED SSH KEY SELF-TEST")
+    print(_vm_ssh_access_title(payload, "SSH KEY SELF-TEST"))
     print("=" * 50)
     print(f"Status: {_vm_distributed_ssh_status_label(payload.get('status'))}")
     print(f"Topology: {payload.get('topology') or 'vm-distributed'}")
@@ -6527,7 +6564,8 @@ def _print_vm_distributed_ssh_key_self_test_result(result):
     print("- The temporary key files are removed after the test.")
     print()
     print("What this does not do:")
-    print("- It does not connect to the distributed VMs.")
+    target_label = "vm-single VM" if payload.get("topology") == "vm-single" else "distributed VMs"
+    print(f"- It does not connect to the {target_label}.")
     print("- It does not modify authorized_keys.")
     print("- It does not touch your existing SSH keys.")
 
@@ -6556,13 +6594,14 @@ def _print_vm_distributed_ssh_key_self_test_result(result):
 def _print_vm_distributed_ssh_access_interactive_guide(result):
     payload = dict(result or {})
     adapter_name = str(payload.get("adapter") or "inesdata").strip()
+    topology = str(payload.get("topology") or "vm-distributed").strip() or "vm-distributed"
     print()
     print("Recommended interactive guide:")
     print("- Why it exists: SSH setup may ask for a one-time password and must run from the right machine.")
     print("- What it does: it walks you through each step, asks before running commands, and verifies passwordless SSH.")
     print("- How to use it: read each step, answer yes only when ready, and type passwords only into SSH prompts.")
     print("Run:")
-    print(f"  python3 main.py {adapter_name} ssh-access assistant --topology vm-distributed")
+    print(f"  python3 main.py {adapter_name} ssh-access assistant --topology {topology}")
 
 
 def _vm_distributed_host_aliases(hostname=None, fqdn=None):
@@ -6730,7 +6769,7 @@ def _print_vm_distributed_ssh_access_assistant_intro(plan_result, detection, tot
     expected_label = str(detection.get("expected_label") or "operator workstation").strip()
     print()
     print("=" * 50)
-    print("VM-DISTRIBUTED SSH ACCESS")
+    print(_vm_ssh_access_title(payload))
     print("=" * 50)
     print(f"Topology: {payload.get('topology') or 'vm-distributed'}")
     if ssh_bootstrap.get("identity_file"):
@@ -6761,7 +6800,7 @@ def _print_vm_distributed_ssh_access_result(result, show_interactive_guide=True)
 
     print()
     print("=" * 50)
-    print("VM-DISTRIBUTED SSH ACCESS")
+    print(_vm_ssh_access_title(payload))
     print("=" * 50)
     print(f"Status: {_vm_distributed_ssh_status_label(payload.get('status'))}")
     print(f"Topology: {payload.get('topology') or 'vm-distributed'}")
@@ -6812,10 +6851,13 @@ def _print_vm_distributed_ssh_access_result(result, show_interactive_guide=True)
     if status == "planned" and show_interactive_guide:
         print()
         print("After the interactive guide succeeds, run:")
-        print(f"  python3 main.py {adapter_name} ssh-access reconcile --topology vm-distributed")
+        print(f"  python3 main.py {adapter_name} ssh-access reconcile --topology {payload.get('topology') or 'vm-distributed'}")
     elif status == "synced":
         print()
-        print("SSH access is ready. You can continue with the vm-distributed deployment levels.")
+        print(
+            "SSH access is ready. You can continue with the "
+            f"{payload.get('topology') or 'vm-distributed'} deployment levels."
+        )
 
     print()
     print("For machine-readable output and planned commands, add --json.")
@@ -6951,7 +6993,9 @@ def _run_vm_distributed_ssh_access_assistant(
     skipped = [item for item in executed if item.get("status") == "skipped"]
     if failed:
         status = "failed"
-    elif passed and len(passed) + len(skipped) == len(commands):
+    elif skipped:
+        status = "partial"
+    elif passed and len(passed) == len(commands):
         status = "completed"
     elif passed:
         status = "partial"
@@ -6960,13 +7004,25 @@ def _run_vm_distributed_ssh_access_assistant(
 
     print()
     print("Guided SSH setup summary")
+    if status == "completed":
+        print("Result: SSH setup commands completed. The final check is reconciliation.")
+    elif status == "partial":
+        print("Result: Some SSH setup commands were skipped. Run reconciliation to see what is still missing.")
+    elif status == "failed":
+        print("Result: Some SSH setup commands failed. Review the failed step before deploying.")
+    else:
+        print("Result: No SSH setup commands were completed.")
     print(f"- Passed: {len(passed)}")
     print(f"- Skipped: {len(skipped)}")
     print(f"- Failed: {len(failed)}")
     if status in {"completed", "partial"}:
         print()
         print("Next recommended check:")
-        print("  python3 main.py inesdata ssh-access reconcile --topology vm-distributed")
+        print(
+            "  python3 main.py "
+            f"{deployer_name or _infer_deployer_name_from_adapter(adapter)} "
+            f"ssh-access reconcile --topology {topology}"
+        )
 
     return {
         "status": status,
@@ -9269,6 +9325,44 @@ def run_level(
     resolved_deployer_name = deployer_name or _infer_deployer_name_from_adapter(adapter)
     level_name = LEVEL_DESCRIPTIONS[level_id]
     normalized_topology = str(topology or "local").strip().lower()
+    if normalized_topology == VM_SINGLE_TOPOLOGY:
+        vm_single_plan = _current_vm_single_topology_plan(adapter_name=resolved_deployer_name)
+        if _vm_single_should_run_level_remotely(level_id, vm_single_plan):
+            return _run_vm_single_level_remotely(
+                resolved_deployer_name,
+                level_id,
+            )
+        if _vm_single_should_prepare_k3s_tunnel(
+            level_id,
+            vm_single_plan,
+            _load_vm_single_configuration_bundle(adapter_name=resolved_deployer_name).get("topology") or {},
+        ):
+            if level_id == 1:
+                result = _run_vm_single_level1_via_ssh_tunnel(adapter, resolved_deployer_name)
+                return {
+                    "level": level_id,
+                    "name": level_name,
+                    "status": "completed",
+                    "result": result,
+                }
+            access = _ensure_vm_single_k3s_api_access(adapter_name=resolved_deployer_name)
+            with _temporary_environment(
+                {
+                    "KUBECONFIG": access["kubeconfig"],
+                    "PIONERA_LEVEL_RUNTIME_ENV_ACTIVE": "true",
+                }
+            ):
+                return run_level(
+                    adapter,
+                    level_id,
+                    deployer_name=resolved_deployer_name,
+                    deployer_registry=deployer_registry,
+                    topology=topology,
+                    validation_engine_cls=validation_engine_cls,
+                    metrics_collector_cls=metrics_collector_cls,
+                    experiment_storage=experiment_storage,
+                    baseline=baseline,
+                )
     if os.environ.get("PIONERA_LEVEL_RUNTIME_ENV_ACTIVE") != "true":
         environment_overrides = _topology_runtime_environment_overrides(topology, level=level_id)
         if environment_overrides:
@@ -10151,6 +10245,67 @@ def _vm_distributed_ssh_access_preflight(topology_config):
     }
 
 
+def _vm_single_ssh_access_preflight(topology_config):
+    topology = dict(topology_config or {})
+    ssh_identity_keys = (
+        "SSH_ACCESS_MODE",
+        "SSH_BASTION_HOST",
+        "SSH_BASTION_USER",
+        "VM_SINGLE_SSH_HOST",
+        "VM_SINGLE_SSH_USER",
+        "VM_SSH_USER",
+    )
+    has_metadata = any(str(topology.get(key) or "").strip() for key in ssh_identity_keys)
+    mode = str(topology.get("SSH_ACCESS_MODE") or "").strip().lower().replace("_", "-")
+    warnings = []
+
+    if not has_metadata:
+        return {
+            "status": "ready",
+            "detail": "optional SSH metadata not configured",
+            "warnings": [],
+        }
+
+    if mode not in {"direct", "bastion"}:
+        warnings.append("SSH_ACCESS_MODE should be direct or bastion when SSH metadata is configured.")
+
+    if mode == "bastion" and not str(topology.get("SSH_BASTION_HOST") or "").strip():
+        warnings.append("SSH_BASTION_HOST is required when SSH_ACCESS_MODE=bastion.")
+
+    target_host = _vm_distributed_config_value(
+        topology,
+        "VM_SINGLE_SSH_HOST",
+        "VM_SINGLE_ADDRESS",
+        "VM_SINGLE_IP",
+        "VM_EXTERNAL_IP",
+        "HOSTS_ADDRESS",
+        "INGRESS_EXTERNAL_IP",
+    )
+    if not target_host:
+        warnings.append("VM_SINGLE_SSH_HOST or VM_EXTERNAL_IP is required for vm-single SSH access.")
+
+    target_port = str(topology.get("VM_SINGLE_SSH_PORT") or "").strip()
+    if target_port and not _vm_distributed_valid_port(target_port):
+        warnings.append("VM_SINGLE_SSH_PORT should be a TCP port number between 1 and 65535.")
+
+    bastion_port = str(topology.get("SSH_BASTION_PORT") or "").strip()
+    if bastion_port and not _vm_distributed_valid_port(bastion_port):
+        warnings.append("SSH_BASTION_PORT should be a TCP port number between 1 and 65535.")
+
+    if warnings:
+        return {
+            "status": "needs-review",
+            "detail": "SSH metadata configured but incomplete",
+            "warnings": warnings,
+        }
+
+    return {
+        "status": "ready",
+        "detail": f"{mode or 'direct'} SSH metadata configured",
+        "warnings": [],
+    }
+
+
 def _vm_distributed_valid_port(value):
     try:
         port = int(str(value).strip())
@@ -10188,6 +10343,69 @@ def _vm_distributed_identity_file(topology_config, role_key=None):
         "VM_DISTRIBUTED_SSH_IDENTITY_FILE",
         "SSH_IDENTITY_FILE",
     )
+
+
+def _vm_single_identity_file(topology_config):
+    return _vm_distributed_config_value(
+        topology_config,
+        "VM_SINGLE_SSH_IDENTITY_FILE",
+        "SSH_IDENTITY_FILE",
+    )
+
+
+def _vm_single_connect_timeout_seconds(topology_config):
+    raw_value = (
+        os.getenv("PIONERA_VM_SINGLE_SSH_CONNECT_TIMEOUT_SECONDS")
+        or _vm_distributed_config_value(topology_config, "SSH_CONNECT_TIMEOUT_SECONDS", default="5")
+    )
+    try:
+        timeout = int(str(raw_value).strip())
+    except (TypeError, ValueError):
+        return 5
+    return min(max(timeout, 1), 60)
+
+
+def _normalized_vm_single_level_execution_mode(topology_config):
+    raw_value = (
+        os.getenv("PIONERA_VM_SINGLE_LEVEL_EXECUTION_MODE")
+        or _vm_distributed_config_value(
+            topology_config,
+            "VM_SINGLE_LEVEL_EXECUTION_MODE",
+            "VM_SINGLE_REMOTE_EXECUTION_MODE",
+            default="local",
+        )
+    ).lower().replace("_", "-")
+    aliases = {
+        "direct": "local",
+        "current": "local",
+        "inside-vm": "local",
+        "operator": "tunnel",
+        "external": "tunnel",
+        "ssh": "remote",
+        "wsl": "auto",
+    }
+    return aliases.get(raw_value, raw_value)
+
+
+def _vm_single_remote_python(topology_config):
+    return _vm_distributed_config_value(topology_config, "VM_SINGLE_REMOTE_PYTHON", default="python3")
+
+
+def _normalized_vm_single_ssh_bootstrap_mode(topology_config):
+    raw_value = _vm_distributed_config_value(
+        topology_config,
+        "VM_SINGLE_SSH_BOOTSTRAP_MODE",
+        default="manual",
+    ).lower().replace("_", "-")
+    aliases = {
+        "disabled": "manual",
+        "off": "manual",
+        "dry-run": "plan",
+        "preview": "plan",
+        "setup": "auto",
+        "reconcile": "auto",
+    }
+    return aliases.get(raw_value, raw_value)
 
 
 def _normalized_vm_distributed_execution_host(topology_config):
@@ -10546,11 +10764,6 @@ def _vm_distributed_manual_ssh_bootstrap_commands(plan):
             _vm_distributed_manual_command(
                 "secure_public_key",
                 _vm_distributed_format_command(["chmod", "644", public_key_file]),
-            ),
-            _vm_distributed_manual_command(
-                "optional_ssh_agent",
-                _vm_distributed_format_command(["ssh-add", identity_file]),
-                "Only needed when the key has a passphrase or the environment uses ssh-agent.",
             ),
         ]
     )
@@ -11003,6 +11216,243 @@ def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, 
         "ssh_bootstrap": ssh_bootstrap,
         "connectors": _vm_distributed_connector_plan(adapter),
         "validation_pairs": validation_pairs,
+        "configuration_preflight": preflight,
+    }
+
+
+def _build_vm_single_ssh_bootstrap_plan(infrastructure_config, topology_config, adapter_config):
+    topology = dict(topology_config or {})
+    adapter = dict(adapter_config or {})
+    bootstrap_mode = _normalized_vm_single_ssh_bootstrap_mode(topology)
+    identity_file = _vm_single_identity_file(topology)
+    key_comment = _vm_distributed_config_value(
+        topology,
+        "VM_SINGLE_SSH_KEY_COMMENT",
+        default="validation-environment-vm-single",
+    )
+    marker = _vm_distributed_config_value(
+        topology,
+        "VM_SINGLE_SSH_MANAGED_MARKER",
+        default="validation-environment-vm-single",
+    )
+    remote_workdir = _vm_distributed_config_value(
+        topology,
+        "VM_SINGLE_REMOTE_WORKDIR",
+        "VM_REMOTE_WORKDIR",
+    )
+    address = _vm_distributed_config_value(
+        topology,
+        "VM_SINGLE_ADDRESS",
+        "VM_SINGLE_IP",
+        "VM_EXTERNAL_IP",
+        "HOSTS_ADDRESS",
+        "INGRESS_EXTERNAL_IP",
+    )
+    ssh_host = _vm_distributed_config_value(topology, "VM_SINGLE_SSH_HOST", default=address)
+    ssh_user = _vm_distributed_config_value(topology, "VM_SINGLE_SSH_USER", "VM_SSH_USER")
+    ssh_port = _vm_distributed_config_value(topology, "VM_SINGLE_SSH_PORT", default="22") or "22"
+    target_roles = [
+        {
+            "role": "vm-single",
+            "role_key": "single",
+            "host": ssh_host,
+            "user": ssh_user,
+            "port": ssh_port,
+            "identity_file": identity_file,
+            "needs_public_key": bool(ssh_host and ssh_user),
+        }
+    ]
+
+    actions = [
+        {
+            "name": "ensure_dedicated_keypair",
+            "status": "planned" if identity_file else "needs-configuration",
+            "idempotent_check": "create the key only when the private or public key is missing",
+        },
+        {
+            "name": "install_public_key_on_target_vm",
+            "status": "planned" if identity_file and target_roles[0]["needs_public_key"] else "needs-configuration",
+            "idempotent_check": "append the public key only when the managed marker is absent",
+        },
+        {
+            "name": "verify_batchmode_ssh",
+            "status": "planned",
+            "idempotent_check": "run ssh -o BatchMode=yes against the vm-single target",
+        },
+    ]
+    warnings = []
+    if bootstrap_mode not in {"manual", "plan", "auto"}:
+        warnings.append("VM_SINGLE_SSH_BOOTSTRAP_MODE should be manual, plan or auto.")
+    if not identity_file:
+        warnings.append("SSH_IDENTITY_FILE or VM_SINGLE_SSH_IDENTITY_FILE is required for SSH bootstrap.")
+    if not ssh_host:
+        warnings.append("VM_SINGLE_SSH_HOST or VM_EXTERNAL_IP is required for vm-single SSH bootstrap.")
+    if not ssh_user:
+        warnings.append("VM_SINGLE_SSH_USER or VM_SSH_USER is required for vm-single SSH bootstrap.")
+
+    return {
+        "status": "ready" if not warnings else "needs-review",
+        "mode": bootstrap_mode,
+        "execution_host": "external",
+        "identity_file": identity_file,
+        "key_comment": key_comment,
+        "managed_marker": marker,
+        "remote_workdir": remote_workdir,
+        "dataspace": str(adapter.get("DS_1_NAME") or "").strip(),
+        "targets": target_roles,
+        "actions": actions,
+        "warnings": warnings,
+        "security": [
+            "private keys are never written to versioned files",
+            "only public keys are installed on the target VM",
+            "BatchMode=yes is used for verification",
+            "managed authorized_keys entries must carry a marker for idempotent updates",
+        ],
+    }
+
+
+def _vm_single_configuration_preflight(infrastructure_config, topology_config, adapter_config):
+    topology = dict(topology_config or {})
+    adapter = dict(adapter_config or {})
+    warnings = []
+    checks = []
+
+    address = _vm_distributed_config_value(
+        topology,
+        "VM_SINGLE_ADDRESS",
+        "VM_SINGLE_IP",
+        "VM_EXTERNAL_IP",
+        "HOSTS_ADDRESS",
+        "INGRESS_EXTERNAL_IP",
+    )
+    if not address:
+        warnings.append(
+            "vm-single needs VM_EXTERNAL_IP, VM_SINGLE_IP, VM_SINGLE_ADDRESS, HOSTS_ADDRESS or INGRESS_EXTERNAL_IP."
+        )
+
+    ssh_preflight = _vm_single_ssh_access_preflight(topology)
+    warnings.extend(ssh_preflight.get("warnings") or [])
+    ssh_bootstrap = _build_vm_single_ssh_bootstrap_plan(infrastructure_config, topology, adapter)
+    warnings.extend(ssh_bootstrap.get("warnings") or [])
+
+    checks.append(
+        {
+            "name": "VM address",
+            "status": "ready" if address else "missing",
+            "detail": "single VM ingress/address value",
+        }
+    )
+    checks.append(
+        {
+            "name": "SSH access",
+            "status": ssh_preflight.get("status") or "unknown",
+            "detail": ssh_preflight.get("detail") or "",
+        }
+    )
+    checks.append(
+        {
+            "name": "SSH bootstrap",
+            "status": ssh_bootstrap.get("status") or "unknown",
+            "detail": ssh_bootstrap.get("mode") or "manual",
+        }
+    )
+    checks.append(
+        {
+            "name": "Dataspace",
+            "status": "ready" if str(adapter.get("DS_1_NAME") or "").strip() else "missing",
+            "detail": "DS_1_NAME",
+        }
+    )
+
+    return {
+        "status": "ready" if not warnings else "needs-review",
+        "checks": checks,
+        "warnings": warnings,
+    }
+
+
+def _build_vm_single_topology_plan(infrastructure_config, topology_config, adapter_config):
+    infra = dict(infrastructure_config or {})
+    topology = dict(topology_config or {})
+    adapter = dict(adapter_config or {})
+    preflight = _vm_single_configuration_preflight(infra, topology, adapter)
+    ssh_bootstrap = _build_vm_single_ssh_bootstrap_plan(infra, topology, adapter)
+    mode = str(topology.get("SSH_ACCESS_MODE") or "").strip().lower().replace("_", "-")
+    if mode not in {"direct", "bastion"}:
+        mode = ""
+    timeout = _vm_single_connect_timeout_seconds(topology)
+    identity_file = _vm_single_identity_file(topology)
+    access = {
+        "mode": mode or "not-configured",
+        "connect_timeout_seconds": timeout,
+        "identity_file": identity_file,
+        "known_hosts_strategy": _vm_distributed_config_value(
+            topology,
+            "VM_SINGLE_SSH_KNOWN_HOSTS_STRATEGY",
+            default="accept-new",
+        ),
+        "bastion": {
+            "host": str(topology.get("SSH_BASTION_HOST") or "").strip(),
+            "port": str(topology.get("SSH_BASTION_PORT") or "2222").strip() or "2222",
+            "user": str(topology.get("SSH_BASTION_USER") or "").strip(),
+            "identity_file": str(topology.get("SSH_BASTION_IDENTITY_FILE") or "").strip(),
+        },
+    }
+    address = _vm_distributed_config_value(
+        topology,
+        "VM_SINGLE_ADDRESS",
+        "VM_SINGLE_IP",
+        "VM_EXTERNAL_IP",
+        "HOSTS_ADDRESS",
+        "INGRESS_EXTERNAL_IP",
+    )
+    ssh_host = _vm_distributed_config_value(topology, "VM_SINGLE_SSH_HOST", default=address)
+    ssh_port = _vm_distributed_config_value(topology, "VM_SINGLE_SSH_PORT", default="22") or "22"
+    ssh_user = _vm_distributed_config_value(topology, "VM_SINGLE_SSH_USER", "VM_SSH_USER")
+    remote_workdir = _vm_distributed_config_value(
+        topology,
+        "VM_SINGLE_REMOTE_WORKDIR",
+        "VM_REMOTE_WORKDIR",
+    )
+    http_url = _vm_distributed_config_value(
+        topology,
+        "VM_SINGLE_HTTP_URL",
+        default=f"http://{address}" if address else "",
+    )
+    vm = {
+        "role": "vm-single",
+        "role_key": "single",
+        "address": address,
+        "public_url": str(topology.get("PUBLIC_GATEWAY_URL") or "").strip(),
+        "http_url": http_url,
+        "remote_workdir": remote_workdir,
+        "levels": [1, 2, 3, 4, 5, 6],
+        "ssh": {
+            "mode": mode or "not-configured",
+            "host": ssh_host,
+            "port": ssh_port,
+            "user": ssh_user,
+            "identity_file": identity_file,
+            "configured": bool(mode and ssh_host),
+        },
+    }
+    vm["ssh"]["command"] = (
+        _vm_distributed_format_command(_vm_distributed_build_ssh_command({"ssh": access}, vm))
+        if vm["ssh"].get("configured")
+        else ""
+    )
+
+    return {
+        "status": preflight.get("status") or "unknown",
+        "topology": "vm-single",
+        "execution_host": "external",
+        "deployment_mode": "single-vm",
+        "domain_base": str(infra.get("DOMAIN_BASE") or "").strip(),
+        "dataspace_domain_base": str(infra.get("DS_DOMAIN_BASE") or "").strip(),
+        "dataspace": str(adapter.get("DS_1_NAME") or "").strip(),
+        "ssh": access,
+        "vms": [vm],
+        "ssh_bootstrap": ssh_bootstrap,
         "configuration_preflight": preflight,
     }
 
@@ -11938,6 +12388,859 @@ def _load_vm_distributed_configuration_bundle(adapter_name=None):
             "infrastructure": _framework_relative_path(_infrastructure_deployer_config_path()),
             "topology": _framework_relative_path(topology_path),
             "adapter": _framework_relative_path(adapter_path) if adapter_path else "",
+        },
+    }
+
+
+def _load_vm_single_configuration_bundle(adapter_name=None):
+    topology_path = _infrastructure_topology_config_path("vm-single")
+    adapter_path = _adapter_deployer_config_path(adapter_name) if adapter_name else ""
+    return {
+        "infrastructure": load_raw_deployer_config(_infrastructure_deployer_config_path()),
+        "topology": load_raw_deployer_config(topology_path),
+        "adapter": load_raw_deployer_config(adapter_path) if adapter_path else {},
+        "paths": {
+            "infrastructure": _framework_relative_path(_infrastructure_deployer_config_path()),
+            "topology": _framework_relative_path(topology_path),
+            "adapter": _framework_relative_path(adapter_path) if adapter_path else "",
+        },
+    }
+
+
+def _current_vm_single_topology_plan(adapter_name=None):
+    bundle = _load_vm_single_configuration_bundle(adapter_name=adapter_name)
+    plan = _build_vm_single_topology_plan(
+        bundle["infrastructure"],
+        bundle["topology"],
+        bundle["adapter"],
+    )
+    plan["config_files"] = bundle["paths"]
+    return plan
+
+
+def _local_host_addresses():
+    addresses = {"127.0.0.1", "::1"}
+    for hostname in {socket.gethostname(), socket.getfqdn()}:
+        if not hostname:
+            continue
+        try:
+            for item in socket.getaddrinfo(hostname, None):
+                if item and len(item) >= 5:
+                    addresses.add(str(item[4][0]))
+        except OSError:
+            continue
+    try:
+        completed = subprocess.run(
+            ["hostname", "-I"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        if completed.returncode == 0:
+            addresses.update(str(completed.stdout or "").split())
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {address.strip() for address in addresses if str(address or "").strip()}
+
+
+def _resolve_host_addresses(host):
+    value = str(host or "").strip()
+    if not value:
+        return set()
+    addresses = {value}
+    try:
+        for item in socket.getaddrinfo(value, None):
+            if item and len(item) >= 5:
+                addresses.add(str(item[4][0]))
+    except OSError:
+        pass
+    return {address.strip() for address in addresses if str(address or "").strip()}
+
+
+def _vm_single_running_on_target(plan):
+    payload = dict(plan or {})
+    vms = [item for item in list(payload.get("vms") or []) if isinstance(item, dict)]
+    vm = vms[0] if vms else {}
+    target_values = {
+        str(vm.get("address") or "").strip(),
+        str(((vm.get("ssh") or {}).get("host")) or "").strip(),
+    }
+    target_values.update(
+        str(item.get("host") or "").strip()
+        for item in list((payload.get("ssh_bootstrap") or {}).get("targets") or [])
+        if isinstance(item, dict)
+    )
+    aliases = _vm_distributed_host_aliases()
+    for value in list(target_values):
+        if value and value.lower() in aliases:
+            return True
+
+    local_addresses = _local_host_addresses()
+    target_addresses = set()
+    for value in target_values:
+        target_addresses.update(_resolve_host_addresses(value))
+    return bool(local_addresses.intersection(target_addresses))
+
+
+def _vm_single_remote_kubeconfig_path(topology_config):
+    return _vm_distributed_config_value(
+        topology_config,
+        "VM_SINGLE_REMOTE_KUBECONFIG",
+        default="/etc/rancher/k3s/k3s.yaml",
+    ) or "/etc/rancher/k3s/k3s.yaml"
+
+
+def _vm_single_local_kubeconfig_path(topology_config):
+    configured = _vm_distributed_config_value(
+        topology_config,
+        "VM_SINGLE_LOCAL_KUBECONFIG",
+        "K3S_KUBECONFIG",
+    )
+    if not configured or configured.startswith("/etc/rancher/"):
+        configured = "~/.kube/vm-single-k3s.yaml"
+    return os.path.abspath(os.path.expanduser(configured))
+
+
+def _vm_single_k3s_api_remote_port(topology_config):
+    return _vm_distributed_config_value(
+        topology_config,
+        "VM_SINGLE_K3S_API_REMOTE_PORT",
+        default="6443",
+    ) or "6443"
+
+
+def _vm_single_k3s_api_local_port(topology_config):
+    configured = _vm_distributed_config_value(topology_config, "VM_SINGLE_K3S_API_LOCAL_PORT")
+    if configured:
+        return int(configured)
+    kubeconfig = _vm_single_local_kubeconfig_path(topology_config)
+    port = _kubeconfig_loopback_port(_kubeconfig_server(kubeconfig))
+    return int(port or 46443)
+
+
+def _vm_single_k3s_tunnel_mode(topology_config):
+    raw_value = _vm_distributed_config_value(
+        topology_config,
+        "VM_SINGLE_K3S_TUNNEL_MODE",
+        default="auto",
+    ).lower().replace("_", "-")
+    aliases = {
+        "1": "auto",
+        "true": "auto",
+        "yes": "auto",
+        "on": "auto",
+        "enabled": "auto",
+        "0": "disabled",
+        "false": "disabled",
+        "no": "disabled",
+        "off": "disabled",
+    }
+    return aliases.get(raw_value, raw_value)
+
+
+def _vm_single_should_prepare_k3s_tunnel(level_id, plan, topology_config):
+    if os.environ.get("PIONERA_VM_SINGLE_REMOTE_LEVEL_ACTIVE") == "true":
+        return False
+    if os.environ.get("PIONERA_LEVEL_RUNTIME_ENV_ACTIVE") == "true":
+        return False
+    if int(level_id) not in {1, 2, 3, 4, 5}:
+        return False
+    try:
+        runtime = build_cluster_runtime(topology_config, topology=VM_SINGLE_TOPOLOGY)
+    except Exception:
+        return False
+    if runtime.get("cluster_type") != "k3s":
+        return False
+    mode = _normalized_vm_single_level_execution_mode(topology_config)
+    if mode == "remote":
+        return False
+    if mode in {"local", "off", "disabled", "false", "0", "no"}:
+        return False
+    return not _vm_single_running_on_target(plan)
+
+
+def _vm_single_should_run_level_remotely(level_id, plan):
+    if os.environ.get("PIONERA_VM_SINGLE_REMOTE_LEVEL_ACTIVE") == "true":
+        return False
+    if int(level_id) not in {1, 2, 3, 4, 5}:
+        return False
+    topology = _load_vm_single_configuration_bundle(adapter_name=None).get("topology") or {}
+    mode = _normalized_vm_single_level_execution_mode(topology)
+    if mode in {"local", "off", "disabled", "false", "0", "no"}:
+        return False
+    if mode == "remote":
+        return True
+    if mode in {"auto", "tunnel"}:
+        return False
+    raise RuntimeError(
+        "VM_SINGLE_LEVEL_EXECUTION_MODE must be local, tunnel, remote or auto."
+    )
+
+
+def _normalized_vm_single_workspace_sync_mode(topology_config):
+    raw_value = (
+        os.getenv("PIONERA_VM_SINGLE_WORKSPACE_SYNC")
+        or _vm_distributed_config_value(topology_config, "VM_SINGLE_WORKSPACE_SYNC", default="auto")
+    ).strip().lower().replace("_", "-")
+    aliases = {
+        "1": "auto",
+        "true": "auto",
+        "yes": "auto",
+        "on": "auto",
+        "enabled": "auto",
+        "0": "disabled",
+        "false": "disabled",
+        "no": "disabled",
+        "off": "disabled",
+    }
+    return aliases.get(raw_value, raw_value)
+
+
+def _vm_single_workspace_sync_delete_enabled(topology_config):
+    raw_value = (
+        os.getenv("PIONERA_VM_SINGLE_WORKSPACE_SYNC_DELETE")
+        or _vm_distributed_config_value(topology_config, "VM_SINGLE_WORKSPACE_SYNC_DELETE", default="false")
+    )
+    return str(raw_value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _vm_single_workspace_sync_excludes(topology_config):
+    default_excludes = [
+        ".git/",
+        ".venv/",
+        "**/.venv/",
+        "**/__pycache__/",
+        "**/node_modules/",
+        "**/.pytest_cache/",
+        "**/.mypy_cache/",
+        "**/.ruff_cache/",
+        "experiments/",
+        "context/deliverables/logs/",
+        "*.log",
+        ".env",
+        ".env.*",
+        "deployers/*/deployments/DEV/*/credentials-*.json",
+        "deployers/*/deployments/DEV/*/policy-*.json",
+    ]
+    configured = _vm_distributed_config_value(topology_config, "VM_SINGLE_WORKSPACE_SYNC_EXCLUDES")
+    extra = [
+        item.strip()
+        for item in configured.replace(";", ",").split(",")
+        if item.strip()
+    ]
+    return default_excludes + extra
+
+
+def _vm_single_workspace_sync_ssh_parts(plan):
+    payload = dict(plan or {})
+    vms = [item for item in list(payload.get("vms") or []) if isinstance(item, dict)]
+    vm = vms[0] if vms else {}
+    command = _vm_distributed_build_ssh_command(payload, vm)
+    if not command or len(command) < 2:
+        return [], ""
+    return command[:-1], command[-1]
+
+
+def _vm_single_k3s_tunnel_command(plan, topology_config, local_port):
+    payload = dict(plan or {})
+    vms = [item for item in list(payload.get("vms") or []) if isinstance(item, dict)]
+    vm = vms[0] if vms else {}
+    command = _vm_distributed_build_ssh_command(payload, vm)
+    if not command:
+        return []
+    remote_port = _vm_single_k3s_api_remote_port(topology_config)
+    tunnel_args = [
+        "-N",
+        "-L",
+        f"127.0.0.1:{int(local_port)}:127.0.0.1:{remote_port}",
+        "-o",
+        "ExitOnForwardFailure=yes",
+    ]
+    return command[:1] + tunnel_args + command[1:]
+
+
+def _ensure_vm_single_k3s_tunnel(plan, topology_config):
+    local_port = _vm_single_k3s_api_local_port(topology_config)
+    if _local_tcp_port_open(local_port):
+        return {"status": "ready", "local_port": local_port}
+
+    mode = _vm_single_k3s_tunnel_mode(topology_config)
+    if mode in {"manual", "disabled", "skip"}:
+        return {
+            "status": "missing",
+            "reason": "tunnel-mode-disabled",
+            "local_port": local_port,
+        }
+
+    command = _vm_single_k3s_tunnel_command(plan, topology_config, local_port)
+    if not command:
+        return {
+            "status": "failed",
+            "reason": "missing-ssh-config",
+            "local_port": local_port,
+        }
+
+    proc = _run_vm_distributed_background_ssh_command(command, timeout_seconds=20)
+    if proc.returncode not in {None, 0}:
+        return {
+            "status": "failed",
+            "reason": "ssh-tunnel-failed",
+            "local_port": local_port,
+            "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+            "error": (proc.stderr or proc.stdout or "").strip()[:500],
+        }
+
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        if _local_tcp_port_open(local_port):
+            _close_vm_distributed_background_ssh_process_files(proc)
+            return {
+                "status": "started",
+                "local_port": local_port,
+                "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+                "pid": getattr(getattr(proc, "process", None), "pid", None),
+            }
+        process = getattr(proc, "process", None)
+        if process and process.poll() is not None:
+            proc = _vm_distributed_background_ssh_process_output(proc)
+            return {
+                "status": "failed",
+                "reason": "ssh-tunnel-failed",
+                "local_port": local_port,
+                "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+                "error": (proc.stderr or proc.stdout or f"ssh exited with {proc.returncode}").strip()[:500],
+            }
+        time.sleep(0.25)
+
+    _terminate_vm_distributed_background_ssh_process(proc)
+    return {
+        "status": "failed",
+        "reason": "ssh-tunnel-timeout",
+        "local_port": local_port,
+        "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+    }
+
+
+def _render_vm_single_local_kubeconfig(remote_kubeconfig, local_port):
+    data = yaml.safe_load(remote_kubeconfig) or {}
+    clusters = data.get("clusters") or []
+    if not clusters:
+        raise RuntimeError("The remote k3s kubeconfig does not contain a cluster entry.")
+    server = f"https://127.0.0.1:{int(local_port)}"
+    for cluster_entry in clusters:
+        cluster = cluster_entry.get("cluster") if isinstance(cluster_entry, dict) else None
+        if isinstance(cluster, dict):
+            cluster["server"] = server
+    return yaml.safe_dump(data, sort_keys=False)
+
+
+def _fetch_vm_single_remote_kubeconfig(plan, topology_config, local_port, command_runner=None):
+    remote_path = _vm_single_remote_kubeconfig_path(topology_config)
+    local_path = _vm_single_local_kubeconfig_path(topology_config)
+    remote_path_q = shlex.quote(remote_path)
+    remote_shell = "\n".join(
+        [
+            "set -eu",
+            f"if test -r {remote_path_q}; then",
+            f"  cat {remote_path_q}",
+            f"elif sudo -n test -r {remote_path_q}; then",
+            f"  sudo -n cat {remote_path_q}",
+            "else",
+            f"  echo 'Remote k3s kubeconfig is not readable: {remote_path}' >&2",
+            "  exit 65",
+            "fi",
+        ]
+    )
+    payload = dict(plan or {})
+    vms = [item for item in list(payload.get("vms") or []) if isinstance(item, dict)]
+    vm = vms[0] if vms else {}
+    command = _vm_distributed_build_ssh_command(payload, vm, remote_command=remote_shell)
+    if not command:
+        raise RuntimeError("Cannot fetch vm-single kubeconfig because the SSH command could not be built.")
+
+    runner = command_runner or subprocess.run
+    completed = runner(command, capture_output=True, text=True, check=False)
+    if int(getattr(completed, "returncode", 1) or 0) != 0:
+        detail = (getattr(completed, "stderr", "") or getattr(completed, "stdout", "") or "").strip()
+        raise RuntimeError(
+            "Could not fetch the remote vm-single k3s kubeconfig. "
+            f"{detail or 'Remote command failed.'}"
+        )
+
+    rendered = _render_vm_single_local_kubeconfig(getattr(completed, "stdout", "") or "", local_port)
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    with open(local_path, "w", encoding="utf-8") as handle:
+        handle.write(rendered)
+    os.chmod(local_path, 0o600)
+    return {
+        "status": "written",
+        "local_path": local_path,
+        "remote_path": remote_path,
+        "server": f"https://127.0.0.1:{int(local_port)}",
+    }
+
+
+def _ensure_vm_single_k3s_api_access(adapter_name=None, command_runner=None):
+    bundle = _load_vm_single_configuration_bundle(adapter_name=adapter_name)
+    plan = _build_vm_single_topology_plan(
+        bundle["infrastructure"],
+        bundle["topology"],
+        bundle["adapter"],
+    )
+    if _vm_single_running_on_target(plan):
+        return {
+            "status": "local-target",
+            "kubeconfig": _vm_single_remote_kubeconfig_path(bundle["topology"]),
+            "tunnel": {"status": "skipped", "reason": "running-on-target"},
+        }
+
+    ssh_bootstrap = dict(plan.get("ssh_bootstrap") or {})
+    if str(ssh_bootstrap.get("status") or "").strip().lower() != "ready":
+        warnings = "; ".join(str(item) for item in list(ssh_bootstrap.get("warnings") or []))
+        raise RuntimeError(
+            "Cannot prepare vm-single Kubernetes access because SSH is not fully configured. "
+            f"{warnings or 'Run ssh-access reconcile first.'}"
+        )
+
+    local_port = _vm_single_k3s_api_local_port(bundle["topology"])
+    kubeconfig_result = _fetch_vm_single_remote_kubeconfig(
+        plan,
+        bundle["topology"],
+        local_port,
+        command_runner=command_runner,
+    )
+    tunnel_result = _ensure_vm_single_k3s_tunnel(plan, bundle["topology"])
+    if tunnel_result.get("status") in {"failed", "missing"}:
+        reason = tunnel_result.get("reason") or "tunnel unavailable"
+        command = tunnel_result.get("command")
+        suffix = f" Command: {command}" if command else ""
+        raise RuntimeError(
+            "Cannot prepare vm-single Kubernetes access because the k3s API tunnel is not available. "
+            f"{reason}.{suffix}"
+        )
+
+    check = _vm_distributed_kubeconfig_check("vm-single", kubeconfig_result["local_path"], timeout_seconds=12)
+    if check.get("status") != "ready":
+        raise RuntimeError(
+            "Cannot prepare vm-single Kubernetes access because kubectl cannot reach the tunneled k3s API. "
+            f"{check.get('detail') or 'unreachable'}"
+        )
+
+    return {
+        "status": "ready",
+        "kubeconfig": kubeconfig_result["local_path"],
+        "kubeconfig_sync": kubeconfig_result,
+        "tunnel": tunnel_result,
+        "check": check,
+    }
+
+
+def _vm_single_k3s_remote_prepare_shell(topology_config):
+    remote_kubeconfig = _vm_single_remote_kubeconfig_path(topology_config)
+    service_name = _vm_distributed_config_value(topology_config, "K3S_SERVICE_NAME", default="k3s") or "k3s"
+    install_exec = _vm_distributed_config_value(
+        topology_config,
+        "K3S_INSTALL_EXEC",
+        default="--disable=traefik",
+    ) or "--disable=traefik"
+    kubeconfig_mode = _vm_distributed_config_value(
+        topology_config,
+        "K3S_WRITE_KUBECONFIG_MODE",
+        default="0644",
+    ) or "0644"
+    install_exec_args = " ".join(shlex.quote(part) for part in shlex.split(install_exec))
+    remote_kubeconfig_q = shlex.quote(remote_kubeconfig)
+    service_name_q = shlex.quote(service_name)
+    kubeconfig_mode_q = shlex.quote(kubeconfig_mode)
+    return "\n".join(
+        [
+            "set -eu",
+            "needs_install=0",
+            "command -v k3s >/dev/null 2>&1 || needs_install=1",
+            f"systemctl is-active --quiet {service_name_q} || needs_install=1",
+            f"test -f {remote_kubeconfig_q} || needs_install=1",
+            'if [ "$needs_install" = "1" ]; then',
+            "  echo 'Installing or repairing k3s on vm-single...'",
+            f"  curl -sfL https://get.k3s.io | sudo sh -s - {install_exec_args}",
+            "else",
+            "  echo 'k3s already installed on vm-single.'",
+            "fi",
+            "if systemctl list-unit-files k3s-agent.service --no-pager >/dev/null 2>&1; then",
+            "  sudo systemctl stop k3s-agent >/dev/null 2>&1 || true",
+            "  sudo systemctl disable k3s-agent >/dev/null 2>&1 || true",
+            "fi",
+            f"sudo systemctl start {service_name_q}",
+            f"sudo chmod {kubeconfig_mode_q} {remote_kubeconfig_q}",
+            f"systemctl is-active {service_name_q}",
+            f"test -r {remote_kubeconfig_q}",
+        ]
+    )
+
+
+def _vm_single_run_local_command(command, label, *, env=None, capture=True, required=True):
+    rendered = _vm_distributed_format_command(command)
+    print(f"Executing: {rendered}")
+    completed = subprocess.run(
+        command,
+        env=env,
+        capture_output=capture,
+        text=True,
+        check=False,
+    )
+    if required and int(completed.returncode or 0) != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(f"{label} failed. {detail}")
+    return completed
+
+
+def _install_vm_single_ingress_nginx(adapter, topology_config, kubeconfig):
+    env = os.environ.copy()
+    env["KUBECONFIG"] = kubeconfig
+    service_type = _vm_distributed_config_value(
+        topology_config,
+        "K3S_INGRESS_SERVICE_TYPE",
+        default="LoadBalancer",
+    ) or "LoadBalancer"
+
+    if not shutil.which("kubectl"):
+        raise RuntimeError("kubectl is required on the operator machine to manage vm-single through the tunnel.")
+    if not shutil.which("helm"):
+        raise RuntimeError("Helm is required on the operator machine to manage vm-single through the tunnel.")
+
+    print("\nInstalling or reconciling ingress-nginx in vm-single k3s...")
+    _vm_single_run_local_command(
+        ["helm", "repo", "add", "ingress-nginx", "https://kubernetes.github.io/ingress-nginx"],
+        "helm repo add ingress-nginx",
+        env=env,
+        required=False,
+    )
+    _vm_single_run_local_command(["helm", "repo", "update"], "helm repo update", env=env)
+    status = _vm_single_run_local_command(
+        ["helm", "status", "ingress-nginx", "-n", "ingress-nginx"],
+        "helm status ingress-nginx",
+        env=env,
+        required=False,
+    )
+    if int(status.returncode or 0) != 0:
+        existing = _vm_single_run_local_command(
+            [
+                "kubectl",
+                "get",
+                "deployment",
+                "ingress-nginx-controller",
+                "-n",
+                "ingress-nginx",
+                "-o",
+                "name",
+            ],
+            "kubectl get ingress-nginx deployment",
+            env=env,
+            required=False,
+        )
+        if int(existing.returncode or 0) != 0 or not (existing.stdout or "").strip():
+            _vm_single_run_local_command(
+                [
+                    "helm",
+                    "install",
+                    "ingress-nginx",
+                    "ingress-nginx/ingress-nginx",
+                    "-n",
+                    "ingress-nginx",
+                    "--create-namespace",
+                    "--set",
+                    f"controller.service.type={service_type}",
+                    "--set",
+                    "controller.watchIngressWithoutClass=true",
+                    "--set",
+                    "controller.allowSnippetAnnotations=true",
+                    "--set",
+                    "controller.config.allow-snippet-annotations=true",
+                    "--set",
+                    "controller.config.annotations-risk-level=Critical",
+                    "--wait",
+                    "--timeout",
+                    "180s",
+                ],
+                "helm install ingress-nginx",
+                env=env,
+            )
+        else:
+            print("ingress-nginx resources already exist outside Helm; reusing them.")
+    else:
+        print("ingress-nginx already installed.")
+
+    infrastructure = getattr(adapter, "infrastructure", None)
+    with _temporary_environment({"KUBECONFIG": kubeconfig}):
+        patch_service = getattr(infrastructure, "_patch_k3s_ingress_nginx_service", None)
+        if callable(patch_service):
+            patch_service(service_type)
+        patch_configmap = getattr(infrastructure, "_patch_ingress_nginx_configmap", None)
+        if callable(patch_configmap):
+            patch_configmap()
+
+
+def _vm_single_k3s_preflight_checks(kubeconfig):
+    env = os.environ.copy()
+    env["KUBECONFIG"] = kubeconfig
+    checks = []
+
+    def check(command, label, *, validator=None, failure_message=None):
+        completed = _vm_single_run_local_command(command, label, env=env, required=False)
+        detail = (completed.stdout or completed.stderr or "").strip()
+        ok = int(completed.returncode or 0) == 0 and bool(detail)
+        if ok and callable(validator):
+            ok = bool(validator(detail))
+        checks.append(
+            {
+                "label": label,
+                "command": _vm_distributed_format_command(command),
+                "status": "passed" if ok else "failed",
+                "detail": detail,
+            }
+        )
+        if not ok:
+            raise RuntimeError(failure_message or f"Level 1 vm-single preflight failed during {label}")
+        return detail
+
+    check(["kubectl", "version", "--client=true"], "kubectl client version")
+    current_context = check(["kubectl", "config", "current-context"], "kubectl current context")
+    check(["kubectl", "cluster-info"], "cluster info")
+    check(["kubectl", "get", "nodes", "--no-headers"], "cluster nodes")
+    check(["kubectl", "get", "ingressclass", "-o", "name"], "ingress classes")
+    check(["kubectl", "get", "storageclass", "-o", "name"], "storage classes")
+    check(
+        ["kubectl", "auth", "can-i", "create", "namespace"],
+        "create namespace permission",
+        validator=lambda detail: detail.strip().lower() in {"yes", "true"},
+        failure_message="the active kubectl identity cannot create namespaces",
+    )
+    return current_context, checks
+
+
+def _run_vm_single_level1_via_ssh_tunnel(adapter, adapter_name):
+    bundle = _load_vm_single_configuration_bundle(adapter_name=adapter_name)
+    plan = _build_vm_single_topology_plan(
+        bundle["infrastructure"],
+        bundle["topology"],
+        bundle["adapter"],
+    )
+    ssh_bootstrap = dict(plan.get("ssh_bootstrap") or {})
+    if str(ssh_bootstrap.get("status") or "").strip().lower() != "ready":
+        warnings = "; ".join(str(item) for item in list(ssh_bootstrap.get("warnings") or []))
+        raise RuntimeError(
+            "Cannot prepare vm-single Level 1 from WSL because SSH is not fully configured. "
+            f"{warnings or 'Run ssh-access reconcile first.'}"
+        )
+
+    print("vm-single Level 1 will prepare k3s on the VM over SSH.")
+    print("The framework stays on this machine; Kubernetes access will use an SSH tunnel.")
+    remote_shell = _vm_single_k3s_remote_prepare_shell(bundle["topology"])
+    command = _vm_single_remote_ssh_command(plan, remote_shell)
+    if not command:
+        raise RuntimeError("Cannot prepare vm-single Level 1 because the target SSH command could not be built.")
+    completed = subprocess.run(command, check=False)
+    if int(getattr(completed, "returncode", 1) or 0) != 0:
+        raise RuntimeError("Remote vm-single k3s preparation failed. Check the SSH output above before retrying.")
+
+    access = _ensure_vm_single_k3s_api_access(adapter_name=adapter_name)
+    _install_vm_single_ingress_nginx(adapter, bundle["topology"], access["kubeconfig"])
+    current_context, checks = _vm_single_k3s_preflight_checks(access["kubeconfig"])
+    infrastructure = getattr(adapter, "infrastructure", None)
+    complete_level = getattr(infrastructure, "complete_level", None)
+    if callable(complete_level):
+        complete_level(1)
+    return {
+        "status": "ready",
+        "mode": "ssh-tunnel-managed",
+        "topology": VM_SINGLE_TOPOLOGY,
+        "cluster_runtime": "k3s",
+        "current_context": current_context,
+        "cluster_creation": "remote-prepared",
+        "kubeconfig": access["kubeconfig"],
+        "tunnel": access["tunnel"],
+        "checks": checks,
+    }
+
+
+def _sync_vm_single_remote_workspace(plan, topology_config, command_runner=None):
+    mode = _normalized_vm_single_workspace_sync_mode(topology_config)
+    if mode in {"disabled", "manual", "skip"}:
+        return {"status": "skipped", "mode": mode}
+    if mode not in {"auto", "always"}:
+        raise RuntimeError("VM_SINGLE_WORKSPACE_SYNC must be auto, always, disabled or manual.")
+
+    remote_workdir = _vm_distributed_config_value(
+        topology_config,
+        "VM_SINGLE_REMOTE_WORKDIR",
+        "VM_REMOTE_WORKDIR",
+    )
+    if not remote_workdir:
+        raise RuntimeError(
+            "VM_SINGLE_REMOTE_WORKDIR is required to synchronize the framework workspace to vm-single."
+        )
+    if not shutil.which("rsync"):
+        raise RuntimeError("rsync is required to synchronize the framework workspace to vm-single.")
+
+    ssh_base, ssh_target = _vm_single_workspace_sync_ssh_parts(plan)
+    if not ssh_base or not ssh_target:
+        raise RuntimeError("Cannot synchronize vm-single workspace because the SSH target could not be built.")
+
+    local_root = os.path.dirname(os.path.abspath(__file__))
+    source = local_root.rstrip("/") + "/"
+    destination = f"{ssh_target}:{remote_workdir.rstrip('/')}/"
+    runner = command_runner or subprocess.run
+
+    mkdir_command = _vm_distributed_build_ssh_command(
+        plan,
+        (plan.get("vms") or [{}])[0],
+        remote_command=f"mkdir -p {shlex.quote(remote_workdir)}",
+    )
+    mkdir_result = runner(mkdir_command, check=False)
+    if int(getattr(mkdir_result, "returncode", 1) or 0) != 0:
+        raise RuntimeError("Could not create the remote vm-single framework workspace directory.")
+
+    rsync_command = [
+        "rsync",
+        "-az",
+        "--human-readable",
+    ]
+    if _vm_single_workspace_sync_delete_enabled(topology_config):
+        rsync_command.append("--delete")
+    for pattern in _vm_single_workspace_sync_excludes(topology_config):
+        rsync_command.extend(["--exclude", pattern])
+    rsync_command.extend(
+        [
+            "-e",
+            _vm_distributed_format_command(ssh_base),
+            source,
+            destination,
+        ]
+    )
+
+    print("Synchronizing framework workspace to vm-single VM...")
+    print(f"Remote workspace: {remote_workdir}")
+    rsync_result = runner(rsync_command, check=False)
+    if int(getattr(rsync_result, "returncode", 1) or 0) != 0:
+        raise RuntimeError("Could not synchronize the framework workspace to vm-single.")
+
+    return {
+        "status": "synced",
+        "mode": mode,
+        "source": source,
+        "remote_workdir": remote_workdir,
+        "delete": _vm_single_workspace_sync_delete_enabled(topology_config),
+        "excluded": _vm_single_workspace_sync_excludes(topology_config),
+    }
+
+
+def _vm_single_remote_level_shell(topology_config, adapter_name, level_id):
+    remote_workdir = _vm_distributed_config_value(
+        topology_config,
+        "VM_SINGLE_REMOTE_WORKDIR",
+        "VM_REMOTE_WORKDIR",
+    )
+    if not remote_workdir:
+        raise RuntimeError(
+            "VM_SINGLE_REMOTE_WORKDIR is required to run vm-single levels remotely from WSL. "
+            "Set it to the framework path inside the VM, or run the framework directly inside the VM."
+        )
+    python_bin = _vm_single_remote_python(topology_config)
+    command = _vm_distributed_format_command(
+        [
+            python_bin,
+            "main.py",
+            adapter_name,
+            "level",
+            str(level_id),
+            "--topology",
+            VM_SINGLE_TOPOLOGY,
+        ]
+    )
+    return "\n".join(
+        [
+            "set -eu",
+            f"if [ ! -d {shlex.quote(remote_workdir)} ]; then",
+            "  echo 'Remote framework workspace not found.' >&2",
+            f"  echo 'Expected: {shlex.quote(remote_workdir)}' >&2",
+            "  echo 'Synchronize the framework workspace in the VM, then rerun this level.' >&2",
+            "  exit 66",
+            "fi",
+            f"cd {shlex.quote(remote_workdir)}",
+            "export PIONERA_VM_SINGLE_REMOTE_LEVEL_ACTIVE=true",
+            f"exec {command}",
+        ]
+    )
+
+
+def _vm_single_remote_ssh_command(plan, remote_shell):
+    payload = dict(plan or {})
+    vms = [item for item in list(payload.get("vms") or []) if isinstance(item, dict)]
+    vm = vms[0] if vms else {}
+    command = _vm_distributed_build_ssh_command(payload, vm, remote_command=remote_shell)
+    if command and command[0] == "ssh" and "-tt" not in command:
+        command.insert(1, "-tt")
+    return command
+
+
+def _run_vm_single_level_remotely(
+    adapter_name,
+    level_id,
+    *,
+    command_runner=None,
+):
+    bundle = _load_vm_single_configuration_bundle(adapter_name=adapter_name)
+    plan = _build_vm_single_topology_plan(
+        bundle["infrastructure"],
+        bundle["topology"],
+        bundle["adapter"],
+    )
+    ssh_bootstrap = dict(plan.get("ssh_bootstrap") or {})
+    if str(ssh_bootstrap.get("status") or "").strip().lower() != "ready":
+        warnings = "; ".join(str(item) for item in list(ssh_bootstrap.get("warnings") or []))
+        raise RuntimeError(
+            "Cannot run vm-single levels remotely because SSH access is not fully configured. "
+            f"{warnings or 'Run ssh-access reconcile first.'}"
+        )
+
+    print(
+        f"vm-single Level {level_id} will run remotely on the configured VM "
+        "because VM_SINGLE_LEVEL_EXECUTION_MODE is remote."
+    )
+    print("Remote execution keeps k3s and deployment state inside the VM.")
+
+    runner = command_runner or subprocess.run
+    workspace_sync = _sync_vm_single_remote_workspace(plan, bundle["topology"], command_runner=runner)
+    remote_shell = _vm_single_remote_level_shell(bundle["topology"], adapter_name, level_id)
+    command = _vm_single_remote_ssh_command(plan, remote_shell)
+    if not command:
+        raise RuntimeError(
+            "Cannot run vm-single level remotely because the target SSH command could not be built."
+        )
+
+    completed = runner(command, check=False)
+    returncode = int(getattr(completed, "returncode", 1) or 0)
+    if returncode != 0:
+        raise RuntimeError(
+            f"Remote vm-single Level {level_id} failed with exit code {returncode}. "
+            "Check the remote output above before retrying."
+        )
+
+    return {
+        "level": int(level_id),
+        "name": LEVEL_DESCRIPTIONS.get(int(level_id), "Unknown"),
+        "status": "completed",
+        "result": {
+            "status": "remote_completed",
+            "topology": VM_SINGLE_TOPOLOGY,
+            "execution": "remote",
+            "remote_workdir": _vm_distributed_config_value(
+                bundle["topology"],
+                "VM_SINGLE_REMOTE_WORKDIR",
+                "VM_REMOTE_WORKDIR",
+            ),
+            "workspace_sync": workspace_sync,
+            "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
         },
     }
 
@@ -14684,6 +15987,9 @@ def main(
     if command == "public-access":
         if len(args.extra) > 1 or (args.extra and args.extra[0] != "reconcile"):
             parser.error("public-access only supports the optional 'reconcile' action")
+    elif command == "level":
+        if len(args.extra) != 1 or not _is_supported_level_token(args.extra[0]):
+            parser.error("level expects exactly one supported level number")
     elif command == "ssh-access":
         if len(args.extra) > 1 or (
             args.extra
@@ -14738,6 +16044,25 @@ def main(
             parser.error(str(exc))
         if isinstance(result, dict) and result.get("mode") in {"shadow", "execute"}:
             print(json.dumps(result, indent=2, default=str))
+        return result
+
+    if command == "level":
+        level_id = int(args.extra[0])
+        result = run_levels(
+            args.adapter,
+            levels=[level_id],
+            adapter_registry=registry,
+            deployer_registry=deployer_registry,
+            topology=args.topology,
+            validation_engine_cls=validation_engine_cls,
+            metrics_collector_cls=metrics_collector_cls,
+            experiment_storage=experiment_storage,
+            baseline=args.baseline,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            _print_action_result(result)
         return result
 
     if command == "validate":
@@ -14810,6 +16135,8 @@ def main(
             )
             if args.json:
                 print(json.dumps(result, indent=2, default=str))
+            elif result.get("status") == "needs-review" and isinstance(result.get("plan"), dict):
+                _print_vm_distributed_ssh_access_result(result["plan"])
             return result
         try:
             result = run_ssh_access(

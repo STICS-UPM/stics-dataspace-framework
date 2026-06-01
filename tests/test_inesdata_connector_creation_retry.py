@@ -947,6 +947,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                     config_data.update(
                         {
                             "NAMESPACE_PROFILE": "role-aligned",
+                            "VM_COMMON_PUBLIC_URL": "https://org1.pionera.oeg.fi.upm.es",
                             "VM_PROVIDER_PUBLIC_URL": "https://org2.pionera.oeg.fi.upm.es",
                         }
                     )
@@ -1010,7 +1011,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         self.assertEqual(ingress["publicHostname"], "org2.pionera.oeg.fi.upm.es")
         self.assertEqual(rendered["services"]["keycloak"]["protocol"], "http")
         self.assertEqual(rendered["services"]["keycloak"]["publicProtocol"], "https")
-        self.assertEqual(rendered["services"]["keycloak"]["external"], "auth.pionera.oeg.fi.upm.es")
+        self.assertEqual(rendered["services"]["keycloak"]["external"], "org1.pionera.oeg.fi.upm.es/auth")
         self.assertEqual(
             ingress["additionalHosts"],
             [
