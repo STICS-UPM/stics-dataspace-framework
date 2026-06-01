@@ -1227,6 +1227,48 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertEqual(commands[0][0][-1].split(" ", 2)[:2], ["sh", "-lc"])
         self.assertNotIn("hostname_value", result["vms"][0]["command"])
 
+    def test_remote_preflight_runs_common_vm_locally_from_common_services_host(self):
+        commands = []
+
+        def runner(command, timeout):
+            commands.append((command, timeout))
+            return mock.Mock(
+                returncode=0,
+                stdout="hostname=common-vm\nuser=operator\nos=Ubuntu 24.04\nhttp_local=404\n",
+                stderr="",
+            )
+
+        plan = {
+            "execution_host": "common-services",
+            "ssh": {
+                "mode": "direct",
+                "connect_timeout_seconds": 5,
+                "bastion": {},
+            },
+            "vms": [
+                {
+                    "role": "common-services",
+                    "role_key": "common",
+                    "remote_workdir": "/srv/validation-environment",
+                    "ssh": {
+                        "configured": True,
+                        "host": "127.0.0.1",
+                        "port": "22",
+                        "user": "operator",
+                    },
+                }
+            ],
+        }
+
+        result = main.run_vm_distributed_remote_preflight(plan, command_runner=runner)
+
+        self.assertEqual(result["status"], "passed")
+        self.assertTrue(result["vms"][0]["local"])
+        self.assertEqual(commands[0][0][0], "sh")
+        self.assertNotIn("ssh", commands[0][0])
+        self.assertEqual(result["vms"][0]["facts"]["hostname"], "common-vm")
+        self.assertEqual(result["vms"][0]["facts"]["http_local"], "404")
+
     def test_remote_preflight_shell_uses_non_blocking_http_local_label(self):
         shell = main._vm_distributed_remote_preflight_shell(
             workdir="/srv/validation-environment",

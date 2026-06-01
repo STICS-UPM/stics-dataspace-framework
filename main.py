@@ -12418,13 +12418,44 @@ def _vm_distributed_default_command_runner(command, timeout):
     )
 
 
+def _vm_distributed_plan_vm_is_local_to_common_services(plan, vm):
+    if str((plan or {}).get("execution_host") or "").strip().lower() != "common-services":
+        return False
+    role_key = str((vm or {}).get("role_key") or (vm or {}).get("role") or "").strip().lower()
+    role_key = role_key.replace("_", "-")
+    if role_key in {"common", "common-services"}:
+        return True
+    if role_key not in {"components", "component-services"}:
+        return False
+
+    ssh = dict((vm or {}).get("ssh") or {})
+    common_vm = next(
+        (
+            item
+            for item in list((plan or {}).get("vms") or [])
+            if str(item.get("role_key") or item.get("role") or "").strip().lower().replace("_", "-")
+            in {"common", "common-services"}
+        ),
+        {},
+    )
+    common_ssh = dict(common_vm.get("ssh") or {})
+    local_aliases = {
+        "127.0.0.1",
+        "localhost",
+        str(common_vm.get("address") or "").strip(),
+        str(common_ssh.get("host") or "").strip(),
+    }
+    local_aliases.discard("")
+    return str((vm or {}).get("address") or "").strip() in local_aliases or str(ssh.get("host") or "").strip() in local_aliases
+
+
 def run_vm_distributed_remote_preflight(plan, command_runner=None):
     vm_plan = dict(plan or {})
     ssh_plan = dict(vm_plan.get("ssh") or {})
     has_configured_ssh = ssh_plan.get("mode") in {"direct", "bastion"} or any(
         (dict(item.get("ssh") or {}).get("access_mode") in {"direct", "bastion"})
         for item in list(vm_plan.get("vms") or [])
-    )
+    ) or any(_vm_distributed_plan_vm_is_local_to_common_services(vm_plan, item) for item in list(vm_plan.get("vms") or []))
     if not has_configured_ssh:
         return {
             "status": "skipped",
@@ -12445,7 +12476,8 @@ def run_vm_distributed_remote_preflight(plan, command_runner=None):
     results = []
     for vm in list(vm_plan.get("vms") or []):
         ssh = dict(vm.get("ssh") or {})
-        if not ssh.get("configured"):
+        local_common_vm = _vm_distributed_plan_vm_is_local_to_common_services(vm_plan, vm)
+        if not ssh.get("configured") and not local_common_vm:
             results.append(
                 {
                     "role": vm.get("role"),
@@ -12458,7 +12490,11 @@ def run_vm_distributed_remote_preflight(plan, command_runner=None):
             workdir=vm.get("remote_workdir"),
             http_url="http://127.0.0.1/",
         )
-        command = _vm_distributed_build_ssh_command(vm_plan, vm, remote_command=remote_command)
+        command = (
+            ["sh", "-lc", remote_command]
+            if local_common_vm
+            else _vm_distributed_build_ssh_command(vm_plan, vm, remote_command=remote_command)
+        )
         try:
             completed = runner(command, timeout=timeout)
             returncode = int(getattr(completed, "returncode", 1) or 0)
@@ -12469,6 +12505,7 @@ def run_vm_distributed_remote_preflight(plan, command_runner=None):
                     "role": vm.get("role"),
                     "host": ssh.get("host"),
                     "status": "passed" if returncode == 0 else "failed",
+                    "local": local_common_vm,
                     "returncode": returncode,
                     "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
                     "facts": _vm_distributed_parse_key_value_output(stdout),
