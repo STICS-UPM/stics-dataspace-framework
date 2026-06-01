@@ -8680,9 +8680,15 @@ def _topology_runtime_environment_overrides(topology="local", level=None, role=N
     if runtime.get("cluster_type") != "k3s":
         return {}
     if normalized_topology == "vm-distributed":
+        runtime_role = role or _vm_distributed_level_runtime_role(level)
         kubeconfig = _vm_distributed_runtime_kubeconfig(
             runtime,
-            role=role or _vm_distributed_level_runtime_role(level),
+            role=runtime_role,
+        )
+        kubeconfig = _vm_distributed_effective_kubeconfig_path(
+            config,
+            runtime_role,
+            kubeconfig,
         )
     else:
         kubeconfig = str(runtime.get("k3s_kubeconfig") or "").strip()
@@ -8699,11 +8705,15 @@ def _topology_runtime_environment_overrides(topology="local", level=None, role=N
 def _configured_vm_distributed_role_kubeconfigs():
     config = _load_effective_infrastructure_deployer_config(topology="vm-distributed")
     runtime = build_cluster_runtime(config, topology="vm-distributed")
-    return {
+    raw_kubeconfigs = {
         "common": _vm_distributed_runtime_kubeconfig(runtime, "common"),
         "provider": _vm_distributed_runtime_kubeconfig(runtime, "provider"),
         "consumer": _vm_distributed_runtime_kubeconfig(runtime, "consumer"),
         "components": _vm_distributed_runtime_kubeconfig(runtime, "components"),
+    }
+    return {
+        role: _vm_distributed_effective_kubeconfig_path(config, role, path)
+        for role, path in raw_kubeconfigs.items()
     }
 
 
@@ -8737,17 +8747,21 @@ def _kubeconfig_loopback_port(server):
 
 def _vm_distributed_role_ssh_config(config, role):
     normalized = str(role or "common").strip().upper()
+    role_key = normalized.lower()
+    address = _vm_distributed_config_value(
+        config,
+        f"VM_{normalized}_IP",
+        "VM_EXTERNAL_IP",
+    )
+    spec = {
+        "ssh_host_key": f"VM_{normalized}_SSH_HOST",
+    }
     return {
-        "host": _vm_distributed_config_value(
-            config,
-            f"VM_{normalized}_SSH_HOST",
-            f"VM_{normalized}_K8S_NODE",
-            f"VM_{normalized}_IP",
-            "VM_EXTERNAL_IP",
-        ),
+        "host": _vm_distributed_effective_ssh_host(config, spec, address)
+        or _vm_distributed_config_value(config, f"VM_{normalized}_K8S_NODE"),
         "port": _vm_distributed_config_value(config, f"VM_{normalized}_SSH_PORT", default="22") or "22",
         "user": _vm_distributed_config_value(config, f"VM_{normalized}_SSH_USER", "VM_SSH_USER"),
-        "identity_file": _vm_distributed_identity_file(config, normalized.lower()),
+        "identity_file": _vm_distributed_identity_file(config, role_key),
     }
 
 
@@ -8784,7 +8798,7 @@ def _vm_distributed_k3s_tunnel_command(config, role, local_port):
     if ssh_config.get("identity_file"):
         command.extend(["-i", ssh_config["identity_file"]])
 
-    access_mode = _vm_distributed_config_value(config, "SSH_ACCESS_MODE").lower().replace("_", "-")
+    access_mode = _vm_distributed_effective_ssh_access_mode(config)
     bastion_host = _vm_distributed_config_value(config, "SSH_BASTION_HOST")
     if access_mode == "bastion" or (not access_mode and bastion_host):
         bastion_target = _vm_distributed_ssh_target(
@@ -9620,6 +9634,8 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "VM_DATASPACE_IP",
     "VM_PROVIDER_IP",
     "VM_CONSUMER_IP",
+    "VM_PROVIDER_K8S_NODE",
+    "VM_CONSUMER_K8S_NODE",
     "VM_CONNECTORS_IP",
     "VM_COMPONENTS_IP",
     "VM_OBSERVABILITY_IP",
@@ -9660,6 +9676,11 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "SSH_CONNECT_TIMEOUT_SECONDS",
     "VM_DISTRIBUTED_SSH_IDENTITY_FILE",
     "VM_DISTRIBUTED_EXECUTION_HOST",
+    "VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH",
+    "VM_DISTRIBUTED_INFER_LOCAL_WORKDIR",
+    "VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE",
+    "VM_DISTRIBUTED_KUBECONFIG_DIR",
+    "VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY",
     "VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE",
     "VM_DISTRIBUTED_SSH_KEY_COMMENT",
     "VM_DISTRIBUTED_SSH_MANAGED_MARKER",
@@ -10193,7 +10214,7 @@ def _vm_distributed_ssh_access_preflight(topology_config):
         "VM_CONSUMER_SSH_USER",
     )
     has_metadata = any(str(topology.get(key) or "").strip() for key in ssh_identity_keys)
-    mode = str(topology.get("SSH_ACCESS_MODE") or "").strip().lower().replace("_", "-")
+    mode = _vm_distributed_effective_ssh_access_mode(topology)
     warnings = []
 
     if not has_metadata:
@@ -10322,6 +10343,17 @@ def _vm_distributed_config_value(config, *keys, default=""):
     return str(default or "").strip()
 
 
+def _vm_distributed_config_flag(config, key, default=False):
+    raw_value = (config or {}).get(key)
+    if raw_value is None or str(raw_value).strip() == "":
+        return bool(default)
+    return str(raw_value).strip().lower() in {"1", "true", "yes", "on", "y", "s", "si", "sí"}
+
+
+def _framework_root_dir():
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def _vm_distributed_connect_timeout_seconds(topology_config):
     raw_value = (
         os.getenv("PIONERA_VM_DISTRIBUTED_SSH_CONNECT_TIMEOUT_SECONDS")
@@ -10421,8 +10453,195 @@ def _normalized_vm_distributed_execution_host(topology_config):
         "common": "common-services",
         "common-vm": "common-services",
         "common-services-vm": "common-services",
+        "detect": "auto",
+        "detected": "auto",
     }
-    return aliases.get(raw_value, raw_value)
+    normalized = aliases.get(raw_value, raw_value)
+    if normalized == "auto":
+        return "common-services" if _vm_distributed_running_on_common_services(topology_config) else "external"
+    return normalized
+
+
+def _vm_distributed_running_on_common_services(topology_config):
+    topology = dict(topology_config or {})
+    target_values = {
+        _vm_distributed_config_value(topology, "VM_COMMON_IP"),
+        _vm_distributed_config_value(topology, "VM_COMMON_SSH_HOST"),
+        _vm_distributed_config_value(topology, "VM_EXTERNAL_IP"),
+    }
+    target_values = {str(value or "").strip() for value in target_values if str(value or "").strip()}
+    aliases = _vm_distributed_host_aliases()
+    if any(value.lower() in aliases for value in target_values):
+        return True
+
+    local_addresses = _local_host_addresses()
+    target_addresses = set()
+    for value in target_values:
+        target_addresses.update(_resolve_host_addresses(value))
+    return bool(local_addresses.intersection(target_addresses))
+
+
+def _vm_distributed_common_vm_direct_ssh_enabled(topology_config):
+    return _vm_distributed_config_flag(
+        topology_config,
+        "VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH",
+        default=True,
+    )
+
+
+def _vm_distributed_effective_ssh_access_mode(topology_config):
+    topology = dict(topology_config or {})
+    mode = str(topology.get("SSH_ACCESS_MODE") or "").strip().lower().replace("_", "-")
+    if mode not in {"direct", "bastion"}:
+        mode = ""
+    if (
+        _normalized_vm_distributed_execution_host(topology) == "common-services"
+        and _vm_distributed_common_vm_direct_ssh_enabled(topology)
+        and mode in {"", "bastion"}
+    ):
+        return "direct"
+    return mode
+
+
+def _vm_distributed_effective_ssh_host(topology_config, spec, address):
+    topology = dict(topology_config or {})
+    configured = _vm_distributed_config_value(topology, spec["ssh_host_key"])
+    if (
+        _normalized_vm_distributed_execution_host(topology) == "common-services"
+        and _vm_distributed_common_vm_direct_ssh_enabled(topology)
+    ):
+        return address or configured
+    return configured or address
+
+
+def _vm_distributed_infer_local_workdir_enabled(topology_config):
+    return _vm_distributed_config_flag(
+        topology_config,
+        "VM_DISTRIBUTED_INFER_LOCAL_WORKDIR",
+        default=True,
+    )
+
+
+def _vm_distributed_effective_remote_workdir(topology_config, role_key, *keys, default=""):
+    configured = _vm_distributed_config_value(topology_config, *keys, default=default)
+    if configured:
+        return configured
+    if (
+        str(role_key or "").strip().lower() == "common"
+        and _normalized_vm_distributed_execution_host(topology_config) == "common-services"
+        and _vm_distributed_infer_local_workdir_enabled(topology_config)
+    ):
+        return _framework_root_dir()
+    return ""
+
+
+def _vm_distributed_kubeconfig_auto_localize_enabled(topology_config):
+    return _vm_distributed_config_flag(
+        topology_config,
+        "VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE",
+        default=True,
+    )
+
+
+def _vm_distributed_kubeconfig_dir(topology_config):
+    configured = _vm_distributed_config_value(
+        topology_config,
+        "VM_DISTRIBUTED_KUBECONFIG_DIR",
+        default="~/.kube",
+    )
+    return os.path.abspath(os.path.expanduser(configured))
+
+
+def _vm_distributed_role_node_name(topology_config, role):
+    normalized = str(role or "").strip().upper().replace("-", "_")
+    if normalized == "COMPONENTS":
+        normalized = "COMMON"
+    value = _vm_distributed_config_value(topology_config, f"VM_{normalized}_K8S_NODE")
+    if value:
+        return value
+    if normalized == "COMMON":
+        return str(socket.gethostname() or "").strip()
+    return ""
+
+
+def _vm_distributed_unique_paths(paths):
+    unique = []
+    seen = set()
+    for path in paths:
+        value = os.path.abspath(os.path.expanduser(str(path or "").strip()))
+        if value and value not in seen:
+            seen.add(value)
+            unique.append(value)
+    return unique
+
+
+def _vm_distributed_readable_file(path):
+    value = os.path.abspath(os.path.expanduser(str(path or "").strip()))
+    return bool(value and os.path.isfile(value) and os.access(value, os.R_OK))
+
+
+def _vm_distributed_kubeconfig_candidates(topology_config, role, configured_path=""):
+    topology = dict(topology_config or {})
+    normalized_role = str(role or "").strip().lower()
+    kubeconfig_dir = _vm_distributed_kubeconfig_dir(topology)
+    candidates = []
+    if normalized_role in {"common", "components"}:
+        candidates.append("/etc/rancher/k3s/k3s.yaml")
+
+    node_name = _vm_distributed_role_node_name(topology, normalized_role)
+    if node_name:
+        candidates.append(os.path.join(kubeconfig_dir, f"{node_name}.yaml"))
+
+    basename = os.path.basename(os.path.expanduser(str(configured_path or "").strip()))
+    if basename and basename not in {"k3s.yaml", "config"}:
+        candidates.append(os.path.join(kubeconfig_dir, basename))
+    return _vm_distributed_unique_paths(candidates)
+
+
+def _vm_distributed_effective_kubeconfig_path(topology_config, role, configured_path=""):
+    topology = dict(topology_config or {})
+    configured = str(configured_path or "").strip()
+    expanded = os.path.abspath(os.path.expanduser(configured)) if configured else ""
+    if expanded and _vm_distributed_readable_file(expanded):
+        return expanded
+    if (
+        _normalized_vm_distributed_execution_host(topology) != "common-services"
+        or not _vm_distributed_kubeconfig_auto_localize_enabled(topology)
+    ):
+        return expanded or configured
+
+    candidates = _vm_distributed_kubeconfig_candidates(topology, role, configured)
+    for candidate in candidates:
+        if _vm_distributed_readable_file(candidate):
+            return candidate
+    if not expanded and candidates:
+        return candidates[0]
+    if expanded:
+        basename = os.path.basename(expanded)
+        for candidate in candidates:
+            if basename and os.path.basename(candidate) == basename:
+                return candidate
+    return expanded or (candidates[0] if candidates else "")
+
+
+def _vm_distributed_http_preflight_tls_verify_mode(config_or_plan):
+    http_preflight = dict((config_or_plan or {}).get("http_preflight") or {})
+    raw_value = str(
+        http_preflight.get("tls_verify")
+        or (config_or_plan or {}).get("VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY")
+        or "auto"
+    ).strip().lower()
+    aliases = {
+        "1": "true",
+        "yes": "true",
+        "on": "true",
+        "0": "false",
+        "no": "false",
+        "off": "false",
+        "detect": "auto",
+    }
+    mode = aliases.get(raw_value, raw_value)
+    return mode if mode in {"auto", "true", "false"} else "auto"
 
 
 def _normalized_vm_distributed_ssh_bootstrap_mode(topology_config):
@@ -10597,8 +10816,9 @@ def _build_vm_distributed_ssh_bootstrap_plan(infrastructure_config, topology_con
         "VM_DISTRIBUTED_SSH_MANAGED_MARKER",
         default="validation-environment-vm-distributed",
     )
-    remote_workdir = _vm_distributed_config_value(
+    remote_workdir = _vm_distributed_effective_remote_workdir(
         topology,
+        "common",
         "VM_COMMON_REMOTE_WORKDIR",
         "VM_REMOTE_WORKDIR",
     )
@@ -10612,7 +10832,7 @@ def _build_vm_distributed_ssh_bootstrap_plan(infrastructure_config, topology_con
             spec["fallback_address_key"],
             "VM_EXTERNAL_IP",
         )
-        ssh_host = _vm_distributed_config_value(topology, spec["ssh_host_key"], default=address)
+        ssh_host = _vm_distributed_effective_ssh_host(topology, spec, address)
         ssh_user = _vm_distributed_config_value(topology, spec["ssh_user_key"], "VM_SSH_USER")
         target_roles.append(
             {
@@ -11134,9 +11354,7 @@ def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, 
     adapter = dict(adapter_config or {})
     preflight = _vm_distributed_configuration_preflight(infra, topology, adapter)
     ssh_bootstrap = _build_vm_distributed_ssh_bootstrap_plan(infra, topology, adapter)
-    mode = str(topology.get("SSH_ACCESS_MODE") or "").strip().lower().replace("_", "-")
-    if mode not in {"direct", "bastion"}:
-        mode = ""
+    mode = _vm_distributed_effective_ssh_access_mode(topology)
     timeout = _vm_distributed_connect_timeout_seconds(topology)
     access = {
         "mode": mode or "not-configured",
@@ -11163,14 +11381,15 @@ def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, 
             spec["fallback_address_key"],
             "VM_EXTERNAL_IP",
         )
-        ssh_host = _vm_distributed_config_value(topology, spec["ssh_host_key"], default=address)
+        ssh_host = _vm_distributed_effective_ssh_host(topology, spec, address)
         ssh_port = _vm_distributed_config_value(topology, spec["ssh_port_key"], default="22") or "22"
-        ssh_user = _vm_distributed_config_value(topology, spec["ssh_user_key"])
+        ssh_user = _vm_distributed_config_value(topology, spec["ssh_user_key"], "VM_SSH_USER")
         ssh_identity_file = _vm_distributed_identity_file(topology, spec["role_key"])
         public_url = _vm_distributed_config_value(topology, spec["public_url_key"])
         http_url = _vm_distributed_config_value(topology, spec["http_url_key"], default=f"http://{address}" if address else "")
-        remote_workdir = _vm_distributed_config_value(
+        remote_workdir = _vm_distributed_effective_remote_workdir(
             topology,
+            spec["role_key"],
             spec["workdir_key"],
             default=spec.get("default_workdir") or "",
         )
@@ -11214,6 +11433,9 @@ def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, 
         "ssh": access,
         "vms": vms,
         "ssh_bootstrap": ssh_bootstrap,
+        "http_preflight": {
+            "tls_verify": _vm_distributed_http_preflight_tls_verify_mode(topology),
+        },
         "connectors": _vm_distributed_connector_plan(adapter),
         "validation_pairs": validation_pairs,
         "configuration_preflight": preflight,
@@ -11586,16 +11808,43 @@ def run_vm_distributed_remote_preflight(plan, command_runner=None):
     }
 
 
+def _vm_distributed_http_get(getter, url, *, timeout=3, allow_redirects=False, verify=None):
+    kwargs = {"timeout": timeout, "allow_redirects": allow_redirects}
+    if verify is not None:
+        kwargs["verify"] = verify
+    try:
+        return getter(url, **kwargs)
+    except TypeError as exc:
+        if verify is not None and "verify" in str(exc):
+            kwargs.pop("verify", None)
+            return getter(url, **kwargs)
+        raise
+
+
 def run_vm_distributed_http_preflight(plan, request_get=None):
     getter = request_get or requests.get
+    tls_verify_mode = _vm_distributed_http_preflight_tls_verify_mode(plan)
     results = []
     for vm in list((plan or {}).get("vms") or []):
         url = str(vm.get("http_url") or "").strip()
         if not url:
             results.append({"role": vm.get("role"), "status": "skipped", "reason": "missing-http-url"})
             continue
+        parsed_url = urllib.parse.urlparse(url)
+        is_https = str(parsed_url.scheme or "").lower() == "https"
+        verify = None
+        if is_https and tls_verify_mode in {"true", "auto"}:
+            verify = True
+        elif is_https and tls_verify_mode == "false":
+            verify = False
         try:
-            response = getter(url, timeout=3, allow_redirects=False)
+            response = _vm_distributed_http_get(
+                getter,
+                url,
+                timeout=3,
+                allow_redirects=False,
+                verify=verify,
+            )
             status_code = int(getattr(response, "status_code", 0) or 0)
             results.append(
                 {
@@ -11605,6 +11854,46 @@ def run_vm_distributed_http_preflight(plan, request_get=None):
                     "status_code": status_code,
                 }
             )
+        except requests.exceptions.SSLError as exc:
+            if not is_https or tls_verify_mode != "auto":
+                results.append(
+                    {
+                        "role": vm.get("role"),
+                        "url": url,
+                        "status": "failed",
+                        "error": str(exc)[:500],
+                    }
+                )
+                continue
+            try:
+                response = _vm_distributed_http_get(
+                    getter,
+                    url,
+                    timeout=3,
+                    allow_redirects=False,
+                    verify=False,
+                )
+                status_code = int(getattr(response, "status_code", 0) or 0)
+                results.append(
+                    {
+                        "role": vm.get("role"),
+                        "url": url,
+                        "status": "warning" if 100 <= status_code < 500 else "failed",
+                        "status_code": status_code,
+                        "reason": "tls-verification-failed",
+                        "error": str(exc)[:500],
+                    }
+                )
+            except requests.RequestException as retry_exc:
+                results.append(
+                    {
+                        "role": vm.get("role"),
+                        "url": url,
+                        "status": "failed",
+                        "reason": "tls-verification-failed",
+                        "error": f"{str(exc)[:240]} | retry without TLS verification: {str(retry_exc)[:240]}",
+                    }
+                )
         except requests.RequestException as exc:
             results.append(
                 {
@@ -11615,7 +11904,12 @@ def run_vm_distributed_http_preflight(plan, request_get=None):
                 }
             )
     statuses = {str(item.get("status") or "").strip().lower() for item in results}
-    overall = "passed" if statuses == {"passed"} else "failed" if "failed" in statuses else "skipped"
+    if "failed" in statuses:
+        overall = "failed"
+    elif "warning" in statuses:
+        overall = "passed-with-warnings"
+    else:
+        overall = "passed" if statuses == {"passed"} else "skipped"
     return {
         "status": overall,
         "topology": "vm-distributed",
@@ -11652,19 +11946,31 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
             missing.append(key)
             missing_adapter_keys.append(key)
 
-    kubeconfig_keys = ("K3S_KUBECONFIG_COMMON", "K3S_KUBECONFIG_PROVIDER", "K3S_KUBECONFIG_CONSUMER")
+    kubeconfig_roles = {
+        "K3S_KUBECONFIG_COMMON": "common",
+        "K3S_KUBECONFIG_PROVIDER": "provider",
+        "K3S_KUBECONFIG_CONSUMER": "consumer",
+    }
+    kubeconfig_keys = tuple(kubeconfig_roles)
     missing_kubeconfig_keys = []
     missing_kubeconfig_files = []
+    effective_kubeconfigs = {}
     for key in kubeconfig_keys:
-        kubeconfig = str(topology.get(key) or "").strip()
+        role = kubeconfig_roles[key]
+        configured_kubeconfig = str(topology.get(key) or "").strip()
+        kubeconfig = _vm_distributed_effective_kubeconfig_path(topology, role, configured_kubeconfig)
+        effective_kubeconfigs[role] = kubeconfig
         if not kubeconfig:
             missing_kubeconfig_keys.append(key)
             warnings.append(f"{key} is empty; vm-distributed will need a kubeconfig for that role.")
             continue
         expanded = os.path.abspath(os.path.expanduser(kubeconfig))
-        if not os.path.isfile(expanded):
+        if not _vm_distributed_readable_file(expanded):
             missing_kubeconfig_files.append(key)
-            warnings.append(f"{key} does not exist locally: {kubeconfig}")
+            if configured_kubeconfig and configured_kubeconfig != kubeconfig:
+                warnings.append(f"{key} is not readable locally after common-services localization: {kubeconfig}")
+            else:
+                warnings.append(f"{key} is not readable locally: {kubeconfig}")
 
     dataspace_name = str(adapter.get("DS_1_NAME") or "").strip()
     connectors = parse_connector_list(adapter.get("DS_1_CONNECTORS"), dataspace_name)
@@ -11720,9 +12026,9 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
         warnings.append("LEVEL4_CONNECTOR_RECONCILIATION_MODE should be full or additive.")
 
     role_kubeconfigs = [
-        str(topology.get(key) or "").strip()
+        str(effective_kubeconfigs.get(kubeconfig_roles[key]) or "").strip()
         for key in kubeconfig_keys
-        if str(topology.get(key) or "").strip()
+        if str(effective_kubeconfigs.get(kubeconfig_roles[key]) or "").strip()
     ]
     multi_kubeconfig = len(set(role_kubeconfigs)) > 1
     common_address = str(topology.get("VM_COMMON_IP") or "").strip()
@@ -11880,6 +12186,7 @@ def _print_vm_distributed_preflight(preflight):
                 "ready": "[ok]",
                 "missing": "[missing]",
                 "needs-review": "[review]",
+                "warning": "[warn]",
                 "blocked": "[blocked]",
             }.get(check_status, "[?]")
             detail = str(check.get("detail") or "").strip()
@@ -12190,6 +12497,8 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         "VM_DATASPACE_IP": common_ip,
         "VM_PROVIDER_IP": provider_ip,
         "VM_CONSUMER_IP": consumer_ip,
+        "VM_PROVIDER_K8S_NODE": topology_config.get("VM_PROVIDER_K8S_NODE") or "",
+        "VM_CONSUMER_K8S_NODE": topology_config.get("VM_CONSUMER_K8S_NODE") or "",
         "VM_CONNECTORS_IP": provider_ip,
         "VM_COMPONENTS_IP": components_ip or common_ip,
         "VM_OBSERVABILITY_IP": components_ip or common_ip,
@@ -12226,7 +12535,14 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         "SSH_IDENTITY_FILE": topology_config.get("SSH_IDENTITY_FILE") or "",
         "SSH_CONNECT_TIMEOUT_SECONDS": topology_config.get("SSH_CONNECT_TIMEOUT_SECONDS") or "5",
         "VM_DISTRIBUTED_SSH_IDENTITY_FILE": topology_config.get("VM_DISTRIBUTED_SSH_IDENTITY_FILE") or "",
-        "VM_DISTRIBUTED_EXECUTION_HOST": topology_config.get("VM_DISTRIBUTED_EXECUTION_HOST") or "external",
+        "VM_DISTRIBUTED_EXECUTION_HOST": topology_config.get("VM_DISTRIBUTED_EXECUTION_HOST") or "auto",
+        "VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH": topology_config.get("VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH") or "true",
+        "VM_DISTRIBUTED_INFER_LOCAL_WORKDIR": topology_config.get("VM_DISTRIBUTED_INFER_LOCAL_WORKDIR") or "true",
+        "VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE": topology_config.get("VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE") or "true",
+        "VM_DISTRIBUTED_KUBECONFIG_DIR": topology_config.get("VM_DISTRIBUTED_KUBECONFIG_DIR") or "~/.kube",
+        "VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY": (
+            topology_config.get("VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY") or "auto"
+        ),
         "VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE": topology_config.get("VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE") or "manual",
         "VM_DISTRIBUTED_SSH_KEY_COMMENT": (
             topology_config.get("VM_DISTRIBUTED_SSH_KEY_COMMENT")

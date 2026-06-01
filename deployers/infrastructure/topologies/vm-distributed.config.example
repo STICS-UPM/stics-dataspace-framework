@@ -93,7 +93,15 @@ SSH_IDENTITY_FILE=
 SSH_CONNECT_TIMEOUT_SECONDS=5
 
 # Optional orchestration/preflight metadata. Keep real workspace paths in local .config files.
-VM_DISTRIBUTED_EXECUTION_HOST=external
+# VM_DISTRIBUTED_EXECUTION_HOST accepts auto, external or common-services.
+# auto keeps WSL/operator workflows external and switches to common-services when
+# the framework is executed directly inside the common-services VM.
+VM_DISTRIBUTED_EXECUTION_HOST=auto
+VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH=true
+VM_DISTRIBUTED_INFER_LOCAL_WORKDIR=true
+VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE=true
+VM_DISTRIBUTED_KUBECONFIG_DIR=~/.kube
+VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY=auto
 VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE=manual
 VM_DISTRIBUTED_SSH_KEY_COMMENT=validation-environment-vm-distributed
 VM_DISTRIBUTED_SSH_MANAGED_MARKER=validation-environment-vm-distributed

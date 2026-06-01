@@ -581,7 +581,12 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertIn("K3S_KUBECONFIG_COMPONENTS=", topology_config)
         self.assertIn("SSH_ACCESS_MODE=", topology_config)
         self.assertIn("SSH_CONNECT_TIMEOUT_SECONDS=5", topology_config)
-        self.assertIn("VM_DISTRIBUTED_EXECUTION_HOST=external", topology_config)
+        self.assertIn("VM_DISTRIBUTED_EXECUTION_HOST=auto", topology_config)
+        self.assertIn("VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH=true", topology_config)
+        self.assertIn("VM_DISTRIBUTED_INFER_LOCAL_WORKDIR=true", topology_config)
+        self.assertIn("VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE=true", topology_config)
+        self.assertIn("VM_DISTRIBUTED_KUBECONFIG_DIR=~/.kube", topology_config)
+        self.assertIn("VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY=auto", topology_config)
         self.assertIn("VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE=manual", topology_config)
         self.assertIn("VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY=accept-new", topology_config)
         self.assertIn("VM_DISTRIBUTED_DEPLOYMENT_MODE=orchestrator", topology_config)
@@ -770,6 +775,89 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             [item["name"] for item in plan["ssh_bootstrap"]["actions"]],
         )
 
+    def test_auto_execution_from_common_vm_uses_direct_ssh_and_local_workdir(self):
+        with mock.patch.object(main, "_local_host_addresses", return_value={"10.0.0.10"}):
+            plan = main._build_vm_distributed_topology_plan(
+                {
+                    "DOMAIN_BASE": "validation.example.local",
+                    "DS_DOMAIN_BASE": "ds.validation.example.local",
+                },
+                {
+                    "VM_COMMON_IP": "10.0.0.10",
+                    "VM_PROVIDER_IP": "10.0.0.20",
+                    "VM_CONSUMER_IP": "10.0.0.30",
+                    "K3S_KUBECONFIG_COMMON": "/tmp/common.yaml",
+                    "K3S_KUBECONFIG_PROVIDER": "/tmp/provider.yaml",
+                    "K3S_KUBECONFIG_CONSUMER": "/tmp/consumer.yaml",
+                    "SSH_ACCESS_MODE": "bastion",
+                    "SSH_BASTION_HOST": "bastion.example.test",
+                    "SSH_BASTION_USER": "jump",
+                    "VM_DISTRIBUTED_EXECUTION_HOST": "auto",
+                    "VM_PROVIDER_SSH_HOST": "provider-name",
+                    "VM_CONSUMER_SSH_HOST": "consumer-name",
+                    "VM_SSH_USER": "operator",
+                },
+                {
+                    "DS_1_NAME": "pionera",
+                    "DS_1_CONNECTORS": "alpha,beta",
+                    "DS_1_CONNECTOR_NAMESPACES": "alpha:provider,beta:consumer",
+                    "LEVEL4_CONNECTOR_RECONCILIATION_MODE": "full",
+                },
+            )
+
+        self.assertEqual(plan["execution_host"], "common-services")
+        self.assertEqual(plan["ssh"]["mode"], "direct")
+        common_vm = next(item for item in plan["vms"] if item["role_key"] == "common")
+        provider_vm = next(item for item in plan["vms"] if item["role_key"] == "provider")
+        self.assertEqual(common_vm["remote_workdir"], main._framework_root_dir())
+        self.assertEqual(provider_vm["ssh"]["host"], "10.0.0.20")
+        self.assertNotIn("ProxyCommand", provider_vm["ssh"]["command"])
+        self.assertNotIn("-J", provider_vm["ssh"]["command"])
+
+    def test_common_vm_preflight_localizes_role_kubeconfigs_from_configured_directory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            kube_dir = os.path.join(tmpdir, ".kube")
+            os.makedirs(kube_dir, exist_ok=True)
+            common_kubeconfig = os.path.join(kube_dir, "pionera40.yaml")
+            provider_kubeconfig = os.path.join(kube_dir, "pionera20.yaml")
+            consumer_kubeconfig = os.path.join(kube_dir, "pionera3.yaml")
+            for path in (common_kubeconfig, provider_kubeconfig, consumer_kubeconfig):
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("apiVersion: v1\n")
+
+            topology = {
+                "VM_COMMON_IP": "10.0.0.10",
+                "VM_PROVIDER_IP": "10.0.0.20",
+                "VM_CONSUMER_IP": "10.0.0.30",
+                "VM_SSH_USER": "operator",
+                "VM_PROVIDER_K8S_NODE": "pionera20",
+                "VM_CONSUMER_K8S_NODE": "pionera3",
+                "VM_DISTRIBUTED_EXECUTION_HOST": "auto",
+                "VM_DISTRIBUTED_KUBECONFIG_DIR": kube_dir,
+                "K3S_KUBECONFIG_COMMON": "/home/other/.kube/pionera40.yaml",
+                "K3S_KUBECONFIG_PROVIDER": "/home/other/.kube/pionera20.yaml",
+                "K3S_KUBECONFIG_CONSUMER": "/home/other/.kube/pionera3.yaml",
+            }
+
+            with mock.patch.object(main, "_local_host_addresses", return_value={"10.0.0.10"}):
+                preflight = main._vm_distributed_configuration_preflight(
+                    {
+                        "DOMAIN_BASE": "validation.example.local",
+                        "DS_DOMAIN_BASE": "ds.validation.example.local",
+                    },
+                    topology,
+                    {
+                        "DS_1_NAME": "pionera",
+                        "DS_1_CONNECTORS": "alpha,beta",
+                        "DS_1_CONNECTOR_NAMESPACES": "alpha:provider,beta:consumer",
+                        "DS_1_VALIDATION_PAIRS": "alpha>beta",
+                        "LEVEL4_CONNECTOR_RECONCILIATION_MODE": "full",
+                    },
+                )
+
+        self.assertEqual(preflight["status"], "ready")
+        self.assertEqual(preflight["warnings"], [])
+
     def test_reconcile_vm_distributed_ssh_access_installs_key_and_verifies_batchmode(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             identity_file = os.path.join(tmpdir, "validation-env")
@@ -956,8 +1044,8 @@ class VmDistributedConfigurationTests(unittest.TestCase):
     def test_http_preflight_marks_http_responses_below_500_as_reachable(self):
         seen = []
 
-        def getter(url, timeout, allow_redirects):
-            seen.append((url, timeout, allow_redirects))
+        def getter(url, timeout, allow_redirects, **kwargs):
+            seen.append((url, timeout, allow_redirects, kwargs))
             return mock.Mock(status_code=404)
 
         result = main.run_vm_distributed_http_preflight(
@@ -967,7 +1055,29 @@ class VmDistributedConfigurationTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["vms"][0]["status_code"], 404)
-        self.assertEqual(seen, [("http://192.0.2.10", 3, False)])
+        self.assertEqual(seen, [("http://192.0.2.10", 3, False, {})])
+
+    def test_http_preflight_reports_self_signed_tls_as_warning_when_endpoint_is_reachable(self):
+        seen = []
+
+        def getter(url, timeout, allow_redirects, **kwargs):
+            seen.append((url, kwargs.get("verify")))
+            if kwargs.get("verify") is True:
+                raise main.requests.exceptions.SSLError("self signed certificate")
+            return mock.Mock(status_code=200)
+
+        result = main.run_vm_distributed_http_preflight(
+            {
+                "http_preflight": {"tls_verify": "auto"},
+                "vms": [{"role": "common-services", "http_url": "https://org1.example.test"}],
+            },
+            request_get=getter,
+        )
+
+        self.assertEqual(result["status"], "passed-with-warnings")
+        self.assertEqual(result["vms"][0]["status"], "warning")
+        self.assertEqual(result["vms"][0]["reason"], "tls-verification-failed")
+        self.assertEqual(seen, [("https://org1.example.test", True), ("https://org1.example.test", False)])
 
     def test_preflight_reports_incomplete_required_values(self):
         preflight = main._vm_distributed_configuration_preflight({}, {}, {})
