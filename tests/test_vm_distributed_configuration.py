@@ -1,5 +1,6 @@
 import io
 import os
+import stat
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -586,11 +587,17 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertIn("VM_DISTRIBUTED_INFER_LOCAL_WORKDIR=true", topology_config)
         self.assertIn("VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE=true", topology_config)
         self.assertIn("VM_DISTRIBUTED_KUBECONFIG_DIR=~/.kube", topology_config)
+        self.assertIn("VM_DISTRIBUTED_KUBECONFIG_SYNC=auto", topology_config)
+        self.assertIn("VM_DISTRIBUTED_REMOTE_KUBECONFIG=/etc/rancher/k3s/k3s.yaml", topology_config)
         self.assertIn("VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY=auto", topology_config)
         self.assertIn("VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE=manual", topology_config)
         self.assertIn("VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY=accept-new", topology_config)
         self.assertIn("VM_DISTRIBUTED_DEPLOYMENT_MODE=orchestrator", topology_config)
         self.assertIn("VM_DISTRIBUTED_PREFLIGHT_DRY_RUN=true", topology_config)
+        self.assertIn("VM_COMMON_K3S_API_LOCAL_PORT=6443", topology_config)
+        self.assertIn("VM_PROVIDER_K3S_API_LOCAL_PORT=26443", topology_config)
+        self.assertIn("VM_CONSUMER_K3S_API_LOCAL_PORT=36443", topology_config)
+        self.assertIn("VM_COMPONENTS_K3S_API_LOCAL_PORT=6443", topology_config)
         self.assertIn("VM_COMMON_HTTP_URL=http://10.0.0.10", topology_config)
         self.assertIn("VM_PROVIDER_HTTP_URL=http://10.0.0.20", topology_config)
         self.assertIn("VM_CONSUMER_HTTP_URL=http://10.0.0.30", topology_config)
@@ -857,6 +864,83 @@ class VmDistributedConfigurationTests(unittest.TestCase):
 
         self.assertEqual(preflight["status"], "ready")
         self.assertEqual(preflight["warnings"], [])
+
+    def test_common_vm_kubeconfig_sync_writes_missing_local_role_kubeconfigs(self):
+        remote_kubeconfig = "\n".join(
+            [
+                "apiVersion: v1",
+                "kind: Config",
+                "clusters:",
+                "- name: default",
+                "  cluster:",
+                "    server: https://127.0.0.1:6443",
+                "users: []",
+                "contexts: []",
+                "current-context: default",
+                "",
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            kube_dir = os.path.join(tmpdir, ".kube")
+            common_path = os.path.join(kube_dir, "pionera40.yaml")
+            provider_path = os.path.join(kube_dir, "pionera20.yaml")
+            consumer_path = os.path.join(kube_dir, "pionera3.yaml")
+            topology = {
+                "CLUSTER_TYPE": "k3s",
+                "VM_DISTRIBUTED_EXECUTION_HOST": "common-services",
+                "VM_COMMON_IP": "10.0.0.10",
+                "VM_PROVIDER_IP": "10.0.0.20",
+                "VM_CONSUMER_IP": "10.0.0.30",
+                "VM_SSH_USER": "operator",
+                "VM_DISTRIBUTED_KUBECONFIG_DIR": kube_dir,
+                "K3S_KUBECONFIG_COMMON": common_path,
+                "K3S_KUBECONFIG_PROVIDER": provider_path,
+                "K3S_KUBECONFIG_CONSUMER": consumer_path,
+                "VM_PROVIDER_K3S_API_LOCAL_PORT": "26443",
+                "VM_CONSUMER_K3S_API_LOCAL_PORT": "36443",
+            }
+
+            calls = []
+
+            def fake_runner(command, **kwargs):
+                calls.append(list(command))
+                return mock.Mock(returncode=0, stdout=remote_kubeconfig, stderr="")
+
+            result = main._ensure_vm_distributed_local_kubeconfigs(
+                topology,
+                roles=("common", "provider", "consumer"),
+                command_runner=fake_runner,
+            )
+
+            self.assertEqual(result["status"], "updated")
+            self.assertEqual([item["status"] for item in result["items"]], ["written", "written", "written"])
+            self.assertEqual(len(calls), 3)
+
+            for path, expected_port in (
+                (common_path, "6443"),
+                (provider_path, "26443"),
+                (consumer_path, "36443"),
+            ):
+                self.assertTrue(os.path.isfile(path))
+                with open(path, encoding="utf-8") as handle:
+                    content = handle.read()
+                self.assertIn(f"server: https://127.0.0.1:{expected_port}", content)
+                self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+
+    def test_kubeconfig_sync_auto_skips_when_execution_host_is_external(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = main._ensure_vm_distributed_local_kubeconfigs(
+                {
+                    "CLUSTER_TYPE": "k3s",
+                    "VM_DISTRIBUTED_EXECUTION_HOST": "external",
+                    "K3S_KUBECONFIG_COMMON": os.path.join(tmpdir, "common.yaml"),
+                },
+                roles=("common",),
+            )
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "kubeconfig-sync-disabled")
 
     def test_reconcile_vm_distributed_ssh_access_installs_key_and_verifies_batchmode(self):
         with tempfile.TemporaryDirectory() as tmpdir:

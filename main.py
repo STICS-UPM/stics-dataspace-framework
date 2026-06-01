@@ -8704,6 +8704,10 @@ def _topology_runtime_environment_overrides(topology="local", level=None, role=N
 
 def _configured_vm_distributed_role_kubeconfigs():
     config = _load_effective_infrastructure_deployer_config(topology="vm-distributed")
+    return _configured_vm_distributed_role_kubeconfigs_from_config(config)
+
+
+def _configured_vm_distributed_role_kubeconfigs_from_config(config):
     runtime = build_cluster_runtime(config, topology="vm-distributed")
     raw_kubeconfigs = {
         "common": _vm_distributed_runtime_kubeconfig(runtime, "common"),
@@ -9179,6 +9183,11 @@ def _vm_distributed_check_role_kubeconfigs(connector_values):
 
 def _ensure_vm_distributed_level4_kubeconfig_supported():
     config = _load_effective_infrastructure_deployer_config(topology="vm-distributed")
+    kubeconfig_sync = _ensure_vm_distributed_local_kubeconfigs(
+        config,
+        roles=_vm_distributed_level_kubeconfig_roles(4),
+    )
+    _raise_vm_distributed_kubeconfig_sync_failure(kubeconfig_sync)
     kubeconfigs = _configured_vm_distributed_role_kubeconfigs()
     connector_values = {
         role: path
@@ -9378,6 +9387,13 @@ def run_level(
                     baseline=baseline,
                 )
     if os.environ.get("PIONERA_LEVEL_RUNTIME_ENV_ACTIVE") != "true":
+        if normalized_topology == "vm-distributed" and level_id > 1:
+            kubeconfig_sync = _ensure_vm_distributed_local_kubeconfigs(
+                roles=_vm_distributed_level_kubeconfig_roles(level_id),
+            )
+            _raise_vm_distributed_kubeconfig_sync_failure(kubeconfig_sync)
+            if kubeconfig_sync.get("status") == "updated":
+                _print_vm_distributed_kubeconfig_sync_result(kubeconfig_sync)
         environment_overrides = _topology_runtime_environment_overrides(topology, level=level_id)
         if environment_overrides:
             environment_overrides["PIONERA_LEVEL_RUNTIME_ENV_ACTIVE"] = "true"
@@ -9680,6 +9696,12 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "VM_DISTRIBUTED_INFER_LOCAL_WORKDIR",
     "VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE",
     "VM_DISTRIBUTED_KUBECONFIG_DIR",
+    "VM_DISTRIBUTED_KUBECONFIG_SYNC",
+    "VM_DISTRIBUTED_REMOTE_KUBECONFIG",
+    "VM_COMMON_REMOTE_KUBECONFIG",
+    "VM_PROVIDER_REMOTE_KUBECONFIG",
+    "VM_CONSUMER_REMOTE_KUBECONFIG",
+    "VM_COMPONENTS_REMOTE_KUBECONFIG",
     "VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY",
     "VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE",
     "VM_DISTRIBUTED_SSH_KEY_COMMENT",
@@ -9690,6 +9712,10 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "VM_DISTRIBUTED_K3S_TUNNEL_MODE",
     "VM_DISTRIBUTED_K3S_API_REMOTE_PORT",
     "VM_DISTRIBUTED_K3S_TUNNEL_RECREATE",
+    "VM_COMMON_K3S_API_LOCAL_PORT",
+    "VM_PROVIDER_K3S_API_LOCAL_PORT",
+    "VM_CONSUMER_K3S_API_LOCAL_PORT",
+    "VM_COMPONENTS_K3S_API_LOCAL_PORT",
     "VM_REMOTE_WORKDIR",
     "VM_COMMON_REMOTE_WORKDIR",
     "VM_PROVIDER_REMOTE_WORKDIR",
@@ -10622,6 +10648,392 @@ def _vm_distributed_effective_kubeconfig_path(topology_config, role, configured_
             if basename and os.path.basename(candidate) == basename:
                 return candidate
     return expanded or (candidates[0] if candidates else "")
+
+
+def _vm_distributed_kubeconfig_sync_mode(topology_config):
+    raw_value = _vm_distributed_config_value(
+        topology_config,
+        "VM_DISTRIBUTED_KUBECONFIG_SYNC",
+        default="auto",
+    ).lower().replace("_", "-")
+    aliases = {
+        "detect": "auto",
+        "detected": "auto",
+        "1": "enabled",
+        "true": "enabled",
+        "yes": "enabled",
+        "on": "enabled",
+        "y": "enabled",
+        "s": "enabled",
+        "si": "enabled",
+        "sí": "enabled",
+        "0": "disabled",
+        "false": "disabled",
+        "no": "disabled",
+        "off": "disabled",
+        "manual": "disabled",
+        "never": "disabled",
+    }
+    return aliases.get(raw_value, raw_value)
+
+
+def _vm_distributed_kubeconfig_sync_enabled(topology_config):
+    mode = _vm_distributed_kubeconfig_sync_mode(topology_config)
+    if mode in {"disabled", "skip"}:
+        return False
+    if mode == "auto":
+        return _normalized_vm_distributed_execution_host(topology_config) == "common-services"
+    return True
+
+
+def _vm_distributed_role_k3s_api_local_port(topology_config, role, configured_path=""):
+    normalized = str(role or "common").strip().lower() or "common"
+    role_key = "COMMON" if normalized == "components" else normalized.upper().replace("-", "_")
+    configured = _vm_distributed_config_value(topology_config, f"VM_{role_key}_K3S_API_LOCAL_PORT")
+    if configured and _vm_distributed_valid_port(configured):
+        return int(configured)
+
+    effective_path = _vm_distributed_effective_kubeconfig_path(
+        topology_config,
+        normalized,
+        configured_path,
+    )
+    if _vm_distributed_readable_file(effective_path):
+        existing_port = _kubeconfig_loopback_port(_kubeconfig_server(effective_path))
+        if existing_port:
+            return int(existing_port)
+
+    defaults = {
+        "common": 6443,
+        "components": 6443,
+        "provider": 26443,
+        "consumer": 36443,
+    }
+    return int(defaults.get(normalized, 6443))
+
+
+def _vm_distributed_remote_k3s_kubeconfig_path(topology_config, role):
+    normalized = str(role or "common").strip().upper().replace("-", "_")
+    if normalized == "COMPONENTS":
+        normalized = "COMMON"
+    return _vm_distributed_config_value(
+        topology_config,
+        f"VM_{normalized}_REMOTE_KUBECONFIG",
+        "VM_DISTRIBUTED_REMOTE_KUBECONFIG",
+        default="/etc/rancher/k3s/k3s.yaml",
+    ) or "/etc/rancher/k3s/k3s.yaml"
+
+
+def _vm_distributed_materialized_kubeconfig_target(topology_config, role, configured_path=""):
+    effective = _vm_distributed_effective_kubeconfig_path(topology_config, role, configured_path)
+    if _vm_distributed_readable_file(effective):
+        return effective
+
+    configured = str(configured_path or "").strip()
+    expanded = os.path.abspath(os.path.expanduser(configured)) if configured else ""
+    if effective and effective != expanded and not effective.startswith("/etc/rancher/"):
+        return effective
+    if expanded and not expanded.startswith("/etc/rancher/"):
+        return expanded
+
+    candidates = _vm_distributed_kubeconfig_candidates(topology_config, role, configured)
+    non_system_candidates = [
+        candidate for candidate in candidates if not str(candidate or "").startswith("/etc/rancher/")
+    ]
+    if non_system_candidates:
+        return non_system_candidates[0]
+    if expanded:
+        return expanded
+
+    normalized = str(role or "common").strip().lower() or "common"
+    node_name = _vm_distributed_role_node_name(topology_config, normalized) or normalized
+    return os.path.join(_vm_distributed_kubeconfig_dir(topology_config), f"{node_name}.yaml")
+
+
+def _render_k3s_kubeconfig_with_server(remote_kubeconfig, server):
+    data = yaml.safe_load(remote_kubeconfig) or {}
+    clusters = data.get("clusters") or []
+    if not clusters:
+        raise RuntimeError("The k3s kubeconfig does not contain a cluster entry.")
+    server_url = str(server or "").strip()
+    if not server_url:
+        raise RuntimeError("The target k3s API server URL is empty.")
+    for cluster_entry in clusters:
+        cluster = cluster_entry.get("cluster") if isinstance(cluster_entry, dict) else None
+        if isinstance(cluster, dict):
+            cluster["server"] = server_url
+    return yaml.safe_dump(data, sort_keys=False)
+
+
+def _vm_distributed_kubeconfig_read_shell(remote_path):
+    remote_path_q = shlex.quote(str(remote_path or "").strip() or "/etc/rancher/k3s/k3s.yaml")
+    return "\n".join(
+        [
+            "set -eu",
+            f"if test -r {remote_path_q}; then",
+            f"  cat {remote_path_q}",
+            f"elif sudo -n test -r {remote_path_q}; then",
+            f"  sudo -n cat {remote_path_q}",
+            "else",
+            f"  echo 'k3s kubeconfig is not readable: {remote_path_q}' >&2",
+            "  echo 'Run Level 1 with K3S_WRITE_KUBECONFIG_MODE=0644 or allow non-interactive sudo for this file.' >&2",
+            "  exit 65",
+            "fi",
+        ]
+    )
+
+
+def _vm_distributed_ssh_access_payload(topology_config):
+    topology = dict(topology_config or {})
+    bastion_host = _vm_distributed_config_value(topology, "SSH_BASTION_HOST")
+    mode = _vm_distributed_effective_ssh_access_mode(topology)
+    if not mode:
+        mode = "bastion" if bastion_host else "direct"
+    return {
+        "mode": mode,
+        "connect_timeout_seconds": _vm_distributed_connect_timeout_seconds(topology),
+        "known_hosts_strategy": _vm_distributed_config_value(
+            topology,
+            "VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY",
+            default="accept-new",
+        ) or "accept-new",
+        "bastion": {
+            "host": bastion_host,
+            "port": _vm_distributed_config_value(topology, "SSH_BASTION_PORT", default="2222") or "2222",
+            "user": _vm_distributed_config_value(topology, "SSH_BASTION_USER"),
+            "identity_file": _vm_distributed_config_value(topology, "SSH_BASTION_IDENTITY_FILE")
+            or _vm_distributed_identity_file(topology),
+        },
+    }
+
+
+def _vm_distributed_role_ssh_payload(topology_config, role):
+    ssh = _vm_distributed_role_ssh_config(topology_config, role)
+    return {
+        "role": role,
+        "role_key": str(role or "").strip().lower() or "common",
+        "ssh": {
+            "host": ssh.get("host") or "",
+            "port": ssh.get("port") or "22",
+            "user": ssh.get("user") or "",
+            "identity_file": ssh.get("identity_file") or "",
+        },
+    }
+
+
+def _vm_distributed_fetch_remote_k3s_kubeconfig(topology_config, role, command_runner=None):
+    remote_path = _vm_distributed_remote_k3s_kubeconfig_path(topology_config, role)
+    remote_shell = _vm_distributed_kubeconfig_read_shell(remote_path)
+    access = _vm_distributed_ssh_access_payload(topology_config)
+    vm = _vm_distributed_role_ssh_payload(topology_config, role)
+    command = _vm_distributed_build_ssh_command({"ssh": access}, vm, remote_command=remote_shell)
+    if not command:
+        raise RuntimeError(f"Cannot fetch the {role} k3s kubeconfig because SSH is not configured.")
+
+    runner = command_runner or subprocess.run
+    try:
+        completed = runner(command, capture_output=True, text=True, check=False)
+    except TypeError:
+        completed = runner(command)
+    returncode = int(getattr(completed, "returncode", 1) or 0)
+    if returncode != 0:
+        detail = (getattr(completed, "stderr", "") or "").strip()
+        public_command = _vm_distributed_format_command(_vm_distributed_public_ssh_command(command))
+        raise RuntimeError(
+            f"Could not fetch the {role} k3s kubeconfig from {remote_path}. "
+            f"{detail or 'Remote command failed.'} Command: {public_command}"
+        )
+    return getattr(completed, "stdout", "") or ""
+
+
+def _vm_distributed_role_is_local_to_common_services(topology_config, role):
+    normalized = str(role or "common").strip().lower() or "common"
+    if normalized == "common":
+        return True
+    if normalized != "components":
+        return False
+    common_address = _vm_distributed_config_value(topology_config, "VM_COMMON_IP", "VM_EXTERNAL_IP")
+    components_address = _vm_distributed_config_value(topology_config, "VM_COMPONENTS_IP", default=common_address)
+    return bool(common_address and components_address and common_address == components_address)
+
+
+def _vm_distributed_read_k3s_kubeconfig_source(topology_config, role, command_runner=None):
+    execution_host = _normalized_vm_distributed_execution_host(topology_config)
+    normalized = str(role or "common").strip().lower() or "common"
+    if (
+        execution_host == "common-services"
+        and _vm_distributed_role_is_local_to_common_services(topology_config, normalized)
+    ):
+        remote_path = _vm_distributed_remote_k3s_kubeconfig_path(topology_config, normalized)
+        command = ["sh", "-lc", _vm_distributed_kubeconfig_read_shell(remote_path)]
+        runner = command_runner or subprocess.run
+        try:
+            completed = runner(command, capture_output=True, text=True, check=False)
+        except TypeError:
+            completed = runner(command)
+        returncode = int(getattr(completed, "returncode", 1) or 0)
+        if returncode != 0:
+            detail = (getattr(completed, "stderr", "") or "").strip()
+            raise RuntimeError(
+                f"Could not read the local {normalized} k3s kubeconfig from {remote_path}. "
+                f"{detail or 'Local command failed.'}"
+            )
+        return getattr(completed, "stdout", "") or ""
+    return _vm_distributed_fetch_remote_k3s_kubeconfig(
+        topology_config,
+        normalized,
+        command_runner=command_runner,
+    )
+
+
+def _write_vm_distributed_local_kubeconfig(path, content):
+    target = os.path.abspath(os.path.expanduser(str(path or "").strip()))
+    if not target:
+        raise RuntimeError("The target kubeconfig path is empty.")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    os.chmod(target, 0o600)
+    return target
+
+
+def _vm_distributed_level_kubeconfig_roles(level=None):
+    try:
+        level_id = int(level)
+    except (TypeError, ValueError):
+        level_id = 0
+    if level_id in {2, 3}:
+        return ("common",)
+    if level_id == 4:
+        return ("common", "provider", "consumer")
+    if level_id == 5:
+        return ("common", "components")
+    if level_id == 6:
+        return ("common", "provider", "consumer", "components")
+    return ("common", "provider", "consumer", "components")
+
+
+def _ensure_vm_distributed_local_kubeconfigs(topology_config=None, roles=None, command_runner=None):
+    config = dict(topology_config or _load_effective_infrastructure_deployer_config(topology="vm-distributed"))
+    runtime = build_cluster_runtime(config, topology="vm-distributed")
+    if runtime.get("cluster_type") != "k3s":
+        return {"status": "skipped", "reason": "non-k3s-runtime", "items": []}
+    if not _vm_distributed_kubeconfig_sync_enabled(config):
+        return {
+            "status": "skipped",
+            "reason": "kubeconfig-sync-disabled",
+            "mode": _vm_distributed_kubeconfig_sync_mode(config),
+            "items": [],
+        }
+
+    configured_paths = _configured_vm_distributed_role_kubeconfigs_from_config(config)
+    requested_roles = tuple(roles or ("common", "provider", "consumer", "components"))
+    items = []
+    seen_targets = set()
+    for role in requested_roles:
+        normalized = str(role or "").strip().lower() or "common"
+        configured_path = configured_paths.get(normalized) or ""
+        target_path = _vm_distributed_materialized_kubeconfig_target(
+            config,
+            normalized,
+            configured_path,
+        )
+        if not target_path:
+            items.append({"role": normalized, "status": "skipped", "reason": "empty-target"})
+            continue
+        if _vm_distributed_readable_file(target_path):
+            items.append({"role": normalized, "status": "ready", "path": target_path})
+            seen_targets.add(target_path)
+            continue
+        if target_path in seen_targets and _vm_distributed_readable_file(target_path):
+            items.append({"role": normalized, "status": "ready", "path": target_path})
+            continue
+
+        try:
+            local_port = _vm_distributed_role_k3s_api_local_port(config, normalized, configured_path)
+            source = _vm_distributed_read_k3s_kubeconfig_source(
+                config,
+                normalized,
+                command_runner=command_runner,
+            )
+            rendered = _render_k3s_kubeconfig_with_server(
+                source,
+                f"https://127.0.0.1:{int(local_port)}",
+            )
+            written_path = _write_vm_distributed_local_kubeconfig(target_path, rendered)
+            items.append(
+                {
+                    "role": normalized,
+                    "status": "written",
+                    "path": written_path,
+                    "server": f"https://127.0.0.1:{int(local_port)}",
+                }
+            )
+            seen_targets.add(written_path)
+        except Exception as exc:
+            items.append(
+                {
+                    "role": normalized,
+                    "status": "failed",
+                    "path": target_path,
+                    "error": str(exc),
+                }
+            )
+
+    failed = [item for item in items if item.get("status") == "failed"]
+    written = [item for item in items if item.get("status") == "written"]
+    if failed:
+        status = "failed"
+    elif written:
+        status = "updated"
+    else:
+        status = "ready"
+    return {
+        "status": status,
+        "mode": _vm_distributed_kubeconfig_sync_mode(config),
+        "execution_host": _normalized_vm_distributed_execution_host(config),
+        "items": items,
+    }
+
+
+def _raise_vm_distributed_kubeconfig_sync_failure(result):
+    failed = [item for item in list((result or {}).get("items") or []) if item.get("status") == "failed"]
+    if not failed:
+        return
+    details = []
+    for item in failed:
+        details.append(
+            f"{item.get('role') or 'unknown'}: {item.get('path') or '(empty)'}: "
+            f"{item.get('error') or 'unknown error'}"
+        )
+    raise RuntimeError(
+        "vm-distributed could not prepare the required local k3s kubeconfig files automatically. "
+        + " ".join(details)
+    )
+
+
+def _print_vm_distributed_kubeconfig_sync_result(result):
+    status = str((result or {}).get("status") or "unknown")
+    if status == "skipped":
+        print(
+            "vm-distributed kubeconfig sync skipped: "
+            f"{(result or {}).get('reason') or 'not required'}."
+        )
+        return
+    print(f"vm-distributed kubeconfig sync: {status}")
+    for item in list((result or {}).get("items") or []):
+        item_status = item.get("status") or "unknown"
+        role = item.get("role") or "unknown"
+        path = item.get("path") or ""
+        suffix = f" -> {path}" if path else ""
+        if item_status == "failed":
+            print(f"  - {role}: failed{suffix}: {item.get('error') or 'unknown error'}")
+        elif item_status == "written":
+            print(f"  - {role}: written{suffix}")
+        elif item_status == "ready":
+            print(f"  - {role}: ready{suffix}")
+        else:
+            print(f"  - {role}: {item_status}{suffix}")
 
 
 def _vm_distributed_http_preflight_tls_verify_mode(config_or_plan):
@@ -12540,6 +12952,14 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         "VM_DISTRIBUTED_INFER_LOCAL_WORKDIR": topology_config.get("VM_DISTRIBUTED_INFER_LOCAL_WORKDIR") or "true",
         "VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE": topology_config.get("VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE") or "true",
         "VM_DISTRIBUTED_KUBECONFIG_DIR": topology_config.get("VM_DISTRIBUTED_KUBECONFIG_DIR") or "~/.kube",
+        "VM_DISTRIBUTED_KUBECONFIG_SYNC": topology_config.get("VM_DISTRIBUTED_KUBECONFIG_SYNC") or "auto",
+        "VM_DISTRIBUTED_REMOTE_KUBECONFIG": (
+            topology_config.get("VM_DISTRIBUTED_REMOTE_KUBECONFIG") or "/etc/rancher/k3s/k3s.yaml"
+        ),
+        "VM_COMMON_REMOTE_KUBECONFIG": topology_config.get("VM_COMMON_REMOTE_KUBECONFIG") or "",
+        "VM_PROVIDER_REMOTE_KUBECONFIG": topology_config.get("VM_PROVIDER_REMOTE_KUBECONFIG") or "",
+        "VM_CONSUMER_REMOTE_KUBECONFIG": topology_config.get("VM_CONSUMER_REMOTE_KUBECONFIG") or "",
+        "VM_COMPONENTS_REMOTE_KUBECONFIG": topology_config.get("VM_COMPONENTS_REMOTE_KUBECONFIG") or "",
         "VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY": (
             topology_config.get("VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY") or "auto"
         ),
@@ -12561,6 +12981,10 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         "VM_DISTRIBUTED_K3S_TUNNEL_MODE": topology_config.get("VM_DISTRIBUTED_K3S_TUNNEL_MODE") or "auto",
         "VM_DISTRIBUTED_K3S_API_REMOTE_PORT": topology_config.get("VM_DISTRIBUTED_K3S_API_REMOTE_PORT") or "6443",
         "VM_DISTRIBUTED_K3S_TUNNEL_RECREATE": topology_config.get("VM_DISTRIBUTED_K3S_TUNNEL_RECREATE") or "auto",
+        "VM_COMMON_K3S_API_LOCAL_PORT": topology_config.get("VM_COMMON_K3S_API_LOCAL_PORT") or "6443",
+        "VM_PROVIDER_K3S_API_LOCAL_PORT": topology_config.get("VM_PROVIDER_K3S_API_LOCAL_PORT") or "26443",
+        "VM_CONSUMER_K3S_API_LOCAL_PORT": topology_config.get("VM_CONSUMER_K3S_API_LOCAL_PORT") or "36443",
+        "VM_COMPONENTS_K3S_API_LOCAL_PORT": topology_config.get("VM_COMPONENTS_K3S_API_LOCAL_PORT") or "6443",
         "VM_REMOTE_WORKDIR": topology_config.get("VM_REMOTE_WORKDIR") or "",
         "VM_COMMON_REMOTE_WORKDIR": topology_config.get("VM_COMMON_REMOTE_WORKDIR") or topology_config.get("VM_REMOTE_WORKDIR") or "",
         "VM_PROVIDER_REMOTE_WORKDIR": topology_config.get("VM_PROVIDER_REMOTE_WORKDIR") or topology_config.get("VM_REMOTE_WORKDIR") or "",
@@ -13039,16 +13463,10 @@ def _ensure_vm_single_k3s_tunnel(plan, topology_config):
 
 
 def _render_vm_single_local_kubeconfig(remote_kubeconfig, local_port):
-    data = yaml.safe_load(remote_kubeconfig) or {}
-    clusters = data.get("clusters") or []
-    if not clusters:
-        raise RuntimeError("The remote k3s kubeconfig does not contain a cluster entry.")
-    server = f"https://127.0.0.1:{int(local_port)}"
-    for cluster_entry in clusters:
-        cluster = cluster_entry.get("cluster") if isinstance(cluster_entry, dict) else None
-        if isinstance(cluster, dict):
-            cluster["server"] = server
-    return yaml.safe_dump(data, sort_keys=False)
+    return _render_k3s_kubeconfig_with_server(
+        remote_kubeconfig,
+        f"https://127.0.0.1:{int(local_port)}",
+    )
 
 
 def _fetch_vm_single_remote_kubeconfig(plan, topology_config, local_port, command_runner=None):
@@ -13692,6 +14110,7 @@ def _print_vm_distributed_assistant_menu(current_adapter=None):
     print("5 - Show manual check commands")
     print("6 - Guided SSH access setup")
     print("7 - Local SSH key self-test")
+    print("8 - Prepare local k3s kubeconfigs")
     print("B/Q - Back")
     print("=" * 50)
 
@@ -13821,6 +14240,20 @@ def _run_vm_distributed_assistant(
                 action="self-test",
             )
             _print_vm_distributed_ssh_key_self_test_result(result)
+            continue
+
+        if choice == "8":
+            selected_adapter = _interactive_require_adapter_selection(
+                current_adapter,
+                adapter_registry=registry,
+            )
+            if not selected_adapter:
+                continue
+            current_adapter = selected_adapter
+            result = _ensure_vm_distributed_local_kubeconfigs()
+            _print_vm_distributed_kubeconfig_sync_result(result)
+            if result.get("status") == "failed":
+                print("Kubeconfig preparation failed. Fix the issue above before running levels 2-6.")
             continue
 
         print("Invalid vm-distributed assistant selection.")
