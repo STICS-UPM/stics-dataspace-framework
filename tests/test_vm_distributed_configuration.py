@@ -942,6 +942,33 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertEqual(result["status"], "skipped")
         self.assertEqual(result["reason"], "kubeconfig-sync-disabled")
 
+    def test_k3s_kubectl_wrapper_is_created_when_kubectl_binary_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            def fake_which(binary):
+                if binary == "kubectl":
+                    return None
+                if binary == "k3s":
+                    return "/usr/local/bin/k3s"
+                return None
+
+            with mock.patch.object(main.shutil, "which", side_effect=fake_which), mock.patch.object(
+                main,
+                "_framework_root_dir",
+                return_value=tmpdir,
+            ):
+                overrides = main._k3s_kubectl_environment_overrides()
+
+            wrapper_path = os.path.join(tmpdir, "runtime", "bin", "kubectl")
+            self.assertEqual(overrides["PIONERA_KUBECTL_WRAPPER"], wrapper_path)
+            self.assertTrue(overrides["PATH"].startswith(os.path.dirname(wrapper_path)))
+            with open(wrapper_path, encoding="utf-8") as handle:
+                content = handle.read()
+            self.assertIn("exec /usr/local/bin/k3s kubectl", content)
+            self.assertEqual(stat.S_IMODE(os.stat(wrapper_path).st_mode), 0o755)
+
+    def test_vm_distributed_level1_prepares_common_kubeconfig_role(self):
+        self.assertEqual(main._vm_distributed_level_kubeconfig_roles(1), ("common",))
+
     def test_reconcile_vm_distributed_ssh_access_installs_key_and_verifies_batchmode(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             identity_file = os.path.join(tmpdir, "validation-env")

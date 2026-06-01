@@ -8695,6 +8695,7 @@ def _topology_runtime_environment_overrides(topology="local", level=None, role=N
     if not kubeconfig:
         return {}
     overrides = {"KUBECONFIG": kubeconfig}
+    overrides.update(_k3s_kubectl_environment_overrides())
     if normalized_topology == "vm-distributed":
         overrides["PIONERA_KUBECONFIG_ROLE"] = str(
             role or _vm_distributed_level_runtime_role(level)
@@ -9387,7 +9388,7 @@ def run_level(
                     baseline=baseline,
                 )
     if os.environ.get("PIONERA_LEVEL_RUNTIME_ENV_ACTIVE") != "true":
-        if normalized_topology == "vm-distributed" and level_id > 1:
+        if normalized_topology == "vm-distributed" and level_id >= 1:
             kubeconfig_sync = _ensure_vm_distributed_local_kubeconfigs(
                 roles=_vm_distributed_level_kubeconfig_roles(level_id),
             )
@@ -10380,6 +10381,74 @@ def _framework_root_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _framework_runtime_bin_dir():
+    return os.path.join(_framework_root_dir(), "runtime", "bin")
+
+
+def _ensure_k3s_kubectl_wrapper():
+    existing_kubectl = shutil.which("kubectl")
+    if existing_kubectl:
+        return {
+            "status": "ready",
+            "reason": "kubectl-present",
+            "path": existing_kubectl,
+        }
+
+    k3s_path = shutil.which("k3s")
+    if not k3s_path:
+        return {
+            "status": "skipped",
+            "reason": "k3s-missing",
+            "path": "",
+        }
+
+    bin_dir = _framework_runtime_bin_dir()
+    wrapper_path = os.path.join(bin_dir, "kubectl")
+    content = "\n".join(
+        [
+            "#!/bin/sh",
+            f"exec {shlex.quote(k3s_path)} kubectl \"$@\"",
+            "",
+        ]
+    )
+    os.makedirs(bin_dir, exist_ok=True)
+    previous = ""
+    try:
+        with open(wrapper_path, encoding="utf-8") as handle:
+            previous = handle.read()
+    except OSError:
+        previous = ""
+
+    if previous != content:
+        with open(wrapper_path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        status = "written"
+    else:
+        status = "ready"
+    os.chmod(wrapper_path, 0o755)
+    return {
+        "status": status,
+        "reason": "k3s-kubectl-wrapper",
+        "path": wrapper_path,
+        "k3s": k3s_path,
+    }
+
+
+def _k3s_kubectl_environment_overrides():
+    wrapper = _ensure_k3s_kubectl_wrapper()
+    if wrapper.get("reason") != "k3s-kubectl-wrapper":
+        return {}
+    wrapper_path = str(wrapper.get("path") or "").strip()
+    if not wrapper_path:
+        return {}
+    bin_dir = os.path.dirname(wrapper_path)
+    current_path = os.environ.get("PATH", "")
+    return {
+        "PATH": f"{bin_dir}{os.pathsep}{current_path}" if current_path else bin_dir,
+        "PIONERA_KUBECTL_WRAPPER": wrapper_path,
+    }
+
+
 def _vm_distributed_connect_timeout_seconds(topology_config):
     raw_value = (
         os.getenv("PIONERA_VM_DISTRIBUTED_SSH_CONNECT_TIMEOUT_SECONDS")
@@ -10902,7 +10971,7 @@ def _vm_distributed_level_kubeconfig_roles(level=None):
         level_id = int(level)
     except (TypeError, ValueError):
         level_id = 0
-    if level_id in {2, 3}:
+    if level_id in {1, 2, 3}:
         return ("common",)
     if level_id == 4:
         return ("common", "provider", "consumer")
@@ -12105,7 +12174,7 @@ def _vm_distributed_remote_preflight_shell(workdir="", http_url="http://127.0.0.
             "ip_value=$(hostname -I 2>/dev/null | tr -s ' ' | sed 's/[[:space:]]*$//')",
             "docker_value=$(command -v docker >/dev/null 2>&1 && docker --version 2>/dev/null || printf missing)",
             "containerd_value=$(command -v containerd >/dev/null 2>&1 && containerd --version 2>/dev/null || printf missing)",
-            "kubectl_value=$(command -v kubectl >/dev/null 2>&1 && kubectl version --client=true --short 2>/dev/null || printf missing)",
+            "kubectl_value=$(command -v kubectl >/dev/null 2>&1 && kubectl version --client=true --short 2>/dev/null || (command -v k3s >/dev/null 2>&1 && printf 'missing; k3s kubectl available') || printf missing)",
             "k3s_value=$(command -v k3s >/dev/null 2>&1 && k3s --version 2>/dev/null | head -n 1 || printf missing)",
             "ports_value=$(ss -lntH 2>/dev/null | awk '{print $4}' | tr '\n' ',' | sed 's/,$//' || printf unavailable)",
             "if [ -n \"$workdir\" ]; then if [ -d \"$workdir\" ]; then workdir_value=present; else workdir_value=missing; fi; else workdir_value=not-configured; fi",
@@ -14185,10 +14254,16 @@ def _run_vm_distributed_assistant(
             if not selected_adapter:
                 continue
             current_adapter = selected_adapter
+            local_prep = _ensure_vm_distributed_local_kubeconfigs()
+            if local_prep.get("status") in {"updated", "failed"}:
+                _print_vm_distributed_kubeconfig_sync_result(local_prep)
+            wrapper_prep = _ensure_k3s_kubectl_wrapper()
+            if wrapper_prep.get("reason") == "k3s-kubectl-wrapper":
+                print(f"Local kubectl wrapper: {wrapper_prep.get('status')} ({wrapper_prep.get('path')})")
             plan = _current_vm_distributed_topology_plan(adapter_name=current_adapter)
             _print_vm_distributed_topology_plan(plan)
             print()
-            print("This preflight uses SSH BatchMode and HTTP GET only. It does not install packages, change firewall rules or deploy resources.")
+            print("This preflight uses SSH BatchMode and HTTP GET only. It may prepare local kubeconfigs/runtime wrappers, but it does not install packages, change firewall rules or deploy resources.")
             if not _interactive_confirm("Run remote vm-distributed preflight now?", default=False):
                 print("Remote preflight cancelled.")
                 continue
