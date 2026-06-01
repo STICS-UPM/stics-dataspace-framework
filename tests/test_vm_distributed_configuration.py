@@ -782,6 +782,81 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             [item["name"] for item in plan["ssh_bootstrap"]["actions"]],
         )
 
+    def test_topology_plan_supports_mixed_role_ssh_access_modes(self):
+        topology = {
+            "VM_COMMON_IP": "192.0.2.10",
+            "VM_PROVIDER_IP": "198.51.100.20",
+            "VM_CONSUMER_IP": "192.0.2.30",
+            "K3S_KUBECONFIG_COMMON": "/tmp/common.yaml",
+            "K3S_KUBECONFIG_PROVIDER": "/tmp/provider.yaml",
+            "K3S_KUBECONFIG_CONSUMER": "/tmp/consumer.yaml",
+            "SSH_BASTION_HOST": "bastion.example.test",
+            "SSH_BASTION_PORT": "2222",
+            "SSH_BASTION_USER": "jump",
+            "VM_COMMON_SSH_ACCESS_MODE": "bastion",
+            "VM_PROVIDER_SSH_ACCESS_MODE": "direct",
+            "VM_CONSUMER_SSH_ACCESS_MODE": "bastion",
+            "VM_COMMON_SSH_HOST": "common.internal.example.test",
+            "VM_PROVIDER_SSH_HOST": "provider.public.example.test",
+            "VM_CONSUMER_SSH_HOST": "consumer.internal.example.test",
+            "VM_SSH_USER": "operator",
+        }
+
+        plan = main._build_vm_distributed_topology_plan(
+            {
+                "DOMAIN_BASE": "common.example.test",
+                "DS_DOMAIN_BASE": "dataspace.example.test",
+            },
+            topology,
+            {
+                "DS_1_NAME": "demo",
+                "DS_1_CONNECTORS": "provider,consumer",
+                "DS_1_CONNECTOR_NAMESPACES": "provider:provider,consumer:consumer",
+                "LEVEL4_CONNECTOR_RECONCILIATION_MODE": "full",
+            },
+        )
+
+        common_vm = next(item for item in plan["vms"] if item["role_key"] == "common")
+        provider_vm = next(item for item in plan["vms"] if item["role_key"] == "provider")
+        consumer_vm = next(item for item in plan["vms"] if item["role_key"] == "consumer")
+
+        self.assertEqual(plan["ssh_role_modes"], {
+            "common": "bastion",
+            "provider": "direct",
+            "consumer": "bastion",
+        })
+        self.assertIn("-J jump@bastion.example.test:2222", common_vm["ssh"]["command"])
+        self.assertNotIn("-J", provider_vm["ssh"]["command"])
+        self.assertNotIn("ProxyCommand", provider_vm["ssh"]["command"])
+        self.assertIn("operator@provider.public.example.test", provider_vm["ssh"]["command"])
+        self.assertIn("-J jump@bastion.example.test:2222", consumer_vm["ssh"]["command"])
+
+    def test_k3s_tunnel_uses_role_specific_ssh_route(self):
+        topology = {
+            "VM_PROVIDER_IP": "198.51.100.20",
+            "VM_CONSUMER_IP": "192.0.2.30",
+            "SSH_BASTION_HOST": "bastion.example.test",
+            "SSH_BASTION_PORT": "2222",
+            "SSH_BASTION_USER": "jump",
+            "VM_PROVIDER_SSH_ACCESS_MODE": "direct",
+            "VM_CONSUMER_SSH_ACCESS_MODE": "bastion",
+            "VM_PROVIDER_SSH_HOST": "provider.public.example.test",
+            "VM_CONSUMER_SSH_HOST": "consumer.internal.example.test",
+            "VM_SSH_USER": "operator",
+        }
+
+        provider_command = main._vm_distributed_k3s_tunnel_command(topology, "provider", 26443)
+        consumer_command = main._vm_distributed_k3s_tunnel_command(topology, "consumer", 36443)
+
+        provider_rendered = main._vm_distributed_format_command(provider_command)
+        consumer_rendered = main._vm_distributed_format_command(consumer_command)
+
+        self.assertIn("operator@provider.public.example.test", provider_rendered)
+        self.assertNotIn("ProxyCommand", provider_rendered)
+        self.assertIn("ProxyCommand=", consumer_rendered)
+        self.assertIn("jump@bastion.example.test", consumer_rendered)
+        self.assertIn("operator@consumer.internal.example.test", consumer_rendered)
+
     def test_auto_execution_from_common_vm_uses_direct_ssh_and_local_workdir(self):
         with mock.patch.object(main, "_local_host_addresses", return_value={"10.0.0.10"}):
             plan = main._build_vm_distributed_topology_plan(

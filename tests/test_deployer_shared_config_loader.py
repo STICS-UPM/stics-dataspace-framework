@@ -130,6 +130,18 @@ class SharedConfigLoaderTests(unittest.TestCase):
             self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
             self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-single",))
 
+        for role in ("COMMON", "COMPONENTS", "PROVIDER", "CONSUMER"):
+            for suffix in (
+                "SSH_ACCESS_MODE",
+                "SSH_BASTION_HOST",
+                "SSH_BASTION_PORT",
+                "SSH_BASTION_USER",
+                "SSH_BASTION_IDENTITY_FILE",
+            ):
+                key = f"VM_{role}_{suffix}"
+                self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
+                self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed",))
+
         for key in (
             "VM_DISTRIBUTED_EXECUTION_HOST",
             "VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH",

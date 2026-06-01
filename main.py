@@ -6231,7 +6231,7 @@ def run_ssh_access(adapter, deployer_name=None, topology="local", action="plan")
 
 def _vm_distributed_ssh_access_step_title(command_name):
     name = str(command_name or "").strip()
-    if name.startswith("check_bastion"):
+    if name.startswith("check_bastion") or (name.startswith("check_") and "bastion" in name):
         return "Step 1 - Check the bastion"
     if name.startswith("create_dedicated_key") or name.startswith("secure_") or name.startswith("optional_ssh_agent"):
         return "Step 2 - Prepare the dedicated key"
@@ -8762,12 +8762,16 @@ def _vm_distributed_role_ssh_config(config, role):
     spec = {
         "ssh_host_key": f"VM_{normalized}_SSH_HOST",
     }
+    identity_file = _vm_distributed_identity_file(config, role_key)
+    access_mode = _vm_distributed_role_ssh_access_mode(config, role_key)
     return {
         "host": _vm_distributed_effective_ssh_host(config, spec, address)
         or _vm_distributed_config_value(config, f"VM_{normalized}_K8S_NODE"),
         "port": _vm_distributed_config_value(config, f"VM_{normalized}_SSH_PORT", default="22") or "22",
         "user": _vm_distributed_config_value(config, f"VM_{normalized}_SSH_USER", "VM_SSH_USER"),
-        "identity_file": _vm_distributed_identity_file(config, role_key),
+        "identity_file": identity_file,
+        "access_mode": access_mode,
+        "bastion": _vm_distributed_role_bastion_config(config, role_key, identity_file=identity_file),
     }
 
 
@@ -8804,17 +8808,16 @@ def _vm_distributed_k3s_tunnel_command(config, role, local_port):
     if ssh_config.get("identity_file"):
         command.extend(["-i", ssh_config["identity_file"]])
 
-    access_mode = _vm_distributed_effective_ssh_access_mode(config)
-    bastion_host = _vm_distributed_config_value(config, "SSH_BASTION_HOST")
+    access_mode = ssh_config.get("access_mode") or _vm_distributed_role_ssh_access_mode(config, role)
+    bastion = dict(ssh_config.get("bastion") or _vm_distributed_role_bastion_config(config, role))
+    bastion_host = str(bastion.get("host") or "").strip()
     if access_mode == "bastion" or (not access_mode and bastion_host):
         bastion_target = _vm_distributed_ssh_target(
-            _vm_distributed_config_value(config, "SSH_BASTION_USER"),
+            bastion.get("user"),
             bastion_host,
         )
-        bastion_port = _vm_distributed_config_value(config, "SSH_BASTION_PORT", default="2222") or "2222"
-        bastion_identity_file = _vm_distributed_config_value(config, "SSH_BASTION_IDENTITY_FILE") or ssh_config.get(
-            "identity_file"
-        )
+        bastion_port = str(bastion.get("port") or "2222").strip() or "2222"
+        bastion_identity_file = str(bastion.get("identity_file") or "").strip() or ssh_config.get("identity_file")
         if bastion_target:
             proxy_command = [
                 "ssh",
@@ -9732,18 +9735,38 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "VM_COMMON_SSH_PORT",
     "VM_COMMON_SSH_USER",
     "VM_COMMON_SSH_IDENTITY_FILE",
+    "VM_COMMON_SSH_ACCESS_MODE",
+    "VM_COMMON_SSH_BASTION_HOST",
+    "VM_COMMON_SSH_BASTION_PORT",
+    "VM_COMMON_SSH_BASTION_USER",
+    "VM_COMMON_SSH_BASTION_IDENTITY_FILE",
     "VM_COMPONENTS_SSH_HOST",
     "VM_COMPONENTS_SSH_PORT",
     "VM_COMPONENTS_SSH_USER",
     "VM_COMPONENTS_SSH_IDENTITY_FILE",
+    "VM_COMPONENTS_SSH_ACCESS_MODE",
+    "VM_COMPONENTS_SSH_BASTION_HOST",
+    "VM_COMPONENTS_SSH_BASTION_PORT",
+    "VM_COMPONENTS_SSH_BASTION_USER",
+    "VM_COMPONENTS_SSH_BASTION_IDENTITY_FILE",
     "VM_PROVIDER_SSH_HOST",
     "VM_PROVIDER_SSH_PORT",
     "VM_PROVIDER_SSH_USER",
     "VM_PROVIDER_SSH_IDENTITY_FILE",
+    "VM_PROVIDER_SSH_ACCESS_MODE",
+    "VM_PROVIDER_SSH_BASTION_HOST",
+    "VM_PROVIDER_SSH_BASTION_PORT",
+    "VM_PROVIDER_SSH_BASTION_USER",
+    "VM_PROVIDER_SSH_BASTION_IDENTITY_FILE",
     "VM_CONSUMER_SSH_HOST",
     "VM_CONSUMER_SSH_PORT",
     "VM_CONSUMER_SSH_USER",
     "VM_CONSUMER_SSH_IDENTITY_FILE",
+    "VM_CONSUMER_SSH_ACCESS_MODE",
+    "VM_CONSUMER_SSH_BASTION_HOST",
+    "VM_CONSUMER_SSH_BASTION_PORT",
+    "VM_CONSUMER_SSH_BASTION_USER",
+    "VM_CONSUMER_SSH_BASTION_IDENTITY_FILE",
 )
 
 VM_DISTRIBUTED_INFRA_KEYS = (
@@ -10234,15 +10257,24 @@ def _vm_distributed_ssh_access_preflight(topology_config):
         "SSH_ACCESS_MODE",
         "SSH_BASTION_HOST",
         "SSH_BASTION_USER",
+        "VM_COMMON_SSH_ACCESS_MODE",
+        "VM_COMMON_SSH_BASTION_HOST",
+        "VM_COMMON_SSH_BASTION_USER",
         "VM_COMMON_SSH_HOST",
         "VM_COMMON_SSH_USER",
+        "VM_PROVIDER_SSH_ACCESS_MODE",
+        "VM_PROVIDER_SSH_BASTION_HOST",
+        "VM_PROVIDER_SSH_BASTION_USER",
         "VM_PROVIDER_SSH_HOST",
         "VM_PROVIDER_SSH_USER",
+        "VM_CONSUMER_SSH_ACCESS_MODE",
+        "VM_CONSUMER_SSH_BASTION_HOST",
+        "VM_CONSUMER_SSH_BASTION_USER",
         "VM_CONSUMER_SSH_HOST",
         "VM_CONSUMER_SSH_USER",
     )
     has_metadata = any(str(topology.get(key) or "").strip() for key in ssh_identity_keys)
-    mode = _vm_distributed_effective_ssh_access_mode(topology)
+    global_mode = _vm_distributed_effective_ssh_access_mode(topology)
     warnings = []
 
     if not has_metadata:
@@ -10252,10 +10284,11 @@ def _vm_distributed_ssh_access_preflight(topology_config):
             "warnings": [],
         }
 
-    if mode not in {"direct", "bastion"}:
+    raw_global_mode = str(topology.get("SSH_ACCESS_MODE") or "").strip()
+    if raw_global_mode and not _normalize_vm_distributed_ssh_access_mode(raw_global_mode):
         warnings.append("SSH_ACCESS_MODE should be direct or bastion when SSH metadata is configured.")
 
-    if mode == "bastion" and not str(topology.get("SSH_BASTION_HOST") or "").strip():
+    if global_mode == "bastion" and not str(topology.get("SSH_BASTION_HOST") or "").strip():
         warnings.append("SSH_BASTION_HOST is required when SSH_ACCESS_MODE=bastion.")
 
     role_specs = (
@@ -10264,12 +10297,30 @@ def _vm_distributed_ssh_access_preflight(topology_config):
         ("consumer", "VM_CONSUMER_SSH_HOST", "VM_CONSUMER_IP", "VM_CONSUMER_SSH_PORT"),
     )
     missing_hosts = []
+    role_modes = {}
     for role, host_key, fallback_ip_key, port_key in role_specs:
         if not str(topology.get(host_key) or topology.get(fallback_ip_key) or "").strip():
             missing_hosts.append(role)
+        role_prefix = _vm_distributed_role_prefix(role)
+        raw_role_mode = str(topology.get(f"VM_{role_prefix}_SSH_ACCESS_MODE") or "").strip()
+        if raw_role_mode and not _normalize_vm_distributed_ssh_access_mode(raw_role_mode):
+            warnings.append(f"VM_{role_prefix}_SSH_ACCESS_MODE should be direct or bastion.")
+        role_mode = _vm_distributed_role_ssh_access_mode(topology, role)
+        role_modes[role] = role_mode or "not-configured"
+        role_bastion = _vm_distributed_role_bastion_config(topology, role)
+        if role_mode == "bastion" and not role_bastion.get("host"):
+            warnings.append(f"VM_{role_prefix}_SSH_BASTION_HOST or SSH_BASTION_HOST is required for {role} bastion SSH.")
         port_value = str(topology.get(port_key) or "").strip()
         if port_value and not _vm_distributed_valid_port(port_value):
             warnings.append(f"{port_key} should be a TCP port number between 1 and 65535.")
+        bastion_port_value = str(topology.get(f"VM_{role_prefix}_SSH_BASTION_PORT") or "").strip()
+        if bastion_port_value and not _vm_distributed_valid_port(bastion_port_value):
+            warnings.append(f"VM_{role_prefix}_SSH_BASTION_PORT should be a TCP port number between 1 and 65535.")
+
+    if not global_mode and not any(mode in {"direct", "bastion"} for mode in role_modes.values()):
+        warnings.append(
+            "SSH_ACCESS_MODE or VM_<ROLE>_SSH_ACCESS_MODE should be direct or bastion when SSH metadata is configured."
+        )
 
     if missing_hosts:
         warnings.append(
@@ -10289,7 +10340,12 @@ def _vm_distributed_ssh_access_preflight(topology_config):
 
     return {
         "status": "ready",
-        "detail": f"{mode or 'direct'} SSH metadata configured",
+        "detail": (
+            f"{global_mode} SSH metadata configured"
+            if global_mode
+            else "role-specific SSH metadata configured"
+        ),
+        "role_modes": role_modes,
         "warnings": [],
     }
 
@@ -10585,11 +10641,21 @@ def _vm_distributed_common_vm_direct_ssh_enabled(topology_config):
     )
 
 
+def _normalize_vm_distributed_ssh_access_mode(raw_value):
+    mode = str(raw_value or "").strip().lower().replace("_", "-")
+    aliases = {
+        "jump": "bastion",
+        "proxy": "bastion",
+        "proxy-jump": "bastion",
+        "proxyjump": "bastion",
+    }
+    mode = aliases.get(mode, mode)
+    return mode if mode in {"direct", "bastion"} else ""
+
+
 def _vm_distributed_effective_ssh_access_mode(topology_config):
     topology = dict(topology_config or {})
-    mode = str(topology.get("SSH_ACCESS_MODE") or "").strip().lower().replace("_", "-")
-    if mode not in {"direct", "bastion"}:
-        mode = ""
+    mode = _normalize_vm_distributed_ssh_access_mode(topology.get("SSH_ACCESS_MODE"))
     if (
         _normalized_vm_distributed_execution_host(topology) == "common-services"
         and _vm_distributed_common_vm_direct_ssh_enabled(topology)
@@ -10599,12 +10665,86 @@ def _vm_distributed_effective_ssh_access_mode(topology_config):
     return mode
 
 
+def _vm_distributed_role_key(role_key):
+    normalized = str(role_key or "common").strip().lower().replace("-", "_")
+    if normalized in {"component", "components"}:
+        return "components"
+    if normalized in {"provider", "consumer", "common"}:
+        return normalized
+    return normalized or "common"
+
+
+def _vm_distributed_role_prefix(role_key):
+    role = _vm_distributed_role_key(role_key).upper().replace("-", "_")
+    return "COMPONENTS" if role == "COMPONENTS" else role
+
+
+def _vm_distributed_role_bastion_config(topology_config, role_key=None, identity_file=""):
+    topology = dict(topology_config or {})
+    role = _vm_distributed_role_prefix(role_key)
+    fallback_role = "COMMON" if role == "COMPONENTS" else ""
+    keys = [f"VM_{role}_SSH_BASTION_HOST"]
+    if fallback_role:
+        keys.append(f"VM_{fallback_role}_SSH_BASTION_HOST")
+    keys.append("SSH_BASTION_HOST")
+    host = _vm_distributed_config_value(topology, *keys)
+
+    port_keys = [f"VM_{role}_SSH_BASTION_PORT"]
+    if fallback_role:
+        port_keys.append(f"VM_{fallback_role}_SSH_BASTION_PORT")
+    port_keys.append("SSH_BASTION_PORT")
+    port = _vm_distributed_config_value(topology, *port_keys, default="2222") or "2222"
+
+    user_keys = [f"VM_{role}_SSH_BASTION_USER"]
+    if fallback_role:
+        user_keys.append(f"VM_{fallback_role}_SSH_BASTION_USER")
+    user_keys.append("SSH_BASTION_USER")
+    user = _vm_distributed_config_value(topology, *user_keys)
+
+    identity_keys = [f"VM_{role}_SSH_BASTION_IDENTITY_FILE"]
+    if fallback_role:
+        identity_keys.append(f"VM_{fallback_role}_SSH_BASTION_IDENTITY_FILE")
+    identity_keys.append("SSH_BASTION_IDENTITY_FILE")
+    identity = _vm_distributed_config_value(topology, *identity_keys) or str(identity_file or "").strip()
+
+    return {
+        "host": host,
+        "port": port,
+        "user": user,
+        "identity_file": identity,
+    }
+
+
+def _vm_distributed_role_ssh_access_mode(topology_config, role_key=None):
+    topology = dict(topology_config or {})
+    role = _vm_distributed_role_prefix(role_key)
+    fallback_role = "COMMON" if role == "COMPONENTS" else ""
+    role_mode = _normalize_vm_distributed_ssh_access_mode(topology.get(f"VM_{role}_SSH_ACCESS_MODE"))
+    if not role_mode and fallback_role:
+        role_mode = _normalize_vm_distributed_ssh_access_mode(
+            topology.get(f"VM_{fallback_role}_SSH_ACCESS_MODE")
+        )
+    if role_mode:
+        return role_mode
+
+    global_mode = _vm_distributed_effective_ssh_access_mode(topology)
+    if global_mode:
+        return global_mode
+
+    if _vm_distributed_role_bastion_config(topology, role_key).get("host"):
+        return "bastion"
+    return ""
+
+
 def _vm_distributed_effective_ssh_host(topology_config, spec, address):
     topology = dict(topology_config or {})
     configured = _vm_distributed_config_value(topology, spec["ssh_host_key"])
+    role_access_mode_key = str(spec.get("ssh_host_key") or "").replace("_SSH_HOST", "_SSH_ACCESS_MODE")
+    role_access_mode_configured = bool(str(topology.get(role_access_mode_key) or "").strip())
     if (
         _normalized_vm_distributed_execution_host(topology) == "common-services"
         and _vm_distributed_common_vm_direct_ssh_enabled(topology)
+        and not role_access_mode_configured
     ):
         return address or configured
     return configured or address
@@ -10887,6 +11027,8 @@ def _vm_distributed_role_ssh_payload(topology_config, role):
             "port": ssh.get("port") or "22",
             "user": ssh.get("user") or "",
             "identity_file": ssh.get("identity_file") or "",
+            "access_mode": ssh.get("access_mode") or "",
+            "bastion": dict(ssh.get("bastion") or {}),
         },
     }
 
@@ -11180,8 +11322,9 @@ def _vm_distributed_build_ssh_command(plan, vm, remote_command=None):
     if identity_file:
         command.extend(["-i", identity_file])
 
-    bastion = dict(access.get("bastion") or {})
-    if access.get("mode") == "bastion" and bastion.get("host"):
+    access_mode = str(ssh.get("access_mode") or access.get("mode") or "").strip().lower().replace("_", "-")
+    bastion = dict(ssh.get("bastion") or access.get("bastion") or {})
+    if access_mode == "bastion" and bastion.get("host"):
         bastion_target = _vm_distributed_ssh_target(bastion.get("user"), bastion.get("host"))
         bastion_port = str(bastion.get("port") or "").strip()
         bastion_identity_file = str(bastion.get("identity_file") or "").strip()
@@ -11316,6 +11459,8 @@ def _build_vm_distributed_ssh_bootstrap_plan(infrastructure_config, topology_con
         )
         ssh_host = _vm_distributed_effective_ssh_host(topology, spec, address)
         ssh_user = _vm_distributed_config_value(topology, spec["ssh_user_key"], "VM_SSH_USER")
+        target_identity = _vm_distributed_identity_file(topology, role_key) or identity_file
+        target_access_mode = _vm_distributed_role_ssh_access_mode(topology, role_key)
         target_roles.append(
             {
                 "role": spec["role"],
@@ -11323,7 +11468,13 @@ def _build_vm_distributed_ssh_bootstrap_plan(infrastructure_config, topology_con
                 "host": ssh_host,
                 "user": ssh_user,
                 "port": _vm_distributed_config_value(topology, spec["ssh_port_key"], default="22") or "22",
-                "identity_file": _vm_distributed_identity_file(topology, role_key) or identity_file,
+                "identity_file": target_identity,
+                "access_mode": target_access_mode,
+                "bastion": _vm_distributed_role_bastion_config(
+                    topology,
+                    role_key,
+                    identity_file=target_identity,
+                ),
                 "needs_public_key": bool(ssh_host and ssh_user),
             }
         )
@@ -11411,27 +11562,52 @@ def _vm_distributed_manual_ssh_bootstrap_commands(plan):
     key_comment = str(ssh_bootstrap.get("key_comment") or "validation-environment-vm-distributed").strip()
     access = dict(vm_plan.get("ssh") or {})
     bastion = dict(access.get("bastion") or {})
-    bastion_host = str(bastion.get("host") or "").strip()
-    bastion_port = str(bastion.get("port") or "").strip()
-    bastion_user = str(bastion.get("user") or "").strip()
-    bastion_target = _vm_distributed_ssh_target(bastion_user, bastion_host)
-    if bastion_target and bastion_port:
-        bastion_target_with_port = f"{bastion_target}:{bastion_port}"
-    else:
-        bastion_target_with_port = bastion_target
 
     commands = []
-    if bastion_host:
+    bastion_entries = []
+
+    def add_bastion_entry(name, value):
+        item = dict(value or {})
+        host = str(item.get("host") or "").strip()
+        user = str(item.get("user") or "").strip()
+        port = str(item.get("port") or "").strip()
+        target = _vm_distributed_ssh_target(user, host)
+        if not host or not target:
+            return
+        key = (target, port)
+        if any(existing["key"] == key for existing in bastion_entries):
+            return
+        bastion_entries.append(
+            {
+                "key": key,
+                "name": name,
+                "host": host,
+                "port": port,
+                "target": target,
+                "target_with_port": f"{target}:{port}" if port else target,
+            }
+        )
+
+    if access.get("mode") == "bastion":
+        add_bastion_entry("global", bastion)
+    for target in list(ssh_bootstrap.get("targets") or []):
+        if (target.get("access_mode") or access.get("mode")) == "bastion":
+            add_bastion_entry(target.get("role_key") or target.get("role") or "target", target.get("bastion") or bastion)
+
+    for bastion_entry in bastion_entries:
+        bastion_host = bastion_entry["host"]
+        bastion_port = bastion_entry["port"]
+        bastion_label = "" if bastion_entry["name"] == "global" else f"{bastion_entry['name']}_"
         commands.append(
             _vm_distributed_manual_command(
-                "check_bastion_dns",
+                f"check_{bastion_label}bastion_dns",
                 _vm_distributed_format_command(["getent", "hosts", bastion_host]),
             )
         )
         if bastion_port:
             commands.append(
                 _vm_distributed_manual_command(
-                    "check_bastion_port",
+                    f"check_{bastion_label}bastion_port",
                     _vm_distributed_format_command(["nc", "-vz", bastion_host, bastion_port]),
                 )
             )
@@ -11470,14 +11646,15 @@ def _vm_distributed_manual_ssh_bootstrap_commands(plan):
         ]
     )
 
-    if bastion_target:
+    for bastion_entry in bastion_entries:
+        bastion_label = "" if bastion_entry["name"] == "global" else f"{bastion_entry['name']}_"
         copy_id = ["ssh-copy-id", "-i", public_key_file]
-        if bastion_port:
-            copy_id.extend(["-p", bastion_port])
-        copy_id.append(bastion_target)
+        if bastion_entry["port"]:
+            copy_id.extend(["-p", bastion_entry["port"]])
+        copy_id.append(bastion_entry["target"])
         commands.append(
             _vm_distributed_manual_command(
-                "install_public_key_on_bastion",
+                f"install_public_key_on_{bastion_label}bastion",
                 _vm_distributed_format_command(copy_id),
                 "May ask for the approved SSH user password; the framework does not store it.",
             )
@@ -11489,8 +11666,17 @@ def _vm_distributed_manual_ssh_bootstrap_commands(plan):
         if not target_host or not target_user:
             continue
         copy_id = ["ssh-copy-id", "-i", public_key_file]
-        if access.get("mode") == "bastion" and bastion_target_with_port:
-            copy_id.extend(["-o", f"ProxyJump={bastion_target_with_port}"])
+        target_mode = target.get("access_mode") or access.get("mode")
+        target_bastion = dict(target.get("bastion") or bastion)
+        target_bastion_target = _vm_distributed_ssh_target(
+            target_bastion.get("user"),
+            target_bastion.get("host"),
+        )
+        target_bastion_port = str(target_bastion.get("port") or "").strip()
+        if target_bastion_target and target_bastion_port:
+            target_bastion_target = f"{target_bastion_target}:{target_bastion_port}"
+        if target_mode == "bastion" and target_bastion_target:
+            copy_id.extend(["-o", f"ProxyJump={target_bastion_target}"])
         copy_id.append(_vm_distributed_ssh_target(target_user, target_host))
         commands.append(
             _vm_distributed_manual_command(
@@ -11500,14 +11686,15 @@ def _vm_distributed_manual_ssh_bootstrap_commands(plan):
             )
         )
 
-    if bastion_target:
+    for bastion_entry in bastion_entries:
+        bastion_label = "" if bastion_entry["name"] == "global" else f"{bastion_entry['name']}_"
         verify_bastion = ["ssh", "-o", "BatchMode=yes", "-i", identity_file]
-        if bastion_port:
-            verify_bastion.extend(["-p", bastion_port])
-        verify_bastion.extend([bastion_target, "hostname"])
+        if bastion_entry["port"]:
+            verify_bastion.extend(["-p", bastion_entry["port"]])
+        verify_bastion.extend([bastion_entry["target"], "hostname"])
         commands.append(
             _vm_distributed_manual_command(
-                "verify_bastion_batchmode",
+                f"verify_{bastion_label}bastion_batchmode",
                 _vm_distributed_format_command(verify_bastion),
             )
         )
@@ -11665,6 +11852,8 @@ def _vm_distributed_target_vm_from_bootstrap_target(plan, target):
             "port": item.get("port") or "22",
             "user": item.get("user"),
             "identity_file": item.get("identity_file"),
+            "access_mode": item.get("access_mode"),
+            "bastion": dict(item.get("bastion") or {}),
         },
     }
 
@@ -11867,6 +12056,12 @@ def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, 
         ssh_port = _vm_distributed_config_value(topology, spec["ssh_port_key"], default="22") or "22"
         ssh_user = _vm_distributed_config_value(topology, spec["ssh_user_key"], "VM_SSH_USER")
         ssh_identity_file = _vm_distributed_identity_file(topology, spec["role_key"])
+        ssh_access_mode = _vm_distributed_role_ssh_access_mode(topology, spec["role_key"])
+        ssh_bastion = _vm_distributed_role_bastion_config(
+            topology,
+            spec["role_key"],
+            identity_file=ssh_identity_file,
+        )
         public_url = _vm_distributed_config_value(topology, spec["public_url_key"])
         http_url = _vm_distributed_config_value(topology, spec["http_url_key"], default=f"http://{address}" if address else "")
         remote_workdir = _vm_distributed_effective_remote_workdir(
@@ -11884,12 +12079,14 @@ def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, 
             "remote_workdir": remote_workdir,
             "levels": spec["levels"],
             "ssh": {
-                "mode": mode or "not-configured",
+                "mode": ssh_access_mode or "not-configured",
+                "access_mode": ssh_access_mode,
                 "host": ssh_host,
                 "port": ssh_port,
                 "user": ssh_user,
                 "identity_file": ssh_identity_file,
-                "configured": bool(mode and ssh_host),
+                "bastion": ssh_bastion,
+                "configured": bool(ssh_access_mode and ssh_host),
             },
         }
         vm["ssh"]["command"] = (
@@ -11913,6 +12110,10 @@ def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, 
         "dataspace_domain_base": str(infra.get("DS_DOMAIN_BASE") or "").strip(),
         "dataspace": str(adapter.get("DS_1_NAME") or "").strip(),
         "ssh": access,
+        "ssh_role_modes": {
+            item["role_key"]: (item.get("ssh") or {}).get("access_mode") or "not-configured"
+            for item in vms
+        },
         "vms": vms,
         "ssh_bootstrap": ssh_bootstrap,
         "http_preflight": {
@@ -12220,7 +12421,11 @@ def _vm_distributed_default_command_runner(command, timeout):
 def run_vm_distributed_remote_preflight(plan, command_runner=None):
     vm_plan = dict(plan or {})
     ssh_plan = dict(vm_plan.get("ssh") or {})
-    if ssh_plan.get("mode") not in {"direct", "bastion"}:
+    has_configured_ssh = ssh_plan.get("mode") in {"direct", "bastion"} or any(
+        (dict(item.get("ssh") or {}).get("access_mode") in {"direct", "bastion"})
+        for item in list(vm_plan.get("vms") or [])
+    )
+    if not has_configured_ssh:
         return {
             "status": "skipped",
             "reason": "ssh-not-configured",
@@ -13077,12 +13282,39 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         "VM_COMMON_SSH_HOST": common_ssh_host,
         "VM_COMMON_SSH_PORT": common_ssh_port,
         "VM_COMMON_SSH_USER": common_ssh_user,
+        "VM_COMMON_SSH_IDENTITY_FILE": topology_config.get("VM_COMMON_SSH_IDENTITY_FILE") or "",
+        "VM_COMMON_SSH_ACCESS_MODE": topology_config.get("VM_COMMON_SSH_ACCESS_MODE") or "",
+        "VM_COMMON_SSH_BASTION_HOST": topology_config.get("VM_COMMON_SSH_BASTION_HOST") or "",
+        "VM_COMMON_SSH_BASTION_PORT": topology_config.get("VM_COMMON_SSH_BASTION_PORT") or "2222",
+        "VM_COMMON_SSH_BASTION_USER": topology_config.get("VM_COMMON_SSH_BASTION_USER") or "",
+        "VM_COMMON_SSH_BASTION_IDENTITY_FILE": topology_config.get("VM_COMMON_SSH_BASTION_IDENTITY_FILE") or "",
+        "VM_COMPONENTS_SSH_HOST": topology_config.get("VM_COMPONENTS_SSH_HOST") or common_ssh_host,
+        "VM_COMPONENTS_SSH_PORT": topology_config.get("VM_COMPONENTS_SSH_PORT") or common_ssh_port,
+        "VM_COMPONENTS_SSH_USER": topology_config.get("VM_COMPONENTS_SSH_USER") or common_ssh_user,
+        "VM_COMPONENTS_SSH_IDENTITY_FILE": topology_config.get("VM_COMPONENTS_SSH_IDENTITY_FILE") or "",
+        "VM_COMPONENTS_SSH_ACCESS_MODE": topology_config.get("VM_COMPONENTS_SSH_ACCESS_MODE") or "",
+        "VM_COMPONENTS_SSH_BASTION_HOST": topology_config.get("VM_COMPONENTS_SSH_BASTION_HOST") or "",
+        "VM_COMPONENTS_SSH_BASTION_PORT": topology_config.get("VM_COMPONENTS_SSH_BASTION_PORT") or "2222",
+        "VM_COMPONENTS_SSH_BASTION_USER": topology_config.get("VM_COMPONENTS_SSH_BASTION_USER") or "",
+        "VM_COMPONENTS_SSH_BASTION_IDENTITY_FILE": topology_config.get("VM_COMPONENTS_SSH_BASTION_IDENTITY_FILE") or "",
         "VM_PROVIDER_SSH_HOST": provider_ssh_host,
         "VM_PROVIDER_SSH_PORT": provider_ssh_port,
         "VM_PROVIDER_SSH_USER": provider_ssh_user,
+        "VM_PROVIDER_SSH_IDENTITY_FILE": topology_config.get("VM_PROVIDER_SSH_IDENTITY_FILE") or "",
+        "VM_PROVIDER_SSH_ACCESS_MODE": topology_config.get("VM_PROVIDER_SSH_ACCESS_MODE") or "",
+        "VM_PROVIDER_SSH_BASTION_HOST": topology_config.get("VM_PROVIDER_SSH_BASTION_HOST") or "",
+        "VM_PROVIDER_SSH_BASTION_PORT": topology_config.get("VM_PROVIDER_SSH_BASTION_PORT") or "2222",
+        "VM_PROVIDER_SSH_BASTION_USER": topology_config.get("VM_PROVIDER_SSH_BASTION_USER") or "",
+        "VM_PROVIDER_SSH_BASTION_IDENTITY_FILE": topology_config.get("VM_PROVIDER_SSH_BASTION_IDENTITY_FILE") or "",
         "VM_CONSUMER_SSH_HOST": consumer_ssh_host,
         "VM_CONSUMER_SSH_PORT": consumer_ssh_port,
         "VM_CONSUMER_SSH_USER": consumer_ssh_user,
+        "VM_CONSUMER_SSH_IDENTITY_FILE": topology_config.get("VM_CONSUMER_SSH_IDENTITY_FILE") or "",
+        "VM_CONSUMER_SSH_ACCESS_MODE": topology_config.get("VM_CONSUMER_SSH_ACCESS_MODE") or "",
+        "VM_CONSUMER_SSH_BASTION_HOST": topology_config.get("VM_CONSUMER_SSH_BASTION_HOST") or "",
+        "VM_CONSUMER_SSH_BASTION_PORT": topology_config.get("VM_CONSUMER_SSH_BASTION_PORT") or "2222",
+        "VM_CONSUMER_SSH_BASTION_USER": topology_config.get("VM_CONSUMER_SSH_BASTION_USER") or "",
+        "VM_CONSUMER_SSH_BASTION_IDENTITY_FILE": topology_config.get("VM_CONSUMER_SSH_BASTION_IDENTITY_FILE") or "",
     }
     adapter_updates = {
         "DS_1_NAME": dataspace_name,
