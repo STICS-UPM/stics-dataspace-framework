@@ -1152,6 +1152,16 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertEqual(commands[0][0][-1].split(" ", 2)[:2], ["sh", "-lc"])
         self.assertNotIn("hostname_value", result["vms"][0]["command"])
 
+    def test_remote_preflight_shell_uses_non_blocking_http_local_label(self):
+        shell = main._vm_distributed_remote_preflight_shell(
+            workdir="/srv/validation-environment",
+            http_url="http://127.0.0.1/",
+        )
+
+        self.assertIn("http_value=unavailable", shell)
+        self.assertIn("http_value=not-checked", shell)
+        self.assertNotIn("printf failed", shell)
+
     def test_http_preflight_marks_http_responses_below_500_as_reachable(self):
         seen = []
 
@@ -1188,7 +1198,34 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertEqual(result["status"], "passed-with-warnings")
         self.assertEqual(result["vms"][0]["status"], "warning")
         self.assertEqual(result["vms"][0]["reason"], "tls-verification-failed")
+        self.assertIn("self signed certificate", result["vms"][0]["detail"])
+        self.assertNotIn("error", result["vms"][0])
         self.assertEqual(seen, [("https://org1.example.test", True), ("https://org1.example.test", False)])
+
+    def test_preflight_result_prints_warning_detail_without_error_label(self):
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            main._print_vm_distributed_preflight_results(
+                "HTTP preflight",
+                {
+                    "status": "passed-with-warnings",
+                    "vms": [
+                        {
+                            "role": "common-services",
+                            "url": "https://org1.example.test",
+                            "status": "warning",
+                            "status_code": 403,
+                            "reason": "tls-verification-failed",
+                            "detail": "self signed certificate",
+                        }
+                    ],
+                },
+            )
+
+        rendered = output.getvalue()
+        self.assertIn("warning: self signed certificate", rendered)
+        self.assertNotIn("error:", rendered)
 
     def test_preflight_reports_incomplete_required_values(self):
         preflight = main._vm_distributed_configuration_preflight({}, {}, {})

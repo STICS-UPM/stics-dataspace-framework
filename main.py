@@ -18,6 +18,7 @@ import threading
 import time
 import types
 import urllib.parse
+import warnings
 import yaml
 
 from runtime_dependencies import ensure_runtime_dependencies
@@ -12178,7 +12179,7 @@ def _vm_distributed_remote_preflight_shell(workdir="", http_url="http://127.0.0.
             "k3s_value=$(command -v k3s >/dev/null 2>&1 && k3s --version 2>/dev/null | head -n 1 || printf missing)",
             "ports_value=$(ss -lntH 2>/dev/null | awk '{print $4}' | tr '\n' ',' | sed 's/,$//' || printf unavailable)",
             "if [ -n \"$workdir\" ]; then if [ -d \"$workdir\" ]; then workdir_value=present; else workdir_value=missing; fi; else workdir_value=not-configured; fi",
-            "if command -v curl >/dev/null 2>&1; then http_value=$(curl -sS -m 3 -o /dev/null -w '%{http_code}' \"$http_url\" 2>/dev/null || printf failed); else http_value=curl-missing; fi",
+            "if command -v curl >/dev/null 2>&1; then http_output=$(curl -sS -m 3 -o /dev/null -w '%{http_code}' \"$http_url\" 2>/dev/null); http_status=$?; if [ \"$http_status\" = \"0\" ]; then http_value=\"$http_output\"; else http_value=unavailable; fi; else http_value=not-checked; fi",
             "printf 'hostname=%s\\n' \"$hostname_value\"",
             "printf 'user=%s\\n' \"$user_value\"",
             "printf 'os=%s\\n' \"$os_value\"",
@@ -12347,13 +12348,15 @@ def run_vm_distributed_http_preflight(plan, request_get=None):
                 )
                 continue
             try:
-                response = _vm_distributed_http_get(
-                    getter,
-                    url,
-                    timeout=3,
-                    allow_redirects=False,
-                    verify=False,
-                )
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    response = _vm_distributed_http_get(
+                        getter,
+                        url,
+                        timeout=3,
+                        allow_redirects=False,
+                        verify=False,
+                    )
                 status_code = int(getattr(response, "status_code", 0) or 0)
                 results.append(
                     {
@@ -12362,7 +12365,7 @@ def run_vm_distributed_http_preflight(plan, request_get=None):
                         "status": "warning" if 100 <= status_code < 500 else "failed",
                         "status_code": status_code,
                         "reason": "tls-verification-failed",
-                        "error": str(exc)[:500],
+                        "detail": str(exc)[:500],
                     }
                 )
             except requests.RequestException as retry_exc:
@@ -14145,8 +14148,12 @@ def _print_vm_distributed_preflight_results(title, result):
             for key in ("hostname", "user", "os", "ips", "docker", "containerd", "kubectl", "k3s", "remote_workdir", "http_local"):
                 if facts.get(key):
                     print(f"    {key}: {facts[key]}")
+        if item.get("detail"):
+            label = "warning" if str(item.get("status") or "").lower() == "warning" else "detail"
+            print(f"    {label}: {item.get('detail')}")
         if item.get("error"):
-            print(f"    error: {item.get('error')}")
+            label = "error" if str(item.get("status") or "").lower() == "failed" else "detail"
+            print(f"    {label}: {item.get('error')}")
 
 
 def _print_vm_distributed_manual_commands(plan):
