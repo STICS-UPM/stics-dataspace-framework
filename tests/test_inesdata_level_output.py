@@ -2834,6 +2834,26 @@ minio:
             9001,
         )
 
+    def test_vm_distributed_common_public_path_ingresses_support_keycloak_dedicated_root_domain(self):
+        infrastructure = self._make_infrastructure()
+
+        ingresses = infrastructure._vm_distributed_common_public_path_ingresses(
+            {
+                "KEYCLOAK_FRONTEND_URL": "https://auth.dev.example.test",
+            }
+        )
+
+        self.assertEqual([item["metadata"]["name"] for item in ingresses], ["common-srvs-keycloak-public-root"])
+        keycloak = ingresses[0]
+        self.assertEqual(keycloak["spec"]["rules"][0]["host"], "auth.dev.example.test")
+        self.assertEqual(keycloak["spec"]["rules"][0]["http"]["paths"][0]["path"], "/")
+        self.assertEqual(keycloak["spec"]["rules"][0]["http"]["paths"][0]["pathType"], "Prefix")
+        self.assertNotIn("nginx.ingress.kubernetes.io/rewrite-target", keycloak["metadata"]["annotations"])
+        self.assertEqual(
+            keycloak["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"],
+            "common-srvs-keycloak",
+        )
+
     def test_vm_distributed_common_public_path_ingresses_infer_default_org1_paths(self):
         infrastructure = self._make_infrastructure()
 

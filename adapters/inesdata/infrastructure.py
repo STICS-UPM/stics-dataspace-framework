@@ -2415,7 +2415,7 @@ class INESDataInfrastructureAdapter:
         public_urls = resolve_vm_distributed_public_urls(config)
         resolved_config = {**dict(config or {}), **public_urls}
         topology_label = self._public_path_topology_label()
-        keycloak_host, keycloak_path = self._path_public_url_parts(
+        keycloak_host, keycloak_path = self._public_url_host_path(
             resolved_config.get("KEYCLOAK_FRONTEND_URL")
             or resolved_config.get("KEYCLOAK_PUBLIC_URL")
         )
@@ -2426,7 +2426,47 @@ class INESDataInfrastructureAdapter:
         )
         ingresses = []
 
-        if keycloak_host and keycloak_path:
+        if keycloak_host and keycloak_path in {"", "/"}:
+            ingresses.append(
+                {
+                    "apiVersion": "networking.k8s.io/v1",
+                    "kind": "Ingress",
+                    "metadata": {
+                        "name": "common-srvs-keycloak-public-root",
+                        "namespace": namespace,
+                        "annotations": {
+                            self.KEYCLOAK_HTTP_COOKIE_ANNOTATION: self.KEYCLOAK_HTTP_COOKIE_SNIPPET,
+                        },
+                        "labels": {
+                            "app.kubernetes.io/managed-by": "validation-environment",
+                            "app.kubernetes.io/part-of": topology_label,
+                        },
+                    },
+                    "spec": {
+                        "ingressClassName": "nginx",
+                        "rules": [
+                            {
+                                "host": keycloak_host,
+                                "http": {
+                                    "paths": [
+                                        {
+                                            "path": "/",
+                                            "pathType": "Prefix",
+                                            "backend": {
+                                                "service": {
+                                                    "name": "common-srvs-keycloak",
+                                                    "port": {"name": "http"},
+                                                }
+                                            },
+                                        }
+                                    ]
+                                },
+                            }
+                        ],
+                    },
+                }
+            )
+        elif keycloak_host and keycloak_path:
             ingresses.append(
                 {
                     "apiVersion": "networking.k8s.io/v1",
