@@ -1585,6 +1585,7 @@ minio:
         infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
         deployment.wait_for_keycloak_admin_ready = lambda *_args, **_kwargs: True
         deployment.restart_registration_service = lambda: None
+        deployment.restart_public_portal = mock.Mock()
         deployment.update_helm_values_with_host_aliases = mock.Mock()
 
         output = io.StringIO()
@@ -1946,6 +1947,7 @@ minio:
         infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
         deployment.wait_for_keycloak_admin_ready = lambda *_args, **_kwargs: True
         deployment.restart_registration_service = lambda: None
+        deployment.restart_public_portal = mock.Mock()
         deployment.update_helm_values_with_host_aliases = mock.Mock()
 
         with mock.patch(
@@ -1980,6 +1982,46 @@ minio:
             "demo-core-ns",
             dataspace_name="demo",
             include_public_portal=True,
+        )
+        deployment.restart_public_portal.assert_called_once_with()
+
+    def test_restart_public_portal_restarts_backend_and_frontend_deployments(self):
+        run = mock.Mock(
+            side_effect=[
+                "deployment.apps/demo-public-portal-backend restarted",
+                'deployment "demo-public-portal-backend" successfully rolled out',
+                "deployment.apps/demo-public-portal-frontend restarted",
+                'deployment "demo-public-portal-frontend" successfully rolled out',
+            ]
+        )
+        deployment = INESDataDeploymentAdapter(
+            run=run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+
+        deployment.restart_public_portal()
+
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                "kubectl rollout restart deployment/demo-public-portal-backend -n demo-core-ns",
+                "kubectl rollout status deployment/demo-public-portal-backend -n demo-core-ns --timeout=180s",
+                "kubectl rollout restart deployment/demo-public-portal-frontend -n demo-core-ns",
+                "kubectl rollout status deployment/demo-public-portal-frontend -n demo-core-ns --timeout=180s",
+            ],
+        )
+        self.assertEqual(
+            [call.kwargs for call in run.call_args_list],
+            [
+                {"check": False},
+                {"capture": True, "check": False},
+                {"check": False},
+                {"capture": True, "check": False},
+            ],
         )
 
     def test_deploy_dataspace_uses_level3_local_image_overrides_when_prepared(self):

@@ -916,6 +916,7 @@ class SharedDataspaceDeploymentAdapter:
             timeout_seconds=300,
         ):
             self._fail("Error deploying public portal")
+        self.restart_public_portal()
         if normalize_topology(topology) == VM_DISTRIBUTED_TOPOLOGY:
             self._sync_vm_distributed_public_portal_backend_path_ingress()
         return True
@@ -1002,7 +1003,7 @@ class SharedDataspaceDeploymentAdapter:
     @staticmethod
     def _print_unique_lines(output):
         previous = None
-        for line in output.splitlines():
+        for line in str(output or "").splitlines():
             line = line.rstrip()
             if not line or line == previous:
                 continue
@@ -1211,6 +1212,31 @@ class SharedDataspaceDeploymentAdapter:
         if rollout_output is None:
             self._fail("registration-service deployment did not finish rolling out")
         self._print_unique_lines(rollout_output)
+
+    def restart_public_portal(self):
+        namespace = self._public_portal_namespace()
+        dataspace_name = self._dataspace_name()
+        deployments = (
+            (f"{dataspace_name}-public-portal-backend", "public portal backend"),
+            (f"{dataspace_name}-public-portal-frontend", "public portal frontend"),
+        )
+
+        print("\nRestarting public portal deployments to pick up recreated database credentials and config...")
+        for deployment_name, label in deployments:
+            if self.run(
+                f"kubectl rollout restart deployment/{deployment_name} -n {namespace}",
+                check=False,
+            ) is None:
+                self._fail(f"Could not restart {label} deployment")
+
+            rollout_output = self.run(
+                f"kubectl rollout status deployment/{deployment_name} -n {namespace} --timeout=180s",
+                capture=True,
+                check=False,
+            )
+            if rollout_output is None:
+                self._fail(f"{label} deployment did not finish rolling out")
+            self._print_unique_lines(rollout_output)
 
     def _show_minikube_tunnel_prompt(self):
         print("-------------------------------------------------")
