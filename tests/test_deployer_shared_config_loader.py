@@ -45,16 +45,58 @@ class SharedConfigLoaderTests(unittest.TestCase):
 
         self.assertEqual(config["DATABASE_HOSTNAME"], "postgresql.example.internal")
 
+    def test_vm_runtime_defaults_infer_vault_service_url(self):
+        config = apply_topology_runtime_defaults(
+            {
+                "VT_URL": "",
+                "VAULT_URL": "http://127.0.0.1:8200",
+                "COMMON_SERVICES_NAMESPACE": "shared-foundation",
+            },
+            "vm-distributed",
+        )
+
+        self.assertEqual(config["VT_URL"], "http://common-srvs-vault.shared-foundation.svc:8200")
+        self.assertEqual(config["VAULT_URL"], "http://common-srvs-vault.shared-foundation.svc:8200")
+
+    def test_vm_runtime_defaults_keep_explicit_vault_service_url(self):
+        config = apply_topology_runtime_defaults(
+            {
+                "VT_URL": "http://vault.example.internal:8200",
+                "VAULT_URL": "https://vault.example.org",
+                "COMMON_SERVICES_NAMESPACE": "shared-foundation",
+            },
+            "vm-single",
+        )
+
+        self.assertEqual(config["VT_URL"], "http://vault.example.internal:8200")
+        self.assertEqual(config["VAULT_URL"], "https://vault.example.org")
+
     def test_local_runtime_defaults_do_not_infer_database_hostname(self):
         config = apply_topology_runtime_defaults(
             {
                 "DATABASE_HOSTNAME": "",
+                "VT_URL": "http://127.0.0.1:8200",
                 "COMMON_SERVICES_NAMESPACE": "shared-foundation",
             },
             "local",
         )
 
         self.assertEqual(config["DATABASE_HOSTNAME"], "")
+        self.assertEqual(config["VT_URL"], "http://127.0.0.1:8200")
+
+    def test_load_layered_deployer_config_replaces_vm_loopback_vault_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = os.path.join(tmpdir, "deployer.config")
+            topology_dir = os.path.join(tmpdir, "topologies")
+            os.makedirs(topology_dir, exist_ok=True)
+            with open(config_path, "w", encoding="utf-8") as handle:
+                handle.write("VT_URL=http://127.0.0.1:8200\nCOMMON_SERVICES_NAMESPACE=shared-foundation\n")
+            with open(os.path.join(topology_dir, "vm-distributed.config"), "w", encoding="utf-8") as handle:
+                handle.write("CLUSTER_TYPE=k3s\n")
+
+            config = load_layered_deployer_config([config_path], topology="vm-distributed")
+
+        self.assertEqual(config["VT_URL"], "http://common-srvs-vault.shared-foundation.svc:8200")
 
     def test_infrastructure_base_config_files_do_not_include_topology_keys(self):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))

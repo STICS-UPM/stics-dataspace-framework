@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from urllib.parse import urlparse
 
 
 _DATASPACE_SLOT_PATTERN = re.compile(r"^DS_(\d+)_([A-Z0-9_]+)$")
@@ -302,11 +303,29 @@ def apply_topology_runtime_defaults(config: dict[str, str], topology: str | None
     if normalized_topology not in {"vm-single", "vm-distributed"}:
         return config
 
+    common_namespace = str(config.get("COMMON_SERVICES_NAMESPACE") or "common-srvs").strip() or "common-srvs"
+
     if not str(config.get("DATABASE_HOSTNAME") or "").strip():
-        common_namespace = str(config.get("COMMON_SERVICES_NAMESPACE") or "common-srvs").strip() or "common-srvs"
         config["DATABASE_HOSTNAME"] = f"common-srvs-postgresql.{common_namespace}.svc"
 
+    vault_service_url = f"http://common-srvs-vault.{common_namespace}.svc:8200"
+    for vault_key in ("VT_URL", "VAULT_URL"):
+        if _is_blank_or_loopback_url(config.get(vault_key)):
+            config[vault_key] = vault_service_url
+
     return config
+
+
+def _is_blank_or_loopback_url(value: str | None) -> bool:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return True
+    try:
+        parsed = urlparse(raw_value if "://" in raw_value else f"http://{raw_value}")
+    except ValueError:
+        return False
+    hostname = (parsed.hostname or "").strip().lower()
+    return hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 
 def topology_overlay_config_path(path: str, topology: str | None = None) -> str:
