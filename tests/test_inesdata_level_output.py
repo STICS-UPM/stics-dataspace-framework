@@ -875,6 +875,51 @@ minio:
         )
         self.assertIn("proxy_pass http://127.0.0.1:31667;", rendered_nginx)
 
+    def test_remote_nginx_sync_retries_interactive_sudo_when_password_is_required(self):
+        infrastructure = self._make_shared_foundation_infrastructure()
+        config = {
+            "VM_SSH_USER": "operator",
+            "VM_PROVIDER_IP": "provider.public.example.test",
+            "VM_PROVIDER_SSH_HOST": "10.0.0.20",
+            "VM_DISTRIBUTED_REMOTE_NGINX_INTERACTIVE": "auto",
+        }
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append((command, kwargs.get("input"), kwargs))
+            command_text = " ".join(command)
+            if "sudo tee" in command_text:
+                return mock.Mock(
+                    returncode=1,
+                    stdout="",
+                    stderr="sudo: a terminal is required to read the password\nsudo: a password is required",
+                )
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch("adapters.shared.infrastructure.subprocess.run", side_effect=fake_run):
+            infrastructure._sync_remote_nginx_vm_distributed(
+                config,
+                "provider",
+                "provider.public.example.test",
+                ["conlab"],
+                "demo",
+                "dataspace.example.test",
+                "31667",
+            )
+
+        self.assertEqual(len(calls), 4)
+        initial_write_command, initial_content, _initial_kwargs = calls[0]
+        temp_write_command, temp_content, _temp_kwargs = calls[1]
+        install_command, _install_input, _install_kwargs = calls[2]
+        reload_command, _reload_input, _reload_kwargs = calls[3]
+        self.assertIn("sudo tee", " ".join(initial_write_command))
+        self.assertIn("server_name", initial_content)
+        self.assertIn("cat > /tmp/pionera-vm-distributed-provider-demo.conf", " ".join(temp_write_command))
+        self.assertEqual(temp_content, initial_content)
+        self.assertIn("-tt", install_command)
+        self.assertIn("sudo install -m 0644", " ".join(install_command))
+        self.assertNotIn("-tt", reload_command)
+
     def test_deploy_infrastructure_does_not_print_complete_on_failure(self):
         infrastructure = self._make_infrastructure()
         infrastructure.ensure_wsl_docker_config = lambda: True
