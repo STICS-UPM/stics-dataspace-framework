@@ -72,6 +72,8 @@ newman/
 # =========================
 # SENSITIVE CONFIGURATION
 # =========================
+.local/
+.profiles/
 deployer.config
 /deployer.config.example
 deployers/infrastructure/topologies/*.config

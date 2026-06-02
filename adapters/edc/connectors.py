@@ -1564,7 +1564,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             if not synchronized:
                 return self._fail_runtime_prerequisite(
                     "EDC Level 4 cannot continue because the local Vault token does not match "
-                    "the running common services. Restore deployers/shared/common/init-keys-vault.json "
+                    "the running common services. Restore the topology-scoped Vault keys artifact "
                     "from the environment that created common-srvs, or recreate Level 2 common services "
                     "and then rerun Level 3 and Level 4.",
                     code="vault_token_mismatch",

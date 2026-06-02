@@ -350,7 +350,8 @@ class SharedDataspaceDeploymentAdapter:
             "components": "k3s_kubeconfig_components",
         }
         key = key_by_role.get(normalized_role, "k3s_kubeconfig_common")
-        return str(runtime.get(key) or runtime.get("k3s_kubeconfig") or "").strip()
+        kubeconfig = str(runtime.get(key) or runtime.get("k3s_kubeconfig") or "").strip()
+        return os.path.abspath(os.path.expanduser(kubeconfig)) if kubeconfig else ""
 
     @contextmanager
     def _temporary_kubeconfig_role(self, role):

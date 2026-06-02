@@ -567,7 +567,8 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
         patch = '{"data":{"use-forwarded-headers":"true","compute-full-forwarded-for":"true"}}'
         kubeconfigs = []
         for key in ("K3S_KUBECONFIG_PROVIDER", "K3S_KUBECONFIG_CONSUMER"):
-            kubeconfig = str((deployer_config or {}).get(key) or "").strip()
+            raw_kubeconfig = str((deployer_config or {}).get(key) or "").strip()
+            kubeconfig = os.path.abspath(os.path.expanduser(raw_kubeconfig)) if raw_kubeconfig else ""
             if kubeconfig and kubeconfig not in kubeconfigs:
                 kubeconfigs.append(kubeconfig)
 

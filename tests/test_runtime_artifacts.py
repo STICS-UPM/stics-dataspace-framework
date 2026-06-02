@@ -85,7 +85,7 @@ class RuntimeArtifactsTests(unittest.TestCase):
             / "init-keys-vault.json",
         )
 
-    def test_prefer_existing_reads_legacy_before_scoped_when_scoped_is_missing(self):
+    def test_vm_distributed_prefer_existing_does_not_read_legacy_by_default(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             legacy_path = (
                 Path(tmpdir)
@@ -104,7 +104,79 @@ class RuntimeArtifactsTests(unittest.TestCase):
                 prefer_existing=True,
             )
 
+        self.assertEqual(
+            path,
+            Path(tmpdir)
+            / "deployers"
+            / "shared"
+            / "deployments"
+            / "DEV"
+            / "vm-distributed"
+            / "common"
+            / "init-keys-vault.json",
+        )
+
+    def test_explicit_legacy_fallback_can_read_legacy_before_scoped_when_scoped_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
+            os.environ,
+            {"PIONERA_RUNTIME_ARTIFACT_LEGACY_FALLBACK": "true"},
+        ):
+            legacy_path = (
+                Path(tmpdir)
+                / "deployers"
+                / "shared"
+                / "common"
+                / "init-keys-vault.json"
+            )
+            legacy_path.parent.mkdir(parents=True)
+            legacy_path.write_text("{}\n", encoding="utf-8")
+
+            path = runtime_artifacts.vault_keys_path(
+                "DEV",
+                topology="vm-distributed",
+                root=tmpdir,
+                prefer_existing=True,
+            )
+
         self.assertEqual(path, legacy_path)
+
+    def test_vm_single_connector_credentials_ignore_legacy_by_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy_path = (
+                Path(tmpdir)
+                / "deployers"
+                / "inesdata"
+                / "deployments"
+                / "DEV"
+                / "pionera"
+                / "credentials-connector-conn-org4-pionera.json"
+            )
+            legacy_path.parent.mkdir(parents=True)
+            legacy_path.write_text("{}\n", encoding="utf-8")
+
+            path = runtime_artifacts.connector_credentials_path(
+                "inesdata",
+                "DEV",
+                "pionera",
+                "conn-org4-pionera",
+                topology="vm-single",
+                root=tmpdir,
+                prefer_existing=True,
+            )
+
+        self.assertEqual(
+            path,
+            Path(tmpdir)
+            / "deployers"
+            / "inesdata"
+            / "deployments"
+            / "DEV"
+            / "vm-single"
+            / "pionera"
+            / "connectors"
+            / "conn-org4-pionera"
+            / "credentials.json",
+        )
 
 
 if __name__ == "__main__":

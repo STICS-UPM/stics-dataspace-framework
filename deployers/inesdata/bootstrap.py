@@ -69,6 +69,16 @@ PUBLIC_COMMON_ACCESS_KEYS = (
 )
 
 
+def _dataspace_keycloak_admin_with_master_token(server_url, token_obj, dataspace):
+    return KeycloakAdmin(
+        server_url=server_url,
+        token=token_obj,
+        realm_name=dataspace,
+        user_realm_name="master",
+        verify=False,
+    )
+
+
 def _split_config_list(raw_value):
     return [
         item.strip()
@@ -524,10 +534,11 @@ def create(ctx, name, dataspace):
         click.echo(f"    - Error obtaining token: {e}")
         ctx.exit(1)
 
-    keycloak_admin = KeycloakAdmin(server_url=keycloak_base_url,
-                                   token=token_obj,
-                                   realm_name=dataspace,
-                                   verify=False)
+    keycloak_admin = _dataspace_keycloak_admin_with_master_token(
+        keycloak_base_url,
+        token_obj,
+        dataspace,
+    )
 
     create_role(keycloak_admin, name)
     create_group(keycloak_admin, name)
@@ -1820,10 +1831,11 @@ def delete_connector_keycloak(username, password, server_url, connector, dataspa
         click.echo(f"    - Error obtaining token: {e}")
         return
 
-    keycloak_admin = KeycloakAdmin(server_url=server_url,
-                                   token=token_obj,
-                                   realm_name=dataspace,
-                                   verify=False)
+    keycloak_admin = _dataspace_keycloak_admin_with_master_token(
+        server_url,
+        token_obj,
+        dataspace,
+    )
     # DELETE USER
     deleted = False
     user_name = 'user-' + connector

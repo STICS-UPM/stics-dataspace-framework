@@ -1863,6 +1863,7 @@ class FakeDeployer:
             "config": {
                 "DS_1_NAME": "fake-ds",
                 "KC_PASSWORD": "super-secret-password",
+                "MINIO_ADMIN_PASS": "minio-admin-pass",
                 "VT_TOKEN": "token-value",
             },
         }
@@ -2687,6 +2688,148 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["level"], 2)
         self.assertEqual(adapter.infrastructure.reset_reasons, ["Interactive Level 2 recreate requested"])
         run_level.assert_called_once()
+
+    def test_interactive_level2_recreates_when_vm_topology_vault_scoped_artifact_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scoped_path = os.path.join(
+                tmpdir,
+                "deployers",
+                "shared",
+                "deployments",
+                "DEV",
+                "vm-distributed",
+                "common",
+                "init-keys-vault.json",
+            )
+            legacy_path = os.path.join(
+                tmpdir,
+                "deployers",
+                "shared",
+                "common",
+                "init-keys-vault.json",
+            )
+            os.makedirs(os.path.dirname(legacy_path), exist_ok=True)
+            with open(legacy_path, "w", encoding="utf-8") as handle:
+                handle.write("{}\n")
+
+            class SharedConfig:
+                @staticmethod
+                def script_dir():
+                    return tmpdir
+
+            class SharedInfrastructure:
+                def __init__(self):
+                    self.config = SharedConfig()
+                    self.reset_reasons = []
+                    self.reset_kubeconfigs = []
+
+                def _vault_keys_artifact_path(self):
+                    return scoped_path
+
+                def verify_common_services_ready_for_level3(self):
+                    return False, "Vault is not initialized/unsealed"
+
+                def reset_local_shared_common_services(self, reason=None):
+                    self.reset_reasons.append(reason)
+                    self.reset_kubeconfigs.append(os.environ.get("KUBECONFIG"))
+                    return True
+
+            adapter = FakeAdapterWithInfrastructure()
+            adapter.infrastructure = SharedInfrastructure()
+
+            stdout = io.StringIO()
+            with mock.patch.object(main, "build_adapter", return_value=adapter), mock.patch.object(
+                main,
+                "_interactive_confirm",
+                return_value=True,
+            ), mock.patch.object(
+                main,
+                "_ensure_vm_distributed_local_kubeconfigs",
+                return_value={"status": "ready", "items": []},
+            ) as kubeconfig_sync, mock.patch.object(
+                main,
+                "_topology_runtime_environment_overrides",
+                return_value={"KUBECONFIG": "/tmp/common-k3s.yaml"},
+            ), mock.patch.object(
+                main,
+                "run_level",
+                return_value={"level": 2, "status": "completed", "result": True},
+            ) as run_level, contextlib.redirect_stdout(stdout):
+                result = main._run_interactive_level2_with_shared_foundation(
+                    adapter_registry={"fake": "fake_adapter_module:FakeAdapterWithInfrastructure"},
+                    deployer_registry=self.deployer_registry,
+                    topology="vm-distributed",
+                )
+
+        self.assertEqual(result["level"], 2)
+        self.assertEqual(
+            adapter.infrastructure.reset_reasons,
+            ["Interactive Level 2 recreate requested for topology-scoped Vault artifact"],
+        )
+        self.assertEqual(adapter.infrastructure.reset_kubeconfigs, ["/tmp/common-k3s.yaml"])
+        kubeconfig_sync.assert_called_once_with(roles=("common",))
+        run_level.assert_called_once()
+        self.assertIn("Topology-scoped Vault keys are missing", stdout.getvalue())
+        self.assertIn("Ignored legacy artifact", stdout.getvalue())
+
+    def test_interactive_level2_cancels_when_vm_topology_vault_scoped_artifact_is_missing_and_recreate_is_declined(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scoped_path = os.path.join(
+                tmpdir,
+                "deployers",
+                "shared",
+                "deployments",
+                "DEV",
+                "vm-distributed",
+                "common",
+                "init-keys-vault.json",
+            )
+            legacy_path = os.path.join(
+                tmpdir,
+                "deployers",
+                "shared",
+                "common",
+                "init-keys-vault.json",
+            )
+            os.makedirs(os.path.dirname(legacy_path), exist_ok=True)
+            with open(legacy_path, "w", encoding="utf-8") as handle:
+                handle.write("{}\n")
+
+            class SharedConfig:
+                @staticmethod
+                def script_dir():
+                    return tmpdir
+
+            class SharedInfrastructure:
+                def __init__(self):
+                    self.config = SharedConfig()
+                    self.reset_called = False
+
+                def _vault_keys_artifact_path(self):
+                    return scoped_path
+
+                def reset_local_shared_common_services(self, reason=None):
+                    del reason
+                    self.reset_called = True
+                    return True
+
+            adapter = FakeAdapterWithInfrastructure()
+            adapter.infrastructure = SharedInfrastructure()
+
+            with mock.patch.object(main, "build_adapter", return_value=adapter), mock.patch.object(
+                main,
+                "_interactive_confirm",
+                return_value=False,
+            ), mock.patch.object(main, "run_level") as run_level:
+                result = main._run_interactive_level2_with_shared_foundation(
+                    adapter_registry={"fake": "fake_adapter_module:FakeAdapterWithInfrastructure"},
+                    deployer_registry=self.deployer_registry,
+                    topology="vm-distributed",
+                )
+
+        self.assertIsNone(result)
+        self.assertFalse(adapter.infrastructure.reset_called)
+        run_level.assert_not_called()
 
     def test_interactive_hosts_preflight_applies_only_missing_entries_for_inesdata(self):
         with tempfile.NamedTemporaryFile("w+", encoding="utf-8") as hosts_file, mock.patch.dict(
@@ -7766,6 +7909,10 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("deploy_components", result["deployer_orchestrator"]["actions"])
         self.assertEqual(
             result["deployer_orchestrator"]["context"]["config"]["KC_PASSWORD"],
+            "***REDACTED***",
+        )
+        self.assertEqual(
+            result["deployer_orchestrator"]["context"]["config"]["MINIO_ADMIN_PASS"],
             "***REDACTED***",
         )
         self.assertEqual(

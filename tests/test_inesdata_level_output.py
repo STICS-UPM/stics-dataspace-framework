@@ -16,6 +16,7 @@ from adapters.inesdata.deployment import INESDataDeploymentAdapter
 from adapters.inesdata.infrastructure import INESDataInfrastructureAdapter
 from adapters.shared.deployment import SharedDataspaceDeploymentAdapter
 from adapters.shared.infrastructure import SharedFoundationInfrastructureAdapter
+from deployers.shared.lib import runtime_artifacts
 
 
 class LevelOutputConfig:
@@ -377,6 +378,38 @@ class InesdataLevelOutputTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "synced")
         write_file.assert_not_called()
+
+    def test_shared_foundation_forwarded_header_patch_expands_kubeconfig_paths(self):
+        infrastructure = self._make_shared_foundation_infrastructure()
+        observed = []
+
+        def fake_run(command, **_kwargs):
+            observed.append(command)
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as home_dir, mock.patch.dict(
+            os.environ,
+            {"HOME": home_dir},
+            clear=True,
+        ), mock.patch(
+            "adapters.shared.infrastructure.subprocess.run",
+            side_effect=fake_run,
+        ):
+            infrastructure._ensure_ingress_nginx_forwarded_headers_vm_distributed(
+                {
+                    "K3S_KUBECONFIG_PROVIDER": "~/.kube/provider.yaml",
+                    "K3S_KUBECONFIG_CONSUMER": "~/.kube/consumer.yaml",
+                }
+            )
+
+        kubeconfigs = [command[command.index("--kubeconfig") + 1] for command in observed]
+        self.assertEqual(
+            kubeconfigs,
+            [
+                os.path.join(home_dir, ".kube", "provider.yaml"),
+                os.path.join(home_dir, ".kube", "consumer.yaml"),
+            ],
+        )
 
     def test_wsl_docker_config_repair_removes_desktop_exe_creds_store(self):
         docker_dir = os.path.join(self.tmpdir.name, ".docker")
@@ -871,6 +904,24 @@ minio:
         self.assertTrue(any("vault token lookup" in cmd for cmd in called_commands))
         self.assertFalse(any("vault secrets enable" in cmd for cmd in called_commands))
 
+    def test_setup_vault_explains_ignored_legacy_keys_for_vm_distributed(self):
+        self.config_adapter.topology = "vm-distributed"
+        infrastructure = self._make_infrastructure()
+        infrastructure.get_pod_by_name = lambda *_args, **_kwargs: "vault-0"
+        infrastructure.wait_for_pod_running = lambda *_args, **_kwargs: True
+        infrastructure._read_vault_status = mock.Mock(return_value=({"initialized": True, "sealed": False}, None))
+
+        legacy_path = runtime_artifacts.legacy_vault_keys_path(root=self.config.script_dir())
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text('{"unseal_keys_hex":["legacy"],"root_token":"legacy-root"}\n', encoding="utf-8")
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertFalse(infrastructure.setup_vault())
+
+        self.assertIn("topology-scoped Vault keys file not found", output.getvalue())
+        self.assertIn("Ignoring legacy artifact", output.getvalue())
+
     def test_ensure_vault_unsealed_recovers_with_existing_keys_when_status_is_temporarily_unavailable(self):
         infrastructure = self._make_infrastructure()
         infrastructure.get_pod_by_name = lambda *_args, **_kwargs: "vault-0"
@@ -889,6 +940,36 @@ minio:
         self.assertTrue(infrastructure.ensure_vault_unsealed(timeout=2, poll_interval=1))
         infrastructure.run.assert_called_once()
         self.assertIn("vault operator unseal abc", infrastructure.run.call_args.args[0])
+
+    def test_ensure_vault_unsealed_uses_topology_scoped_keys_for_vm_distributed(self):
+        self.config_adapter.topology = "vm-distributed"
+        infrastructure = self._make_infrastructure()
+        infrastructure.get_pod_by_name = lambda *_args, **_kwargs: "vault-0"
+
+        with open(self.config.vault_keys_path(), "w", encoding="utf-8") as handle:
+            handle.write('{"unseal_keys_hex":["legacy"],"root_token":"legacy-root"}')
+
+        scoped_path = runtime_artifacts.vault_keys_path(
+            "DEV",
+            topology="vm-distributed",
+            config=self.config_adapter.load_deployer_config(),
+            root=self.config.script_dir(),
+        )
+        os.makedirs(os.path.dirname(scoped_path), exist_ok=True)
+        with open(scoped_path, "w", encoding="utf-8") as handle:
+            handle.write('{"unseal_keys_hex":["scoped"],"root_token":"scoped-root"}')
+
+        infrastructure._read_vault_status = mock.Mock(
+            side_effect=[
+                (None, "vault status unavailable"),
+                ({"initialized": True, "sealed": False}, None),
+            ]
+        )
+        infrastructure.run = mock.Mock(return_value=object())
+
+        self.assertTrue(infrastructure.ensure_vault_unsealed(timeout=2, poll_interval=1))
+        self.assertIn("vault operator unseal scoped", infrastructure.run.call_args.args[0])
+        self.assertNotIn("legacy", infrastructure.run.call_args.args[0])
 
     def test_deploy_infrastructure_continues_when_helm_fails_but_release_exists(self):
         infrastructure = self._make_infrastructure()
@@ -2131,6 +2212,51 @@ minio:
             quiet=True,
         )
 
+    def test_level3_vm_distributed_postgres_access_expands_common_kubeconfig(self):
+        infrastructure = self._make_infrastructure()
+        observed = {}
+
+        def fake_port_forward(namespace, pattern, local_port, remote_port, quiet=False):
+            del namespace, pattern, local_port, remote_port, quiet
+            observed["kubeconfig"] = os.environ.get("KUBECONFIG")
+            observed["role"] = os.environ.get("PIONERA_KUBECONFIG_ROLE")
+            return True
+
+        infrastructure.port_forward_service = mock.Mock(side_effect=fake_port_forward)
+        infrastructure.stop_port_forward_service = mock.Mock(return_value=True)
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=infrastructure,
+            config_adapter=LevelOutputConfigAdapter(
+                {
+                    "K3S_KUBECONFIG": "~/.kube/default.yaml",
+                    "K3S_KUBECONFIG_COMMON": "~/.kube/common.yaml",
+                    "PG_PORT": "5432",
+                }
+            ),
+            config_cls=self.config,
+        )
+
+        with tempfile.TemporaryDirectory() as home_dir, mock.patch.dict(
+            os.environ,
+            {"HOME": home_dir},
+            clear=True,
+        ), mock.patch.object(
+            deployment,
+            "_reserve_local_port",
+            return_value=15432,
+        ):
+            access = deployment._start_level3_postgres_access("vm-distributed")
+            deployment._stop_level3_postgres_access(access)
+
+        self.assertEqual(observed["role"], "common")
+        self.assertEqual(
+            observed["kubeconfig"],
+            os.path.join(home_dir, ".kube", "common.yaml"),
+        )
+
     def test_bootstrap_dataspace_command_passes_postgres_forward_overrides(self):
         deployment = INESDataDeploymentAdapter(
             run=self._run,
@@ -2716,7 +2842,7 @@ minio:
             ),
         )
 
-    def test_vm_distributed_vault_keys_can_read_existing_legacy_artifact(self):
+    def test_vm_distributed_vault_keys_ignore_existing_legacy_artifact_by_default(self):
         self.config_adapter.topology = "vm-distributed"
         legacy_path = os.path.join(
             self.config.script_dir(),
@@ -2730,7 +2856,36 @@ minio:
             handle.write("{}\n")
         infrastructure = self._make_infrastructure()
 
-        self.assertEqual(infrastructure._vault_keys_artifact_path(), legacy_path)
+        self.assertEqual(
+            infrastructure._vault_keys_artifact_path(),
+            os.path.join(
+                self.config.script_dir(),
+                "deployers",
+                "shared",
+                "deployments",
+                "DEV",
+                "vm-distributed",
+                "common",
+                "init-keys-vault.json",
+            ),
+        )
+
+    def test_vm_distributed_vault_keys_can_use_legacy_artifact_when_fallback_is_explicit(self):
+        self.config_adapter.topology = "vm-distributed"
+        legacy_path = os.path.join(
+            self.config.script_dir(),
+            "deployers",
+            "shared",
+            "common",
+            "init-keys-vault.json",
+        )
+        os.makedirs(os.path.dirname(legacy_path), exist_ok=True)
+        with open(legacy_path, "w", encoding="utf-8") as handle:
+            handle.write("{}\n")
+        infrastructure = self._make_infrastructure()
+
+        with mock.patch.dict(os.environ, {"PIONERA_RUNTIME_ARTIFACT_LEGACY_FALLBACK": "true"}):
+            self.assertEqual(infrastructure._vault_keys_artifact_path(), legacy_path)
 
     def test_sync_common_credentials_from_kubernetes_replaces_local_placeholders(self):
         infrastructure = self._make_infrastructure()

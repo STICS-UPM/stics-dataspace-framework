@@ -1719,7 +1719,16 @@ class INESDataInfrastructureAdapter:
             with open(vault_file_path, "r") as f:
                 keys = json.load(f)
         except FileNotFoundError:
-            print("Error: Vault keys file not found")
+            legacy_vault_path = str(
+                runtime_artifacts.legacy_vault_keys_path(root=self.config.script_dir())
+            )
+            if vault_file_path != legacy_vault_path and os.path.exists(legacy_vault_path):
+                print(
+                    "Error: topology-scoped Vault keys file not found. "
+                    f"Ignoring legacy artifact {legacy_vault_path} to avoid mixing topology state."
+                )
+            else:
+                print("Error: Vault keys file not found")
             return False
         except json.JSONDecodeError:
             print("Error: Vault keys file corrupted")
@@ -1816,8 +1825,7 @@ class INESDataInfrastructureAdapter:
 
         data, status_error = self._read_vault_status(pod, self.config.NS_COMMON)
         if not data:
-            ensure_vault_keys_file = getattr(self.config, "ensure_vault_keys_file", None)
-            vault_keys_path = ensure_vault_keys_file() if callable(ensure_vault_keys_file) else self.config.vault_keys_path()
+            vault_keys_path = self._vault_keys_artifact_path()
             if not os.path.exists(vault_keys_path):
                 print(f"Could not get Vault status: {status_error}")
                 return False
@@ -1830,8 +1838,7 @@ class INESDataInfrastructureAdapter:
 
         if data.get("sealed"):
             print("Vault sealed. Running unseal...")
-            ensure_vault_keys_file = getattr(self.config, "ensure_vault_keys_file", None)
-            vault_keys_path = ensure_vault_keys_file() if callable(ensure_vault_keys_file) else self.config.vault_keys_path()
+            vault_keys_path = self._vault_keys_artifact_path()
             with open(vault_keys_path) as f:
                 keys = json.load(f)
             unseal_key = keys["unseal_keys_hex"][0]
@@ -3536,6 +3543,7 @@ class INESDataInfrastructureAdapter:
 
     def _setup_cluster_k3s(self, runtime):
         kubeconfig = runtime["k3s_kubeconfig"]
+        kubeconfig = os.path.abspath(os.path.expanduser(kubeconfig)) if kubeconfig else ""
         kubeconfig_q = shlex.quote(kubeconfig)
         service_name = runtime.get("k3s_service_name") or "k3s"
         service_name_q = shlex.quote(service_name)

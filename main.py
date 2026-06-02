@@ -1,6 +1,7 @@
 import argparse
 import contextlib
 import getpass
+import ipaddress
 import importlib
 import inspect
 import io
@@ -99,12 +100,14 @@ from deployers.shared.lib.cluster_runtime import (
     build_cluster_runtime,
     normalize_cluster_type,
 )
+from deployers.shared.lib.config_loader import INFRASTRUCTURE_MANAGED_KEYS, TOPOLOGY_OVERLAY_KEYS
 from deployers.shared.lib.connectors import (
     parse_connector_list,
     parse_connector_mapping,
     parse_connector_pairs,
 )
 from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls
+from deployers.shared.lib import runtime_artifacts
 from validation.core.test_data_cleanup import run_pre_validation_cleanup
 from validation.orchestration.hosts import (
     ensure_public_endpoints_accessible,
@@ -1449,6 +1452,8 @@ def _temporary_adapter_auto_mode(adapter, enabled=True):
 _REDACTED_VALUE = "***REDACTED***"
 _SENSITIVE_KEY_MARKERS = (
     "PASSWORD",
+    "_PASS",
+    "PASS",
     "PASSWD",
     "TOKEN",
     "SECRET",
@@ -6605,10 +6610,20 @@ def _print_vm_distributed_ssh_access_interactive_guide(result):
     print(f"  python3 main.py {adapter_name} ssh-access assistant --topology {topology}")
 
 
+def _safe_local_hostname():
+    try:
+        return str(socket.gethostname() or "").strip()
+    except OSError:
+        return ""
+
+
 def _vm_distributed_host_aliases(hostname=None, fqdn=None):
+    hostname_value = str(hostname if hostname is not None else _safe_local_hostname()).strip()
+    # Avoid implicit reverse DNS lookups here; slow DNS must not block menu/preflight planning.
+    fqdn_value = str(fqdn if fqdn is not None else hostname_value).strip()
     aliases = {
-        str(hostname or socket.gethostname() or "").strip().lower(),
-        str(fqdn or socket.getfqdn() or "").strip().lower(),
+        hostname_value.lower(),
+        fqdn_value.lower(),
     }
     return {alias for alias in aliases if alias}
 
@@ -9786,6 +9801,68 @@ VM_DISTRIBUTED_ADAPTER_KEYS = (
     "LEVEL4_CONNECTOR_RECONCILIATION_MODE",
 )
 
+VM_DISTRIBUTED_PROFILE_INFRA_KEYS = frozenset(
+    {
+        *VM_DISTRIBUTED_INFRA_KEYS,
+        "KC_URL",
+        "KC_INTERNAL_URL",
+        "KC_MANAGEMENT_URL",
+        "KEYCLOAK_HOSTNAME",
+        "KEYCLOAK_ADMIN_HOSTNAME",
+        "PG_HOST",
+        "PG_PORT",
+        "DATABASE_HOSTNAME",
+        "VAULT_URL",
+        "VT_URL",
+        "MINIO_ENDPOINT",
+        "MINIO_HOSTNAME",
+        "MINIO_CONSOLE_HOSTNAME",
+        "PUBLIC_HOSTNAME",
+        "PUBLIC_HOSTNAME_PROVIDER",
+        "PUBLIC_HOSTNAME_CONSUMER",
+        "TOPOLOGY",
+    }
+)
+
+VM_DISTRIBUTED_PROFILE_TOPOLOGY_KEYS = frozenset(
+    set(VM_DISTRIBUTED_TOPOLOGY_KEYS)
+    | set(TOPOLOGY_OVERLAY_KEYS.get("vm-distributed", frozenset()))
+)
+
+ENVIRONMENT_PROFILE_METADATA_KEYS = frozenset(
+    {
+        "PROFILE_NAME",
+        "PROFILE_TOPOLOGY",
+        "PROFILE_ADAPTER",
+        "ENVIRONMENT_NAME",
+        "ENVIRONMENT_LABEL",
+    }
+)
+
+ENVIRONMENT_PROFILE_INFRA_KEYS = frozenset(
+    {
+        *VM_DISTRIBUTED_PROFILE_INFRA_KEYS,
+        *INFRASTRUCTURE_MANAGED_KEYS,
+        "DOMAIN_BASE",
+        "DS_DOMAIN_BASE",
+        "PUBLIC_HOSTNAME",
+        "PUBLIC_HOSTNAME_PROVIDER",
+        "PUBLIC_HOSTNAME_CONSUMER",
+        "TOPOLOGY",
+    }
+)
+
+VM_DISTRIBUTED_PROFILE_SENSITIVE_KEY_TOKENS = (
+    "PASSWORD",
+    "PASSWD",
+    "_PASS",
+    "TOKEN",
+    "SECRET",
+    "PRIVATE_KEY",
+    "UNSEAL",
+    "ROOT_KEY",
+)
+
 
 def _adapter_deployer_config_path(adapter_name):
     normalized = str(adapter_name or "").strip().lower()
@@ -10113,12 +10190,22 @@ def _print_vm_distributed_discovery_help(topic):
     print()
 
 
-def _prompt_vm_distributed_value(label, current="", default="", required=False, help_topic=""):
+def _prompt_vm_distributed_value(
+    label,
+    current="",
+    default="",
+    required=False,
+    help_topic="",
+    profile_value=None,
+):
     current_text = str(current or "").strip()
     default_text = str(default or "").strip()
+    profile_text = str(profile_value or "").strip() if profile_value is not None else ""
     while True:
         suffix = ""
-        if current_text:
+        if profile_text:
+            suffix = f" [{profile_text}]"
+        elif current_text:
             suffix = f" [{current_text}]"
         elif default_text:
             suffix = f" [{default_text}]"
@@ -10129,6 +10216,8 @@ def _prompt_vm_distributed_value(label, current="", default="", required=False, 
             continue
         if value:
             return value
+        if profile_text:
+            return profile_text
         if current_text:
             return current_text
         if default_text:
@@ -10627,6 +10716,10 @@ def _vm_distributed_running_on_common_services(topology_config):
         return True
 
     local_addresses = _local_host_addresses()
+    explicit_target_addresses = {value for value in target_values if _looks_like_ip_address(value)}
+    if explicit_target_addresses:
+        return bool(local_addresses.intersection(explicit_target_addresses))
+
     target_addresses = set()
     for value in target_values:
         target_addresses.update(_resolve_host_addresses(value))
@@ -12932,6 +13025,634 @@ def _print_vm_distributed_preflight(preflight):
         print("  Required values are present.")
 
 
+def _vm_distributed_profile_parse_value(raw_value):
+    value = str(raw_value or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _vm_distributed_profile_key_has_valid_characters(key):
+    allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_")
+    return bool(key) and all(character in allowed for character in key)
+
+
+def _load_vm_distributed_profile(profile_path):
+    raw_path = str(profile_path or "").strip()
+    if not raw_path:
+        return {}, [{"line": 0, "message": "Profile path is empty."}]
+    resolved_path = os.path.abspath(os.path.expanduser(raw_path))
+    if not os.path.isfile(resolved_path):
+        return {}, [{"line": 0, "message": f"Profile file does not exist: {resolved_path}"}]
+
+    values = {}
+    errors = []
+    with open(resolved_path, encoding="utf-8") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):].strip()
+            if "=" not in line:
+                errors.append({"line": line_number, "message": "Expected KEY=VALUE."})
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if not _vm_distributed_profile_key_has_valid_characters(key):
+                errors.append({"line": line_number, "message": f"Invalid key: {key or '(empty)'}"})
+                continue
+            if key != key.upper():
+                errors.append({"line": line_number, "message": f"Key must be uppercase: {key}"})
+                continue
+            values[key] = _vm_distributed_profile_parse_value(value)
+    return values, errors
+
+
+def _vm_distributed_profile_sensitive_key(key):
+    normalized = str(key or "").strip().upper()
+    return any(token in normalized for token in VM_DISTRIBUTED_PROFILE_SENSITIVE_KEY_TOKENS)
+
+
+def _environment_profile_name(raw_name=None):
+    requested = str(
+        raw_name
+        if raw_name is not None
+        else os.getenv("PIONERA_ENVIRONMENT_PROFILE", "default")
+    ).strip()
+    if not requested:
+        return "default"
+    allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+    cleaned = "".join(character if character in allowed else "-" for character in requested)
+    cleaned = cleaned.strip(".-") or "default"
+    if cleaned in {".", ".."}:
+        return "default"
+    return cleaned
+
+
+def _environment_profiles_dir():
+    return os.path.abspath(os.path.join(_framework_root_dir(), ".profiles"))
+
+
+def _environment_profile_path(profile_name=None):
+    return os.path.join(_environment_profiles_dir(), f"{_environment_profile_name(profile_name)}.env")
+
+
+def _available_environment_profiles():
+    profiles_dir = _environment_profiles_dir()
+    if not os.path.isdir(profiles_dir):
+        return []
+    profiles = []
+    for filename in sorted(os.listdir(profiles_dir)):
+        if not filename.endswith(".env"):
+            continue
+        path = os.path.join(profiles_dir, filename)
+        if not os.path.isfile(path):
+            continue
+        profile_name = filename[: -len(".env")]
+        if not profile_name:
+            continue
+        profiles.append(
+            {
+                "name": profile_name,
+                "path": path,
+                "relative_path": _framework_relative_path(path),
+            }
+        )
+    return profiles
+
+
+def _adapter_profile_keys(adapter_name):
+    keys = set(VM_DISTRIBUTED_ADAPTER_KEYS)
+    for path in (
+        _adapter_deployer_config_example_path(adapter_name),
+        _adapter_deployer_config_path(adapter_name),
+    ):
+        keys.update(load_raw_deployer_config(path).keys())
+    return frozenset(keys)
+
+
+def _configuration_profile_target_for_key(key, topology="vm-distributed", adapter_name="inesdata"):
+    normalized = str(key or "").strip().upper()
+    if not normalized:
+        return ""
+    if _vm_distributed_profile_sensitive_key(normalized):
+        return "sensitive"
+    if normalized in ENVIRONMENT_PROFILE_METADATA_KEYS:
+        return "metadata"
+    normalized_topology = normalize_topology(topology)
+    topology_keys = set(TOPOLOGY_OVERLAY_KEYS.get(normalized_topology, frozenset()))
+    if normalized_topology == "vm-distributed":
+        topology_keys.update(VM_DISTRIBUTED_PROFILE_TOPOLOGY_KEYS)
+    if normalized in topology_keys:
+        return "topology"
+    if normalized in ENVIRONMENT_PROFILE_INFRA_KEYS:
+        return "infrastructure"
+    if normalized in _adapter_profile_keys(adapter_name):
+        return "adapter"
+    if normalized.startswith("DS_"):
+        return "adapter"
+    return ""
+
+
+def _vm_distributed_profile_target_for_key(key):
+    return _configuration_profile_target_for_key(
+        key,
+        topology="vm-distributed",
+        adapter_name="inesdata",
+    )
+
+
+def _validate_configuration_profile_scope(profile_values, topology="vm-distributed", adapter_name="inesdata"):
+    selected_topology = normalize_topology(topology)
+    selected_adapter = str(adapter_name or "").strip().lower() or "inesdata"
+    errors = []
+    profile_topology = str(dict(profile_values or {}).get("PROFILE_TOPOLOGY") or "").strip()
+    if profile_topology and normalize_topology(profile_topology) != selected_topology:
+        errors.append(
+            {
+                "key": "PROFILE_TOPOLOGY",
+                "reason": "topology-mismatch",
+                "message": (
+                    f"Profile targets topology '{normalize_topology(profile_topology)}' "
+                    f"but this run targets '{selected_topology}'."
+                ),
+            }
+        )
+    profile_adapter = str(dict(profile_values or {}).get("PROFILE_ADAPTER") or "").strip().lower()
+    if profile_adapter and profile_adapter != selected_adapter:
+        errors.append(
+            {
+                "key": "PROFILE_ADAPTER",
+                "reason": "adapter-mismatch",
+                "message": (
+                    f"Profile targets adapter '{profile_adapter}' "
+                    f"but this run targets '{selected_adapter}'."
+                ),
+            }
+        )
+    return errors
+
+
+def _split_configuration_profile_updates(profile_values, topology="vm-distributed", adapter_name="inesdata"):
+    grouped = {
+        "metadata": {},
+        "infrastructure": {},
+        "topology": {},
+        "adapter": {},
+    }
+    rejected = []
+    for key, value in sorted(dict(profile_values or {}).items()):
+        target = _configuration_profile_target_for_key(
+            key,
+            topology=topology,
+            adapter_name=adapter_name,
+        )
+        if target == "sensitive":
+            rejected.append(
+                {
+                    "key": key,
+                    "reason": "sensitive-key",
+                    "message": "Sensitive values must stay out of local configuration profiles.",
+                }
+            )
+            continue
+        if target not in grouped:
+            rejected.append(
+                {
+                    "key": key,
+                    "reason": "unknown-key",
+                    "message": "This key is not supported by local configuration profiles.",
+                }
+            )
+            continue
+        grouped[target][key] = value
+    return grouped, rejected
+
+
+def _split_vm_distributed_profile_updates(profile_values):
+    grouped, rejected = _split_configuration_profile_updates(
+        profile_values,
+        topology="vm-distributed",
+        adapter_name="inesdata",
+    )
+    grouped.pop("metadata", None)
+    return grouped, rejected
+
+
+def _configuration_profile_preflight(topology, adapter_name, infrastructure_path, topology_path, adapter_path):
+    normalized_topology = normalize_topology(topology)
+    if normalized_topology == "vm-distributed":
+        return _vm_distributed_configuration_preflight(
+            load_raw_deployer_config(infrastructure_path),
+            load_raw_deployer_config(topology_path),
+            load_raw_deployer_config(adapter_path),
+        )
+    return {
+        "status": "applied",
+        "checks": [
+            {
+                "name": "Configuration profile",
+                "status": "ready",
+                "detail": f"applied to {normalized_topology}/{adapter_name}",
+            }
+        ],
+        "missing": [],
+        "warnings": [],
+    }
+
+
+def apply_environment_configuration_profile(profile_path, topology="vm-distributed", adapter_name="inesdata"):
+    selected_topology = normalize_topology(topology)
+    selected_adapter = str(adapter_name or "").strip().lower() or "inesdata"
+    profile_values, parse_errors = _load_vm_distributed_profile(profile_path)
+    if parse_errors:
+        return {
+            "status": "failed",
+            "reason": "invalid-profile",
+            "topology": selected_topology,
+            "adapter": selected_adapter,
+            "errors": parse_errors,
+        }
+    if not profile_values:
+        return {
+            "status": "failed",
+            "reason": "empty-profile",
+            "topology": selected_topology,
+            "adapter": selected_adapter,
+            "errors": [{"line": 0, "message": "Profile does not contain any KEY=VALUE entries."}],
+        }
+
+    scope_errors = _validate_configuration_profile_scope(
+        profile_values,
+        topology=selected_topology,
+        adapter_name=selected_adapter,
+    )
+    grouped, rejected = _split_configuration_profile_updates(
+        profile_values,
+        topology=selected_topology,
+        adapter_name=selected_adapter,
+    )
+    rejected = scope_errors + rejected
+    if rejected:
+        return {
+            "status": "failed",
+            "reason": "profile-has-unsupported-keys",
+            "topology": selected_topology,
+            "adapter": selected_adapter,
+            "rejected": rejected,
+        }
+
+    _seed_infrastructure_deployer_config_if_missing()
+    topology_path = _seed_infrastructure_topology_config_if_missing(selected_topology)
+    adapter_path = _seed_adapter_deployer_config_if_missing(selected_adapter)
+
+    if grouped["infrastructure"]:
+        _write_key_value_updates(
+            _infrastructure_deployer_config_path(),
+            grouped["infrastructure"],
+            sorted(ENVIRONMENT_PROFILE_INFRA_KEYS),
+        )
+    if grouped["topology"]:
+        _write_key_value_updates(
+            topology_path,
+            grouped["topology"],
+            sorted(
+                set(TOPOLOGY_OVERLAY_KEYS.get(selected_topology, frozenset()))
+                | (set(VM_DISTRIBUTED_TOPOLOGY_KEYS) if selected_topology == "vm-distributed" else set())
+            ),
+        )
+    if grouped["adapter"]:
+        _write_key_value_updates(
+            adapter_path,
+            grouped["adapter"],
+            sorted(_adapter_profile_keys(selected_adapter)),
+        )
+
+    preflight = _configuration_profile_preflight(
+        selected_topology,
+        selected_adapter,
+        _infrastructure_deployer_config_path(),
+        topology_path,
+        adapter_path,
+    )
+    return {
+        "status": "applied" if preflight.get("status") == "ready" else preflight.get("status", "applied"),
+        "topology": selected_topology,
+        "adapter": selected_adapter,
+        "profile": os.path.abspath(os.path.expanduser(str(profile_path or "").strip())),
+        "updated_files": [
+            path
+            for path, updates in (
+                (_infrastructure_deployer_config_path(), grouped["infrastructure"]),
+                (topology_path, grouped["topology"]),
+                (adapter_path, grouped["adapter"]),
+            )
+            if updates
+        ],
+        "updated_keys": {
+            group: sorted(updates)
+            for group, updates in grouped.items()
+            if updates and group != "metadata"
+        },
+        "preflight": preflight,
+    }
+
+
+def apply_vm_distributed_configuration_profile(profile_path, adapter_name="inesdata"):
+    return apply_environment_configuration_profile(
+        profile_path,
+        topology="vm-distributed",
+        adapter_name=adapter_name,
+    )
+
+
+def _vm_distributed_profile_path():
+    return _environment_profile_path()
+
+
+def _current_environment_profile_display():
+    profile_path = _vm_distributed_profile_path()
+    return f"{_environment_profile_name()} ({_framework_relative_path(profile_path)})"
+
+
+def _select_environment_profile_interactively():
+    profiles = _available_environment_profiles()
+    current_name = _environment_profile_name()
+    print()
+    print("Local configuration profiles")
+    print(f"Current profile: {_current_environment_profile_display()}")
+    print(f"Profiles directory: {_framework_relative_path(_environment_profiles_dir())}")
+    if profiles:
+        print()
+        for index, profile in enumerate(profiles, start=1):
+            marker = "*" if profile["name"] == current_name else " "
+            print(f"{index} - {profile['name']} {marker} ({profile['relative_path']})")
+    else:
+        print()
+        print("No local profiles found yet.")
+        print("W -> 1 will create the selected profile if it does not exist.")
+
+    print()
+    print("Enter a listed number or a profile name. Press Enter to cancel.")
+    answer = _interactive_read("Profile: ").strip()
+    if not answer:
+        print("Profile selection cancelled.")
+        return {
+            "status": "cancelled",
+            "profile": current_name,
+            "path": _vm_distributed_profile_path(),
+        }
+
+    selected_name = ""
+    if answer.isdigit() and profiles:
+        selected_index = int(answer)
+        if 1 <= selected_index <= len(profiles):
+            selected_name = profiles[selected_index - 1]["name"]
+        else:
+            print("Profile selection ignored: number out of range.")
+            return {
+                "status": "failed",
+                "reason": "out-of-range",
+                "profile": current_name,
+                "path": _vm_distributed_profile_path(),
+            }
+    else:
+        selected_name = _environment_profile_name(answer)
+
+    os.environ["PIONERA_ENVIRONMENT_PROFILE"] = selected_name
+    selected_path = _environment_profile_path(selected_name)
+    print(f"Selected profile: {selected_name} ({_framework_relative_path(selected_path)})")
+    if not os.path.isfile(selected_path):
+        print("This profile does not exist yet. W -> 1 will create it as a template.")
+    return {
+        "status": "selected",
+        "profile": selected_name,
+        "path": selected_path,
+    }
+
+
+def _read_vm_distributed_profile_content(profile_path):
+    with open(profile_path, encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_name="inesdata"):
+    selected_topology = normalize_topology(topology)
+    selected_adapter = str(adapter_name or "").strip().lower() or "inesdata"
+    connector_defaults = (
+        "# DS_1_CONNECTORS=provider,consumer\n"
+        "# DS_1_CONNECTOR_NAMESPACES=provider:provider,consumer:consumer\n"
+        "# DS_1_VALIDATION_PAIRS=provider>consumer"
+    )
+    return f"""# Local validation-environment profile
+# Fill this file with non-sensitive values only.
+# Do not include passwords, tokens, private keys or secrets.
+# Remove the leading '#' from the KEY=VALUE lines you want to apply.
+# This file is ignored by Git and is meant for operator-specific values.
+
+# Optional scope guards
+# PROFILE_TOPOLOGY={selected_topology}
+# PROFILE_ADAPTER={selected_adapter}
+
+# Common and dataspace domains
+# DOMAIN_BASE=example.org
+# DS_DOMAIN_BASE=ds.example.org
+
+# VM addresses or DNS names
+# VM_COMMON_IP=192.0.2.10
+# VM_PROVIDER_IP=192.0.2.20
+# VM_CONSUMER_IP=192.0.2.30
+# VM_COMPONENTS_IP=192.0.2.10
+# INGRESS_EXTERNAL_IP=192.0.2.10
+
+# vm-single address
+# VM_EXTERNAL_IP=192.0.2.10
+# VM_SINGLE_SSH_HOST=192.0.2.10
+
+# SSH metadata
+# VM_SSH_USER=operator
+# SSH_ACCESS_MODE=
+# SSH_BASTION_HOST=
+# SSH_BASTION_PORT=2222
+# SSH_BASTION_USER=
+# SSH_BASTION_IDENTITY_FILE=
+# VM_COMMON_SSH_HOST=
+# VM_COMMON_SSH_PORT=22
+# VM_COMMON_SSH_USER=
+# VM_PROVIDER_SSH_HOST=
+# VM_PROVIDER_SSH_PORT=22
+# VM_PROVIDER_SSH_USER=
+# VM_CONSUMER_SSH_HOST=
+# VM_CONSUMER_SSH_PORT=22
+# VM_CONSUMER_SSH_USER=
+
+# Kubeconfig paths as seen from the host running the framework
+# K3S_KUBECONFIG_COMMON=/etc/rancher/k3s/k3s.yaml
+# K3S_KUBECONFIG_PROVIDER=/etc/rancher/k3s/k3s.yaml
+# K3S_KUBECONFIG_CONSUMER=/etc/rancher/k3s/k3s.yaml
+# K3S_KUBECONFIG_COMPONENTS=/etc/rancher/k3s/k3s.yaml
+
+# Dataspace and connector inventory
+# DS_1_NAME=dataspace
+{connector_defaults}
+# LEVEL4_CONNECTOR_RECONCILIATION_MODE=full
+
+# Adapter-specific non-sensitive options can also be added here.
+# For example:
+# COMPONENTS=ontology-hub,ai-model-hub,semantic-virtualization
+# EDC_DASHBOARD_ENABLED=true
+"""
+
+
+def _ensure_vm_distributed_profile_file(adapter_name="inesdata"):
+    profile_path = _vm_distributed_profile_path()
+    if os.path.isfile(profile_path):
+        return {"status": "exists", "path": profile_path}
+    os.makedirs(os.path.dirname(profile_path), exist_ok=True)
+    with open(profile_path, "w", encoding="utf-8") as handle:
+        handle.write(
+            _vm_distributed_profile_template_content(
+                topology="vm-distributed",
+                adapter_name=adapter_name,
+            )
+        )
+    return {"status": "created", "path": profile_path}
+
+
+def _load_vm_distributed_wizard_profile_suggestions(adapter_name=""):
+    profile_state = _ensure_vm_distributed_profile_file(adapter_name=adapter_name)
+    profile_path = profile_state["path"]
+    if profile_state.get("status") == "created":
+        return {
+            "status": "created",
+            "path": profile_path,
+            "content": _read_vm_distributed_profile_content(profile_path),
+            "values": {},
+        }
+
+    profile_values, parse_errors = _load_vm_distributed_profile(profile_path)
+    if parse_errors:
+        return {
+            "status": "failed",
+            "path": profile_path,
+            "reason": "invalid-profile",
+            "errors": parse_errors,
+            "values": {},
+        }
+    if not profile_values:
+        return {
+            "status": "template",
+            "path": profile_path,
+            "content": _read_vm_distributed_profile_content(profile_path),
+            "values": {},
+        }
+    scope_errors = _validate_configuration_profile_scope(
+        profile_values,
+        topology="vm-distributed",
+        adapter_name=adapter_name,
+    )
+    _grouped, rejected = _split_configuration_profile_updates(
+        profile_values,
+        topology="vm-distributed",
+        adapter_name=adapter_name,
+    )
+    rejected = scope_errors + rejected
+    if rejected:
+        return {
+            "status": "failed",
+            "path": profile_path,
+            "reason": "profile-has-unsupported-keys",
+            "rejected": rejected,
+            "values": {},
+        }
+    return {
+        "status": "loaded",
+        "path": profile_path,
+        "content": _read_vm_distributed_profile_content(profile_path),
+        "values": profile_values,
+    }
+
+
+def _print_vm_distributed_wizard_profile_suggestions(profile):
+    payload = dict(profile or {})
+    status = str(payload.get("status") or "not-found")
+    if status in {"not-found", "created", "template"}:
+        print()
+        if status == "created":
+            print("Configuration profile created.")
+        elif status == "template":
+            print("Configuration profile exists but has no active KEY=VALUE entries.")
+        else:
+            print("Configuration profile: not found.")
+        print(f"Profile location: {_framework_relative_path(payload.get('path') or _vm_distributed_profile_path())}")
+        if status in {"created", "template"}:
+            print("Fill this file, then run W -> 1 again to review and apply it.")
+        return
+
+    print()
+    if status == "loaded":
+        print(f"Configuration profile detected: {_framework_relative_path(payload.get('path'))}")
+        print("Profile content:")
+        print("-" * 50)
+        content = str(payload.get("content") or "").rstrip()
+        print(content or "(empty)")
+        print("-" * 50)
+        print("This profile contains only supported non-sensitive keys.")
+        return
+
+    print(f"Configuration profile ignored: {_framework_relative_path(payload.get('path'))}")
+    if payload.get("reason"):
+        print(f"Reason: {payload.get('reason')}")
+    for item in list(payload.get("errors") or []):
+        line = item.get("line")
+        prefix = f"line {line}: " if line else ""
+        print(f"- {prefix}{item.get('message')}")
+    for item in list(payload.get("rejected") or []):
+        print(f"- {item.get('key')}: {item.get('message')}")
+
+
+def _vm_distributed_profile_suggestion(profile_values, key):
+    if key in dict(profile_values or {}):
+        return dict(profile_values or {}).get(key)
+    return None
+
+
+def _print_vm_distributed_profile_result(result):
+    payload = dict(result or {})
+    print()
+    print("vm-distributed profile result:")
+    print(f"  Status: {payload.get('status') or 'unknown'}")
+    if payload.get("reason"):
+        print(f"  Reason: {payload.get('reason')}")
+    if payload.get("profile"):
+        print(f"  Profile: {payload.get('profile')}")
+    errors = list(payload.get("errors") or [])
+    if errors:
+        print("  Errors:")
+        for item in errors:
+            line = item.get("line")
+            prefix = f"line {line}: " if line else ""
+            print(f"  - {prefix}{item.get('message')}")
+    rejected = list(payload.get("rejected") or [])
+    if rejected:
+        print("  Rejected keys:")
+        for item in rejected:
+            print(f"  - {item.get('key')}: {item.get('message')}")
+    updated_files = list(payload.get("updated_files") or [])
+    if updated_files:
+        print("  Updated files:")
+        for path in updated_files:
+            print(f"  - {path}")
+    updated_keys = dict(payload.get("updated_keys") or {})
+    if updated_keys:
+        print("  Updated key groups:")
+        for group, keys in updated_keys.items():
+            print(f"  - {group}: {', '.join(keys)}")
+    if payload.get("preflight"):
+        _print_vm_distributed_preflight(payload.get("preflight"))
+
+
 def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_registry=None):
     registry = adapter_registry or ADAPTER_REGISTRY
     selected_adapter = _interactive_require_adapter_selection(
@@ -12956,6 +13677,25 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
     infrastructure_config = load_raw_deployer_config(_infrastructure_deployer_config_path())
     topology_config = load_raw_deployer_config(topology_path)
     adapter_config = load_raw_deployer_config(adapter_path)
+    profile_suggestions = _load_vm_distributed_wizard_profile_suggestions(selected_adapter)
+    _print_vm_distributed_wizard_profile_suggestions(profile_suggestions)
+    profile_values = dict(profile_suggestions.get("values") or {})
+    if profile_suggestions.get("status") == "loaded":
+        if _interactive_confirm("Apply this profile now?", default=False):
+            result = apply_vm_distributed_configuration_profile(
+                profile_suggestions.get("path"),
+                adapter_name=selected_adapter,
+            )
+            _print_vm_distributed_profile_result(result)
+            print()
+            print("Next suggested step: W -> 4 (non-destructive SSH/HTTP preflight).")
+            return result
+        print("Continuing with question-by-question configuration.")
+        print("Press Enter to accept profile values shown in brackets, or type a different value.")
+        print()
+
+    def profile_value(key):
+        return _vm_distributed_profile_suggestion(profile_values, key)
 
     domain_base = _prompt_vm_distributed_value(
         "Base domain for common services",
@@ -12963,6 +13703,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default="validation.example.local",
         required=True,
         help_topic="common-domain",
+        profile_value=profile_value("DOMAIN_BASE"),
     )
     ds_domain_base = _prompt_vm_distributed_value(
         "Base domain for dataspace/connectors",
@@ -12970,6 +13711,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default=f"ds.{domain_base}" if domain_base else "",
         required=True,
         help_topic="dataspace-domain",
+        profile_value=profile_value("DS_DOMAIN_BASE"),
     )
     routing_mode = _prompt_vm_distributed_value(
         "Topology routing mode",
@@ -12977,6 +13719,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default="host",
         required=True,
         help_topic="routing",
+        profile_value=profile_value("TOPOLOGY_ROUTING_MODE"),
     )
 
     common_ip = _prompt_vm_distributed_value(
@@ -12985,6 +13728,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default=topology_config.get("VM_EXTERNAL_IP"),
         required=True,
         help_topic="common-address",
+        profile_value=profile_value("VM_COMMON_IP") or profile_value("VM_EXTERNAL_IP"),
     )
     provider_ip = _prompt_vm_distributed_value(
         "Provider-side connector VM IP/DNS",
@@ -12992,6 +13736,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default=topology_config.get("VM_CONNECTORS_IP"),
         required=True,
         help_topic="provider-address",
+        profile_value=profile_value("VM_PROVIDER_IP") or profile_value("VM_CONNECTORS_IP"),
     )
     consumer_ip = _prompt_vm_distributed_value(
         "Consumer-side connector VM IP/DNS",
@@ -12999,6 +13744,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default=provider_ip,
         required=True,
         help_topic="consumer-address",
+        profile_value=profile_value("VM_CONSUMER_IP"),
     )
     components_ip = _prompt_vm_distributed_value(
         "Components VM IP/DNS",
@@ -13006,6 +13752,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default=common_ip,
         required=False,
         help_topic="components-address",
+        profile_value=profile_value("VM_COMPONENTS_IP"),
     )
     ingress_ip = _prompt_vm_distributed_value(
         "Ingress/public IP or DNS",
@@ -13013,6 +13760,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default=common_ip,
         required=False,
         help_topic="ingress-address",
+        profile_value=profile_value("INGRESS_EXTERNAL_IP"),
     )
     ssh_user = _prompt_vm_distributed_value(
         "SSH user for remote NGINX sync",
@@ -13020,6 +13768,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default="",
         required=False,
         help_topic="ssh-user",
+        profile_value=profile_value("VM_SSH_USER"),
     )
 
     ssh_access_mode = _prompt_vm_distributed_value(
@@ -13028,6 +13777,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default="",
         required=False,
         help_topic="ssh-access",
+        profile_value=profile_value("SSH_ACCESS_MODE"),
     )
     ssh_access_mode = str(ssh_access_mode or "").strip().lower().replace("_", "-")
     ssh_bastion_host = topology_config.get("SSH_BASTION_HOST") or ""
@@ -13051,6 +13801,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
                 default="",
                 required=True,
                 help_topic="bastion",
+                profile_value=profile_value("SSH_BASTION_HOST"),
             )
             ssh_bastion_port = _prompt_vm_distributed_value(
                 "SSH bastion port",
@@ -13058,6 +13809,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
                 default="2222",
                 required=False,
                 help_topic="bastion",
+                profile_value=profile_value("SSH_BASTION_PORT"),
             )
             ssh_bastion_user = _prompt_vm_distributed_value(
                 "SSH bastion user",
@@ -13065,6 +13817,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
                 default="",
                 required=False,
                 help_topic="bastion",
+                profile_value=profile_value("SSH_BASTION_USER"),
             )
             ssh_bastion_identity_file = _prompt_vm_distributed_value(
                 "SSH bastion identity file",
@@ -13072,6 +13825,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
                 default="",
                 required=False,
                 help_topic="bastion",
+                profile_value=profile_value("SSH_BASTION_IDENTITY_FILE"),
             )
         common_ssh_host = _prompt_vm_distributed_value(
             "Common services SSH host/IP",
@@ -13079,6 +13833,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
             default=common_ip,
             required=True,
             help_topic="common-ssh",
+            profile_value=profile_value("VM_COMMON_SSH_HOST"),
         )
         common_ssh_port = _prompt_vm_distributed_value(
             "Common services SSH port",
@@ -13086,6 +13841,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
             default="22",
             required=False,
             help_topic="common-ssh",
+            profile_value=profile_value("VM_COMMON_SSH_PORT"),
         )
         common_ssh_user = _prompt_vm_distributed_value(
             "Common services SSH user",
@@ -13093,6 +13849,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
             default="",
             required=False,
             help_topic="common-ssh",
+            profile_value=profile_value("VM_COMMON_SSH_USER"),
         )
         provider_ssh_host = _prompt_vm_distributed_value(
             "Provider VM SSH host/IP",
@@ -13100,6 +13857,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
             default=provider_ip,
             required=True,
             help_topic="provider-ssh",
+            profile_value=profile_value("VM_PROVIDER_SSH_HOST"),
         )
         provider_ssh_port = _prompt_vm_distributed_value(
             "Provider VM SSH port",
@@ -13107,6 +13865,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
             default="22",
             required=False,
             help_topic="provider-ssh",
+            profile_value=profile_value("VM_PROVIDER_SSH_PORT"),
         )
         provider_ssh_user = _prompt_vm_distributed_value(
             "Provider VM SSH user",
@@ -13114,6 +13873,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
             default="",
             required=False,
             help_topic="provider-ssh",
+            profile_value=profile_value("VM_PROVIDER_SSH_USER"),
         )
         consumer_ssh_host = _prompt_vm_distributed_value(
             "Consumer VM SSH host/IP",
@@ -13121,6 +13881,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
             default=consumer_ip,
             required=True,
             help_topic="consumer-ssh",
+            profile_value=profile_value("VM_CONSUMER_SSH_HOST"),
         )
         consumer_ssh_port = _prompt_vm_distributed_value(
             "Consumer VM SSH port",
@@ -13128,6 +13889,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
             default="22",
             required=False,
             help_topic="consumer-ssh",
+            profile_value=profile_value("VM_CONSUMER_SSH_PORT"),
         )
         consumer_ssh_user = _prompt_vm_distributed_value(
             "Consumer VM SSH user",
@@ -13135,6 +13897,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
             default="",
             required=False,
             help_topic="consumer-ssh",
+            profile_value=profile_value("VM_CONSUMER_SSH_USER"),
         )
 
     common_kubeconfig = _prompt_vm_distributed_value(
@@ -13143,6 +13906,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default="/etc/rancher/k3s/k3s.yaml",
         required=True,
         help_topic="common-kubeconfig",
+        profile_value=profile_value("K3S_KUBECONFIG_COMMON") or profile_value("K3S_KUBECONFIG"),
     )
     provider_kubeconfig = _prompt_vm_distributed_value(
         "Provider-side kubeconfig path",
@@ -13150,6 +13914,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default=common_kubeconfig,
         required=True,
         help_topic="provider-kubeconfig",
+        profile_value=profile_value("K3S_KUBECONFIG_PROVIDER"),
     )
     consumer_kubeconfig = _prompt_vm_distributed_value(
         "Consumer-side kubeconfig path",
@@ -13157,6 +13922,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default=provider_kubeconfig,
         required=True,
         help_topic="consumer-kubeconfig",
+        profile_value=profile_value("K3S_KUBECONFIG_CONSUMER"),
     )
     components_kubeconfig = _prompt_vm_distributed_value(
         "Components kubeconfig path",
@@ -13164,6 +13930,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default=common_kubeconfig,
         required=True,
         help_topic="components-kubeconfig",
+        profile_value=profile_value("K3S_KUBECONFIG_COMPONENTS"),
     )
 
     dataspace_name = _prompt_vm_distributed_value(
@@ -13172,6 +13939,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default="pionera",
         required=True,
         help_topic="dataspace",
+        profile_value=profile_value("DS_1_NAME"),
     )
     connectors = _prompt_vm_distributed_value(
         "Connector inventory (comma-separated short names)",
@@ -13179,6 +13947,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default="citycounciledc,companyedc" if selected_adapter == "edc" else "org2,org3",
         required=True,
         help_topic="connector-inventory",
+        profile_value=profile_value("DS_1_CONNECTORS"),
     )
     connector_namespaces = _prompt_vm_distributed_value(
         "Connector locations (connector:group, comma-separated)",
@@ -13186,6 +13955,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default=_default_vm_distributed_connector_locations(connectors),
         required=False,
         help_topic="connector-locations",
+        profile_value=profile_value("DS_1_CONNECTOR_NAMESPACES"),
     )
     validation_pairs = _prompt_vm_distributed_value(
         "Validation pairs (source>target, comma-separated)",
@@ -13193,6 +13963,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default=_default_vm_distributed_validation_pairs(connectors),
         required=False,
         help_topic="validation-pairs",
+        profile_value=profile_value("DS_1_VALIDATION_PAIRS"),
     )
     reconciliation_mode = _prompt_vm_distributed_value(
         "Level 4 connector reconciliation mode (full/additive)",
@@ -13200,6 +13971,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         default="full",
         required=True,
         help_topic="reconciliation",
+        profile_value=profile_value("LEVEL4_CONNECTOR_RECONCILIATION_MODE"),
     )
 
     infra_updates = {
@@ -13363,6 +14135,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
 
     if not _interactive_confirm("Save this vm-distributed configuration now?", default=True):
         print("vm-distributed configuration not saved.")
+        print("Returning to the VM-DISTRIBUTED assistant; choose B or Q there to leave it.")
         return {"status": "cancelled", "adapter": selected_adapter, "topology": "vm-distributed"}
 
     _write_key_value_updates(
@@ -13501,15 +14274,11 @@ def _current_vm_single_topology_plan(adapter_name=None):
 
 def _local_host_addresses():
     addresses = {"127.0.0.1", "::1"}
-    for hostname in {socket.gethostname(), socket.getfqdn()}:
+    for hostname in {_safe_local_hostname()}:
         if not hostname:
             continue
-        try:
-            for item in socket.getaddrinfo(hostname, None):
-                if item and len(item) >= 5:
-                    addresses.add(str(item[4][0]))
-        except OSError:
-            continue
+        addresses.add(hostname)
+        addresses.update(_resolve_host_addresses(hostname))
     try:
         completed = subprocess.run(
             ["hostname", "-I"],
@@ -13525,17 +14294,36 @@ def _local_host_addresses():
     return {address.strip() for address in addresses if str(address or "").strip()}
 
 
+def _looks_like_ip_address(value):
+    try:
+        ipaddress.ip_address(str(value or "").strip())
+        return True
+    except ValueError:
+        return False
+
+
 def _resolve_host_addresses(host):
     value = str(host or "").strip()
     if not value:
         return set()
     addresses = {value}
+    if _looks_like_ip_address(value):
+        return addresses
     try:
-        for item in socket.getaddrinfo(value, None):
-            if item and len(item) >= 5:
-                addresses.add(str(item[4][0]))
-    except OSError:
-        pass
+        completed = subprocess.run(
+            ["getent", "ahosts", value],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {address.strip() for address in addresses if str(address or "").strip()}
+    if completed.returncode == 0:
+        for raw_line in str(completed.stdout or "").splitlines():
+            parts = raw_line.split()
+            if parts:
+                addresses.add(parts[0])
     return {address.strip() for address in addresses if str(address or "").strip()}
 
 
@@ -14396,13 +15184,35 @@ def _print_vm_distributed_topology_plan(plan):
 
 def _print_vm_distributed_preflight_results(title, result):
     payload = dict(result or {})
+    def _status_label(status):
+        raw_status = str(status or "unknown").strip() or "unknown"
+        normalized = raw_status.lower()
+        if normalized in {"passed", "ready", "completed", "updated"} or normalized.endswith("-ok"):
+            return _console_color(raw_status, "32")
+        if normalized in {"failed", "error", "unavailable"} or normalized.endswith("-failed"):
+            return _console_color(raw_status, "31")
+        if normalized in {"warning", "passed-with-warnings", "needs-review", "missing"}:
+            return _console_color(raw_status, "33")
+        if normalized in {"skipped", "not-applicable"}:
+            return _console_color(raw_status, "90")
+        return _console_color(raw_status, "36")
+
+    def _detail_label(label, status):
+        normalized = str(status or "").strip().lower()
+        if label == "error" or normalized in {"failed", "error"}:
+            return _console_color(label, "31")
+        if label == "warning" or normalized in {"warning", "passed-with-warnings"}:
+            return _console_color(label, "33")
+        return label
+
     print()
-    print(f"{title}: {payload.get('status') or 'unknown'}")
+    print(f"{title}: {_status_label(payload.get('status'))}")
     reason = payload.get("reason")
     if reason:
         print(f"  Reason: {reason}")
     for item in list(payload.get("vms") or []):
-        line = f"  - {item.get('role')}: {item.get('status') or 'unknown'}"
+        item_status = item.get("status") or "unknown"
+        line = f"  - {item.get('role')}: {_status_label(item_status)}"
         if item.get("host"):
             line += f" ({item.get('host')})"
         if item.get("url"):
@@ -14419,10 +15229,10 @@ def _print_vm_distributed_preflight_results(title, result):
                     print(f"    {key}: {facts[key]}")
         if item.get("detail"):
             label = "warning" if str(item.get("status") or "").lower() == "warning" else "detail"
-            print(f"    {label}: {item.get('detail')}")
+            print(f"    {_detail_label(label, item.get('status'))}: {item.get('detail')}")
         if item.get("error"):
             label = "error" if str(item.get("status") or "").lower() == "failed" else "detail"
-            print(f"    {label}: {item.get('error')}")
+            print(f"    {_detail_label(label, item.get('status'))}: {item.get('error')}")
 
 
 def _print_vm_distributed_manual_commands(plan):
@@ -14448,6 +15258,8 @@ def _print_vm_distributed_assistant_menu(current_adapter=None):
     print("VM-DISTRIBUTED ASSISTANT")
     print("=" * 50)
     print(f"Adapter: {current_adapter or '(not selected)'}")
+    print(f"Profile: {_current_environment_profile_display()}")
+    print("P - Select local configuration profile")
     print("1 - Configure/update local vm-distributed .config files")
     print("2 - Show configured topology and static preflight")
     print("3 - Preview deployment and hosts plan")
@@ -14474,6 +15286,10 @@ def _run_vm_distributed_assistant(
         choice = _interactive_read("\nSelection: ").strip().upper()
         if not choice or choice in {"B", "Q"}:
             return {"status": "completed", "adapter": current_adapter, "topology": "vm-distributed"}
+
+        if choice == "P":
+            _select_environment_profile_interactively()
+            continue
 
         if choice == "1":
             result = _run_vm_distributed_configuration_wizard(
@@ -14637,6 +15453,73 @@ def _interactive_require_adapter_selection(current_adapter, adapter_registry=Non
     return selected_adapter
 
 
+def _shared_common_services_resetter(infrastructure):
+    resetter = getattr(infrastructure, "reset_local_shared_common_services", None)
+    if not callable(resetter):
+        resetter = getattr(infrastructure, "reset_common_services_for_level4_repair", None)
+    if not callable(resetter):
+        raise RuntimeError(
+            "Shared infrastructure does not expose a controlled common-services reset operation."
+        )
+    return resetter
+
+
+def _level2_common_services_reset_runtime(topology):
+    normalized_topology = normalize_topology(topology)
+    if normalized_topology == VM_DISTRIBUTED_TOPOLOGY:
+        kubeconfig_sync = _ensure_vm_distributed_local_kubeconfigs(
+            roles=_vm_distributed_level_kubeconfig_roles(2),
+        )
+        _raise_vm_distributed_kubeconfig_sync_failure(kubeconfig_sync)
+        if kubeconfig_sync.get("status") == "updated":
+            _print_vm_distributed_kubeconfig_sync_result(kubeconfig_sync)
+
+    environment_overrides = _topology_runtime_environment_overrides(
+        normalized_topology,
+        level=2,
+        role="common" if normalized_topology == VM_DISTRIBUTED_TOPOLOGY else None,
+    )
+    if not environment_overrides:
+        return contextlib.nullcontext()
+
+    environment_overrides["PIONERA_LEVEL_RUNTIME_ENV_ACTIVE"] = "true"
+    return _temporary_environment(environment_overrides)
+
+
+def _reset_shared_common_services_for_level2(infrastructure, reason, topology="local"):
+    resetter = _shared_common_services_resetter(infrastructure)
+    with _level2_common_services_reset_runtime(topology):
+        if not resetter(reason=reason):
+            raise RuntimeError("Could not reset shared common services safely.")
+
+
+def _vm_topology_vault_artifact_gap(infrastructure, topology):
+    if normalize_topology(topology) not in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
+        return None
+
+    resolver = getattr(infrastructure, "_vault_keys_artifact_path", None)
+    if not callable(resolver):
+        return None
+
+    scoped_path = str(resolver() or "").strip()
+    if not scoped_path:
+        return None
+
+    config = getattr(infrastructure, "config", None)
+    script_dir_getter = getattr(config, "script_dir", None)
+    root = script_dir_getter() if callable(script_dir_getter) else None
+    legacy_path = str(runtime_artifacts.legacy_vault_keys_path(root=root))
+    if os.path.abspath(scoped_path) == os.path.abspath(legacy_path):
+        return None
+    if os.path.exists(scoped_path) or not os.path.exists(legacy_path):
+        return None
+
+    return {
+        "scoped_path": _framework_relative_path(scoped_path),
+        "legacy_path": _framework_relative_path(legacy_path),
+    }
+
+
 def _run_interactive_level2_with_shared_foundation(
     adapter_registry=None,
     deployer_registry=None,
@@ -14656,6 +15539,26 @@ def _run_interactive_level2_with_shared_foundation(
     )
 
     infrastructure = getattr(adapter, "infrastructure", None)
+    vault_gap = _vm_topology_vault_artifact_gap(infrastructure, topology)
+    if vault_gap:
+        print()
+        print("Topology-scoped Vault keys are missing for the active topology.")
+        print("A legacy Vault keys artifact exists, but it is ignored to avoid mixing topology state.")
+        print(f"Expected scoped artifact: {vault_gap['scoped_path']}")
+        print(f"Ignored legacy artifact: {vault_gap['legacy_path']}")
+        if not _interactive_confirm(
+            f"Recreate shared common services now ({execution_context})? "
+            "This resets common-srvs for all adapters in this cluster.",
+            default=False,
+        ):
+            print("Level 2 cancelled.")
+            return None
+        _reset_shared_common_services_for_level2(
+            infrastructure,
+            reason="Interactive Level 2 recreate requested for topology-scoped Vault artifact",
+            topology=topology,
+        )
+
     verify_common_services = getattr(infrastructure, "verify_common_services_ready_for_level3", None)
     if callable(verify_common_services):
         common_ready, _root_cause = verify_common_services()
@@ -14703,15 +15606,11 @@ def _run_interactive_level2_with_shared_foundation(
                 print("Level 2 cancelled.")
                 return None
 
-            resetter = getattr(infrastructure, "reset_local_shared_common_services", None)
-            if not callable(resetter):
-                resetter = getattr(infrastructure, "reset_common_services_for_level4_repair", None)
-            if not callable(resetter):
-                raise RuntimeError(
-                    "Shared infrastructure does not expose a controlled common-services reset operation."
-                )
-            if not resetter(reason="Interactive Level 2 recreate requested"):
-                raise RuntimeError("Could not reset shared common services safely.")
+            _reset_shared_common_services_for_level2(
+                infrastructure,
+                reason="Interactive Level 2 recreate requested",
+                topology=topology,
+            )
 
     return run_level(
         adapter,

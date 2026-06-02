@@ -10,6 +10,7 @@ from unittest import mock
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from deployers.edc import bootstrap as edc_bootstrap
+from deployers.inesdata import bootstrap as inesdata_bootstrap
 
 
 class BootstrapConfigLoaderTests(unittest.TestCase):
@@ -178,6 +179,28 @@ print(json.dumps(bootstrap.load_effective_deployer_config(), sort_keys=True))
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("Usage:", completed.stdout)
+
+    def test_inesdata_connector_keycloak_admin_refreshes_master_token_in_master_realm(self):
+        token = {
+            "access_token": "access-token",
+            "refresh_token": "refresh-token",
+            "expires_in": 60,
+        }
+
+        with mock.patch.object(inesdata_bootstrap, "KeycloakAdmin") as keycloak_admin:
+            inesdata_bootstrap._dataspace_keycloak_admin_with_master_token(
+                "http://keycloak.local",
+                token,
+                "demo-dataspace",
+            )
+
+        keycloak_admin.assert_called_once_with(
+            server_url="http://keycloak.local",
+            token=token,
+            realm_name="demo-dataspace",
+            user_realm_name="master",
+            verify=False,
+        )
 
 
 if __name__ == "__main__":
