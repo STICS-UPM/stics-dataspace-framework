@@ -203,6 +203,7 @@ def remote_k3s_image_import_target(config: dict | None, role: str = "common") ->
 
     normalized_role = str(role or "common").strip().lower() or "common"
     role_key = normalized_role.upper().replace("-", "_")
+    fallback_ip = ""
     if normalized_role == "components":
         host = _first_config_value(
             values,
@@ -211,10 +212,12 @@ def remote_k3s_image_import_target(config: dict | None, role: str = "common") ->
             "VM_COMPONENTS_IP",
             "VM_COMMON_IP",
         )
+        fallback_ip = _first_config_value(values, "VM_COMPONENTS_IP", "VM_COMMON_IP")
         user = _first_config_value(values, "VM_COMPONENTS_SSH_USER", "VM_COMMON_SSH_USER", "VM_SSH_USER")
         port = _first_config_value(values, "VM_COMPONENTS_SSH_PORT", "VM_COMMON_SSH_PORT") or "22"
     else:
         host = _first_config_value(values, f"VM_{role_key}_SSH_HOST", f"VM_{role_key}_IP")
+        fallback_ip = _first_config_value(values, f"VM_{role_key}_IP")
         user = _first_config_value(values, f"VM_{role_key}_SSH_USER", "VM_SSH_USER")
         port = _first_config_value(values, f"VM_{role_key}_SSH_PORT") or "22"
 
@@ -231,6 +234,8 @@ def remote_k3s_image_import_target(config: dict | None, role: str = "common") ->
         and access_mode in {"", "bastion"}
     ):
         access_mode = "direct"
+    if access_mode == "direct":
+        host = _direct_access_host(host, fallback_ip)
     bastion_host = ""
     bastion_user = ""
     bastion_port = ""
@@ -286,6 +291,18 @@ def remote_k3s_image_import_target(config: dict | None, role: str = "common") ->
 
 def shell_join(args: list[str]) -> str:
     return " ".join(shlex.quote(str(arg)) for arg in args)
+
+
+def _direct_access_host(host: str, fallback_ip: str = "") -> str:
+    normalized_host = str(host or "").strip()
+    normalized_fallback = str(fallback_ip or "").strip()
+    if not normalized_host or not normalized_fallback or normalized_host == normalized_fallback:
+        return normalized_host
+    if _looks_like_ip_address(normalized_host):
+        return normalized_host
+    if _resolve_host_addresses(normalized_host):
+        return normalized_host
+    return normalized_fallback
 
 
 def _normalized_vm_distributed_execution_host(values: dict) -> str:

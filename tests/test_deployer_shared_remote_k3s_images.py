@@ -76,6 +76,55 @@ class RemoteK3sImagesTests(unittest.TestCase):
         self.assertEqual(target.bastion_destination, "")
         self.assertNotIn("orion.example.test", shell_join(target.scp_upload_args("/tmp/image.tar", "/tmp/image.tar")))
 
+    def test_common_services_direct_import_uses_role_ip_when_hostname_does_not_resolve(self):
+        with mock.patch(
+            "deployers.shared.lib.remote_k3s_images._resolve_host_addresses",
+            return_value=set(),
+        ):
+            target = remote_k3s_image_import_target(
+                {
+                    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                    "VM_DISTRIBUTED_EXECUTION_HOST": "common-services",
+                    "VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH": "true",
+                    "SSH_ACCESS_MODE": "bastion",
+                    "SSH_BASTION_HOST": "orion.example.test",
+                    "SSH_BASTION_PORT": "2222",
+                    "SSH_BASTION_USER": "jump",
+                    "VM_PROVIDER_SSH_HOST": "pionera20",
+                    "VM_PROVIDER_IP": "192.168.122.134",
+                    "VM_PROVIDER_SSH_USER": "pionera",
+                },
+                role="provider",
+            )
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.host, "192.168.122.134")
+        self.assertEqual(target.destination, "pionera@192.168.122.134")
+        self.assertEqual(target.bastion_destination, "")
+        self.assertNotIn("pionera20", shell_join(target.scp_upload_args("/tmp/image.tar", "/tmp/image.tar")))
+
+    def test_common_services_direct_import_keeps_resolvable_hostname(self):
+        with mock.patch(
+            "deployers.shared.lib.remote_k3s_images._resolve_host_addresses",
+            return_value={"192.168.122.134"},
+        ):
+            target = remote_k3s_image_import_target(
+                {
+                    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                    "VM_DISTRIBUTED_EXECUTION_HOST": "common-services",
+                    "VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH": "true",
+                    "SSH_ACCESS_MODE": "bastion",
+                    "SSH_BASTION_HOST": "orion.example.test",
+                    "VM_PROVIDER_SSH_HOST": "pionera20",
+                    "VM_PROVIDER_IP": "192.168.122.134",
+                    "VM_PROVIDER_SSH_USER": "pionera",
+                },
+                role="provider",
+            )
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.host, "pionera20")
+
     def test_external_execution_keeps_bastion_for_remote_image_import(self):
         target = remote_k3s_image_import_target(
             {
