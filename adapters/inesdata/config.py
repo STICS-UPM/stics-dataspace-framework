@@ -372,11 +372,22 @@ class INESDataConfigAdapter:
             return os.path.join(script_dir(), "deployers", "infrastructure", "deployer.config")
         return ""
 
+    def _identity_branding_config_paths(self):
+        script_dir = getattr(self.config, "script_dir", None)
+        if not callable(script_dir):
+            return []
+        identity_dir = os.path.join(script_dir(), "identity")
+        return [
+            os.path.join(identity_dir, "branding.config.example"),
+            os.path.join(identity_dir, "branding.config"),
+        ]
+
     def load_deployer_config(self):
         adapter_config_path = self.config.deployer_config_path()
         return load_layered_deployer_config(
             [
                 self._infrastructure_deployer_config_path(),
+                *self._identity_branding_config_paths(),
                 adapter_config_path,
             ],
             protected_keys=INFRASTRUCTURE_MANAGED_KEYS,

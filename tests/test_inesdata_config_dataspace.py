@@ -83,6 +83,78 @@ class InesdataConfigDataspaceTests(unittest.TestCase):
         self.assertEqual(config["DS_DOMAIN_BASE"], "dev.ds.dataspaceunit.upm")
         self.assertEqual(config["DS_1_NAME"], "demo")
 
+    def test_load_deployer_config_includes_identity_branding_defaults(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "deployers", "infrastructure"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "deployers", "inesdata"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "identity"), exist_ok=True)
+            with open(
+                os.path.join(tmpdir, "deployers", "infrastructure", "deployer.config"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write("KC_URL=http://shared-keycloak\n")
+            with open(
+                os.path.join(tmpdir, "identity", "branding.config.example"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write("INESDATA_BRAND_LOGO_FILES=pionera-logo.svg\n")
+            with open(
+                os.path.join(tmpdir, "deployers", "inesdata", "deployer.config"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write("DS_1_NAME=demo\n")
+
+            class TempConfig(InesdataConfig):
+                @classmethod
+                def script_dir(cls):
+                    return tmpdir
+
+            config = INESDataConfigAdapter(TempConfig).load_deployer_config()
+
+        self.assertEqual(config["INESDATA_BRAND_LOGO_FILES"], "pionera-logo.svg")
+
+    def test_load_deployer_config_identity_branding_overrides_example(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "deployers", "infrastructure"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "deployers", "inesdata"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "identity"), exist_ok=True)
+            with open(
+                os.path.join(tmpdir, "deployers", "infrastructure", "deployer.config"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write("")
+            with open(
+                os.path.join(tmpdir, "identity", "branding.config.example"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write("INESDATA_BRAND_NAME=PIONERA\n")
+            with open(
+                os.path.join(tmpdir, "identity", "branding.config"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write("INESDATA_BRAND_NAME=CustomBrand\n")
+            with open(
+                os.path.join(tmpdir, "deployers", "inesdata", "deployer.config"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write("DS_1_NAME=demo\n")
+
+            class TempConfig(InesdataConfig):
+                @classmethod
+                def script_dir(cls):
+                    return tmpdir
+
+            config = INESDataConfigAdapter(TempConfig).load_deployer_config()
+
+        self.assertEqual(config["INESDATA_BRAND_NAME"], "CustomBrand")
+
     def test_dataspace_database_names_match_bootstrap_normalization(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, "deployers", "inesdata"), exist_ok=True)
