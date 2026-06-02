@@ -98,6 +98,28 @@ class SharedConfigLoaderTests(unittest.TestCase):
 
         self.assertEqual(config["VT_URL"], "http://common-srvs-vault.shared-foundation.svc:8200")
 
+    def test_load_layered_deployer_config_keeps_environment_vault_override(self):
+        previous = os.environ.get("PIONERA_VT_URL")
+        os.environ["PIONERA_VT_URL"] = "http://127.0.0.1:59491"
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                config_path = os.path.join(tmpdir, "deployer.config")
+                topology_dir = os.path.join(tmpdir, "topologies")
+                os.makedirs(topology_dir, exist_ok=True)
+                with open(config_path, "w", encoding="utf-8") as handle:
+                    handle.write("VT_URL=http://127.0.0.1:8200\nCOMMON_SERVICES_NAMESPACE=shared-foundation\n")
+                with open(os.path.join(topology_dir, "vm-distributed.config"), "w", encoding="utf-8") as handle:
+                    handle.write("CLUSTER_TYPE=k3s\n")
+
+                config = load_layered_deployer_config([config_path], topology="vm-distributed")
+        finally:
+            if previous is None:
+                os.environ.pop("PIONERA_VT_URL", None)
+            else:
+                os.environ["PIONERA_VT_URL"] = previous
+
+        self.assertEqual(config["VT_URL"], "http://127.0.0.1:59491")
+
     def test_infrastructure_base_config_files_do_not_include_topology_keys(self):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         for relative_path in ("deployers/infrastructure/deployer.config.example",):

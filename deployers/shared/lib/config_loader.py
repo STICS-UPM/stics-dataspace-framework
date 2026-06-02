@@ -283,6 +283,20 @@ def load_deployer_config(path: str) -> dict[str, str]:
     return config
 
 
+def pionera_environment_override_keys() -> set[str]:
+    """Return config keys provided through PIONERA_* environment variables."""
+
+    keys: set[str] = set()
+    for env_key, env_value in os.environ.items():
+        if not env_key.startswith("PIONERA_"):
+            continue
+        override_key = env_key[len("PIONERA_"):].strip()
+        if not override_key or env_value in (None, ""):
+            continue
+        keys.add(override_key)
+    return keys
+
+
 def apply_pionera_environment_overrides(config: dict[str, str]) -> dict[str, str]:
     """Apply PIONERA_* environment variables as highest-priority overrides."""
 
@@ -296,20 +310,27 @@ def apply_pionera_environment_overrides(config: dict[str, str]) -> dict[str, str
     return config
 
 
-def apply_topology_runtime_defaults(config: dict[str, str], topology: str | None = None) -> dict[str, str]:
+def apply_topology_runtime_defaults(
+    config: dict[str, str],
+    topology: str | None = None,
+    protected_keys: set[str] | frozenset[str] | None = None,
+) -> dict[str, str]:
     """Fill runtime defaults that depend on the selected topology."""
 
     normalized_topology = str(topology or "").strip().lower()
     if normalized_topology not in {"vm-single", "vm-distributed"}:
         return config
 
+    protected = set(protected_keys or [])
     common_namespace = str(config.get("COMMON_SERVICES_NAMESPACE") or "common-srvs").strip() or "common-srvs"
 
-    if not str(config.get("DATABASE_HOSTNAME") or "").strip():
+    if "DATABASE_HOSTNAME" not in protected and not str(config.get("DATABASE_HOSTNAME") or "").strip():
         config["DATABASE_HOSTNAME"] = f"common-srvs-postgresql.{common_namespace}.svc"
 
     vault_service_url = f"http://common-srvs-vault.{common_namespace}.svc:8200"
     for vault_key in ("VT_URL", "VAULT_URL"):
+        if vault_key in protected:
+            continue
         if _is_blank_or_loopback_url(config.get(vault_key)):
             config[vault_key] = vault_service_url
 
@@ -399,9 +420,11 @@ def load_layered_deployer_config(
                 if key in protected and key in config:
                     continue
                 config[key] = value
+    environment_override_keys = set()
     if apply_environment:
+        environment_override_keys = pionera_environment_override_keys()
         apply_pionera_environment_overrides(config)
-    apply_topology_runtime_defaults(config, topology)
+    apply_topology_runtime_defaults(config, topology, protected_keys=environment_override_keys)
     return config
 
 
