@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ipaddress
 import os
 import shlex
+import socket
 
 
 DEFAULT_REMOTE_IMAGE_IMPORT_COMMAND = "sudo -n k3s ctr -n k8s.io images import"
@@ -223,6 +225,12 @@ def remote_k3s_image_import_target(config: dict | None, role: str = "common") ->
         return None
 
     access_mode = str(values.get("SSH_ACCESS_MODE") or "").strip().lower()
+    if (
+        _normalized_vm_distributed_execution_host(values) == "common-services"
+        and _vm_distributed_common_vm_direct_ssh_enabled(values)
+        and access_mode in {"", "bastion"}
+    ):
+        access_mode = "direct"
     bastion_host = ""
     bastion_user = ""
     bastion_port = ""
@@ -278,6 +286,96 @@ def remote_k3s_image_import_target(config: dict | None, role: str = "common") ->
 
 def shell_join(args: list[str]) -> str:
     return " ".join(shlex.quote(str(arg)) for arg in args)
+
+
+def _normalized_vm_distributed_execution_host(values: dict) -> str:
+    raw_value = str(values.get("VM_DISTRIBUTED_EXECUTION_HOST") or "external").strip().lower().replace("_", "-")
+    aliases = {
+        "local": "external",
+        "operator": "external",
+        "orchestrator": "external",
+        "common": "common-services",
+        "common-vm": "common-services",
+        "common-services-vm": "common-services",
+        "detect": "auto",
+        "detected": "auto",
+    }
+    normalized = aliases.get(raw_value, raw_value)
+    if normalized == "auto":
+        return "common-services" if _vm_distributed_running_on_common_services(values) else "external"
+    return normalized
+
+
+def _vm_distributed_common_vm_direct_ssh_enabled(values: dict) -> bool:
+    return parse_bool(values.get("VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH"), default=True)
+
+
+def _vm_distributed_running_on_common_services(values: dict) -> bool:
+    target_values = {
+        _first_config_value(values, "VM_COMMON_IP"),
+        _first_config_value(values, "VM_COMMON_SSH_HOST"),
+        _first_config_value(values, "VM_EXTERNAL_IP"),
+    }
+    target_values = {str(value or "").strip() for value in target_values if str(value or "").strip()}
+    if not target_values:
+        return False
+
+    aliases = _local_host_aliases()
+    if any(value.lower() in aliases for value in target_values):
+        return True
+
+    local_addresses = _local_host_addresses()
+    explicit_target_addresses = {value for value in target_values if _looks_like_ip_address(value)}
+    if explicit_target_addresses:
+        return bool(local_addresses.intersection(explicit_target_addresses))
+
+    target_addresses = set()
+    for value in target_values:
+        target_addresses.update(_resolve_host_addresses(value))
+    return bool(local_addresses.intersection(target_addresses))
+
+
+def _local_host_aliases() -> set[str]:
+    aliases = {"localhost", "127.0.0.1"}
+    for value in (socket.gethostname(), socket.getfqdn()):
+        normalized = str(value or "").strip().lower()
+        if normalized:
+            aliases.add(normalized)
+            aliases.add(normalized.split(".", 1)[0])
+    return {alias for alias in aliases if alias}
+
+
+def _local_host_addresses() -> set[str]:
+    addresses = {"127.0.0.1", "::1"}
+    for host in _local_host_aliases():
+        addresses.update(_resolve_host_addresses(host))
+    return addresses
+
+
+def _resolve_host_addresses(host: str) -> set[str]:
+    normalized = str(host or "").strip()
+    if not normalized:
+        return set()
+    if _looks_like_ip_address(normalized):
+        return {normalized}
+
+    addresses = set()
+    try:
+        for item in socket.getaddrinfo(normalized, None):
+            address = item[4][0]
+            if address:
+                addresses.add(address)
+    except OSError:
+        return set()
+    return addresses
+
+
+def _looks_like_ip_address(value: str) -> bool:
+    try:
+        ipaddress.ip_address(str(value or "").strip())
+    except ValueError:
+        return False
+    return True
 
 
 def _first_config_value(values: dict, *keys: str) -> str:
