@@ -382,15 +382,16 @@ minio:
             call
             for call in run.call_args_list
             if call.args
-            and call.args[0][:2] == ["ssh", "ubuntu@10.0.0.20"]
-            and "sudo tee" in call.args[0][2]
+            and call.args[0][0] == "ssh"
+            and "ubuntu@10.0.0.20" in call.args[0]
+            and "sudo tee" in call.args[0][-1]
         ]
         self.assertEqual(len(remote_provider_writes), 1)
         self.assertIn(
             "conn-citycouncil-pionera.dev.ds.example",
             remote_provider_writes[0].kwargs["input"],
         )
-        self.assertIn("proxy_pass http://10.0.0.20:31667;", remote_provider_writes[0].kwargs["input"])
+        self.assertIn("proxy_pass http://127.0.0.1:31667;", remote_provider_writes[0].kwargs["input"])
 
     def test_shared_foundation_vm_distributed_routing_skips_local_nginx_when_absent(self):
         self.config_adapter = LevelOutputConfigAdapter(
@@ -834,6 +835,39 @@ minio:
         self.assertIn("LEVEL 2 COMPLETE", rendered)
         infrastructure.manage_hosts_entries.assert_not_called()
         infrastructure.deploy_helm_release.assert_called_once()
+
+    def test_remote_nginx_sync_uses_role_specific_ssh_host_and_local_upstream(self):
+        infrastructure = self._make_shared_foundation_infrastructure()
+        config = {
+            "VM_SSH_USER": "operator",
+            "VM_CONSUMER_IP": "consumer.public.example.test",
+            "VM_CONSUMER_SSH_HOST": "10.0.0.239",
+            "VM_CONSUMER_SSH_PORT": "22",
+        }
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append((command, kwargs.get("input")))
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch("adapters.shared.infrastructure.subprocess.run", side_effect=fake_run):
+            infrastructure._sync_remote_nginx_vm_distributed(
+                config,
+                "consumer",
+                "consumer.public.example.test",
+                ["org3"],
+                "pionera",
+                "dataspace.example.test",
+                "31667",
+            )
+
+        self.assertEqual(len(calls), 2)
+        write_command, rendered_nginx = calls[0]
+        reload_command, _reload_input = calls[1]
+        self.assertIn("operator@10.0.0.239", write_command)
+        self.assertIn("operator@10.0.0.239", reload_command)
+        self.assertNotIn("operator@consumer.public.example.test", write_command)
+        self.assertIn("proxy_pass http://127.0.0.1:31667;", rendered_nginx)
 
     def test_deploy_infrastructure_does_not_print_complete_on_failure(self):
         infrastructure = self._make_infrastructure()

@@ -562,6 +562,104 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
             return ""
         return f"{user}@{host}"
 
+    @staticmethod
+    def _vm_distributed_config_value(config, *keys, default=""):
+        for key in keys:
+            value = str((config or {}).get(key) or "").strip()
+            if value:
+                return value
+        return default
+
+    @staticmethod
+    def _vm_distributed_remote_ssh_command(config, role, fallback_host, remote_command):
+        role_key = str(role or "").strip().upper()
+        host = SharedFoundationInfrastructureAdapter._vm_distributed_config_value(
+            config,
+            f"VM_{role_key}_SSH_HOST",
+            default=str(fallback_host or "").strip(),
+        )
+        user = SharedFoundationInfrastructureAdapter._vm_distributed_config_value(
+            config,
+            f"VM_{role_key}_SSH_USER",
+            "VM_SSH_USER",
+        )
+        if not host or not user:
+            return []
+
+        timeout = SharedFoundationInfrastructureAdapter._vm_distributed_config_value(
+            config,
+            "SSH_CONNECT_TIMEOUT_SECONDS",
+            default="5",
+        )
+        known_hosts_strategy = SharedFoundationInfrastructureAdapter._vm_distributed_config_value(
+            config,
+            "VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY",
+            default="accept-new",
+        )
+        port = SharedFoundationInfrastructureAdapter._vm_distributed_config_value(
+            config,
+            f"VM_{role_key}_SSH_PORT",
+            default="22",
+        )
+        identity_file = SharedFoundationInfrastructureAdapter._vm_distributed_config_value(
+            config,
+            f"VM_{role_key}_SSH_IDENTITY_FILE",
+            "VM_DISTRIBUTED_SSH_IDENTITY_FILE",
+            "SSH_IDENTITY_FILE",
+        )
+
+        command = [
+            "ssh",
+            "-o",
+            f"ConnectTimeout={timeout}",
+            "-o",
+            f"StrictHostKeyChecking={known_hosts_strategy}",
+            "-p",
+            port or "22",
+        ]
+        if identity_file:
+            command.extend(["-i", os.path.expanduser(identity_file)])
+
+        access_mode = SharedFoundationInfrastructureAdapter._vm_distributed_config_value(
+            config,
+            f"VM_{role_key}_SSH_ACCESS_MODE",
+            "SSH_ACCESS_MODE",
+        ).lower().replace("_", "-")
+        bastion_host = SharedFoundationInfrastructureAdapter._vm_distributed_config_value(
+            config,
+            f"VM_{role_key}_SSH_BASTION_HOST",
+            "SSH_BASTION_HOST",
+        )
+        if access_mode == "bastion" or (not access_mode and bastion_host):
+            bastion_user = SharedFoundationInfrastructureAdapter._vm_distributed_config_value(
+                config,
+                f"VM_{role_key}_SSH_BASTION_USER",
+                "SSH_BASTION_USER",
+            )
+            bastion_port = SharedFoundationInfrastructureAdapter._vm_distributed_config_value(
+                config,
+                f"VM_{role_key}_SSH_BASTION_PORT",
+                "SSH_BASTION_PORT",
+                default="2222",
+            )
+            bastion_identity_file = SharedFoundationInfrastructureAdapter._vm_distributed_config_value(
+                config,
+                f"VM_{role_key}_SSH_BASTION_IDENTITY_FILE",
+                "SSH_BASTION_IDENTITY_FILE",
+            )
+            if bastion_host and bastion_user:
+                bastion_target = f"{bastion_user}@{bastion_host}"
+                if bastion_port:
+                    bastion_target = f"{bastion_target}:{bastion_port}"
+                if bastion_identity_file:
+                    command.extend(["-i", os.path.expanduser(bastion_identity_file)])
+                command.extend(["-J", bastion_target])
+
+        command.append(f"{user}@{host}")
+        if remote_command:
+            command.append(remote_command)
+        return command
+
     def _ensure_ingress_nginx_forwarded_headers_vm_distributed(self, deployer_config):
         """Patch ingress-nginx on connector clusters to honor forwarded HTTPS headers."""
         patch = '{"data":{"use-forwarded-headers":"true","compute-full-forwarded-for":"true"}}'
@@ -739,18 +837,34 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
 
         if provider_ip and provider_shorts:
             self._sync_remote_nginx_vm_distributed(
-                deployer_config, provider_ip, provider_shorts, ds_name, ds_domain, provider_nodeport
+                deployer_config, "provider", provider_ip, provider_shorts, ds_name, ds_domain, provider_nodeport
             )
         if consumer_ip and consumer_shorts:
             self._sync_remote_nginx_vm_distributed(
-                deployer_config, consumer_ip, consumer_shorts, ds_name, ds_domain, consumer_nodeport
+                deployer_config, "consumer", consumer_ip, consumer_shorts, ds_name, ds_domain, consumer_nodeport
             )
 
-    def _sync_remote_nginx_vm_distributed(self, deployer_config, remote_ip, connector_shorts, ds_name, ds_domain, nodeport):
+    def _sync_remote_nginx_vm_distributed(
+        self, deployer_config, role, remote_ip, connector_shorts, ds_name, ds_domain, nodeport
+    ):
         """Write connector proxy blocks on a remote VM when SSH is configured."""
-        ssh_target = self._vm_distributed_ssh_target(deployer_config, remote_ip)
-        if not ssh_target:
-            print(f"Remote NGINX sync skipped for {remote_ip}: VM_SSH_USER is not configured.")
+        ssh_write_command = self._vm_distributed_remote_ssh_command(
+            deployer_config,
+            role,
+            remote_ip,
+            f"sudo tee /etc/nginx/sites-enabled/pionera-vm-distributed-{ds_name}.conf >/dev/null",
+        )
+        ssh_reload_command = self._vm_distributed_remote_ssh_command(
+            deployer_config,
+            role,
+            remote_ip,
+            "sudo nginx -s reload",
+        )
+        if not ssh_write_command or not ssh_reload_command:
+            print(
+                f"Remote NGINX sync skipped for {role} ({remote_ip}): "
+                f"VM_{str(role or '').upper()}_SSH_HOST and VM_SSH_USER are required."
+            )
             return
 
         blocks = []
@@ -762,7 +876,7 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
                 f"    server_name {hostname};\n"
                 "    client_max_body_size 0;\n"
                 "    location / {\n"
-                f"        proxy_pass http://{remote_ip}:{nodeport};\n"
+                f"        proxy_pass http://127.0.0.1:{nodeport};\n"
                 "        proxy_set_header Host $host;\n"
                 "        proxy_set_header X-Real-IP $remote_addr;\n"
                 "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
@@ -778,18 +892,21 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
         content = "# Generated by Validation-Environment for vm-distributed connector routing\n" + "\n".join(blocks)
         try:
             write_proc = subprocess.run(
-                ["ssh", ssh_target, f"sudo tee {remote_conf} >/dev/null"],
+                ssh_write_command,
                 input=content,
                 capture_output=True,
                 text=True,
             )
             if write_proc.returncode != 0:
-                print(f"Warning: remote NGINX write failed on {remote_ip}: {write_proc.stderr.strip()}")
+                print(
+                    f"Warning: remote NGINX write failed on {role} ({remote_ip}): "
+                    f"{write_proc.stderr.strip()}"
+                )
                 return
-            reload_proc = subprocess.run(["ssh", ssh_target, "sudo nginx -s reload"], capture_output=True, text=True)
+            reload_proc = subprocess.run(ssh_reload_command, capture_output=True, text=True)
             if reload_proc.returncode == 0:
-                print(f"Remote NGINX routing updated on {remote_ip}: {remote_conf}")
+                print(f"Remote NGINX routing updated on {role} ({remote_ip}): {remote_conf}")
             else:
-                print(f"Warning: remote NGINX reload failed on {remote_ip}: {reload_proc.stderr.strip()}")
+                print(f"Warning: remote NGINX reload failed on {role} ({remote_ip}): {reload_proc.stderr.strip()}")
         except Exception as exc:
-            print(f"Warning: remote NGINX sync skipped on {remote_ip}: {exc}")
+            print(f"Warning: remote NGINX sync skipped on {role} ({remote_ip}): {exc}")
