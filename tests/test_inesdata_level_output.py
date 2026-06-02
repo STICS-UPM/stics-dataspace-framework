@@ -842,6 +842,7 @@ minio:
         config = {
             "VM_SSH_USER": "operator",
             "VM_CONSUMER_IP": "consumer.public.example.test",
+            "VM_CONSUMER_PUBLIC_URL": "https://consumer.public.example.test",
             "VM_CONSUMER_SSH_HOST": "10.0.0.239",
             "VM_CONSUMER_SSH_PORT": "22",
         }
@@ -868,6 +869,10 @@ minio:
         self.assertIn("operator@10.0.0.239", write_command)
         self.assertIn("operator@10.0.0.239", reload_command)
         self.assertNotIn("operator@consumer.public.example.test", write_command)
+        self.assertIn(
+            "server_name consumer.public.example.test conn-org3-pionera.dataspace.example.test;",
+            rendered_nginx,
+        )
         self.assertIn("proxy_pass http://127.0.0.1:31667;", rendered_nginx)
 
     def test_deploy_infrastructure_does_not_print_complete_on_failure(self):

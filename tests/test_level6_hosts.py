@@ -1,6 +1,8 @@
 import unittest
 from unittest import mock
 
+import requests
+
 from validation.orchestration import hosts
 
 
@@ -93,6 +95,44 @@ class Level6HostsTests(unittest.TestCase):
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["checked"], [])
         requester.assert_not_called()
+
+    def test_public_endpoint_check_auto_retries_self_signed_certificate_without_hiding_network_failures(self):
+        class Response:
+            status_code = 200
+
+        requester = mock.Mock(
+            side_effect=[
+                requests.exceptions.SSLError("self-signed certificate"),
+                Response(),
+            ]
+        )
+
+        result = hosts.ensure_public_endpoints_accessible(
+            [{"label": "Keycloak", "url": "https://auth.example.test"}],
+            requester=requester,
+            tls_verify="auto",
+        )
+
+        self.assertEqual(result["status"], "passed-with-warnings")
+        self.assertEqual(result["checked"][0]["tls_verification"], "disabled-after-certificate-failure")
+        self.assertEqual(result["tls_warnings"][0]["reason"], "certificate-verification-failed")
+        self.assertTrue(requester.call_args_list[0].kwargs["verify"])
+        self.assertFalse(requester.call_args_list[1].kwargs["verify"])
+
+    def test_public_endpoint_check_false_disables_tls_verification_for_https(self):
+        class Response:
+            status_code = 404
+
+        requester = mock.Mock(return_value=Response())
+
+        result = hosts.ensure_public_endpoints_accessible(
+            [{"label": "connector", "url": "https://conn.example.test"}],
+            requester=requester,
+            tls_verify="false",
+        )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertFalse(requester.call_args.kwargs["verify"])
 
 
 if __name__ == "__main__":

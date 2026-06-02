@@ -111,6 +111,7 @@ from deployers.shared.lib import runtime_artifacts
 from validation.core.test_data_cleanup import run_pre_validation_cleanup
 from validation.orchestration.hosts import (
     ensure_public_endpoints_accessible,
+    normalize_public_endpoint_tls_verify_mode,
     normalize_public_endpoint_url,
 )
 from validation.orchestration.components import (
@@ -4722,10 +4723,22 @@ def _run_public_endpoint_preflight(
     endpoints = _level6_public_endpoint_candidates(adapter, connectors, deployer_context)
     if not endpoints:
         return {"status": "skipped", "reason": "no-public-endpoints"}
+    config = dict(getattr(deployer_context, "config", {}) or {})
+    tls_verify = None
+    if topology == "vm-distributed":
+        tls_verify = _vm_distributed_http_preflight_tls_verify_mode(config)
+    elif topology == "vm-single":
+        tls_verify = normalize_public_endpoint_tls_verify_mode(
+            config.get("VM_SINGLE_HTTP_PREFLIGHT_TLS_VERIFY")
+        )
 
     if announce:
         print("\nVerifying public ingress hostnames...")
-    result = ensure_public_endpoints_accessible(endpoints, topology=topology)
+    result = ensure_public_endpoints_accessible(
+        endpoints,
+        topology=topology,
+        tls_verify=tls_verify,
+    )
     if announce:
         print("Public ingress hostnames OK\n")
     return result
@@ -15916,11 +15929,17 @@ def _run_vm_distributed_assistant(
             if not selected_adapter:
                 continue
             current_adapter = selected_adapter
-            _run_vm_distributed_ssh_access_assistant(
+            result = _run_vm_distributed_ssh_access_assistant(
                 build_adapter(current_adapter, adapter_registry=registry, topology="vm-distributed"),
                 deployer_name=current_adapter,
                 topology="vm-distributed",
             )
+            if isinstance(result, dict) and result.get("status") == "needs-review":
+                message = str(result.get("message") or "").strip()
+                if message:
+                    print(message)
+                plan_result = result.get("plan") if isinstance(result.get("plan"), dict) else result
+                _print_vm_distributed_ssh_access_result(plan_result, show_interactive_guide=False)
             continue
 
         if choice == "7":

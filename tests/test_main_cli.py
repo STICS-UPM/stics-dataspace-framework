@@ -7421,6 +7421,7 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("https://org3.pionera.oeg.fi.upm.es", urls)
         self.assertNotIn("http://auth.pionera.oeg.fi.upm.es", urls)
         self.assertNotIn("http://registration-service-pionera.pionera.oeg.fi.upm.es", urls)
+        self.assertEqual(preflight.call_args.kwargs["tls_verify"], "auto")
 
     def test_cleanup_failure_hint_explains_local_artifact_credential_mismatch(self):
         cleanup_result = {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -72,23 +73,72 @@ def normalize_public_endpoint_url(value: str | None) -> str | None:
     return raw_value.rstrip("/")
 
 
+def normalize_public_endpoint_tls_verify_mode(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    raw_value = str(value).strip().lower()
+    aliases = {
+        "1": "true",
+        "yes": "true",
+        "on": "true",
+        "0": "false",
+        "no": "false",
+        "off": "false",
+        "detect": "auto",
+    }
+    mode = aliases.get(raw_value, raw_value)
+    return mode if mode in {"auto", "true", "false"} else None
+
+
+def _request_public_endpoint(requester: Callable[..., Any], url: str, **kwargs: Any) -> Any:
+    try:
+        return requester(url, **kwargs)
+    except TypeError as exc:
+        if "verify" in kwargs and "verify" in str(exc):
+            kwargs.pop("verify", None)
+            return requester(url, **kwargs)
+        raise
+
+
+def _public_endpoint_tls_verify_kwargs(url: str, mode: str | None) -> dict[str, bool]:
+    if not mode:
+        return {}
+    if str(urlparse(url).scheme or "").lower() != "https":
+        return {}
+    if mode in {"auto", "true"}:
+        return {"verify": True}
+    if mode == "false":
+        return {"verify": False}
+    return {}
+
+
 def check_public_endpoints_access(
     endpoints: list[dict[str, str]],
     *,
     requester: Callable[..., Any] | None = None,
     timeout: int = 5,
+    tls_verify: Any = None,
 ) -> dict[str, Any]:
     request = requester or requests.get
+    tls_verify_mode = normalize_public_endpoint_tls_verify_mode(tls_verify)
     checked: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
+    tls_warnings: list[dict[str, str]] = []
 
     for endpoint in endpoints or []:
         label = str(endpoint.get("label") or endpoint.get("url") or "endpoint")
         url = normalize_public_endpoint_url(endpoint.get("url"))
         if not url:
             continue
+        request_kwargs = {
+            "timeout": timeout,
+            "allow_redirects": False,
+            **_public_endpoint_tls_verify_kwargs(url, tls_verify_mode),
+        }
         try:
-            response = request(url, timeout=timeout, allow_redirects=False)
+            response = _request_public_endpoint(request, url, **request_kwargs)
             checked.append(
                 {
                     "label": label,
@@ -96,6 +146,48 @@ def check_public_endpoints_access(
                     "status_code": getattr(response, "status_code", None),
                 }
             )
+        except requests.exceptions.SSLError as exc:
+            if tls_verify_mode != "auto" or str(urlparse(url).scheme or "").lower() != "https":
+                failures.append(
+                    {
+                        "label": label,
+                        "url": url,
+                        "error": str(exc),
+                    }
+                )
+                continue
+            try:
+                retry_kwargs = dict(request_kwargs)
+                retry_kwargs["verify"] = False
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    response = _request_public_endpoint(request, url, **retry_kwargs)
+                checked.append(
+                    {
+                        "label": label,
+                        "url": url,
+                        "status_code": getattr(response, "status_code", None),
+                        "tls_verification": "disabled-after-certificate-failure",
+                    }
+                )
+                tls_warnings.append(
+                    {
+                        "label": label,
+                        "url": url,
+                        "reason": "certificate-verification-failed",
+                        "detail": str(exc),
+                    }
+                )
+            except Exception as retry_exc:
+                failures.append(
+                    {
+                        "label": label,
+                        "url": url,
+                        "error": (
+                            f"{str(exc)} | retry without TLS verification: {str(retry_exc)}"
+                        ),
+                    }
+                )
         except Exception as exc:
             failures.append(
                 {
@@ -106,9 +198,10 @@ def check_public_endpoints_access(
             )
 
     return {
-        "status": "failed" if failures else "passed",
+        "status": "failed" if failures else "passed-with-warnings" if tls_warnings else "passed",
         "checked": checked,
         "failures": failures,
+        "tls_warnings": tls_warnings,
     }
 
 
@@ -145,11 +238,13 @@ def ensure_public_endpoints_accessible(
     topology: str = "local",
     requester: Callable[..., Any] | None = None,
     timeout: int = 5,
+    tls_verify: Any = None,
 ) -> dict[str, Any]:
     result = check_public_endpoints_access(
         endpoints,
         requester=requester,
         timeout=timeout,
+        tls_verify=tls_verify,
     )
     if result["status"] == "failed":
         raise RuntimeError(format_public_endpoint_access_error(result, topology=topology))

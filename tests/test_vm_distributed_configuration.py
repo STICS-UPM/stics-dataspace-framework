@@ -901,6 +901,54 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertIn(".profiles/default.env", rendered.replace("\\", "/"))
         self.assertIn("Fill this file, then run W -> 1 again", rendered)
 
+    def test_assistant_option_6_prints_needs_review_when_ssh_commands_are_missing(self):
+        plan = {
+            "status": "needs-review",
+            "adapter": "inesdata",
+            "topology": "vm-distributed",
+            "execution_host": "common-services",
+            "ssh_bootstrap": {
+                "status": "needs-review",
+                "identity_file": "",
+                "warnings": [
+                    "A dedicated SSH identity file is required for automated SSH bootstrap.",
+                ],
+            },
+            "manual_bootstrap_commands": [],
+        }
+        ssh_result = {
+            "status": "needs-review",
+            "adapter": "inesdata",
+            "topology": "vm-distributed",
+            "message": "No SSH setup commands were generated.",
+            "plan": plan,
+        }
+        output = io.StringIO()
+
+        with redirect_stdout(output), mock.patch.object(
+            main,
+            "_interactive_read",
+            side_effect=["6", "B"],
+        ), mock.patch.object(
+            main,
+            "_interactive_require_adapter_selection",
+            return_value="inesdata",
+        ), mock.patch.object(
+            main,
+            "build_adapter",
+            return_value=mock.Mock(),
+        ), mock.patch.object(
+            main,
+            "_run_vm_distributed_ssh_access_assistant",
+            return_value=ssh_result,
+        ):
+            result = main._run_vm_distributed_assistant(current_adapter="inesdata")
+
+        rendered = output.getvalue()
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("No SSH setup commands were generated.", rendered)
+        self.assertIn("A dedicated SSH key for this validation environment.", rendered)
+
     def test_wizard_profile_message_shows_valid_content(self):
         profile = {
             "status": "loaded",
