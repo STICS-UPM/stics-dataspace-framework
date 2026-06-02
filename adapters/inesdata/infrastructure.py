@@ -2172,6 +2172,7 @@ class INESDataInfrastructureAdapter:
         domain_base = config.get("DOMAIN_BASE")
         if domain_base:
             common_hostnames = canonical_common_service_hostnames(domain_base)
+            expected_frontend_url = self._keycloak_master_frontend_url(config, common_hostnames)
             add_row_value(
                 "DOMAIN_BASE",
                 "keycloak.ingress.hostname",
@@ -2199,6 +2200,12 @@ class INESDataInfrastructureAdapter:
                 values.get("minio", {}).get("consoleIngress", {}).get("hosts", [""])[0]
                 if values.get("minio", {}).get("consoleIngress", {}).get("hosts")
                 else "",
+            )
+            add_row_value(
+                "KEYCLOAK_FRONTEND_URL",
+                "keycloak.keycloakConfigCli.configuration.master.json.attributes.frontendUrl",
+                expected_frontend_url,
+                self._keycloak_master_frontend_url_from_values(values),
             )
 
 
@@ -2252,16 +2259,14 @@ class INESDataInfrastructureAdapter:
             common_hostnames = canonical_common_service_hostnames(domain_base)
             values["keycloak"]["ingress"]["hostname"] = common_hostnames["keycloak_hostname"]
             values["keycloak"]["adminIngress"]["hostname"] = common_hostnames["keycloak_admin_hostname"]
+            frontend_url = self._keycloak_master_frontend_url(config, common_hostnames)
             
             master_json_str = values["keycloak"]["keycloakConfigCli"]["configuration"]["master.json"]
             try:
-                import json
                 master_json_data = json.loads(master_json_str)
                 if "attributes" not in master_json_data:
                     master_json_data["attributes"] = {}
-                master_json_data["attributes"]["frontendUrl"] = (
-                    f"http://{common_hostnames['keycloak_admin_hostname']}"
-                )
+                master_json_data["attributes"]["frontendUrl"] = frontend_url
                 values["keycloak"]["keycloakConfigCli"]["configuration"]["master.json"] = json.dumps(master_json_data, indent=2)
             except Exception as e:
                 print(f"Warning: Could not update frontendUrl in master.json: {e}")
@@ -2310,6 +2315,30 @@ class INESDataInfrastructureAdapter:
         if value is None or str(value).strip() == "":
             return default
         return str(value).strip().lower() in {"1", "true", "yes", "y", "on", "si", "sí"}
+
+    @staticmethod
+    def _keycloak_master_frontend_url(config, common_hostnames):
+        for key in ("KEYCLOAK_FRONTEND_URL", "KEYCLOAK_PUBLIC_URL"):
+            value = str((config or {}).get(key) or "").strip().rstrip("/")
+            if value:
+                return value
+        return f"http://{common_hostnames['keycloak_admin_hostname']}"
+
+    @classmethod
+    def _keycloak_master_frontend_url_from_values(cls, values):
+        try:
+            master_json = (
+                values.get("keycloak", {})
+                .get("keycloakConfigCli", {})
+                .get("configuration", {})
+                .get("master.json", "")
+            )
+            if not master_json:
+                return ""
+            parsed = json.loads(str(master_json))
+            return str((parsed.get("attributes") or {}).get("frontendUrl") or "").strip()
+        except Exception:
+            return ""
 
     @staticmethod
     def _public_root_alias_paths(config, key, default_value):

@@ -1217,8 +1217,11 @@ class SharedDataspaceDeploymentAdapter:
                         f"{kc_runtime_url}/realms/master"
                     ),
                 )
-        except Exception:
-            self._fail("Keycloak not accessible. Verify ingress hostname resolution")
+        except Exception as exc:
+            self._fail(
+                "Keycloak not accessible",
+                root_cause=f"{kc_runtime_url}/realms/master failed: {exc}",
+            )
 
         if not self.wait_for_keycloak_admin_ready(kc_runtime_url, kc_user, kc_password):
             self._fail("Keycloak admin API not ready", root_cause="admin authentication did not succeed in time")

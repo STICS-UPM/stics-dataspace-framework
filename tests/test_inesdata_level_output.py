@@ -2545,6 +2545,67 @@ minio:
             INESDataInfrastructureAdapter.KEYCLOAK_HTTP_COOKIE_SNIPPET,
         )
 
+    def test_apply_sync_uses_configured_keycloak_frontend_url_for_master_realm(self):
+        infrastructure = self._make_infrastructure()
+        values = {
+            "postgresql": {
+                "auth": {
+                    "postgresPassword": "old",
+                    "password": "old",
+                }
+            },
+            "keycloak": {
+                "externalDatabase": {"password": "old"},
+                "auth": {
+                    "adminUser": "old",
+                    "adminPassword": "old",
+                },
+                "ingress": {"hostname": "auth.old.example"},
+                "adminIngress": {"hostname": "admin.auth.old.example"},
+                "keycloakConfigCli": {
+                    "extraEnv": [
+                        {"name": "KEYCLOAK_USER", "value": "old"},
+                        {"name": "KEYCLOAK_PASSWORD", "value": "old"},
+                    ],
+                    "configuration": {
+                        "master.json": json.dumps(
+                            {
+                                "realm": "master",
+                                "attributes": {"frontendUrl": "http://admin.auth.old.example"},
+                            }
+                        )
+                    },
+                },
+            },
+            "minio": {
+                "rootUser": "old",
+                "rootPassword": "old",
+                "ingress": {"hosts": ["minio.old.example"]},
+                "consoleIngress": {"hosts": ["console.minio.old.example"]},
+            },
+        }
+
+        updated = infrastructure.apply_sync(
+            values,
+            {
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                "PG_PASSWORD": "pg-secret",
+                "KC_USER": "admin",
+                "KC_PASSWORD": "kc-secret",
+                "MINIO_USER": "minio-admin",
+                "MINIO_PASSWORD": "minio-secret",
+            },
+        )
+
+        master = json.loads(
+            updated["keycloak"]["keycloakConfigCli"]["configuration"]["master.json"]
+        )
+        self.assertEqual(
+            master["attributes"]["frontendUrl"],
+            "https://org1.pionera.oeg.fi.upm.es/auth",
+        )
+
     def test_apply_sync_keeps_keycloak_proxy_for_tls_values(self):
         infrastructure = self._make_infrastructure()
         values = {
