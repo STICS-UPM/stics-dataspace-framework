@@ -5238,14 +5238,14 @@ def _interactive_offer_vm_single_address_configuration(required=False):
 
 def _menu_action_requires_vm_single_address(choice):
     normalized = str(choice or "").strip().upper()
-    if normalized in {"0", "P", "H", "U", "X"}:
+    if normalized in {"0", "P", "H", "U", "X", "J"}:
         return True
     return normalized in {"3", "4", "5", "6"}
 
 
 def _menu_action_benefits_from_vm_distributed_configuration(choice):
     normalized = str(choice or "").strip().upper()
-    if normalized in {"0", "P", "H", "U", "X"}:
+    if normalized in {"0", "P", "H", "U", "X", "J"}:
         return True
     return normalized in {str(level_id) for level_id in LEVEL_DESCRIPTIONS}
 
@@ -16313,6 +16313,309 @@ def _run_interoperability_tests_menu_interactive(
     return {"status": "cancelled", "adapter": selected_adapter, "topology": topology}
 
 
+def _csv_tokens(raw_value):
+    tokens = []
+    for token in str(raw_value or "").split(","):
+        item = token.strip()
+        if item and item not in tokens:
+            tokens.append(item)
+    return tokens
+
+
+def _connector_short_name_from_full(connector, dataspace_name):
+    value = str(connector or "").strip()
+    dataspace = str(dataspace_name or "").strip()
+    prefix = "conn-"
+    suffix = f"-{dataspace}" if dataspace else ""
+    if value.startswith(prefix) and suffix and value.endswith(suffix):
+        return value[len(prefix) : -len(suffix)]
+    if value.startswith(prefix):
+        return value[len(prefix) :]
+    return value
+
+
+def _connector_full_name_from_short(connector, dataspace_name):
+    parsed = parse_connector_list(connector, dataspace_name)
+    return parsed[0] if parsed else ""
+
+
+def _default_connector_location_for_add(existing_mapping, existing_connectors):
+    provider_count = sum(1 for value in existing_mapping.values() if str(value).strip().lower() == "provider")
+    consumer_count = sum(1 for value in existing_mapping.values() if str(value).strip().lower() == "consumer")
+    if not existing_mapping:
+        connector_count = len(list(existing_connectors or []))
+        if connector_count == 1:
+            return "consumer"
+    return "provider" if provider_count <= consumer_count else "consumer"
+
+
+def _default_connector_location_mapping_tokens(connectors, dataspace_name):
+    tokens = []
+    for index, connector in enumerate(list(connectors or [])):
+        short_name = _connector_short_name_from_full(connector, dataspace_name)
+        role = "provider" if index % 2 == 0 else "consumer"
+        tokens.append(f"{short_name}:{role}")
+    return tokens
+
+
+def _build_add_connector_inventory_plan(adapter_config, connector_name, location, validation_pair=""):
+    config = dict(adapter_config or {})
+    dataspace_name = str(config.get("DS_1_NAME") or config.get("DS_NAME") or "").strip()
+    short_name = str(connector_name or "").strip()
+    if not dataspace_name:
+        return {
+            "status": "failed",
+            "reason": "missing-dataspace",
+            "message": "DS_1_NAME is required before adding a connector.",
+        }
+    if not short_name:
+        return {
+            "status": "cancelled",
+            "reason": "empty-connector-name",
+            "message": "Connector name was empty.",
+        }
+    if "," in short_name or ":" in short_name or ">" in short_name or "=" in short_name:
+        return {
+            "status": "failed",
+            "reason": "invalid-connector-name",
+            "message": "Use one connector short name without commas, colons or pair separators.",
+        }
+
+    existing_tokens = _csv_tokens(config.get("DS_1_CONNECTORS"))
+    existing_connectors = parse_connector_list(config.get("DS_1_CONNECTORS"), dataspace_name)
+    new_connector = _connector_full_name_from_short(short_name, dataspace_name)
+    if not new_connector:
+        return {
+            "status": "failed",
+            "reason": "invalid-connector-name",
+            "message": "Connector name could not be normalized.",
+        }
+    if new_connector in existing_connectors:
+        return {
+            "status": "exists",
+            "adapter_updates": {},
+            "dataspace": dataspace_name,
+            "connector": new_connector,
+            "connector_short_name": _connector_short_name_from_full(new_connector, dataspace_name),
+            "message": f"Connector {new_connector} is already present in DS_1_CONNECTORS.",
+        }
+
+    connector_tokens = [*existing_tokens, short_name]
+    connector_full_set = set([*existing_connectors, new_connector])
+    mapping_raw = str(config.get("DS_1_CONNECTOR_NAMESPACES") or "").strip()
+    mapping = parse_connector_mapping(mapping_raw, dataspace_name)
+    mapping_tokens = _csv_tokens(mapping_raw)
+    selected_location = str(location or "").strip().lower()
+    if not selected_location:
+        selected_location = _default_connector_location_for_add(mapping, existing_connectors)
+    if selected_location not in {"provider", "consumer", "dataspace"}:
+        selected_location = str(location or "").strip()
+    if not selected_location:
+        selected_location = "provider"
+    if not mapping_tokens and existing_connectors:
+        mapping_tokens = _default_connector_location_mapping_tokens(existing_connectors, dataspace_name)
+        mapping = parse_connector_mapping(",".join(mapping_tokens), dataspace_name)
+    if new_connector not in mapping:
+        mapping_tokens.append(f"{short_name}:{selected_location}")
+
+    pair_tokens = _csv_tokens(config.get("DS_1_VALIDATION_PAIRS"))
+    pair_raw = str(validation_pair or "").strip()
+    added_pair = ""
+    if pair_raw and pair_raw.lower() not in {"none", "skip", "-"}:
+        parsed_pairs = parse_connector_pairs(pair_raw, dataspace_name)
+        if len(parsed_pairs) != 1:
+            return {
+                "status": "failed",
+                "reason": "invalid-validation-pair",
+                "message": "Validation pair must use source>target, for example partnera>org3.",
+            }
+        source, target = parsed_pairs[0]
+        missing = [connector for connector in (source, target) if connector not in connector_full_set]
+        if missing:
+            return {
+                "status": "failed",
+                "reason": "unknown-validation-pair-connector",
+                "message": (
+                    "Validation pair references connectors outside the updated inventory: "
+                    + ", ".join(missing)
+                ),
+            }
+        existing_pairs = parse_connector_pairs(config.get("DS_1_VALIDATION_PAIRS"), dataspace_name)
+        if (source, target) not in existing_pairs:
+            pair_tokens.append(pair_raw)
+            added_pair = pair_raw
+
+    updates = {
+        "DS_1_CONNECTORS": ",".join(connector_tokens),
+        "DS_1_CONNECTOR_NAMESPACES": ",".join(mapping_tokens),
+        "LEVEL4_CONNECTOR_RECONCILIATION_MODE": "additive",
+    }
+    if pair_tokens:
+        updates["DS_1_VALIDATION_PAIRS"] = ",".join(pair_tokens)
+
+    return {
+        "status": "planned",
+        "dataspace": dataspace_name,
+        "connector": new_connector,
+        "connector_short_name": short_name,
+        "location": selected_location,
+        "validation_pair": added_pair,
+        "adapter_updates": updates,
+        "existing_connectors": existing_connectors,
+        "updated_connectors": [*existing_connectors, new_connector],
+    }
+
+
+def _print_add_connector_plan(plan, adapter_name, topology):
+    print()
+    print("ADD CONNECTOR PLAN")
+    print(f"Adapter: {adapter_name}")
+    print(f"Topology: {topology}")
+    print(f"Dataspace: {plan.get('dataspace')}")
+    print(f"New connector: {plan.get('connector')}")
+    if plan.get("location"):
+        print(f"Placement: {plan.get('location')}")
+    if plan.get("validation_pair"):
+        print(f"Validation pair to add: {plan.get('validation_pair')}")
+    else:
+        print("Validation pair to add: none")
+    print()
+    print("Configuration updates:")
+    for key, value in sorted(dict(plan.get("adapter_updates") or {}).items()):
+        print(f"- {key}={value}")
+
+
+def _run_add_connector_interactive(
+    current_adapter,
+    *,
+    adapter_registry=None,
+    deployer_registry=None,
+    topology="local",
+    validation_engine_cls=ValidationEngine,
+    metrics_collector_cls=MetricsCollector,
+    experiment_storage=ExperimentStorage,
+):
+    selected_adapter = _interactive_require_adapter_selection(
+        current_adapter,
+        adapter_registry=adapter_registry,
+    )
+    if not selected_adapter:
+        return None
+
+    adapter_path = _seed_adapter_deployer_config_if_missing(selected_adapter)
+    adapter_config = load_raw_deployer_config(adapter_path)
+    dataspace_name = str(adapter_config.get("DS_1_NAME") or adapter_config.get("DS_NAME") or "").strip()
+    existing_connectors = parse_connector_list(adapter_config.get("DS_1_CONNECTORS"), dataspace_name)
+
+    print()
+    print("ADD CONNECTOR TO EXISTING DATASPACE")
+    print("This updates the connector inventory and runs Level 4 in additive mode when confirmed.")
+    if dataspace_name:
+        print(f"Dataspace: {dataspace_name}")
+    if existing_connectors:
+        print("Current connectors:")
+        for connector in existing_connectors:
+            print(f"- {_connector_short_name_from_full(connector, dataspace_name)} ({connector})")
+    else:
+        print("Current connectors: none configured")
+
+    connector_name = _interactive_read("New connector short name (blank to cancel): ").strip()
+    if not connector_name:
+        print("Add connector cancelled.")
+        return {"status": "cancelled", "adapter": selected_adapter, "topology": topology}
+
+    existing_mapping = parse_connector_mapping(adapter_config.get("DS_1_CONNECTOR_NAMESPACES"), dataspace_name)
+    default_location = _default_connector_location_for_add(existing_mapping, existing_connectors)
+    location = _interactive_read(
+        f"Placement group (provider/consumer/dataspace or custom) [{default_location}]: "
+    ).strip() or default_location
+
+    default_pair = ""
+    if existing_connectors:
+        first_existing = _connector_short_name_from_full(existing_connectors[0], dataspace_name)
+        default_pair = f"{connector_name}>{first_existing}"
+    validation_pair = ""
+    if default_pair:
+        validation_pair = _interactive_read(
+            f"Validation pair involving the new connector [{default_pair}, none=skip]: "
+        ).strip()
+        if not validation_pair:
+            validation_pair = default_pair
+    else:
+        validation_pair = _interactive_read("Validation pair involving the new connector (source>target, blank=skip): ").strip()
+
+    plan = _build_add_connector_inventory_plan(
+        adapter_config,
+        connector_name,
+        location,
+        validation_pair=validation_pair,
+    )
+    if plan.get("status") == "exists":
+        print(plan.get("message"))
+        return {"status": "skipped", "adapter": selected_adapter, "topology": topology, "reason": "connector-exists"}
+    if plan.get("status") != "planned":
+        print(plan.get("message") or "Could not prepare add connector plan.")
+        return {
+            "status": "failed",
+            "adapter": selected_adapter,
+            "topology": topology,
+            "reason": plan.get("reason") or "plan-failed",
+        }
+
+    _print_add_connector_plan(plan, selected_adapter, topology)
+    if not _interactive_confirm("Apply these connector inventory changes?", default=False):
+        print("Add connector cancelled before writing configuration.")
+        return {"status": "cancelled", "adapter": selected_adapter, "topology": topology}
+
+    _write_key_value_updates(
+        adapter_path,
+        plan["adapter_updates"],
+        sorted(_adapter_profile_keys(selected_adapter)),
+    )
+    print(f"Updated adapter configuration: {_framework_relative_path(adapter_path)}")
+
+    result = {
+        "status": "prepared",
+        "adapter": selected_adapter,
+        "topology": topology,
+        "connector": plan.get("connector"),
+        "updated_keys": sorted(plan["adapter_updates"]),
+        "config_file": _framework_relative_path(adapter_path),
+    }
+
+    if not _interactive_confirm(
+        f"Run Level 4 in additive mode now ({_interactive_execution_context(topology, selected_adapter)})?",
+        default=False,
+    ):
+        print("Level 4 not run. You can run Level 4 later; it is now configured in additive mode.")
+        return result
+
+    if not _interactive_ensure_hosts_ready_for_levels(
+        selected_adapter,
+        levels=[4],
+        adapter_registry=adapter_registry,
+        deployer_registry=deployer_registry,
+        topology=topology,
+    ):
+        result["status"] = "prepared"
+        result["level_4"] = {"status": "skipped", "reason": "hosts-not-ready"}
+        return result
+
+    level_result = run_levels(
+        selected_adapter,
+        levels=[4],
+        adapter_registry=adapter_registry,
+        deployer_registry=deployer_registry,
+        topology=topology,
+        validation_engine_cls=validation_engine_cls,
+        metrics_collector_cls=metrics_collector_cls,
+        experiment_storage=experiment_storage,
+    )
+    result["status"] = "completed"
+    result["level_4"] = level_result
+    return result
+
+
 def _run_interactive_full_levels(
     adapter_name,
     adapter_registry=None,
@@ -16435,6 +16738,7 @@ def _print_interactive_menu(adapter_name, adapter_registry=None, topology="local
     print("P - Preview deployment plan")
     print("H - Plan/apply hosts entries")
     print("U - Show available access URLs")
+    print("J - Add connector to existing dataspace")
     print("G - Validate target")
     print("E - View experiment reports")
     print("M - Run metrics / benchmarks")
@@ -16490,6 +16794,8 @@ def _print_interactive_help():
     print("    It shows concrete hostnames, the sync result, and in menu mode can offer to apply the plan immediately.")
     print("U - Use to print access URLs derived from the selected adapter config in a readable format.")
     print("    Useful after Levels 2-5 when you want portal, connector, component or MinIO access details without searching files manually.")
+    print("J - Use when an existing dataspace needs one more connector without recreating healthy connectors.")
+    print("    It updates the connector inventory, switches Level 4 to additive mode, shows a plan, and can run Level 4 after confirmation.")
     print("G - Use to inspect an external INESData validation target without deploying PIONERA resources.")
     print("    The current runner validates the target YAML and can run enabled read-only Playwright project specs.")
     print("E - Use to open a local, read-only dashboard for previous validation experiments.")
@@ -18046,6 +18352,21 @@ def run_interactive_menu(
                         metrics_collector_cls=metrics_collector_cls,
                         experiment_storage=experiment_storage,
                         kafka_manager_cls=kafka_manager_cls,
+                    )
+                    if result is not None:
+                        current_adapter = result.get("adapter") or current_adapter
+                        _print_action_result(result)
+                    continue
+
+                if choice == "J":
+                    result = _run_add_connector_interactive(
+                        current_adapter,
+                        adapter_registry=registry,
+                        deployer_registry=deployer_registry,
+                        topology=topology,
+                        validation_engine_cls=validation_engine_cls,
+                        metrics_collector_cls=metrics_collector_cls,
+                        experiment_storage=experiment_storage,
                     )
                     if result is not None:
                         current_adapter = result.get("adapter") or current_adapter

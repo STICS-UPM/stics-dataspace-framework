@@ -2334,6 +2334,7 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("K - Use when vm-single is active", stdout.getvalue())
         self.assertIn("H - Use to inspect or apply local hosts entries", stdout.getvalue())
         self.assertIn("U - Use to print access URLs derived from the selected adapter config", stdout.getvalue())
+        self.assertIn("J - Use when an existing dataspace needs one more connector", stdout.getvalue())
         self.assertIn("X - Use only when you intentionally want to destroy and recreate", stdout.getvalue())
         self.assertIn("asks for one automatically", stdout.getvalue())
         self.assertIn("[Developer]", stdout.getvalue())
@@ -2401,6 +2402,98 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("Kafka transfer interoperability tests", stdout.getvalue())
         self.assertIn("Kafka: Passed", stdout.getvalue())
         run_kafka.assert_called_once()
+
+    def test_add_connector_inventory_plan_sets_level4_additive_mode(self):
+        plan = main._build_add_connector_inventory_plan(
+            {
+                "DS_1_NAME": "pionera",
+                "DS_1_CONNECTORS": "org2,org3",
+                "DS_1_CONNECTOR_NAMESPACES": "org2:provider,org3:consumer",
+                "DS_1_VALIDATION_PAIRS": "org2>org3",
+                "LEVEL4_CONNECTOR_RECONCILIATION_MODE": "full",
+            },
+            "partnera",
+            "provider",
+            validation_pair="partnera>org3",
+        )
+
+        self.assertEqual(plan["status"], "planned")
+        self.assertEqual(plan["connector"], "conn-partnera-pionera")
+        self.assertEqual(
+            plan["adapter_updates"],
+            {
+                "DS_1_CONNECTORS": "org2,org3,partnera",
+                "DS_1_CONNECTOR_NAMESPACES": "org2:provider,org3:consumer,partnera:provider",
+                "DS_1_VALIDATION_PAIRS": "org2>org3,partnera>org3",
+                "LEVEL4_CONNECTOR_RECONCILIATION_MODE": "additive",
+            },
+        )
+
+    def test_menu_add_connector_updates_config_and_runs_level4_additive(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter_path = os.path.join(tmpdir, "deployer.config")
+            adapter_example_path = os.path.join(tmpdir, "deployer.config.example")
+            with open(adapter_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "DS_1_NAME=pionera\n"
+                    "DS_1_CONNECTORS=org2,org3\n"
+                    "DS_1_CONNECTOR_NAMESPACES=org2:provider,org3:consumer\n"
+                    "DS_1_VALIDATION_PAIRS=org2>org3\n"
+                    "LEVEL4_CONNECTOR_RECONCILIATION_MODE=full\n"
+                )
+            with open(adapter_example_path, "w", encoding="utf-8") as handle:
+                handle.write("")
+
+            stdout = io.StringIO()
+            with mock.patch("builtins.input", side_effect=[
+                "J",
+                "partnera",
+                "provider",
+                "partnera>org3",
+                "Y",
+                "Y",
+                "Q",
+            ]), mock.patch.object(
+                main,
+                "_adapter_deployer_config_path",
+                return_value=adapter_path,
+            ), mock.patch.object(
+                main,
+                "_adapter_deployer_config_example_path",
+                return_value=adapter_example_path,
+            ), mock.patch.object(
+                main,
+                "_interactive_ensure_hosts_ready_for_levels",
+                return_value=True,
+            ), mock.patch.object(
+                main,
+                "run_levels",
+                return_value={"status": "completed", "levels": [{"level": 4}]},
+            ) as run_levels, contextlib.redirect_stdout(stdout):
+                result = main.main(
+                    ["menu"],
+                    adapter_registry=self.registry,
+                    deployer_registry=self.deployer_registry,
+                    validation_engine_cls=FakeValidationEngine,
+                    metrics_collector_cls=FakeMetricsCollector,
+                    experiment_storage=FakeStorage,
+                )
+
+            self.assertEqual(result["status"], "exited")
+            with open(adapter_path, encoding="utf-8") as handle:
+                content = handle.read()
+
+        self.assertIn("J - Add connector to existing dataspace", stdout.getvalue())
+        self.assertIn("ADD CONNECTOR PLAN", stdout.getvalue())
+        self.assertIn("DS_1_CONNECTORS=org2,org3,partnera", content)
+        self.assertIn(
+            "DS_1_CONNECTOR_NAMESPACES=org2:provider,org3:consumer,partnera:provider",
+            content,
+        )
+        self.assertIn("DS_1_VALIDATION_PAIRS=org2>org3,partnera>org3", content)
+        self.assertIn("LEVEL4_CONNECTOR_RECONCILIATION_MODE=additive", content)
+        run_levels.assert_called_once()
+        self.assertEqual(run_levels.call_args.kwargs["levels"], [4])
 
     def test_menu_level3_adapter_prompt_does_not_print_generic_hosts_hint(self):
         registry = {

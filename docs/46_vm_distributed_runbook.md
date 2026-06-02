@@ -342,14 +342,24 @@ Para añadir conectores a un dataspace vivo, usa reconciliación aditiva.
 Este es el flujo recomendado para cumplir el caso pedido por el supervisor:
 añadir conectores a espacios de datos que ya tienen conectores desplegados.
 
-1. Hacer copia de seguridad de los `.config` locales.
-2. Añadir el nuevo conector a `DS_1_CONNECTORS`.
-3. Declarar su ubicación en `DS_1_CONNECTOR_NAMESPACES`.
-4. Añadir pares de validación en `DS_1_VALIDATION_PAIRS` si se quiere validar.
-5. Cambiar Level 4 a modo aditivo.
-6. Previsualizar el plan.
-7. Ejecutar `Level 4`.
-8. Ejecutar validación focalizada o `Level 6`.
+La forma guiada es usar el menú principal:
+
+```bash
+python3 main.py menu
+```
+
+Después selecciona:
+
+```text
+J - Add connector to existing dataspace
+```
+
+El asistente pide el nombre corto del conector, su ubicación y el par de
+validación opcional. Antes de escribir ficheros, muestra un plan. Si el operador
+confirma, actualiza el inventario, cambia `Level 4` a modo aditivo y puede
+ejecutar `Level 4` en ese momento.
+
+El resultado equivalente en configuración es:
 
 Ejemplo:
 
@@ -360,14 +370,14 @@ DS_1_VALIDATION_PAIRS=org2>org3,partnera>org2
 LEVEL4_CONNECTOR_RECONCILIATION_MODE=additive
 ```
 
-Después:
+También se puede revisar el plan manualmente con:
 
 ```bash
 python3 main.py inesdata deploy --topology vm-distributed --dry-run
 ```
 
-Si el plan es correcto, ejecuta `Level 4` desde el menú. Los conectores sanos se
-preservan y el framework añade los que faltan.
+En modo aditivo, los conectores sanos se preservan y el framework añade los que
+faltan.
 
 Para generar evidencia de instalación limpia, vuelve a usar `full` en un entorno
 controlado o en una reconstrucción completa.
