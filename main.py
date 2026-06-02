@@ -16080,6 +16080,7 @@ def _run_interactive_level2_with_shared_foundation(
     baseline=False,
 ):
     shared_adapter_name = _shared_foundation_adapter_name(adapter_registry=adapter_registry)
+    normalized_topology = normalize_topology(topology)
     execution_context = _interactive_execution_context(topology)
     adapter = build_adapter(
         shared_adapter_name,
@@ -16121,6 +16122,18 @@ def _run_interactive_level2_with_shared_foundation(
                 f"Reuse shared common services ({execution_context})?",
                 default=True,
             ):
+                public_access_result = None
+                if normalized_topology == VM_DISTRIBUTED_TOPOLOGY:
+                    sync_public_access = getattr(infrastructure, "sync_vm_distributed_public_access", None)
+                    if callable(sync_public_access):
+                        print("Reconciling vm-distributed public access for reused common services...")
+                        try:
+                            public_access_result = sync_public_access(topology=normalized_topology)
+                        except TypeError:
+                            public_access_result = sync_public_access()
+                        except Exception as exc:
+                            print(f"Warning: vm-distributed public access reconciliation failed: {exc}")
+                            public_access_result = {"status": "failed", "error": str(exc)}
                 announcer = getattr(infrastructure, "announce_level", None)
                 if callable(announcer):
                     announcer(2, "DEPLOY COMMON SERVICES")
@@ -16137,6 +16150,8 @@ def _run_interactive_level2_with_shared_foundation(
                         "shared_adapter": shared_adapter_name,
                     },
                 }
+                if public_access_result is not None:
+                    payload["result"]["public_access"] = public_access_result
                 payload.update(
                     _safe_level_hosts_followup(
                         adapter,
