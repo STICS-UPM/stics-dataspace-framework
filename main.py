@@ -16856,8 +16856,8 @@ def _interactive_ensure_hosts_ready_for_levels(
 
 def _should_interactive_vm_distributed_hosts_preflight(context):
     config = dict(getattr(context, "config", {}) or {})
-    execution_host = str(config.get("VM_DISTRIBUTED_EXECUTION_HOST") or "").strip().lower()
-    if execution_host not in {"common-services", "common", "common-vm", "common-services-vm"}:
+    execution_host = _normalized_vm_distributed_execution_host(config)
+    if execution_host != "common-services":
         return False
 
     hosts_file = _interactive_hosts_file_path()

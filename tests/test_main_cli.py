@@ -3074,6 +3074,72 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("138.100.15.165 org1.pionera.oeg.fi.upm.es", hosts_content)
         self.assertIn("Hosts public names reconciled: 1", stdout.getvalue())
 
+    def test_vm_distributed_auto_execution_host_reconciles_hosts_when_running_on_common_services(self):
+        context = DeploymentContext.from_mapping(
+            {
+                "deployer": "inesdata",
+                "topology": "vm-distributed",
+                "environment": "DEV",
+                "dataspace_name": "pionera",
+                "ds_domain_base": "pionera.oeg.fi.upm.es",
+                "topology_profile": {
+                    "name": "vm-distributed",
+                    "default_address": "192.168.122.64",
+                    "role_addresses": {
+                        "common": "192.168.122.64",
+                        "registration_service": "192.168.122.64",
+                    },
+                    "ingress_external_ip": "192.168.122.64",
+                    "routing_mode": "host",
+                },
+                "config": {
+                    "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                    "DS_1_NAME": "pionera",
+                    "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                    "VM_DISTRIBUTED_EXECUTION_HOST": "auto",
+                    "VM_PUBLIC_PROXY_IP": "138.100.15.165",
+                },
+            }
+        )
+
+        with tempfile.NamedTemporaryFile("w+", encoding="utf-8") as hosts_file, mock.patch.dict(
+            os.environ,
+            {"PIONERA_HOSTS_FILE": hosts_file.name},
+            clear=False,
+        ):
+            hosts_file.write("127.0.0.1 localhost\n192.168.122.64 org1.pionera.oeg.fi.upm.es\n")
+            hosts_file.flush()
+
+            stdout = io.StringIO()
+            with mock.patch("builtins.input", side_effect=["Y"]), mock.patch.object(
+                main,
+                "_vm_distributed_running_on_common_services",
+                return_value=True,
+            ), mock.patch.object(
+                main,
+                "build_adapter",
+                return_value=object(),
+            ), mock.patch.object(
+                main,
+                "_resolve_deployer_context",
+                return_value=("inesdata", context),
+            ), contextlib.redirect_stdout(stdout):
+                result = main._interactive_ensure_hosts_ready_for_levels(
+                    "inesdata",
+                    levels=[3],
+                    adapter_registry={"inesdata": "fake_adapter_module:FakeAdapter"},
+                    deployer_registry={"inesdata": "fake_deployer_module:FakeDeployer"},
+                    topology="vm-distributed",
+                )
+
+            hosts_file.seek(0)
+            hosts_content = hosts_file.read()
+
+        self.assertTrue(result)
+        self.assertNotIn("192.168.122.64 org1.pionera.oeg.fi.upm.es", hosts_content)
+        self.assertIn("138.100.15.165 org1.pionera.oeg.fi.upm.es", hosts_content)
+        self.assertIn("Hosts public names reconciled: 1", stdout.getvalue())
+
     def test_vm_distributed_external_hosts_preflight_does_not_touch_operator_hosts(self):
         context = DeploymentContext.from_mapping(
             {
