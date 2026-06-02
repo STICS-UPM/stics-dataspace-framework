@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import warnings
 from urllib.parse import urlparse
 
 import requests
@@ -46,6 +47,55 @@ class SharedDataspaceDeploymentAdapter:
         if root_cause:
             raise RuntimeError(f"{message}. Root cause: {root_cause}")
         raise RuntimeError(message)
+
+    @staticmethod
+    def _normalize_tls_verify_mode(value, default="true"):
+        raw_value = str(value or default or "true").strip().lower()
+        aliases = {
+            "1": "true",
+            "yes": "true",
+            "on": "true",
+            "0": "false",
+            "no": "false",
+            "off": "false",
+            "detect": "auto",
+        }
+        mode = aliases.get(raw_value, raw_value)
+        return mode if mode in {"auto", "true", "false"} else default
+
+    def _keycloak_tls_verify_mode(self, deployer_config=None):
+        config = dict(deployer_config or {})
+        raw_value = (
+            config.get("KEYCLOAK_TLS_VERIFY")
+            or config.get("KEYCLOAK_HTTP_TLS_VERIFY")
+            or config.get("VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY")
+            or config.get("VM_SINGLE_HTTP_PREFLIGHT_TLS_VERIFY")
+        )
+        if not raw_value:
+            topology = self._normalized_topology()
+            raw_value = "auto" if topology in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY} else "true"
+        return self._normalize_tls_verify_mode(raw_value, default="true")
+
+    def _keycloak_request(self, requester, url, *, tls_verify_mode=None, **kwargs):
+        mode = self._normalize_tls_verify_mode(tls_verify_mode, default="true")
+        parsed = urlparse(str(url or ""))
+        is_https = str(parsed.scheme or "").lower() == "https"
+        request_kwargs = dict(kwargs)
+        if is_https and mode == "false":
+            request_kwargs["verify"] = False
+        try:
+            return requester(url, **request_kwargs)
+        except requests.exceptions.SSLError:
+            if not is_https or mode != "auto":
+                raise
+            print(
+                "Warning: Keycloak TLS certificate verification failed; "
+                "retrying without certificate verification because TLS verify mode is auto."
+            )
+            request_kwargs["verify"] = False
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return requester(url, **request_kwargs)
 
     def _dataspace_name(self):
         getter = getattr(self.config, "dataspace_name", None)
@@ -1077,11 +1127,14 @@ class SharedDataspaceDeploymentAdapter:
         token_url = f"{kc_url.rstrip('/')}/realms/master/protocol/openid-connect/token"
         last_issue = None
         start = time.time()
+        tls_verify_mode = getattr(self, "_keycloak_tls_verify_mode_override", None) or self._keycloak_tls_verify_mode()
 
         while time.time() - start <= timeout:
             try:
-                response = requests.post(
+                response = self._keycloak_request(
+                    requests.post,
                     token_url,
+                    tls_verify_mode=tls_verify_mode,
                     data={
                         "grant_type": "password",
                         "client_id": "admin-cli",
@@ -1196,6 +1249,7 @@ class SharedDataspaceDeploymentAdapter:
         print("Verifying Keycloak access...")
         deployer_config = self.config_adapter.load_deployer_config()
         kc_runtime_url = self._keycloak_runtime_url(deployer_config)
+        tls_verify_mode = self._keycloak_tls_verify_mode(deployer_config)
         kc_user = deployer_config.get("KC_USER")
         kc_password = deployer_config.get("KC_PASSWORD")
 
@@ -1211,7 +1265,12 @@ class SharedDataspaceDeploymentAdapter:
             self._fail("KC_USER/KC_PASSWORD not defined in deployer.config")
 
         try:
-            response = requests.get(f"{kc_runtime_url}/realms/master", timeout=5)
+            response = self._keycloak_request(
+                requests.get,
+                f"{kc_runtime_url}/realms/master",
+                tls_verify_mode=tls_verify_mode,
+                timeout=5,
+            )
             if response.status_code not in (200, 302):
                 self._fail(
                     "Keycloak not ready",
@@ -1226,7 +1285,19 @@ class SharedDataspaceDeploymentAdapter:
                 root_cause=f"{kc_runtime_url}/realms/master failed: {exc}",
             )
 
-        if not self.wait_for_keycloak_admin_ready(kc_runtime_url, kc_user, kc_password):
+        previous_tls_verify_mode = getattr(self, "_keycloak_tls_verify_mode_override", None)
+        self._keycloak_tls_verify_mode_override = tls_verify_mode
+        try:
+            keycloak_admin_ready = self.wait_for_keycloak_admin_ready(kc_runtime_url, kc_user, kc_password)
+        finally:
+            if previous_tls_verify_mode is None:
+                try:
+                    delattr(self, "_keycloak_tls_verify_mode_override")
+                except AttributeError:
+                    pass
+            else:
+                self._keycloak_tls_verify_mode_override = previous_tls_verify_mode
+        if not keycloak_admin_ready:
             self._fail("Keycloak admin API not ready", root_cause="admin authentication did not succeed in time")
 
         if not os.path.exists(self.config.venv_path()):

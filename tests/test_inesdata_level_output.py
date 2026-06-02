@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import requests
 import yaml
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -1779,6 +1780,68 @@ minio:
 
         self.assertEqual(self.config_adapter.topology, "vm-distributed")
         get_request.assert_called_with("https://auth.example.test/realms/master", timeout=5)
+
+    def test_deploy_dataspace_for_vm_distributed_retries_keycloak_tls_auto_on_certificate_error(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "KC_USER": "admin",
+                "KC_PASSWORD": "secret",
+                "KEYCLOAK_FRONTEND_URL": "https://auth.dev.linkeddata.es",
+                "VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY": "auto",
+            }
+        )
+        infrastructure = self._make_infrastructure()
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=infrastructure,
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+        deployment.connectors_adapter = FakeConnectorsAdapter()
+        infrastructure.ensure_vault_unsealed = lambda: True
+        infrastructure.sync_common_credentials_from_kubernetes = mock.Mock(return_value=True)
+        infrastructure.sync_vm_distributed_routing = mock.Mock(return_value={"status": "synced"})
+        infrastructure.deploy_helm_release = lambda *_args, **_kwargs: True
+        infrastructure.wait_for_dataspace_level3_pods = lambda *_args, **_kwargs: True
+        infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
+        deployment.wait_for_keycloak_admin_ready = mock.Mock(return_value=True)
+        deployment.restart_registration_service = lambda: None
+        deployment.update_helm_values_with_host_aliases = mock.Mock()
+        deployment._reserve_local_port = mock.Mock(return_value=15432)
+        infrastructure.port_forward_service = mock.Mock(return_value=True)
+        infrastructure.stop_port_forward_service = mock.Mock(return_value=True)
+        responses = iter(
+            [
+                requests.exceptions.SSLError("self-signed certificate"),
+                mock.Mock(status_code=200),
+            ]
+        )
+
+        def fake_get(*_args, **_kwargs):
+            response = next(responses)
+            if isinstance(response, BaseException):
+                raise response
+            return response
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), mock.patch(
+            "adapters.inesdata.deployment.ensure_python_requirements",
+            lambda *_args, **_kwargs: None,
+        ), mock.patch(
+            "adapters.inesdata.deployment.requests.get",
+            side_effect=fake_get,
+        ) as get_request, mock.patch(
+            "adapters.shared.deployment.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+        ):
+            deployment.deploy_dataspace_for_topology("vm-distributed")
+
+        self.assertEqual(get_request.call_count, 2)
+        self.assertEqual(get_request.call_args_list[0].kwargs, {"timeout": 5})
+        self.assertEqual(get_request.call_args_list[1].kwargs, {"timeout": 5, "verify": False})
+        self.assertIn("TLS certificate verification failed", output.getvalue())
 
     def test_public_portal_connector_endpoints_replace_changeme_placeholders(self):
         self.config_adapter = LevelOutputConfigAdapter(

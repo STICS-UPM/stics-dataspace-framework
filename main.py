@@ -11623,6 +11623,13 @@ def _vm_distributed_format_command(command):
     return " ".join(shlex.quote(str(part)) for part in list(command or []))
 
 
+def _vm_distributed_local_path_for_shell(path):
+    value = str(path or "").strip()
+    if not value:
+        return ""
+    return os.path.abspath(os.path.expanduser(value))
+
+
 def _vm_distributed_build_ssh_command(plan, vm, remote_command=None):
     ssh = dict((vm or {}).get("ssh") or {})
     host = str(ssh.get("host") or "").strip()
@@ -11644,7 +11651,7 @@ def _vm_distributed_build_ssh_command(plan, vm, remote_command=None):
         str(ssh.get("port") or "22").strip() or "22",
     ]
 
-    identity_file = str(ssh.get("identity_file") or "").strip()
+    identity_file = _vm_distributed_local_path_for_shell(ssh.get("identity_file"))
     if identity_file:
         command.extend(["-i", identity_file])
 
@@ -11653,7 +11660,7 @@ def _vm_distributed_build_ssh_command(plan, vm, remote_command=None):
     if access_mode == "bastion" and bastion.get("host"):
         bastion_target = _vm_distributed_ssh_target(bastion.get("user"), bastion.get("host"))
         bastion_port = str(bastion.get("port") or "").strip()
-        bastion_identity_file = str(bastion.get("identity_file") or "").strip()
+        bastion_identity_file = _vm_distributed_local_path_for_shell(bastion.get("identity_file"))
         if bastion_identity_file:
             proxy_command = [
                 "ssh",
@@ -11884,7 +11891,8 @@ def _vm_distributed_manual_ssh_bootstrap_commands(plan):
     if not identity_file:
         return []
 
-    public_key_file = _vm_distributed_public_key_path(identity_file)
+    local_identity_file = _vm_distributed_local_path_for_shell(identity_file)
+    public_key_file = _vm_distributed_public_key_path(local_identity_file)
     key_comment = str(ssh_bootstrap.get("key_comment") or "validation-environment-vm-distributed").strip()
     access = dict(vm_plan.get("ssh") or {})
     bastion = dict(access.get("bastion") or {})
@@ -11944,7 +11952,7 @@ def _vm_distributed_manual_ssh_bootstrap_commands(plan):
             "-t",
             "ed25519",
             "-f",
-            identity_file,
+            local_identity_file,
             "-C",
             key_comment,
             "-N",
@@ -11954,7 +11962,7 @@ def _vm_distributed_manual_ssh_bootstrap_commands(plan):
     commands.append(
         _vm_distributed_manual_command(
             "create_dedicated_key_if_missing",
-            f"test -f {shlex.quote(identity_file)} || {keygen}",
+            f"test -f {shlex.quote(local_identity_file)} || {keygen}",
             "Does not overwrite an existing key.",
         )
     )
@@ -11963,7 +11971,7 @@ def _vm_distributed_manual_ssh_bootstrap_commands(plan):
             _vm_distributed_manual_command("secure_ssh_directory", "chmod 700 ~/.ssh"),
             _vm_distributed_manual_command(
                 "secure_private_key",
-                _vm_distributed_format_command(["chmod", "600", identity_file]),
+                _vm_distributed_format_command(["chmod", "600", local_identity_file]),
             ),
             _vm_distributed_manual_command(
                 "secure_public_key",
@@ -11992,6 +12000,9 @@ def _vm_distributed_manual_ssh_bootstrap_commands(plan):
         if not target_host or not target_user:
             continue
         copy_id = ["ssh-copy-id", "-i", public_key_file]
+        target_port = str(target.get("port") or "").strip()
+        if target_port and target_port != "22":
+            copy_id.extend(["-p", target_port])
         target_mode = target.get("access_mode") or access.get("mode")
         target_bastion = dict(target.get("bastion") or bastion)
         target_bastion_target = _vm_distributed_ssh_target(
@@ -12014,7 +12025,7 @@ def _vm_distributed_manual_ssh_bootstrap_commands(plan):
 
     for bastion_entry in bastion_entries:
         bastion_label = "" if bastion_entry["name"] == "global" else f"{bastion_entry['name']}_"
-        verify_bastion = ["ssh", "-o", "BatchMode=yes", "-i", identity_file]
+        verify_bastion = ["ssh", "-o", "BatchMode=yes", "-i", local_identity_file]
         if bastion_entry["port"]:
             verify_bastion.extend(["-p", bastion_entry["port"]])
         verify_bastion.extend([bastion_entry["target"], "hostname"])
@@ -14204,9 +14215,14 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
             print()
             print("Next suggested step: W -> 4 (non-destructive SSH/HTTP preflight).")
             return result
-        print("Continuing with question-by-question configuration.")
-        print("Press Enter to accept profile values shown in brackets, or type a different value.")
-        print()
+        print("Profile not applied. Returning to the main menu without changes.")
+        return {
+            "status": "cancelled",
+            "reason": "profile-not-applied",
+            "topology": "vm-distributed",
+            "adapter": selected_adapter,
+            "profile": os.path.abspath(os.path.expanduser(str(profile_suggestions.get("path") or ""))),
+        }
 
     def profile_value(key):
         return _vm_distributed_profile_suggestion(profile_values, key)

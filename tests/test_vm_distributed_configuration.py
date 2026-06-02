@@ -989,7 +989,11 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 )
 
             output = io.StringIO()
-            with mock.patch("builtins.input", side_effect=["y"]), mock.patch.object(
+            with mock.patch("builtins.input", side_effect=["y"]), mock.patch.dict(
+                os.environ,
+                {"PIONERA_ENVIRONMENT_PROFILE": "default"},
+                clear=False,
+            ), mock.patch.object(
                 main,
                 "_framework_root_dir",
                 return_value=tmpdir,
@@ -1038,6 +1042,98 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertIn("Configuration profile detected:", rendered)
         self.assertIn("DOMAIN_BASE=common.example.test", rendered)
         self.assertIn("Next suggested step: W -> 4", rendered)
+
+    def test_wizard_loaded_profile_decline_returns_to_menu_without_manual_questions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            infra_path = os.path.join(tmpdir, "infrastructure", "deployer.config")
+            infra_example_path = os.path.join(tmpdir, "infrastructure", "deployer.config.example")
+            topology_path = os.path.join(tmpdir, "infrastructure", "topologies", "vm-distributed.config")
+            topology_example_path = os.path.join(
+                tmpdir,
+                "infrastructure",
+                "topologies",
+                "vm-distributed.config.example",
+            )
+            adapter_path = os.path.join(tmpdir, "inesdata", "deployer.config")
+            adapter_example_path = os.path.join(tmpdir, "inesdata", "deployer.config.example")
+            kubeconfig_path = os.path.join(tmpdir, "common.yaml")
+            profile_path = os.path.join(tmpdir, ".profiles", "default.env")
+
+            for path in (
+                infra_path,
+                infra_example_path,
+                topology_path,
+                topology_example_path,
+                adapter_path,
+                adapter_example_path,
+                kubeconfig_path,
+                profile_path,
+            ):
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(kubeconfig_path, "w", encoding="utf-8") as handle:
+                handle.write("apiVersion: v1\n")
+            with open(profile_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "\n".join(
+                        [
+                            "DOMAIN_BASE=common.example.test",
+                            "DS_DOMAIN_BASE=ds.example.test",
+                            "VM_COMMON_IP=192.0.2.10",
+                            "VM_PROVIDER_IP=192.0.2.20",
+                            "VM_CONSUMER_IP=192.0.2.30",
+                            f"K3S_KUBECONFIG_COMMON={kubeconfig_path}",
+                            f"K3S_KUBECONFIG_PROVIDER={kubeconfig_path}",
+                            f"K3S_KUBECONFIG_CONSUMER={kubeconfig_path}",
+                            "DS_1_NAME=dataspace",
+                            "DS_1_CONNECTORS=alpha,beta",
+                        ]
+                    )
+                )
+
+            output = io.StringIO()
+            with mock.patch("builtins.input", side_effect=["n"]), mock.patch.dict(
+                os.environ,
+                {"PIONERA_ENVIRONMENT_PROFILE": "default"},
+                clear=False,
+            ), mock.patch.object(
+                main,
+                "_framework_root_dir",
+                return_value=tmpdir,
+            ), mock.patch.object(
+                main,
+                "_infrastructure_deployer_config_path",
+                return_value=infra_path,
+            ), mock.patch.object(
+                main,
+                "_infrastructure_deployer_config_example_path",
+                return_value=infra_example_path,
+            ), mock.patch.object(
+                main,
+                "_infrastructure_topology_config_path",
+                return_value=topology_path,
+            ), mock.patch.object(
+                main,
+                "_infrastructure_topology_config_example_path",
+                return_value=topology_example_path,
+            ), mock.patch.object(
+                main,
+                "_adapter_deployer_config_path",
+                return_value=adapter_path,
+            ), mock.patch.object(
+                main,
+                "_adapter_deployer_config_example_path",
+                return_value=adapter_example_path,
+            ), redirect_stdout(output):
+                result = main._run_vm_distributed_configuration_wizard(
+                    current_adapter="inesdata",
+                    adapter_registry={"inesdata": object()},
+                )
+
+        self.assertEqual(result["status"], "cancelled")
+        self.assertEqual(result["reason"], "profile-not-applied")
+        rendered = output.getvalue()
+        self.assertIn("Profile not applied. Returning to the main menu without changes.", rendered)
+        self.assertNotIn("Base domain for common services", rendered)
 
     def test_apply_vm_distributed_profile_writes_safe_keys_to_target_configs(self):
         with tempfile.TemporaryDirectory() as tmpdir:

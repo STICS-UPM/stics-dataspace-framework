@@ -5150,7 +5150,7 @@ class MainCliTests(unittest.TestCase):
                         "role_key": "common",
                         "host": "common.example.test",
                         "user": "operator",
-                        "port": "22",
+                        "port": "2256",
                         "identity_file": "/home/operator/.ssh/validation-env-vm",
                         "needs_public_key": True,
                     }
@@ -5181,6 +5181,14 @@ class MainCliTests(unittest.TestCase):
         self.assertTrue(
             any(item["name"] == "install_public_key_on_common" for item in result["manual_bootstrap_commands"])
         )
+        self.assertTrue(
+            any(
+                item["name"] == "install_public_key_on_common"
+                and "-p 2256" in item["command"]
+                and "operator@common.example.test" in item["command"]
+                for item in result["manual_bootstrap_commands"]
+            )
+        )
         self.assertIn("VM-DISTRIBUTED SSH ACCESS", stdout.getvalue())
         self.assertIn("Where to run this", stdout.getvalue())
         self.assertIn("common-services VM", stdout.getvalue())
@@ -5188,6 +5196,66 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("Why it exists", stdout.getvalue())
         self.assertIn("python3 main.py fake ssh-access assistant --topology vm-distributed", stdout.getvalue())
         self.assertNotIn("Human setup guide", stdout.getvalue())
+
+    def test_manual_ssh_bootstrap_commands_expand_home_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(os.environ, {"HOME": tmpdir}):
+            plan = {
+                "execution_host": "external",
+                "ssh": {
+                    "mode": "bastion",
+                    "bastion": {
+                        "host": "bastion.example.test",
+                        "port": "2222",
+                        "user": "jump",
+                        "identity_file": "~/.ssh/validation-env-vm",
+                    },
+                },
+                "ssh_bootstrap": {
+                    "status": "ready",
+                    "mode": "manual",
+                    "identity_file": "~/.ssh/validation-env-vm",
+                    "key_comment": "validation-env",
+                    "targets": [
+                        {
+                            "role": "consumer-connectors",
+                            "role_key": "consumer",
+                            "host": "consumer.example.test",
+                            "user": "operator",
+                            "port": "22",
+                            "identity_file": "~/.ssh/validation-env-vm",
+                            "access_mode": "bastion",
+                            "bastion": {
+                                "host": "bastion.example.test",
+                                "port": "2222",
+                                "user": "jump",
+                                "identity_file": "~/.ssh/validation-env-vm",
+                            },
+                            "needs_public_key": True,
+                        }
+                    ],
+                },
+            }
+
+            commands = main._vm_distributed_manual_ssh_bootstrap_commands(plan)
+
+        rendered_commands = [item["command"] for item in commands]
+        expected_identity = os.path.join(tmpdir, ".ssh", "validation-env-vm")
+        self.assertTrue(any(expected_identity in command for command in rendered_commands))
+        self.assertFalse(any("~/.ssh/validation-env-vm" in command for command in rendered_commands))
+        self.assertTrue(
+            any(
+                item["name"] == "create_dedicated_key_if_missing"
+                and f"test -f {expected_identity}" in item["command"]
+                for item in commands
+            )
+        )
+        self.assertTrue(
+            any(
+                item["name"] == "verify_consumer_batchmode"
+                and f"-i {expected_identity}" in item["command"]
+                for item in commands
+            )
+        )
 
     def test_ssh_access_plan_supports_vm_single_target(self):
         plan = {
