@@ -1157,6 +1157,9 @@ class SharedDataspaceDeploymentAdapter:
         self.infrastructure.announce_level(3, "DATASPACE")
         normalized_topology = normalize_topology(topology)
         self.topology = normalized_topology
+        for adapter in (self.config_adapter, getattr(self.infrastructure, "config_adapter", None)):
+            if adapter is not None and hasattr(adapter, "topology"):
+                adapter.topology = normalized_topology
 
         if require_tunnel_prompt:
             self._show_minikube_tunnel_prompt()

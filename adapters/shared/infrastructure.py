@@ -41,6 +41,8 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
     def setup_cluster_preflight(self, topology=LOCAL_TOPOLOGY):
         """Prepare and validate the cluster required by VM-based execution."""
         normalized_topology = normalize_topology(topology)
+        if hasattr(self.config_adapter, "topology"):
+            self.config_adapter.topology = normalized_topology
         if normalized_topology == LOCAL_TOPOLOGY:
             return self.setup_cluster()
         if normalized_topology not in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
@@ -167,6 +169,8 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
     def deploy_infrastructure_for_topology(self, topology=LOCAL_TOPOLOGY):
         """Run Level 2 foundation deployment using the safest topology-aware path."""
         normalized_topology = normalize_topology(topology)
+        if hasattr(self.config_adapter, "topology"):
+            self.config_adapter.topology = normalized_topology
         if normalized_topology == LOCAL_TOPOLOGY:
             return self.deploy_infrastructure()
         if normalized_topology not in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:

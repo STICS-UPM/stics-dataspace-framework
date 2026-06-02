@@ -1723,6 +1723,63 @@ minio:
             "secret",
         )
 
+    def test_deploy_dataspace_for_topology_switches_config_adapter_before_keycloak_check(self):
+        class TopologyAwareConfigAdapter(LevelOutputConfigAdapter):
+            def __init__(self):
+                super().__init__(
+                    {
+                        "KC_USER": "admin",
+                        "KC_PASSWORD": "secret",
+                        "VM_COMMON_PUBLIC_URL": "https://common.example.test",
+                    }
+                )
+                self.topology = "local"
+
+            def load_deployer_config(self):
+                config = super().load_deployer_config()
+                if self.topology == "vm-distributed":
+                    config["KEYCLOAK_FRONTEND_URL"] = "https://auth.example.test"
+                return config
+
+        self.config_adapter = TopologyAwareConfigAdapter()
+        infrastructure = self._make_infrastructure()
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=infrastructure,
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+        deployment.connectors_adapter = FakeConnectorsAdapter()
+        infrastructure.ensure_vault_unsealed = lambda: True
+        infrastructure.sync_common_credentials_from_kubernetes = mock.Mock(return_value=True)
+        infrastructure.sync_vm_distributed_routing = mock.Mock(return_value={"status": "synced"})
+        infrastructure.deploy_helm_release = lambda *_args, **_kwargs: True
+        infrastructure.wait_for_dataspace_level3_pods = lambda *_args, **_kwargs: True
+        infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
+        deployment.wait_for_keycloak_admin_ready = mock.Mock(return_value=True)
+        deployment.restart_registration_service = lambda: None
+        deployment.update_helm_values_with_host_aliases = mock.Mock()
+        deployment._reserve_local_port = mock.Mock(return_value=15432)
+        infrastructure.port_forward_service = mock.Mock(return_value=True)
+        infrastructure.stop_port_forward_service = mock.Mock(return_value=True)
+
+        with contextlib.redirect_stdout(io.StringIO()), mock.patch(
+            "adapters.inesdata.deployment.ensure_python_requirements",
+            lambda *_args, **_kwargs: None,
+        ), mock.patch(
+            "adapters.inesdata.deployment.requests.get",
+            return_value=mock.Mock(status_code=200),
+        ) as get_request, mock.patch(
+            "adapters.shared.deployment.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+        ):
+            deployment.deploy_dataspace_for_topology("vm-distributed")
+
+        self.assertEqual(self.config_adapter.topology, "vm-distributed")
+        get_request.assert_called_with("https://auth.example.test/realms/master", timeout=5)
+
     def test_public_portal_connector_endpoints_replace_changeme_placeholders(self):
         self.config_adapter = LevelOutputConfigAdapter(
             {
