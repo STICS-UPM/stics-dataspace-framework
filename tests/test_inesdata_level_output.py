@@ -203,6 +203,45 @@ class InesdataLevelOutputTests(unittest.TestCase):
             config_cls=self.config,
         )
 
+    def _write_common_values_for_sync(self):
+        with open(self.config.values_path(), "w", encoding="utf-8") as handle:
+            handle.write(
+                """
+postgresql:
+  auth:
+    postgresPassword: old-pg
+    password: old-pg
+keycloak:
+  externalDatabase:
+    password: old-pg
+  auth:
+    adminUser: old-admin
+    adminPassword: old-kc
+  ingress:
+    hostname: keycloak.dev.ed.dataspaceunit.upm
+  adminIngress:
+    hostname: keycloak-admin.dev.ed.dataspaceunit.upm
+  keycloakConfigCli:
+    extraEnv:
+      - name: KEYCLOAK_USER
+        value: old-admin
+      - name: KEYCLOAK_PASSWORD
+        value: old-kc
+    configuration:
+      master.json: |
+        {"realm": "master", "attributes": {"frontendUrl": "http://keycloak-admin.dev.ed.dataspaceunit.upm"}}
+minio:
+  rootUser: old-minio
+  rootPassword: old-minio
+  ingress:
+    hosts:
+      - minio.dev.ed.dataspaceunit.upm
+  consoleIngress:
+    hosts:
+      - console.minio-s3.dev.ed.dataspaceunit.upm
+"""
+            )
+
     def test_setup_cluster_prints_header_once_and_complete_on_success(self):
         infrastructure = self._make_infrastructure()
         infrastructure.ensure_unix_environment = lambda: None
@@ -491,43 +530,7 @@ class InesdataLevelOutputTests(unittest.TestCase):
                 "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
             }
         )
-        with open(self.config.values_path(), "w", encoding="utf-8") as handle:
-            handle.write(
-                """
-postgresql:
-  auth:
-    postgresPassword: old-pg
-    password: old-pg
-keycloak:
-  externalDatabase:
-    password: old-pg
-  auth:
-    adminUser: old-admin
-    adminPassword: old-kc
-  ingress:
-    hostname: keycloak.dev.ed.dataspaceunit.upm
-  adminIngress:
-    hostname: keycloak-admin.dev.ed.dataspaceunit.upm
-  keycloakConfigCli:
-    extraEnv:
-      - name: KEYCLOAK_USER
-        value: old-admin
-      - name: KEYCLOAK_PASSWORD
-        value: old-kc
-    configuration:
-      master.json: |
-        {"realm": "master", "attributes": {"frontendUrl": "http://keycloak-admin.dev.ed.dataspaceunit.upm"}}
-minio:
-  rootUser: old-minio
-  rootPassword: old-minio
-  ingress:
-    hosts:
-      - minio.dev.ed.dataspaceunit.upm
-  consoleIngress:
-    hosts:
-      - console.minio-s3.dev.ed.dataspaceunit.upm
-"""
-            )
+        self._write_common_values_for_sync()
         self.assertFalse(os.path.exists(self.config.deployer_config_path()))
         infrastructure = self._make_infrastructure()
 
@@ -542,6 +545,79 @@ minio:
         self.assertIn("adminPassword: kc-secret", values_text)
         self.assertIn("proxy: none", values_text)
         self.assertIn("proxy_cookie_flags ~ nosecure nosamesite;", values_text)
+
+    def test_sync_common_values_prompts_for_local_topology(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "PG_PASSWORD": "pg-secret",
+                "KC_USER": "admin",
+                "KC_PASSWORD": "kc-secret",
+                "MINIO_USER": "minio-user",
+                "MINIO_PASSWORD": "minio-secret",
+                "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+            }
+        )
+        self._write_common_values_for_sync()
+        infrastructure = INESDataInfrastructureAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: False,
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+
+        output = io.StringIO()
+        with mock.patch("builtins.input", return_value="Y") as prompt:
+            with contextlib.redirect_stdout(output):
+                infrastructure.sync_common_values()
+
+        rendered = output.getvalue()
+        self.assertIn("Configuration synchronization: deployer.config -> common/values.yaml", rendered)
+        self.assertIn("Hosts entries to add to your system:", rendered)
+        prompt.assert_called_once_with("Apply detected changes? (Y/N): ")
+
+    def test_sync_common_values_auto_applies_for_vm_distributed_without_local_prompt(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "PG_PASSWORD": "pg-secret",
+                "KC_USER": "admin",
+                "KC_PASSWORD": "kc-secret",
+                "MINIO_USER": "minio-user",
+                "MINIO_PASSWORD": "minio-secret",
+                "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+            }
+        )
+        self.config_adapter.topology = "vm-distributed"
+        self._write_common_values_for_sync()
+        infrastructure = INESDataInfrastructureAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: False,
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+
+        output = io.StringIO()
+        with mock.patch("builtins.input", side_effect=AssertionError("input should not be called")):
+            with contextlib.redirect_stdout(output):
+                infrastructure.sync_common_values()
+
+        rendered = output.getvalue()
+        self.assertIn(
+            "Synchronizing common values from deployer.config for topology 'vm-distributed'.",
+            rendered,
+        )
+        self.assertIn(
+            "Detected configuration differences; applying automatically for topology 'vm-distributed'.",
+            rendered,
+        )
+        self.assertNotIn("Configuration synchronization: deployer.config -> common/values.yaml", rendered)
+        self.assertNotIn("Hosts entries to add to your system:", rendered)
+
+        with open(self.config.values_path(), encoding="utf-8") as handle:
+            values_text = handle.read()
+
+        self.assertIn("adminPassword: kc-secret", values_text)
 
     def test_setup_cluster_preflight_reports_ready_for_vm_single(self):
         infrastructure = SharedFoundationInfrastructureAdapter(

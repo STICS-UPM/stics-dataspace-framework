@@ -1370,13 +1370,35 @@ class INESDataConnectorsAdapter:
             "certs",
         )
 
+    def _connector_minio_policy_path(self, connector_name, ds_name=None, for_write=False):
+        resolver = getattr(self.config_adapter, "connector_minio_policy_path", None)
+        if callable(resolver):
+            try:
+                return resolver(connector_name, ds_name=ds_name, for_write=for_write)
+            except TypeError as exc:
+                if "for_write" not in str(exc):
+                    raise
+                return resolver(connector_name, ds_name=ds_name)
+        config = self.config_adapter.load_deployer_config() if self.config_adapter else {}
+        environment = str(config.get("ENVIRONMENT", "DEV") or "DEV").strip().upper() or "DEV"
+        ds_name = ds_name or getattr(self.config, "DS_NAME", "dataspace")
+        return os.path.join(
+            self._bootstrap_repo_dir(),
+            "deployments",
+            environment,
+            ds_name,
+            f"policy-{ds_name}-{connector_name}.json",
+        )
+
     def _connector_runtime_environment_prefix(self, connector_name, ds_name):
         credentials_path = self._connector_credentials_file_path(connector_name, ds_name=ds_name, for_write=True)
         certs_dir = self._connector_certificates_dir(connector_name, ds_name=ds_name)
+        policy_path = self._connector_minio_policy_path(connector_name, ds_name=ds_name, for_write=True)
         repo_dir = self._bootstrap_repo_dir()
         values = {
             "PIONERA_CONNECTOR_CREDENTIALS_PATH": os.path.relpath(credentials_path, repo_dir),
             "PIONERA_CONNECTOR_CERTS_DIR": os.path.relpath(certs_dir, repo_dir),
+            "PIONERA_CONNECTOR_MINIO_POLICY_PATH": os.path.relpath(policy_path, repo_dir),
         }
         return "".join(f"{key}={shlex.quote(str(value))} " for key, value in values.items() if value)
 
@@ -3944,12 +3966,10 @@ class INESDataConnectorsAdapter:
 
         # Attach S3 policy to connector user (required for upload permissions) - FIX for BUG-001
         policy_name = f"policy-{ds_name}-{connector_name}"
-        policy_file_path = os.path.join(
-            self.config.repo_dir(),
-            "deployments",
-            "DEV",
-            ds_name,
-            f"{policy_name}.json"
+        policy_file_path = self._connector_minio_policy_path(
+            connector_name,
+            ds_name=ds_name,
+            for_write=False,
         )
 
         if os.path.exists(policy_file_path):
@@ -4048,12 +4068,10 @@ class INESDataConnectorsAdapter:
             print(f"  MinIO policy '{policy_name}' already attached to '{connector_name}'")
             return True
 
-        policy_file_path = os.path.join(
-            self.config.repo_dir(),
-            "deployments",
-            "DEV",
-            ds_name,
-            f"{policy_name}.json",
+        policy_file_path = self._connector_minio_policy_path(
+            connector_name,
+            ds_name=ds_name,
+            for_write=False,
         )
         if not os.path.exists(policy_file_path):
             print(f"  Warning: policy file not found: {policy_file_path}")

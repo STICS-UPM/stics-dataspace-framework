@@ -133,6 +133,68 @@ class FakePublicAccessAdapter(FakeAdapter):
         self.infrastructure = FakePublicAccessInfrastructure()
 
 
+class RuntimeArtifactPathSummaryTests(unittest.TestCase):
+    def test_vm_distributed_inesdata_summary_separates_shared_and_adapter_artifacts(self):
+        context = DeploymentContext(
+            deployer="inesdata",
+            topology="vm-distributed",
+            environment="DEV",
+            dataspace_name="pionera",
+            ds_domain_base="pionera.example.test",
+            connectors=["conn-org2-pionera"],
+        )
+
+        summary = main.build_runtime_artifact_path_summary("inesdata", context)
+
+        self.assertEqual(summary["status"], "available")
+        self.assertEqual(summary["topology"], "vm-distributed")
+        shared_paths = {item["path"] for item in summary["shared"]}
+        adapter_paths = {item["path"] for item in summary["adapter_artifacts"]}
+        connector_paths = {
+            item["path"]
+            for connector in summary["connectors"]
+            for item in connector["artifacts"]
+        }
+        self.assertIn(
+            "deployers/shared/deployments/DEV/vm-distributed/common/init-keys-vault.json",
+            shared_paths,
+        )
+        self.assertIn(
+            "deployers/inesdata/deployments/DEV/vm-distributed/pionera/credentials-dataspace-pionera.json",
+            adapter_paths,
+        )
+        self.assertIn(
+            "deployers/inesdata/deployments/DEV/vm-distributed/pionera/connectors/conn-org2-pionera/credentials.json",
+            connector_paths,
+        )
+        self.assertIn(
+            "deployers/inesdata/deployments/DEV/vm-distributed/pionera/connectors/conn-org2-pionera/policy.json",
+            connector_paths,
+        )
+
+    def test_runtime_artifact_path_summary_prints_guidance(self):
+        context = DeploymentContext(
+            deployer="inesdata",
+            topology="vm-distributed",
+            environment="DEV",
+            dataspace_name="pionera",
+            ds_domain_base="pionera.example.test",
+            connectors=["conn-org2-pionera"],
+        )
+        summary = main.build_runtime_artifact_path_summary("inesdata", context)
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            main._print_runtime_artifact_paths(summary)
+
+        rendered = output.getvalue()
+        self.assertIn("Shared foundation artifacts", rendered)
+        self.assertIn("Adapter artifacts", rendered)
+        self.assertIn("Connector artifacts", rendered)
+        self.assertIn("deployers/shared", rendered)
+        self.assertIn("deployers/<adapter>", rendered)
+
+
 class KafkaTransferConsoleOutputTests(unittest.TestCase):
     def test_level6_kafka_disabled_message_explains_how_to_enable(self):
         class KafkaReadyAdapter(FakeAdapter):

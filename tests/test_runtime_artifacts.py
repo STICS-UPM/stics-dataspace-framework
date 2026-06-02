@@ -61,6 +61,59 @@ class RuntimeArtifactsTests(unittest.TestCase):
             / "credentials.json",
         )
 
+    def test_local_without_deployment_id_keeps_legacy_minio_policy_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_DEPLOYMENT_ID": "",
+                "PIONERA_RUNTIME_ARTIFACT_LAYOUT": "",
+            },
+        ):
+            path = runtime_artifacts.connector_minio_policy_path(
+                "inesdata",
+                "DEV",
+                "pionera",
+                "conn-org2-pionera",
+                topology="local",
+                root=tmpdir,
+            )
+
+        self.assertEqual(
+            path,
+            Path(tmpdir)
+            / "deployers"
+            / "inesdata"
+            / "deployments"
+            / "DEV"
+            / "pionera"
+            / "policy-pionera-conn-org2-pionera.json",
+        )
+
+    def test_vm_distributed_minio_policy_is_topology_scoped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = runtime_artifacts.connector_minio_policy_path(
+                "inesdata",
+                "DEV",
+                "pionera",
+                "conn-org2-pionera",
+                topology="vm-distributed",
+                root=tmpdir,
+            )
+
+        self.assertEqual(
+            path,
+            Path(tmpdir)
+            / "deployers"
+            / "inesdata"
+            / "deployments"
+            / "DEV"
+            / "vm-distributed"
+            / "pionera"
+            / "connectors"
+            / "conn-org2-pionera"
+            / "policy.json",
+        )
+
     def test_deployment_id_adds_an_extra_runtime_scope(self):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
             os.environ,

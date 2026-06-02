@@ -2123,7 +2123,7 @@ class INESDataInfrastructureAdapter:
                 return candidate
         return self.config.deployer_config_path()
 
-    def show_correspondence_table(self, values, config):
+    def _common_values_sync_rows(self, values, config):
         rows = []
 
         def status(expected, current):
@@ -2208,10 +2208,26 @@ class INESDataInfrastructureAdapter:
             if item["name"] == "KEYCLOAK_PASSWORD":
                 add_row("KC_PASSWORD", "keycloakConfigCli.KEYCLOAK_PASSWORD", "KC_PASSWORD", item["value"])
 
+        return rows
+
+    @staticmethod
+    def _common_values_sync_has_diffs(rows):
+        return any(row[4] == "DIFF" for row in rows)
+
+    @staticmethod
+    def _print_common_values_sync_table(rows):
         print("\nConfiguration synchronization: deployer.config -> common/values.yaml\n")
         print(tabulate(rows, headers=["DEPLOYER.CONFIG", "COMMON/VALUES.YAML", "EXPECTED", "FOUND", "STATUS"], tablefmt="grid"))
         print()
-        return any(row[4] == "DIFF" for row in rows)
+
+    def show_correspondence_table(self, values, config):
+        rows = self._common_values_sync_rows(values, config)
+        self._print_common_values_sync_table(rows)
+        return self._common_values_sync_has_diffs(rows)
+
+    def _is_local_topology(self):
+        topology = str(getattr(self.config_adapter, "topology", "local") or "local")
+        return runtime_artifacts.normalize_topology(topology) == runtime_artifacts.LOCAL_TOPOLOGY
 
     def apply_sync(self, values, config):
         pg_password = config.get("PG_PASSWORD")
@@ -2595,14 +2611,30 @@ class INESDataInfrastructureAdapter:
         with open(values_path) as f:
             values = yaml_ruamel.load(f)
 
-        has_diffs = self.show_correspondence_table(values, config)
+        sync_rows = self._common_values_sync_rows(values, config)
+        has_diffs = self._common_values_sync_has_diffs(sync_rows)
+        local_topology = self._is_local_topology()
+
+        if local_topology:
+            self._print_common_values_sync_table(sync_rows)
+        else:
+            print(
+                "Synchronizing common values from deployer.config "
+                f"for topology '{self._public_path_topology_label()}'."
+            )
 
         if has_diffs:
             if self._auto_mode():
                 choice = "Y"
                 print("[AUTO_MODE] Automatically applying detected changes")
-            else:
+            elif local_topology:
                 choice = input("Apply detected changes? (Y/N): ").strip().upper()
+            else:
+                choice = "Y"
+                print(
+                    "Detected configuration differences; applying automatically "
+                    f"for topology '{self._public_path_topology_label()}'."
+                )
 
             if choice == "Y":
                 values = self.apply_sync(values, config)
@@ -2617,11 +2649,12 @@ class INESDataInfrastructureAdapter:
         else:
             print("No differences found\n")
 
-        hosts = self.config_adapter.generate_hosts(ds_name)
-        print("Hosts entries to add to your system:\n")
-        for host in hosts:
-            print(host)
-        print()
+        if local_topology:
+            hosts = self.config_adapter.generate_hosts(ds_name)
+            print("Hosts entries to add to your system:\n")
+            for host in hosts:
+                print(host)
+            print()
 
     def _secret_value(self, namespace, secret_name, key):
         value = self.run_silent(

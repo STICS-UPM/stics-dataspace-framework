@@ -849,6 +849,16 @@ def connector_cert_path(dataspace, environment, connector, filename):
         base_dir = os.path.join(os.path.dirname(__file__), base_dir)
     return os.path.join(base_dir, filename.format(connector=connector))
 
+def connector_minio_policy_file(dataspace, environment, connector):
+    configured = os.getenv("PIONERA_CONNECTOR_MINIO_POLICY_PATH", "").strip()
+    if configured:
+        return configured
+    base_dir = runtime_dir(dataspace, environment)
+    legacy_dir = os.path.join("deployments", environment, dataspace)
+    if os.path.normpath(base_dir) != os.path.normpath(legacy_dir):
+        return os.path.join(base_dir, "connectors", connector, "policy.json")
+    return os.path.join(base_dir, f"policy-{dataspace}-{connector}.json")
+
 def create_password_file(datasource, environment, source_type, name):
     # Generate file name
     filename = credentials_file(datasource, environment, source_type, name)
@@ -2054,9 +2064,12 @@ def create_minio_policy(connector, dataspace, environment):
     }
 
     # Generate file name
-    filename = f'deployments/{environment}/{dataspace}/policy-{dataspace}-{connector}.json'
+    filename = connector_minio_policy_file(dataspace, environment, connector)
+    folder = os.path.dirname(filename)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
     # Write the policy to the file
-    with open(filename, 'w') as f:
+    with open(filename, 'w', encoding="utf-8") as f:
         # Write the updated data back to the file
         json.dump(minio_policy, f, indent=4)
 

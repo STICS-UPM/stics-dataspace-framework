@@ -41,6 +41,9 @@ class ConnectorRetryConfig:
     def connector_credentials_path(self, connector_name):
         return os.path.join(self.root, f"credentials-connector-{connector_name}.json")
 
+    def connector_minio_policy_path(self, connector_name):
+        return os.path.join(self.root, f"policy-{connector_name}.json")
+
     def connector_values_file(self, connector_name):
         return os.path.join(self.root, f"values-{connector_name}.yaml")
 
@@ -85,6 +88,19 @@ class ConnectorRetryConfigAdapter:
 
     def registration_service_internal_hostname(self, **_kwargs):
         return "demo-registration-service:8080"
+
+    def connector_minio_policy_path(self, connector_name, ds_name=None, for_write=False):
+        ds_name = ds_name or "demo"
+        return os.path.join(
+            self.root,
+            "deployments",
+            "DEV",
+            "vm-distributed",
+            ds_name,
+            "connectors",
+            connector_name,
+            "policy.json",
+        )
 
 
 class RoleAlignedConnectorRetryConfigAdapter(ConnectorRetryConfigAdapter):
@@ -279,6 +295,27 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         self.assertIn("bootstrap.py connector create conn-demo demo", create_cmd)
         self.assertIn("PIONERA_TOPOLOGY=vm-single", delete_cmd)
         self.assertIn("bootstrap.py connector delete conn-demo demo", delete_cmd)
+
+    def test_bootstrap_connector_create_command_passes_scoped_minio_policy_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=ConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+            adapter.config_adapter.topology = "vm-distributed"
+
+            create_cmd = adapter._bootstrap_connector_create_command("python3", "conn-demo", "demo")
+
+        expected = (
+            "PIONERA_CONNECTOR_MINIO_POLICY_PATH="
+            "deployments/DEV/vm-distributed/demo/connectors/conn-demo/policy.json"
+        )
+        self.assertIn(expected, create_cmd)
+        self.assertIn("bootstrap.py connector create conn-demo demo", create_cmd)
 
     def test_bootstrap_connector_commands_can_override_vault_url_for_host_runtime(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4596,9 +4633,9 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                     '{"minio":{"passwd":"connector-pass","access_key":"access","secret_key":"secret"}}'
                 )
 
-            policy_dir = os.path.join(tmpdir, "deployments", "DEV", "demo")
-            os.makedirs(policy_dir, exist_ok=True)
-            with open(os.path.join(policy_dir, "policy-demo-conn-a-demo.json"), "w", encoding="utf-8") as handle:
+            policy_path = config_adapter.connector_minio_policy_path("conn-a-demo", ds_name="demo")
+            os.makedirs(os.path.dirname(policy_path), exist_ok=True)
+            with open(policy_path, "w", encoding="utf-8") as handle:
                 handle.write('{"Version":"2012-10-17","Statement":[]}')
 
             calls = []
@@ -4658,9 +4695,9 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                     '{"minio":{"passwd":"connector-pass","access_key":"access","secret_key":"secret"}}'
                 )
 
-            policy_dir = os.path.join(tmpdir, "deployments", "DEV", "demo")
-            os.makedirs(policy_dir, exist_ok=True)
-            with open(os.path.join(policy_dir, "policy-demo-conn-a-demo.json"), "w", encoding="utf-8") as handle:
+            policy_path = config_adapter.connector_minio_policy_path("conn-a-demo", ds_name="demo")
+            os.makedirs(os.path.dirname(policy_path), exist_ok=True)
+            with open(policy_path, "w", encoding="utf-8") as handle:
                 handle.write('{"Version":"2012-10-17","Statement":[]}')
 
             calls = []

@@ -202,6 +202,46 @@ print(json.dumps(bootstrap.load_effective_deployer_config(), sort_keys=True))
             verify=False,
         )
 
+    def test_inesdata_connector_minio_policy_file_uses_scoped_layout_for_vm_distributed(self):
+        previous = self._clear_pionera_overrides()
+        os.environ["PIONERA_TOPOLOGY"] = "vm-distributed"
+        try:
+            path = inesdata_bootstrap.connector_minio_policy_file(
+                "pionera",
+                "DEV",
+                "conn-org2-pionera",
+            )
+        finally:
+            self._restore_environment(previous)
+
+        self.assertEqual(
+            path,
+            os.path.join(
+                "deployments",
+                "DEV",
+                "vm-distributed",
+                "pionera",
+                "connectors",
+                "conn-org2-pionera",
+                "policy.json",
+            ),
+        )
+
+    def test_inesdata_connector_minio_policy_file_honors_explicit_path(self):
+        previous = self._clear_pionera_overrides()
+        os.environ["PIONERA_TOPOLOGY"] = "vm-distributed"
+        os.environ["PIONERA_CONNECTOR_MINIO_POLICY_PATH"] = "custom/policy.json"
+        try:
+            path = inesdata_bootstrap.connector_minio_policy_file(
+                "pionera",
+                "DEV",
+                "conn-org2-pionera",
+            )
+        finally:
+            self._restore_environment(previous)
+
+        self.assertEqual(path, "custom/policy.json")
+
 
 if __name__ == "__main__":
     unittest.main()

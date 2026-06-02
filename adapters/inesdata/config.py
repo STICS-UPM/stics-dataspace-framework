@@ -433,6 +433,21 @@ class INESDataConfigAdapter:
             )
         )
 
+    def connector_minio_policy_path(self, connector_name, ds_name=None, for_write=False):
+        config = self.load_deployer_config()
+        return str(
+            runtime_artifacts.connector_minio_policy_path(
+                self.config.adapter_name(),
+                self.deployment_environment_name(),
+                ds_name or self.primary_dataspace_name(),
+                connector_name,
+                topology=self.topology,
+                config=config,
+                root=self.config.script_dir(),
+                prefer_existing=not for_write,
+            )
+        )
+
     def legacy_connector_credentials_path(self, connector_name, ds_name=None):
         return os.path.join(
             self.config.repo_dir(),

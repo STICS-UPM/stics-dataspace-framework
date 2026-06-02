@@ -7762,6 +7762,215 @@ def run_available_access_urls(adapter, deployer_name=None, deployer_registry=Non
     return result
 
 
+def _runtime_artifact_entry(label, path):
+    normalized = str(path or "").strip()
+    if not normalized:
+        return None
+    absolute_path = os.path.abspath(os.path.expanduser(normalized))
+    return {
+        "label": label,
+        "path": _framework_relative_path(absolute_path),
+        "exists": os.path.exists(absolute_path),
+    }
+
+
+def _append_runtime_artifact(entries, label, path):
+    entry = _runtime_artifact_entry(label, path)
+    if entry:
+        entries.append(entry)
+
+
+def _call_runtime_path_resolver(resolver, *args, **kwargs):
+    if not callable(resolver):
+        return ""
+    attempts = [
+        (args, kwargs),
+        (args, {key: value for key, value in kwargs.items() if key != "for_write"}),
+        (args, {}),
+    ]
+    for call_args, call_kwargs in attempts:
+        try:
+            return resolver(*call_args, **call_kwargs)
+        except TypeError:
+            continue
+    return ""
+
+
+def build_runtime_artifact_path_summary(adapter_name, context, adapter=None):
+    """Build a read-only summary of generated runtime artifact locations."""
+    resolved_adapter = str(adapter_name or getattr(context, "deployer", "") or "").strip()
+    topology = normalize_topology(getattr(context, "topology", None) or LOCAL_TOPOLOGY)
+    environment = str(getattr(context, "environment", "DEV") or "DEV").strip().upper() or "DEV"
+    dataspace = str(getattr(context, "dataspace_name", "") or "").strip()
+    connectors = list(getattr(context, "connectors", []) or [])
+    config = dict(getattr(context, "config", {}) or {})
+    root = _framework_root_dir()
+
+    vault_keys = runtime_artifacts.vault_keys_path(
+        environment,
+        topology=topology,
+        config=config,
+        root=root,
+    )
+    shared_entries = []
+    _append_runtime_artifact(shared_entries, "Shared common runtime root", os.path.dirname(str(vault_keys)))
+    _append_runtime_artifact(shared_entries, "Vault init keys", vault_keys)
+    _append_runtime_artifact(
+        shared_entries,
+        "Common services values",
+        os.path.join(root, "deployers", "shared", "deployments", environment, "common", "values.yaml"),
+    )
+
+    adapter_root = runtime_artifacts.dataspace_runtime_dir(
+        resolved_adapter,
+        environment,
+        dataspace,
+        topology=topology,
+        config=config,
+        root=root,
+    )
+    adapter_entries = []
+    _append_runtime_artifact(adapter_entries, f"{resolved_adapter} runtime root", adapter_root)
+    if dataspace:
+        _append_runtime_artifact(
+            adapter_entries,
+            "Dataspace credentials",
+            os.path.join(str(adapter_root), f"credentials-dataspace-{dataspace}.json"),
+        )
+        _append_runtime_artifact(
+            adapter_entries,
+            "Registration service values",
+            os.path.join(str(adapter_root), "dataspace", "registration-service", f"values-{dataspace}.yaml"),
+        )
+        _append_runtime_artifact(
+            adapter_entries,
+            "Public portal values",
+            os.path.join(str(adapter_root), "dataspace", "public-portal", f"values-{dataspace}.yaml"),
+        )
+
+    config_adapter = getattr(adapter, "config_adapter", None)
+    connector_entries = []
+    for connector in connectors:
+        connector_item = {"name": connector, "artifacts": []}
+        credentials_path = _call_runtime_path_resolver(
+            getattr(config_adapter, "connector_credentials_path", None),
+            connector,
+            ds_name=dataspace,
+            for_write=False,
+        ) or runtime_artifacts.connector_credentials_path(
+            resolved_adapter,
+            environment,
+            dataspace,
+            connector,
+            topology=topology,
+            config=config,
+            root=root,
+        )
+        certs_dir = _call_runtime_path_resolver(
+            getattr(config_adapter, "connector_certificates_dir", None),
+            connector_name=connector,
+            ds_name=dataspace,
+        ) or runtime_artifacts.connector_certificates_dir(
+            resolved_adapter,
+            environment,
+            dataspace,
+            connector,
+            topology=topology,
+            config=config,
+            root=root,
+        )
+        _append_runtime_artifact(connector_item["artifacts"], "Credentials", credentials_path)
+        _append_runtime_artifact(connector_item["artifacts"], "Certificates", certs_dir)
+
+        minio_policy_path = _call_runtime_path_resolver(
+            getattr(config_adapter, "connector_minio_policy_path", None),
+            connector,
+            ds_name=dataspace,
+            for_write=False,
+        )
+        if not minio_policy_path and resolved_adapter == "inesdata":
+            minio_policy_path = runtime_artifacts.connector_minio_policy_path(
+                resolved_adapter,
+                environment,
+                dataspace,
+                connector,
+                topology=topology,
+                config=config,
+                root=root,
+            )
+        _append_runtime_artifact(connector_item["artifacts"], "MinIO policy", minio_policy_path)
+
+        edc_policy_path = _call_runtime_path_resolver(
+            getattr(config_adapter, "edc_connector_policy_file", None),
+            connector,
+            ds_name=dataspace,
+        )
+        _append_runtime_artifact(connector_item["artifacts"], "Connector policy", edc_policy_path)
+
+        connector_entries.append(connector_item)
+
+    return {
+        "status": "available",
+        "adapter": resolved_adapter,
+        "topology": topology,
+        "environment": environment,
+        "dataspace": dataspace or None,
+        "shared": shared_entries,
+        "adapter_artifacts": adapter_entries,
+        "connectors": connector_entries,
+        "guidance": "Shared artifacts belong to deployers/shared; adapter artifacts belong to deployers/<adapter>.",
+    }
+
+
+def run_runtime_artifact_paths(adapter, deployer_name=None, deployer_registry=None, topology="local"):
+    resolved_deployer_name, context = _resolve_deployer_context(
+        adapter,
+        deployer_name=deployer_name,
+        deployer_registry=deployer_registry,
+        topology=topology,
+    )
+    return build_runtime_artifact_path_summary(
+        resolved_deployer_name,
+        context,
+        adapter=adapter,
+    )
+
+
+def _print_runtime_artifact_paths(summary):
+    payload = dict(summary or {})
+    print()
+    print("Runtime artifact paths")
+    print(f"Adapter: {payload.get('adapter') or '-'}")
+    print(f"Topology: {payload.get('topology') or '-'}")
+    print(f"Environment: {payload.get('environment') or '-'}")
+    if payload.get("dataspace"):
+        print(f"Dataspace: {payload.get('dataspace')}")
+
+    def _print_entries(title, entries):
+        print()
+        print(title)
+        for item in list(entries or []):
+            status = "exists" if item.get("exists") else "missing"
+            print(f"- {item.get('label')}: {item.get('path')} [{status}]")
+
+    _print_entries("Shared foundation artifacts", payload.get("shared"))
+    _print_entries("Adapter artifacts", payload.get("adapter_artifacts"))
+
+    connectors = list(payload.get("connectors") or [])
+    if connectors:
+        print()
+        print("Connector artifacts")
+        for connector in connectors:
+            print(f"- {connector.get('name')}")
+            for item in list(connector.get("artifacts") or []):
+                status = "exists" if item.get("exists") else "missing"
+                print(f"  - {item.get('label')}: {item.get('path')} [{status}]")
+
+    if payload.get("guidance"):
+        print()
+        print(payload.get("guidance"))
+
+
 def _build_recreate_dataspace_plan(adapter, context):
     plan_getter = _resolve_adapter_callable(
         adapter,
@@ -15268,6 +15477,7 @@ def _print_vm_distributed_assistant_menu(current_adapter=None):
     print("6 - Guided SSH access setup")
     print("7 - Local SSH key self-test")
     print("8 - Prepare local k3s kubeconfigs")
+    print("9 - Show runtime artifact paths")
     print("B/Q - Back")
     print("=" * 50)
 
@@ -15421,6 +15631,25 @@ def _run_vm_distributed_assistant(
             _print_vm_distributed_kubeconfig_sync_result(result)
             if result.get("status") == "failed":
                 print("Kubeconfig preparation failed. Fix the issue above before running levels 2-6.")
+            continue
+
+        if choice == "9":
+            selected_adapter = _interactive_require_adapter_selection(
+                current_adapter,
+                adapter_registry=registry,
+            )
+            if not selected_adapter:
+                continue
+            current_adapter = selected_adapter
+            adapter = build_adapter(current_adapter, adapter_registry=registry, topology="vm-distributed")
+            _print_runtime_artifact_paths(
+                run_runtime_artifact_paths(
+                    adapter,
+                    deployer_name=current_adapter,
+                    deployer_registry=deployer_registry,
+                    topology="vm-distributed",
+                )
+            )
             continue
 
         print("Invalid vm-distributed assistant selection.")
@@ -15949,7 +16178,7 @@ def _print_interactive_help():
     print("    It switches between local, vm-single and vm-distributed without editing configuration files.")
     print("K - Use when vm-single is active and you want to choose Minikube or k3s for this menu session.")
     print("W - Use before selecting vm-distributed to open the configuration wizard, or with vm-distributed active to open the assistant.")
-    print("    The assistant can write ignored .config files, show the VM plan, preview hosts/deployment, run non-destructive checks, and guide SSH setup.")
+    print("    The assistant can write ignored .config files, show the VM plan, preview hosts/deployment, run non-destructive checks, show artifact paths, and guide SSH setup.")
     print("P - Use before deploying to inspect the plan without changing the environment.")
     print("    If Levels 3-6 need an adapter and none has been chosen yet, the menu asks for one automatically.")
     print("H - Use to inspect or apply local hosts entries needed by the selected adapter.")

@@ -182,6 +182,38 @@ def connector_certificates_dir(
     return runtime_dir.joinpath("certs")
 
 
+def connector_minio_policy_path(
+    adapter: str,
+    environment: str,
+    dataspace: str,
+    connector: str,
+    *,
+    topology: str = LOCAL_TOPOLOGY,
+    config: dict[str, str] | None = None,
+    root: str | Path | None = None,
+    prefer_existing: bool = False,
+) -> Path:
+    clean_dataspace = clean_segment(dataspace, "dataspace")
+    clean_connector = clean_segment(connector, "connector")
+    legacy = legacy_dataspace_runtime_dir(adapter, environment, clean_dataspace, root=root).joinpath(
+        f"policy-{clean_dataspace}-{clean_connector}.json"
+    )
+    if not use_scoped_layout(topology, config):
+        return legacy
+
+    preferred = dataspace_runtime_dir(
+        adapter,
+        environment,
+        clean_dataspace,
+        topology=topology,
+        config=config,
+        root=root,
+    ).joinpath("connectors", clean_connector, "policy.json")
+    if prefer_existing and legacy_fallback_allowed(topology, config) and not preferred.exists() and legacy.exists():
+        return legacy
+    return preferred
+
+
 def legacy_vault_keys_path(*, root: str | Path | None = None) -> Path:
     return shared_root(root).joinpath("common", "init-keys-vault.json")
 
@@ -220,6 +252,7 @@ __all__ = [
     "artifact_layout",
     "connector_certificates_dir",
     "connector_credentials_path",
+    "connector_minio_policy_path",
     "dataspace_runtime_dir",
     "deployment_id",
     "legacy_dataspace_runtime_dir",
