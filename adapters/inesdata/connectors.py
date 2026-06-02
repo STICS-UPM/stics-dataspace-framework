@@ -1,7 +1,6 @@
 import base64
 from contextlib import contextmanager
 import html
-import importlib.util
 import json
 import os
 import re
@@ -16,6 +15,10 @@ import requests
 import yaml
 
 from deployers.infrastructure.lib.namespaces import resolve_namespace_profile_plan
+from deployers.shared.lib.inesdata_branding_assets import (
+    inesdata_branding_template_keys,
+    load_branding_assets,
+)
 from deployers.shared.lib.components import ontology_validator_source_path, patch_ontology_validator_source
 from deployers.shared.lib.connectors import (
     normalize_connector_name,
@@ -51,7 +54,6 @@ class INESDataConnectorsAdapter:
         self.config_adapter = config_adapter or INESDataConfigAdapter(self.config)
         self._management_token_cache = {}
         self._vault_management_token_verified = False
-        self._bootstrap_runtime_module = None
 
     def _auto_mode(self):
         return self.auto_mode_getter() if callable(self.auto_mode_getter) else bool(self.auto_mode_getter)
@@ -2632,9 +2634,8 @@ class INESDataConnectorsAdapter:
             return {}
 
         try:
-            bootstrap = self._bootstrap_runtime()
-            config = bootstrap.load_effective_deployer_config()
-            branding_keys = bootstrap._inesdata_branding_template_keys(config, "connector")
+            config = self.config_adapter.load_deployer_config() or {}
+            branding_keys = inesdata_branding_template_keys(config, "connector")
         except Exception as exc:
             print(f"Connector interface branding source patch skipped: {exc}")
             return {}
@@ -4238,25 +4239,10 @@ class INESDataConnectorsAdapter:
                 print(f"Warning: could not remove stale values file {values_file}: {exc}")
         return values_file
 
-    def _bootstrap_runtime(self):
-        if self._bootstrap_runtime_module is not None:
-            return self._bootstrap_runtime_module
-
-        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        bootstrap_path = os.path.join(root_dir, "deployers", "inesdata", "bootstrap.py")
-        spec = importlib.util.spec_from_file_location("_pionera_inesdata_bootstrap_runtime", bootstrap_path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"Could not load INESData bootstrap module from {bootstrap_path}")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        self._bootstrap_runtime_module = module
-        return module
-
     def _apply_connector_interface_branding_assets(self, connector_name, namespace):
         try:
-            bootstrap = self._bootstrap_runtime()
-            config = bootstrap.load_effective_deployer_config()
-            branding_keys = bootstrap._inesdata_branding_template_keys(config, "connector")
+            config = self.config_adapter.load_deployer_config() or {}
+            branding_keys = inesdata_branding_template_keys(config, "connector")
             selected_files = list(branding_keys.get("inesdata_brand_asset_files") or [])
             configmap_name = f"{connector_name}-interface-branding-assets"
             if not selected_files:
@@ -4268,7 +4254,7 @@ class INESDataConnectorsAdapter:
                     )
                 return True
 
-            assets = bootstrap._load_branding_assets(config, selected_files)
+            assets = load_branding_assets(config, selected_files, self._framework_root_dir())
             manifest = {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",

@@ -118,6 +118,18 @@ class AdditiveConnectorRetryConfigAdapter(ConnectorRetryConfigAdapter):
         return config
 
 
+class BrandingConnectorRetryConfigAdapter(ConnectorRetryConfigAdapter):
+    def load_deployer_config(self):
+        config = super().load_deployer_config()
+        config.update(
+            {
+                "INESDATA_BRAND_ASSETS_DIR": "identity",
+                "INESDATA_BRAND_LOGO_FILES": "logo.svg",
+            }
+        )
+        return config
+
+
 class VmDistributedConnectorRetryConfigAdapter(ConnectorRetryConfigAdapter):
     topology = "vm-distributed"
 
@@ -139,6 +151,49 @@ class VmDistributedConnectorRetryConfigAdapter(ConnectorRetryConfigAdapter):
 
 
 class ConnectorCreationRetryTests(unittest.TestCase):
+    def test_connector_branding_assets_do_not_import_bootstrap_click_dependency(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            identity_dir = os.path.join(tmpdir, "identity")
+            os.makedirs(identity_dir, exist_ok=True)
+            with open(os.path.join(identity_dir, "logo.svg"), "w", encoding="utf-8") as handle:
+                handle.write("<svg></svg>")
+
+            commands = []
+
+            def run(command, **_kwargs):
+                commands.append(command)
+                return object()
+
+            def run_silent(command, **_kwargs):
+                commands.append(command)
+                if "kubectl get namespace" in command:
+                    return "provider active"
+                if "kubectl get configmap" in command:
+                    return ""
+                return ""
+
+            adapter = INESDataConnectorsAdapter(
+                run=run,
+                run_silent=run_silent,
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=BrandingConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+
+            original_import = __import__
+
+            def import_without_click(name, *args, **kwargs):
+                if name == "click":
+                    raise ModuleNotFoundError("No module named 'click'")
+                return original_import(name, *args, **kwargs)
+
+            with mock.patch("builtins.__import__", side_effect=import_without_click):
+                applied = adapter._apply_connector_interface_branding_assets("conn-a-demo", "provider")
+
+            self.assertTrue(applied)
+            self.assertTrue(any("kubectl create -f" in command for command in commands))
+
     def test_vm_distributed_connector_urls_prefer_public_access_urls(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             connector_name = "conn-org2-pionera"
