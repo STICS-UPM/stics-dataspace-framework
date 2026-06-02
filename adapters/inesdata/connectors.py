@@ -1,6 +1,7 @@
 import base64
 from contextlib import contextmanager
 import html
+import ipaddress
 import json
 import os
 import re
@@ -1818,13 +1819,10 @@ class INESDataConnectorsAdapter:
                 ds_name=ds_name,
                 ds_namespace=ds_namespace,
             )
-            if not host_aliases:
-                return
-
             with open(values_file) as f:
                 values = yaml.safe_load(f) or {}
 
-            values["hostAliases"] = host_aliases
+            values["hostAliases"] = host_aliases or []
 
             with open(values_file, "w") as f:
                 yaml.dump(values, f, sort_keys=False)
@@ -1882,10 +1880,14 @@ class INESDataConnectorsAdapter:
         ).strip()
 
         grouped = {}
+        skipped_addresses = []
 
         def add(ip, hostnames):
-            clean_ip = str(ip or "").strip()
+            raw_ip = str(ip or "").strip()
+            clean_ip = self._literal_ip_address(raw_ip)
             if not clean_ip:
+                if raw_ip and raw_ip not in skipped_addresses:
+                    skipped_addresses.append(raw_ip)
                 return
             bucket = grouped.setdefault(clean_ip, [])
             for hostname in hostnames or []:
@@ -1942,11 +1944,27 @@ class INESDataConnectorsAdapter:
             else:
                 add(common_ip, [connector_hostname])
 
+        if skipped_addresses:
+            print(
+                "Skipping connector hostAliases for non-IP topology addresses: "
+                f"{', '.join(skipped_addresses)}. Public DNS will be used."
+            )
+
         return [
             {"ip": ip, "hostnames": hostnames}
             for ip, hostnames in grouped.items()
             if ip and hostnames
         ]
+
+    @staticmethod
+    def _literal_ip_address(value):
+        candidate = str(value or "").strip()
+        if not candidate:
+            return ""
+        try:
+            return str(ipaddress.ip_address(candidate))
+        except ValueError:
+            return ""
 
     @staticmethod
     def _public_hostname_for_role(role, deployer_config):

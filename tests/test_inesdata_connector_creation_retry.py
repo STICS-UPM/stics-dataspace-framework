@@ -791,6 +791,82 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         self.assertIn("org3.pionera.oeg.fi.upm.es", aliases["192.168.122.9"])
         run.assert_not_called()
 
+    def test_update_connector_host_aliases_skips_vm_distributed_dns_role_addresses(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+
+            class DnsVmDistributedConfigAdapter(VmDistributedConnectorRetryConfigAdapter):
+                def load_deployer_config(self):
+                    values = super().load_deployer_config()
+                    values["DS_DOMAIN_BASE"] = "linkeddata.es"
+                    values["DOMAIN_BASE"] = "linkeddata.es"
+                    values["VM_COMMON_IP"] = "linkeddata.es"
+                    values["VM_PROVIDER_IP"] = "stics.bavenir.eu"
+                    values["VM_CONSUMER_IP"] = "stics.linkeddata.es"
+                    values["VM_PROVIDER_PUBLIC_URL"] = "https://stics.bavenir.eu"
+                    values["VM_CONSUMER_PUBLIC_URL"] = "https://stics.linkeddata.es"
+                    return values
+
+            config_adapter = DnsVmDistributedConfigAdapter(tmpdir)
+            values_path = config.connector_values_file("conn-a-demo")
+            with open(values_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(
+                    {
+                        "hostAliases": [
+                            {
+                                "ip": "stics.bavenir.eu",
+                                "hostnames": ["stale.invalid.example"],
+                            }
+                        ]
+                    },
+                    handle,
+                    sort_keys=False,
+                )
+
+            adapter = INESDataConnectorsAdapter(
+                run=mock.Mock(return_value="192.168.49.2"),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=object(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "demo",
+                    "namespace": "core-control",
+                    "connectors": ["conn-a-demo", "conn-b-demo"],
+                    "connector_details": [
+                        {
+                            "name": "conn-a-demo",
+                            "role": "provider",
+                            "namespace_role": "provider",
+                        },
+                        {
+                            "name": "conn-b-demo",
+                            "role": "consumer",
+                            "namespace_role": "consumer",
+                        },
+                    ],
+                }
+            ]
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                adapter.update_connector_host_aliases(
+                    values_path,
+                    ["conn-a-demo", "conn-b-demo"],
+                    connector_name="conn-a-demo",
+                    ds_name="demo",
+                )
+
+            with open(values_path, "r", encoding="utf-8") as handle:
+                rendered = yaml.safe_load(handle)
+
+        self.assertEqual(rendered["hostAliases"], [])
+        self.assertIn("Skipping connector hostAliases", output.getvalue())
+        self.assertIn("Public DNS will be used", output.getvalue())
+
     def test_update_connector_host_aliases_uses_vm_single_k3s_ingress_ip(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorRetryConfig(tmpdir)
