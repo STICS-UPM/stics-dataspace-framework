@@ -5616,6 +5616,7 @@ def _sync_deployer_hosts_if_enabled(context, levels=None):
         "blocks": result["blocks"],
         "skipped_existing": result.get("skipped_existing", {}),
         "legacy_external_hostnames": result.get("legacy_external_hostnames", []),
+        "reconciled_public_hostnames": result.get("reconciled_public_hostnames", []),
     }
 
 
@@ -16778,7 +16779,7 @@ def _interactive_ensure_hosts_ready_for_levels(
     topology="local",
 ):
     normalized_topology = str(topology or "local").strip().lower()
-    if not current_adapter or normalized_topology not in {LOCAL_TOPOLOGY, "vm-single"}:
+    if not current_adapter or normalized_topology not in {LOCAL_TOPOLOGY, "vm-single", VM_DISTRIBUTED_TOPOLOGY}:
         return True
 
     selected_levels = {int(level) for level in (levels or [])}
@@ -16792,6 +16793,8 @@ def _interactive_ensure_hosts_ready_for_levels(
         deployer_registry=deployer_registry,
         topology=topology,
     )
+    if normalized_topology == VM_DISTRIBUTED_TOPOLOGY and not _should_interactive_vm_distributed_hosts_preflight(context):
+        return True
     readiness = _build_hosts_readiness_plan(context, levels=selected_levels)
     missing_hostnames = list(readiness.get("missing_hostnames") or [])
     legacy_external_hostnames = list(readiness.get("legacy_external_hostnames") or [])
@@ -16848,6 +16851,18 @@ def _interactive_ensure_hosts_ready_for_levels(
         print("Run H with the required permissions, then retry the selected level.")
         return False
 
+    return True
+
+
+def _should_interactive_vm_distributed_hosts_preflight(context):
+    config = dict(getattr(context, "config", {}) or {})
+    execution_host = str(config.get("VM_DISTRIBUTED_EXECUTION_HOST") or "").strip().lower()
+    if execution_host not in {"common-services", "common", "common-vm", "common-services-vm"}:
+        return False
+
+    hosts_file = _interactive_hosts_file_path()
+    if not hosts_file or _is_windows_hosts_file(hosts_file):
+        return False
     return True
 
 
@@ -17145,6 +17160,9 @@ def _print_action_result(result):
             legacy_external_hostnames = list(hosts_sync.get("legacy_external_hostnames") or [])
             if legacy_external_hostnames:
                 lines.append(f"Hosts legacy aliases outside managed blocks: {len(legacy_external_hostnames)}")
+            reconciled_public_hostnames = list(hosts_sync.get("reconciled_public_hostnames") or [])
+            if reconciled_public_hostnames:
+                lines.append(f"Hosts public names reconciled: {len(reconciled_public_hostnames)}")
 
         connector_recovery = payload.get("connector_recovery")
         if isinstance(connector_recovery, dict):

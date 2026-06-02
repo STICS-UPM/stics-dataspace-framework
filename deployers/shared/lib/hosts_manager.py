@@ -215,7 +215,16 @@ def apply_managed_blocks(
         block_names=[block.name for block in blocks],
         config=config,
     )
-    updated_content, missing_blocks, skipped_existing = merge_missing_managed_blocks(existing_content, blocks)
+    public_hostnames_to_reconcile = _public_proxy_hostnames_to_reconcile(
+        existing_content,
+        blocks,
+        config=config,
+    )
+    updated_content, missing_blocks, skipped_existing = merge_missing_managed_blocks(
+        existing_content,
+        blocks,
+        reconciled_hostnames=public_hostnames_to_reconcile,
+    )
     changed = updated_content != existing_content
     elevated = False
     if changed:
@@ -235,6 +244,7 @@ def apply_managed_blocks(
         "blocks": blocks_as_dict(missing_blocks),
         "skipped_existing": skipped_existing,
         "legacy_external_hostnames": legacy_external_hostnames,
+        "reconciled_public_hostnames": public_hostnames_to_reconcile,
     }
 
 
@@ -256,11 +266,14 @@ def _write_hosts_file_with_sudo(hosts_file: str, content: str) -> None:
 def merge_missing_managed_blocks(
     existing_content: str,
     blocks: list[HostBlock],
+    *,
+    reconciled_hostnames: list[str] | None = None,
 ) -> tuple[str, list[HostBlock], dict[str, list[str]]]:
     """Merge only host entries that are not already present outside target blocks."""
 
     block_names = [block.name for block in blocks]
     base_content = remove_managed_blocks(existing_content, block_names)
+    base_content = remove_hostnames(base_content, reconciled_hostnames or [])
     existing_hostnames = parse_hostnames(base_content)
     missing_blocks = []
     skipped_existing: dict[str, list[str]] = {}
@@ -281,6 +294,37 @@ def merge_missing_managed_blocks(
 
     updated_content = upsert_managed_blocks(base_content, missing_blocks)
     return updated_content, missing_blocks, skipped_existing
+
+
+def remove_hostnames(existing_content: str, hostnames: list[str]) -> str:
+    target_hostnames = {str(hostname or "").strip().lower() for hostname in hostnames if str(hostname or "").strip()}
+    if not target_hostnames:
+        return existing_content or ""
+
+    kept_lines = []
+    for raw_line in (existing_content or "").splitlines():
+        active_part, separator, comment = raw_line.partition("#")
+        parts = active_part.split()
+        if len(parts) < 2:
+            kept_lines.append(raw_line)
+            continue
+
+        address = parts[0]
+        remaining_hostnames = [hostname for hostname in parts[1:] if hostname.lower() not in target_hostnames]
+        if len(remaining_hostnames) == len(parts) - 1:
+            kept_lines.append(raw_line)
+            continue
+        if not remaining_hostnames:
+            continue
+
+        rebuilt_line = f"{address} {' '.join(remaining_hostnames)}"
+        if separator:
+            rebuilt_line = f"{rebuilt_line} #{comment.strip()}" if comment.strip() else f"{rebuilt_line} #"
+        kept_lines.append(rebuilt_line)
+
+    if not kept_lines:
+        return ""
+    return "\n".join(kept_lines).rstrip() + "\n"
 
 
 def remove_managed_blocks(existing_content: str, block_names: list[str]) -> str:
@@ -360,6 +404,25 @@ def parse_hostnames(content: str) -> set[str]:
     return hostnames
 
 
+def parse_hostname_addresses(content: str) -> dict[str, set[str]]:
+    addresses: dict[str, set[str]] = {}
+    for raw_line in (content or "").splitlines():
+        active_part = raw_line.split("#", 1)[0].strip()
+        if not active_part:
+            continue
+        parts = active_part.split()
+        if len(parts) < 2:
+            continue
+        address = parts[0].strip()
+        if not address:
+            continue
+        for hostname in parts[1:]:
+            cleaned = hostname.strip().lower()
+            if cleaned:
+                addresses.setdefault(cleaned, set()).add(address)
+    return addresses
+
+
 def _build_common_entries(config: dict[str, Any], *, address: str, topology: str | None = None) -> list[HostEntry]:
     resolved_hostnames = resolved_common_service_hostnames(config)
     public_address = _vm_distributed_public_proxy_address(config, topology=topology)
@@ -380,15 +443,51 @@ def _build_common_entries(config: dict[str, Any], *, address: str, topology: str
 def _vm_distributed_public_proxy_address(config: dict[str, Any], *, topology: str | None = None) -> str:
     if str(topology or "").strip().lower() != "vm-distributed":
         return ""
-    execution_host = str(config.get("VM_DISTRIBUTED_EXECUTION_HOST") or "external").strip().lower()
-    if execution_host not in {"external", "operator", "workstation", "wsl"}:
-        return ""
     return str(
         config.get("VM_PUBLIC_PROXY_IP")
         or config.get("PUBLIC_PROXY_IP")
         or config.get("VM_PUBLIC_ACCESS_IP")
         or ""
     ).strip()
+
+
+def _public_proxy_hostnames_to_reconcile(
+    existing_content: str,
+    blocks: list[HostBlock],
+    *,
+    config: dict[str, Any] | None = None,
+) -> list[str]:
+    values = dict(config or {})
+    public_address = str(
+        values.get("VM_PUBLIC_PROXY_IP")
+        or values.get("PUBLIC_PROXY_IP")
+        or values.get("VM_PUBLIC_ACCESS_IP")
+        or ""
+    ).strip()
+    if not public_address:
+        return []
+
+    public_hostnames = _vm_distributed_public_endpoint_hostnames(values)
+    if not public_hostnames:
+        return []
+
+    managed_public_hostnames = {
+        entry.hostname.lower()
+        for block in blocks
+        for entry in block.entries
+        if entry.address == public_address and entry.hostname.lower() in public_hostnames
+    }
+    if not managed_public_hostnames:
+        return []
+
+    base_content = remove_managed_blocks(existing_content, [block.name for block in blocks])
+    addresses_by_hostname = parse_hostname_addresses(base_content)
+    hostnames_to_reconcile = []
+    for hostname in sorted(managed_public_hostnames):
+        addresses = addresses_by_hostname.get(hostname, set())
+        if addresses and any(address != public_address for address in addresses):
+            hostnames_to_reconcile.append(hostname)
+    return hostnames_to_reconcile
 
 
 def _vm_distributed_public_endpoint_hostnames(config: dict[str, Any]) -> set[str]:

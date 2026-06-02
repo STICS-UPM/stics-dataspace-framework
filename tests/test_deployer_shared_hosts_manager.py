@@ -204,7 +204,7 @@ class SharedHostsManagerTests(unittest.TestCase):
         self.assertNotIn("192.168.122.64 minio.pionera.oeg.fi.upm.es", rendered["shared common"])
         self.assertIn("192.168.122.64 auth.pionera.oeg.fi.upm.es", rendered["shared common"])
 
-    def test_build_context_host_blocks_keeps_common_private_when_running_from_common_services_vm(self):
+    def test_build_context_host_blocks_routes_public_common_urls_to_proxy_from_common_services_vm(self):
         context = DeploymentContext(
             deployer="inesdata",
             topology="vm-distributed",
@@ -221,6 +221,7 @@ class SharedHostsManagerTests(unittest.TestCase):
                 "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
                 "MINIO_HOSTNAME": "minio.pionera.oeg.fi.upm.es",
                 "MINIO_API_PUBLIC_URL": "https://minio.pionera.oeg.fi.upm.es",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
                 "VM_DISTRIBUTED_EXECUTION_HOST": "common-services",
                 "VM_PUBLIC_PROXY_IP": "138.100.15.165",
             },
@@ -228,8 +229,10 @@ class SharedHostsManagerTests(unittest.TestCase):
 
         rendered = blocks_as_dict(build_context_host_blocks(context))
 
-        self.assertIn("192.168.122.64 minio.pionera.oeg.fi.upm.es", rendered["shared common"])
-        self.assertNotIn("138.100.15.165 minio.pionera.oeg.fi.upm.es", rendered["shared common"])
+        self.assertIn("138.100.15.165 minio.pionera.oeg.fi.upm.es", rendered["shared common"])
+        self.assertIn("138.100.15.165 org1.pionera.oeg.fi.upm.es", rendered["shared common"])
+        self.assertNotIn("192.168.122.64 org1.pionera.oeg.fi.upm.es", rendered["shared common"])
+        self.assertIn("192.168.122.64 auth.pionera.oeg.fi.upm.es", rendered["shared common"])
 
     def test_build_context_host_blocks_routes_connectors_to_provider_and_consumer_addresses(self):
         context = DeploymentContext(
@@ -415,6 +418,48 @@ class SharedHostsManagerTests(unittest.TestCase):
         self.assertIn("connectors edc demoedc", {block.name for block in missing_blocks})
         self.assertIn("dataspace demoedc", skipped)
         self.assertIn("connectors edc demoedc", skipped)
+
+    def test_apply_managed_blocks_reconciles_vm_distributed_public_proxy_hostnames(self):
+        context = DeploymentContext(
+            deployer="inesdata",
+            topology="vm-distributed",
+            environment="DEV",
+            dataspace_name="pionera",
+            ds_domain_base="pionera.oeg.fi.upm.es",
+            topology_profile=build_topology_profile(
+                "vm-distributed",
+                {
+                    "VM_COMMON_IP": "192.168.122.64",
+                },
+            ),
+            config={
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                "VM_PUBLIC_PROXY_IP": "138.100.15.165",
+            },
+        )
+        blocks = build_context_host_blocks(context)
+        existing = (
+            "127.0.0.1 localhost\n"
+            "192.168.122.64 org1.pionera.oeg.fi.upm.es internal-alias.example\n"
+        )
+
+        with self.subTest("conflicting public hostname moved into managed block"):
+            import tempfile
+
+            with tempfile.NamedTemporaryFile("w+", encoding="utf-8") as handle:
+                handle.write(existing)
+                handle.flush()
+
+                result = apply_managed_blocks(handle.name, blocks, config=context.config)
+                handle.seek(0)
+                content = handle.read()
+
+        self.assertTrue(result["changed"])
+        self.assertEqual(result["reconciled_public_hostnames"], ["org1.pionera.oeg.fi.upm.es"])
+        self.assertIn("192.168.122.64 internal-alias.example", content)
+        self.assertNotIn("192.168.122.64 org1.pionera.oeg.fi.upm.es", content)
+        self.assertIn("138.100.15.165 org1.pionera.oeg.fi.upm.es", content)
 
     def test_detect_legacy_external_hostnames_reports_common_service_aliases(self):
         existing = (
