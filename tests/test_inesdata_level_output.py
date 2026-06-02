@@ -2318,6 +2318,46 @@ minio:
         )
         run.assert_not_called()
 
+    def test_update_registration_host_aliases_skips_vm_distributed_dns_address(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "CLUSTER_TYPE": "k3s",
+                "INGRESS_EXTERNAL_IP": "dev.linkeddata.example",
+                "VM_COMMON_IP": "dev.linkeddata.example",
+                "VM_PROVIDER_IP": "provider.linkeddata.example",
+                "VM_CONSUMER_IP": "consumer.linkeddata.example",
+            }
+        )
+        self.config_adapter.topology = "vm-distributed"
+        self.config_adapter.host_alias_domains = lambda **_kwargs: [
+            "auth.dev.linkeddata.example",
+            "registration-service-demo.dev.linkeddata.example",
+        ]
+        run = mock.Mock(return_value="192.168.49.2")
+        deployment = INESDataDeploymentAdapter(
+            run=run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            deployment.update_helm_values_with_host_aliases(
+                self.config.registration_values_file(),
+                topology="vm-distributed",
+            )
+
+        with open(self.config.registration_values_file(), encoding="utf-8") as handle:
+            values = yaml.safe_load(handle)
+
+        self.assertEqual(values["hostAliases"], [])
+        self.assertIn("Skipping registration-service hostAliases", output.getvalue())
+        self.assertIn("Public DNS will be used", output.getvalue())
+        run.assert_not_called()
+
     def test_level3_postgres_cleanup_reconciles_residual_role_directly(self):
         deployment = INESDataDeploymentAdapter(
             run=self._run,

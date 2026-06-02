@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import ipaddress
 import json
 import os
 import shlex
@@ -664,7 +665,17 @@ class SharedDataspaceDeploymentAdapter:
     def _level3_public_portal_values_files(self, values_file):
         return values_file
 
-    def _host_alias_ip_for_topology(self, topology):
+    @staticmethod
+    def _literal_ip_address(value):
+        candidate = str(value or "").strip()
+        if not candidate:
+            return ""
+        try:
+            return str(ipaddress.ip_address(candidate))
+        except ValueError:
+            return ""
+
+    def _host_alias_candidate_for_topology(self, topology):
         normalized_topology = normalize_topology(topology)
         cluster_type = str(self._cluster_runtime(normalized_topology).get("cluster_type") or "minikube").strip().lower()
         if normalized_topology == LOCAL_TOPOLOGY or cluster_type == "minikube":
@@ -680,21 +691,42 @@ class SharedDataspaceDeploymentAdapter:
 
         return ""
 
+    def _host_alias_ip_for_topology(self, topology):
+        return self._literal_ip_address(self._host_alias_candidate_for_topology(topology))
+
+    def _host_aliases_are_optional_for_topology(self, topology):
+        normalized_topology = normalize_topology(topology)
+        cluster_type = str(self._cluster_runtime(normalized_topology).get("cluster_type") or "minikube").strip().lower()
+        return normalized_topology in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY} and cluster_type == "k3s"
+
     def update_helm_values_with_host_aliases(self, values_file, minikube_ip=None, topology=None):
-        host_alias_ip = minikube_ip or self._host_alias_ip_for_topology(
+        resolved_topology = (
             topology
             or getattr(self.config_adapter, "topology", None)
             or getattr(self, "topology", None)
             or LOCAL_TOPOLOGY
         )
+        host_alias_candidate = minikube_ip or self._host_alias_candidate_for_topology(resolved_topology)
+        host_alias_ip = self._literal_ip_address(host_alias_candidate)
+
+        with open(values_file) as f:
+            values = yaml.safe_load(f) or {}
+
         if not host_alias_ip:
+            if self._host_aliases_are_optional_for_topology(resolved_topology):
+                values["hostAliases"] = []
+                with open(values_file, "w") as f:
+                    yaml.dump(values, f, sort_keys=False)
+                candidate_label = str(host_alias_candidate or "not configured").strip()
+                print(
+                    "Skipping registration-service hostAliases because Kubernetes requires a literal IP "
+                    f"and the configured topology address is '{candidate_label}'. Public DNS will be used."
+                )
+                return
             self._fail(
                 "Could not resolve registration-service hostAliases IP",
                 root_cause="check topology address and cluster runtime configuration",
             )
-
-        with open(values_file) as f:
-            values = yaml.safe_load(f)
 
         host_alias_domains = getattr(self.config_adapter, "host_alias_domains", None)
         if callable(host_alias_domains):
