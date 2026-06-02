@@ -9577,6 +9577,11 @@ def run_level(
     resolved_deployer_name = deployer_name or _infer_deployer_name_from_adapter(adapter)
     level_name = LEVEL_DESCRIPTIONS[level_id]
     normalized_topology = str(topology or "local").strip().lower()
+    if normalized_topology == "vm-distributed" and level_id == 2:
+        _ensure_pionera_environment_profile_file(
+            topology=normalized_topology,
+            adapter_name=resolved_deployer_name,
+        )
     if normalized_topology == VM_SINGLE_TOPOLOGY:
         vm_single_plan = _current_vm_single_topology_plan(adapter_name=resolved_deployer_name)
         if _vm_single_should_run_level_remotely(level_id, vm_single_plan):
@@ -9896,15 +9901,20 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "K3S_SERVICE_NAME",
     "K3S_INGRESS_CONTROLLER",
     "K3S_INGRESS_SERVICE_TYPE",
+    "K3S_INGRESS_HTTP_NODEPORT",
     "K3S_REPAIR_ON_LEVEL1",
     "K3S_WRITE_KUBECONFIG_MODE",
+    "KEYCLOAK_BOOTSTRAP_PORT_FORWARD",
     "KEYCLOAK_FRONTEND_URL",
     "KEYCLOAK_PUBLIC_URL",
     "MINIO_API_PUBLIC_URL",
     "MINIO_CONSOLE_PUBLIC_URL",
+    "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES_ENABLED",
+    "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES",
     "MINIO_PUBLIC_URL",
     "COMPONENTS_PUBLIC_BASE_URL",
     "COMPONENTS_PUBLIC_PATH_REWRITE",
+    "VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER",
     "ONTOLOGY_HUB_PUBLIC_URL",
     "AI_MODEL_HUB_PUBLIC_URL",
     "SEMANTIC_VIRTUALIZATION_PUBLIC_URL",
@@ -9912,6 +9922,12 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "TOPOLOGY_ROUTING_MODE",
     "VM_PROVIDER_CONNECTORS",
     "VM_CONSUMER_CONNECTORS",
+    "VM_PROVIDER_INGRESS_HTTP_PORT",
+    "VM_CONSUMER_INGRESS_HTTP_PORT",
+    "VM_PROVIDER_INGRESS_NODEPORT",
+    "VM_CONSUMER_INGRESS_NODEPORT",
+    "VM_PUBLIC_PROXY_IP",
+    "CONNECTOR_PROTOCOL_ADDRESS_MODE",
     "SSH_BASTION_HOST",
     "SSH_BASTION_PORT",
     "SSH_BASTION_USER",
@@ -9941,6 +9957,13 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "VM_DISTRIBUTED_K3S_TUNNEL_MODE",
     "VM_DISTRIBUTED_K3S_API_REMOTE_PORT",
     "VM_DISTRIBUTED_K3S_TUNNEL_RECREATE",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP",
     "VM_COMMON_K3S_API_LOCAL_PORT",
     "VM_PROVIDER_K3S_API_LOCAL_PORT",
     "VM_CONSUMER_K3S_API_LOCAL_PORT",
@@ -13274,7 +13297,10 @@ def _load_vm_distributed_profile(profile_path):
             if key != key.upper():
                 errors.append({"line": line_number, "message": f"Key must be uppercase: {key}"})
                 continue
-            values[key] = _vm_distributed_profile_parse_value(value)
+            parsed_value = _vm_distributed_profile_parse_value(value)
+            if parsed_value == "":
+                continue
+            values[key] = parsed_value
     return values, errors
 
 
@@ -13283,19 +13309,22 @@ def _vm_distributed_profile_sensitive_key(key):
     return any(token in normalized for token in VM_DISTRIBUTED_PROFILE_SENSITIVE_KEY_TOKENS)
 
 
+DEFAULT_ENVIRONMENT_PROFILE_NAME = "pionera"
+
+
 def _environment_profile_name(raw_name=None):
     requested = str(
         raw_name
         if raw_name is not None
-        else os.getenv("PIONERA_ENVIRONMENT_PROFILE", "default")
+        else os.getenv("PIONERA_ENVIRONMENT_PROFILE", DEFAULT_ENVIRONMENT_PROFILE_NAME)
     ).strip()
     if not requested:
-        return "default"
+        return DEFAULT_ENVIRONMENT_PROFILE_NAME
     allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
     cleaned = "".join(character if character in allowed else "-" for character in requested)
-    cleaned = cleaned.strip(".-") or "default"
+    cleaned = cleaned.strip(".-") or DEFAULT_ENVIRONMENT_PROFILE_NAME
     if cleaned in {".", ".."}:
-        return "default"
+        return DEFAULT_ENVIRONMENT_PROFILE_NAME
     return cleaned
 
 
@@ -13646,87 +13675,362 @@ def _read_vm_distributed_profile_content(profile_path):
         return handle.read()
 
 
+VM_DISTRIBUTED_PROFILE_TEMPLATE_KEYS = (
+    "PROFILE_TOPOLOGY",
+    "PROFILE_ADAPTER",
+    "ENVIRONMENT_NAME",
+    "DOMAIN_BASE",
+    "DS_DOMAIN_BASE",
+    "TOPOLOGY_ROUTING_MODE",
+    "KEYCLOAK_FRONTEND_URL",
+    "KEYCLOAK_PUBLIC_URL",
+    "MINIO_API_PUBLIC_URL",
+    "MINIO_CONSOLE_PUBLIC_URL",
+    "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES_ENABLED",
+    "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES",
+    "COMPONENTS_PUBLIC_BASE_URL",
+    "COMPONENTS_PUBLIC_PATH_REWRITE",
+    "VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER",
+    "VM_EXTERNAL_IP",
+    "VM_COMMON_IP",
+    "VM_DATASPACE_IP",
+    "VM_PROVIDER_IP",
+    "VM_CONSUMER_IP",
+    "VM_CONNECTORS_IP",
+    "VM_COMPONENTS_IP",
+    "VM_OBSERVABILITY_IP",
+    "INGRESS_EXTERNAL_IP",
+    "VM_PUBLIC_PROXY_IP",
+    "VM_PROVIDER_K8S_NODE",
+    "VM_CONSUMER_K8S_NODE",
+    "CLUSTER_TYPE",
+    "K3S_KUBECONFIG",
+    "K3S_KUBECONFIG_COMMON",
+    "K3S_KUBECONFIG_PROVIDER",
+    "K3S_KUBECONFIG_CONSUMER",
+    "K3S_KUBECONFIG_COMPONENTS",
+    "K3S_INSTALL_EXEC",
+    "K3S_SERVICE_NAME",
+    "K3S_INGRESS_CONTROLLER",
+    "K3S_INGRESS_SERVICE_TYPE",
+    "K3S_INGRESS_HTTP_NODEPORT",
+    "K3S_REPAIR_ON_LEVEL1",
+    "K3S_WRITE_KUBECONFIG_MODE",
+    "VM_PROVIDER_CONNECTORS",
+    "VM_CONSUMER_CONNECTORS",
+    "VM_PROVIDER_INGRESS_HTTP_PORT",
+    "VM_CONSUMER_INGRESS_HTTP_PORT",
+    "VM_PROVIDER_INGRESS_NODEPORT",
+    "VM_CONSUMER_INGRESS_NODEPORT",
+    "VM_COMMON_PUBLIC_URL",
+    "VM_PROVIDER_PUBLIC_URL",
+    "VM_CONSUMER_PUBLIC_URL",
+    "VM_COMMON_HTTP_URL",
+    "VM_PROVIDER_HTTP_URL",
+    "VM_CONSUMER_HTTP_URL",
+    "CONNECTOR_PROTOCOL_ADDRESS_MODE",
+    "VM_SSH_USER",
+    "SSH_ACCESS_MODE",
+    "SSH_BASTION_HOST",
+    "SSH_BASTION_PORT",
+    "SSH_BASTION_USER",
+    "SSH_BASTION_IDENTITY_FILE",
+    "SSH_IDENTITY_FILE",
+    "SSH_CONNECT_TIMEOUT_SECONDS",
+    "VM_COMMON_SSH_HOST",
+    "VM_COMMON_SSH_PORT",
+    "VM_COMMON_SSH_USER",
+    "VM_COMPONENTS_SSH_HOST",
+    "VM_COMPONENTS_SSH_PORT",
+    "VM_COMPONENTS_SSH_USER",
+    "VM_PROVIDER_SSH_HOST",
+    "VM_PROVIDER_SSH_PORT",
+    "VM_PROVIDER_SSH_USER",
+    "VM_CONSUMER_SSH_HOST",
+    "VM_CONSUMER_SSH_PORT",
+    "VM_CONSUMER_SSH_USER",
+    "KEYCLOAK_BOOTSTRAP_PORT_FORWARD",
+    "VM_DISTRIBUTED_EXECUTION_HOST",
+    "VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH",
+    "VM_DISTRIBUTED_INFER_LOCAL_WORKDIR",
+    "VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE",
+    "VM_DISTRIBUTED_KUBECONFIG_DIR",
+    "VM_DISTRIBUTED_KUBECONFIG_SYNC",
+    "VM_DISTRIBUTED_REMOTE_KUBECONFIG",
+    "VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY",
+    "VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE",
+    "VM_DISTRIBUTED_SSH_KEY_COMMENT",
+    "VM_DISTRIBUTED_SSH_MANAGED_MARKER",
+    "VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY",
+    "VM_DISTRIBUTED_DEPLOYMENT_MODE",
+    "VM_DISTRIBUTED_PREFLIGHT_DRY_RUN",
+    "VM_DISTRIBUTED_K3S_TUNNEL_MODE",
+    "VM_DISTRIBUTED_K3S_API_REMOTE_PORT",
+    "VM_DISTRIBUTED_K3S_TUNNEL_RECREATE",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE",
+    "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP",
+    "DS_1_NAME",
+    "DS_1_NAMESPACE",
+    "NAMESPACE_PROFILE",
+    "DS_1_REGISTRATION_NAMESPACE",
+    "DS_1_PROVIDER_NAMESPACE",
+    "DS_1_CONSUMER_NAMESPACE",
+    "COMMON_SERVICES_NAMESPACE",
+    "COMPONENTS_NAMESPACE",
+    "DS_1_CONNECTORS",
+    "DS_1_CONNECTOR_NAMESPACES",
+    "DS_1_VALIDATION_PAIRS",
+    "LEVEL4_CONNECTOR_RECONCILIATION_MODE",
+    "COMPONENTS",
+)
+
+
+def _vm_distributed_profile_template_keys(topology="vm-distributed", adapter_name="inesdata"):
+    selected_topology = normalize_topology(topology)
+    selected_adapter = str(adapter_name or "").strip().lower() or "inesdata"
+    keys = list(VM_DISTRIBUTED_PROFILE_TEMPLATE_KEYS)
+    if selected_topology != "vm-distributed":
+        keys = [
+            "PROFILE_TOPOLOGY",
+            "PROFILE_ADAPTER",
+            "ENVIRONMENT_NAME",
+            "DOMAIN_BASE",
+            "DS_DOMAIN_BASE",
+            "VM_EXTERNAL_IP",
+            "VM_SINGLE_SSH_HOST",
+            "VM_SSH_USER",
+            "SSH_ACCESS_MODE",
+            "SSH_BASTION_HOST",
+            "SSH_BASTION_PORT",
+            "SSH_BASTION_USER",
+            "SSH_BASTION_IDENTITY_FILE",
+            "K3S_KUBECONFIG",
+            "DS_1_NAME",
+            "DS_1_CONNECTORS",
+            "DS_1_VALIDATION_PAIRS",
+        ]
+    if selected_adapter == "edc":
+        keys.extend(("EDC_DASHBOARD_ENABLED", "EDC_CONNECTOR_NAMES"))
+    return tuple(dict.fromkeys(keys))
+
+
 def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_name="inesdata"):
     selected_topology = normalize_topology(topology)
     selected_adapter = str(adapter_name or "").strip().lower() or "inesdata"
-    connector_defaults = (
-        "# DS_1_CONNECTORS=provider,consumer\n"
-        "# DS_1_CONNECTOR_NAMESPACES=provider:provider,consumer:consumer\n"
-        "# DS_1_VALIDATION_PAIRS=provider>consumer"
+    if selected_topology != "vm-distributed":
+        return "".join(f"{key}=\n" for key in _vm_distributed_profile_template_keys(topology, selected_adapter))
+
+    sections = (
+        (
+            "Local validation-environment profile.\n"
+            "This file is ignored by Git and must not contain passwords, tokens or private keys.",
+            ("PROFILE_TOPOLOGY", "PROFILE_ADAPTER", "ENVIRONMENT_NAME"),
+        ),
+        (
+            "Common and dataspace domains",
+            ("DOMAIN_BASE", "DS_DOMAIN_BASE", "TOPOLOGY_ROUTING_MODE"),
+        ),
+        (
+            "Common service public routes",
+            (
+                "KEYCLOAK_FRONTEND_URL",
+                "KEYCLOAK_PUBLIC_URL",
+                "MINIO_API_PUBLIC_URL",
+                "MINIO_CONSOLE_PUBLIC_URL",
+                "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES_ENABLED",
+                "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES",
+                "COMPONENTS_PUBLIC_BASE_URL",
+                "COMPONENTS_PUBLIC_PATH_REWRITE",
+                "VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER",
+            ),
+        ),
+        (
+            "VM placement",
+            (
+                "VM_EXTERNAL_IP",
+                "VM_COMMON_IP",
+                "VM_DATASPACE_IP",
+                "VM_PROVIDER_IP",
+                "VM_CONSUMER_IP",
+                "VM_CONNECTORS_IP",
+                "VM_COMPONENTS_IP",
+                "VM_OBSERVABILITY_IP",
+                "INGRESS_EXTERNAL_IP",
+                "VM_PUBLIC_PROXY_IP",
+                "VM_PROVIDER_K8S_NODE",
+                "VM_CONSUMER_K8S_NODE",
+            ),
+        ),
+        (
+            "Kubernetes access",
+            (
+                "CLUSTER_TYPE",
+                "K3S_KUBECONFIG",
+                "K3S_KUBECONFIG_COMMON",
+                "K3S_KUBECONFIG_PROVIDER",
+                "K3S_KUBECONFIG_CONSUMER",
+                "K3S_KUBECONFIG_COMPONENTS",
+                "K3S_INSTALL_EXEC",
+                "K3S_SERVICE_NAME",
+                "K3S_INGRESS_CONTROLLER",
+                "K3S_INGRESS_SERVICE_TYPE",
+                "K3S_INGRESS_HTTP_NODEPORT",
+                "K3S_REPAIR_ON_LEVEL1",
+                "K3S_WRITE_KUBECONFIG_MODE",
+            ),
+        ),
+        (
+            "Connector placement and public routes",
+            (
+                "VM_PROVIDER_CONNECTORS",
+                "VM_CONSUMER_CONNECTORS",
+                "VM_PROVIDER_INGRESS_HTTP_PORT",
+                "VM_CONSUMER_INGRESS_HTTP_PORT",
+                "VM_PROVIDER_INGRESS_NODEPORT",
+                "VM_CONSUMER_INGRESS_NODEPORT",
+                "VM_COMMON_PUBLIC_URL",
+                "VM_PROVIDER_PUBLIC_URL",
+                "VM_CONSUMER_PUBLIC_URL",
+                "VM_COMMON_HTTP_URL",
+                "VM_PROVIDER_HTTP_URL",
+                "VM_CONSUMER_HTTP_URL",
+                "CONNECTOR_PROTOCOL_ADDRESS_MODE",
+            ),
+        ),
+        (
+            "SSH metadata",
+            (
+                "VM_SSH_USER",
+                "SSH_ACCESS_MODE",
+                "SSH_BASTION_HOST",
+                "SSH_BASTION_PORT",
+                "SSH_BASTION_USER",
+                "SSH_BASTION_IDENTITY_FILE",
+                "SSH_IDENTITY_FILE",
+                "SSH_CONNECT_TIMEOUT_SECONDS",
+                "VM_COMMON_SSH_HOST",
+                "VM_COMMON_SSH_PORT",
+                "VM_COMMON_SSH_USER",
+                "VM_COMPONENTS_SSH_HOST",
+                "VM_COMPONENTS_SSH_PORT",
+                "VM_COMPONENTS_SSH_USER",
+                "VM_PROVIDER_SSH_HOST",
+                "VM_PROVIDER_SSH_PORT",
+                "VM_PROVIDER_SSH_USER",
+                "VM_CONSUMER_SSH_HOST",
+                "VM_CONSUMER_SSH_PORT",
+                "VM_CONSUMER_SSH_USER",
+            ),
+        ),
+        (
+            "Orchestration behavior",
+            (
+                "KEYCLOAK_BOOTSTRAP_PORT_FORWARD",
+                "VM_DISTRIBUTED_EXECUTION_HOST",
+                "VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH",
+                "VM_DISTRIBUTED_INFER_LOCAL_WORKDIR",
+                "VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE",
+                "VM_DISTRIBUTED_KUBECONFIG_DIR",
+                "VM_DISTRIBUTED_KUBECONFIG_SYNC",
+                "VM_DISTRIBUTED_REMOTE_KUBECONFIG",
+                "VM_DISTRIBUTED_HTTP_PREFLIGHT_TLS_VERIFY",
+                "VM_DISTRIBUTED_SSH_BOOTSTRAP_MODE",
+                "VM_DISTRIBUTED_SSH_KEY_COMMENT",
+                "VM_DISTRIBUTED_SSH_MANAGED_MARKER",
+                "VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY",
+                "VM_DISTRIBUTED_DEPLOYMENT_MODE",
+                "VM_DISTRIBUTED_PREFLIGHT_DRY_RUN",
+                "VM_DISTRIBUTED_K3S_TUNNEL_MODE",
+                "VM_DISTRIBUTED_K3S_API_REMOTE_PORT",
+                "VM_DISTRIBUTED_K3S_TUNNEL_RECREATE",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP",
+            ),
+        ),
+        (
+            "Dataspace and connector inventory",
+            (
+                "DS_1_NAME",
+                "DS_1_NAMESPACE",
+                "NAMESPACE_PROFILE",
+                "DS_1_REGISTRATION_NAMESPACE",
+                "DS_1_PROVIDER_NAMESPACE",
+                "DS_1_CONSUMER_NAMESPACE",
+                "COMMON_SERVICES_NAMESPACE",
+                "COMPONENTS_NAMESPACE",
+                "DS_1_CONNECTORS",
+                "DS_1_CONNECTOR_NAMESPACES",
+                "DS_1_VALIDATION_PAIRS",
+                "LEVEL4_CONNECTOR_RECONCILIATION_MODE",
+                "COMPONENTS",
+            ),
+        ),
     )
-    return f"""# Local validation-environment profile
-# Fill this file with non-sensitive values only.
-# Do not include passwords, tokens, private keys or secrets.
-# Remove the leading '#' from the KEY=VALUE lines you want to apply.
-# This file is ignored by Git and is meant for operator-specific values.
-
-# Optional scope guards
-# PROFILE_TOPOLOGY={selected_topology}
-# PROFILE_ADAPTER={selected_adapter}
-
-# Common and dataspace domains
-# DOMAIN_BASE=example.org
-# DS_DOMAIN_BASE=ds.example.org
-
-# VM addresses or DNS names
-# VM_COMMON_IP=192.0.2.10
-# VM_PROVIDER_IP=192.0.2.20
-# VM_CONSUMER_IP=192.0.2.30
-# VM_COMPONENTS_IP=192.0.2.10
-# INGRESS_EXTERNAL_IP=192.0.2.10
-
-# vm-single address
-# VM_EXTERNAL_IP=192.0.2.10
-# VM_SINGLE_SSH_HOST=192.0.2.10
-
-# SSH metadata
-# VM_SSH_USER=operator
-# SSH_ACCESS_MODE=
-# SSH_BASTION_HOST=
-# SSH_BASTION_PORT=2222
-# SSH_BASTION_USER=
-# SSH_BASTION_IDENTITY_FILE=
-# VM_COMMON_SSH_HOST=
-# VM_COMMON_SSH_PORT=22
-# VM_COMMON_SSH_USER=
-# VM_PROVIDER_SSH_HOST=
-# VM_PROVIDER_SSH_PORT=22
-# VM_PROVIDER_SSH_USER=
-# VM_CONSUMER_SSH_HOST=
-# VM_CONSUMER_SSH_PORT=22
-# VM_CONSUMER_SSH_USER=
-
-# Kubeconfig paths as seen from the host running the framework
-# K3S_KUBECONFIG_COMMON=/etc/rancher/k3s/k3s.yaml
-# K3S_KUBECONFIG_PROVIDER=/etc/rancher/k3s/k3s.yaml
-# K3S_KUBECONFIG_CONSUMER=/etc/rancher/k3s/k3s.yaml
-# K3S_KUBECONFIG_COMPONENTS=/etc/rancher/k3s/k3s.yaml
-
-# Dataspace and connector inventory
-# DS_1_NAME=dataspace
-{connector_defaults}
-# LEVEL4_CONNECTOR_RECONCILIATION_MODE=full
-
-# Adapter-specific non-sensitive options can also be added here.
-# For example:
-# COMPONENTS=ontology-hub,ai-model-hub,semantic-virtualization
-# EDC_DASHBOARD_ENABLED=true
-"""
+    rendered = []
+    emitted = set()
+    for title, keys in sections:
+        for comment_line in str(title).splitlines():
+            rendered.append(f"# {comment_line}")
+        for key in keys:
+            if key in emitted:
+                continue
+            emitted.add(key)
+            rendered.append(f"{key}=")
+        rendered.append("")
+    if selected_adapter == "edc":
+        rendered.append("# EDC adapter options")
+        rendered.append("EDC_DASHBOARD_ENABLED=")
+        rendered.append("EDC_CONNECTOR_NAMES=")
+        rendered.append("")
+    return "\n".join(rendered).rstrip() + "\n"
 
 
-def _ensure_vm_distributed_profile_file(adapter_name="inesdata"):
-    profile_path = _vm_distributed_profile_path()
+def _ensure_environment_profile_file(profile_name=None, topology="vm-distributed", adapter_name="inesdata"):
+    profile_path = _environment_profile_path(profile_name)
     if os.path.isfile(profile_path):
         return {"status": "exists", "path": profile_path}
     os.makedirs(os.path.dirname(profile_path), exist_ok=True)
     with open(profile_path, "w", encoding="utf-8") as handle:
         handle.write(
             _vm_distributed_profile_template_content(
-                topology="vm-distributed",
+                topology=topology,
                 adapter_name=adapter_name,
             )
         )
     return {"status": "created", "path": profile_path}
+
+
+def _ensure_pionera_environment_profile_file(topology="vm-distributed", adapter_name="inesdata"):
+    return _ensure_environment_profile_file(
+        DEFAULT_ENVIRONMENT_PROFILE_NAME,
+        topology=topology,
+        adapter_name=adapter_name,
+    )
+
+
+def _ensure_vm_distributed_profile_file(adapter_name="inesdata"):
+    pionera_state = _ensure_pionera_environment_profile_file(
+        topology="vm-distributed",
+        adapter_name=adapter_name,
+    )
+    current_name = _environment_profile_name()
+    if current_name == DEFAULT_ENVIRONMENT_PROFILE_NAME:
+        return pionera_state
+    return _ensure_environment_profile_file(
+        current_name,
+        topology="vm-distributed",
+        adapter_name=adapter_name,
+    )
 
 
 def _load_vm_distributed_wizard_profile_suggestions(adapter_name=""):

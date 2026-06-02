@@ -4025,6 +4025,84 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(level5_env["KUBECONFIG"], "/clusters/components.yaml")
         self.assertEqual(level5_env["PIONERA_KUBECONFIG_ROLE"], "components")
 
+    def test_environment_profile_name_defaults_to_pionera(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(main._environment_profile_name(), "pionera")
+            self.assertEqual(main._environment_profile_path(), os.path.join(
+                main._environment_profiles_dir(),
+                "pionera.env",
+            ))
+
+    def test_vm_distributed_profile_template_uses_blank_variables_with_section_comments(self):
+        content = main._vm_distributed_profile_template_content(
+            topology="vm-distributed",
+            adapter_name="inesdata",
+        )
+
+        self.assertIn("# Local validation-environment profile.", content)
+        self.assertIn("# VM placement", content)
+        self.assertIn("# Dataspace and connector inventory", content)
+        self.assertIn("DOMAIN_BASE=\n", content)
+        self.assertIn("VM_COMMON_IP=\n", content)
+        self.assertIn("DS_1_CONNECTORS=\n", content)
+        self.assertNotIn("example.org", content)
+        for line in content.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            self.assertTrue(line.endswith("="), line)
+
+    def test_vm_distributed_profile_template_keys_are_supported_by_profile_loader(self):
+        keys = main._vm_distributed_profile_template_keys(
+            topology="vm-distributed",
+            adapter_name="inesdata",
+        )
+        values = {key: "x" for key in keys}
+
+        _grouped, rejected = main._split_configuration_profile_updates(
+            values,
+            topology="vm-distributed",
+            adapter_name="inesdata",
+        )
+
+        self.assertEqual(rejected, [])
+
+    def test_vm_distributed_profile_loader_ignores_blank_template_values(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_path = os.path.join(tmpdir, "profile.env")
+            with open(profile_path, "w", encoding="utf-8") as handle:
+                handle.write("DOMAIN_BASE=\nDS_1_NAME=pionera\nVM_COMMON_IP=\n")
+
+            values, errors = main._load_vm_distributed_profile(profile_path)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(values, {"DS_1_NAME": "pionera"})
+
+    def test_vm_distributed_profile_creation_creates_pionera_env_without_overwriting(self):
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            main,
+            "_framework_root_dir",
+            return_value=tmpdir,
+        ), mock.patch.dict(os.environ, {}, clear=True):
+            state = main._ensure_vm_distributed_profile_file(adapter_name="inesdata")
+            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
+
+            self.assertEqual(state["status"], "created")
+            self.assertEqual(state["path"], profile_path)
+            self.assertTrue(os.path.isfile(profile_path))
+            with open(profile_path, encoding="utf-8") as handle:
+                created_content = handle.read()
+            self.assertIn("# Common and dataspace domains", created_content)
+            self.assertIn("DOMAIN_BASE=\n", created_content)
+
+            with open(profile_path, "w", encoding="utf-8") as handle:
+                handle.write("DOMAIN_BASE=keep.example\n")
+            state = main._ensure_vm_distributed_profile_file(adapter_name="inesdata")
+            with open(profile_path, encoding="utf-8") as handle:
+                preserved_content = handle.read()
+
+        self.assertEqual(state["status"], "exists")
+        self.assertEqual(preserved_content, "DOMAIN_BASE=keep.example\n")
+
     def test_run_level_two_uses_vm_distributed_topology_deploy_infrastructure(self):
         adapter = FakeAdapterWithInfrastructure()
         adapter.infrastructure = mock.Mock()
@@ -4032,12 +4110,27 @@ class MainCliTests(unittest.TestCase):
             return_value={"status": "deployed", "mode": "vm-distributed"}
         )
 
-        with mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            main,
+            "_framework_root_dir",
+            return_value=tmpdir,
+        ), mock.patch.object(
+            main,
+            "_ensure_vm_distributed_local_kubeconfigs",
+            return_value={"status": "skipped"},
+        ), mock.patch.object(
+            main,
+            "_topology_runtime_environment_overrides",
+            return_value={},
+        ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
             result = main.run_level(adapter, 2, deployer_name="fake", topology="vm-distributed")
+            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
+            profile_created = os.path.isfile(profile_path)
 
         self.assertEqual(result["level"], 2)
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["result"]["mode"], "vm-distributed")
+        self.assertTrue(profile_created)
         adapter.infrastructure.deploy_infrastructure_for_topology.assert_called_once_with(topology="vm-distributed")
         self.assertEqual(adapter.calls, [])
 
