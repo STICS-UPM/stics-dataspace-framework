@@ -295,6 +295,20 @@ def apply_pionera_environment_overrides(config: dict[str, str]) -> dict[str, str
     return config
 
 
+def apply_topology_runtime_defaults(config: dict[str, str], topology: str | None = None) -> dict[str, str]:
+    """Fill runtime defaults that depend on the selected topology."""
+
+    normalized_topology = str(topology or "").strip().lower()
+    if normalized_topology not in {"vm-single", "vm-distributed"}:
+        return config
+
+    if not str(config.get("DATABASE_HOSTNAME") or "").strip():
+        common_namespace = str(config.get("COMMON_SERVICES_NAMESPACE") or "common-srvs").strip() or "common-srvs"
+        config["DATABASE_HOSTNAME"] = f"common-srvs-postgresql.{common_namespace}.svc"
+
+    return config
+
+
 def topology_overlay_config_path(path: str, topology: str | None = None) -> str:
     """Return the optional topology overlay path that accompanies a deployer.config file."""
 
@@ -368,6 +382,7 @@ def load_layered_deployer_config(
                 config[key] = value
     if apply_environment:
         apply_pionera_environment_overrides(config)
+    apply_topology_runtime_defaults(config, topology)
     return config
 
 

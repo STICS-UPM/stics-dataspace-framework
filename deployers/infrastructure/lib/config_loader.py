@@ -3,6 +3,7 @@
 from deployers.shared.lib.config_loader import (
     INFRASTRUCTURE_MANAGED_KEYS,
     apply_pionera_environment_overrides,
+    apply_topology_runtime_defaults,
     detect_topology_key_migration_warnings,
     iter_dataspace_slots,
     load_deployer_config,
@@ -14,6 +15,7 @@ from deployers.shared.lib.config_loader import (
 __all__ = [
     "INFRASTRUCTURE_MANAGED_KEYS",
     "apply_pionera_environment_overrides",
+    "apply_topology_runtime_defaults",
     "detect_topology_key_migration_warnings",
     "iter_dataspace_slots",
     "load_deployer_config",

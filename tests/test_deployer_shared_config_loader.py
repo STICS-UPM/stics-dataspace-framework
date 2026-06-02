@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from deployers.shared.lib.config_loader import (
     TOPOLOGY_KEY_TARGETS,
     TOPOLOGY_OVERLAY_KEYS,
+    apply_topology_runtime_defaults,
     detect_topology_key_migration_warnings,
     INFRASTRUCTURE_MANAGED_KEYS,
     iter_dataspace_slots,
@@ -19,6 +20,42 @@ from deployers.shared.lib.config_loader import (
 
 
 class SharedConfigLoaderTests(unittest.TestCase):
+    def test_vm_distributed_runtime_defaults_infer_database_hostname(self):
+        config = apply_topology_runtime_defaults(
+            {
+                "DATABASE_HOSTNAME": "",
+                "COMMON_SERVICES_NAMESPACE": "shared-foundation",
+            },
+            "vm-distributed",
+        )
+
+        self.assertEqual(
+            config["DATABASE_HOSTNAME"],
+            "common-srvs-postgresql.shared-foundation.svc",
+        )
+
+    def test_vm_runtime_defaults_keep_explicit_database_hostname(self):
+        config = apply_topology_runtime_defaults(
+            {
+                "DATABASE_HOSTNAME": "postgresql.example.internal",
+                "COMMON_SERVICES_NAMESPACE": "shared-foundation",
+            },
+            "vm-single",
+        )
+
+        self.assertEqual(config["DATABASE_HOSTNAME"], "postgresql.example.internal")
+
+    def test_local_runtime_defaults_do_not_infer_database_hostname(self):
+        config = apply_topology_runtime_defaults(
+            {
+                "DATABASE_HOSTNAME": "",
+                "COMMON_SERVICES_NAMESPACE": "shared-foundation",
+            },
+            "local",
+        )
+
+        self.assertEqual(config["DATABASE_HOSTNAME"], "")
+
     def test_infrastructure_base_config_files_do_not_include_topology_keys(self):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         for relative_path in ("deployers/infrastructure/deployer.config.example",):
