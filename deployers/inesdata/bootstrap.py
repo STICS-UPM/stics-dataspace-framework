@@ -674,6 +674,12 @@ def connector_participant_urls(config, connector, dataspace, environment):
         base = f"https://{connector}-{dataspace}.ds.dataspaceunit-project.eu"
         return f"{base}/protocol", f"{base}/shared"
 
+    public_urls = build_connector_public_access_urls(connector, dataspace, environment, config)
+    public_protocol = public_urls.get("connector_protocol_api")
+    public_shared = public_urls.get("connector_shared_api")
+    if public_protocol and public_shared:
+        return public_protocol, public_shared
+
     urls = build_connector_access_urls(connector, dataspace, environment, config)
     return urls["connector_protocol_api"], urls["connector_shared_api"]
 
@@ -694,6 +700,7 @@ def register_connector_database(pg_user, pg_password, pg_host, pg_port, database
         dataspace,
         environment,
     )
+    cur.execute(f"DELETE FROM public.edc_participant WHERE participant_id = '{connector}';")
     cur.execute(f"INSERT INTO public.edc_participant (participant_id,url,created_at,shared_url) VALUES ('{connector}','{conn_protocol}',EXTRACT(EPOCH FROM NOW())::BIGINT,'{conn_shared}');")
     cur.close()
     conn.close()

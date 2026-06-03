@@ -86,6 +86,44 @@ class InesdataBootstrapDatabaseTests(unittest.TestCase):
         self.assertEqual(urls["keycloak_realm"], "https://org4.pionera.oeg.fi.upm.es/auth/realms/pionera")
         self.assertEqual(urls["minio_console"], "https://org4.pionera.oeg.fi.upm.es/s3-console/")
 
+    def test_connector_participant_urls_use_vm_single_public_root_path_routes(self):
+        protocol_url, shared_url = bootstrap.connector_participant_urls(
+            {
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+            },
+            "conn-org2-pionera",
+            "pionera",
+            "DEV",
+        )
+
+        self.assertEqual(
+            protocol_url,
+            "https://org4.pionera.oeg.fi.upm.es/c/org2/protocol",
+        )
+        self.assertEqual(
+            shared_url,
+            "https://org4.pionera.oeg.fi.upm.es/c/org2/shared",
+        )
+
+    def test_connector_participant_urls_use_vm_distributed_public_routes(self):
+        protocol_url, shared_url = bootstrap.connector_participant_urls(
+            {
+                "TOPOLOGY": "vm-distributed",
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "VM_PROVIDER_CONNECTORS": "org2",
+            },
+            "conn-org2-pionera",
+            "pionera",
+            "DEV",
+        )
+
+        self.assertEqual(protocol_url, "https://org2.pionera.oeg.fi.upm.es/protocol")
+        self.assertEqual(shared_url, "https://org2.pionera.oeg.fi.upm.es/shared")
+
     def test_connector_participant_urls_keep_production_pattern(self):
         protocol_url, shared_url = bootstrap.connector_participant_urls(
             {},
@@ -281,9 +319,45 @@ class InesdataBootstrapDatabaseTests(unittest.TestCase):
             )
 
         rendered_queries = "\n".join(query_text(query) for query, _params in cursor.executed)
+        self.assertIn("DELETE FROM public.edc_participant", rendered_queries)
         self.assertIn("http://conn-citycouncil-pionera.dev.ds.dataspaceunit.upm/protocol", rendered_queries)
         self.assertIn("http://conn-citycouncil-pionera.dev.ds.dataspaceunit.upm/shared", rendered_queries)
         self.assertNotIn("http://conn-citycouncil-pionera:19194/protocol", rendered_queries)
+        self.assertTrue(cursor.closed)
+        self.assertTrue(connection.closed)
+
+    def test_register_connector_database_reconciles_vm_single_public_participant_urls(self):
+        cursor = FakeCursor(fetch_results=[])
+        connection = FakeConnection(cursor)
+
+        with (
+            mock.patch("deployers.inesdata.bootstrap.psycopg2.connect", return_value=connection),
+            mock.patch(
+                "deployers.inesdata.bootstrap.load_effective_deployer_config",
+                return_value={
+                    "TOPOLOGY": "vm-single",
+                    "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                    "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                    "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                },
+            ),
+        ):
+            bootstrap.register_connector_database(
+                "postgres",
+                "secret",
+                "localhost",
+                "5432",
+                "pionera_rs",
+                "conn-org2-pionera",
+                "pionera",
+                "DEV",
+            )
+
+        rendered_queries = "\n".join(query_text(query) for query, _params in cursor.executed)
+        self.assertIn("DELETE FROM public.edc_participant", rendered_queries)
+        self.assertIn("https://org4.pionera.oeg.fi.upm.es/c/org2/protocol", rendered_queries)
+        self.assertIn("https://org4.pionera.oeg.fi.upm.es/c/org2/shared", rendered_queries)
+        self.assertNotIn("http://conn-org2-pionera.pionera.oeg.fi.upm.es/protocol", rendered_queries)
         self.assertTrue(cursor.closed)
         self.assertTrue(connection.closed)
 
