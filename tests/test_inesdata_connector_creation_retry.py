@@ -1596,6 +1596,39 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                 "http://127.0.0.1:18081/realms/master/protocol/openid-connect/token",
             )
 
+    def test_local_keycloak_readiness_prefers_internal_url_over_public_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = ConnectorRetryConfigAdapter(tmpdir)
+            config_adapter.load_deployer_config = lambda: {
+                "KEYCLOAK_FRONTEND_URL": "https://org1.dev.ed.dataspaceunit.upm/auth",
+                "KEYCLOAK_PUBLIC_URL": "https://org1.dev.ed.dataspaceunit.upm/auth",
+                "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+                "KC_URL": "http://admin.auth.dev.ed.dataspaceunit.upm",
+                "KC_USER": "admin",
+                "KC_PASSWORD": "secret",
+            }
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+
+            with mock.patch(
+                "adapters.inesdata.connectors.requests.post",
+                return_value=mock.Mock(status_code=200, json=lambda: {"access_token": "token"}),
+            ) as mocked_post:
+                self.assertTrue(adapter.wait_for_keycloak_admin_ready(timeout=0.01, poll_interval=0))
+
+            mocked_post.assert_called_once()
+            self.assertEqual(
+                mocked_post.call_args.args[0],
+                "http://auth.dev.ed.dataspaceunit.upm/realms/master/protocol/openid-connect/token",
+            )
+
     def test_keycloak_readiness_infers_vm_single_public_auth_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorRetryConfig(tmpdir)

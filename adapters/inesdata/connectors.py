@@ -1015,21 +1015,31 @@ class INESDataConnectorsAdapter:
             return str(override_url).strip().rstrip("/")
 
         deployer_config = self.config_adapter.load_deployer_config() or {}
-        public_urls = resolve_vm_distributed_public_urls(
-            {
-                **dict(deployer_config or {}),
-                "TOPOLOGY": self._normalized_topology(),
-            }
-        )
-        keycloak_url = str(
-            deployer_config.get("KC_MANAGEMENT_URL")
-            or deployer_config.get("KEYCLOAK_FRONTEND_URL")
-            or deployer_config.get("KEYCLOAK_PUBLIC_URL")
-            or public_urls.get("KEYCLOAK_FRONTEND_URL")
-            or public_urls.get("KEYCLOAK_PUBLIC_URL")
-            or deployer_config.get("KC_URL")
-            or ""
-        ).strip()
+        topology = self._normalized_topology()
+        public_urls = {}
+        if topology in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
+            public_urls = resolve_vm_distributed_public_urls(
+                {
+                    **dict(deployer_config or {}),
+                    "TOPOLOGY": topology,
+                }
+            )
+            candidates = (
+                deployer_config.get("KC_MANAGEMENT_URL"),
+                deployer_config.get("KEYCLOAK_FRONTEND_URL"),
+                deployer_config.get("KEYCLOAK_PUBLIC_URL"),
+                public_urls.get("KEYCLOAK_FRONTEND_URL"),
+                public_urls.get("KEYCLOAK_PUBLIC_URL"),
+                deployer_config.get("KC_INTERNAL_URL"),
+                deployer_config.get("KC_URL"),
+            )
+        else:
+            candidates = (
+                deployer_config.get("KC_MANAGEMENT_URL"),
+                deployer_config.get("KC_INTERNAL_URL"),
+                deployer_config.get("KC_URL"),
+            )
+        keycloak_url = str(next((value for value in candidates if str(value or "").strip()), "")).strip()
         if keycloak_url and not keycloak_url.startswith("http"):
             keycloak_url = f"http://{keycloak_url}"
         return keycloak_url.rstrip("/")
