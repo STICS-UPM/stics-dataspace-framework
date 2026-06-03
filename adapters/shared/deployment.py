@@ -1,4 +1,4 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import ipaddress
 import json
 import os
@@ -484,7 +484,8 @@ class SharedDataspaceDeploymentAdapter:
             return sock.getsockname()[1]
 
     def _start_level3_postgres_access(self, topology):
-        if normalize_topology(topology) != VM_DISTRIBUTED_TOPOLOGY:
+        normalized_topology = normalize_topology(topology)
+        if normalized_topology not in {LOCAL_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
             return {"pg_host": None, "pg_port": None, "port_forward": None}
 
         port_forward_service = getattr(self.infrastructure, "port_forward_service", None)
@@ -508,7 +509,13 @@ class SharedDataspaceDeploymentAdapter:
             remote_port = 5432
 
         local_port = self._reserve_local_port()
-        with self._temporary_kubeconfig_role("common"):
+        kubeconfig_role = "common" if normalized_topology == VM_DISTRIBUTED_TOPOLOGY else None
+        kubeconfig_context = (
+            self._temporary_kubeconfig_role(kubeconfig_role)
+            if kubeconfig_role
+            else nullcontext()
+        )
+        with kubeconfig_context:
             opened = port_forward_service(namespace, pattern, local_port, remote_port, quiet=True)
 
         if not opened:
@@ -530,7 +537,7 @@ class SharedDataspaceDeploymentAdapter:
             "port_forward": {
                 "namespace": namespace,
                 "pattern": pattern,
-                "kubeconfig_role": "common",
+                "kubeconfig_role": kubeconfig_role,
             },
         }
 
@@ -543,7 +550,13 @@ class SharedDataspaceDeploymentAdapter:
         if not callable(stop_port_forward_service):
             return
 
-        with self._temporary_kubeconfig_role(port_forward.get("kubeconfig_role") or "common"):
+        kubeconfig_role = port_forward.get("kubeconfig_role")
+        kubeconfig_context = (
+            self._temporary_kubeconfig_role(kubeconfig_role)
+            if kubeconfig_role
+            else nullcontext()
+        )
+        with kubeconfig_context:
             stop_port_forward_service(
                 port_forward["namespace"],
                 port_forward["pattern"],
