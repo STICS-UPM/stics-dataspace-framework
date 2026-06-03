@@ -41,7 +41,7 @@ El menú y los comandos comparten el mismo modelo de ejecución por niveles.
 | --- | --- | --- |
 | `local` | Ruta estable de desarrollo y validación local | Validación diaria, depuración y reproducción controlada |
 | `vm-single` | Ruta operativa sobre una VM con Kubernetes gestionado | Validación final en entorno tipo VM y smoke de integración |
-| `vm-distributed` | Modelo documentado para alinear con `main`; requiere cierre operativo específico | Evolución hacia validación distribuida con roles físicos separados |
+| `vm-distributed` | Ruta distribuida parametrizable con roles físicos separados | Validación de entornos con servicios comunes, conectores y componentes en VMs distintas |
 
 ## Adapters
 
@@ -133,7 +133,7 @@ La guía específica está en
 
 Para entender el framework actual, la ruta recomendada es:
 
-1. [README](./README.md)
+1. [README de documentación](./README.md)
 2. [Inicio rápido](./32_getting_started.md)
 3. [Arquitectura](./34_architecture.md)
 4. [Deployers y topologías](./35_deployers_and_topologies.md)

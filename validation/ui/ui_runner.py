@@ -8,6 +8,16 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from deployers.infrastructure.lib.contracts import DeploymentContext, ValidationProfile
+from deployers.infrastructure.lib.topology import (
+    LOCAL_TOPOLOGY,
+    VM_DISTRIBUTED_TOPOLOGY,
+    VM_SINGLE_TOPOLOGY,
+    normalize_topology,
+)
+from deployers.shared.lib.vm_distributed_public_access import (
+    is_vm_public_placeholder_url,
+    resolve_vm_distributed_public_urls,
+)
 from validation.components.artifact_cleanup import cleanup_empty_experiment_artifact_dirs
 
 
@@ -68,6 +78,130 @@ def _force_url_scheme(base_url: str | None, scheme: str) -> str:
     if not parsed.netloc:
         return ""
     return urlunsplit((scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+
+
+def _first_non_empty(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _hostname_from_url_or_raw(value: Any) -> str:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return ""
+    parsed = urlsplit(raw_value if "://" in raw_value else f"http://{raw_value}")
+    return (parsed.hostname or raw_value.split("/", 1)[0]).strip()
+
+
+def _infer_local_common_domain(config: dict[str, Any], fallback_domain: str | None = None) -> str:
+    explicit_domain = _hostname_from_url_or_raw(
+        _first_non_empty(config.get("DOMAIN_BASE"), config.get("COMMON_DOMAIN_BASE"))
+    )
+    if explicit_domain:
+        return explicit_domain
+
+    for key in (
+        "MINIO_CONSOLE_HOSTNAME",
+        "MINIO_HOSTNAME",
+        "KEYCLOAK_HOSTNAME",
+        "KEYCLOAK_ADMIN_HOSTNAME",
+        "KC_INTERNAL_URL",
+        "KC_URL",
+        "KEYCLOAK_FRONTEND_URL",
+        "KEYCLOAK_PUBLIC_URL",
+    ):
+        hostname = _hostname_from_url_or_raw(config.get(key))
+        if not hostname:
+            continue
+        for prefix in ("console.minio-s3.", "minio.", "admin.auth.", "keycloak.", "auth.", "org1."):
+            if hostname.startswith(prefix):
+                return hostname[len(prefix) :]
+    return str(fallback_domain or "").strip()
+
+
+def _local_common_service_url(
+    config: dict[str, Any],
+    *,
+    hostname_key: str,
+    default_prefix: str,
+    fallback_domain: str | None = None,
+) -> str:
+    hostname = _hostname_from_url_or_raw(config.get(hostname_key))
+    if not hostname:
+        domain = _infer_local_common_domain(config, fallback_domain=fallback_domain)
+        if not domain:
+            return ""
+        hostname = f"{default_prefix}.{domain}"
+    return _force_url_scheme(hostname, "http")
+
+
+def _topology_public_urls(config: dict[str, Any], topology: str) -> dict[str, str]:
+    if topology not in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
+        return {}
+    values = {str(key): str(value) for key, value in (config or {}).items()}
+    values["TOPOLOGY"] = topology
+    return resolve_vm_distributed_public_urls(values)
+
+
+def _resolve_ui_keycloak_url(config: dict[str, Any], topology: str, fallback_domain: str | None = None) -> str:
+    public_urls = _topology_public_urls(config, topology)
+    if public_urls:
+        public_keycloak_url = _first_non_empty(
+            public_urls.get("KEYCLOAK_FRONTEND_URL"),
+            public_urls.get("KEYCLOAK_PUBLIC_URL"),
+        )
+        if public_keycloak_url:
+            return public_keycloak_url.rstrip("/")
+
+    if topology == LOCAL_TOPOLOGY:
+        explicit_public_url = _first_non_empty(config.get("KEYCLOAK_FRONTEND_URL"), config.get("KEYCLOAK_PUBLIC_URL"))
+        if explicit_public_url and not is_vm_public_placeholder_url(explicit_public_url):
+            return explicit_public_url.rstrip("/")
+
+        local_keycloak_url = _local_common_service_url(
+            config,
+            hostname_key="KEYCLOAK_HOSTNAME",
+            default_prefix="auth",
+            fallback_domain=fallback_domain,
+        )
+        if local_keycloak_url:
+            return local_keycloak_url
+        return _first_non_empty(
+            config.get("KC_INTERNAL_URL"),
+            config.get("KC_URL"),
+            os.environ.get("UI_KEYCLOAK_URL"),
+        ).rstrip("/")
+
+    return _first_non_empty(
+        config.get("KEYCLOAK_FRONTEND_URL"),
+        config.get("KEYCLOAK_PUBLIC_URL"),
+        config.get("KC_INTERNAL_URL"),
+        config.get("KC_URL"),
+        os.environ.get("UI_KEYCLOAK_URL"),
+    ).rstrip("/")
+
+
+def _resolve_ui_minio_console_url(config: dict[str, Any], topology: str, fallback_domain: str | None = None) -> str:
+    public_urls = _topology_public_urls(config, topology)
+    if public_urls.get("MINIO_CONSOLE_PUBLIC_URL"):
+        return public_urls["MINIO_CONSOLE_PUBLIC_URL"].rstrip("/")
+
+    if topology == LOCAL_TOPOLOGY:
+        return _local_common_service_url(
+            config,
+            hostname_key="MINIO_CONSOLE_HOSTNAME",
+            default_prefix="console.minio-s3",
+            fallback_domain=fallback_domain,
+        )
+
+    return _first_non_empty(
+        config.get("MINIO_CONSOLE_PUBLIC_URL"),
+        config.get("MINIO_PUBLIC_URL"),
+        os.environ.get("UI_MINIO_CONSOLE_URL"),
+    ).rstrip("/")
 
 
 def _model_server_connector_base_url(config: dict[str, Any], topology: str | None = None) -> str:
@@ -133,21 +267,20 @@ def _build_playwright_environment(
     env = dict(os.environ)
     config = dict(context.config or {})
     adapter = profile.adapter or context.deployer or "unknown"
-    keycloak_url = str(
-        config.get("KEYCLOAK_FRONTEND_URL")
-        or config.get("KEYCLOAK_PUBLIC_URL")
-        or config.get("KC_INTERNAL_URL")
-        or config.get("KC_URL")
-        or env.get("UI_KEYCLOAK_URL")
-        or ""
-    ).strip()
+    topology = normalize_topology(context.topology or config.get("TOPOLOGY"))
+    fallback_domain = _first_non_empty(config.get("DOMAIN_BASE"), context.ds_domain_base)
+    keycloak_url = _resolve_ui_keycloak_url(config, topology, fallback_domain=fallback_domain)
+    minio_console_url = _resolve_ui_minio_console_url(config, topology, fallback_domain=fallback_domain)
 
     env["UI_ADAPTER"] = adapter
     env["UI_DATASPACE"] = context.dataspace_name
     env["UI_ENVIRONMENT"] = context.environment
     env["UI_DS_DOMAIN"] = context.ds_domain_base
-    env["UI_TOPOLOGY"] = context.topology
+    env["UI_DOMAIN_BASE"] = str(config.get("DOMAIN_BASE") or "").strip()
+    env["UI_TOPOLOGY"] = topology
     env["UI_KEYCLOAK_URL"] = keycloak_url
+    if minio_console_url:
+        env["UI_MINIO_CONSOLE_URL"] = minio_console_url
     runtime_dir = str(getattr(context, "runtime_dir", "") or "").strip()
     if runtime_dir:
         env["UI_RUNTIME_DIR"] = runtime_dir

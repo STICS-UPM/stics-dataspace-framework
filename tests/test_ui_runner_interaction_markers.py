@@ -111,6 +111,62 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
             env = subprocess_run.call_args.kwargs["env"]
             self.assertEqual(env["UI_KEYCLOAK_URL"], "https://org1.example.test/auth")
 
+    def test_playwright_validation_exports_local_minio_console_url_from_local_hostname(self):
+        context = self._context()
+        context.config.update(
+            {
+                "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+                "MINIO_CONSOLE_HOSTNAME": "console.minio-s3.dev.ed.dataspaceunit.upm",
+                "MINIO_CONSOLE_PUBLIC_URL": "https://org1.dev.ed.dataspaceunit.upm/s3-console",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            ui_runner.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0),
+        ) as subprocess_run:
+            ui_runner.run_playwright_validation(
+                profile=self._profile(),
+                context=context,
+                experiment_dir=tmpdir,
+            )
+
+            env = subprocess_run.call_args.kwargs["env"]
+            self.assertEqual(
+                env["UI_MINIO_CONSOLE_URL"],
+                "http://console.minio-s3.dev.ed.dataspaceunit.upm",
+            )
+            self.assertNotIn("org1", env["UI_MINIO_CONSOLE_URL"])
+
+    def test_playwright_validation_exports_vm_single_public_keycloak_and_minio_urls(self):
+        context = self._context()
+        context.topology = "vm-single"
+        context.config.update(
+            {
+                "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.dev.ed.dataspaceunit.upm/auth",
+                "MINIO_CONSOLE_PUBLIC_URL": "https://console.minio-s3.dev.ed.dataspaceunit.upm",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            ui_runner.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0),
+        ) as subprocess_run:
+            ui_runner.run_playwright_validation(
+                profile=self._profile(),
+                context=context,
+                experiment_dir=tmpdir,
+            )
+
+            env = subprocess_run.call_args.kwargs["env"]
+            self.assertEqual(env["UI_TOPOLOGY"], "vm-single")
+            self.assertEqual(env["UI_KEYCLOAK_URL"], "https://org4.pionera.oeg.fi.upm.es/auth")
+            self.assertEqual(env["UI_MINIO_CONSOLE_URL"], "https://org4.pionera.oeg.fi.upm.es/s3-console")
+
     def test_playwright_validation_exports_active_runtime_dir(self):
         context = self._context()
         context.topology = "vm-single"

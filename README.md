@@ -59,12 +59,16 @@ vm-single
 vm-distributed
 ```
 
-`local` es la ruta de despliegue normal y usa Minikube. `vm-single` ya dispone
-de ejecución real para la ruta base del dataspace en `inesdata` y `edc`, y usa
-el mismo modelo `role-aligned` de namespaces. `vm-distributed` sigue formando
-parte del contexto del deployer y de la planificación de hosts; el menú incluye
-un asistente para preparar sus `.config` locales, aunque la ejecución completa de
-la topología se mantiene como evolución controlada.
+`local` es la ruta de desarrollo y validación en la máquina operadora.
+`vm-single` despliega el entorno en una VM con Kubernetes gestionado por el
+framework. `vm-distributed` separa servicios comunes, conectores y componentes
+por roles de infraestructura y se configura mediante perfiles locales,
+preflight SSH/HTTP/Kubernetes y URLs públicas parametrizables.
+
+Las tres topologías comparten el mismo modelo de niveles, adapters y namespaces
+funcionales. Los valores reales de dominio, IP, SSH, kubeconfig y credenciales
+permanecen en ficheros locales ignorados por Git o en variables de entorno, no
+en la documentación versionada.
 
 ## Inicio Rápido
 

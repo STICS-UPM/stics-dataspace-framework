@@ -20,15 +20,22 @@ vm3    tres máquinas virtuales
 
 ## Comportamiento Actual
 
-`local` es la topología por defecto y la ruta soportada para despliegue normal.
+`local` es la topología por defecto para desarrollo y validación en la máquina
+operadora.
 
-`vm-single` y `vm-distributed` ya forman parte del contexto del deployer y de
-la planificación de `hosts`. `vm-single` dispone de ejecución real para la ruta
-base del dataspace. `vm-distributed` debe alinearse con la rama `main` antes de
-considerarse una ruta operativa cerrada: no debe introducir namespaces propios
-ni convenciones distintas a las que usan `local` y `vm-single`.
+`vm-single` despliega el entorno en una VM con Kubernetes gestionado por el
+framework. Es útil para validar una instalación completa sin separar servicios
+por máquinas.
 
-Esta protección evita ejecutar suposiciones locales contra un entorno VM allí donde la topología todavía no está cerrada.
+`vm-distributed` separa roles de infraestructura: servicios comunes,
+conectores, componentes y, cuando aplica, observabilidad. La topología se
+configura mediante overlays locales o perfiles ignorados por Git. Antes de
+ejecutar niveles, el framework debe validar SSH, kubeconfig, HTTP e Ingress con
+preflights.
+
+Las tres topologías deben compartir namespaces funcionales, contratos de
+adapter y resolución de URLs por topología. Esta regla evita contaminar una
+topología con dominios, credenciales o artefactos generados por otra.
 
 ## Convención de Nombres
 

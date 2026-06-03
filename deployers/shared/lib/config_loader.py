@@ -389,6 +389,8 @@ def apply_topology_runtime_defaults(
         config["VAULT_URL"] = vault_service_url
 
     normalized_topology = str(topology or "").strip().lower()
+    if normalized_topology:
+        config["TOPOLOGY"] = normalized_topology
     if normalized_topology not in {"vm-single", "vm-distributed"}:
         return config
 

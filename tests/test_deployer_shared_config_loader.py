@@ -106,6 +106,39 @@ class SharedConfigLoaderTests(unittest.TestCase):
 
         self.assertEqual(config["VT_URL"], "http://common-srvs-vault.shared-foundation.svc:8200")
 
+    def test_load_layered_deployer_config_stamps_active_topology(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = os.path.join(tmpdir, "deployer.config")
+            topology_dir = os.path.join(tmpdir, "topologies")
+            os.makedirs(topology_dir, exist_ok=True)
+            with open(config_path, "w", encoding="utf-8") as handle:
+                handle.write("TOPOLOGY=local\nDOMAIN_BASE=dev.ed.dataspaceunit.upm\n")
+            with open(os.path.join(topology_dir, "vm-single.config"), "w", encoding="utf-8") as handle:
+                handle.write("VM_SINGLE_HTTP_URL=https://org4.pionera.oeg.fi.upm.es\n")
+
+            config = load_layered_deployer_config([config_path], topology="vm-single")
+
+        self.assertEqual(config["TOPOLOGY"], "vm-single")
+        self.assertEqual(config["VM_SINGLE_HTTP_URL"], "https://org4.pionera.oeg.fi.upm.es")
+
+    def test_load_layered_deployer_config_active_topology_overrides_environment_topology(self):
+        previous = os.environ.get("PIONERA_TOPOLOGY")
+        os.environ["PIONERA_TOPOLOGY"] = "local"
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                config_path = os.path.join(tmpdir, "deployer.config")
+                with open(config_path, "w", encoding="utf-8") as handle:
+                    handle.write("DOMAIN_BASE=dev.ed.dataspaceunit.upm\n")
+
+                config = load_layered_deployer_config([config_path], topology="vm-single")
+        finally:
+            if previous is None:
+                os.environ.pop("PIONERA_TOPOLOGY", None)
+            else:
+                os.environ["PIONERA_TOPOLOGY"] = previous
+
+        self.assertEqual(config["TOPOLOGY"], "vm-single")
+
     def test_load_layered_deployer_config_keeps_environment_vault_override(self):
         previous = os.environ.get("PIONERA_VT_URL")
         os.environ["PIONERA_VT_URL"] = "http://127.0.0.1:59491"
