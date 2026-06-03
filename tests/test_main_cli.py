@@ -2078,6 +2078,27 @@ class MainCliTests(unittest.TestCase):
 
         self.assertEqual(validation_engine.ds_name, "demoedc")
 
+    def test_build_validation_engine_uses_deployer_context_public_runtime(self):
+        adapter = FakeAdapter()
+        context = types.SimpleNamespace(
+            topology="vm-single",
+            ds_domain_base="pionera.oeg.fi.upm.es",
+            config={
+                "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+                "MINIO_API_PUBLIC_URL": "http://minio.dev.ed.dataspaceunit.upm",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+            },
+        )
+
+        validation_engine = main.build_validation_engine(
+            adapter,
+            deployer_context=context,
+        )
+        env_vars = validation_engine.build_newman_env("conn-a", "conn-b")
+
+        self.assertEqual(env_vars["keycloakUrl"], "https://org4.pionera.oeg.fi.upm.es/auth")
+        self.assertEqual(env_vars["dsDomain"], "pionera.oeg.fi.upm.es")
+
     def test_list_command_rejects_extra_argument(self):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as exc:
@@ -7503,6 +7524,62 @@ class MainCliTests(unittest.TestCase):
         adapter.infrastructure.ensure_local_infra_access.assert_not_called()
         cleanup_runner.assert_called_once()
 
+    def test_test_data_cleanup_resolves_vm_single_public_runtime(self):
+        adapter = FakeAdapterWithInfrastructure()
+        adapter.infrastructure = types.SimpleNamespace(
+            ensure_local_infra_access=mock.Mock(return_value=False)
+        )
+
+        with mock.patch.object(
+            main,
+            "run_pre_validation_cleanup",
+            return_value={"status": "completed", "summary": {"deleted_total": 1}},
+        ) as cleanup_runner, mock.patch.dict(
+            os.environ,
+            {"PIONERA_TEST_DATA_CLEANUP": "true"},
+            clear=False,
+        ):
+            result = main._run_test_data_cleanup_if_enabled(
+                adapter,
+                ["conn-org2-pionera"],
+                {
+                    "topology": "vm-single",
+                    "dataspace_name": "pionera",
+                    "ds_domain_base": "dev.ed.dataspaceunit.upm",
+                    "config": {
+                        "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+                        "KEYCLOAK_FRONTEND_URL": "https://org1.dev.ed.dataspaceunit.upm/auth",
+                        "MINIO_API_PUBLIC_URL": "http://minio.dev.ed.dataspaceunit.upm",
+                        "MINIO_CONSOLE_PUBLIC_URL": "https://console.minio-s3.dev.ed.dataspaceunit.upm",
+                        "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                    },
+                },
+                "/tmp/cleanup-vm-single",
+            )
+
+        self.assertEqual(result["status"], "completed")
+        cleanup_context = cleanup_runner.call_args.kwargs["context"]
+        self.assertEqual(
+            cleanup_context.config["KEYCLOAK_FRONTEND_URL"],
+            "https://org4.pionera.oeg.fi.upm.es/auth",
+        )
+        self.assertEqual(
+            cleanup_context.config["KEYCLOAK_PUBLIC_URL"],
+            "https://org4.pionera.oeg.fi.upm.es/auth",
+        )
+        self.assertEqual(
+            cleanup_context.config["MINIO_API_PUBLIC_URL"],
+            "https://org4.pionera.oeg.fi.upm.es",
+        )
+        self.assertEqual(
+            cleanup_context.config["MINIO_CONSOLE_PUBLIC_URL"],
+            "https://org4.pionera.oeg.fi.upm.es/s3-console",
+        )
+        self.assertNotEqual(
+            cleanup_context.config["KEYCLOAK_FRONTEND_URL"],
+            "https://org1.dev.ed.dataspaceunit.upm/auth",
+        )
+
     def test_test_data_cleanup_requires_local_infra_access_for_vm_single_loopback_endpoints(self):
         adapter = FakeAdapterWithInfrastructure()
         adapter.infrastructure = types.SimpleNamespace(
@@ -7611,6 +7688,58 @@ class MainCliTests(unittest.TestCase):
         self.assertNotIn("http://auth.pionera.oeg.fi.upm.es", urls)
         self.assertNotIn("http://registration-service-pionera.pionera.oeg.fi.upm.es", urls)
         self.assertEqual(preflight.call_args.kwargs["tls_verify"], "auto")
+
+    def test_level6_public_endpoint_preflight_uses_vm_single_public_paths(self):
+        class PublicConnectors(FakeConnectors):
+            @staticmethod
+            def connector_base_url(connector):
+                return {
+                    "conn-org2-pionera": "https://org4.pionera.oeg.fi.upm.es/c/org2",
+                    "conn-org3-pionera": "https://org4.pionera.oeg.fi.upm.es/c/org3",
+                }[connector]
+
+        adapter = FakeAdapterWithInfrastructure()
+        adapter.connectors = PublicConnectors()
+        context = types.SimpleNamespace(
+            topology="vm-single",
+            dataspace_name="pionera",
+            ds_domain_base="dev.ed.dataspaceunit.upm",
+            config={
+                "KC_URL": "http://admin.auth.dev.ed.dataspaceunit.upm",
+                "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.dev.ed.dataspaceunit.upm/auth",
+                "MINIO_HOSTNAME": "minio.dev.ed.dataspaceunit.upm",
+                "MINIO_API_PUBLIC_URL": "http://minio.dev.ed.dataspaceunit.upm",
+                "MINIO_CONSOLE_PUBLIC_URL": "https://console.minio-s3.dev.ed.dataspaceunit.upm",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+            },
+        )
+
+        with mock.patch.object(
+            main,
+            "ensure_public_endpoints_accessible",
+            return_value={"status": "passed", "checked": []},
+        ) as preflight:
+            result = main._ensure_level6_public_endpoint_access(
+                adapter,
+                ["conn-org2-pionera", "conn-org3-pionera"],
+                context,
+            )
+
+        self.assertEqual(result["status"], "passed")
+        endpoints = preflight.call_args.args[0]
+        urls = {endpoint["url"] for endpoint in endpoints}
+        self.assertIn("https://org4.pionera.oeg.fi.upm.es/auth", urls)
+        self.assertIn("https://org4.pionera.oeg.fi.upm.es/s3-console", urls)
+        self.assertIn("https://org4.pionera.oeg.fi.upm.es", urls)
+        self.assertIn("https://org4.pionera.oeg.fi.upm.es/c/org2", urls)
+        self.assertIn("https://org4.pionera.oeg.fi.upm.es/c/org3", urls)
+        self.assertNotIn("http://auth.dev.ed.dataspaceunit.upm", urls)
+        self.assertNotIn("http://admin.auth.dev.ed.dataspaceunit.upm", urls)
+        self.assertNotIn("https://org1.dev.ed.dataspaceunit.upm/auth", urls)
+        self.assertNotIn("http://minio.dev.ed.dataspaceunit.upm", urls)
+        self.assertNotIn("https://console.minio-s3.dev.ed.dataspaceunit.upm", urls)
+        self.assertNotIn("http://registration-service-pionera.dev.ed.dataspaceunit.upm", urls)
 
     def test_cleanup_failure_hint_explains_local_artifact_credential_mismatch(self):
         cleanup_result = {
@@ -8527,6 +8656,33 @@ class MainCliTests(unittest.TestCase):
         self.assertIs(
             suite.protocol_address_resolver.__func__,
             adapter.connectors.build_protocol_address.__func__,
+        )
+
+    def test_build_kafka_edc_validation_suite_uses_deployer_context_public_keycloak_url(self):
+        adapter = FakeAdapter()
+        context = DeploymentContext(
+            deployer="inesdata",
+            topology="vm-single",
+            environment="DEV",
+            dataspace_name="pionera",
+            ds_domain_base="pionera.oeg.fi.upm.es",
+            connectors=["conn-org2-pionera", "conn-org3-pionera"],
+            config={
+                "TOPOLOGY": "vm-single",
+                "DS_1_NAME": "pionera",
+                "VM_SINGLE_PUBLIC_URL": "https://org4.pionera.oeg.fi.upm.es",
+            },
+        )
+
+        suite = main.build_kafka_edc_validation_suite(adapter, deployer_context=context)
+
+        self.assertEqual(
+            suite.keycloak_url_resolver(),
+            "https://org4.pionera.oeg.fi.upm.es/auth",
+        )
+        self.assertEqual(
+            suite.load_deployer_config()["KEYCLOAK_FRONTEND_URL"],
+            "https://org4.pionera.oeg.fi.upm.es/auth",
         )
 
     def test_build_adapter_passes_dry_run_when_supported(self):

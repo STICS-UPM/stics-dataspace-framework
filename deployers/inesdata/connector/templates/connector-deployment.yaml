@@ -46,8 +46,8 @@ spec:
         {{- with (index $layout "namespaceProfile") }}
         validation-environment-namespace-profile: {{ . | quote }}
         {{- end }}
-      {{- if or (index $layout "runtimeNamespace") (index $layout "activeNamespace") (index $layout "plannedNamespace") (index $layout "registrationServiceNamespace") (index $layout "plannedRegistrationServiceNamespace") }}
       annotations:
+        checksum/config: {{ tpl (.Files.Glob "config/*").AsConfig . | sha256sum }}
         {{- with (index $layout "runtimeNamespace") }}
         validation-environment/runtime-namespace: {{ . | quote }}
         {{- end }}
@@ -63,7 +63,6 @@ spec:
         {{- with (index $layout "plannedRegistrationServiceNamespace") }}
         validation-environment/planned-registration-service-namespace: {{ . | quote }}
         {{- end }}
-      {{- end }}
     spec:
       {{- with .Values.hostAliases }}
       hostAliases:

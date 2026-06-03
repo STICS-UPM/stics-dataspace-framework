@@ -451,14 +451,14 @@ Para una ejecución auditable, conserva:
 
 | Evidencia | Ubicación recomendada |
 | --- | --- |
-| Configuración sin secretos | `context/deliverables/` o anexo sanitizado |
+| Configuración sin secretos | anexo operativo sanitizado |
 | Plan de hosts y URLs | salida de `hosts --dry-run` |
 | Preflight estático | salida de `W -> 2` |
 | Preflight remoto | salida de `W -> 4` |
 | Estado Kubernetes por nivel | salidas de `kubectl get` |
 | Resultado de niveles | log de consola |
 | Resultados de validación | `experiments/<experimento>/` |
-| Incidencias y mitigaciones | documento de traspaso en `context/deliverables/` |
+| Incidencias y mitigaciones | documento de traspaso sanitizado |
 
 No guardar contraseñas, tokens, claves privadas, cookies ni kubeconfigs reales en
 documentación versionada.

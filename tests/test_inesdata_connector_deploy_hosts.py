@@ -117,6 +117,7 @@ class ConnectorDeployHostsTests(unittest.TestCase):
             adapter.create_connector = fake_create_connector
             adapter._prepare_vault_management_access = lambda *_args, **_kwargs: True
             adapter.wait_for_all_connectors = lambda *_args, **_kwargs: True
+            adapter.validate_connectors_with_stabilization = lambda *_args, **_kwargs: True
 
             with mock.patch("adapters.inesdata.connectors.ensure_python_requirements"):
                 deployed = adapter.deploy_connectors()

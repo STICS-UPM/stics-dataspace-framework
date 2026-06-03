@@ -921,6 +921,22 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             cwd="/tmp/mapping-editor",
         )
 
+    def test_k3s_cri_image_ref_alias_matches_container_runtime_normalization(self):
+        adapter = self._make_adapter()
+
+        self.assertEqual(
+            adapter._k3s_cri_image_ref_alias("ontology-hub:local"),
+            "docker.io/library/ontology-hub:local",
+        )
+        self.assertEqual(
+            adapter._k3s_cri_image_ref_alias("eclipse-edc/data-dashboard:local"),
+            "docker.io/eclipse-edc/data-dashboard:local",
+        )
+        self.assertEqual(
+            adapter._k3s_cri_image_ref_alias("registry.example.org/ns/image:tag"),
+            "registry.example.org/ns/image:tag",
+        )
+
     def test_prepare_level6_local_image_builds_on_host_and_loads_into_minikube(self):
         adapter = self._make_adapter()
         deployer_config = {"LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true"}
@@ -985,6 +1001,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 return_value={"image": {"repository": "ontology-hub", "tag": "local"}},
             ),
             mock.patch.object(adapter, "_minikube_is_available") as minikube_available_mock,
+            mock.patch.object(adapter, "_local_k3s_command_available", return_value=True),
             mock.patch.object(adapter, "_build_ontology_hub_image_on_host") as build_mock,
             mock.patch.object(adapter, "_load_image_into_k3s") as load_k3s_mock,
             mock.patch.object(adapter, "_load_image_into_minikube") as load_minikube_mock,
@@ -1000,6 +1017,34 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         build_mock.assert_called_once_with("ontology-hub:local", deployer_config)
         load_k3s_mock.assert_called_once_with("ontology-hub:local", deployer_config)
         load_minikube_mock.assert_not_called()
+
+    def test_prepare_level6_local_image_blocks_vm_single_k3s_import_without_local_or_remote_target(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-single"
+        deployer_config = {
+            "CLUSTER_TYPE": "k3s",
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true",
+        }
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_safe_load_yaml_file",
+                return_value={"image": {"repository": "ontology-hub", "tag": "local"}},
+            ),
+            mock.patch.object(adapter, "_local_k3s_command_available", return_value=False),
+            mock.patch.object(adapter, "_build_ontology_hub_image_on_host") as build_mock,
+            mock.patch.object(adapter, "_load_image_into_k3s") as load_k3s_mock,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Remote k3s image import is not configured for vm-single"):
+                adapter._maybe_prepare_level6_local_image(
+                    "ontology-hub",
+                    "/tmp/ontology-values.yaml",
+                    deployer_config,
+                )
+
+        build_mock.assert_not_called()
+        load_k3s_mock.assert_not_called()
 
     def test_prepare_level6_local_image_blocks_vm_distributed_local_k3s_import(self):
         adapter = self._make_adapter()
@@ -1130,18 +1175,69 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             adapter._load_image_into_k3s("ontology-hub:local", deployer_config)
 
         commands = [call.args[0] for call in adapter.run.call_args_list]
-        self.assertIn("docker save ontology-hub:local -o", commands[0])
-        self.assertIn("scp -P 22 -o ProxyJump=jump@orion.example.test:2222", commands[1])
-        self.assertIn("pionera@pionera40:/tmp/", commands[1])
-        self.assertIn("ssh -p 22 -J jump@orion.example.test:2222 pionera@pionera40", commands[2])
-        self.assertIn("sudo -n k3s ctr -n k8s.io images import", commands[2])
-        self.assertIn("status=$?", commands[2])
-        self.assertIn("exit $status", commands[2])
+        self.assertEqual("docker tag ontology-hub:local docker.io/library/ontology-hub:local", commands[0])
+        self.assertIn("docker save ontology-hub:local docker.io/library/ontology-hub:local -o", commands[1])
+        self.assertIn("scp -P 22 -o ProxyJump=jump@orion.example.test:2222", commands[2])
+        self.assertIn("pionera@pionera40:/tmp/", commands[2])
+        self.assertIn("ssh -p 22 -J jump@orion.example.test:2222 pionera@pionera40", commands[3])
+        self.assertIn("sudo -n k3s ctr -n k8s.io images import", commands[3])
+        self.assertIn("status=$?", commands[3])
+        self.assertIn("exit $status", commands[3])
+
+    def test_load_image_into_k3s_uses_remote_import_for_vm_single_when_local_k3s_is_missing(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-single"
+        adapter.run = mock.Mock(return_value="ok")
+        deployer_config = {
+            "CLUSTER_TYPE": "k3s",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT": "auto",
+            "VM_SINGLE_SSH_HOST": "vm-single.example.test",
+            "VM_SINGLE_SSH_USER": "pionera",
+            "VM_SINGLE_SSH_PORT": "22",
+        }
+
+        with (
+            mock.patch.object(adapter, "_docker_cmd", return_value="docker"),
+            mock.patch.object(adapter, "_local_k3s_command_available", return_value=False),
+        ):
+            adapter._load_image_into_k3s("ontology-hub:local", deployer_config)
+
+        commands = [call.args[0] for call in adapter.run.call_args_list]
+        self.assertEqual("docker tag ontology-hub:local docker.io/library/ontology-hub:local", commands[0])
+        self.assertIn("docker save ontology-hub:local docker.io/library/ontology-hub:local -o", commands[1])
+        self.assertIn("scp -P 22", commands[2])
+        self.assertIn("pionera@vm-single.example.test:/tmp/", commands[2])
+        self.assertIn("sudo -n k3s ctr -n k8s.io images ls -q", commands[3])
+        self.assertIn("ssh -p 22 pionera@vm-single.example.test", commands[4])
+        self.assertIn("sudo -n k3s ctr -n k8s.io images import", commands[4])
+
+    def test_load_image_into_k3s_prefers_vm_single_remote_when_operator_has_unrelated_k3s(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-single"
+        adapter.run = mock.Mock(return_value="ok")
+        deployer_config = {
+            "CLUSTER_TYPE": "k3s",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT": "auto",
+            "VM_SINGLE_SSH_HOST": "vm-single.example.test",
+            "VM_SINGLE_SSH_USER": "pionera",
+        }
+
+        with (
+            mock.patch.object(adapter, "_docker_cmd", return_value="docker"),
+            mock.patch.object(adapter, "_local_k3s_command_available", return_value=True),
+            mock.patch.object(adapter, "_vm_single_running_on_target", return_value=False),
+        ):
+            adapter._load_image_into_k3s("ontology-hub:local", deployer_config)
+
+        commands = [call.args[0] for call in adapter.run.call_args_list]
+        self.assertIn("scp -P 22", commands[2])
+        self.assertIn("ssh -p 22 pionera@vm-single.example.test", commands[4])
+        self.assertFalse(any("sudo k3s ctr -n k8s.io images import /tmp/" in command for command in commands))
 
     def test_load_image_into_k3s_auto_falls_back_to_interactive_sudo_prompt(self):
         adapter = self._make_adapter()
         adapter.config_adapter.topology = "vm-distributed"
-        adapter.run = mock.Mock(side_effect=["saved", "copied", None, "imported"])
+        adapter.run = mock.Mock(side_effect=["tagged", "saved", "copied", None, "imported"])
         deployer_config = {
             "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
             "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
@@ -1158,11 +1254,12 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             adapter._load_image_into_k3s("ontology-hub:local", deployer_config)
 
         commands = [call.args[0] for call in adapter.run.call_args_list]
-        self.assertIn("docker save ontology-hub:local -o", commands[0])
-        self.assertIn("scp -P 22 -o ProxyJump=jump@orion.example.test:2222", commands[1])
-        self.assertIn("sudo -n k3s ctr -n k8s.io images ls -q", commands[2])
-        self.assertIn("ssh -tt", commands[3])
-        self.assertIn("sudo k3s ctr -n k8s.io images import", commands[3])
+        self.assertEqual("docker tag ontology-hub:local docker.io/library/ontology-hub:local", commands[0])
+        self.assertIn("docker save ontology-hub:local docker.io/library/ontology-hub:local -o", commands[1])
+        self.assertIn("scp -P 22 -o ProxyJump=jump@orion.example.test:2222", commands[2])
+        self.assertIn("sudo -n k3s ctr -n k8s.io images ls -q", commands[3])
+        self.assertIn("ssh -tt", commands[4])
+        self.assertIn("sudo k3s ctr -n k8s.io images import", commands[4])
 
     def test_prepare_level6_local_image_rebuilds_ontology_hub_without_consulting_host_cache(self):
         adapter = self._make_adapter()
@@ -1279,6 +1376,54 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             [
                 mock.call("minikube", "morph-kgv:local"),
                 mock.call("minikube", "mapping-editor:local"),
+            ],
+        )
+
+    def test_prepare_level6_local_image_imports_semantic_virtualization_images_into_k3s(self):
+        adapter = self._make_adapter()
+        deployer_config = {
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true",
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED": "true",
+        }
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_safe_load_yaml_file",
+                return_value={
+                    "image": {"repository": "morph-kgv", "tag": "local"},
+                    "mappingEditor": {
+                        "image": {"repository": "mapping-editor", "tag": "local"},
+                    },
+                },
+            ),
+            mock.patch.object(adapter, "_cluster_runtime", return_value={"cluster_type": "k3s"}),
+            mock.patch.object(adapter, "_ensure_k3s_local_image_import_supported") as ensure_mock,
+            mock.patch.object(adapter, "_build_semantic_virtualization_image_on_host") as build_api_mock,
+            mock.patch.object(adapter, "_build_mapping_editor_image_on_host") as build_editor_mock,
+            mock.patch.object(adapter, "_load_image_into_cluster_runtime") as load_mock,
+        ):
+            result = adapter._maybe_prepare_level6_local_image(
+                "semantic-virtualization",
+                "/tmp/semantic-virtualization-values.yaml",
+                deployer_config,
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(
+            ensure_mock.mock_calls,
+            [
+                mock.call("morph-kgv:local", deployer_config),
+                mock.call("mapping-editor:local", deployer_config),
+            ],
+        )
+        build_api_mock.assert_called_once_with("morph-kgv:local", deployer_config)
+        build_editor_mock.assert_called_once_with("mapping-editor:local", deployer_config)
+        self.assertEqual(
+            load_mock.mock_calls,
+            [
+                mock.call("k3s", "minikube", "morph-kgv:local", deployer_config),
+                mock.call("k3s", "minikube", "mapping-editor:local", deployer_config),
             ],
         )
 
@@ -1914,6 +2059,53 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             label="ontology-hub",
         )
 
+    def test_shared_components_adapter_finalize_component_runtime_restarts_and_waits_for_semantic_virtualization(self):
+        adapter = self._make_shared_adapter()
+        adapter._wait_for_component_rollout = mock.Mock(return_value=True)
+        deployer_config = {"SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED": "true"}
+
+        result = adapter.finalize_component_runtime(
+            "semantic-virtualization",
+            release_name="demo-semantic-virtualization",
+            namespace="components",
+            built_local_image=True,
+            deployer_config=deployer_config,
+        )
+
+        self.assertEqual(result["component"], "semantic-virtualization")
+        self.assertTrue(result["built_local_image"])
+        self.assertTrue(result["waited_for_rollout"])
+        self.assertEqual(
+            adapter.run.mock_calls,
+            [
+                mock.call(
+                    "kubectl rollout restart deployment/demo-semantic-virtualization -n components",
+                    check=False,
+                ),
+                mock.call(
+                    "kubectl rollout restart deployment/demo-semantic-virtualization-editor -n components",
+                    check=False,
+                ),
+            ],
+        )
+        self.assertEqual(
+            adapter._wait_for_component_rollout.mock_calls,
+            [
+                mock.call(
+                    "components",
+                    "demo-semantic-virtualization",
+                    timeout_seconds=900,
+                    label="semantic-virtualization",
+                ),
+                mock.call(
+                    "components",
+                    "demo-semantic-virtualization-editor",
+                    timeout_seconds=900,
+                    label="semantic-virtualization-editor",
+                ),
+            ],
+        )
+
     def test_shared_components_adapter_prepares_component_runtime_execution(self):
         adapter = self._make_shared_adapter()
         adapter._maybe_prepare_level6_local_image = mock.Mock(return_value=True)
@@ -1939,18 +2131,43 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             {"DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm"},
         )
 
-    def test_shared_components_adapter_finalize_component_runtime_skips_rollout_for_non_ontology_component(self):
+    def test_shared_components_adapter_finalize_component_runtime_waits_for_ai_model_hub(self):
         adapter = self._make_shared_adapter()
         adapter._wait_for_component_rollout = mock.Mock(return_value=True)
+        adapter._ensure_ai_model_hub_model_server = mock.Mock(return_value={"enabled": False})
 
         result = adapter.finalize_component_runtime(
             "ai-model-hub",
             release_name="demo-ai-model-hub",
             namespace="demo",
             built_local_image=False,
+            deployer_config={},
         )
 
         self.assertEqual(result["component"], "ai-model-hub")
+        self.assertFalse(result["built_local_image"])
+        self.assertTrue(result["waited_for_rollout"])
+        adapter.run.assert_not_called()
+        adapter._wait_for_component_rollout.assert_called_once_with(
+            "demo",
+            "demo-ai-model-hub",
+            timeout_seconds=900,
+            label="ai-model-hub",
+        )
+        adapter._ensure_ai_model_hub_model_server.assert_called_once_with("demo", {})
+
+    def test_shared_components_adapter_finalize_component_runtime_skips_rollout_for_plain_component(self):
+        adapter = self._make_shared_adapter()
+        adapter._wait_for_component_rollout = mock.Mock(return_value=True)
+
+        result = adapter.finalize_component_runtime(
+            "custom-component",
+            release_name="demo-custom-component",
+            namespace="demo",
+            built_local_image=False,
+        )
+
+        self.assertEqual(result["component"], "custom-component")
         self.assertFalse(result["built_local_image"])
         self.assertFalse(result["waited_for_rollout"])
         adapter.run.assert_not_called()
@@ -2029,7 +2246,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         adapter._cleanup_components.assert_called_once_with(["ontology-hub"], "components")
         self.assertEqual(infrastructure.deploy_calls, [])
 
-    def test_components_does_not_cleanup_when_runtime_preparation_fails(self):
+    def test_components_does_not_deploy_when_runtime_preparation_fails_after_cleanup(self):
         adapter = self._make_shared_adapter()
         adapter.config_adapter.load_deployer_config = mock.Mock(return_value={})
         adapter._cleanup_components = mock.Mock()
@@ -2068,9 +2285,74 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "image import failed"):
                 adapter.COMPONENTS(["ontology-hub"])
 
-        adapter._cleanup_legacy_component_releases.assert_not_called()
-        adapter._cleanup_components.assert_not_called()
+        adapter._cleanup_legacy_component_releases.assert_called_once_with(
+            ["ontology-hub"],
+            active_namespace="components",
+            ds_name="demo",
+            deployer_config={},
+        )
+        adapter._cleanup_components.assert_called_once_with(["ontology-hub"], "components")
         adapter.deploy_shared_component_runtime.assert_not_called()
+
+    def test_components_prepares_runtime_after_cleanup_before_deploy(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.load_deployer_config = mock.Mock(return_value={})
+        events = []
+        adapter._cleanup_legacy_component_releases = mock.Mock(
+            side_effect=lambda *args, **kwargs: events.append("legacy-cleanup") or None
+        )
+        adapter._cleanup_components = mock.Mock(side_effect=lambda *args, **kwargs: events.append("cleanup"))
+        adapter.verify_component_publication = mock.Mock(return_value={"verified": True})
+        adapter.prepare_component_runtime_metadata = mock.Mock(
+            return_value=[
+                {
+                    "component": "ai-model-hub",
+                    "normalized_component": "ai-model-hub",
+                    "excluded": False,
+                    "error": None,
+                    "chart_dir": "/tmp/chart-ai",
+                    "values_file": "/tmp/chart-ai/values-demo.yaml",
+                    "host": "ai-model-hub-demo.dev.ds.dataspaceunit.upm",
+                    "release_name": "demo-ai-model-hub",
+                }
+            ]
+        )
+        adapter.prepare_component_deployment_plan = mock.Mock(
+            return_value={
+                "component": "ai-model-hub",
+                "normalized_component": "ai-model-hub",
+                "chart_dir": "/tmp/chart-ai",
+                "values_file": "/tmp/chart-ai/values-demo.yaml",
+                "host": "ai-model-hub-demo.dev.ds.dataspaceunit.upm",
+                "release_name": "demo-ai-model-hub",
+                "override_plan": {"has_override": False},
+            }
+        )
+        adapter.prepare_component_runtime_execution = mock.Mock(
+            side_effect=lambda *args, **kwargs: events.append("prepare") or {
+                "component": "ai-model-hub",
+                "release_name": "demo-ai-model-hub",
+                "namespace": "components",
+                "deployer_config": {},
+                "built_local_image": True,
+            }
+        )
+        adapter.deploy_component_release = mock.Mock(
+            side_effect=lambda *args, **kwargs: events.append("deploy") or {
+                "component": "ai-model-hub",
+                "release_name": "demo-ai-model-hub",
+                "namespace": "components",
+            }
+        )
+        adapter.finalize_component_runtime = mock.Mock(
+            side_effect=lambda *args, **kwargs: events.append("finalize") or {"component": "ai-model-hub"}
+        )
+
+        with mock.patch("adapters.inesdata.components.os.path.exists", return_value=True):
+            result = adapter.COMPONENTS(["ai-model-hub"])
+
+        self.assertEqual(result["deployed"], ["ai-model-hub"])
+        self.assertEqual(events, ["legacy-cleanup", "cleanup", "prepare", "deploy", "finalize"])
 
     def test_components_sync_mapping_editor_hostname_when_enabled(self):
         infrastructure = FakeInfrastructure()

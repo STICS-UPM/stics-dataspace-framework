@@ -104,11 +104,22 @@ function withoutTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
+function withTrailingSlash(value: string): string {
+  return `${withoutTrailingSlash(value)}/`;
+}
+
 function optionalUrl(value: string | undefined): string | undefined {
   if (!value || value.trim().length === 0) {
     return undefined;
   }
   return withoutTrailingSlash(value.trim());
+}
+
+function optionalPortalUrl(value: string | undefined): string | undefined {
+  if (!value || value.trim().length === 0) {
+    return undefined;
+  }
+  return withTrailingSlash(value.trim());
 }
 
 function appendUrlPath(baseUrl: string | undefined, pathSuffix: string): string | undefined {
@@ -206,6 +217,14 @@ function deploymentRoot(adapter: string): string {
   return path.join(projectRootPath, "deployers", adapter, "deployments");
 }
 
+function configuredRuntimeDir(adapter: string, environment: string, dataspace: string): string {
+  const explicitRuntimeDir = process.env.UI_RUNTIME_DIR?.trim();
+  if (explicitRuntimeDir) {
+    return explicitRuntimeDir;
+  }
+  return path.join(deploymentRoot(adapter), environment, dataspace);
+}
+
 function deployerConfigPath(adapter: string): string {
   const root = projectRoot();
   const adapterPath = path.join(root, "deployers", adapter, "deployer.config");
@@ -216,7 +235,7 @@ function deployerConfigPath(adapter: string): string {
 }
 
 function defaultPortalPath(adapter: string): string {
-  return adapter === "edc" ? "/edc-dashboard/" : "/inesdata-connector-interface";
+  return adapter === "edc" ? "/edc-dashboard/" : "/inesdata-connector-interface/";
 }
 
 function connectorCredentialsPath(
@@ -225,12 +244,22 @@ function connectorCredentialsPath(
   dataspace: string,
   connectorName: string,
 ): string {
-  return path.join(
-    deploymentRoot(adapter),
-    environment,
-    dataspace,
-    `credentials-connector-${connectorName}.json`,
-  );
+  const envPrefix = connectorEnvPrefix(connectorName);
+  const explicitPath = process.env[`UI_${envPrefix}_CREDENTIALS_FILE`]?.trim();
+  if (explicitPath) {
+    return explicitPath;
+  }
+
+  const runtimeDir = configuredRuntimeDir(adapter, environment, dataspace);
+  const scopedPath = path.join(runtimeDir, "connectors", connectorName, "credentials.json");
+  const legacyPath = path.join(runtimeDir, `credentials-connector-${connectorName}.json`);
+  if (fs.existsSync(scopedPath)) {
+    return scopedPath;
+  }
+  if (fs.existsSync(legacyPath)) {
+    return legacyPath;
+  }
+  return scopedPath;
 }
 
 function publicAccessUrlsFromCredentials(credentials: any): Record<string, string> {
@@ -245,10 +274,12 @@ function connectorPublicPortalBaseUrl(
   adapter: string,
   accessUrls: Record<string, string>,
 ): string | undefined {
-  return (
-    optionalUrl(accessUrls.connector_interface_login) ||
-    appendUrlPath(accessUrls.connector_ingress, defaultPortalPath(adapter))
-  );
+  const configuredPortalUrl = optionalPortalUrl(accessUrls.connector_interface_login);
+  if (configuredPortalUrl) {
+    return configuredPortalUrl;
+  }
+  const derivedPortalUrl = appendUrlPath(accessUrls.connector_ingress, defaultPortalPath(adapter));
+  return derivedPortalUrl ? withTrailingSlash(derivedPortalUrl) : undefined;
 }
 
 function connectorPublicManagementBaseUrl(accessUrls: Record<string, string>): string | undefined {
@@ -354,20 +385,26 @@ function configuredValidationPairs(adapter: string, dataspace: string): Array<[s
 }
 
 function discoverConnectorNames(adapter: string, environment: string, dataspace: string): string[] {
-  const runtimeDir = path.join(deploymentRoot(adapter), environment, dataspace);
+  const runtimeDir = configuredRuntimeDir(adapter, environment, dataspace);
   const configuredConnectors = configuredConnectorNames(adapter, dataspace);
   if (!fs.existsSync(runtimeDir)) {
     return configuredConnectors;
   }
 
-  const discoveredConnectors = fs
+  const legacyConnectors = fs
     .readdirSync(runtimeDir)
     .map((entry) => {
       const match = entry.match(/^credentials-connector-(.+)\.json$/);
       return match ? match[1] : undefined;
     })
-    .filter((value): value is string => Boolean(value))
-    .sort();
+    .filter((value): value is string => Boolean(value));
+  const scopedConnectorsDir = path.join(runtimeDir, "connectors");
+  const scopedConnectors = fs.existsSync(scopedConnectorsDir)
+    ? fs
+        .readdirSync(scopedConnectorsDir)
+        .filter((entry) => fs.existsSync(path.join(scopedConnectorsDir, entry, "credentials.json")))
+    : [];
+  const discoveredConnectors = Array.from(new Set([...legacyConnectors, ...scopedConnectors])).sort();
 
   if (configuredConnectors.length === 0) {
     return discoveredConnectors;
@@ -438,6 +475,7 @@ function resolveConnectorRuntime(
     "eu-central-1";
   const endpointOverride = `${minioProtocol}://${minioHost}`;
   const envPrefix = connectorEnvPrefix(connectorName);
+  const explicitPortalUrl = optionalPortalUrl(process.env[`UI_${envPrefix}_PORTAL_URL`]);
   const protocolMode = connectorProtocolAddressMode(deployerConfig, envPrefix);
   const protocolAccessUrls = protocolMode === "internal" ? internalAccessUrls : publicAccessUrls;
   const transferDestinationType =
@@ -451,9 +489,9 @@ function resolveConnectorRuntime(
     adapter,
     connectorName,
     portalBaseUrl:
-      process.env[`UI_${envPrefix}_PORTAL_URL`] ||
+      explicitPortalUrl ||
       connectorPublicPortalBaseUrl(adapter, publicAccessUrls) ||
-      `${baseUrl}${defaultPortalPath(adapter)}`,
+      withTrailingSlash(`${baseUrl}${defaultPortalPath(adapter)}`),
     managementBaseUrl:
       process.env[`UI_${envPrefix}_MANAGEMENT_URL`] ||
       connectorPublicManagementBaseUrl(publicAccessUrls) ||

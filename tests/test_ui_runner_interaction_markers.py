@@ -111,6 +111,28 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
             env = subprocess_run.call_args.kwargs["env"]
             self.assertEqual(env["UI_KEYCLOAK_URL"], "https://org1.example.test/auth")
 
+    def test_playwright_validation_exports_active_runtime_dir(self):
+        context = self._context()
+        context.topology = "vm-single"
+        context.runtime_dir = "/tmp/deployers/inesdata/deployments/DEV/vm-single/demo"
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            ui_runner.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0),
+        ) as subprocess_run:
+            ui_runner.run_playwright_validation(
+                profile=self._profile(),
+                context=context,
+                experiment_dir=tmpdir,
+            )
+
+            env = subprocess_run.call_args.kwargs["env"]
+            self.assertEqual(
+                env["UI_RUNTIME_DIR"],
+                "/tmp/deployers/inesdata/deployments/DEV/vm-single/demo",
+            )
+
     def test_playwright_validation_exports_vm_distributed_component_and_protocol_urls(self):
         context = self._context()
         context.topology = "vm-distributed"

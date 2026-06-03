@@ -164,7 +164,7 @@ def configured_component_public_path(
     if explicit_url_path:
         return explicit_url_path
 
-    if config.get(f"{env_key}_PUBLIC_BASE_URL") or config.get("COMPONENTS_PUBLIC_BASE_URL"):
+    if _component_public_base_url(normalized, config):
         return f"/{normalized}"
 
     return ""
@@ -187,11 +187,7 @@ def configured_component_public_url(
         return explicit_url.rstrip("/")
 
     public_path = configured_component_public_path(normalized, config)
-    public_base_url = str(
-        config.get(f"{env_key}_PUBLIC_BASE_URL")
-        or config.get("COMPONENTS_PUBLIC_BASE_URL")
-        or ""
-    ).strip().rstrip("/")
+    public_base_url = _component_public_base_url(normalized, config)
     if public_base_url:
         return f"{public_base_url}{public_path}"
 
@@ -221,8 +217,7 @@ def configured_component_host(
         config.get(f"{env_key}_HOST")
         or config.get(f"{env_key}_HOSTNAME")
         or config.get(f"{env_key}_PUBLIC_URL")
-        or config.get(f"{env_key}_PUBLIC_BASE_URL")
-        or config.get("COMPONENTS_PUBLIC_BASE_URL")
+        or _component_public_base_url(normalized, config)
         or config.get(f"{env_key}_URL")
     )
     explicit_host = _host_from_host_or_url(explicit)
@@ -236,6 +231,18 @@ def configured_component_host(
             return f"{normalized}-{ds_name}.{ds_domain}"
 
     return ""
+
+
+def _component_public_base_url(normalized_component: str, config: dict[str, Any]) -> str:
+    env_key = normalized_component.upper().replace("-", "_")
+    return str(
+        config.get(f"{env_key}_PUBLIC_BASE_URL")
+        or config.get("COMPONENTS_PUBLIC_BASE_URL")
+        or config.get("VM_SINGLE_PUBLIC_URL")
+        or config.get("VM_SINGLE_HTTP_URL")
+        or config.get("VM_COMMON_PUBLIC_URL")
+        or ""
+    ).strip().rstrip("/")
 
 
 def infer_component_hostname(

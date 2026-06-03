@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import shlex
+import socket
 import tempfile
 import time
 import ipaddress
@@ -19,6 +20,7 @@ from deployers.shared.lib.components import (
 )
 from deployers.shared.lib.cluster_runtime import build_cluster_runtime
 from deployers.shared.lib.remote_k3s_images import remote_k3s_image_import_target, shell_join
+from deployers.shared.lib.topology import VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY, normalize_topology
 from deployers.infrastructure.lib.paths import shared_artifact_roots
 from .config import INESDataConfigAdapter, InesdataConfig
 
@@ -918,20 +920,198 @@ class INESDataComponentsAdapter:
             return docker_desktop
         return "docker"
 
+    @staticmethod
+    def _k3s_cri_image_ref_alias(image_ref: str) -> str:
+        normalized = str(image_ref or "").strip()
+        if not normalized:
+            return ""
+        has_path = "/" in normalized
+        first_segment = normalized.split("/", 1)[0]
+        if has_path and ("." in first_segment or ":" in first_segment or first_segment == "localhost"):
+            return normalized
+        if has_path:
+            return f"docker.io/{normalized}"
+        return f"docker.io/library/{normalized}"
+
+    def _normalized_topology(self) -> str:
+        return normalize_topology(getattr(self.config_adapter, "topology", None) or "local")
+
     def _is_vm_distributed_topology(self) -> bool:
-        topology = str(getattr(self.config_adapter, "topology", "") or "").strip().lower()
-        return topology == "vm-distributed"
+        return self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY
+
+    def _is_vm_single_topology(self) -> bool:
+        return self._normalized_topology() == VM_SINGLE_TOPOLOGY
+
+    @staticmethod
+    def _config_value(config: dict | None, *keys: str) -> str:
+        values = dict(config or {})
+        for key in keys:
+            value = str(values.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    @staticmethod
+    def _local_k3s_command_available() -> bool:
+        if shutil.which("k3s"):
+            return True
+        return any(os.path.exists(path) for path in ("/usr/local/bin/k3s", "/usr/bin/k3s"))
+
+    @staticmethod
+    def _resolve_host_addresses(host: str) -> set[str]:
+        value = str(host or "").strip()
+        if not value:
+            return set()
+        try:
+            return {str(ipaddress.ip_address(value))}
+        except ValueError:
+            pass
+        try:
+            return {
+                str(item[4][0])
+                for item in socket.getaddrinfo(value, None)
+                if item and item[4] and item[4][0]
+            }
+        except OSError:
+            return set()
+
+    def _local_host_addresses(self) -> set[str]:
+        addresses = {"127.0.0.1", "::1"}
+        for candidate in {socket.gethostname(), socket.getfqdn()}:
+            addresses.update(self._resolve_host_addresses(candidate))
+        try:
+            hostname_ips = self.run_silent("hostname -I")
+        except Exception:
+            hostname_ips = ""
+        for raw_value in str(hostname_ips or "").split():
+            addresses.update(self._resolve_host_addresses(raw_value))
+        return {address for address in addresses if address}
+
+    def _vm_single_running_on_target(self, deployer_config: dict | None = None) -> bool:
+        if os.environ.get("PIONERA_VM_SINGLE_REMOTE_LEVEL_ACTIVE") == "true":
+            return True
+        config = dict(deployer_config or {})
+        local_names = {
+            "localhost",
+            socket.gethostname().strip().lower(),
+            socket.getfqdn().strip().lower(),
+        }
+        target_values = {
+            self._config_value(config, "VM_SINGLE_SSH_HOST"),
+            self._config_value(config, "VM_EXTERNAL_IP"),
+            self._config_value(config, "VM_SINGLE_IP"),
+            self._config_value(config, "VM_SINGLE_ADDRESS"),
+        }
+        for value in target_values:
+            normalized = str(value or "").strip().lower()
+            if normalized and normalized in local_names:
+                return True
+        target_addresses = set()
+        for value in target_values:
+            target_addresses.update(self._resolve_host_addresses(value))
+        return bool(target_addresses.intersection(self._local_host_addresses()))
+
+    def _vm_single_should_use_local_k3s_import(self, deployer_config: dict | None = None) -> bool:
+        if not self._local_k3s_command_available():
+            return False
+        config = dict(deployer_config or {})
+        mode = str(config.get("VM_SINGLE_LEVEL_EXECUTION_MODE") or "").strip().lower()
+        if mode in {"local", "direct"}:
+            return True
+        if self._vm_single_running_on_target(config):
+            return True
+        return self._vm_single_remote_image_import_target(config) is None
+
+    def _resolved_cluster_type(self, deployer_config: dict | None = None) -> str:
+        config = dict(deployer_config or {})
+        runtime = self._cluster_runtime(config)
+        return (
+            str(config.get("CLUSTER_TYPE") or runtime.get("cluster_type") or "minikube").strip().lower()
+            or "minikube"
+        )
+
+    def _vm_single_remote_image_import_target(self, deployer_config: dict | None = None):
+        config = dict(deployer_config or {})
+        raw_enabled = str(config.get("VM_SINGLE_REMOTE_IMAGE_IMPORT") or "auto").strip().lower()
+        if raw_enabled in {"0", "false", "no", "n", "off", "disabled", "disable", "never", "none"}:
+            return None
+
+        host = self._config_value(config, "VM_SINGLE_SSH_HOST", "VM_EXTERNAL_IP", "VM_SINGLE_IP")
+        if not host:
+            return None
+
+        remote_config = dict(config)
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT"] = "true"
+        remote_config["VM_COMMON_SSH_HOST"] = host
+        remote_config["VM_COMMON_IP"] = self._config_value(config, "VM_EXTERNAL_IP", "VM_SINGLE_IP") or host
+        remote_config["VM_COMMON_SSH_PORT"] = self._config_value(config, "VM_SINGLE_SSH_PORT") or "22"
+        remote_config["VM_COMMON_SSH_USER"] = self._config_value(
+            config,
+            "VM_SINGLE_SSH_USER",
+            "VM_SSH_USER",
+            "SSH_BASTION_USER",
+        )
+        remote_config["VM_COMMON_SSH_IDENTITY_FILE"] = self._config_value(
+            config,
+            "VM_SINGLE_SSH_IDENTITY_FILE",
+            "SSH_IDENTITY_FILE",
+            "SSH_BASTION_IDENTITY_FILE",
+        )
+        if self._config_value(config, "VM_SINGLE_SSH_ACCESS_MODE"):
+            remote_config["SSH_ACCESS_MODE"] = self._config_value(config, "VM_SINGLE_SSH_ACCESS_MODE")
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND"] = self._config_value(
+            config,
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_COMMAND",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND",
+            "K3S_IMAGE_IMPORT_COMMAND",
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR"] = (
+            self._config_value(config, "VM_SINGLE_REMOTE_IMAGE_IMPORT_DIR", "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR")
+            or "/tmp"
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE"] = (
+            self._config_value(
+                config,
+                "VM_SINGLE_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+            )
+            or "auto"
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY"] = self._config_value(
+            config,
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_TTY",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY",
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE"] = self._config_value(
+            config,
+            "VM_SINGLE_REMOTE_IMAGE_PRUNE",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE",
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP"] = (
+            self._config_value(
+                config,
+                "VM_SINGLE_REMOTE_IMAGE_PRUNE_KEEP",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP",
+            )
+            or "2"
+        )
+
+        return remote_k3s_image_import_target(remote_config, role="common")
 
     def _remote_k3s_image_import_target(self, deployer_config: dict | None = None):
-        if not self._is_vm_distributed_topology():
-            return None
         config = dict(deployer_config or {})
         if not config:
             try:
                 config = dict(self.config_adapter.load_deployer_config() or {})
             except Exception:
                 config = {}
-        return remote_k3s_image_import_target(config, role="components")
+        if self._is_vm_distributed_topology():
+            return remote_k3s_image_import_target(config, role="components")
+        if self._is_vm_single_topology() and self._resolved_cluster_type(config) == "k3s":
+            if self._vm_single_should_use_local_k3s_import(config):
+                return None
+            return self._vm_single_remote_image_import_target(config)
+        return None
 
     @staticmethod
     def _remote_import_command_uses_noninteractive_sudo(import_command: str) -> bool:
@@ -972,12 +1152,27 @@ class INESDataComponentsAdapter:
         )
 
     def _ensure_k3s_local_image_import_supported(self, image_ref: str, deployer_config: dict | None = None):
-        if not self._is_vm_distributed_topology():
+        topology = self._normalized_topology()
+        if topology not in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
+            return
+        if topology == VM_SINGLE_TOPOLOGY and self._vm_single_should_use_local_k3s_import(deployer_config):
             return
         remote_target = self._remote_k3s_image_import_target(deployer_config)
         if remote_target:
             self._ensure_remote_k3s_image_import_prerequisites(remote_target, image_ref)
             return
+        if topology == VM_SINGLE_TOPOLOGY:
+            self._fail(
+                "Remote k3s image import is not configured for vm-single Level 5",
+                root_cause=(
+                    f"Image '{image_ref}' must be available in the vm-single k3s runtime. "
+                    "Run Level 5 from the vm-single VM, publish the component image to a registry "
+                    "reachable by the cluster, or configure VM_SINGLE_REMOTE_IMAGE_IMPORT with "
+                    "VM_SINGLE_SSH_HOST so the framework can import it remotely. "
+                    "A local 'sudo k3s ctr images import' would target the operator host, not the "
+                    "vm-single cluster."
+                ),
+            )
         self._fail(
             "Remote k3s image import is not configured for vm-distributed Level 5",
             root_cause=(
@@ -999,6 +1194,14 @@ class INESDataComponentsAdapter:
     def _load_image_into_k3s(self, image_ref: str, deployer_config: dict | None = None):
         image_q = shlex.quote(image_ref)
         docker_q = shlex.quote(self._docker_cmd())
+        cri_alias = self._k3s_cri_image_ref_alias(image_ref)
+        save_refs = [image_ref]
+        if cri_alias and cri_alias != image_ref:
+            cri_alias_q = shlex.quote(cri_alias)
+            if self.run(f"{docker_q} tag {image_q} {cri_alias_q}", check=False) is None:
+                self._fail("Failed to tag local image with k3s CRI alias", root_cause=f"{image_ref} -> {cri_alias}")
+            save_refs.append(cri_alias)
+        save_refs_q = " ".join(shlex.quote(ref) for ref in save_refs)
         fd, archive_path = tempfile.mkstemp(prefix="pionera-component-image-", suffix=".tar")
         os.close(fd)
         archive_q = shlex.quote(archive_path)
@@ -1008,7 +1211,7 @@ class INESDataComponentsAdapter:
                 print(f"\nLoading image into remote k3s containerd ({remote_target.host}): {image_ref}")
             else:
                 print(f"\nLoading image into k3s containerd: {image_ref}")
-            if self.run(f"{docker_q} save {image_q} -o {archive_q}", check=False) is None:
+            if self.run(f"{docker_q} save {save_refs_q} -o {archive_q}", check=False) is None:
                 self._fail("Failed to export local image for k3s", root_cause=image_ref)
             if remote_target:
                 remote_archive_path = remote_target.remote_archive_path(archive_path)
@@ -1275,6 +1478,8 @@ class INESDataComponentsAdapter:
                         root_cause=f"Values file: {values_file}",
                     )
                 if editor_image_ref.lower().endswith(":local"):
+                    if cluster_type == "k3s":
+                        self._ensure_k3s_local_image_import_supported(editor_image_ref, deployer_config)
                     self._build_mapping_editor_image_on_host(editor_image_ref, deployer_config)
                     self._load_image_into_cluster_runtime(cluster_type, profile, editor_image_ref, deployer_config)
             return True
@@ -2022,38 +2227,6 @@ class INESDataComponentsAdapter:
                 }
             )
 
-        prepared_runtime_executions = {}
-        for item in deployment_items:
-            normalized = item["normalized"]
-            deployment_plan = item["deployment_plan"]
-            values_file = item["values_file"]
-            release_name = item["release_name"]
-
-            if callable(runtime_execution_preparer):
-                execution = runtime_execution_preparer(
-                    normalized,
-                    deployment_plan=deployment_plan,
-                    namespace=namespace,
-                    deployer_config=deployer_config,
-                )
-            else:
-                built_local_image = False
-                try:
-                    built_local_image = self._maybe_prepare_level6_local_image(normalized, values_file, deployer_config)
-                except Exception as exc:
-                    self._fail(
-                        f"Error preparing local images for component '{normalized}'",
-                        root_cause=str(exc),
-                    )
-                execution = {
-                    "component": normalized,
-                    "release_name": release_name,
-                    "namespace": namespace,
-                    "deployer_config": deployer_config,
-                    "built_local_image": built_local_image,
-                }
-            prepared_runtime_executions[normalized] = execution
-
         self._cleanup_legacy_component_releases(
             components,
             active_namespace=namespace,
@@ -2076,7 +2249,30 @@ class INESDataComponentsAdapter:
             release_name = item["release_name"]
             override_plan = item["override_plan"]
             current_deployment_plan = item["deployment_plan"]
-            execution = prepared_runtime_executions.get(normalized) or {}
+
+            if callable(runtime_execution_preparer):
+                execution = runtime_execution_preparer(
+                    normalized,
+                    deployment_plan=current_deployment_plan,
+                    namespace=namespace,
+                    deployer_config=deployer_config,
+                )
+            else:
+                built_local_image = False
+                try:
+                    built_local_image = self._maybe_prepare_level6_local_image(normalized, values_file, deployer_config)
+                except Exception as exc:
+                    self._fail(
+                        f"Error preparing local images for component '{normalized}'",
+                        root_cause=str(exc),
+                    )
+                execution = {
+                    "component": normalized,
+                    "release_name": release_name,
+                    "namespace": namespace,
+                    "deployer_config": deployer_config,
+                    "built_local_image": built_local_image,
+                }
             built_local_image = bool(execution.get("built_local_image"))
 
             if callable(shared_runtime_deployer):

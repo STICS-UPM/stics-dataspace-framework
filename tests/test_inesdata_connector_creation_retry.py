@@ -320,6 +320,76 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                 "https://org2.pionera.oeg.fi.upm.es/protocol",
             )
 
+    def test_vm_single_connector_protocol_address_uses_public_path_by_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connector_name = "conn-org2-pionera"
+            with open(os.path.join(tmpdir, f"credentials-connector-{connector_name}.json"), "w") as handle:
+                json.dump(
+                    {
+                        "connector_user": {"user": "org2-user", "passwd": "secret"},
+                        "access_urls": {
+                            "connector_protocol_api": (
+                                "http://conn-org2-pionera.dev.ds.dataspaceunit.upm/protocol"
+                            ),
+                        },
+                        "public_access_urls": {
+                            "connector_ingress": "https://org4.pionera.oeg.fi.upm.es/c/org2",
+                        },
+                    },
+                    handle,
+                )
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=VmSinglePublicConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+
+            self.assertEqual(
+                adapter.build_protocol_address(connector_name),
+                "https://org4.pionera.oeg.fi.upm.es/c/org2/protocol",
+            )
+
+    def test_vm_single_connector_protocol_address_can_be_forced_internal(self):
+        class InternalProtocolConfigAdapter(VmSinglePublicConnectorRetryConfigAdapter):
+            def load_deployer_config(self):
+                config = super().load_deployer_config()
+                config["CONNECTOR_PROTOCOL_ADDRESS_MODE"] = "internal"
+                return config
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connector_name = "conn-org2-pionera"
+            with open(os.path.join(tmpdir, f"credentials-connector-{connector_name}.json"), "w") as handle:
+                json.dump(
+                    {
+                        "connector_user": {"user": "org2-user", "passwd": "secret"},
+                        "access_urls": {
+                            "connector_protocol_api": (
+                                "http://conn-org2-pionera.dev.ds.dataspaceunit.upm/protocol"
+                            ),
+                        },
+                        "public_access_urls": {
+                            "connector_ingress": "https://org4.pionera.oeg.fi.upm.es/c/org2",
+                        },
+                    },
+                    handle,
+                )
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=InternalProtocolConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+
+            self.assertEqual(
+                adapter.build_protocol_address(connector_name),
+                "http://conn-org2-pionera.dev.ds.dataspaceunit.upm/protocol",
+            )
+
     def test_vm_distributed_keycloak_token_url_prefers_frontend_url(self):
         class PublicKeycloakConfigAdapter(VmDistributedConnectorRetryConfigAdapter):
             def load_deployer_config(self):
@@ -1336,6 +1406,12 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         minio = rendered["services"]["minio"]
         self.assertEqual(ingress["publicProtocol"], "https")
         self.assertEqual(ingress["publicHostname"], "org4.pionera.oeg.fi.upm.es/c/org2")
+        self.assertEqual(ingress["callbackProtocol"], "https")
+        self.assertEqual(ingress["callbackHostname"], "org4.pionera.oeg.fi.upm.es/c/org2")
+        self.assertEqual(
+            ingress["dataplanePublicBaseUrl"],
+            "https://org4.pionera.oeg.fi.upm.es/c/org2/public",
+        )
         self.assertNotIn("additionalHosts", ingress)
         self.assertEqual(connector_interface["publicBasePath"], "/c/org2/inesdata-connector-interface")
         self.assertEqual(
@@ -2996,6 +3072,27 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                 mock.patch("adapters.inesdata.connectors.os.path.getsize", return_value=1),
             ):
                 self.assertIsNotNone(adapter._local_connector_image_override_path())
+
+    def test_local_connector_image_override_path_is_ignored_when_level4_local_images_disabled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = ConnectorRetryConfigAdapter(tmpdir)
+            config_adapter.topology = "vm-single"
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+
+            with (
+                mock.patch.object(adapter, "_level4_local_images_mode", return_value="disabled"),
+                mock.patch("adapters.inesdata.connectors.os.path.isfile", return_value=True),
+                mock.patch("adapters.inesdata.connectors.os.path.getsize", return_value=1),
+            ):
+                self.assertIsNone(adapter._local_connector_image_override_path())
 
     def test_explicit_connector_image_override_path_writes_runtime_override_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:

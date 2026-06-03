@@ -171,6 +171,19 @@ class SharedComponentsContractTests(unittest.TestCase):
             "https://org1.pionera.oeg.fi.upm.es/ontology-hub",
         )
 
+    def test_component_public_url_can_use_vm_single_public_url(self):
+        config = {"VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es"}
+
+        self.assertEqual(
+            configured_component_host("ontology-hub", config, dataspace_name="pionera"),
+            "org4.pionera.oeg.fi.upm.es",
+        )
+        self.assertEqual(configured_component_public_path("ontology-hub", config), "/ontology-hub")
+        self.assertEqual(
+            configured_component_public_url("ontology-hub", config, dataspace_name="pionera"),
+            "https://org4.pionera.oeg.fi.upm.es/ontology-hub",
+        )
+
     def test_component_public_url_preserves_explicit_url_path_but_ingress_uses_host(self):
         config = {"AI_MODEL_HUB_PUBLIC_URL": "https://org1.pionera.oeg.fi.upm.es/ai-model-hub"}
 

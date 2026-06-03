@@ -308,25 +308,39 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         normalized = self._normalize_component_key(component)
         resolved_release_name = str(release_name or "").strip()
         resolved_namespace = str(namespace or "").strip()
+        resolved_config = dict(deployer_config or {})
+        rollout_targets = self._component_runtime_rollout_targets(
+            normalized,
+            resolved_release_name,
+            resolved_config,
+        )
 
         if built_local_image:
-            print(f"Restarting deployment/{resolved_release_name} to pick up local image...\n")
-            self.run(
-                f"kubectl rollout restart deployment/{resolved_release_name} -n {resolved_namespace}",
-                check=False,
-            )
+            for deployment_name, _label in rollout_targets:
+                print(f"Restarting deployment/{deployment_name} to pick up local image...\n")
+                self.run(
+                    f"kubectl rollout restart deployment/{deployment_name} -n {resolved_namespace}",
+                    check=False,
+                )
 
         waited_for_rollout = False
-        if normalized == "ontology-hub":
-            timeout_seconds = 1800
+        if normalized in {"ontology-hub", "ai-model-hub", "semantic-virtualization"}:
             if not self._wait_for_component_rollout(
                 resolved_namespace,
-                resolved_release_name,
-                timeout_seconds=timeout_seconds,
-                label=normalized,
+                rollout_targets[0][0],
+                timeout_seconds=self._component_runtime_rollout_timeout_seconds(normalized),
+                label=rollout_targets[0][1],
             ):
-                self._fail(f"Timeout waiting for component '{normalized}' deployment rollout")
+                self._fail(f"Timeout waiting for component '{rollout_targets[0][1]}' deployment rollout")
             waited_for_rollout = True
+            for deployment_name, label in rollout_targets[1:]:
+                if not self._wait_for_component_rollout(
+                    resolved_namespace,
+                    deployment_name,
+                    timeout_seconds=self._component_runtime_rollout_timeout_seconds(label),
+                    label=label,
+                ):
+                    self._fail(f"Timeout waiting for component '{label}' deployment rollout")
 
         model_server = None
         if normalized == "ai-model-hub":
@@ -369,6 +383,29 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         if model_server:
             result["model_server"] = model_server
         return result
+
+    def _component_runtime_rollout_targets(self, normalized_component, release_name, deployer_config=None):
+        normalized = self._normalize_component_key(normalized_component)
+        resolved_release_name = str(release_name or "").strip()
+        targets = [(resolved_release_name, normalized)]
+
+        if normalized == "semantic-virtualization" and self._semantic_virtualization_mapping_editor_enabled(
+            dict(deployer_config or {})
+        ):
+            targets.append((f"{resolved_release_name}-editor", "semantic-virtualization-editor"))
+
+        return targets
+
+    @staticmethod
+    def _component_runtime_rollout_timeout_seconds(normalized_component):
+        normalized = str(normalized_component or "").strip()
+        if normalized == "ontology-hub":
+            return 1800
+        if normalized == "ai-model-hub":
+            return 900
+        if normalized in {"semantic-virtualization", "semantic-virtualization-editor"}:
+            return 900
+        return 300
 
     def _vm_distributed_role_kubeconfig(self, role, deployer_config=None):
         runtime = self._cluster_runtime(deployer_config)

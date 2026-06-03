@@ -731,6 +731,8 @@ class INESDataConnectorsAdapter:
             return "public"
         if mode in {"internal", "private"}:
             return "internal"
+        if self._normalized_topology() == VM_SINGLE_TOPOLOGY:
+            return "public"
         return "internal"
 
     def build_protocol_address(self, connector_name, path="/protocol"):
@@ -2622,6 +2624,11 @@ class INESDataConnectorsAdapter:
         ingress["publicProtocol"] = public_protocol
         ingress["publicHostname"] = public_external
         if self._normalized_topology() == VM_SINGLE_TOPOLOGY:
+            ingress["callbackProtocol"] = public_protocol
+            ingress["callbackHostname"] = public_external
+            ingress["dataplanePublicBaseUrl"] = (
+                f"{public_protocol}://{public_external}/public"
+            )
             with open(values_file, "w") as f:
                 yaml.dump(values, f, sort_keys=False)
             return
@@ -2797,6 +2804,8 @@ class INESDataConnectorsAdapter:
                     pass
 
     def _local_connector_image_override_path(self):
+        if self._level4_local_images_mode() == "disabled":
+            return None
         policy = self._resolve_level4_local_image_policy(
             mode=self._level4_local_images_mode(),
             label="INESData connector",

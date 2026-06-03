@@ -2668,7 +2668,38 @@ def _resolve_adapter_callable(adapter, *paths: str, default=None):
     return default
 
 
-def build_validation_engine(adapter, engine_cls=ValidationEngine):
+def _context_config_loader(base_loader, deployer_context=None):
+    if deployer_context is None:
+        return base_loader
+
+    def load_context_config():
+        loaded = base_loader() if callable(base_loader) else {}
+        config = dict(loaded or {}) if isinstance(loaded, dict) else {}
+        context = _test_data_cleanup_context_with_public_runtime(deployer_context)
+        context_config = getattr(context, "config", None)
+        if isinstance(context_config, dict):
+            config.update(context_config)
+        return config
+
+    return load_context_config
+
+
+def _context_ds_domain_resolver(base_resolver, deployer_context=None):
+    if deployer_context is None:
+        return base_resolver
+
+    def resolve_context_ds_domain():
+        context_domain = str(getattr(deployer_context, "ds_domain_base", "") or "").strip()
+        if context_domain:
+            return context_domain
+        if callable(base_resolver):
+            return base_resolver()
+        return ""
+
+    return resolve_context_ds_domain
+
+
+def build_validation_engine(adapter, engine_cls=ValidationEngine, deployer_context=None):
     """Build a generic validation engine from adapter-provided dependencies."""
     cleanup_test_entities = _resolve_adapter_callable(
         adapter,
@@ -2681,10 +2712,14 @@ def build_validation_engine(adapter, engine_cls=ValidationEngine):
         "connectors.load_connector_credentials",
         "load_connector_credentials",
     )
-    load_deployer_config = _resolve_adapter_callable(
+    base_load_deployer_config = _resolve_adapter_callable(
         adapter,
         "config_adapter.load_deployer_config",
         "load_deployer_config",
+    )
+    load_deployer_config = _context_config_loader(
+        base_load_deployer_config,
+        deployer_context=deployer_context,
     )
     validation_test_entities_absent = _resolve_adapter_callable(
         adapter,
@@ -2692,10 +2727,14 @@ def build_validation_engine(adapter, engine_cls=ValidationEngine):
         "validation_test_entities_absent",
         default=lambda connector: (True, []),
     )
-    ds_domain_resolver = _resolve_adapter_callable(
+    base_ds_domain_resolver = _resolve_adapter_callable(
         adapter,
         "config.ds_domain_base",
         "ds_domain_base",
+    )
+    ds_domain_resolver = _context_ds_domain_resolver(
+        base_ds_domain_resolver,
+        deployer_context=deployer_context,
     )
     protocol_address_resolver = _resolve_adapter_callable(
         adapter,
@@ -3206,6 +3245,7 @@ def build_kafka_edc_validation_suite(
     experiment_storage=ExperimentStorage,
     kafka_manager_cls=KafkaManager,
     kafka_manager=None,
+    deployer_context=None,
 ):
     """Build the Level 6 functional EDC+Kafka validator from adapter hooks."""
     load_connector_credentials = _resolve_adapter_callable(
@@ -3213,15 +3253,23 @@ def build_kafka_edc_validation_suite(
         "connectors.load_connector_credentials",
         "load_connector_credentials",
     )
-    load_deployer_config = _resolve_adapter_callable(
+    base_load_deployer_config = _resolve_adapter_callable(
         adapter,
         "config_adapter.load_deployer_config",
         "load_deployer_config",
+    )
+    load_deployer_config = _context_config_loader(
+        base_load_deployer_config,
+        deployer_context=deployer_context,
     )
     ds_domain_resolver = _resolve_adapter_callable(
         adapter,
         "config.ds_domain_base",
         "ds_domain_base",
+    )
+    ds_domain_resolver = _context_ds_domain_resolver(
+        ds_domain_resolver,
+        deployer_context=deployer_context,
     )
     kafka_runtime_loader = _resolve_adapter_callable(
         adapter,
@@ -3238,6 +3286,9 @@ def build_kafka_edc_validation_suite(
         "connectors.build_public_protocol_address",
         "connectors.build_internal_protocol_address",
     )
+    keycloak_url_resolver = None
+    if deployer_context is not None:
+        keycloak_url_resolver = lambda: _edc_keycloak_public_base_url(deployer_context)
 
     missing_dependencies = [
         name
@@ -3263,6 +3314,7 @@ def build_kafka_edc_validation_suite(
         ds_domain_resolver=ds_domain_resolver,
         ds_name_loader=_dataspace_name_loader(adapter),
         protocol_address_resolver=protocol_address_resolver,
+        keycloak_url_resolver=keycloak_url_resolver,
     )
 
 
@@ -3461,6 +3513,7 @@ def run_level6_kafka_edc_after_newman(
     kafka_manager_cls=KafkaManager,
     kafka_preparation=None,
     kafka_enabled=None,
+    deployer_context=None,
 ):
     """Run the functional EDC+Kafka suite after Newman when enabled in Level 6."""
     if not _supports_level6_kafka_edc(
@@ -3525,6 +3578,7 @@ def run_level6_kafka_edc_after_newman(
             experiment_storage=experiment_storage,
             kafka_manager_cls=kafka_manager_cls,
             kafka_manager=prepared_kafka_manager,
+            deployer_context=deployer_context,
         )
         http_fallback = _Level6LocalHttpPortForwardFallback(adapter, connectors, validator)
         http_fallback.activate_if_needed()
@@ -3870,7 +3924,11 @@ def run_interoperability_newman_tests(
             validation_profile=validation_profile,
         )
 
-        validation_engine = build_validation_engine(adapter, engine_cls=validation_engine_cls)
+        validation_engine = build_validation_engine(
+            adapter,
+            engine_cls=validation_engine_cls,
+            deployer_context=deployer_context,
+        )
         run_method = validation_engine.run
         try:
             parameters = inspect.signature(run_method).parameters
@@ -3935,6 +3993,7 @@ def run_interoperability_kafka_tests(
     )
     connectors = validation_runtime["connectors"]
     validation_profile = validation_runtime["validation_profile"]
+    deployer_context = validation_runtime["deployer_context"]
     resolved_deployer_name = validation_runtime.get("deployer_name") or deployer_name
     if not _supports_level6_kafka_edc(
         adapter,
@@ -3982,6 +4041,7 @@ def run_interoperability_kafka_tests(
             kafka_manager_cls=kafka_manager_cls,
             kafka_preparation=kafka_preparation,
             kafka_enabled=True,
+            deployer_context=deployer_context,
         )
 
     return {
@@ -4558,6 +4618,65 @@ def _test_data_cleanup_requires_local_infra_access(deployer_context):
     return any(_is_loopback_endpoint(value) for value in endpoint_values)
 
 
+def _test_data_cleanup_context_with_public_runtime(deployer_context):
+    if deployer_context is None:
+        return None
+
+    if isinstance(deployer_context, dict):
+        payload = dict(deployer_context)
+    elif callable(getattr(deployer_context, "as_dict", None)):
+        payload = dict(deployer_context.as_dict())
+    else:
+        payload = {
+            "deployer": getattr(deployer_context, "deployer", ""),
+            "topology": getattr(deployer_context, "topology", ""),
+            "environment": getattr(deployer_context, "environment", ""),
+            "dataspace_name": getattr(deployer_context, "dataspace_name", ""),
+            "ds_domain_base": getattr(deployer_context, "ds_domain_base", ""),
+            "connectors": list(getattr(deployer_context, "connectors", []) or []),
+            "components": list(getattr(deployer_context, "components", []) or []),
+            "config": dict(getattr(deployer_context, "config", {}) or {}),
+        }
+
+    config = dict(payload.get("config") or {})
+    topology = normalize_topology(payload.get("topology") or config.get("TOPOLOGY"))
+    if topology in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
+        public_config = {**config, "TOPOLOGY": topology}
+        public_urls = resolve_vm_distributed_public_urls(public_config)
+
+        def replace_missing_or_placeholder(key, value):
+            normalized_value = normalize_public_endpoint_url(value)
+            if not normalized_value:
+                return
+            if _vm_public_url_candidate(public_config, config.get(key)):
+                return
+            config[key] = normalized_value
+
+        replace_missing_or_placeholder(
+            "KEYCLOAK_FRONTEND_URL",
+            public_urls.get("KEYCLOAK_FRONTEND_URL") or public_urls.get("KEYCLOAK_PUBLIC_URL"),
+        )
+        replace_missing_or_placeholder(
+            "KEYCLOAK_PUBLIC_URL",
+            public_urls.get("KEYCLOAK_PUBLIC_URL") or public_urls.get("KEYCLOAK_FRONTEND_URL"),
+        )
+        replace_missing_or_placeholder(
+            "MINIO_API_PUBLIC_URL",
+            public_urls.get("MINIO_API_PUBLIC_URL") or public_urls.get("MINIO_PUBLIC_URL"),
+        )
+        replace_missing_or_placeholder(
+            "MINIO_PUBLIC_URL",
+            public_urls.get("MINIO_PUBLIC_URL") or public_urls.get("MINIO_API_PUBLIC_URL"),
+        )
+        replace_missing_or_placeholder(
+            "MINIO_CONSOLE_PUBLIC_URL",
+            public_urls.get("MINIO_CONSOLE_PUBLIC_URL"),
+        )
+
+    payload["config"] = config
+    return types.SimpleNamespace(**payload)
+
+
 def _append_public_endpoint(endpoints, seen, label, url):
     normalized_url = normalize_public_endpoint_url(url)
     if not normalized_url or normalized_url in seen:
@@ -4575,30 +4694,41 @@ def _level6_public_endpoint_candidates(adapter, connectors, deployer_context):
     ds_domain = str(getattr(deployer_context, "ds_domain_base", "") or "").strip()
     dataspace = str(getattr(deployer_context, "dataspace_name", "") or "").strip()
     topology = str(getattr(deployer_context, "topology", "") or "").strip().lower()
-    vm_distributed = topology == "vm-distributed"
+    vm_public_topology = topology in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}
 
-    if vm_distributed:
+    if vm_public_topology:
+        public_config = {**config, "TOPOLOGY": topology}
+        public_urls = resolve_vm_distributed_public_urls(public_config)
+        public_candidate = lambda value: _vm_public_url_candidate(public_config, value)
         _append_public_endpoint(
             endpoints,
             seen,
             "Keycloak public",
-            config.get("KEYCLOAK_FRONTEND_URL") or config.get("KEYCLOAK_PUBLIC_URL"),
+            public_candidate(config.get("KEYCLOAK_FRONTEND_URL"))
+            or public_candidate(config.get("KEYCLOAK_PUBLIC_URL"))
+            or public_urls.get("KEYCLOAK_FRONTEND_URL")
+            or public_urls.get("KEYCLOAK_PUBLIC_URL"),
         )
         _append_public_endpoint(
             endpoints,
             seen,
             "MinIO console",
-            config.get("MINIO_CONSOLE_PUBLIC_URL") or config.get("MINIO_PUBLIC_URL"),
+            public_candidate(config.get("MINIO_CONSOLE_PUBLIC_URL"))
+            or public_candidate(config.get("MINIO_PUBLIC_URL"))
+            or public_urls.get("MINIO_CONSOLE_PUBLIC_URL")
+            or public_urls.get("MINIO_PUBLIC_URL"),
         )
         _append_public_endpoint(
             endpoints,
             seen,
             "MinIO API",
-            config.get("PIONERA_LEVEL6_MINIO_ENDPOINT")
-            or config.get("LEVEL6_MINIO_ENDPOINT")
-            or config.get("EDC_LEVEL6_MINIO_ENDPOINT")
-            or config.get("MINIO_API_PUBLIC_URL")
-            or config.get("MINIO_PUBLIC_URL"),
+            public_candidate(config.get("PIONERA_LEVEL6_MINIO_ENDPOINT"))
+            or public_candidate(config.get("LEVEL6_MINIO_ENDPOINT"))
+            or public_candidate(config.get("EDC_LEVEL6_MINIO_ENDPOINT"))
+            or public_candidate(config.get("MINIO_API_PUBLIC_URL"))
+            or public_candidate(config.get("MINIO_PUBLIC_URL"))
+            or public_urls.get("MINIO_API_PUBLIC_URL")
+            or public_urls.get("MINIO_PUBLIC_URL"),
         )
     else:
         _append_public_endpoint(endpoints, seen, "Keycloak admin", resolved_urls.get("KC_URL"))
@@ -4881,7 +5011,7 @@ def _run_test_data_cleanup_if_enabled(adapter, connectors, deployer_context, exp
 
     cleanup_result = run_pre_validation_cleanup(
         adapter=adapter,
-        context=deployer_context,
+        context=_test_data_cleanup_context_with_public_runtime(deployer_context),
         connectors=list(connectors or []),
         experiment_dir=experiment_dir,
         mode=_test_data_cleanup_mode(),
@@ -8243,7 +8373,11 @@ def run_validate(
             validation_profile=validation_profile,
         )
 
-        validation_engine = build_validation_engine(adapter, engine_cls=validation_engine_cls)
+        validation_engine = build_validation_engine(
+            adapter,
+            engine_cls=validation_engine_cls,
+            deployer_context=deployer_context,
+        )
         run_method = validation_engine.run
 
         try:
@@ -8329,6 +8463,7 @@ def run_validate(
             kafka_manager_cls=kafka_manager_cls,
             kafka_preparation=kafka_preparation,
             kafka_enabled=kafka_level6_enabled,
+            deployer_context=deployer_context,
         )
 
         if validation_profile is not None:

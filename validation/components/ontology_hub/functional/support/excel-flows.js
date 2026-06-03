@@ -1383,30 +1383,42 @@ async function openThemisPanel(page) {
 
   const entrypoints = [
     {
+      name: "visible-tool-item",
+      locator: page.locator(".tool-item.gradient img[src='/img/themis.png']").first(),
+    },
+    {
       name: "themis-tab",
       locator: page.locator(".ontology-tab[data-onto-target='themis']").first(),
-    },
-    {
-      name: "accessible-themis-tab",
-      locator: page.getByRole("tab", { name: /themis/i }).first(),
-    },
-    {
-      name: "text-themis-tab",
-      locator: page.locator("[role='tab'], .ontology-tab, button, a").filter({ hasText: /themis/i }).first(),
-    },
-    {
-      name: "visible-themis-text",
-      locator: page.getByText(/^Themis$/i).first(),
     },
     {
       name: "legacy-user-options",
       locator: page.locator("#user-options img[src='/img/themis.png']").first(),
     },
-    {
-      name: "visible-tool-item",
-      locator: page.locator(".tool-item.gradient img[src='/img/themis.png']").first(),
-    },
   ];
+  if (typeof page.getByRole === "function") {
+    entrypoints.splice(1, 0, {
+      name: "accessible-themis-tab",
+      locator: page.getByRole("tab", { name: /themis/i }).first(),
+    });
+  }
+  let textTabLocator = null;
+  try {
+    textTabLocator = page.locator("[role='tab'], .ontology-tab, button, a");
+  } catch (_error) {
+    textTabLocator = null;
+  }
+  if (textTabLocator && typeof textTabLocator.filter === "function") {
+    entrypoints.splice(2, 0, {
+      name: "text-themis-tab",
+      locator: textTabLocator.filter({ hasText: /themis/i }).first(),
+    });
+  }
+  if (typeof page.getByText === "function") {
+    entrypoints.splice(3, 0, {
+      name: "visible-themis-text",
+      locator: page.getByText(/^Themis$/i).first(),
+    });
+  }
   const attempts = [];
   let lastError = null;
 

@@ -148,6 +148,9 @@ def _build_playwright_environment(
     env["UI_DS_DOMAIN"] = context.ds_domain_base
     env["UI_TOPOLOGY"] = context.topology
     env["UI_KEYCLOAK_URL"] = keycloak_url
+    runtime_dir = str(getattr(context, "runtime_dir", "") or "").strip()
+    if runtime_dir:
+        env["UI_RUNTIME_DIR"] = runtime_dir
     env["UI_KEYCLOAK_CLIENT_ID"] = str(
         env.get("UI_KEYCLOAK_CLIENT_ID")
         or config.get("EDC_DASHBOARD_PROXY_CLIENT_ID")
