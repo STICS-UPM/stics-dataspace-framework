@@ -72,6 +72,15 @@ if [[ ! -d "$DASHBOARD_REPO_DIR/.git" ]]; then
   bash "$SCRIPT_DIR/sync_dashboard_sources.sh" --apply
 fi
 
+APPLY_OVERLAYS_SCRIPT="$ADAPTER_DIR/scripts/apply_overlays.sh"
+if [[ -f "$APPLY_OVERLAYS_SCRIPT" ]]; then
+  if [[ "$APPLY" == true ]]; then
+    bash "$APPLY_OVERLAYS_SCRIPT" --apply --target dashboard
+  else
+    echo "Would run: bash \"$APPLY_OVERLAYS_SCRIPT\" --apply --target dashboard"
+  fi
+fi
+
 DASHBOARD_DIR="$DASHBOARD_REPO_DIR"
 if [[ -d "$DASHBOARD_REPO_DIR/DataDashboard" ]]; then
   DASHBOARD_DIR="$DASHBOARD_REPO_DIR/DataDashboard"

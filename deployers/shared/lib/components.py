@@ -392,6 +392,31 @@ _ONTOLOGY_VALIDATOR_SOURCE_PARTS = (
     "JenaValidationService.java",
 )
 
+_EDC_ONTOLOGY_VALIDATOR_SOURCE_PARTS = (
+    "adapters",
+    "edc",
+    "sources",
+    "connector",
+    "extensions",
+    "edc-rdf-validator",
+    "src",
+    "main",
+    "java",
+    "org",
+    "eclipse",
+    "edc",
+    "validation",
+    "rdf",
+    "services",
+    "impl",
+    "JenaValidationService.java",
+)
+
+_ONTOLOGY_VALIDATOR_SOURCE_PARTS_BY_TARGET = {
+    "inesdata": _ONTOLOGY_VALIDATOR_SOURCE_PARTS,
+    "edc": _EDC_ONTOLOGY_VALIDATOR_SOURCE_PARTS,
+}
+
 
 def _repo_root_candidates(project_root: str | Path | None) -> list[Path]:
     candidates: list[Path] = []
@@ -400,7 +425,8 @@ def _repo_root_candidates(project_root: str | Path | None) -> list[Path]:
         candidates.extend([root, root.parent, root.parent.parent])
         if root.name == "inesdata" and root.parent.name == "deployers":
             candidates.insert(0, root.parent.parent)
-    candidates.append(Path(__file__).resolve().parents[3])
+    else:
+        candidates.append(Path(__file__).resolve().parents[3])
 
     resolved: list[Path] = []
     seen: set[Path] = set()
@@ -412,13 +438,46 @@ def _repo_root_candidates(project_root: str | Path | None) -> list[Path]:
     return resolved
 
 
+def ontology_validator_source_paths(
+    project_root: str | Path | None,
+    *,
+    targets: tuple[str, ...] = ("inesdata", "edc"),
+) -> list[Path]:
+    resolved: list[Path] = []
+    seen: set[Path] = set()
+    for target in targets:
+        relative_parts = _ONTOLOGY_VALIDATOR_SOURCE_PARTS_BY_TARGET.get(target)
+        if relative_parts is None:
+            continue
+        relative_path = Path(*relative_parts)
+        for root in _repo_root_candidates(project_root):
+            candidate = (root / relative_path).resolve()
+            if candidate.exists() and candidate not in seen:
+                seen.add(candidate)
+                resolved.append(candidate)
+    return resolved
+
+
 def ontology_validator_source_path(project_root: str | Path | None) -> Path | None:
-    relative_path = Path(*_ONTOLOGY_VALIDATOR_SOURCE_PARTS)
-    for root in _repo_root_candidates(project_root):
-        candidate = root / relative_path
-        if candidate.exists():
-            return candidate
-    return None
+    paths = ontology_validator_source_paths(project_root)
+    return paths[0] if paths else None
+
+
+def snapshot_ontology_validator_sources(paths: list[Path]) -> dict[Path, str]:
+    snapshots: dict[Path, str] = {}
+    for path in paths:
+        if path.exists():
+            snapshots[path] = path.read_text(encoding="utf-8")
+    return snapshots
+
+
+def restore_ontology_validator_sources(snapshots: dict[Path, str]) -> None:
+    for path, content in snapshots.items():
+        if path.exists():
+            current = path.read_text(encoding="utf-8")
+            if current != content:
+                path.write_text(content, encoding="utf-8", newline="\n")
+                print(f"Ontology validator source restored: {path}")
 
 
 def ontology_validator_url_mapping(context: Any) -> dict[str, str]:
@@ -461,17 +520,7 @@ def ontology_validator_url_mapping(context: Any) -> dict[str, str]:
     }
 
 
-def patch_ontology_validator_source(context: Any, project_root: str | Path | None) -> bool:
-    mapping = ontology_validator_url_mapping(context)
-    if not mapping:
-        print("Ontology validator URL patch skipped: Ontology Hub endpoint could not be resolved.")
-        return False
-
-    source_path = ontology_validator_source_path(project_root)
-    if source_path is None:
-        print("Ontology validator URL patch skipped: JenaValidationService.java was not found.")
-        return False
-
+def _patch_jena_validation_service_file(source_path: Path, mapping: dict[str, str]) -> bool:
     content = source_path.read_text(encoding="utf-8")
     pattern = r'(return\s+url\.replace\(")([^"]*)(",\s*")([^"]*)("\);)'
 
@@ -483,18 +532,71 @@ def patch_ontology_validator_source(context: Any, project_root: str | Path | Non
 
     updated, replacements = re.subn(pattern, replace, content, count=1)
     if replacements == 0:
-        print("Ontology validator URL patch skipped: expected url.replace(...) pattern was not found.")
+        print(
+            "Ontology validator URL patch skipped: expected url.replace(...) pattern was not found "
+            f"in {source_path}."
+        )
         return False
 
     if updated != content:
         source_path.write_text(updated, encoding="utf-8", newline="\n")
         print(
             "Ontology validator URL patch applied: "
-            f"{mapping['external_url']} -> {mapping['internal_url']}"
+            f"{mapping['external_url']} -> {mapping['internal_url']} ({source_path.name})"
         )
     else:
         print(
             "Ontology validator URL patch already up to date: "
-            f"{mapping['external_url']} -> {mapping['internal_url']}"
+            f"{mapping['external_url']} -> {mapping['internal_url']} ({source_path.name})"
         )
     return True
+
+
+def patch_ontology_validator_source(
+    context: Any,
+    project_root: str | Path | None,
+    *,
+    targets: tuple[str, ...] = ("inesdata", "edc"),
+) -> bool:
+    mapping = ontology_validator_url_mapping(context)
+    if not mapping:
+        print("Ontology validator URL patch skipped: Ontology Hub endpoint could not be resolved.")
+        return False
+
+    source_paths = ontology_validator_source_paths(project_root, targets=targets)
+    if not source_paths:
+        print("Ontology validator URL patch skipped: JenaValidationService.java was not found.")
+        return False
+
+    patched_any = False
+    for source_path in source_paths:
+        if _patch_jena_validation_service_file(source_path, mapping):
+            patched_any = True
+    return patched_any
+
+
+def ontology_validator_patch_context_from_environ() -> Any | None:
+    import os
+    from types import SimpleNamespace
+
+    dataspace_name = str(os.environ.get("PIONERA_ONTOLOGY_PATCH_DATASPACE") or "").strip()
+    if not dataspace_name:
+        return None
+
+    config = {
+        "DS_DOMAIN_BASE": str(os.environ.get("PIONERA_ONTOLOGY_PATCH_DS_DOMAIN_BASE") or "").strip(),
+        "COMPONENTS_NAMESPACE": str(
+            os.environ.get("PIONERA_ONTOLOGY_PATCH_COMPONENTS_NAMESPACE") or ""
+        ).strip(),
+        "ONTOLOGY_HUB_URL": str(os.environ.get("PIONERA_ONTOLOGY_PATCH_ONTOLOGY_HUB_URL") or "").strip(),
+        "ONTOLOGY_HUB_HOST": str(os.environ.get("PIONERA_ONTOLOGY_PATCH_ONTOLOGY_HUB_HOST") or "").strip(),
+        "ONTOLOGY_HUB_HOSTNAME": str(
+            os.environ.get("PIONERA_ONTOLOGY_PATCH_ONTOLOGY_HUB_HOSTNAME") or ""
+        ).strip(),
+    }
+    components_namespace = config["COMPONENTS_NAMESPACE"] or "components"
+    return SimpleNamespace(
+        dataspace_name=dataspace_name,
+        config=config,
+        namespace_roles=SimpleNamespace(components_namespace=components_namespace),
+    )

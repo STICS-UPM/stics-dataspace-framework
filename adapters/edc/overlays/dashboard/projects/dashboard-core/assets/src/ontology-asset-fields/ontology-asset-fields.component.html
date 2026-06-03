@@ -1,0 +1,94 @@
+<div class="ontology-fields flex flex-col gap-3">
+  <p class="text-xs opacity-70">
+    Select ontology and SHACL from Ontology Hub. Download URLs are stored on the asset for EDC RDF validation during S3
+    transfer.
+  </p>
+
+  @if (listLoading) {
+    <p class="text-sm opacity-70">Loading ontologies…</p>
+  } @else if (loadError) {
+    <p class="text-sm text-error">{{ loadError }}</p>
+  } @else {
+    <label class="form-control w-full">
+      <span class="label-text font-medium">URI Ontology</span>
+      <input
+        type="text"
+        class="input input-bordered input-sm mb-1"
+        placeholder="Search by title or URI…"
+        [value]="ontologySearch"
+        (input)="onSearchOntology($event)"
+      />
+      <select
+        class="select select-bordered w-full"
+        [value]="ontologyUri"
+        (change)="onOntologySelected($any($event.target).value)"
+      >
+        <option value="" disabled>Select ontology</option>
+        @for (ontology of filteredOntologies; track ontology.uri) {
+          <option [value]="ontology.uri">{{ ontologyTitle(ontology) }}</option>
+        }
+      </select>
+    </label>
+
+    @if (ontologyUri) {
+      <label class="form-control w-full">
+        <span class="label-text font-medium">Version</span>
+        <select
+          class="select select-bordered w-full"
+          [value]="ontologyVersion"
+          (change)="onVersionSelected($any($event.target).value)"
+          required
+        >
+          <option value="" disabled>Select version</option>
+          @for (version of ontologyVersions; track version.issued) {
+            <option [value]="version.issued">{{ version.name }}</option>
+          }
+        </select>
+      </label>
+
+      <label class="form-control w-full">
+        <span class="label-text font-medium">SHACL</span>
+        <select
+          class="select select-bordered w-full"
+          [value]="ontologyShacl"
+          (change)="onShaclSelected($any($event.target).value)"
+          required
+        >
+          <option value="" disabled>Select SHACL shape</option>
+          @for (shacl of ontologyShacls; track shacl) {
+            <option [value]="shacl">{{ shacl }}</option>
+          }
+          <option [value]="newShacleOption">Upload a new shacle file</option>
+        </select>
+      </label>
+
+      @if (ontologyShacl === newShacleOption) {
+        <div class="flex flex-col gap-2 border border-base-300 rounded-box p-3 bg-base-100">
+          <span class="text-sm font-medium">SHACL file</span>
+          <input
+            type="file"
+            class="file-input file-input-bordered file-input-sm w-full"
+            accept=".ttl,.shacl,.rdf,.txt,text/plain"
+            (change)="onShaclFileSelected($event)"
+          />
+          <button
+            type="button"
+            class="btn btn-outline btn-sm self-end"
+            [disabled]="!shaclPendingFile || uploadRunning"
+            (click)="uploadShacleFile()"
+          >
+            @if (uploadRunning) {
+              <span class="loading loading-spinner loading-xs"></span>
+            }
+            Upload file
+          </button>
+          @if (uploadMessage) {
+            <p class="text-xs" [class.text-success]="uploadMessage.includes('success')" [class.text-error]="uploadMessage.includes('Error')">
+              {{ uploadMessage }}
+            </p>
+          }
+        </div>
+      }
+    }
+  }
+</div>

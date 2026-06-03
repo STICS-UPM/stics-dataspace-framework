@@ -38,6 +38,17 @@ dependencies {
 
     implementation(libs.edc.data.plane.spi)
     implementation(libs.edc.web.spi)
+    // validation-environment-edc-rdf-overlay
+    implementation(project(":extensions:edc-rdf-validator"))
+    implementation(project(":extensions:edc-rdf-validator-dataplane"))
+    implementation(project(":extensions:edc-rdf-validation-api"))
+    implementation(libs.edc.sql.core)
+    implementation(libs.edc.sql.pool)
+    implementation(libs.edc.sql.transferprocess)
+    implementation(libs.edc.transaction.local)
+    implementation(libs.edc.transaction.spi)
+    implementation(libs.edc.transaction.datasource.spi)
+    implementation(libs.postgres)
 }
 
 application {

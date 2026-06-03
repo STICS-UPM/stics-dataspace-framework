@@ -18,3 +18,8 @@ EDC_DASHBOARD_PROXY_AUTH_MODE=oidc-bff
 EDC_DASHBOARD_PROXY_CLIENT_ID=dataspace-users
 EDC_DASHBOARD_PROXY_SCOPE=openid profile email
 EDC_DASHBOARD_BASE_HREF=/edc-dashboard/
+# Ontology Hub (EDC dashboard runtime). Leave email/password empty if the hub allows anonymous list/upload.
+ONTOLOGY_HUB_URL=http://ontology-hub-demo.dev.ds.dataspaceunit.upm
+ONTOLOGY_HUB_ADMIN_EMAIL=
+ONTOLOGY_HUB_ADMIN_PASSWORD=
+ONTOLOGY_HUB_INTERNAL_URL=http://demo-ontology-hub.components:3333
