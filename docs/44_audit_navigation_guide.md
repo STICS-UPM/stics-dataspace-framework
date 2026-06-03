@@ -10,7 +10,7 @@ conserva solo como trazabilidad histórica.
 El framework permite desplegar y validar entornos PIONERA con adapters de
 INESData y EDC. La documentación vigente cubre:
 
-- topologías `local`, `vm-single` y modelo de alineamiento para `vm-distributed`;
+- topologías `local`, `vm-single` y `vm-distributed`;
 - namespaces canónicos comunes a todas las topologías;
 - ejecución por menú y CLI mediante `main.py`;
 - validación de `Level 6` con Newman/Postman, Kafka, componentes compartidos,
@@ -77,10 +77,10 @@ Todas las topologías deben alinearse con los mismos namespaces funcionales:
 
 ## Estado de Topologías
 
-`local` y `vm-single` son las topologías principales de trabajo actual. La
-topología `vm-distributed` debe mantenerse alineada con la rama remota `main`,
-especialmente en namespaces, contratos de deployer, Level 5 y validación de
-Level 6.
+`local`, `vm-single` y `vm-distributed` comparten el mismo modelo de niveles,
+namespaces funcionales y contratos de adapter. La topología `vm-distributed`
+añade separación física por roles y requiere configuración local de red, SSH,
+kubeconfig, DNS/Ingress y URLs públicas antes de ejecutar los niveles.
 
 ## Trazabilidad Histórica
 

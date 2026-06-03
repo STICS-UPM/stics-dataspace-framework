@@ -518,10 +518,10 @@ Para despliegues con conectores externos o infraestructura distribuida, revisa
 [Preparación de conectores externos](./45_external_connector_readiness.md)
 antes de ejecutar niveles de despliegue.
 
-### Alineamiento Requerido con `main`
+### Alineamiento Operativo
 
-Para cerrar `vm-distributed`, la implementación debe partir de la rama remota
-`main` y conservar el contrato común del framework:
+Para operar `vm-distributed`, la configuración debe conservar el contrato común
+del framework:
 
 - usar los namespaces canónicos descritos en este documento;
 - mantener `NAMESPACE_PROFILE=role-aligned`;
@@ -535,7 +535,7 @@ Para cerrar `vm-distributed`, la implementación debe partir de la rama remota
   `deployers/infrastructure/topologies/vm-distributed.config`;
 - usar variables públicas `PIONERA_*` para overrides de usuario.
 
-Checklist mínimo antes de declarar la topología operativa:
+Checklist mínimo antes de declarar válida una ejecución distribuida:
 
 1. `python3 main.py inesdata hosts --topology vm-distributed --dry-run` genera
    entradas coherentes.

@@ -13,6 +13,41 @@ El punto de entrada principal es `main.py`. El framework está organizado para
 trabajar con distintos adapters y topologías sin duplicar la lógica común de
 validación.
 
+## Estado Actual del Proyecto
+
+El framework está en una fase operativa de validación y cierre documental. La
+rama `main` contiene:
+
+- ejecución por niveles `1-6`;
+- adapters `inesdata` y `edc`;
+- topologías `local`, `vm-single` y `vm-distributed`;
+- validación con Newman, Playwright, Kafka opcional y componentes;
+- generación de evidencias bajo `experiments/`;
+- documentación pública en `docs/`.
+
+El estado detallado se mantiene en
+[docs/30_framework_current_state.md](./docs/30_framework_current_state.md).
+
+## Índice
+
+| Sección | Qué contiene |
+| --- | --- |
+| [Funcionalidades principales](#funcionalidades-principales) | Capacidades del framework |
+| [Adapters](#adapters) | Implementaciones soportadas |
+| [Topologías](#topologías) | `local`, `vm-single` y `vm-distributed` |
+| [Instalación y compilación](#instalación-y-compilación) | Clonado, bootstrap y entorno Python |
+| [Configuración](#configuración) | Ficheros `.config`, overlays y variables `PIONERA_*` |
+| [Guía de uso con ejemplos](#guía-de-uso-con-ejemplos) | Menú, CLI, niveles y ejemplos de comandos |
+| [Requisitos técnicos y dependencias](#requisitos-técnicos-y-dependencias) | Herramientas necesarias |
+| [Validación](#validación) | `Level 6`, Newman, Playwright, Kafka y componentes |
+| [Pruebas y cómo ejecutarlas](#pruebas-y-cómo-ejecutarlas) | Tests unitarios del framework |
+| [Estructura del repositorio](#estructura-del-repositorio) | Carpetas principales |
+| [Documentación](#documentación) | Rutas de lectura en `docs/` |
+| [Cómo contribuir](#cómo-contribuir) | Issues, forks y pull requests |
+| [Agradecimientos y financiación](#agradecimientos-y-fuentes-de-financiación) | Financiación del proyecto |
+| [Autores y contacto](#autores-y-contacto) | Contacto público del proyecto |
+| [Licencia](#licencia) | Licencia Apache 2.0 |
+
 ## Funcionalidades Principales
 
 - desplegar un dataspace por niveles;
@@ -70,7 +105,7 @@ funcionales. Los valores reales de dominio, IP, SSH, kubeconfig y credenciales
 permanecen en ficheros locales ignorados por Git o en variables de entorno, no
 en la documentación versionada.
 
-## Inicio Rápido
+## Instalación y Compilación
 
 1. Clona el repositorio:
 
@@ -365,7 +400,9 @@ namespace, registration-service, bases de datos, usuarios y artefactos
 generados. Los conectores pueden tener nombres similares siempre que el
 dataspace resultante produzca hostnames distintos.
 
-## Menú y Niveles
+## Guía de Uso con Ejemplos
+
+### Menú y Niveles
 
 El menú se abre con:
 
@@ -412,7 +449,8 @@ cada conector cuando aplique.
 Si no preseleccionas adapter con `S`, el menú lo pedirá automáticamente cuando
 una operación de `Level 3` a `Level 6` lo necesite.
 
-La referencia completa está en [docs/menu-reference.md](./docs/menu-reference.md).
+La referencia completa está en
+[docs/33_menu_reference.md](./docs/33_menu_reference.md).
 
 ## Validación Local y Acceso Público
 
@@ -428,7 +466,7 @@ Esto significa que `Level 6` completo no debe considerarse correcto si solo
 funciona mediante `port-forward`. Primero deben estar operativos `hosts`,
 Ingress y `minikube tunnel`.
 
-## Prerrequisitos
+## Requisitos Técnicos y Dependencias
 
 Para ejecución local, el framework espera:
 
@@ -536,9 +574,9 @@ El script:
 4. ayuda a publicar un hostname externo coherente para browser, Keycloak y MinIO.
 
 La arquitectura y las URLs de referencia están documentadas en
-[docs/acceso_externo_conectores_pionera.md](./docs/acceso_externo_conectores_pionera.md).
+[docs/41_pionera_connector_external_access.md](./docs/41_pionera_connector_external_access.md).
 
-## CLI Principal
+### CLI Principal
 
 Listar adapters:
 
@@ -638,7 +676,8 @@ validation/ui/playwright.inesdata.config.ts
 validation/ui/playwright.edc.config.ts
 ```
 
-La documentación de validación está en [docs/validation.md](./docs/validation.md).
+La documentación de validación está en
+[docs/37_validation.md](./docs/37_validation.md).
 
 ## Métricas y Kafka
 
@@ -781,7 +820,7 @@ experiments/
 Los reportes Playwright quedan dentro del experimento correspondiente cuando se
 ejecutan desde `Level 6`.
 
-## Arquitectura y Estructura
+## Estructura del Repositorio
 
 | Ruta | Descripción |
 | --- | --- |
@@ -795,7 +834,7 @@ ejecutan desde `Level 6`.
 | `tests/` | Pruebas unitarias del framework. |
 | `docs/` | Documentación estable del framework. |
 
-## Tests
+## Pruebas y Cómo Ejecutarlas
 
 Pruebas focalizadas de topologías, contratos, hosts y CLI:
 
@@ -822,15 +861,45 @@ La documentación está en [docs/](./docs/README.md).
 
 Orden recomendado:
 
-- [Inicio rápido](./docs/getting-started.md)
-- [Referencia del menú](./docs/menu-reference.md)
-- [Arquitectura](./docs/architecture.md)
-- [Deployers y topologías](./docs/deployers-and-topologies.md)
-- [Adapters](./docs/adapters.md)
-- [Validación](./docs/validation.md)
-- [Desarrollo y testing](./docs/development-and-testing.md)
-- [Troubleshooting](./docs/troubleshooting.md)
-- [Acceso externo a conectores (VM/PIONERA)](./docs/acceso_externo_conectores_pionera.md)
+- [Inicio rápido](./docs/32_getting_started.md)
+- [Referencia del menú](./docs/33_menu_reference.md)
+- [Arquitectura](./docs/34_architecture.md)
+- [Deployers y topologías](./docs/35_deployers_and_topologies.md)
+- [Adapters](./docs/36_adapters.md)
+- [Validación](./docs/37_validation.md)
+- [Desarrollo y testing](./docs/38_development_and_testing.md)
+- [Troubleshooting](./docs/39_troubleshooting.md)
+- [Acceso externo a conectores](./docs/41_pionera_connector_external_access.md)
+- [Guía operativa de vm-distributed](./docs/46_vm_distributed_runbook.md)
+
+## Imágenes, Diagramas y Vídeos Explicativos
+
+Diagramas disponibles:
+
+- [Entorno local de validación](./docs/pionera_local_validation_environment.png)
+- [Entorno distribuido de validación](./docs/pionera_distributed_validation_environment.png)
+- [Arquitectura del entorno de pruebas](./docs/test_environment_architecture.png)
+
+Los vídeos explicativos pueden enlazarse desde `docs/README.md` cuando estén
+publicados. La estructura recomendada es:
+
+1. resumen del framework y metodología de validación;
+2. despliegue básico y topologías;
+3. validación de componentes y evidencias.
+
+## Cómo Contribuir
+
+El flujo recomendado para contribuciones es:
+
+1. abre un issue describiendo el cambio, bug o mejora;
+2. crea un fork o una rama de trabajo;
+3. ejecuta las pruebas relevantes antes de abrir el pull request;
+4. abre un pull request explicando el objetivo, alcance, pruebas ejecutadas y
+   riesgos conocidos.
+
+No incluyas credenciales, tokens, claves privadas, kubeconfigs reales, logs con
+secretos ni datos personales en commits, issues o pull requests. Usa
+placeholders y ficheros locales ignorados por Git para configuración de entorno.
 
 ## Referencias Técnicas
 
@@ -840,9 +909,14 @@ Orden recomendado:
 - [Eclipse EDC Kafka sample](https://github.com/eclipse-edc/Samples/tree/main/transfer/transfer-06-kafka-broker)
 - [DataSpaceUnit local deployment](https://github.com/DataSpaceUnit/ds-local-deployment)
 
-## Financiación
+## Agradecimientos y Fuentes de Financiación
 
-This work has received funding from the **PIONERA project** (Enhancing interoperability in data spaces through artificial intelligence), a project funded in the context of the call for Technological Products and Services for Data Spaces of the Ministry for Digital Transformation and Public Administration within the framework of the PRTR funded by the European Union (NextGenerationEU).
+Este trabajo ha recibido financiación del **proyecto PIONERA** (Enhancing
+interoperability in data spaces through artificial intelligence), financiado en
+el contexto de la convocatoria de Productos y Servicios Tecnológicos para
+Espacios de Datos del Ministerio para la Transformación Digital y de la Función
+Pública, dentro del marco del PRTR financiado por la Unión Europea
+(NextGenerationEU).
 
 <div align="center">
   <img src="funding_label.png" alt="Logos financiación" width="900" />
@@ -850,6 +924,12 @@ This work has received funding from the **PIONERA project** (Enhancing interoper
 
 ---
 
+## Autores y Contacto
+
+Este repositorio forma parte del trabajo software del proyecto PIONERA. Para
+consultas, incidencias o propuestas de cambio, usa los issues y pull requests
+del repositorio en GitHub.
+
 ## Licencia
 
-Validation-Environment is available under the **[Apache License 2.0](https://github.com/ProyectoPIONERA/pionera_env/blob/main/LICENSE)**.
+Validation-Environment está disponible bajo la **[Apache License 2.0](./LICENSE)**.

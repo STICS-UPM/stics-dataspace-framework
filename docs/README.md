@@ -22,6 +22,28 @@ documentación estable de `docs/`.
 | Resolver errores | [Troubleshooting](./39_troubleshooting.md) |
 | Auditar el framework | [Guía de navegación para auditoría](./44_audit_navigation_guide.md) |
 
+## Estructura Pública del Repositorio Software
+
+La documentación sigue esta estructura de referencia para facilitar revisión,
+uso y auditoría.
+
+| Elemento esperado | Ubicación principal |
+| --- | --- |
+| Título y descripción del proyecto | [README principal](../README.md) |
+| Estado actual del proyecto | [30 Estado actual](./30_framework_current_state.md) |
+| Índice o tabla de contenido | [README principal](../README.md) y este índice |
+| Funcionalidades principales | [README principal](../README.md#funcionalidades-principales) |
+| Estructura del repositorio | [README principal](../README.md#estructura-del-repositorio) y [Arquitectura](./34_architecture.md) |
+| Requisitos técnicos y dependencias | [README principal](../README.md#requisitos-técnicos-y-dependencias) e [Inicio rápido](./32_getting_started.md) |
+| Instalación y compilación | [README principal](../README.md#instalación-y-compilación) e [Inicio rápido](./32_getting_started.md) |
+| Guía de uso con ejemplos | [README principal](../README.md#guía-de-uso-con-ejemplos), [Referencia del menú](./33_menu_reference.md) y [Validación](./37_validation.md) |
+| Cómo contribuir | [README principal](../README.md#cómo-contribuir) |
+| Agradecimientos y financiación | [README principal](../README.md#agradecimientos-y-fuentes-de-financiación) |
+| Autores y contacto | [README principal](../README.md#autores-y-contacto) |
+| Licencia del proyecto | [README principal](../README.md#licencia) y [`LICENSE`](../LICENSE) |
+| Pruebas y cómo ejecutarlas | [README principal](../README.md#pruebas-y-cómo-ejecutarlas) y [Desarrollo y testing](./38_development_and_testing.md) |
+| Imágenes, diagramas o vídeos explicativos | [README principal](../README.md#imágenes-diagramas-y-vídeos-explicativos) y [diagramas](#diagramas-y-evidencias) |
+
 ## Rutas de Lectura
 
 ### Operación del Framework
