@@ -52,6 +52,8 @@ class INESDataInfrastructureAdapter:
     POSTGRES_SERVICE_PORT = 5432
     KEYCLOAK_HTTP_COOKIE_ANNOTATION = "nginx.ingress.kubernetes.io/configuration-snippet"
     KEYCLOAK_HTTP_COOKIE_SNIPPET = "proxy_cookie_flags ~ nosecure nosamesite;\n"
+    KEYCLOAK_CONFIG_CLI_AVAILABILITY_TIMEOUT_ENV = "KEYCLOAK_AVAILABILITYCHECK_TIMEOUT"
+    KEYCLOAK_CONFIG_CLI_AVAILABILITY_TIMEOUT_DEFAULT = "600s"
 
     def __init__(self, run, run_silent, auto_mode_getter, config_adapter=None, config_cls=None):
         self.run = run
@@ -2215,6 +2217,20 @@ class INESDataInfrastructureAdapter:
             if item["name"] == "KEYCLOAK_PASSWORD":
                 add_row("KC_PASSWORD", "keycloakConfigCli.KEYCLOAK_PASSWORD", "KC_PASSWORD", item["value"])
 
+        keycloak_config_cli = values.get("keycloak", {}).get("keycloakConfigCli", {})
+        add_row_value(
+            "KEYCLOAK_CONFIG_CLI_AVAILABILITY_TIMEOUT",
+            (
+                "keycloak.keycloakConfigCli.extraEnvVars."
+                f"{self.KEYCLOAK_CONFIG_CLI_AVAILABILITY_TIMEOUT_ENV}"
+            ),
+            self._keycloak_config_cli_availability_timeout(config),
+            self._env_var_value(
+                keycloak_config_cli.get("extraEnvVars", []),
+                self.KEYCLOAK_CONFIG_CLI_AVAILABILITY_TIMEOUT_ENV,
+            ),
+        )
+
         return rows
 
     @staticmethod
@@ -2291,7 +2307,41 @@ class INESDataInfrastructureAdapter:
             if item["name"] == "KEYCLOAK_PASSWORD":
                 item["value"] = kc_password
 
+        keycloak_config_cli = values.setdefault("keycloak", {}).setdefault("keycloakConfigCli", {})
+        self._upsert_env_var(
+            keycloak_config_cli,
+            "extraEnvVars",
+            self.KEYCLOAK_CONFIG_CLI_AVAILABILITY_TIMEOUT_ENV,
+            self._keycloak_config_cli_availability_timeout(config),
+        )
+
         return values
+
+    @classmethod
+    def _keycloak_config_cli_availability_timeout(cls, config):
+        raw_value = str((config or {}).get("KEYCLOAK_CONFIG_CLI_AVAILABILITY_TIMEOUT") or "").strip()
+        return raw_value or cls.KEYCLOAK_CONFIG_CLI_AVAILABILITY_TIMEOUT_DEFAULT
+
+    @staticmethod
+    def _env_var_value(env_vars, name):
+        if not isinstance(env_vars, list):
+            return ""
+        for item in env_vars:
+            if isinstance(item, dict) and item.get("name") == name:
+                return item.get("value", "")
+        return ""
+
+    @staticmethod
+    def _upsert_env_var(parent, key, name, value):
+        env_vars = parent.get(key)
+        if not isinstance(env_vars, list):
+            env_vars = []
+            parent[key] = env_vars
+        for item in env_vars:
+            if isinstance(item, dict) and item.get("name") == name:
+                item["value"] = value
+                return
+        env_vars.append({"name": name, "value": value})
 
     @staticmethod
     def _path_public_url_parts(raw_url):
@@ -3081,10 +3131,10 @@ class INESDataInfrastructureAdapter:
         return False
 
     def reset_local_shared_common_services(self, reason=None):
-        print("\nResetting local shared common services...")
+        print("\nResetting shared common services for the active topology...")
         if reason:
             print(f"Reset reason: {reason}")
-        print("This removes the local common-srvs namespace and regenerates Vault credentials on the next Level 2 run.")
+        print("This removes the common-srvs namespace and regenerates Vault credentials on the next Level 2 run.")
 
         self.stop_port_forward_service(self.config.NS_COMMON, "postgresql", quiet=True)
         self.stop_port_forward_service(self.config.NS_COMMON, "vault", quiet=True)
@@ -3100,7 +3150,7 @@ class INESDataInfrastructureAdapter:
             self.finalize_local_common_services_reset(success=False)
             return False
 
-        print("Local shared common services reset completed")
+        print("Shared common services reset completed")
         return True
 
     def reset_common_services_for_level4_repair(self, reason=None):

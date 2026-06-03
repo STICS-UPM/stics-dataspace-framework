@@ -65,6 +65,113 @@ class INESDataDeploymentAdapter(SharedDataspaceDeploymentAdapter):
             deployer_config = {}
         return str(deployer_config.get("MINIKUBE_PROFILE") or "minikube").strip() or "minikube"
 
+    @staticmethod
+    def _config_value(config, *keys):
+        values = dict(config or {})
+        for key in keys:
+            value = str(values.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _vm_single_remote_image_import_target(self, deployer_config):
+        config = dict(deployer_config or {})
+        raw_enabled = str(config.get("VM_SINGLE_REMOTE_IMAGE_IMPORT") or "auto").strip().lower()
+        if raw_enabled in {"0", "false", "no", "n", "off", "disabled", "disable", "never", "none"}:
+            return None
+
+        host = self._config_value(config, "VM_SINGLE_SSH_HOST", "VM_EXTERNAL_IP", "VM_SINGLE_IP")
+        if not host:
+            return None
+
+        remote_config = dict(config)
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT"] = "true"
+        remote_config["VM_COMMON_SSH_HOST"] = host
+        remote_config["VM_COMMON_IP"] = self._config_value(config, "VM_EXTERNAL_IP", "VM_SINGLE_IP") or host
+        remote_config["VM_COMMON_SSH_PORT"] = self._config_value(config, "VM_SINGLE_SSH_PORT") or "22"
+        remote_config["VM_COMMON_SSH_USER"] = self._config_value(
+            config,
+            "VM_SINGLE_SSH_USER",
+            "VM_SSH_USER",
+            "SSH_BASTION_USER",
+        )
+        remote_config["VM_COMMON_SSH_IDENTITY_FILE"] = self._config_value(
+            config,
+            "VM_SINGLE_SSH_IDENTITY_FILE",
+            "SSH_IDENTITY_FILE",
+            "SSH_BASTION_IDENTITY_FILE",
+        )
+        if self._config_value(config, "VM_SINGLE_SSH_ACCESS_MODE"):
+            remote_config["SSH_ACCESS_MODE"] = self._config_value(config, "VM_SINGLE_SSH_ACCESS_MODE")
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND"] = self._config_value(
+            config,
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_COMMAND",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND",
+            "K3S_IMAGE_IMPORT_COMMAND",
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR"] = (
+            self._config_value(config, "VM_SINGLE_REMOTE_IMAGE_IMPORT_DIR", "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR")
+            or "/tmp"
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE"] = (
+            self._config_value(
+                config,
+                "VM_SINGLE_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+            )
+            or "auto"
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY"] = self._config_value(
+            config,
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_TTY",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY",
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE"] = self._config_value(
+            config,
+            "VM_SINGLE_REMOTE_IMAGE_PRUNE",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE",
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP"] = (
+            self._config_value(
+                config,
+                "VM_SINGLE_REMOTE_IMAGE_PRUNE_KEEP",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP",
+            )
+            or "2"
+        )
+
+        return remote_k3s_image_import_target(remote_config, role="common")
+
+    @staticmethod
+    def _explicit_bool(value):
+        raw_value = str(value or "").strip().lower()
+        if not raw_value:
+            return None
+        if raw_value in {"1", "true", "yes", "y", "on", "enabled", "enable"}:
+            return True
+        if raw_value in {"0", "false", "no", "n", "off", "disabled", "disable", "never", "none"}:
+            return False
+        return None
+
+    def _should_prepull_level3_images(self, topology):
+        normalized_topology = normalize_topology(topology)
+        if normalized_topology != VM_SINGLE_TOPOLOGY:
+            return super()._should_prepull_level3_images(topology)
+
+        env_value = str(os.environ.get("PIONERA_K3S_LEVEL3_IMAGE_PREPULL") or "").strip()
+        if env_value:
+            return super()._should_prepull_level3_images(topology)
+
+        deployer_config = self._deployer_config()
+        for key in ("VM_SINGLE_K3S_LEVEL3_IMAGE_PREPULL", "K3S_LEVEL3_IMAGE_PREPULL"):
+            configured = self._explicit_bool(deployer_config.get(key))
+            if configured is not None:
+                if not configured:
+                    return False
+                return super()._should_prepull_level3_images(topology)
+
+        return False
+
     def _level3_local_images_mode(self):
         try:
             deployer_config = self.config_adapter.load_deployer_config() or {}
@@ -207,6 +314,14 @@ class INESDataDeploymentAdapter(SharedDataspaceDeploymentAdapter):
                 print(f"Skipping Level 3 local dataspace image preparation for vm-distributed. {detail}")
                 return True
             env_prefix = f"{remote_target.render_shell_env_prefix()} "
+        elif normalize_topology(topology) == VM_SINGLE_TOPOLOGY and cluster_type == "k3s":
+            try:
+                deployer_config = self.config_adapter.load_deployer_config() or {}
+            except Exception:
+                deployer_config = {}
+            remote_target = self._vm_single_remote_image_import_target(deployer_config)
+            if remote_target and remote_target.is_configured():
+                env_prefix = f"{remote_target.render_shell_env_prefix()} "
         command = " ".join(
             shlex.quote(part)
             for part in [

@@ -58,6 +58,54 @@ class VmDistributedPublicAccessTests(unittest.TestCase):
         self.assertEqual(urls["COMPONENTS_PUBLIC_BASE_URL"], "https://components.example.org")
         self.assertEqual(urls["PUBLIC_PORTAL_BACKEND_PUBLIC_URL"], "https://backend.example.org/portal-backend")
 
+    def test_resolve_public_urls_does_not_infer_vm_urls_from_placeholder_domains(self):
+        urls = resolve_vm_distributed_public_urls(
+            {
+                "TOPOLOGY": "vm-distributed",
+                "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+            }
+        )
+
+        self.assertNotIn("VM_COMMON_PUBLIC_URL", urls)
+        self.assertNotIn("KEYCLOAK_FRONTEND_URL", urls)
+        self.assertNotIn("MINIO_CONSOLE_PUBLIC_URL", urls)
+
+    def test_resolve_public_urls_preserves_explicit_vm_urls_with_placeholder_domains(self):
+        urls = resolve_vm_distributed_public_urls(
+            {
+                "TOPOLOGY": "vm-distributed",
+                "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+                "VM_COMMON_PUBLIC_URL": "https://org1.real.example.org",
+                "KEYCLOAK_FRONTEND_URL": "https://auth.real.example.org/auth",
+            }
+        )
+
+        self.assertEqual(urls["VM_COMMON_PUBLIC_URL"], "https://org1.real.example.org")
+        self.assertEqual(urls["KEYCLOAK_FRONTEND_URL"], "https://auth.real.example.org/auth")
+
+    def test_resolve_public_urls_ignores_explicit_placeholder_urls_for_vm_topologies(self):
+        urls = resolve_vm_distributed_public_urls(
+            {
+                "TOPOLOGY": "vm-distributed",
+                "DOMAIN_BASE": "pionera.example.test",
+                "DS_DOMAIN_BASE": "pionera.example.test",
+                "VM_COMMON_PUBLIC_URL": "https://org1.dev.ed.dataspaceunit.upm",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.dev.ed.dataspaceunit.upm/auth",
+                "MINIO_CONSOLE_PUBLIC_URL": "https://console.minio-s3.dev.ed.dataspaceunit.upm",
+                "PUBLIC_PORTAL_BACKEND_PUBLIC_URL": "https://org1.dev.ds.dataspaceunit.upm/public-portal-backend",
+            }
+        )
+
+        self.assertEqual(urls["VM_COMMON_PUBLIC_URL"], "https://org1.pionera.example.test")
+        self.assertEqual(urls["KEYCLOAK_FRONTEND_URL"], "https://org1.pionera.example.test/auth")
+        self.assertEqual(urls["MINIO_CONSOLE_PUBLIC_URL"], "https://org1.pionera.example.test/s3-console")
+        self.assertEqual(
+            urls["PUBLIC_PORTAL_BACKEND_PUBLIC_URL"],
+            "https://org1.pionera.example.test/public-portal-backend",
+        )
+
     def test_build_plan_uses_org_connectors_and_public_urls_from_config(self):
         plan = build_vm_distributed_public_access_plan(
             {

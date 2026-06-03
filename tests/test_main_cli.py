@@ -1618,6 +1618,40 @@ class InesdataPortalReadinessTests(unittest.TestCase):
         self.assertNotIn("http://conn-org2-pionera.pionera.oeg.fi.upm.es", org2_urls.values())
         self.assertNotIn("http://conn-org3-pionera.pionera.oeg.fi.upm.es", org3_urls.values())
 
+    def test_run_available_access_urls_for_vm_single_uses_public_connector_path_routes(self):
+        adapter = FakeAdapter()
+        fake_context = types.SimpleNamespace(
+            config={
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+            },
+            dataspace_name="pionera",
+            environment="DEV",
+            connectors=["conn-org2-pionera"],
+            components=[],
+        )
+
+        with mock.patch.object(
+            main,
+            "_resolve_deployer_context",
+            return_value=("inesdata", fake_context),
+        ):
+            result = main.run_available_access_urls(adapter, deployer_name="inesdata", topology="vm-single")
+
+        org2_urls = result["urls"]["connectors"]["conn-org2-pionera"]
+        self.assertEqual(org2_urls["connector_ingress"], "https://org4.pionera.oeg.fi.upm.es/c/org2")
+        self.assertEqual(
+            org2_urls["connector_interface_login"],
+            "https://org4.pionera.oeg.fi.upm.es/c/org2/inesdata-connector-interface/",
+        )
+        self.assertEqual(
+            result["urls"]["keycloak_realm"],
+            "https://org4.pionera.oeg.fi.upm.es/auth/realms/pionera",
+        )
+        self.assertNotIn("http://conn-org2-pionera.pionera.oeg.fi.upm.es", org2_urls.values())
+
     def test_level2_access_urls_preserve_keycloak_proxy_path(self):
         urls = main._level2_access_urls(
             {
@@ -3138,6 +3172,34 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("192.0.2.10 conn-b.example.local", hosts_content)
         self.assertIn("Host entries are missing for adapter 'edc'", stdout.getvalue())
 
+    def test_interactive_hosts_preflight_skips_vm_single_with_public_url(self):
+        fake_context = types.SimpleNamespace(
+            config={
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+            }
+        )
+
+        with mock.patch.object(
+            main,
+            "_resolve_deployer_context",
+            return_value=("inesdata", fake_context),
+        ), mock.patch.object(
+            main,
+            "_build_hosts_readiness_plan",
+            side_effect=AssertionError("vm-single public URL must not require local hosts"),
+        ):
+            result = main._interactive_ensure_hosts_ready_for_levels(
+                "inesdata",
+                levels=[3],
+                adapter_registry={"inesdata": "fake_adapter_module:FakeAdapter"},
+                deployer_registry={"inesdata": "fake_deployer_module:FakeVmDeployer"},
+                topology="vm-single",
+            )
+
+        self.assertTrue(result)
+
     def test_vm_distributed_common_services_hosts_preflight_reconciles_public_proxy_hostnames(self):
         context = DeploymentContext.from_mapping(
             {
@@ -4287,6 +4349,42 @@ class MainCliTests(unittest.TestCase):
         adapter.deployment.deploy_dataspace_for_topology.assert_called_once_with(topology="vm-single")
         self.assertEqual(adapter.calls, [])
 
+    def test_run_level_vm_single_with_public_url_skips_hosts_followup(self):
+        adapter = FakeAdapterWithInfrastructure()
+        adapter.deployment = mock.Mock()
+        adapter.deployment.deploy_dataspace_for_topology = mock.Mock(
+            return_value={"status": "deployed", "mode": "vm-single"}
+        )
+        context = types.SimpleNamespace(
+            topology="vm-single",
+            config={
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+            },
+        )
+
+        with mock.patch.object(
+            main,
+            "_resolve_deployer_context",
+            return_value=("fake", context),
+        ), mock.patch.object(
+            main,
+            "_resolve_level_access_urls",
+            return_value={
+                "public_portal_backend_admin": "https://org4.pionera.oeg.fi.upm.es/public-portal-backend/admin",
+            },
+        ):
+            result = main.run_level(adapter, 3, deployer_name="fake", topology="vm-single")
+
+        self.assertEqual(result["level"], 3)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(
+            result["urls"]["public_portal_backend_admin"],
+            "https://org4.pionera.oeg.fi.upm.es/public-portal-backend/admin",
+        )
+        self.assertNotIn("hosts_plan", result)
+        self.assertNotIn("hosts_sync", result)
+
     def test_run_level_vm_single_k3s_sets_kubeconfig_for_every_level(self):
         adapter = FakeAdapterWithInfrastructure()
         observed = {}
@@ -4317,6 +4415,37 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(observed["kubeconfig"], "/etc/rancher/k3s/k3s.yaml")
         self.assertIsNone(restored_kubeconfig)
+
+    def test_topology_runtime_environment_overrides_use_vm_single_local_kubeconfig(self):
+        with mock.patch.object(
+            main,
+            "_load_effective_infrastructure_deployer_config",
+            return_value={
+                "CLUSTER_TYPE": "k3s",
+                "K3S_KUBECONFIG": "/etc/rancher/k3s/k3s.yaml",
+                "VM_SINGLE_LOCAL_KUBECONFIG": "/home/operator/.kube/pionera4.yaml",
+            },
+        ):
+            overrides = main._topology_runtime_environment_overrides("vm-single", level=4)
+
+        self.assertEqual(overrides["KUBECONFIG"], "/home/operator/.kube/pionera4.yaml")
+
+    def test_interactive_runtime_environment_applies_vm_single_kubeconfig(self):
+        with mock.patch.object(
+            main,
+            "_load_effective_infrastructure_deployer_config",
+            return_value={
+                "CLUSTER_TYPE": "k3s",
+                "VM_SINGLE_LOCAL_KUBECONFIG": "/home/operator/.kube/pionera4.yaml",
+            },
+        ), mock.patch.dict(os.environ, {}, clear=True):
+            main._apply_interactive_topology_runtime_environment("vm-single")
+            applied_kubeconfig = os.environ.get("KUBECONFIG")
+            main._apply_interactive_topology_runtime_environment("local")
+            cleared_kubeconfig = os.environ.get("KUBECONFIG")
+
+        self.assertEqual(applied_kubeconfig, "/home/operator/.kube/pionera4.yaml")
+        self.assertIsNone(cleared_kubeconfig)
 
     def test_topology_runtime_environment_overrides_use_vm_distributed_roles(self):
         with mock.patch.object(
@@ -4372,6 +4501,39 @@ class MainCliTests(unittest.TestCase):
         _grouped, rejected = main._split_configuration_profile_updates(
             values,
             topology="vm-distributed",
+            adapter_name="inesdata",
+        )
+
+        self.assertEqual(rejected, [])
+
+    def test_vm_single_profile_template_uses_blank_variables_with_section_comments(self):
+        content = main._vm_distributed_profile_template_content(
+            topology="vm-single",
+            adapter_name="inesdata",
+        )
+
+        self.assertIn("# Public domain and common routes", content)
+        self.assertIn("# Kubernetes runtime", content)
+        self.assertIn("# Execution mode", content)
+        self.assertIn("VM_SINGLE_HTTP_URL=\n", content)
+        self.assertIn("VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX=\n", content)
+        self.assertIn("DS_1_CONNECTORS=\n", content)
+        self.assertNotIn("org4.pionera", content)
+        for line in content.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            self.assertTrue(line.endswith("="), line)
+
+    def test_vm_single_profile_template_keys_are_supported_by_profile_loader(self):
+        keys = main._vm_distributed_profile_template_keys(
+            topology="vm-single",
+            adapter_name="inesdata",
+        )
+        values = {key: "x" for key in keys}
+
+        _grouped, rejected = main._split_configuration_profile_updates(
+            values,
+            topology="vm-single",
             adapter_name="inesdata",
         )
 
@@ -4444,6 +4606,33 @@ class MainCliTests(unittest.TestCase):
         self.assertTrue(profile_created)
         adapter.infrastructure.deploy_infrastructure_for_topology.assert_called_once_with(topology="vm-distributed")
         self.assertEqual(adapter.calls, [])
+
+    def test_run_level_two_creates_vm_single_profile_template(self):
+        adapter = FakeAdapterWithInfrastructure()
+        adapter.infrastructure = mock.Mock()
+        adapter.infrastructure.deploy_infrastructure_for_topology = mock.Mock(
+            return_value={"status": "deployed", "mode": "vm-single"}
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            main,
+            "_framework_root_dir",
+            return_value=tmpdir,
+        ), mock.patch.object(
+            main,
+            "_topology_runtime_environment_overrides",
+            return_value={},
+        ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
+            result = main.run_level(adapter, 2, deployer_name="fake", topology="vm-single")
+            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
+            with open(profile_path, encoding="utf-8") as handle:
+                profile_content = handle.read()
+
+        self.assertEqual(result["level"], 2)
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("VM_SINGLE_HTTP_URL=\n", profile_content)
+        self.assertIn("# Public domain and common routes", profile_content)
+        adapter.infrastructure.deploy_infrastructure_for_topology.assert_called_once_with(topology="vm-single")
 
     def test_run_level_three_uses_vm_distributed_topology_deploy_dataspace(self):
         adapter = FakeAdapterWithInfrastructure()

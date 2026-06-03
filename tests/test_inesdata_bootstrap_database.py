@@ -65,6 +65,27 @@ class InesdataBootstrapDatabaseTests(unittest.TestCase):
             "http://conn-citycouncil-pionera.dev.ds.dataspaceunit.upm/shared",
         )
 
+    def test_connector_public_access_urls_use_vm_single_root_path_routes(self):
+        urls = bootstrap.build_connector_public_access_urls(
+            "conn-org2-pionera",
+            "pionera",
+            "DEV",
+            {
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+            },
+        )
+
+        self.assertEqual(urls["connector_ingress"], "https://org4.pionera.oeg.fi.upm.es/c/org2")
+        self.assertEqual(
+            urls["connector_interface_login"],
+            "https://org4.pionera.oeg.fi.upm.es/c/org2/inesdata-connector-interface/",
+        )
+        self.assertEqual(urls["keycloak_realm"], "https://org4.pionera.oeg.fi.upm.es/auth/realms/pionera")
+        self.assertEqual(urls["minio_console"], "https://org4.pionera.oeg.fi.upm.es/s3-console/")
+
     def test_connector_participant_urls_keep_production_pattern(self):
         protocol_url, shared_url = bootstrap.connector_participant_urls(
             {},
@@ -128,6 +149,34 @@ class InesdataBootstrapDatabaseTests(unittest.TestCase):
 
         self.assertEqual(frontend_url, "https://org1.pionera.oeg.fi.upm.es/auth")
 
+    def test_keycloak_frontend_url_from_config_ignores_vm_placeholder_public_url(self):
+        frontend_url = bootstrap.keycloak_frontend_url_from_config(
+            {
+                "TOPOLOGY": "vm-distributed",
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.dev.ed.dataspaceunit.upm/auth",
+            },
+            "pionera",
+        )
+
+        self.assertEqual(frontend_url, "https://org1.pionera.oeg.fi.upm.es/auth")
+
+    def test_keycloak_management_url_from_config_does_not_infer_vm_org_url_for_local(self):
+        management_url = bootstrap.keycloak_management_url_from_config(
+            {
+                "TOPOLOGY": "local",
+                "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+                "KC_URL": "http://admin.auth.dev.ed.dataspaceunit.upm",
+                "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+                "KEYCLOAK_HOSTNAME": "auth.dev.ed.dataspaceunit.upm",
+            },
+            "http://localhost:8080",
+        )
+
+        self.assertEqual(management_url, "http://admin.auth.dev.ed.dataspaceunit.upm")
+
     def test_keycloak_management_url_from_config_prefers_public_frontend_url(self):
         management_url = bootstrap.keycloak_management_url_from_config(
             {
@@ -173,7 +222,10 @@ class InesdataBootstrapDatabaseTests(unittest.TestCase):
         )
 
         self.assertNotIn("public_portal_login", urls)
-        self.assertNotIn("public_portal_backend_admin", urls)
+        self.assertEqual(
+            urls["public_portal_backend_admin"],
+            "https://org1.pionera.oeg.fi.upm.es/public-portal-backend/admin",
+        )
         self.assertNotIn("registration_service", urls)
         self.assertEqual(urls["keycloak_realm"], "https://org1.pionera.oeg.fi.upm.es/auth/realms/pionera")
 
@@ -184,6 +236,27 @@ class InesdataBootstrapDatabaseTests(unittest.TestCase):
         )
 
         self.assertEqual(frontend_url, "https://gateway.example.test/auth")
+
+    def test_connector_runtime_vault_url_falls_back_to_cluster_service(self):
+        vault_url = bootstrap.connector_runtime_vault_url(
+            {"COMMON_SERVICES_NAMESPACE": "shared-foundation"}
+        )
+
+        self.assertEqual(vault_url, "http://common-srvs-vault.shared-foundation.svc:8200")
+
+    def test_connector_runtime_vault_url_preserves_explicit_value(self):
+        vault_url = bootstrap.connector_runtime_vault_url(
+            {"VAULT_URL": "http://vault.internal.example:8200/"}
+        )
+
+        self.assertEqual(vault_url, "http://vault.internal.example:8200")
+
+    def test_connector_runtime_database_hostname_falls_back_to_cluster_service(self):
+        hostname = bootstrap.connector_runtime_database_hostname(
+            {"COMMON_SERVICES_NAMESPACE": "shared-foundation"}
+        )
+
+        self.assertEqual(hostname, "common-srvs-postgresql.shared-foundation.svc")
 
     def test_register_connector_database_inserts_public_ingress_urls_for_dev(self):
         cursor = FakeCursor(fetch_results=[])

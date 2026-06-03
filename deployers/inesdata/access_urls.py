@@ -18,7 +18,11 @@ from deployers.infrastructure.lib.public_hostnames import (  # noqa: E402
     clean_public_hostname,
     resolved_common_service_hostnames,
 )
-from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls  # noqa: E402
+from deployers.infrastructure.lib.topology import normalize_topology  # noqa: E402
+from deployers.shared.lib.vm_distributed_public_access import (  # noqa: E402
+    is_vm_public_placeholder_url,
+    resolve_vm_distributed_public_urls,
+)
 
 
 URL_DEV = ".dev.ds.dataspaceunit.upm"
@@ -82,6 +86,42 @@ def split_config_list(raw_value):
     ]
 
 
+def uses_vm_public_url_guard(config):
+    topology = normalize_topology(
+        (config or {}).get("TOPOLOGY")
+        or (config or {}).get("PIONERA_TOPOLOGY")
+        or (config or {}).get("INESDATA_TOPOLOGY")
+        or ""
+    )
+    return topology in {"vm-distributed", "vm-single"}
+
+
+def uses_public_url_resolution(config):
+    if uses_vm_public_url_guard(config):
+        return True
+    values = config or {}
+    return any(str(values.get(key) or "").strip() for key in PUBLIC_COMMON_ACCESS_KEYS)
+
+
+def resolved_public_urls_for_config(config):
+    return resolve_vm_distributed_public_urls(config) if uses_public_url_resolution(config) else {}
+
+
+def first_usable_public_url(config, public_urls, *keys):
+    guard_placeholder_urls = uses_vm_public_url_guard(config)
+    values = config or {}
+    resolved = public_urls or {}
+    for key in keys:
+        for source in (values, resolved):
+            value = str(source.get(key) or "").strip()
+            if not value:
+                continue
+            if guard_placeholder_urls and is_vm_public_placeholder_url(value):
+                continue
+            return value
+    return ""
+
+
 def connector_matches_configured_name(connector, dataspace, configured_name):
     configured = str(configured_name or "").strip()
     if not configured:
@@ -95,8 +135,57 @@ def connector_matches_configured_name(connector, dataspace, configured_name):
     return configured in aliases
 
 
+def connector_public_path_prefix(config):
+    prefix = str((config or {}).get("VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX") or "/c").strip()
+    if not prefix:
+        prefix = "/c"
+    if not prefix.startswith("/"):
+        prefix = f"/{prefix}"
+    return prefix.rstrip("/")
+
+
+def vm_single_connector_public_base_url(connector, dataspace, config, public_urls=None):
+    values = config or {}
+    topology = normalize_topology(
+        values.get("TOPOLOGY")
+        or values.get("PIONERA_TOPOLOGY")
+        or values.get("INESDATA_TOPOLOGY")
+        or ""
+    )
+    if topology != "vm-single":
+        return ""
+
+    resolved = public_urls or resolved_public_urls_for_config(values)
+    common_base = normalize_url(
+        first_usable_public_url(
+            values,
+            resolved,
+            "VM_SINGLE_PUBLIC_URL",
+            "VM_SINGLE_HTTP_URL",
+            "VM_COMMON_PUBLIC_URL",
+            "VM_COMMON_HTTP_URL",
+        )
+    )
+    if not common_base:
+        return ""
+
+    short_name = connector_short_name(connector, dataspace)
+    if not short_name:
+        return ""
+    return f"{common_base}{connector_public_path_prefix(values)}/{short_name}"
+
+
 def connector_public_base_url(connector, dataspace, config):
-    public_urls = resolve_vm_distributed_public_urls(config)
+    public_urls = resolved_public_urls_for_config(config)
+    vm_single_base = vm_single_connector_public_base_url(
+        connector,
+        dataspace,
+        config,
+        public_urls=public_urls,
+    )
+    if vm_single_base:
+        return vm_single_base
+
     role_options = (
         ("VM_PROVIDER_CONNECTORS", "VM_PROVIDER_PUBLIC_URL", "VM_PROVIDER_HTTP_URL"),
         ("VM_CONSUMER_CONNECTORS", "VM_CONSUMER_PUBLIC_URL", "VM_CONSUMER_HTTP_URL"),
@@ -104,11 +193,7 @@ def connector_public_base_url(connector, dataspace, config):
     for connectors_key, public_url_key, fallback_url_key in role_options:
         for configured_connector in split_config_list(config.get(connectors_key)):
             if connector_matches_configured_name(connector, dataspace, configured_connector):
-                return normalize_url(
-                    config.get(public_url_key)
-                    or public_urls.get(public_url_key)
-                    or config.get(fallback_url_key)
-                )
+                return normalize_url(first_usable_public_url(config, public_urls, public_url_key, fallback_url_key))
     return ""
 
 
@@ -131,12 +216,12 @@ def normalize_keycloak_frontend_url(value, realm_name=None):
 
 
 def keycloak_public_base_url(config, dataspace):
-    public_urls = resolve_vm_distributed_public_urls(config)
-    explicit_url = (
-        config.get("KEYCLOAK_FRONTEND_URL")
-        or config.get("KEYCLOAK_PUBLIC_URL")
-        or public_urls.get("KEYCLOAK_FRONTEND_URL")
-        or public_urls.get("KEYCLOAK_PUBLIC_URL")
+    public_urls = resolved_public_urls_for_config(config)
+    explicit_url = first_usable_public_url(
+        config,
+        public_urls,
+        "KEYCLOAK_FRONTEND_URL",
+        "KEYCLOAK_PUBLIC_URL",
     )
     if explicit_url:
         return normalize_keycloak_frontend_url(explicit_url, dataspace)
@@ -149,8 +234,8 @@ def keycloak_public_base_url(config, dataspace):
 
 
 def minio_console_public_url(config):
-    public_urls = resolve_vm_distributed_public_urls(config)
-    explicit_url = config.get("MINIO_CONSOLE_PUBLIC_URL") or public_urls.get("MINIO_CONSOLE_PUBLIC_URL")
+    public_urls = resolved_public_urls_for_config(config)
+    explicit_url = first_usable_public_url(config, public_urls, "MINIO_CONSOLE_PUBLIC_URL")
     if explicit_url:
         return normalize_public_url_with_trailing_slash(explicit_url)
 
@@ -166,13 +251,8 @@ def minio_console_public_url(config):
 
 
 def minio_api_public_url(config):
-    public_urls = resolve_vm_distributed_public_urls(config)
-    return normalize_url(
-        config.get("MINIO_API_PUBLIC_URL")
-        or config.get("MINIO_PUBLIC_URL")
-        or public_urls.get("MINIO_API_PUBLIC_URL")
-        or public_urls.get("MINIO_PUBLIC_URL")
-    )
+    public_urls = resolved_public_urls_for_config(config)
+    return normalize_url(first_usable_public_url(config, public_urls, "MINIO_API_PUBLIC_URL", "MINIO_PUBLIC_URL"))
 
 
 def _is_vm_distributed_public_common_mode(config):
@@ -220,7 +300,7 @@ def dataspace_public_access_urls(dataspace, config):
     if not _is_vm_distributed_public_common_mode(config):
         return {}
 
-    values = {**dict(config or {}), **resolve_vm_distributed_public_urls(config)}
+    values = {**dict(config or {}), **resolved_public_urls_for_config(config)}
     urls = {}
 
     public_portal = normalize_public_url_with_trailing_slash(

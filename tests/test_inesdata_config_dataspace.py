@@ -39,12 +39,13 @@ class InesdataConfigDataspaceTests(unittest.TestCase):
                 os.path.join(tmpdir, "deployers", "infrastructure", "deployer.config"),
             )
 
-    def test_infrastructure_deployer_config_example_uses_shared_auth_hostnames(self):
+    def test_local_topology_config_example_owns_default_auth_hostnames(self):
         example_path = os.path.join(
             InesdataConfig.script_dir(),
             "deployers",
             "infrastructure",
-            "deployer.config.example",
+            "topologies",
+            "local.config.example",
         )
 
         with open(example_path, "r", encoding="utf-8") as handle:

@@ -6,8 +6,11 @@ import unittest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from deployers.shared.lib.config_loader import (
+    COMMON_SERVICE_TOPOLOGY_KEYS,
+    KUBERNETES_WORKLOAD_TOPOLOGY_KEYS,
     TOPOLOGY_KEY_TARGETS,
     TOPOLOGY_OVERLAY_KEYS,
+    VM_SERVICE_TOPOLOGY_KEYS,
     apply_topology_runtime_defaults,
     detect_topology_key_migration_warnings,
     INFRASTRUCTURE_MANAGED_KEYS,
@@ -71,18 +74,23 @@ class SharedConfigLoaderTests(unittest.TestCase):
         self.assertEqual(config["VT_URL"], "http://vault.example.internal:8200")
         self.assertEqual(config["VAULT_URL"], "https://vault.example.org")
 
-    def test_local_runtime_defaults_do_not_infer_database_hostname(self):
+    def test_local_runtime_defaults_infer_database_hostname_for_cluster_workloads(self):
         config = apply_topology_runtime_defaults(
             {
                 "DATABASE_HOSTNAME": "",
                 "VT_URL": "http://127.0.0.1:8200",
+                "VAULT_URL": "",
                 "COMMON_SERVICES_NAMESPACE": "shared-foundation",
             },
             "local",
         )
 
-        self.assertEqual(config["DATABASE_HOSTNAME"], "")
+        self.assertEqual(
+            config["DATABASE_HOSTNAME"],
+            "common-srvs-postgresql.shared-foundation.svc",
+        )
         self.assertEqual(config["VT_URL"], "http://127.0.0.1:8200")
+        self.assertEqual(config["VAULT_URL"], "http://common-srvs-vault.shared-foundation.svc:8200")
 
     def test_load_layered_deployer_config_replaces_vm_loopback_vault_url(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -189,6 +197,29 @@ class SharedConfigLoaderTests(unittest.TestCase):
             ("vm-distributed", "vm-single"),
         )
 
+    def test_common_service_endpoint_keys_are_topology_scoped(self):
+        for key in COMMON_SERVICE_TOPOLOGY_KEYS:
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["local"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
+            self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("local", "vm-distributed", "vm-single"))
+
+        for key in KUBERNETES_WORKLOAD_TOPOLOGY_KEYS:
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["local"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
+            self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("local", "vm-distributed", "vm-single"))
+
+        for key in VM_SERVICE_TOPOLOGY_KEYS:
+            if key == "VT_URL":
+                self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["local"])
+                self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("local", "vm-distributed", "vm-single"))
+                continue
+            self.assertNotIn(key, TOPOLOGY_OVERLAY_KEYS["local"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
+            self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed", "vm-single"))
+
     def test_vm_ssh_access_keys_are_topology_scoped(self):
         shared_vm_keys = (
             "SSH_ACCESS_MODE",
@@ -200,6 +231,20 @@ class SharedConfigLoaderTests(unittest.TestCase):
             "SSH_CONNECT_TIMEOUT_SECONDS",
             "VM_SSH_USER",
             "VM_REMOTE_WORKDIR",
+            "COMPONENTS_PUBLIC_BASE_URL",
+            "COMPONENTS_PUBLIC_PATH_REWRITE",
+            "VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER",
+            "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
+            "MODEL_SERVER_CONNECTOR_BASE_URL",
+            "AI_MODEL_OBSERVER_JOURNAL_BASE_URL",
+            "AI_MODEL_HUB_OBSERVER_JOURNAL_BASE_URL",
+            "MODEL_OBSERVER_JOURNAL_BASE_URL",
+            "ONTOLOGY_HUB_PUBLIC_URL",
+            "ONTOLOGY_HUB_SELF_HOST_URL",
+            "ONTOLOGY_HUB_INTERNAL_SELF_HOST_URL",
+            "AI_MODEL_HUB_PUBLIC_URL",
+            "SEMANTIC_VIRTUALIZATION_PUBLIC_URL",
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL",
         )
         for key in shared_vm_keys:
             self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
@@ -226,7 +271,9 @@ class SharedConfigLoaderTests(unittest.TestCase):
             "VM_SINGLE_WORKSPACE_SYNC",
             "VM_SINGLE_WORKSPACE_SYNC_DELETE",
             "VM_SINGLE_WORKSPACE_SYNC_EXCLUDES",
+            "VM_SINGLE_PUBLIC_URL",
             "VM_SINGLE_HTTP_URL",
+            "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
         ):
             self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
             self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-single",))
@@ -282,18 +329,7 @@ class SharedConfigLoaderTests(unittest.TestCase):
             "VM_PROVIDER_HTTP_URL",
             "VM_CONSUMER_HTTP_URL",
             "KEYCLOAK_BOOTSTRAP_PORT_FORWARD",
-            "KEYCLOAK_FRONTEND_URL",
-            "KEYCLOAK_PUBLIC_URL",
             "VM_PUBLIC_PROXY_IP",
-            "MINIO_API_PUBLIC_URL",
-            "MINIO_CONSOLE_PUBLIC_URL",
-            "MINIO_PUBLIC_URL",
-            "COMPONENTS_PUBLIC_BASE_URL",
-            "COMPONENTS_PUBLIC_PATH_REWRITE",
-            "ONTOLOGY_HUB_PUBLIC_URL",
-            "AI_MODEL_HUB_PUBLIC_URL",
-            "SEMANTIC_VIRTUALIZATION_PUBLIC_URL",
-            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL",
             "VM_PROVIDER_K8S_NODE",
             "VM_CONSUMER_K8S_NODE",
             "VM_COMMON_SSH_HOST",
@@ -417,16 +453,28 @@ class SharedConfigLoaderTests(unittest.TestCase):
 
             warnings = detect_topology_key_migration_warnings(config_path)
 
-        self.assertEqual([item["key"] for item in warnings], ["INGRESS_EXTERNAL_IP", "PG_HOST", "VM_EXTERNAL_IP"])
         self.assertEqual(
-            warnings[0]["recommended_overlay_paths"],
+            [item["key"] for item in warnings],
+            ["INGRESS_EXTERNAL_IP", "KC_URL", "PG_HOST", "VM_EXTERNAL_IP"],
+        )
+        warnings_by_key = {item["key"]: item for item in warnings}
+        self.assertEqual(
+            warnings_by_key["INGRESS_EXTERNAL_IP"]["recommended_overlay_paths"],
             [
                 os.path.join(infrastructure_dir, "topologies", "vm-distributed.config"),
                 os.path.join(infrastructure_dir, "topologies", "vm-single.config"),
             ],
         )
         self.assertEqual(
-            warnings[1]["recommended_overlay_paths"],
+            warnings_by_key["KC_URL"]["recommended_overlay_paths"],
+            [
+                os.path.join(infrastructure_dir, "topologies", "local.config"),
+                os.path.join(infrastructure_dir, "topologies", "vm-distributed.config"),
+                os.path.join(infrastructure_dir, "topologies", "vm-single.config"),
+            ],
+        )
+        self.assertEqual(
+            warnings_by_key["PG_HOST"]["recommended_overlay_paths"],
             [os.path.join(infrastructure_dir, "topologies", "local.config")],
         )
 

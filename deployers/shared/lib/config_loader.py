@@ -34,12 +34,48 @@ INFRASTRUCTURE_MANAGED_KEYS = frozenset(
     }
 )
 
+COMMON_SERVICE_TOPOLOGY_KEYS = frozenset(
+    {
+        "DOMAIN_BASE",
+        "DS_DOMAIN_BASE",
+        "KC_URL",
+        "KC_INTERNAL_URL",
+        "KC_MANAGEMENT_URL",
+        "KEYCLOAK_HOSTNAME",
+        "KEYCLOAK_ADMIN_HOSTNAME",
+        "KEYCLOAK_FRONTEND_URL",
+        "KEYCLOAK_PUBLIC_URL",
+        "MINIO_ENDPOINT",
+        "MINIO_HOSTNAME",
+        "MINIO_CONSOLE_HOSTNAME",
+        "MINIO_API_PUBLIC_URL",
+        "MINIO_CONSOLE_PUBLIC_URL",
+        "MINIO_PUBLIC_URL",
+        "PUBLIC_HOSTNAME",
+        "PUBLIC_HOSTNAME_PROVIDER",
+        "PUBLIC_HOSTNAME_CONSUMER",
+        "TOPOLOGY",
+    }
+)
+
+KUBERNETES_WORKLOAD_TOPOLOGY_KEYS = frozenset(
+    {
+        "DATABASE_HOSTNAME",
+        "VAULT_URL",
+    }
+)
+
+VM_SERVICE_TOPOLOGY_KEYS = frozenset(
+    {
+        "VT_URL",
+    }
+)
+
 TOPOLOGY_OVERLAY_KEYS = {
     "local": frozenset(
         {
             "PG_HOST",
             "VT_URL",
-            "MINIO_ENDPOINT",
             "LOCAL_HOSTS_ADDRESS",
             "LOCAL_INGRESS_EXTERNAL_IP",
             "LOCAL_RESOURCE_PROFILE",
@@ -49,7 +85,9 @@ TOPOLOGY_OVERLAY_KEYS = {
             "MINIKUBE_MEMORY",
             "MINIKUBE_PROFILE",
         }
-    ),
+    )
+    | COMMON_SERVICE_TOPOLOGY_KEYS
+    | KUBERNETES_WORKLOAD_TOPOLOGY_KEYS,
     "vm-single": frozenset(
         {
             "VM_EXTERNAL_IP",
@@ -71,6 +109,14 @@ TOPOLOGY_OVERLAY_KEYS = {
             "VM_SINGLE_K3S_TUNNEL_MODE",
             "VM_SINGLE_K3S_API_LOCAL_PORT",
             "VM_SINGLE_K3S_API_REMOTE_PORT",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_COMMAND",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_DIR",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_TTY",
+            "VM_SINGLE_REMOTE_IMAGE_PRUNE",
+            "VM_SINGLE_REMOTE_IMAGE_PRUNE_KEEP",
+            "VM_SINGLE_K3S_LEVEL3_IMAGE_PREPULL",
             "MINIKUBE_DRIVER",
             "MINIKUBE_CPUS",
             "MINIKUBE_MEMORY",
@@ -90,7 +136,9 @@ TOPOLOGY_OVERLAY_KEYS = {
             "VM_SINGLE_WORKSPACE_SYNC",
             "VM_SINGLE_WORKSPACE_SYNC_DELETE",
             "VM_SINGLE_WORKSPACE_SYNC_EXCLUDES",
+            "VM_SINGLE_PUBLIC_URL",
             "VM_SINGLE_HTTP_URL",
+            "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
             "VM_REMOTE_WORKDIR",
             "SSH_ACCESS_MODE",
             "SSH_BASTION_HOST",
@@ -99,8 +147,25 @@ TOPOLOGY_OVERLAY_KEYS = {
             "SSH_BASTION_IDENTITY_FILE",
             "SSH_IDENTITY_FILE",
             "SSH_CONNECT_TIMEOUT_SECONDS",
+            "COMPONENTS_PUBLIC_BASE_URL",
+            "COMPONENTS_PUBLIC_PATH_REWRITE",
+            "VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER",
+            "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
+            "MODEL_SERVER_CONNECTOR_BASE_URL",
+            "AI_MODEL_OBSERVER_JOURNAL_BASE_URL",
+            "AI_MODEL_HUB_OBSERVER_JOURNAL_BASE_URL",
+            "MODEL_OBSERVER_JOURNAL_BASE_URL",
+            "ONTOLOGY_HUB_PUBLIC_URL",
+            "ONTOLOGY_HUB_SELF_HOST_URL",
+            "ONTOLOGY_HUB_INTERNAL_SELF_HOST_URL",
+            "AI_MODEL_HUB_PUBLIC_URL",
+            "SEMANTIC_VIRTUALIZATION_PUBLIC_URL",
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL",
         }
-    ),
+    )
+    | COMMON_SERVICE_TOPOLOGY_KEYS
+    | KUBERNETES_WORKLOAD_TOPOLOGY_KEYS
+    | VM_SERVICE_TOPOLOGY_KEYS,
     "vm-distributed": frozenset(
         {
             "VM_EXTERNAL_IP",
@@ -132,8 +197,6 @@ TOPOLOGY_OVERLAY_KEYS = {
             "KEYCLOAK_BOOTSTRAP_PORT_FORWARD",
             "KEYCLOAK_PORT_FORWARD_BOOTSTRAP",
             "FORCE_KEYCLOAK_BOOTSTRAP_PORT_FORWARD",
-            "KEYCLOAK_FRONTEND_URL",
-            "KEYCLOAK_PUBLIC_URL",
             "VM_PUBLIC_PROXY_IP",
             "TOPOLOGY_ROUTING_MODE",
             "VM_PROVIDER_CONNECTORS",
@@ -143,13 +206,7 @@ TOPOLOGY_OVERLAY_KEYS = {
             "VM_PROVIDER_INGRESS_NODEPORT",
             "VM_CONSUMER_INGRESS_NODEPORT",
             "CONNECTOR_PROTOCOL_ADDRESS_MODE",
-            "DATABASE_HOSTNAME",
-            "VAULT_URL",
-            "VT_URL",
             "PIONERA_LEVEL6_MINIO_ENDPOINT",
-            "MINIO_API_PUBLIC_URL",
-            "MINIO_CONSOLE_PUBLIC_URL",
-            "MINIO_PUBLIC_URL",
             "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES_ENABLED",
             "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES",
             "COMPONENTS_PUBLIC_BASE_URL",
@@ -254,7 +311,10 @@ TOPOLOGY_OVERLAY_KEYS = {
             "VM_CONSUMER_SSH_BASTION_USER",
             "VM_CONSUMER_SSH_BASTION_IDENTITY_FILE",
         }
-    ),
+    )
+    | COMMON_SERVICE_TOPOLOGY_KEYS
+    | KUBERNETES_WORKLOAD_TOPOLOGY_KEYS
+    | VM_SERVICE_TOPOLOGY_KEYS,
 }
 
 TOPOLOGY_KEY_TARGETS: dict[str, tuple[str, ...]] = {}
@@ -318,10 +378,6 @@ def apply_topology_runtime_defaults(
 ) -> dict[str, str]:
     """Fill runtime defaults that depend on the selected topology."""
 
-    normalized_topology = str(topology or "").strip().lower()
-    if normalized_topology not in {"vm-single", "vm-distributed"}:
-        return config
-
     protected = set(protected_keys or [])
     common_namespace = str(config.get("COMMON_SERVICES_NAMESPACE") or "common-srvs").strip() or "common-srvs"
 
@@ -329,11 +385,15 @@ def apply_topology_runtime_defaults(
         config["DATABASE_HOSTNAME"] = f"common-srvs-postgresql.{common_namespace}.svc"
 
     vault_service_url = f"http://common-srvs-vault.{common_namespace}.svc:8200"
-    for vault_key in ("VT_URL", "VAULT_URL"):
-        if vault_key in protected:
-            continue
-        if _is_blank_or_loopback_url(config.get(vault_key)):
-            config[vault_key] = vault_service_url
+    if "VAULT_URL" not in protected and _is_blank_or_loopback_url(config.get("VAULT_URL")):
+        config["VAULT_URL"] = vault_service_url
+
+    normalized_topology = str(topology or "").strip().lower()
+    if normalized_topology not in {"vm-single", "vm-distributed"}:
+        return config
+
+    if "VT_URL" not in protected and _is_blank_or_loopback_url(config.get("VT_URL")):
+        config["VT_URL"] = vault_service_url
 
     return config
 

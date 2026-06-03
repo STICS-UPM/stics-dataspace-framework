@@ -100,13 +100,23 @@ from deployers.shared.lib.cluster_runtime import (
     build_cluster_runtime,
     normalize_cluster_type,
 )
-from deployers.shared.lib.config_loader import INFRASTRUCTURE_MANAGED_KEYS, TOPOLOGY_OVERLAY_KEYS
+from deployers.shared.lib.config_loader import (
+    COMMON_SERVICE_TOPOLOGY_KEYS,
+    INFRASTRUCTURE_MANAGED_KEYS,
+    KUBERNETES_WORKLOAD_TOPOLOGY_KEYS,
+    TOPOLOGY_OVERLAY_KEYS,
+    VM_SERVICE_TOPOLOGY_KEYS,
+)
 from deployers.shared.lib.connectors import (
     parse_connector_list,
     parse_connector_mapping,
     parse_connector_pairs,
 )
-from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls
+from deployers.shared.lib.vm_distributed_public_access import (
+    VM_PUBLIC_PLACEHOLDER_DOMAINS,
+    is_vm_public_placeholder_url,
+    resolve_vm_distributed_public_urls,
+)
 from deployers.shared.lib import runtime_artifacts
 from validation.core.test_data_cleanup import run_pre_validation_cleanup
 from validation.orchestration.hosts import (
@@ -1849,17 +1859,51 @@ def _keycloak_base_without_realm(url, dataspace_name):
     return normalized.rstrip("/")
 
 
+def _config_topology_value(config):
+    return normalize_topology(
+        (config or {}).get("TOPOLOGY")
+        or (config or {}).get("PIONERA_TOPOLOGY")
+        or (config or {}).get("INESDATA_TOPOLOGY")
+        or LOCAL_TOPOLOGY
+    )
+
+
+def _config_uses_vm_public_url_resolution(config):
+    topology = _config_topology_value(config)
+    if topology in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
+        return True
+    values = config or {}
+    public_url_keys = globals().get("VM_DISTRIBUTED_PUBLIC_URL_KEYS", ())
+    return any(str(values.get(key) or "").strip() for key in public_url_keys)
+
+
+def _vm_public_url_candidate(config, value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if (
+        _config_topology_value(config) in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}
+        and is_vm_public_placeholder_url(text)
+    ):
+        return ""
+    return text
+
+
 def _public_keycloak_base_url(deployer_context):
     config = dict(getattr(deployer_context, "config", {}) or {})
     dataspace = str(getattr(deployer_context, "dataspace_name", "") or "").strip()
-    public_urls = resolve_vm_distributed_public_urls(config)
+    public_urls = (
+        resolve_vm_distributed_public_urls(config)
+        if _config_uses_vm_public_url_resolution(config)
+        else {}
+    )
     for raw_url in (
         config.get("KEYCLOAK_FRONTEND_URL"),
         config.get("KEYCLOAK_PUBLIC_URL"),
         public_urls.get("KEYCLOAK_FRONTEND_URL"),
         public_urls.get("KEYCLOAK_PUBLIC_URL"),
     ):
-        normalized = _keycloak_base_without_realm(raw_url, dataspace)
+        normalized = _keycloak_base_without_realm(_vm_public_url_candidate(config, raw_url), dataspace)
         if normalized:
             return normalized
 
@@ -7658,7 +7702,7 @@ def run_available_access_urls(adapter, deployer_name=None, deployer_registry=Non
 
         connector_urls = {}
         for connector in connectors:
-            if resolved_topology == "vm-distributed":
+            if resolved_topology in {"vm-distributed", "vm-single"}:
                 access_urls = build_inesdata_connector_public_access_urls(
                     connector,
                     dataspace_name,
@@ -8930,7 +8974,7 @@ def _topology_runtime_environment_overrides(topology="local", level=None, role=N
             kubeconfig,
         )
     else:
-        kubeconfig = str(runtime.get("k3s_kubeconfig") or "").strip()
+        kubeconfig = _vm_single_local_kubeconfig_path(config)
     if not kubeconfig:
         return {}
     overrides = {"KUBECONFIG": kubeconfig}
@@ -9591,7 +9635,7 @@ def run_level(
     resolved_deployer_name = deployer_name or _infer_deployer_name_from_adapter(adapter)
     level_name = LEVEL_DESCRIPTIONS[level_id]
     normalized_topology = str(topology or "local").strip().lower()
-    if normalized_topology == "vm-distributed" and level_id == 2:
+    if normalized_topology in {"vm-single", "vm-distributed"} and level_id == 2:
         _ensure_pionera_environment_profile_file(
             topology=normalized_topology,
             adapter_name=resolved_deployer_name,
@@ -9893,6 +9937,9 @@ def _interactive_confirm(prompt, default=False):
 
 
 VM_DISTRIBUTED_TOPOLOGY_KEYS = (
+    *tuple(sorted(COMMON_SERVICE_TOPOLOGY_KEYS)),
+    *tuple(sorted(KUBERNETES_WORKLOAD_TOPOLOGY_KEYS)),
+    *tuple(sorted(VM_SERVICE_TOPOLOGY_KEYS)),
     "VM_EXTERNAL_IP",
     "VM_COMMON_IP",
     "VM_DATASPACE_IP",
@@ -9919,13 +9966,8 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "K3S_REPAIR_ON_LEVEL1",
     "K3S_WRITE_KUBECONFIG_MODE",
     "KEYCLOAK_BOOTSTRAP_PORT_FORWARD",
-    "KEYCLOAK_FRONTEND_URL",
-    "KEYCLOAK_PUBLIC_URL",
-    "MINIO_API_PUBLIC_URL",
-    "MINIO_CONSOLE_PUBLIC_URL",
     "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES_ENABLED",
     "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES",
-    "MINIO_PUBLIC_URL",
     "COMPONENTS_PUBLIC_BASE_URL",
     "COMPONENTS_PUBLIC_PATH_REWRITE",
     "VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER",
@@ -10031,10 +10073,7 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "VM_CONSUMER_SSH_BASTION_IDENTITY_FILE",
 )
 
-VM_DISTRIBUTED_INFRA_KEYS = (
-    "DOMAIN_BASE",
-    "DS_DOMAIN_BASE",
-)
+VM_DISTRIBUTED_INFRA_KEYS = ()
 
 VM_DISTRIBUTED_ADAPTER_KEYS = (
     "DS_1_NAME",
@@ -10050,24 +10089,8 @@ VM_DISTRIBUTED_ADAPTER_KEYS = (
 
 VM_DISTRIBUTED_PROFILE_INFRA_KEYS = frozenset(
     {
-        *VM_DISTRIBUTED_INFRA_KEYS,
-        "KC_URL",
-        "KC_INTERNAL_URL",
-        "KC_MANAGEMENT_URL",
-        "KEYCLOAK_HOSTNAME",
-        "KEYCLOAK_ADMIN_HOSTNAME",
         "PG_HOST",
         "PG_PORT",
-        "DATABASE_HOSTNAME",
-        "VAULT_URL",
-        "VT_URL",
-        "MINIO_ENDPOINT",
-        "MINIO_HOSTNAME",
-        "MINIO_CONSOLE_HOSTNAME",
-        "PUBLIC_HOSTNAME",
-        "PUBLIC_HOSTNAME_PROVIDER",
-        "PUBLIC_HOSTNAME_CONSUMER",
-        "TOPOLOGY",
     }
 )
 
@@ -10108,6 +10131,66 @@ VM_DISTRIBUTED_PROFILE_SENSITIVE_KEY_TOKENS = (
     "PRIVATE_KEY",
     "UNSEAL",
     "ROOT_KEY",
+)
+
+TOPOLOGY_SCOPED_INFRASTRUCTURE_KEYS = frozenset(
+    set(COMMON_SERVICE_TOPOLOGY_KEYS)
+    | set(KUBERNETES_WORKLOAD_TOPOLOGY_KEYS)
+    | set(VM_SERVICE_TOPOLOGY_KEYS)
+    | {
+        "PIONERA_LEVEL6_MINIO_ENDPOINT",
+    }
+)
+
+
+def _effective_topology_scoped_infrastructure_config(
+    infrastructure_config,
+    topology_config,
+    topology="vm-distributed",
+):
+    selected_topology = normalize_topology(topology)
+    effective = dict(infrastructure_config or {})
+    allowed_topology_keys = set(TOPOLOGY_OVERLAY_KEYS.get(selected_topology, frozenset()))
+    for key in sorted(TOPOLOGY_SCOPED_INFRASTRUCTURE_KEYS & allowed_topology_keys):
+        value = str(dict(topology_config or {}).get(key) or "").strip()
+        if value:
+            effective[key] = value
+    return effective
+
+
+def _is_vm_public_placeholder_domain(value):
+    normalized = str(value or "").strip().strip(".").lower()
+    if not normalized:
+        return False
+    return normalized in VM_PUBLIC_PLACEHOLDER_DOMAINS
+
+
+def _usable_vm_public_url_config_value(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if is_vm_public_placeholder_url(text):
+        return ""
+    return text
+
+
+VM_DISTRIBUTED_PUBLIC_URL_KEYS = (
+    "VM_SINGLE_PUBLIC_URL",
+    "VM_SINGLE_HTTP_URL",
+    "VM_COMMON_PUBLIC_URL",
+    "VM_PROVIDER_PUBLIC_URL",
+    "VM_CONSUMER_PUBLIC_URL",
+    "KEYCLOAK_FRONTEND_URL",
+    "KEYCLOAK_PUBLIC_URL",
+    "MINIO_API_PUBLIC_URL",
+    "MINIO_PUBLIC_URL",
+    "MINIO_CONSOLE_PUBLIC_URL",
+    "COMPONENTS_PUBLIC_BASE_URL",
+    "PUBLIC_PORTAL_PUBLIC_URL",
+    "PUBLIC_PORTAL_BACKEND_PUBLIC_URL",
+    "DATASPACE_PUBLIC_PORTAL_BACKEND_URL",
+    "REGISTRATION_SERVICE_PUBLIC_URL",
+    "DATASPACE_REGISTRATION_SERVICE_PUBLIC_URL",
 )
 
 
@@ -12371,8 +12454,12 @@ def _reconcile_vm_distributed_ssh_access(plan, command_runner=None):
 
 
 def _build_vm_distributed_topology_plan(infrastructure_config, topology_config, adapter_config):
-    infra = dict(infrastructure_config or {})
     topology = dict(topology_config or {})
+    infra = _effective_topology_scoped_infrastructure_config(
+        infrastructure_config,
+        topology,
+        topology="vm-distributed",
+    )
     adapter = dict(adapter_config or {})
     preflight = _vm_distributed_configuration_preflight(infra, topology, adapter)
     ssh_bootstrap = _build_vm_distributed_ssh_bootstrap_plan(infra, topology, adapter)
@@ -12628,8 +12715,12 @@ def _vm_single_configuration_preflight(infrastructure_config, topology_config, a
 
 
 def _build_vm_single_topology_plan(infrastructure_config, topology_config, adapter_config):
-    infra = dict(infrastructure_config or {})
     topology = dict(topology_config or {})
+    infra = _effective_topology_scoped_infrastructure_config(
+        infrastructure_config,
+        topology,
+        topology="vm-single",
+    )
     adapter = dict(adapter_config or {})
     preflight = _vm_single_configuration_preflight(infra, topology, adapter)
     ssh_bootstrap = _build_vm_single_ssh_bootstrap_plan(infra, topology, adapter)
@@ -12995,8 +13086,12 @@ def run_vm_distributed_http_preflight(plan, request_get=None):
 
 
 def _vm_distributed_configuration_preflight(infrastructure_config, topology_config, adapter_config):
-    infra = dict(infrastructure_config or {})
     topology = dict(topology_config or {})
+    infra = _effective_topology_scoped_infrastructure_config(
+        infrastructure_config,
+        topology,
+        topology="vm-distributed",
+    )
     adapter = dict(adapter_config or {})
     missing = []
     warnings = []
@@ -13005,9 +13100,30 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
     domain_keys = ("DOMAIN_BASE", "DS_DOMAIN_BASE")
     missing_domain_keys = []
     for key in domain_keys:
-        if not str(infra.get(key) or "").strip():
+        value = str(infra.get(key) or "").strip()
+        if not value:
             missing.append(key)
             missing_domain_keys.append(key)
+            continue
+        if _is_vm_public_placeholder_domain(value):
+            missing.append(key)
+            missing_domain_keys.append(key)
+            warnings.append(
+                f"{key} uses the example domain '{value}'. Set a real public domain or explicit public URLs before running vm-distributed."
+            )
+
+    public_url_values = {**infra, **topology, **adapter}
+    missing_public_url_keys = []
+    for key in VM_DISTRIBUTED_PUBLIC_URL_KEYS:
+        value = str(public_url_values.get(key) or "").strip()
+        if not value or not is_vm_public_placeholder_url(value):
+            continue
+        if key not in missing:
+            missing.append(key)
+        missing_public_url_keys.append(key)
+        warnings.append(
+            f"{key} points to the example public URL '{value}'. Replace it with a real public URL or leave it blank to infer from real domains."
+        )
 
     address_keys = ("VM_COMMON_IP", "VM_PROVIDER_IP", "VM_CONSUMER_IP")
     missing_address_keys = []
@@ -13138,6 +13254,13 @@ def _vm_distributed_configuration_preflight(infrastructure_config, topology_conf
             "name": "Domains",
             "status": "missing" if missing_domain_keys else "ready",
             "detail": "DOMAIN_BASE and DS_DOMAIN_BASE",
+        }
+    )
+    checks.append(
+        {
+            "name": "Public URLs",
+            "status": "missing" if missing_public_url_keys else "ready",
+            "detail": "browser-facing URLs must not use example domains",
         }
     )
     checks.append(
@@ -13816,12 +13939,94 @@ VM_DISTRIBUTED_PROFILE_TEMPLATE_KEYS = (
     "COMPONENTS",
 )
 
+VM_SINGLE_PROFILE_TEMPLATE_KEYS = (
+    "PROFILE_TOPOLOGY",
+    "PROFILE_ADAPTER",
+    "ENVIRONMENT_NAME",
+    "DOMAIN_BASE",
+    "DS_DOMAIN_BASE",
+    "KEYCLOAK_FRONTEND_URL",
+    "KEYCLOAK_PUBLIC_URL",
+    "MINIO_API_PUBLIC_URL",
+    "MINIO_CONSOLE_PUBLIC_URL",
+    "VM_SINGLE_PUBLIC_URL",
+    "VM_SINGLE_HTTP_URL",
+    "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
+    "COMPONENTS_PUBLIC_BASE_URL",
+    "COMPONENTS_PUBLIC_PATH_REWRITE",
+    "VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER",
+    "ONTOLOGY_HUB_PUBLIC_URL",
+    "AI_MODEL_HUB_PUBLIC_URL",
+    "SEMANTIC_VIRTUALIZATION_PUBLIC_URL",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL",
+    "VM_EXTERNAL_IP",
+    "VM_COMMON_IP",
+    "VM_DATASPACE_IP",
+    "VM_CONNECTORS_IP",
+    "VM_COMPONENTS_IP",
+    "INGRESS_EXTERNAL_IP",
+    "CLUSTER_TYPE",
+    "K3S_KUBECONFIG",
+    "K3S_INSTALL_EXEC",
+    "K3S_SERVICE_NAME",
+    "K3S_INGRESS_CONTROLLER",
+    "K3S_INGRESS_SERVICE_TYPE",
+    "K3S_REPAIR_ON_LEVEL1",
+    "K3S_WRITE_KUBECONFIG_MODE",
+    "VM_SINGLE_LOCAL_KUBECONFIG",
+    "VM_SINGLE_REMOTE_KUBECONFIG",
+    "VM_SINGLE_K3S_TUNNEL_MODE",
+    "VM_SINGLE_K3S_API_LOCAL_PORT",
+    "VM_SINGLE_K3S_API_REMOTE_PORT",
+    "MINIKUBE_DRIVER",
+    "MINIKUBE_CPUS",
+    "MINIKUBE_MEMORY",
+    "MINIKUBE_PROFILE",
+    "VM_SSH_USER",
+    "SSH_ACCESS_MODE",
+    "SSH_BASTION_HOST",
+    "SSH_BASTION_PORT",
+    "SSH_BASTION_USER",
+    "SSH_BASTION_IDENTITY_FILE",
+    "SSH_IDENTITY_FILE",
+    "SSH_CONNECT_TIMEOUT_SECONDS",
+    "VM_SINGLE_SSH_HOST",
+    "VM_SINGLE_SSH_PORT",
+    "VM_SINGLE_SSH_USER",
+    "VM_SINGLE_SSH_IDENTITY_FILE",
+    "VM_SINGLE_SSH_BOOTSTRAP_MODE",
+    "VM_SINGLE_SSH_KEY_COMMENT",
+    "VM_SINGLE_SSH_MANAGED_MARKER",
+    "VM_SINGLE_SSH_KNOWN_HOSTS_STRATEGY",
+    "VM_SINGLE_LEVEL_EXECUTION_MODE",
+    "VM_SINGLE_REMOTE_PYTHON",
+    "VM_SINGLE_REMOTE_WORKDIR",
+    "VM_SINGLE_WORKSPACE_SYNC",
+    "VM_SINGLE_WORKSPACE_SYNC_DELETE",
+    "VM_SINGLE_WORKSPACE_SYNC_EXCLUDES",
+    "DS_1_NAME",
+    "DS_1_NAMESPACE",
+    "DS_1_REGISTRATION_NAMESPACE",
+    "DS_1_PROVIDER_NAMESPACE",
+    "DS_1_CONSUMER_NAMESPACE",
+    "COMMON_SERVICES_NAMESPACE",
+    "COMPONENTS_NAMESPACE",
+    "NAMESPACE_PROFILE",
+    "DS_1_CONNECTORS",
+    "DS_1_CONNECTOR_NAMESPACES",
+    "DS_1_VALIDATION_PAIRS",
+    "LEVEL4_CONNECTOR_RECONCILIATION_MODE",
+    "COMPONENTS",
+)
+
 
 def _vm_distributed_profile_template_keys(topology="vm-distributed", adapter_name="inesdata"):
     selected_topology = normalize_topology(topology)
     selected_adapter = str(adapter_name or "").strip().lower() or "inesdata"
     keys = list(VM_DISTRIBUTED_PROFILE_TEMPLATE_KEYS)
-    if selected_topology != "vm-distributed":
+    if selected_topology == "vm-single":
+        keys = list(VM_SINGLE_PROFILE_TEMPLATE_KEYS)
+    elif selected_topology != "vm-distributed":
         keys = [
             "PROFILE_TOPOLOGY",
             "PROFILE_ADAPTER",
@@ -13849,6 +14054,141 @@ def _vm_distributed_profile_template_keys(topology="vm-distributed", adapter_nam
 def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_name="inesdata"):
     selected_topology = normalize_topology(topology)
     selected_adapter = str(adapter_name or "").strip().lower() or "inesdata"
+    if selected_topology == "vm-single":
+        sections = (
+            (
+                "Local validation-environment profile.\n"
+                "This file is ignored by Git and must not contain passwords, tokens or private keys.",
+                ("PROFILE_TOPOLOGY", "PROFILE_ADAPTER", "ENVIRONMENT_NAME"),
+            ),
+            (
+                "Public domain and common routes",
+                (
+                    "DOMAIN_BASE",
+                    "DS_DOMAIN_BASE",
+                    "VM_SINGLE_PUBLIC_URL",
+                    "VM_SINGLE_HTTP_URL",
+                    "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
+                    "KEYCLOAK_FRONTEND_URL",
+                    "KEYCLOAK_PUBLIC_URL",
+                    "MINIO_API_PUBLIC_URL",
+                    "MINIO_CONSOLE_PUBLIC_URL",
+                ),
+            ),
+            (
+                "Component public routes",
+                (
+                    "COMPONENTS_PUBLIC_BASE_URL",
+                    "COMPONENTS_PUBLIC_PATH_REWRITE",
+                    "VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER",
+                    "ONTOLOGY_HUB_PUBLIC_URL",
+                    "AI_MODEL_HUB_PUBLIC_URL",
+                    "SEMANTIC_VIRTUALIZATION_PUBLIC_URL",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL",
+                ),
+            ),
+            (
+                "VM placement",
+                (
+                    "VM_EXTERNAL_IP",
+                    "VM_COMMON_IP",
+                    "VM_DATASPACE_IP",
+                    "VM_CONNECTORS_IP",
+                    "VM_COMPONENTS_IP",
+                    "INGRESS_EXTERNAL_IP",
+                ),
+            ),
+            (
+                "Kubernetes runtime",
+                (
+                    "CLUSTER_TYPE",
+                    "K3S_KUBECONFIG",
+                    "K3S_INSTALL_EXEC",
+                    "K3S_SERVICE_NAME",
+                    "K3S_INGRESS_CONTROLLER",
+                    "K3S_INGRESS_SERVICE_TYPE",
+                    "K3S_REPAIR_ON_LEVEL1",
+                    "K3S_WRITE_KUBECONFIG_MODE",
+                    "VM_SINGLE_LOCAL_KUBECONFIG",
+                    "VM_SINGLE_REMOTE_KUBECONFIG",
+                    "VM_SINGLE_K3S_TUNNEL_MODE",
+                    "VM_SINGLE_K3S_API_LOCAL_PORT",
+                    "VM_SINGLE_K3S_API_REMOTE_PORT",
+                    "MINIKUBE_DRIVER",
+                    "MINIKUBE_CPUS",
+                    "MINIKUBE_MEMORY",
+                    "MINIKUBE_PROFILE",
+                ),
+            ),
+            (
+                "SSH access",
+                (
+                    "VM_SSH_USER",
+                    "SSH_ACCESS_MODE",
+                    "SSH_BASTION_HOST",
+                    "SSH_BASTION_PORT",
+                    "SSH_BASTION_USER",
+                    "SSH_BASTION_IDENTITY_FILE",
+                    "SSH_IDENTITY_FILE",
+                    "SSH_CONNECT_TIMEOUT_SECONDS",
+                    "VM_SINGLE_SSH_HOST",
+                    "VM_SINGLE_SSH_PORT",
+                    "VM_SINGLE_SSH_USER",
+                    "VM_SINGLE_SSH_IDENTITY_FILE",
+                    "VM_SINGLE_SSH_BOOTSTRAP_MODE",
+                    "VM_SINGLE_SSH_KEY_COMMENT",
+                    "VM_SINGLE_SSH_MANAGED_MARKER",
+                    "VM_SINGLE_SSH_KNOWN_HOSTS_STRATEGY",
+                ),
+            ),
+            (
+                "Execution mode",
+                (
+                    "VM_SINGLE_LEVEL_EXECUTION_MODE",
+                    "VM_SINGLE_REMOTE_PYTHON",
+                    "VM_SINGLE_REMOTE_WORKDIR",
+                    "VM_SINGLE_WORKSPACE_SYNC",
+                    "VM_SINGLE_WORKSPACE_SYNC_DELETE",
+                    "VM_SINGLE_WORKSPACE_SYNC_EXCLUDES",
+                ),
+            ),
+            (
+                "Dataspace and connector inventory",
+                (
+                    "DS_1_NAME",
+                    "DS_1_NAMESPACE",
+                    "NAMESPACE_PROFILE",
+                    "DS_1_REGISTRATION_NAMESPACE",
+                    "DS_1_PROVIDER_NAMESPACE",
+                    "DS_1_CONSUMER_NAMESPACE",
+                    "COMMON_SERVICES_NAMESPACE",
+                    "COMPONENTS_NAMESPACE",
+                    "DS_1_CONNECTORS",
+                    "DS_1_CONNECTOR_NAMESPACES",
+                    "DS_1_VALIDATION_PAIRS",
+                    "LEVEL4_CONNECTOR_RECONCILIATION_MODE",
+                    "COMPONENTS",
+                ),
+            ),
+        )
+        rendered = []
+        emitted = set()
+        for title, keys in sections:
+            for comment_line in str(title).splitlines():
+                rendered.append(f"# {comment_line}")
+            for key in keys:
+                if key in emitted:
+                    continue
+                emitted.add(key)
+                rendered.append(f"{key}=")
+            rendered.append("")
+        if selected_adapter == "edc":
+            rendered.append("# EDC adapter options")
+            rendered.append("EDC_DASHBOARD_ENABLED=")
+            rendered.append("EDC_CONNECTOR_NAMES=")
+            rendered.append("")
+        return "\n".join(rendered).rstrip() + "\n"
+
     if selected_topology != "vm-distributed":
         return "".join(f"{key}=\n" for key in _vm_distributed_profile_template_keys(topology, selected_adapter))
 
@@ -14217,6 +14557,11 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
     infrastructure_config = load_raw_deployer_config(_infrastructure_deployer_config_path())
     topology_config = load_raw_deployer_config(topology_path)
     adapter_config = load_raw_deployer_config(adapter_path)
+    effective_infrastructure_config = _effective_topology_scoped_infrastructure_config(
+        infrastructure_config,
+        topology_config,
+        topology="vm-distributed",
+    )
     profile_suggestions = _load_vm_distributed_wizard_profile_suggestions(selected_adapter)
     _print_vm_distributed_wizard_profile_suggestions(profile_suggestions)
     profile_values = dict(profile_suggestions.get("values") or {})
@@ -14244,7 +14589,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
 
     domain_base = _prompt_vm_distributed_value(
         "Base domain for common services",
-        current=infrastructure_config.get("DOMAIN_BASE"),
+        current=topology_config.get("DOMAIN_BASE") or infrastructure_config.get("DOMAIN_BASE"),
         default="validation.example.local",
         required=True,
         help_topic="common-domain",
@@ -14252,7 +14597,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
     )
     ds_domain_base = _prompt_vm_distributed_value(
         "Base domain for dataspace/connectors",
-        current=infrastructure_config.get("DS_DOMAIN_BASE"),
+        current=topology_config.get("DS_DOMAIN_BASE") or infrastructure_config.get("DS_DOMAIN_BASE"),
         default=f"ds.{domain_base}" if domain_base else "",
         required=True,
         help_topic="dataspace-domain",
@@ -14519,22 +14864,27 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         profile_value=profile_value("LEVEL4_CONNECTOR_RECONCILIATION_MODE"),
     )
 
-    infra_updates = {
-        "DOMAIN_BASE": domain_base,
-        "DS_DOMAIN_BASE": ds_domain_base,
-    }
-    infra_updates.update(
-        _vm_distributed_common_service_public_updates(domain_base, infrastructure_config)
+    common_service_updates = _vm_distributed_common_service_public_updates(
+        domain_base,
+        {
+            **effective_infrastructure_config,
+            **topology_config,
+            "DOMAIN_BASE": domain_base,
+            "DS_DOMAIN_BASE": ds_domain_base,
+        },
     )
     public_url_updates = resolve_vm_distributed_public_urls(
         {
-            **infrastructure_config,
+            **effective_infrastructure_config,
             **topology_config,
             "DOMAIN_BASE": domain_base,
             "DS_DOMAIN_BASE": ds_domain_base,
         }
     )
     topology_updates = {
+        "DOMAIN_BASE": domain_base,
+        "DS_DOMAIN_BASE": ds_domain_base,
+        **common_service_updates,
         "VM_EXTERNAL_IP": common_ip,
         "VM_COMMON_IP": common_ip,
         "VM_DATASPACE_IP": common_ip,
@@ -14623,11 +14973,17 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         "VM_COMMON_PUBLIC_URL": public_url_updates.get("VM_COMMON_PUBLIC_URL") or "",
         "VM_PROVIDER_PUBLIC_URL": public_url_updates.get("VM_PROVIDER_PUBLIC_URL") or "",
         "VM_CONSUMER_PUBLIC_URL": public_url_updates.get("VM_CONSUMER_PUBLIC_URL") or "",
-        "KEYCLOAK_FRONTEND_URL": public_url_updates.get("KEYCLOAK_FRONTEND_URL") or topology_config.get("KEYCLOAK_FRONTEND_URL") or "",
-        "KEYCLOAK_PUBLIC_URL": public_url_updates.get("KEYCLOAK_PUBLIC_URL") or topology_config.get("KEYCLOAK_PUBLIC_URL") or "",
-        "MINIO_API_PUBLIC_URL": topology_config.get("MINIO_API_PUBLIC_URL") or "",
+        "KEYCLOAK_FRONTEND_URL": (
+            public_url_updates.get("KEYCLOAK_FRONTEND_URL")
+            or _usable_vm_public_url_config_value(topology_config.get("KEYCLOAK_FRONTEND_URL"))
+        ),
+        "KEYCLOAK_PUBLIC_URL": (
+            public_url_updates.get("KEYCLOAK_PUBLIC_URL")
+            or _usable_vm_public_url_config_value(topology_config.get("KEYCLOAK_PUBLIC_URL"))
+        ),
+        "MINIO_API_PUBLIC_URL": _usable_vm_public_url_config_value(topology_config.get("MINIO_API_PUBLIC_URL")),
         "MINIO_CONSOLE_PUBLIC_URL": public_url_updates.get("MINIO_CONSOLE_PUBLIC_URL") or "",
-        "MINIO_PUBLIC_URL": topology_config.get("MINIO_PUBLIC_URL") or "",
+        "MINIO_PUBLIC_URL": _usable_vm_public_url_config_value(topology_config.get("MINIO_PUBLIC_URL")),
         "COMPONENTS_PUBLIC_BASE_URL": public_url_updates.get("COMPONENTS_PUBLIC_BASE_URL") or "",
         "COMPONENTS_PUBLIC_PATH_REWRITE": topology_config.get("COMPONENTS_PUBLIC_PATH_REWRITE") or "true",
         "VM_COMMON_HTTP_URL": topology_config.get("VM_COMMON_HTTP_URL") or (f"http://{common_ip}" if common_ip else ""),
@@ -14684,11 +15040,6 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         return {"status": "cancelled", "adapter": selected_adapter, "topology": "vm-distributed"}
 
     _write_key_value_updates(
-        _infrastructure_deployer_config_path(),
-        infra_updates,
-        VM_DISTRIBUTED_INFRA_KEYS,
-    )
-    _write_key_value_updates(
         topology_path,
         topology_updates,
         VM_DISTRIBUTED_TOPOLOGY_KEYS,
@@ -14707,7 +15058,7 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
     _print_vm_distributed_preflight(preflight)
     print()
     print("Updated files:")
-    for path in (_infrastructure_deployer_config_path(), topology_path, adapter_path):
+    for path in (topology_path, adapter_path):
         print(f"- {_framework_relative_path(path)}")
 
     return {
@@ -14715,7 +15066,6 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         "adapter": selected_adapter,
         "topology": "vm-distributed",
         "config_files": [
-            _framework_relative_path(_infrastructure_deployer_config_path()),
             _framework_relative_path(topology_path),
             _framework_relative_path(adapter_path),
         ],
@@ -16238,6 +16588,9 @@ def _safe_level_hosts_followup(
         except Exception:
             return {}
 
+    if normalize_topology(topology) == VM_SINGLE_TOPOLOGY and not _should_interactive_vm_single_hosts_preflight(context):
+        return {"deployer_name": resolved_deployer_name} if resolved_deployer_name else {}
+
     followup = {
         "hosts_plan": _build_shadow_host_sync_plan(context, levels=[level_id]),
     }
@@ -17122,6 +17475,27 @@ def _set_session_cluster_runtime_override(cluster_runtime):
     print(f"Active cluster runtime set to {os.environ['PIONERA_CLUSTER_TYPE']}.")
 
 
+_INTERACTIVE_RUNTIME_ENV_KEYS = {
+    "KUBECONFIG",
+    "PIONERA_KUBECONFIG_ROLE",
+    "KUBECTL_INSECURE_SKIP_TLS_VERIFY",
+    "HELM_KUBEINSECURE_SKIP_TLS_VERIFY",
+}
+
+
+def _apply_interactive_topology_runtime_environment(topology="local"):
+    """Apply session-scoped kubectl environment for the active interactive topology."""
+
+    for key in _INTERACTIVE_RUNTIME_ENV_KEYS:
+        os.environ.pop(key, None)
+
+    overrides = _topology_runtime_environment_overrides(topology)
+    for key, value in overrides.items():
+        if value is not None and str(value).strip():
+            os.environ[key] = str(value)
+    return overrides
+
+
 def _print_adapter_selection_hint(adapter_name):
     if str(adapter_name or "").strip().lower() not in {"edc", "inesdata"}:
         return
@@ -17151,6 +17525,8 @@ def _interactive_ensure_hosts_ready_for_levels(
         deployer_registry=deployer_registry,
         topology=topology,
     )
+    if normalized_topology == "vm-single" and not _should_interactive_vm_single_hosts_preflight(context):
+        return True
     if normalized_topology == VM_DISTRIBUTED_TOPOLOGY and not _should_interactive_vm_distributed_hosts_preflight(context):
         return True
     readiness = _build_hosts_readiness_plan(context, levels=selected_levels)
@@ -17209,6 +17585,16 @@ def _interactive_ensure_hosts_ready_for_levels(
         print("Run H with the required permissions, then retry the selected level.")
         return False
 
+    return True
+
+
+def _should_interactive_vm_single_hosts_preflight(context):
+    config = dict(getattr(context, "config", {}) or {})
+    values = {"TOPOLOGY": "vm-single", **config}
+    public_urls = resolve_vm_distributed_public_urls(values)
+    for key in ("VM_COMMON_PUBLIC_URL", "VM_SINGLE_PUBLIC_URL", "VM_SINGLE_HTTP_URL"):
+        if _usable_vm_public_url_config_value(public_urls.get(key) or values.get(key)):
+            return False
     return True
 
 
@@ -18201,12 +18587,21 @@ def run_interactive_menu(
 
     original_cluster_type_env_present = "PIONERA_CLUSTER_TYPE" in os.environ
     original_cluster_type_env = os.environ.get("PIONERA_CLUSTER_TYPE")
+    original_runtime_env = {
+        key: (key in os.environ, os.environ.get(key))
+        for key in _INTERACTIVE_RUNTIME_ENV_KEYS
+    }
 
     def restore_cluster_type_env():
         if original_cluster_type_env_present:
             os.environ["PIONERA_CLUSTER_TYPE"] = original_cluster_type_env
         else:
             os.environ.pop("PIONERA_CLUSTER_TYPE", None)
+        for key, (was_present, old_value) in original_runtime_env.items():
+            if was_present:
+                os.environ[key] = old_value
+            else:
+                os.environ.pop(key, None)
 
     try:
         if prompt_initial_topology:
@@ -18237,15 +18632,21 @@ def run_interactive_menu(
                     if not switch_result.get("allowed"):
                         return {"status": "exited", "adapter": current_adapter, "topology": topology}
                     _set_session_cluster_runtime_override(selected_runtime)
+                    _apply_interactive_topology_runtime_environment(topology)
                     _offer_persist_vm_single_cluster_runtime(selected_runtime, previous_runtime=previous_runtime)
                     _interactive_offer_vm_single_address_configuration(required=False)
                 elif normalize_topology(topology) == "vm-distributed":
+                    _apply_interactive_topology_runtime_environment(topology)
                     current_adapter, config_result = _offer_vm_distributed_configuration(
                         current_adapter=current_adapter,
                         adapter_registry=registry,
                     )
                     if config_result is not None:
                         _print_action_result(config_result)
+                else:
+                    _apply_interactive_topology_runtime_environment(topology)
+
+        _apply_interactive_topology_runtime_environment(topology)
 
         while True:
             _print_interactive_menu(current_adapter, adapter_registry=registry, topology=topology)
@@ -18288,15 +18689,19 @@ def run_interactive_menu(
                             if not switch_result.get("allowed"):
                                 continue
                             _set_session_cluster_runtime_override(selected_runtime)
+                            _apply_interactive_topology_runtime_environment(topology)
                             _offer_persist_vm_single_cluster_runtime(selected_runtime, previous_runtime=previous_runtime)
                             _interactive_offer_vm_single_address_configuration(required=False)
                         elif normalize_topology(topology) == "vm-distributed":
+                            _apply_interactive_topology_runtime_environment(topology)
                             current_adapter, config_result = _offer_vm_distributed_configuration(
                                 current_adapter=current_adapter,
                                 adapter_registry=registry,
                             )
                             if config_result is not None:
                                 _print_action_result(config_result)
+                        else:
+                            _apply_interactive_topology_runtime_environment(topology)
                     continue
 
                 if choice == "K":
@@ -18312,6 +18717,7 @@ def run_interactive_menu(
                         if not switch_result.get("allowed"):
                             continue
                         _set_session_cluster_runtime_override(selected_runtime)
+                        _apply_interactive_topology_runtime_environment(topology)
                         _offer_persist_vm_single_cluster_runtime(selected_runtime, previous_runtime=previous_runtime)
                     continue
 
@@ -18320,6 +18726,7 @@ def run_interactive_menu(
                         if _interactive_confirm("Switch active topology to vm-distributed for this configuration?", default=True):
                             topology = "vm-distributed"
                             print("Active topology set to vm-distributed.")
+                            _apply_interactive_topology_runtime_environment(topology)
                         else:
                             print("vm-distributed configuration cancelled.")
                             continue

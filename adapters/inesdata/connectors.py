@@ -222,6 +222,83 @@ class INESDataConnectorsAdapter:
         except Exception:
             return {}
 
+    @staticmethod
+    def _config_value(config, *keys):
+        values = dict(config or {})
+        for key in keys:
+            value = str(values.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _vm_single_remote_image_import_target(self, deployer_config):
+        config = dict(deployer_config or {})
+        raw_enabled = str(config.get("VM_SINGLE_REMOTE_IMAGE_IMPORT") or "auto").strip().lower()
+        if raw_enabled in {"0", "false", "no", "n", "off", "disabled", "disable", "never", "none"}:
+            return None
+
+        host = self._config_value(config, "VM_SINGLE_SSH_HOST", "VM_EXTERNAL_IP", "VM_SINGLE_IP")
+        if not host:
+            return None
+
+        remote_config = dict(config)
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT"] = "true"
+        remote_config["VM_COMMON_SSH_HOST"] = host
+        remote_config["VM_COMMON_IP"] = self._config_value(config, "VM_EXTERNAL_IP", "VM_SINGLE_IP") or host
+        remote_config["VM_COMMON_SSH_PORT"] = self._config_value(config, "VM_SINGLE_SSH_PORT") or "22"
+        remote_config["VM_COMMON_SSH_USER"] = self._config_value(
+            config,
+            "VM_SINGLE_SSH_USER",
+            "VM_SSH_USER",
+            "SSH_BASTION_USER",
+        )
+        remote_config["VM_COMMON_SSH_IDENTITY_FILE"] = self._config_value(
+            config,
+            "VM_SINGLE_SSH_IDENTITY_FILE",
+            "SSH_IDENTITY_FILE",
+            "SSH_BASTION_IDENTITY_FILE",
+        )
+        if self._config_value(config, "VM_SINGLE_SSH_ACCESS_MODE"):
+            remote_config["SSH_ACCESS_MODE"] = self._config_value(config, "VM_SINGLE_SSH_ACCESS_MODE")
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND"] = self._config_value(
+            config,
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_COMMAND",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND",
+            "K3S_IMAGE_IMPORT_COMMAND",
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR"] = (
+            self._config_value(config, "VM_SINGLE_REMOTE_IMAGE_IMPORT_DIR", "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR")
+            or "/tmp"
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE"] = (
+            self._config_value(
+                config,
+                "VM_SINGLE_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+            )
+            or "auto"
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY"] = self._config_value(
+            config,
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_TTY",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY",
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE"] = self._config_value(
+            config,
+            "VM_SINGLE_REMOTE_IMAGE_PRUNE",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE",
+        )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP"] = (
+            self._config_value(
+                config,
+                "VM_SINGLE_REMOTE_IMAGE_PRUNE_KEEP",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP",
+            )
+            or "2"
+        )
+
+        return remote_k3s_image_import_target(remote_config, role="common")
+
     def _vm_distributed_remote_image_import_configured(self):
         if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
             return False
@@ -232,11 +309,18 @@ class INESDataConnectorsAdapter:
         return False
 
     def _remote_image_import_env_prefix_for_namespace(self, namespace, dataspace=None):
-        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+        normalized_topology = self._normalized_topology()
+        if normalized_topology not in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
             return ""
         deployer_config = self._deployer_config_for_local_image_import()
-        role = self._namespace_kubeconfig_role(namespace, dataspace=dataspace)
-        target = remote_k3s_image_import_target(deployer_config, role=role)
+        if normalized_topology == VM_SINGLE_TOPOLOGY:
+            cluster_type = str(self._cluster_runtime().get("cluster_type") or "minikube").strip().lower()
+            if cluster_type != "k3s":
+                return ""
+            target = self._vm_single_remote_image_import_target(deployer_config)
+        else:
+            role = self._namespace_kubeconfig_role(namespace, dataspace=dataspace)
+            target = remote_k3s_image_import_target(deployer_config, role=role)
         if not target:
             return ""
         env_prefix = target.render_shell_env_prefix()
@@ -929,8 +1013,20 @@ class INESDataConnectorsAdapter:
             return str(override_url).strip().rstrip("/")
 
         deployer_config = self.config_adapter.load_deployer_config() or {}
+        public_urls = resolve_vm_distributed_public_urls(
+            {
+                **dict(deployer_config or {}),
+                "TOPOLOGY": self._normalized_topology(),
+            }
+        )
         keycloak_url = str(
-            deployer_config.get("KC_MANAGEMENT_URL") or deployer_config.get("KC_URL") or ""
+            deployer_config.get("KC_MANAGEMENT_URL")
+            or deployer_config.get("KEYCLOAK_FRONTEND_URL")
+            or deployer_config.get("KEYCLOAK_PUBLIC_URL")
+            or public_urls.get("KEYCLOAK_FRONTEND_URL")
+            or public_urls.get("KEYCLOAK_PUBLIC_URL")
+            or deployer_config.get("KC_URL")
+            or ""
         ).strip()
         if keycloak_url and not keycloak_url.startswith("http"):
             keycloak_url = f"http://{keycloak_url}"
@@ -1328,8 +1424,9 @@ class INESDataConnectorsAdapter:
         prefix = self._bootstrap_environment_prefix()
         if vault_url:
             prefix += f"PIONERA_VT_URL={shlex.quote(str(vault_url).rstrip('/'))} "
-        if keycloak_url:
-            prefix += f"PIONERA_KC_MANAGEMENT_URL={shlex.quote(str(keycloak_url).rstrip('/'))} "
+        resolved_keycloak_url = keycloak_url or self._keycloak_admin_url()
+        if resolved_keycloak_url:
+            prefix += f"PIONERA_KC_MANAGEMENT_URL={shlex.quote(str(resolved_keycloak_url).rstrip('/'))} "
         if pg_host:
             prefix += f"PIONERA_PG_HOST={shlex.quote(str(pg_host))} "
         if pg_port:
@@ -2217,8 +2314,11 @@ class INESDataConnectorsAdapter:
         if explicit_api:
             return self._strip_model_observer_api_path(explicit_api)
 
-        if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
-            public_urls = resolve_vm_distributed_public_urls(deployer_config)
+        if self._normalized_topology() in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
+            public_config = dict(deployer_config or {})
+            if self._normalized_topology() == VM_SINGLE_TOPOLOGY:
+                public_config["TOPOLOGY"] = VM_SINGLE_TOPOLOGY
+            public_urls = resolve_vm_distributed_public_urls(public_config)
             backend_url = str(
                 deployer_config.get("PUBLIC_PORTAL_BACKEND_PUBLIC_URL")
                 or deployer_config.get("DATASPACE_PUBLIC_PORTAL_BACKEND_URL")
@@ -2348,42 +2448,156 @@ class INESDataConnectorsAdapter:
             public_external = f"{public_external}{public_path}"
         return parsed.scheme, public_external
 
+    @staticmethod
+    def _internal_service_hostname_from_url(value):
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            return ""
+        try:
+            parsed = urlparse(raw_value if "://" in raw_value else f"http://{raw_value}")
+        except ValueError:
+            return ""
+        hostname = (parsed.hostname or "").strip()
+        if not hostname:
+            return ""
+        if not (
+            hostname.endswith(".svc")
+            or ".svc." in hostname
+            or hostname.endswith(".cluster.local")
+        ):
+            return ""
+        if parsed.port:
+            return f"{hostname}:{parsed.port}"
+        return hostname
+
+    def _common_service_internal_hostname(self, deployer_config, service_name, default_port):
+        common_namespace = str(
+            (deployer_config or {}).get("COMMON_SERVICES_NAMESPACE")
+            or getattr(self.config, "NS_COMMON", "common-srvs")
+            or "common-srvs"
+        ).strip() or "common-srvs"
+        return f"common-srvs-{service_name}.{common_namespace}.svc:{int(default_port)}"
+
+    def _keycloak_internal_service_hostname(self, deployer_config):
+        configured = self._internal_service_hostname_from_url(
+            (deployer_config or {}).get("KC_INTERNAL_URL")
+            or (deployer_config or {}).get("KEYCLOAK_INTERNAL_URL")
+            or ""
+        )
+        return configured or self._common_service_internal_hostname(deployer_config, "keycloak", 80)
+
+    def _minio_internal_service_hostname(self, deployer_config):
+        configured = self._internal_service_hostname_from_url(
+            (deployer_config or {}).get("MINIO_ENDPOINT")
+            or (deployer_config or {}).get("MINIO_INTERNAL_URL")
+            or ""
+        )
+        return configured or self._common_service_internal_hostname(deployer_config, "minio", 9000)
+
+    @staticmethod
+    def _rewrite_connector_interface_asset_urls(value, old_base, new_base):
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            return value
+        rewritten = []
+        changed = False
+        for item in raw_value.split(","):
+            stripped_item = item.strip()
+            if stripped_item.startswith(old_base):
+                rewritten.append(f"{new_base}{stripped_item[len(old_base):]}")
+                changed = True
+            else:
+                rewritten.append(stripped_item)
+        return ",".join(rewritten) if changed else value
+
+    def _update_connector_interface_public_base_path(self, values, public_path):
+        normalized_public_path = str(public_path or "").strip().rstrip("/")
+        if not normalized_public_path:
+            return
+        if not normalized_public_path.startswith("/"):
+            normalized_public_path = f"/{normalized_public_path}"
+
+        interface_base_path = f"{normalized_public_path}/inesdata-connector-interface"
+        connector_interface = values.setdefault("connectorInterface", {})
+        connector_interface["publicBasePath"] = interface_base_path
+
+        branding = connector_interface.setdefault("branding", {})
+        old_asset_base = "/inesdata-connector-interface/assets/branding"
+        new_asset_base = f"{interface_base_path}/assets/branding"
+        asset_base_url = str(branding.get("assetBaseUrl") or "").strip().rstrip("/")
+        if not asset_base_url or asset_base_url == old_asset_base:
+            branding["assetBaseUrl"] = new_asset_base
+
+        for key in ("logoUrls", "footerLogoUrls", "poweredByLogoUrls"):
+            if key in branding:
+                branding[key] = self._rewrite_connector_interface_asset_urls(
+                    branding.get(key),
+                    old_asset_base,
+                    new_asset_base,
+                )
+
     def _connector_public_url_for_role(self, role, deployer_config):
+        public_urls = resolve_vm_distributed_public_urls(deployer_config)
         normalized_role = str(role or "").strip().lower()
         if normalized_role == "provider":
             return (
                 (deployer_config or {}).get("VM_PROVIDER_PUBLIC_URL")
+                or public_urls.get("VM_PROVIDER_PUBLIC_URL")
                 or (deployer_config or {}).get("VM_PROVIDER_HTTP_URL")
                 or ""
             )
         if normalized_role == "consumer":
             return (
                 (deployer_config or {}).get("VM_CONSUMER_PUBLIC_URL")
+                or public_urls.get("VM_CONSUMER_PUBLIC_URL")
                 or (deployer_config or {}).get("VM_CONSUMER_HTTP_URL")
                 or ""
             )
         return ""
 
     def update_connector_public_ingress_config(self, values_file, connector_name):
-        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+        if self._normalized_topology() not in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
             return
 
         deployer_config = self.config_adapter.load_deployer_config() or {}
-        layout = self._connector_layout_metadata(connector_name)
-        public_url = self._connector_public_url_for_role(layout.get("role"), deployer_config)
+        with open(values_file) as f:
+            values = yaml.safe_load(f) or {}
+
+        if self._normalized_topology() == VM_SINGLE_TOPOLOGY:
+            values_connector = values.setdefault("connector", {})
+            values_dataspace = str(values_connector.get("dataspace") or "").strip()
+            public_url = self._vm_single_connector_public_base_url_from_config(
+                connector_name,
+                deployer_config,
+                dataspace=values_dataspace,
+            )
+        else:
+            layout = self._connector_layout_metadata(connector_name)
+            public_url = self._connector_public_url_for_role(layout.get("role"), deployer_config)
         public_protocol, public_hostname = self._public_url_parts(public_url)
         if not public_hostname:
             return
 
-        with open(values_file) as f:
-            values = yaml.safe_load(f) or {}
+        public_external = public_hostname
+        public_path = urlparse(str(public_url or "")).path.strip().rstrip("/")
+        if public_path:
+            public_external = f"{public_external}{public_path}"
+            if self._normalized_topology() == VM_SINGLE_TOPOLOGY:
+                self._update_connector_interface_public_base_path(values, public_path)
 
         connector = values.setdefault("connector", {})
         ingress = connector.setdefault("ingress", {})
         services = values.setdefault("services", {})
         keycloak = services.setdefault("keycloak", {})
+        if not str(keycloak.get("hostname") or "").strip():
+            keycloak["hostname"] = self._keycloak_internal_service_hostname(deployer_config)
+        keycloak.setdefault("protocol", "http")
         keycloak_public_protocol, keycloak_public_external = self._keycloak_public_url_parts(
-            deployer_config
+            (
+                {**dict(deployer_config or {}), "TOPOLOGY": VM_SINGLE_TOPOLOGY}
+                if self._normalized_topology() == VM_SINGLE_TOPOLOGY
+                else deployer_config
+            )
         )
         if keycloak_public_protocol:
             keycloak["publicProtocol"] = keycloak_public_protocol
@@ -2391,16 +2605,27 @@ class INESDataConnectorsAdapter:
             keycloak["publicProtocol"] = public_protocol
         if keycloak_public_external:
             keycloak["external"] = keycloak_public_external
+
+        minio = services.setdefault("minio", {})
+        if not str(minio.get("hostname") or "").strip():
+            minio["hostname"] = self._minio_internal_service_hostname(deployer_config)
+        minio.setdefault("protocol", "http")
+
         primary_hostname = str(ingress.get("hostname") or "").strip()
         if primary_hostname == public_hostname:
             ingress["publicProtocol"] = public_protocol
-            ingress["publicHostname"] = public_hostname
+            ingress["publicHostname"] = public_external
             with open(values_file, "w") as f:
                 yaml.dump(values, f, sort_keys=False)
             return
 
         ingress["publicProtocol"] = public_protocol
-        ingress["publicHostname"] = public_hostname
+        ingress["publicHostname"] = public_external
+        if self._normalized_topology() == VM_SINGLE_TOPOLOGY:
+            with open(values_file, "w") as f:
+                yaml.dump(values, f, sort_keys=False)
+            return
+
         additional_hosts = ingress.setdefault("additionalHosts", [])
         existing_hosts = {
             str(item.get("hostname") or "").strip().lower()
@@ -2417,6 +2642,159 @@ class INESDataConnectorsAdapter:
 
         with open(values_file, "w") as f:
             yaml.dump(values, f, sort_keys=False)
+
+    @staticmethod
+    def _public_hostname_and_path(public_hostname):
+        raw = str(public_hostname or "").strip().rstrip("/")
+        if not raw:
+            return "", ""
+        parsed = urlparse(raw if "://" in raw else f"//{raw}")
+        hostname = str(parsed.netloc or "").strip()
+        path = str(parsed.path or "").strip().rstrip("/")
+        if path and not path.startswith("/"):
+            path = f"/{path}"
+        return hostname, path
+
+    def _vm_single_connector_public_path_ingress_manifests(self, values, namespace):
+        if self._normalized_topology() != VM_SINGLE_TOPOLOGY:
+            return []
+
+        connector = (values or {}).get("connector") or {}
+        connector_name = str(connector.get("name") or "").strip()
+        ingress = connector.get("ingress") or {}
+        host, path_prefix = self._public_hostname_and_path(ingress.get("publicHostname"))
+        if not connector_name or not host or not path_prefix:
+            return []
+
+        namespace = str(namespace or self._connector_runtime_namespace(connector_name) or "").strip()
+        if not namespace:
+            return []
+
+        escaped_prefix = re.escape(path_prefix)
+        proxy_body_size = str(ingress.get("proxyBodySize") or "800m")
+        common_annotations = {
+            "nginx.ingress.kubernetes.io/proxy-body-size": proxy_body_size,
+            "nginx.org/client-max-body-size": proxy_body_size,
+            "nginx.ingress.kubernetes.io/use-regex": "true",
+        }
+
+        def backend(service_name, port):
+            return {
+                "service": {
+                    "name": service_name,
+                    "port": {"number": port},
+                }
+            }
+
+        route_specs = [
+            ("api", connector_name, 19191),
+            ("control", connector_name, 19192),
+            ("management", connector_name, 19193),
+            ("protocol", connector_name, 19194),
+            ("federatedcatalog", connector_name, 19195),
+            ("shared", connector_name, 19196),
+            ("public", connector_name, 19291),
+            ("inesdata-connector-interface", f"{connector_name}-interface", 8080),
+        ]
+        routed_paths = [
+            {
+                "pathType": "ImplementationSpecific",
+                "path": f"{escaped_prefix}(/|$)({segment}.*)",
+                "backend": backend(service_name, port),
+            }
+            for segment, service_name, port in route_specs
+        ]
+
+        routed_ingress = {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": {
+                "name": f"{connector_name}-public-path-ingress",
+                "namespace": namespace,
+                "annotations": {
+                    **common_annotations,
+                    "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                },
+            },
+            "spec": {
+                "rules": [
+                    {
+                        "host": host,
+                        "http": {"paths": routed_paths},
+                    }
+                ]
+            },
+        }
+
+        root_ingress = {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": {
+                "name": f"{connector_name}-public-root-ingress",
+                "namespace": namespace,
+                "annotations": {
+                    **common_annotations,
+                    "nginx.ingress.kubernetes.io/rewrite-target": "/inesdata-connector-interface/",
+                },
+            },
+            "spec": {
+                "rules": [
+                    {
+                        "host": host,
+                        "http": {
+                            "paths": [
+                                {
+                                    "pathType": "ImplementationSpecific",
+                                    "path": f"{escaped_prefix}/?$",
+                                    "backend": backend(f"{connector_name}-interface", 8080),
+                                }
+                            ]
+                        },
+                    }
+                ]
+            },
+        }
+
+        return [routed_ingress, root_ingress]
+
+    def _sync_vm_single_connector_public_path_ingresses(self, values_file, namespace):
+        if self._normalized_topology() != VM_SINGLE_TOPOLOGY:
+            return True
+
+        try:
+            with open(values_file, "r", encoding="utf-8") as handle:
+                values = yaml.safe_load(handle) or {}
+        except Exception as exc:
+            print(f"Warning: vm-single public connector ingress sync skipped: {exc}")
+            return True
+
+        manifests = self._vm_single_connector_public_path_ingress_manifests(values, namespace)
+        if not manifests:
+            return True
+
+        tmp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                delete=False,
+                prefix="vm-single-connector-public-ingress-",
+                suffix=".yaml",
+            ) as handle:
+                yaml.safe_dump_all(manifests, handle, sort_keys=False)
+                tmp_path = handle.name
+
+            print("Synchronizing vm-single connector public path ingresses...")
+            return self.run(f"kubectl apply -f {shlex.quote(tmp_path)}", check=False) is not None
+        except Exception as exc:
+            print(f"Error synchronizing vm-single connector public path ingresses: {exc}")
+            return False
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
     def _local_connector_image_override_path(self):
         policy = self._resolve_level4_local_image_policy(
@@ -3197,7 +3575,7 @@ class INESDataConnectorsAdapter:
         return connector_name in deployed
 
     def build_connector_url(self, connector_name):
-        if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+        if self._normalized_topology() in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
             credentials_url = self._connector_public_access_url(connector_name, "connector_interface_login")
             if credentials_url:
                 return self._normalize_public_url(credentials_url, trailing_slash=True)
@@ -3571,8 +3949,58 @@ class INESDataConnectorsAdapter:
             return ""
         return str(access_urls.get(key) or "").strip()
 
+    @staticmethod
+    def _connector_short_name_for_public_path(connector_name, dataspace):
+        short_name = str(connector_name or "").strip()
+        if short_name.startswith("conn-"):
+            short_name = short_name[len("conn-"):]
+        suffix = f"-{dataspace}"
+        if dataspace and short_name.endswith(suffix):
+            short_name = short_name[: -len(suffix)]
+        return short_name
+
+    @staticmethod
+    def _vm_single_connector_public_path_prefix(deployer_config):
+        prefix = str(
+            (deployer_config or {}).get("VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX")
+            or "/c"
+        ).strip()
+        if not prefix:
+            prefix = "/c"
+        if not prefix.startswith("/"):
+            prefix = f"/{prefix}"
+        return prefix.rstrip("/")
+
+    def _vm_single_connector_public_base_url_from_config(self, connector_name, deployer_config, dataspace=None):
+        if self._normalized_topology() != VM_SINGLE_TOPOLOGY:
+            return ""
+        public_urls = resolve_vm_distributed_public_urls(
+            {
+                **dict(deployer_config or {}),
+                "TOPOLOGY": VM_SINGLE_TOPOLOGY,
+            }
+        )
+        common_base = (
+            (deployer_config or {}).get("VM_SINGLE_PUBLIC_URL")
+            or (deployer_config or {}).get("VM_SINGLE_HTTP_URL")
+            or public_urls.get("VM_COMMON_PUBLIC_URL")
+            or (deployer_config or {}).get("VM_COMMON_PUBLIC_URL")
+            or (deployer_config or {}).get("VM_COMMON_HTTP_URL")
+            or ""
+        )
+        common_base = self._normalize_public_url(common_base)
+        if not common_base:
+            return ""
+        short_name = self._connector_short_name_for_public_path(
+            connector_name,
+            dataspace or self._dataspace_name(),
+        )
+        if not short_name:
+            return ""
+        return f"{common_base}{self._vm_single_connector_public_path_prefix(deployer_config)}/{short_name}"
+
     def _connector_public_base_url(self, connector_name):
-        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+        if self._normalized_topology() not in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
             return ""
 
         credentials_url = self._connector_public_access_url(connector_name, "connector_ingress")
@@ -3580,6 +4008,13 @@ class INESDataConnectorsAdapter:
             return self._normalize_public_url(credentials_url)
 
         deployer_config = self.config_adapter.load_deployer_config() or {}
+        inferred_url = self._vm_single_connector_public_base_url_from_config(
+            connector_name,
+            deployer_config,
+        )
+        if inferred_url:
+            return self._normalize_public_url(inferred_url)
+
         layout = self._connector_layout_metadata(connector_name)
         role = (
             layout.get("namespace_role")
@@ -3634,10 +4069,18 @@ class INESDataConnectorsAdapter:
     def _keycloak_token_url(self):
         deployer_config = self.config_adapter.load_deployer_config()
         keycloak_url = ""
-        if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+        if self._normalized_topology() in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
+            public_urls = resolve_vm_distributed_public_urls(
+                {
+                    **dict(deployer_config or {}),
+                    "TOPOLOGY": self._normalized_topology(),
+                }
+            )
             keycloak_url = (
                 deployer_config.get("KEYCLOAK_FRONTEND_URL")
                 or deployer_config.get("KEYCLOAK_PUBLIC_URL")
+                or public_urls.get("KEYCLOAK_FRONTEND_URL")
+                or public_urls.get("KEYCLOAK_PUBLIC_URL")
                 or ""
             )
         keycloak_url = keycloak_url or deployer_config.get("KC_INTERNAL_URL") or deployer_config.get("KC_URL")
@@ -4628,6 +5071,8 @@ class INESDataConnectorsAdapter:
             ):
                 print("Timeout waiting for connector deployment rollout")
                 return False
+            if not self._sync_vm_single_connector_public_path_ingresses(values_file, target_namespace):
+                return False
 
         print("\nCONNECTORS CREATED\n")
         return True
@@ -4990,7 +5435,7 @@ class INESDataConnectorsAdapter:
         if not self.wait_for_all_connectors(all_connectors):
             print("Aborting Level 4 because connector interface readiness failed")
             return []
-        if self._normalized_topology() == VM_SINGLE_TOPOLOGY and not self.validate_connectors_with_stabilization(
+        if self._normalized_topology() in {LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY} and not self.validate_connectors_with_stabilization(
             all_connectors,
             retries=1,
             wait_seconds=30,

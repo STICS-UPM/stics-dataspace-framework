@@ -7,6 +7,13 @@ from urllib.parse import urlparse
 from .config_loader import load_deployer_config
 from .connectors import normalize_connector_name, parse_connector_list, parse_connector_mapping
 
+VM_PUBLIC_PLACEHOLDER_DOMAINS = frozenset(
+    {
+        "dev.ed.dataspaceunit.upm",
+        "dev.ds.dataspaceunit.upm",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class PublicConnector:
@@ -113,15 +120,34 @@ def resolve_vm_distributed_public_urls(config: dict[str, str] | None) -> dict[st
     ).strip().lower().replace("_", "-")
     common_domain = _clean_domain(values.get("DOMAIN_BASE") or values.get("DS_DOMAIN_BASE"))
     connector_domain = _clean_domain(values.get("DS_DOMAIN_BASE") or values.get("DOMAIN_BASE"))
+    allow_default_role_urls = not (
+        topology in {"vm-distributed", "vm-single"}
+        and (
+            _is_placeholder_domain(common_domain)
+            or _is_placeholder_domain(connector_domain)
+        )
+    )
 
     vm_single_url = _clean_public_url(values.get("VM_SINGLE_PUBLIC_URL") or values.get("VM_SINGLE_HTTP_URL"))
+    if topology in {"vm-distributed", "vm-single"} and is_vm_public_placeholder_url(vm_single_url):
+        vm_single_url = ""
     common_url = _clean_public_url(values.get("VM_COMMON_PUBLIC_URL"))
+    if topology in {"vm-distributed", "vm-single"} and is_vm_public_placeholder_url(common_url):
+        common_url = ""
     if not common_url and (topology == "vm-single" or vm_single_url):
         common_url = vm_single_url
-    if not common_url:
+    if not common_url and allow_default_role_urls:
         common_url = _default_role_url("org1", common_domain)
-    provider_url = _clean_public_url(values.get("VM_PROVIDER_PUBLIC_URL")) or _default_role_url("org2", connector_domain)
-    consumer_url = _clean_public_url(values.get("VM_CONSUMER_PUBLIC_URL")) or _default_role_url("org3", connector_domain)
+    provider_url = _clean_public_url(values.get("VM_PROVIDER_PUBLIC_URL"))
+    if topology in {"vm-distributed", "vm-single"} and is_vm_public_placeholder_url(provider_url):
+        provider_url = ""
+    if not provider_url and allow_default_role_urls:
+        provider_url = _default_role_url("org2", connector_domain)
+    consumer_url = _clean_public_url(values.get("VM_CONSUMER_PUBLIC_URL"))
+    if topology in {"vm-distributed", "vm-single"} and is_vm_public_placeholder_url(consumer_url):
+        consumer_url = ""
+    if not consumer_url and allow_default_role_urls:
+        consumer_url = _default_role_url("org3", connector_domain)
 
     resolved: dict[str, str] = {}
     if common_url:
@@ -133,6 +159,10 @@ def resolve_vm_distributed_public_urls(config: dict[str, str] | None) -> dict[st
 
     keycloak_frontend_url = _clean_public_url(values.get("KEYCLOAK_FRONTEND_URL"))
     keycloak_public_url = _clean_public_url(values.get("KEYCLOAK_PUBLIC_URL"))
+    if topology in {"vm-distributed", "vm-single"} and is_vm_public_placeholder_url(keycloak_frontend_url):
+        keycloak_frontend_url = ""
+    if topology in {"vm-distributed", "vm-single"} and is_vm_public_placeholder_url(keycloak_public_url):
+        keycloak_public_url = ""
     if keycloak_frontend_url:
         resolved["KEYCLOAK_FRONTEND_URL"] = keycloak_frontend_url
     elif keycloak_public_url:
@@ -141,18 +171,24 @@ def resolve_vm_distributed_public_urls(config: dict[str, str] | None) -> dict[st
         resolved["KEYCLOAK_FRONTEND_URL"] = _join_url_path(common_url, "auth")
 
     minio_console_url = _clean_public_url(values.get("MINIO_CONSOLE_PUBLIC_URL"))
+    if topology in {"vm-distributed", "vm-single"} and is_vm_public_placeholder_url(minio_console_url):
+        minio_console_url = ""
     if minio_console_url:
         resolved["MINIO_CONSOLE_PUBLIC_URL"] = minio_console_url
     elif common_url:
         resolved["MINIO_CONSOLE_PUBLIC_URL"] = _join_url_path(common_url, "s3-console")
 
     minio_api_url = _clean_public_url(values.get("MINIO_API_PUBLIC_URL") or values.get("MINIO_PUBLIC_URL"))
+    if topology in {"vm-distributed", "vm-single"} and is_vm_public_placeholder_url(minio_api_url):
+        minio_api_url = ""
     if minio_api_url:
         resolved["MINIO_API_PUBLIC_URL"] = minio_api_url
     elif common_url:
         resolved["MINIO_API_PUBLIC_URL"] = common_url
 
     components_base_url = _clean_public_url(values.get("COMPONENTS_PUBLIC_BASE_URL"))
+    if topology in {"vm-distributed", "vm-single"} and is_vm_public_placeholder_url(components_base_url):
+        components_base_url = ""
     if components_base_url:
         resolved["COMPONENTS_PUBLIC_BASE_URL"] = components_base_url
     elif common_url:
@@ -162,6 +198,8 @@ def resolve_vm_distributed_public_urls(config: dict[str, str] | None) -> dict[st
         values.get("PUBLIC_PORTAL_BACKEND_PUBLIC_URL")
         or values.get("DATASPACE_PUBLIC_PORTAL_BACKEND_URL")
     )
+    if topology in {"vm-distributed", "vm-single"} and is_vm_public_placeholder_url(public_portal_backend_url):
+        public_portal_backend_url = ""
     if public_portal_backend_url:
         resolved["PUBLIC_PORTAL_BACKEND_PUBLIC_URL"] = public_portal_backend_url
         resolved["DATASPACE_PUBLIC_PORTAL_BACKEND_URL"] = public_portal_backend_url
@@ -284,6 +322,29 @@ def _hostname_from_url(raw_url: str) -> str:
 
 def _clean_domain(value: str | None) -> str:
     return str(value or "").strip().strip(".")
+
+
+def _is_placeholder_domain(value: str | None) -> bool:
+    normalized = _clean_domain(value).lower()
+    if not normalized:
+        return False
+    return normalized in VM_PUBLIC_PLACEHOLDER_DOMAINS
+
+
+def is_vm_public_placeholder_url(value: str | None) -> bool:
+    parsed = urlparse(str(value or "").strip())
+    hostname = parsed.hostname or _clean_domain(value)
+    return _is_placeholder_hostname(hostname)
+
+
+def _is_placeholder_hostname(value: str | None) -> bool:
+    normalized = _clean_domain(value).lower()
+    if not normalized:
+        return False
+    return any(
+        normalized == placeholder or normalized.endswith(f".{placeholder}")
+        for placeholder in VM_PUBLIC_PLACEHOLDER_DOMAINS
+    )
 
 
 def _clean_public_url(value: str | None) -> str:

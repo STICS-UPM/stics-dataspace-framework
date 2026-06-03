@@ -157,6 +157,91 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         details = {item["name"]: item["detail"] for item in preflight["checks"]}
         self.assertEqual(details["Level 4 cluster scope"], "multi-kubeconfig connector deployment enabled")
 
+    def test_preflight_treats_vm_public_placeholder_domains_as_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            kubeconfig = os.path.join(tmpdir, "k3s.yaml")
+            with open(kubeconfig, "w", encoding="utf-8") as handle:
+                handle.write("apiVersion: v1\n")
+
+            preflight = main._vm_distributed_configuration_preflight(
+                {},
+                {
+                    "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+                    "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+                    "VM_COMMON_IP": "10.0.0.10",
+                    "VM_PROVIDER_IP": "10.0.0.20",
+                    "VM_CONSUMER_IP": "10.0.0.30",
+                    "K3S_KUBECONFIG_COMMON": kubeconfig,
+                    "K3S_KUBECONFIG_PROVIDER": kubeconfig,
+                    "K3S_KUBECONFIG_CONSUMER": kubeconfig,
+                },
+                {
+                    "DS_1_NAME": "pionera",
+                    "DS_1_CONNECTORS": "org2,org3",
+                    "DS_1_CONNECTOR_NAMESPACES": "org2:provider,org3:consumer",
+                    "DS_1_VALIDATION_PAIRS": "org2>org3",
+                    "LEVEL4_CONNECTOR_RECONCILIATION_MODE": "full",
+                },
+            )
+
+        self.assertEqual(preflight["status"], "incomplete")
+        self.assertIn("DOMAIN_BASE", preflight["missing"])
+        self.assertIn("DS_DOMAIN_BASE", preflight["missing"])
+        self.assertTrue(any("example domain" in warning for warning in preflight["warnings"]))
+        checks = {item["name"]: item["status"] for item in preflight["checks"]}
+        self.assertEqual(checks["Domains"], "missing")
+
+    def test_preflight_treats_vm_public_placeholder_urls_as_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            kubeconfig = os.path.join(tmpdir, "k3s.yaml")
+            with open(kubeconfig, "w", encoding="utf-8") as handle:
+                handle.write("apiVersion: v1\n")
+
+            preflight = main._vm_distributed_configuration_preflight(
+                {},
+                {
+                    "DOMAIN_BASE": "pionera.example.test",
+                    "DS_DOMAIN_BASE": "pionera.example.test",
+                    "KEYCLOAK_FRONTEND_URL": "https://org1.dev.ed.dataspaceunit.upm/auth",
+                    "VM_COMMON_IP": "10.0.0.10",
+                    "VM_PROVIDER_IP": "10.0.0.20",
+                    "VM_CONSUMER_IP": "10.0.0.30",
+                    "K3S_KUBECONFIG_COMMON": kubeconfig,
+                    "K3S_KUBECONFIG_PROVIDER": kubeconfig,
+                    "K3S_KUBECONFIG_CONSUMER": kubeconfig,
+                },
+                {
+                    "DS_1_NAME": "pionera",
+                    "DS_1_CONNECTORS": "org2,org3",
+                    "DS_1_CONNECTOR_NAMESPACES": "org2:provider,org3:consumer",
+                    "DS_1_VALIDATION_PAIRS": "org2>org3",
+                    "LEVEL4_CONNECTOR_RECONCILIATION_MODE": "full",
+                },
+            )
+
+        self.assertEqual(preflight["status"], "incomplete")
+        self.assertIn("KEYCLOAK_FRONTEND_URL", preflight["missing"])
+        self.assertTrue(any("example public URL" in warning for warning in preflight["warnings"]))
+        checks = {item["name"]: item["status"] for item in preflight["checks"]}
+        self.assertEqual(checks["Domains"], "ready")
+        self.assertEqual(checks["Public URLs"], "missing")
+
+    def test_local_keycloak_preflight_does_not_infer_vm_org_placeholder_url(self):
+        context = mock.Mock()
+        context.dataspace_name = "demo"
+        context.config = {
+            "TOPOLOGY": "local",
+            "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+            "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+            "KC_URL": "http://admin.auth.dev.ed.dataspaceunit.upm",
+            "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+            "KEYCLOAK_HOSTNAME": "auth.dev.ed.dataspaceunit.upm",
+        }
+
+        keycloak_url = main._public_keycloak_base_url(context)
+
+        self.assertEqual(keycloak_url, "http://admin.auth.dev.ed.dataspaceunit.upm")
+
     def test_level4_preflight_starts_missing_loopback_k3s_tunnel(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             provider_kubeconfig = os.path.join(tmpdir, "provider.yaml")
@@ -574,11 +659,14 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             with open(infra_path, encoding="utf-8") as handle:
                 infra_config = handle.read()
 
-        self.assertIn("KC_URL=http://admin.auth.validation.example.local", infra_config)
-        self.assertIn("KC_INTERNAL_URL=http://auth.validation.example.local", infra_config)
-        self.assertIn("KEYCLOAK_HOSTNAME=auth.validation.example.local", infra_config)
-        self.assertIn("MINIO_HOSTNAME=minio.validation.example.local", infra_config)
-        self.assertIn("MINIO_CONSOLE_HOSTNAME=console.minio-s3.validation.example.local", infra_config)
+        self.assertNotIn("validation.example.local", infra_config)
+        self.assertIn("DOMAIN_BASE=validation.example.local", topology_config)
+        self.assertIn("DS_DOMAIN_BASE=ds.validation.example.local", topology_config)
+        self.assertIn("KC_URL=http://admin.auth.validation.example.local", topology_config)
+        self.assertIn("KC_INTERNAL_URL=http://auth.validation.example.local", topology_config)
+        self.assertIn("KEYCLOAK_HOSTNAME=auth.validation.example.local", topology_config)
+        self.assertIn("MINIO_HOSTNAME=minio.validation.example.local", topology_config)
+        self.assertIn("MINIO_CONSOLE_HOSTNAME=console.minio-s3.validation.example.local", topology_config)
         self.assertIn("DS_1_CONNECTORS=alpha,beta,gamma", adapter_config)
         self.assertIn("DS_1_CONNECTOR_NAMESPACES=alpha:provider,beta:consumer,gamma:provider", adapter_config)
         self.assertIn("DS_1_VALIDATION_PAIRS=alpha>beta", adapter_config)
@@ -712,10 +800,10 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             main,
             "_framework_root_dir",
             return_value=tmpdir,
-        ):
+        ), mock.patch.dict(os.environ, {}, clear=True):
             path = main._vm_distributed_profile_path()
 
-        self.assertEqual(path, os.path.join(tmpdir, ".profiles", "default.env"))
+        self.assertEqual(path, os.path.join(tmpdir, ".profiles", "pionera.env"))
         self.assertNotIn(f"{os.sep}context{os.sep}", path)
 
     def test_wizard_profile_path_ignores_removed_local_vm_distributed_profile(self):
@@ -729,10 +817,10 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 main,
                 "_framework_root_dir",
                 return_value=tmpdir,
-            ):
+            ), mock.patch.dict(os.environ, {}, clear=True):
                 path = main._vm_distributed_profile_path()
 
-        self.assertEqual(path, os.path.join(tmpdir, ".profiles", "default.env"))
+        self.assertEqual(path, os.path.join(tmpdir, ".profiles", "pionera.env"))
 
     def test_explicit_environment_profile_selects_named_profile(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -818,20 +906,20 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             main,
             "_framework_root_dir",
             return_value=tmpdir,
-        ):
+        ), mock.patch.dict(os.environ, {}, clear=True):
             result = main._load_vm_distributed_wizard_profile_suggestions("inesdata")
-            profile_path = os.path.join(tmpdir, ".profiles", "default.env")
+            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
             self.assertEqual(result["status"], "created")
             self.assertEqual(result["path"], profile_path)
             self.assertTrue(os.path.isfile(profile_path))
             self.assertIn("# Local validation-environment profile", result["content"])
-            self.assertIn("# PROFILE_TOPOLOGY=vm-distributed", result["content"])
-            self.assertIn("# PROFILE_ADAPTER=inesdata", result["content"])
+            self.assertIn("PROFILE_TOPOLOGY=", result["content"])
+            self.assertIn("PROFILE_ADAPTER=", result["content"])
             self.assertEqual(result["values"], {})
 
     def test_wizard_profile_loader_keeps_comment_only_template_non_applicable(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            profile_path = os.path.join(tmpdir, ".profiles", "default.env")
+            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
             os.makedirs(os.path.dirname(profile_path), exist_ok=True)
             with open(profile_path, "w", encoding="utf-8") as handle:
                 handle.write("# DOMAIN_BASE=profile.example.test\n")
@@ -840,7 +928,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 main,
                 "_framework_root_dir",
                 return_value=tmpdir,
-            ):
+            ), mock.patch.dict(os.environ, {}, clear=True):
                 result = main._load_vm_distributed_wizard_profile_suggestions("inesdata")
 
         self.assertEqual(result["status"], "template")
@@ -850,7 +938,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
 
     def test_wizard_profile_loader_reads_standard_local_profile(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            profile_path = os.path.join(tmpdir, ".profiles", "default.env")
+            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
             os.makedirs(os.path.dirname(profile_path), exist_ok=True)
             with open(profile_path, "w", encoding="utf-8") as handle:
                 handle.write("DOMAIN_BASE=profile.example.test\nDS_1_NAME=dataspace\n")
@@ -1083,7 +1171,8 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 adapter_config = handle.read()
 
         self.assertEqual(result["status"], "applied")
-        self.assertIn("DOMAIN_BASE=common.example.test", infra_config)
+        self.assertNotIn("DOMAIN_BASE=common.example.test", infra_config)
+        self.assertIn("DOMAIN_BASE=common.example.test", topology_config)
         self.assertIn("VM_COMMON_IP=192.0.2.10", topology_config)
         self.assertIn("DS_1_NAME=dataspace", adapter_config)
         rendered = output.getvalue()
@@ -1281,9 +1370,11 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             with open(adapter_path, encoding="utf-8") as handle:
                 adapter_config = handle.read()
 
-        self.assertIn("DOMAIN_BASE=common.example.test", infra_config)
-        self.assertIn("DS_DOMAIN_BASE=ds.example.test", infra_config)
-        self.assertIn("KEYCLOAK_HOSTNAME=auth.common.example.test", infra_config)
+        self.assertIn("DOMAIN_BASE=old.example.test", infra_config)
+        self.assertNotIn("common.example.test", infra_config)
+        self.assertIn("DOMAIN_BASE=common.example.test", topology_config)
+        self.assertIn("DS_DOMAIN_BASE=ds.example.test", topology_config)
+        self.assertIn("KEYCLOAK_HOSTNAME=auth.common.example.test", topology_config)
         self.assertIn("VM_COMMON_IP=192.0.2.10", topology_config)
         self.assertIn("VM_SSH_USER=operator", topology_config)
         self.assertIn("VM_DISTRIBUTED_EXECUTION_HOST=common-services", topology_config)
@@ -1419,7 +1510,8 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 adapter_config = handle.read()
 
         self.assertIn(result["status"], {"applied", "incomplete", "needs-review"})
-        self.assertIn("DOMAIN_BASE=common.example.test", infra_config)
+        self.assertNotIn("DOMAIN_BASE=common.example.test", infra_config)
+        self.assertIn("DOMAIN_BASE=common.example.test", topology_config)
         self.assertIn("VM_COMMON_IP=192.0.2.10", topology_config)
         self.assertIn("VM_PROVIDER_IP=192.0.2.20", topology_config)
         self.assertIn("DS_1_NAME=dataspace-edc", adapter_config)
@@ -1506,7 +1598,8 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 adapter_config = handle.read()
 
         self.assertEqual(result["status"], "applied")
-        self.assertIn("DOMAIN_BASE=single.example.test", infra_config)
+        self.assertNotIn("DOMAIN_BASE=single.example.test", infra_config)
+        self.assertIn("DOMAIN_BASE=single.example.test", topology_config)
         self.assertIn("VM_EXTERNAL_IP=192.0.2.40", topology_config)
         self.assertIn("VM_SINGLE_SSH_HOST=192.0.2.40", topology_config)
         self.assertIn("DS_1_NAME=single-dataspace", adapter_config)

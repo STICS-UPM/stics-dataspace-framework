@@ -1,5 +1,18 @@
 PG_HOST=localhost
 VT_URL=http://localhost:8200
+# Internal Kubernetes service used by deployed workloads. Leave blank to infer it.
+DATABASE_HOSTNAME=
+# Internal Vault service used by deployed workloads. Leave blank to infer it.
+VAULT_URL=
+DOMAIN_BASE=dev.ed.dataspaceunit.upm
+DS_DOMAIN_BASE=dev.ds.dataspaceunit.upm
+KC_URL=http://admin.auth.dev.ed.dataspaceunit.upm
+KC_INTERNAL_URL=http://auth.dev.ed.dataspaceunit.upm
+KEYCLOAK_HOSTNAME=auth.dev.ed.dataspaceunit.upm
+KEYCLOAK_ADMIN_HOSTNAME=admin.auth.dev.ed.dataspaceunit.upm
+MINIO_HOSTNAME=minio.dev.ed.dataspaceunit.upm
+MINIO_CONSOLE_HOSTNAME=console.minio-s3.dev.ed.dataspaceunit.upm
+TOPOLOGY=local
 LOCAL_HOSTS_ADDRESS=
 LOCAL_INGRESS_EXTERNAL_IP=
 LOCAL_RESOURCE_PROFILE=single-adapter

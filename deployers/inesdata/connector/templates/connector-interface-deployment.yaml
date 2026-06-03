@@ -6,8 +6,15 @@
 {{- $connectorIngressBase := printf "%s://%s" ((index $ingress "protocol") | default "http") (index $ingress "hostname") }}
 {{- $keycloak := .Values.services.keycloak | default dict }}
 {{- $keycloakPublicProtocol := (index $keycloak "publicProtocol" | default $connectorPublicProtocol | default (index $keycloak "protocol") | default "http") }}
+{{- $connectorInterface := .Values.connectorInterface | default dict }}
+{{- $connectorInterfacePublicBasePath := (trimSuffix "/" ((index $connectorInterface "publicBasePath") | default "/inesdata-connector-interface")) }}
+{{- $connectorInterfacePublicBaseHref := printf "%s/" $connectorInterfacePublicBasePath }}
 {{- $modelObserver := .Values.connectorInterface.modelObserver | default dict }}
 {{- $branding := .Values.connectorInterface.branding | default dict }}
+{{- $brandingAssetBaseUrl := ((index $branding "assetBaseUrl") | default "") }}
+{{- if or (not $brandingAssetBaseUrl) (and (ne $connectorInterfacePublicBasePath "/inesdata-connector-interface") (eq (trimSuffix "/" $brandingAssetBaseUrl) "/inesdata-connector-interface/assets/branding")) }}
+{{- $brandingAssetBaseUrl = printf "%s/assets/branding" $connectorInterfacePublicBasePath }}
+{{- end }}
 {{- $brandingAssets := (index $branding "assets") | default list }}
 {{- $brandingAssetsConfigMapName := (index $branding "assetsConfigMapName") | default "" }}
 apiVersion: apps/v1
@@ -103,7 +110,7 @@ spec:
             - name: APP_SHOW_MENU_TEXT
               value: {{ (index $branding "showMenuText" | default "true") | quote }}
             - name: APP_BRANDING_ASSET_BASE_URL
-              value: {{ (index $branding "assetBaseUrl" | default "/inesdata-connector-interface/assets/branding") | quote }}
+              value: {{ $brandingAssetBaseUrl | quote }}
             - name: APP_LOGO_FILES
               value: {{ (index $branding "logoFiles" | default "") | quote }}
             - name: APP_LOGO_URLS
@@ -122,6 +129,8 @@ spec:
               value: {{ (index $branding "footerText" | default "") | quote }}
             - name: APP_LOCAL_STORE_LABEL
               value: {{ (index $branding "localStoreLabel" | default "InesDataStore") | quote }}
+            - name: APP_BASE_HREF
+              value: {{ $connectorInterfacePublicBaseHref | quote }}
             - name: CATALOG_URL
               value: {{ $connectorPublicBase }}/management/federatedcatalog
             - name: MANAGEMENT_API_URL
@@ -143,7 +152,7 @@ spec:
             - name: OAUTH2_ISSUER
               value: {{ $keycloakPublicProtocol }}://{{ .Values.services.keycloak.external }}/realms/{{ .Values.connector.dataspace }}
             - name: OAUTH2_REDIRECT_PATH
-              value: /inesdata-connector-interface
+              value: {{ $connectorInterfacePublicBaseHref | quote }}
             - name: OAUTH2_RESPONSE_TYPE
               value: {{ .Values.connectorInterface.oauth2.type }}
             - name: OAUTH2_SCOPE

@@ -53,11 +53,16 @@ from deployers.shared.lib.inesdata_branding_assets import (
     safe_branding_asset_filename,
     split_config_list,
 )
-from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls
+from deployers.shared.lib.vm_distributed_public_access import (
+    is_vm_public_placeholder_url,
+    resolve_vm_distributed_public_urls,
+)
 
 URL_PRO = '.dataspaceunit-project.eu'
 URL_DEV = '.dev.ds.dataspaceunit.upm'
 PUBLIC_COMMON_ACCESS_KEYS = (
+    "VM_SINGLE_PUBLIC_URL",
+    "VM_SINGLE_HTTP_URL",
     "VM_COMMON_PUBLIC_URL",
     "VM_COMMON_HTTP_URL",
     "PUBLIC_PORTAL_PUBLIC_URL",
@@ -247,6 +252,29 @@ def load_effective_deployer_config(topology=None):
         protected_keys=INFRASTRUCTURE_MANAGED_KEYS,
         topology=resolved_topology,
     )
+
+
+def _normalized_config_value(config, key):
+    value = str((config or {}).get(key) or "").strip()
+    if value.lower() in {"none", "null"}:
+        return ""
+    return value
+
+
+def connector_runtime_database_hostname(config):
+    configured = _normalized_config_value(config, "DATABASE_HOSTNAME")
+    if configured:
+        return configured
+    namespace = _normalized_config_value(config, "COMMON_SERVICES_NAMESPACE") or "common-srvs"
+    return f"common-srvs-postgresql.{namespace}.svc"
+
+
+def connector_runtime_vault_url(config):
+    configured = _normalized_config_value(config, "VAULT_URL")
+    if configured:
+        return configured.rstrip("/")
+    namespace = _normalized_config_value(config, "COMMON_SERVICES_NAMESPACE") or "common-srvs"
+    return f"http://common-srvs-vault.{namespace}.svc:8200"
 
 
 @click.group()
@@ -1065,16 +1093,47 @@ def _url_scheme(value):
     return parsed.scheme if parsed.scheme in {"http", "https"} else ""
 
 
+def _uses_vm_public_url_guard(config):
+    topology = normalize_topology(
+        (config or {}).get("TOPOLOGY")
+        or (config or {}).get("PIONERA_TOPOLOGY")
+        or (config or {}).get("INESDATA_TOPOLOGY")
+        or ""
+    )
+    return topology in {"vm-distributed", "vm-single"}
+
+
+def _uses_public_url_resolution(config):
+    if _uses_vm_public_url_guard(config):
+        return True
+    values = config or {}
+    return any(str(values.get(key) or "").strip() for key in PUBLIC_COMMON_ACCESS_KEYS)
+
+
+def _first_usable_vm_public_url(config, public_urls, *keys):
+    guard_placeholder_urls = _uses_vm_public_url_guard(config)
+    values = config or {}
+    resolved = public_urls or {}
+    for key in keys:
+        for source in (values, resolved):
+            value = str(source.get(key) or "").strip()
+            if not value:
+                continue
+            if guard_placeholder_urls and is_vm_public_placeholder_url(value):
+                continue
+            return value
+    return ""
+
+
 def keycloak_frontend_url_from_config(config, realm_name=None):
     """Resolve the browser-facing Keycloak base URL for realm metadata."""
 
-    public_urls = resolve_vm_distributed_public_urls(config)
-    explicit_url = (
-        config.get("KEYCLOAK_FRONTEND_URL")
-        or config.get("KEYCLOAK_PUBLIC_URL")
-        or public_urls.get("KEYCLOAK_FRONTEND_URL")
-        or public_urls.get("KEYCLOAK_PUBLIC_URL")
-        or ""
+    public_urls = resolve_vm_distributed_public_urls(config) if _uses_public_url_resolution(config) else {}
+    explicit_url = _first_usable_vm_public_url(
+        config or {},
+        public_urls,
+        "KEYCLOAK_FRONTEND_URL",
+        "KEYCLOAK_PUBLIC_URL",
     )
     if explicit_url:
         return normalize_keycloak_frontend_url(explicit_url, realm_name)
@@ -1233,8 +1292,57 @@ def connector_matches_configured_name(connector, dataspace, configured_name):
     return configured in aliases
 
 
+def connector_public_path_prefix(config):
+    prefix = str((config or {}).get("VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX") or "/c").strip()
+    if not prefix:
+        prefix = "/c"
+    if not prefix.startswith("/"):
+        prefix = f"/{prefix}"
+    return prefix.rstrip("/")
+
+
+def vm_single_connector_public_base_url(connector, dataspace, config, public_urls=None):
+    values = config or {}
+    topology = normalize_topology(
+        values.get("TOPOLOGY")
+        or values.get("PIONERA_TOPOLOGY")
+        or values.get("INESDATA_TOPOLOGY")
+        or ""
+    )
+    if topology != "vm-single":
+        return ""
+
+    resolved = public_urls or resolve_vm_distributed_public_urls(values)
+    common_base = normalize_url(
+        _first_usable_vm_public_url(
+            values,
+            resolved,
+            "VM_SINGLE_PUBLIC_URL",
+            "VM_SINGLE_HTTP_URL",
+            "VM_COMMON_PUBLIC_URL",
+            "VM_COMMON_HTTP_URL",
+        )
+    )
+    if not common_base:
+        return ""
+
+    short_name = connector_short_name(connector, dataspace)
+    if not short_name:
+        return ""
+    return f"{common_base}{connector_public_path_prefix(values)}/{short_name}"
+
+
 def connector_public_base_url(connector, dataspace, config):
     public_urls = resolve_vm_distributed_public_urls(config)
+    vm_single_base = vm_single_connector_public_base_url(
+        connector,
+        dataspace,
+        config,
+        public_urls=public_urls,
+    )
+    if vm_single_base:
+        return vm_single_base
+
     role_options = (
         ("VM_PROVIDER_CONNECTORS", "VM_PROVIDER_PUBLIC_URL", "VM_PROVIDER_HTTP_URL"),
         ("VM_CONSUMER_CONNECTORS", "VM_CONSUMER_PUBLIC_URL", "VM_CONSUMER_HTTP_URL"),
@@ -2073,6 +2181,8 @@ def create_connector_value_files(dataspace_name, connector_name, environment):
     keys['connector_name'] = connector_name
 
     config = load_effective_deployer_config()
+    config["DATABASE_HOSTNAME"] = connector_runtime_database_hostname(config)
+    config["VAULT_URL"] = connector_runtime_vault_url(config)
     keys['registration_service_internal_hostname'] = registration_service_internal_hostname(
         config,
         dataspace_name,

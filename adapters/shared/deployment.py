@@ -25,12 +25,32 @@ from deployers.shared.lib.topology import (
     build_topology_profile,
     normalize_topology,
 )
-from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls
+from deployers.shared.lib.vm_distributed_public_access import (
+    is_vm_public_placeholder_url,
+    resolve_vm_distributed_public_urls,
+)
 from runtime_dependencies import ensure_python_requirements
 
 
 class SharedDataspaceDeploymentAdapter:
     """Neutral Level 3 deployment flow reused by multiple adapters."""
+
+    PUBLIC_COMMON_ACCESS_KEYS = (
+        "VM_SINGLE_PUBLIC_URL",
+        "VM_SINGLE_HTTP_URL",
+        "VM_COMMON_PUBLIC_URL",
+        "VM_COMMON_HTTP_URL",
+        "PUBLIC_PORTAL_PUBLIC_URL",
+        "PUBLIC_PORTAL_BACKEND_PUBLIC_URL",
+        "REGISTRATION_SERVICE_PUBLIC_URL",
+        "KEYCLOAK_FRONTEND_URL",
+        "KEYCLOAK_PUBLIC_URL",
+        "MINIO_API_PUBLIC_URL",
+        "MINIO_PUBLIC_URL",
+        "MINIO_CONSOLE_PUBLIC_URL",
+        "COMPONENTS_PUBLIC_BASE_URL",
+        "PUBLIC_HOSTNAME",
+    )
 
     def __init__(self, run, run_silent, auto_mode_getter, infrastructure_adapter, config_adapter, config_cls):
         self.run = run
@@ -202,18 +222,45 @@ class SharedDataspaceDeploymentAdapter:
         path = (parsed.path or "").rstrip("/")
         return host, path
 
+    def _uses_public_url_resolution(self, config):
+        values = config or {}
+        topology = normalize_topology(
+            values.get("TOPOLOGY")
+            or values.get("PIONERA_TOPOLOGY")
+            or values.get("INESDATA_TOPOLOGY")
+            or LOCAL_TOPOLOGY
+        )
+        if topology in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
+            return True
+        return any(str(values.get(key) or "").strip() for key in self.PUBLIC_COMMON_ACCESS_KEYS)
+
+    def _usable_keycloak_runtime_url(self, config, value):
+        normalized = self._normalized_http_url(value)
+        if not normalized:
+            return ""
+        topology = normalize_topology(
+            (config or {}).get("TOPOLOGY")
+            or (config or {}).get("PIONERA_TOPOLOGY")
+            or (config or {}).get("INESDATA_TOPOLOGY")
+            or LOCAL_TOPOLOGY
+        )
+        if topology in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY} and is_vm_public_placeholder_url(normalized):
+            return ""
+        return normalized
+
     def _keycloak_runtime_url(self, config):
-        public_urls = resolve_vm_distributed_public_urls(config or {})
+        values = config or {}
+        public_urls = resolve_vm_distributed_public_urls(values) if self._uses_public_url_resolution(values) else {}
         for raw_url in (
-            (config or {}).get("KC_MANAGEMENT_URL"),
-            (config or {}).get("KEYCLOAK_FRONTEND_URL"),
-            (config or {}).get("KEYCLOAK_PUBLIC_URL"),
+            values.get("KC_MANAGEMENT_URL"),
+            values.get("KEYCLOAK_FRONTEND_URL"),
+            values.get("KEYCLOAK_PUBLIC_URL"),
             public_urls.get("KEYCLOAK_FRONTEND_URL"),
             public_urls.get("KEYCLOAK_PUBLIC_URL"),
-            (config or {}).get("KC_INTERNAL_URL"),
-            (config or {}).get("KC_URL"),
+            values.get("KC_INTERNAL_URL"),
+            values.get("KC_URL"),
         ):
-            normalized = self._normalized_http_url(raw_url)
+            normalized = self._usable_keycloak_runtime_url(values, raw_url)
             if normalized:
                 return normalized
         return ""
@@ -1193,6 +1240,47 @@ class SharedDataspaceDeploymentAdapter:
             print("Keycloak admin authentication did not become ready")
         return False
 
+    @staticmethod
+    def _readiness_seconds(config, key, default):
+        try:
+            value = float(str((config or {}).get(key) or "").strip())
+            if value >= 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+        return default
+
+    def wait_for_keycloak_realm_ready(self, kc_url, tls_verify_mode=None, timeout=120, poll_interval=3):
+        print("Waiting for Keycloak realm endpoint to become ready...")
+        realm_url = f"{kc_url.rstrip('/')}/realms/master"
+        last_issue = None
+        start = time.time()
+        effective_tls_verify_mode = tls_verify_mode or self._keycloak_tls_verify_mode()
+
+        while time.time() - start <= timeout:
+            try:
+                response = self._keycloak_request(
+                    requests.get,
+                    realm_url,
+                    tls_verify_mode=effective_tls_verify_mode,
+                    timeout=5,
+                )
+                if response.status_code in (200, 302):
+                    print("Keycloak realm endpoint is ready")
+                    return True, None
+                last_issue = f"unexpected HTTP status {response.status_code} from {realm_url}"
+            except Exception as exc:
+                last_issue = f"{realm_url} failed: {exc}"
+
+            if poll_interval:
+                time.sleep(poll_interval)
+
+        if last_issue:
+            print(f"Keycloak realm endpoint did not become ready: {last_issue}")
+        else:
+            print("Keycloak realm endpoint did not become ready")
+        return False, last_issue
+
     def restart_registration_service(self):
         deployment_name = f"{self._dataspace_name()}-registration-service"
         namespace = self._registration_service_namespace()
@@ -1322,25 +1410,19 @@ class SharedDataspaceDeploymentAdapter:
         if not kc_user or not kc_password:
             self._fail("KC_USER/KC_PASSWORD not defined in deployer.config")
 
-        try:
-            response = self._keycloak_request(
-                requests.get,
-                f"{kc_runtime_url}/realms/master",
-                tls_verify_mode=tls_verify_mode,
-                timeout=5,
-            )
-            if response.status_code not in (200, 302):
-                self._fail(
-                    "Keycloak not ready",
-                    root_cause=(
-                        f"unexpected HTTP status {response.status_code} from "
-                        f"{kc_runtime_url}/realms/master"
-                    ),
-                )
-        except Exception as exc:
+        realm_ready, realm_issue = self.wait_for_keycloak_realm_ready(
+            kc_runtime_url,
+            tls_verify_mode=tls_verify_mode,
+            timeout=self._readiness_seconds(deployer_config, "KEYCLOAK_REALM_READY_TIMEOUT_SECONDS", 120),
+            poll_interval=self._readiness_seconds(deployer_config, "KEYCLOAK_REALM_READY_POLL_SECONDS", 3),
+        )
+        if not realm_ready:
+            message = "Keycloak not ready"
+            if realm_issue and "failed:" in realm_issue:
+                message = "Keycloak not accessible"
             self._fail(
-                "Keycloak not accessible",
-                root_cause=f"{kc_runtime_url}/realms/master failed: {exc}",
+                message,
+                root_cause=realm_issue or f"{kc_runtime_url}/realms/master did not become ready",
             )
 
         previous_tls_verify_mode = getattr(self, "_keycloak_tls_verify_mode_override", None)

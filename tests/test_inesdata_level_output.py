@@ -1614,6 +1614,59 @@ minio:
         self.assertIn("Keycloak URL not defined in deployer.config", message)
         self.assertIn("KEYCLOAK_FRONTEND_URL", message)
 
+    def test_deploy_dataspace_waits_when_keycloak_realm_temporarily_returns_503(self):
+        infrastructure = self._make_infrastructure()
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=infrastructure,
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+        deployment.connectors_adapter = FakeConnectorsAdapter()
+        infrastructure.ensure_local_infra_access = mock.Mock(return_value=True)
+        infrastructure.ensure_vault_unsealed = lambda: True
+        infrastructure.reconcile_vault_state_for_local_runtime = mock.Mock(return_value=True)
+        infrastructure.sync_common_credentials_from_kubernetes = mock.Mock(return_value=True)
+        infrastructure.deploy_helm_release = lambda *_args, **_kwargs: True
+        infrastructure.wait_for_dataspace_level3_pods = lambda *_args, **_kwargs: True
+        infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
+        deployment.restart_registration_service = lambda: None
+        deployment.update_helm_values_with_host_aliases = mock.Mock()
+        deployment.wait_for_keycloak_admin_ready = mock.Mock(return_value=True)
+        deployment.config_adapter.load_deployer_config = lambda: {
+            "KC_URL": "http://admin.auth.dev.ed.dataspaceunit.upm",
+            "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+            "KC_USER": "admin",
+            "KC_PASSWORD": "secret",
+            "KEYCLOAK_REALM_READY_TIMEOUT_SECONDS": "1",
+            "KEYCLOAK_REALM_READY_POLL_SECONDS": "0",
+        }
+
+        with mock.patch(
+            "adapters.inesdata.deployment.ensure_python_requirements",
+            lambda *_args, **_kwargs: None,
+        ), mock.patch(
+            "adapters.inesdata.deployment.requests.get",
+            side_effect=[mock.Mock(status_code=503), mock.Mock(status_code=200)],
+        ) as mocked_get, mock.patch(
+            "adapters.shared.deployment.subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+        ):
+            deployment.deploy_dataspace()
+
+        self.assertEqual(mocked_get.call_count, 2)
+        mocked_get.assert_called_with(
+            "http://auth.dev.ed.dataspaceunit.upm/realms/master",
+            timeout=5,
+        )
+        deployment.wait_for_keycloak_admin_ready.assert_called_once_with(
+            "http://auth.dev.ed.dataspaceunit.upm",
+            "admin",
+            "secret",
+        )
+
     def test_deploy_dataspace_for_vm_single_skips_tunnel_prompt_and_updates_runtime_host_aliases(self):
         infrastructure = self._make_infrastructure()
         run = mock.Mock(return_value=object())
@@ -2169,6 +2222,65 @@ minio:
             ),
         ])
 
+    def test_prepare_level3_local_images_for_vm_single_k3s_uses_remote_import_target(self):
+        config = LevelOutputPublicPortalConfig(self.tmpdir.name)
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "CLUSTER_TYPE": "k3s",
+                "VM_EXTERNAL_IP": "192.168.122.52",
+                "VM_SINGLE_SSH_HOST": "192.168.122.52",
+                "VM_SINGLE_SSH_USER": "pionera",
+                "VM_SINGLE_SSH_PORT": "22",
+                "SSH_ACCESS_MODE": "bastion",
+                "SSH_BASTION_HOST": "orion.example.test",
+                "SSH_BASTION_USER": "pionera",
+                "SSH_BASTION_PORT": "2222",
+                "SSH_IDENTITY_FILE": "/home/operator/.ssh/vm-single",
+                "VM_SINGLE_REMOTE_IMAGE_IMPORT": "auto",
+                "VM_SINGLE_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
+            }
+        )
+        adapter_root = os.path.join(self.tmpdir.name, "adapters", "inesdata")
+        script_path = os.path.join(adapter_root, "scripts", "local_build_load_deploy.sh")
+        for source_name in (
+            "inesdata-registration-service",
+            "inesdata-public-portal-backend",
+            "inesdata-public-portal-frontend",
+        ):
+            os.makedirs(os.path.join(adapter_root, "sources", source_name), exist_ok=True)
+        os.makedirs(os.path.dirname(script_path), exist_ok=True)
+        with open(script_path, "w", encoding="utf-8") as handle:
+            handle.write("#!/usr/bin/env bash\n")
+
+        seen_commands = []
+
+        def run(cmd, **_kwargs):
+            seen_commands.append(cmd)
+            return object()
+
+        deployment = INESDataDeploymentAdapter(
+            run=run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=config,
+        )
+
+        result = deployment._prepare_level3_local_dataspace_images(
+            topology="vm-single",
+            namespace="core-control",
+            dataspace="demo",
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(len(seen_commands), 1)
+        self.assertIn("K3S_REMOTE_IMPORT_HOST=192.168.122.52", seen_commands[0])
+        self.assertIn("K3S_REMOTE_IMPORT_USER=pionera", seen_commands[0])
+        self.assertIn("K3S_REMOTE_IMPORT_BASTION_HOST=orion.example.test", seen_commands[0])
+        self.assertIn("K3S_REMOTE_IMPORT_INTERACTIVE=auto", seen_commands[0])
+        self.assertIn("--cluster-runtime k3s", seen_commands[0])
+
     def test_deploy_dataspace_for_vm_single_k3s_prepulls_level3_images_before_helm(self):
         config = LevelOutputPublicPortalConfig(self.tmpdir.name)
         self.config_adapter = LevelOutputConfigAdapter(
@@ -2250,7 +2362,10 @@ minio:
         output = io.StringIO()
         with contextlib.redirect_stdout(output), mock.patch.dict(
             os.environ,
-            {"PIONERA_K3S_IMAGE_PULL_TIMEOUT": "123"},
+            {
+                "PIONERA_K3S_IMAGE_PULL_TIMEOUT": "123",
+                "PIONERA_K3S_LEVEL3_IMAGE_PREPULL": "true",
+            },
         ), mock.patch(
             "adapters.inesdata.deployment.ensure_python_requirements",
             lambda *_args, **_kwargs: None,
@@ -2287,6 +2402,47 @@ minio:
                 timeout_seconds=300,
             ),
         ])
+
+    def test_vm_single_k3s_level3_prepull_is_disabled_by_default_for_inesdata(self):
+        config = LevelOutputPublicPortalConfig(self.tmpdir.name)
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "CLUSTER_TYPE": "k3s",
+                "VM_SINGLE_IP": "192.168.122.134",
+            }
+        )
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=config,
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(deployment._should_prepull_level3_images("vm-single"))
+
+    def test_vm_single_k3s_level3_prepull_can_be_enabled_from_config(self):
+        config = LevelOutputPublicPortalConfig(self.tmpdir.name)
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "CLUSTER_TYPE": "k3s",
+                "VM_SINGLE_IP": "192.168.122.134",
+                "VM_SINGLE_K3S_LEVEL3_IMAGE_PREPULL": "true",
+            }
+        )
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=config,
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(deployment._should_prepull_level3_images("vm-single"))
 
     def test_level3_k3s_prepull_retries_interactively_only_when_sudo_requires_password(self):
         deployment = SharedDataspaceDeploymentAdapter(
@@ -2326,6 +2482,48 @@ minio:
             ],
         )
         self.assertIn("needs sudo password", output.getvalue())
+
+    def test_shared_deployment_keycloak_runtime_url_does_not_infer_vm_org_url_for_local(self):
+        deployment = SharedDataspaceDeploymentAdapter(
+            run=mock.Mock(),
+            run_silent=mock.Mock(),
+            auto_mode_getter=lambda: False,
+            infrastructure_adapter=None,
+            config_adapter=None,
+            config_cls=None,
+        )
+
+        runtime_url = deployment._keycloak_runtime_url(
+            {
+                "TOPOLOGY": "local",
+                "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+                "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+                "KC_URL": "http://admin.auth.dev.ed.dataspaceunit.upm",
+            }
+        )
+
+        self.assertEqual(runtime_url, "http://auth.dev.ed.dataspaceunit.upm")
+
+    def test_shared_deployment_keycloak_runtime_url_infers_vm_org_url_for_vm_distributed(self):
+        deployment = SharedDataspaceDeploymentAdapter(
+            run=mock.Mock(),
+            run_silent=mock.Mock(),
+            auto_mode_getter=lambda: False,
+            infrastructure_adapter=None,
+            config_adapter=None,
+            config_cls=None,
+        )
+
+        runtime_url = deployment._keycloak_runtime_url(
+            {
+                "TOPOLOGY": "vm-distributed",
+                "DOMAIN_BASE": "pionera.example.test",
+                "DS_DOMAIN_BASE": "pionera.example.test",
+            }
+        )
+
+        self.assertEqual(runtime_url, "https://org1.pionera.example.test/auth")
 
     def test_update_registration_host_aliases_uses_vm_single_k3s_ingress_ip(self):
         self.config_adapter = LevelOutputConfigAdapter(

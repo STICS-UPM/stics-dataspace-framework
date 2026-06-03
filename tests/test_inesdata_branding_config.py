@@ -58,14 +58,29 @@ class InesdataBrandingConfigTests(unittest.TestCase):
             "APP_POWERED_BY_LOGO_URLS",
             "APP_FOOTER_TEXT",
             "APP_LOCAL_STORE_LABEL",
+            "APP_BASE_HREF",
         ):
             self.assertIn(key, deployment)
+        self.assertIn("publicBasePath", deployment)
+        self.assertIn("OAUTH2_REDIRECT_PATH", deployment)
+        self.assertIn("$connectorInterfacePublicBaseHref := printf", deployment)
+        self.assertIn("value: {{ $connectorInterfacePublicBaseHref | quote }}", deployment)
         self.assertIn("connectorInterface:", values)
         self.assertIn("branding:", values)
         self.assertIn("showMenuText", values)
         self.assertIn("localStoreLabel", values)
         self.assertIn("assetsConfigMapName", values)
         self.assertIn("assets:", values)
+
+    def test_connector_interface_entrypoint_rewrites_base_href(self):
+        entrypoint = (
+            ROOT
+            / "adapters/inesdata/sources/inesdata-connector-interface/docker/assets/scripts/docker-entrypoint.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("APP_BASE_HREF", entrypoint)
+        self.assertIn("<base href=", entrypoint)
+        self.assertIn("sed -i", entrypoint)
 
     def test_connector_interface_branding_patch_keeps_balanced_footer_logos(self):
         source = (ROOT / "adapters/inesdata/connectors.py").read_text(encoding="utf-8")

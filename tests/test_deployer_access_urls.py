@@ -98,6 +98,22 @@ class DeployerAccessUrlsTests(unittest.TestCase):
         self.assertEqual(urls["minio_api"], "https://org1.pionera.oeg.fi.upm.es")
         self.assertEqual(urls["minio_console"], "https://org1.pionera.oeg.fi.upm.es/s3-console/")
 
+    def test_inesdata_vm_distributed_common_access_urls_ignore_placeholder_public_urls(self):
+        urls = inesdata_bootstrap.common_access_urls(
+            "pionera",
+            "DEV",
+            {
+                "TOPOLOGY": "vm-distributed",
+                "DOMAIN_BASE": "pionera.example.test",
+                "DS_DOMAIN_BASE": "pionera.example.test",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.dev.ed.dataspaceunit.upm/auth",
+                "MINIO_CONSOLE_PUBLIC_URL": "https://console.minio-s3.dev.ed.dataspaceunit.upm",
+            },
+        )
+
+        self.assertEqual(urls["keycloak_realm"], "https://org1.pionera.example.test/auth/realms/pionera")
+        self.assertEqual(urls["minio_console"], "https://org1.pionera.example.test/s3-console/")
+
     def test_inesdata_vm_single_common_access_urls_use_configured_public_root_routes(self):
         urls = inesdata_bootstrap.common_access_urls(
             "pionera",
@@ -215,6 +231,7 @@ class DeployerAccessUrlsTests(unittest.TestCase):
             "pionera",
             "DEV",
             {
+                "TOPOLOGY": "vm-distributed",
                 "DOMAIN_BASE": "pionera.example.test",
                 "DS_DOMAIN_BASE": "pionera.example.test",
                 "VM_PROVIDER_CONNECTORS": "org2",
@@ -224,6 +241,31 @@ class DeployerAccessUrlsTests(unittest.TestCase):
         self.assertEqual(urls["connector_ingress"], "https://org2.pionera.example.test")
         self.assertEqual(urls["keycloak_realm"], "https://org1.pionera.example.test/auth/realms/pionera")
         self.assertEqual(urls["minio_console"], "https://org1.pionera.example.test/s3-console/")
+
+    def test_inesdata_connector_public_access_urls_use_vm_single_root_path_routes(self):
+        urls = inesdata_bootstrap.build_connector_public_access_urls(
+            "conn-org2-pionera",
+            "pionera",
+            "DEV",
+            {
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+            },
+        )
+
+        self.assertEqual(urls["connector_ingress"], "https://org4.pionera.oeg.fi.upm.es/c/org2")
+        self.assertEqual(
+            urls["connector_interface_login"],
+            "https://org4.pionera.oeg.fi.upm.es/c/org2/inesdata-connector-interface/",
+        )
+        self.assertEqual(
+            urls["connector_management_api"],
+            "https://org4.pionera.oeg.fi.upm.es/c/org2/management",
+        )
+        self.assertEqual(urls["keycloak_realm"], "https://org4.pionera.oeg.fi.upm.es/auth/realms/pionera")
+        self.assertEqual(urls["minio_console"], "https://org4.pionera.oeg.fi.upm.es/s3-console/")
 
     def test_access_urls_preserve_explicit_keycloak_port(self):
         urls = inesdata_bootstrap.common_access_urls(
