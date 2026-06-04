@@ -92,9 +92,9 @@ services:
     realm:
       {{ keys.dataspace_name }}
     protocol:
-      {{ 'https' if keys.environment == 'PRO' else 'http' }}
+      {{ keys.keycloak_protocol | default(('https' if keys.environment == 'PRO' else 'http'), true) }}
     url:
-      {{ 'https' if keys.environment == 'PRO' else 'http' }}://{{ keys.keycloak_hostname }}/realms/{{ keys.dataspace_name }}
+      {{ keys.keycloak_protocol | default(('https' if keys.environment == 'PRO' else 'http'), true) }}://{{ keys.keycloak_hostname }}/realms/{{ keys.dataspace_name }}
 ingress:
   frontend:
     hostname:

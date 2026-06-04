@@ -191,7 +191,29 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertTrue(all(path["pathType"] == "Prefix" for path in paths))
         self.assertTrue(all(path["backend"]["service"]["name"] == "pionera-ontology-hub" for path in paths))
 
-    def test_ontology_hub_public_root_alias_ingress_is_vm_distributed_only(self):
+    def test_ontology_hub_public_root_alias_ingress_routes_absolute_app_paths_for_vm_single(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "vm-single"
+
+        ingress = adapter._ontology_hub_public_root_alias_ingress(
+            "pionera-ontology-hub",
+            "components",
+            {
+                "VM_SINGLE_PUBLIC_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "COMPONENTS_PUBLIC_PATH_REWRITE": "true",
+            },
+        )
+
+        self.assertIsNotNone(ingress)
+        self.assertEqual(ingress["spec"]["rules"][0]["host"], "org4.pionera.oeg.fi.upm.es")
+        self.assertEqual(ingress["metadata"]["labels"]["app.kubernetes.io/part-of"], "vm-single")
+        paths = ingress["spec"]["rules"][0]["http"]["paths"]
+        self.assertEqual(
+            [path["path"] for path in paths],
+            ["/dataset", "/edition", "/css", "/js", "/img"],
+        )
+
+    def test_ontology_hub_public_root_alias_ingress_is_external_topology_only(self):
         adapter = self._make_shared_adapter()
         adapter.config_adapter.topology = "local"
 

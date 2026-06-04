@@ -485,7 +485,7 @@ class SharedDataspaceDeploymentAdapter:
 
     def _start_level3_postgres_access(self, topology):
         normalized_topology = normalize_topology(topology)
-        if normalized_topology not in {LOCAL_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
+        if normalized_topology not in {LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
             return {"pg_host": None, "pg_port": None, "port_forward": None}
 
         port_forward_service = getattr(self.infrastructure, "port_forward_service", None)
@@ -1154,7 +1154,7 @@ class SharedDataspaceDeploymentAdapter:
             ),
             (
                 "drop database",
-                f"DROP DATABASE IF EXISTS {self._sql_identifier(database_name)};",
+                f"DROP DATABASE IF EXISTS {self._sql_identifier(database_name)} WITH (FORCE);",
             ),
             (
                 "drop role",
@@ -1471,7 +1471,7 @@ class SharedDataspaceDeploymentAdapter:
         if postgres_access is None:
             self._fail(
                 "PostgreSQL access is not available for Level 3",
-                root_cause="could not create a temporary PostgreSQL port-forward for vm-distributed",
+                root_cause="could not create a temporary PostgreSQL port-forward for this topology",
             )
         postgres_host = postgres_access.get("pg_host")
         postgres_port = postgres_access.get("pg_port")
@@ -1563,7 +1563,7 @@ class SharedDataspaceDeploymentAdapter:
         if readiness_postgres_access is None:
             self._fail(
                 "PostgreSQL access is not available for Level 3 readiness verification",
-                root_cause="could not create a temporary PostgreSQL port-forward for vm-distributed",
+                root_cause="could not create a temporary PostgreSQL port-forward for this topology",
             )
         try:
             with self._temporary_level3_postgres_environment(

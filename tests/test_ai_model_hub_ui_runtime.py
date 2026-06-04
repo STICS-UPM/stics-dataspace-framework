@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -58,6 +59,28 @@ console.log(JSON.stringify({ trace: config.use.trace }));
         check=True,
     )
     return json.loads(result.stdout)["trace"]
+
+
+def resolve_connector_credentials_with_node(env_overrides=None):
+    env = dict(os.environ)
+    env.update(env_overrides or {})
+    script = """
+const { findConnectorCredentialsFile, loadConnectorUserCredentials } = require('./validation/components/ai_model_hub/ui/auth');
+const connectorId = 'conn-org2-pionera';
+console.log(JSON.stringify({
+  path: findConnectorCredentialsFile('pionera', connectorId),
+  credentials: loadConnectorUserCredentials('pionera', connectorId)
+}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return json.loads(result.stdout)
 
 
 class AIModelHubUiRuntimeTests(unittest.TestCase):
@@ -124,6 +147,36 @@ class AIModelHubUiRuntimeTests(unittest.TestCase):
 
     def test_ui_playwright_trace_can_be_enabled_explicitly(self):
         self.assertEqual(resolve_ui_trace_mode_with_node({"PLAYWRIGHT_TRACE": "on"}), "on")
+
+    def test_auth_credentials_resolver_prefers_scoped_runtime_dir(self):
+        with tempfile.TemporaryDirectory() as runtime_dir:
+            credentials_dir = Path(runtime_dir) / "connectors" / "conn-org2-pionera"
+            credentials_dir.mkdir(parents=True)
+            credentials_file = credentials_dir / "credentials.json"
+            credentials_file.write_text(
+                json.dumps(
+                    {
+                        "connector_user": {
+                            "user": "scoped-user",
+                            "passwd": "scoped-password",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = resolve_connector_credentials_with_node(
+                {
+                    "UI_RUNTIME_DIR": runtime_dir,
+                    "UI_TOPOLOGY": "vm-single",
+                    "UI_ENVIRONMENT": "DEV",
+                    "UI_ADAPTER": "inesdata",
+                }
+            )
+
+        self.assertEqual(result["path"], str(credentials_file))
+        self.assertEqual(result["credentials"]["user"], "scoped-user")
+        self.assertEqual(result["credentials"]["passwd"], "scoped-password")
 
 
 if __name__ == "__main__":

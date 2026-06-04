@@ -1,5 +1,10 @@
 # 22. Entrada `main.py`
 
+> Documento de trazabilidad histórica. Para el uso vigente consulta
+> [33 Referencia del menú](./33_menu_reference.md) y
+> [30 Estado actual](./30_framework_current_state.md). En el cierre del
+> repositorio, EDC queda documentado oficialmente sobre `vm-distributed`.
+
 `main.py` es la entrada canónica del framework. Todas las operaciones de uso,
 despliegue, validación, métricas, hosts y topologías deben ejecutarse desde este
 punto.
@@ -9,9 +14,8 @@ punto.
 ```bash
 python3 main.py menu
 python3 main.py inesdata deploy --topology local
-python3 main.py edc deploy --topology local
 python3 main.py inesdata validate --topology local
-python3 main.py edc validate --topology local
+python3 main.py edc validate --topology vm-distributed
 ```
 
 ## Por Qué `main.py`

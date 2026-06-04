@@ -65,6 +65,10 @@ Despliega componentes opcionales configurados, como Ontology Hub o AI Model Hub 
 
 Ejecuta la validación integral del adapter activo. Puede incluir limpieza previa, Newman, checks de almacenamiento, Playwright, componentes y métricas según el perfil de validación.
 
+Para evidencias de cierre, usa `vm-distributed` con el adapter `edc`. Las rutas
+`local` y `vm-single` de EDC están implementadas, pero deben revalidarse antes
+de presentarse como evidencia oficial actualizada.
+
 En topología `local`, esta opción espera que los hostnames publicados por
 Ingress estén accesibles. Mantén `minikube tunnel` abierto y responde la
 contraseña en esa terminal si aparece el prompt de sudo. Para conectores ya
@@ -347,7 +351,7 @@ Ejemplos por CLI:
 
 ```bash
 python3 main.py inesdata deploy --topology local
-python3 main.py edc hosts --topology vm-single --dry-run
+python3 main.py inesdata hosts --topology vm-single --dry-run
 ```
 
 Topologías canónicas:

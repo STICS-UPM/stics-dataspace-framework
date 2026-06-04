@@ -1,7 +1,12 @@
 # 14. Entorno Productivo de Validación
 
+> Documento de trazabilidad histórica. Para el alcance vigente de cierre usa
+> [30 Estado actual](./30_framework_current_state.md),
+> [35 Deployers y topologías](./35_deployers_and_topologies.md) y
+> [44 Guía de auditoría](./44_audit_navigation_guide.md).
+
 El entorno productivo de validación se representa con topologías Kubernetes
-distintas al modo local. El modo local usa `Minikube` en la maquina de
+distintas al modo local. El modo local usa `Minikube` en la máquina de
 desarrollo; `vm-single` usa un Minikube gestionado dentro de la VM para hacer
 reproducible el quickstart; y las topologías VM mantienen la misma separación
 por niveles del framework.
@@ -10,18 +15,16 @@ por niveles del framework.
 
 ## Topologías Soportadas por el Framework
 
-| Topología canonica | Alias visual | Estado actual |
+| Topología canónica | Alias visual | Estado actual |
 | --- | --- | --- |
 | `local` | local | despliegue real habilitado |
-| `vm-single` | vm1 | despliegue real habilitado para la ruta base de `inesdata` y `edc` |
-| `vm-distributed` | vm3 | planificación de hosts y perfil de topología |
+| `vm-single` | vm1 | despliegue real habilitado; EDC requiere revalidación de cierre |
+| `vm-distributed` | vm3 | despliegue real habilitado mediante perfil de VMs; ruta oficial de cierre para EDC |
 
-`vm-distributed` sigue protegido por guardas. El resto de la ruta ya puede
-ejecutarse en `vm-single` sin depender del perfil `local`, incluyendo
-componentes compartidos cuando el conector EDC registre las extensiones
-requeridas.
+El alcance vigente de cierre debe interpretarse siempre con la matriz de
+adapter y topología de la documentación actual.
 
-## Interpretacion de `vm-distributed`
+## Interpretación de `vm-distributed`
 
 Para PIONERA, `vm-distributed` se modela como un único cluster Kubernetes con
 tres nodos/VMs y separación de workloads por rol:

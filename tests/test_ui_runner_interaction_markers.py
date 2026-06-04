@@ -166,6 +166,7 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
             self.assertEqual(env["UI_TOPOLOGY"], "vm-single")
             self.assertEqual(env["UI_KEYCLOAK_URL"], "https://org4.pionera.oeg.fi.upm.es/auth")
             self.assertEqual(env["UI_MINIO_CONSOLE_URL"], "https://org4.pionera.oeg.fi.upm.es/s3-console")
+            self.assertEqual(env["UI_CONNECTOR_PROTOCOL_ADDRESS_MODE"], "public")
 
     def test_playwright_validation_exports_active_runtime_dir(self):
         context = self._context()

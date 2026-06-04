@@ -310,7 +310,7 @@ def _build_playwright_environment(
         protocol_address_mode = explicit_ui_protocol_address_mode
     elif configured_protocol_address_mode:
         protocol_address_mode = configured_protocol_address_mode
-    elif str(context.topology or "").strip().lower() == "vm-distributed":
+    elif topology in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
         protocol_address_mode = "public"
     else:
         protocol_address_mode = ""

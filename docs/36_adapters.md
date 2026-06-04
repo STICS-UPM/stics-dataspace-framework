@@ -108,6 +108,20 @@ configuración de `identity/`.
 
 El adapter EDC soporta un despliegue EDC genérico.
 
+### Alcance de Cierre de EDC
+
+En la versión de cierre del repositorio, EDC debe describirse así:
+
+| Topología | Estado de cierre |
+| --- | --- |
+| `vm-distributed` | Ruta probada oficialmente para EDC. |
+| `local` | Ruta implementada y útil para desarrollo; pasó validaciones antes de la conciliación reciente de topologías, pero debe revalidarse antes de presentarse como evidencia actual. |
+| `vm-single` | Ruta implementada; no se ha validado oficialmente después de la conciliación reciente. |
+
+Esta distinción evita confundir soporte de código con evidencia auditada. Si se
+necesita cerrar EDC en `local` o `vm-single`, ejecuta una revalidación completa
+desde los niveles `1-6` y conserva el experimento resultante.
+
 Configuración relevante:
 
 ```text

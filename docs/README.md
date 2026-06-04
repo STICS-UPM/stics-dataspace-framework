@@ -97,12 +97,13 @@ Usa `main.py` para el trabajo diario:
 python3 main.py menu
 python3 main.py inesdata deploy --topology local
 python3 main.py inesdata validate --topology local
-python3 main.py edc validate --topology local
-python3 main.py edc hosts --topology local --dry-run
+python3 main.py edc validate --topology vm-distributed
+python3 main.py edc hosts --topology vm-distributed --dry-run
 ```
 
 El menú guiado es la entrada recomendada para uso interactivo. El CLI directo
 es la entrada recomendada para automatización y ejecuciones reproducibles.
+Para EDC, la ruta oficial de cierre documentada es `vm-distributed`.
 
 ## Documentación Vigente
 

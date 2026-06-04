@@ -2903,6 +2903,43 @@ class MainCliTests(unittest.TestCase):
         run_level.assert_not_called()
         self.assertIn("Reconciling vm-distributed public access", stdout.getvalue())
 
+    def test_interactive_level2_reuse_reconciles_vm_single_public_access(self):
+        class SharedInfrastructure:
+            def __init__(self):
+                self.public_access_calls = []
+
+            def verify_common_services_ready_for_level3(self):
+                return True, None
+
+            def sync_vm_distributed_public_access(self, topology="local"):
+                self.public_access_calls.append(topology)
+                return {
+                    "status": "synced",
+                    "nginx_http": {"status": "synced"},
+                }
+
+        adapter = FakeAdapterWithInfrastructure()
+        adapter.infrastructure = SharedInfrastructure()
+
+        stdout = io.StringIO()
+        with mock.patch.object(main, "build_adapter", return_value=adapter), mock.patch.object(
+            main,
+            "_interactive_confirm",
+            return_value=True,
+        ), mock.patch.object(main, "run_level") as run_level, contextlib.redirect_stdout(stdout):
+            result = main._run_interactive_level2_with_shared_foundation(
+                adapter_registry={"fake": "fake_adapter_module:FakeAdapterWithInfrastructure"},
+                deployer_registry=self.deployer_registry,
+                topology="vm-single",
+            )
+
+        self.assertEqual(result["level"], 2)
+        self.assertEqual(result["result"]["action"], "reuse")
+        self.assertEqual(result["result"]["public_access"]["status"], "synced")
+        self.assertEqual(adapter.infrastructure.public_access_calls, ["vm-single"])
+        run_level.assert_not_called()
+        self.assertIn("Reconciling vm-single public access", stdout.getvalue())
+
     def test_interactive_level2_can_recreate_healthy_shared_common_services(self):
         class SharedInfrastructure:
             def __init__(self):
@@ -6806,6 +6843,7 @@ class MainCliTests(unittest.TestCase):
                 "environment": "DEV",
                 "dataspace_name": "pionera",
                 "ds_domain_base": "pionera.oeg.fi.upm.es",
+                "runtime_dir": "/repo/deployers/inesdata/deployments/DEV/vm-distributed/pionera",
                 "connectors": [
                     "conn-org2-pionera",
                     "conn-org3-pionera",
@@ -6824,6 +6862,9 @@ class MainCliTests(unittest.TestCase):
 
         env = main._level6_component_validation_environment(context, "inesdata")
 
+        self.assertEqual(env["UI_TOPOLOGY"], "vm-distributed")
+        self.assertEqual(env["UI_ENVIRONMENT"], "DEV")
+        self.assertEqual(env["UI_RUNTIME_DIR"], "/repo/deployers/inesdata/deployments/DEV/vm-distributed/pionera")
         self.assertEqual(env["AI_MODEL_HUB_KEYCLOAK_URL"], "https://org1.pionera.oeg.fi.upm.es/auth")
         self.assertEqual(
             env["AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL"],
@@ -6836,6 +6877,50 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(
             env["AI_MODEL_HUB_PROVIDER_PROTOCOL_URL"],
             "http://conn-org2-pionera.pionera.oeg.fi.upm.es/protocol",
+        )
+
+    def test_level6_component_validation_environment_uses_vm_single_public_path_urls(self):
+        context = DeploymentContext.from_mapping(
+            {
+                "deployer": "inesdata",
+                "topology": "vm-single",
+                "environment": "DEV",
+                "dataspace_name": "pionera",
+                "ds_domain_base": "dev.ds.dataspaceunit.upm",
+                "runtime_dir": "/repo/deployers/inesdata/deployments/DEV/vm-single/pionera",
+                "connectors": [
+                    "conn-org2-pionera",
+                    "conn-org3-pionera",
+                ],
+                "config": {
+                    "TOPOLOGY": "vm-single",
+                    "DS_1_CONNECTORS": "org2,org3",
+                    "VM_PROVIDER_CONNECTORS": "org2",
+                    "VM_CONSUMER_CONNECTORS": "org3",
+                    "VM_SINGLE_PUBLIC_URL": "https://org4.pionera.oeg.fi.upm.es",
+                    "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX": "/c",
+                    "KEYCLOAK_FRONTEND_URL": "https://org4.pionera.oeg.fi.upm.es/auth",
+                },
+            }
+        )
+
+        env = main._level6_component_validation_environment(context, "inesdata")
+
+        self.assertEqual(env["UI_TOPOLOGY"], "vm-single")
+        self.assertEqual(env["UI_ENVIRONMENT"], "DEV")
+        self.assertEqual(env["UI_RUNTIME_DIR"], "/repo/deployers/inesdata/deployments/DEV/vm-single/pionera")
+        self.assertEqual(env["AI_MODEL_HUB_KEYCLOAK_URL"], "https://org4.pionera.oeg.fi.upm.es/auth")
+        self.assertEqual(
+            env["AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL"],
+            "https://org4.pionera.oeg.fi.upm.es/c/org2/management",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL"],
+            "https://org4.pionera.oeg.fi.upm.es/c/org3/management",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_PROVIDER_PROTOCOL_URL"],
+            "https://org4.pionera.oeg.fi.upm.es/c/org2/protocol",
         )
 
     def test_local_adapter_install_capacity_preflight_switches_when_explicitly_confirmed(self):

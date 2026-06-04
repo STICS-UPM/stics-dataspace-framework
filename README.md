@@ -13,10 +13,10 @@ El punto de entrada principal es `main.py`. El framework está organizado para
 trabajar con distintos adapters y topologías sin duplicar la lógica común de
 validación.
 
-## Estado Actual del Proyecto
+## Estado Consolidado del Proyecto
 
-El framework está en una fase operativa de validación y cierre documental. La
-rama `main` contiene:
+La rama `main` consolida el framework como herramienta de despliegue, validación
+y generación de evidencias. Incluye:
 
 - ejecución por niveles `1-6`;
 - adapters `inesdata` y `edc`;
@@ -27,6 +27,22 @@ rama `main` contiene:
 
 El estado detallado se mantiene en
 [docs/30_framework_current_state.md](./docs/30_framework_current_state.md).
+
+### Alcance de Cierre
+
+El framework conserva soporte de código para los adapters y topologías
+documentados, pero la evidencia de cierre distingue entre capacidad
+implementada y validación oficial reproducida:
+
+| Adapter | `local` | `vm-single` | `vm-distributed` |
+| --- | --- | --- | --- |
+| `inesdata` | Implementado y usado como ruta local de desarrollo/validación | Implementado y validado como entorno VM de referencia | Implementado y validado como entorno distribuido de referencia |
+| `edc` | Implementado; pasó validaciones antes de la conciliación reciente de topologías y debe revalidarse antes de usarlo como evidencia actual | Implementado; no se ha validado oficialmente después de la conciliación reciente | Implementado y probado oficialmente como ruta de cierre para EDC |
+
+Por tanto, para evidencias de cierre del adapter `edc`, usa
+`vm-distributed`. Las rutas `local` y `vm-single` de EDC permanecen disponibles
+para desarrollo y futuras revalidaciones, pero no se presentan como resultado
+oficial actualizado en esta versión de cierre.
 
 ## Índice
 
@@ -68,7 +84,7 @@ El estado detallado se mantiene en
 | Adapter | Uso |
 | --- | --- |
 | `inesdata` | Despliegue y validación con conectores INESData y su portal. |
-| `edc` | Despliegue y validación con conectores EDC genéricos y dashboard EDC. |
+| `edc` | Despliegue y validación con conectores EDC genéricos; la evidencia oficial de cierre se limita a `vm-distributed`. |
 
 Cada adapter tiene su propio deployer:
 
@@ -104,6 +120,10 @@ Las tres topologías comparten el mismo modelo de niveles, adapters y namespaces
 funcionales. Los valores reales de dominio, IP, SSH, kubeconfig y credenciales
 permanecen en ficheros locales ignorados por Git o en variables de entorno, no
 en la documentación versionada.
+
+El hecho de que una topología esté implementada no implica que todos los
+adapters tengan evidencia oficial de cierre en esa topología. Consulta la matriz
+de alcance antes de preparar una ejecución para auditoría.
 
 ## Instalación y Compilación
 
@@ -588,28 +608,28 @@ Desplegar:
 
 ```bash
 python3 main.py inesdata deploy --topology local
-python3 main.py edc deploy --topology local
+python3 main.py edc deploy --topology vm-distributed
 ```
 
 Validar:
 
 ```bash
 python3 main.py inesdata validate --topology local
-python3 main.py edc validate --topology local
+python3 main.py edc validate --topology vm-distributed
 ```
 
 Ejecutar despliegue y validación:
 
 ```bash
 python3 main.py inesdata run --topology local
-python3 main.py edc run --topology local
+python3 main.py edc run --topology vm-distributed
 ```
 
 Previsualizar sin modificar el entorno:
 
 ```bash
 python3 main.py inesdata deploy --topology local --dry-run
-python3 main.py edc run --topology local --dry-run
+python3 main.py edc run --topology vm-distributed --dry-run
 ```
 
 Recrear un dataspace de forma controlada:
@@ -630,6 +650,12 @@ python3 main.py edc recreate-dataspace --topology local --confirm-dataspace demo
 - validaciones de componentes;
 - métricas;
 - reportes en `experiments/`.
+
+En esta versión de cierre, la validación oficial actualizada de `edc` se
+considera limitada a `vm-distributed`. La ruta `local` de EDC conserva soporte
+de desarrollo y llegó a pasar validaciones antes de la conciliación reciente de
+topologías; la ruta `vm-single` de EDC no se ha validado oficialmente después de
+esa conciliación.
 
 En topología `local`, `Level 6` usa por defecto el modo de orquestación
 `stable`: Newman, Kafka, Playwright y componentes se coordinan con menos
@@ -929,6 +955,8 @@ Pública, dentro del marco del PRTR financiado por la Unión Europea
 Este repositorio forma parte del trabajo software del proyecto PIONERA. Para
 consultas, incidencias o propuestas de cambio, usa los issues y pull requests
 del repositorio en GitHub.
+
+- **Mantenedor del framework:** Adrián Vargas (<adrian.vargas@upm.es>)
 
 ## Licencia
 

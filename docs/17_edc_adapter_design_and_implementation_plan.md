@@ -1,5 +1,10 @@
 # 17. Adapter EDC
 
+> Documento de trazabilidad histórica. El adapter EDC existe en el framework,
+> pero la evidencia oficial de cierre se limita a `vm-distributed`; `local` y
+> `vm-single` deben revalidarse después de la conciliación reciente de
+> topologías.
+
 El adapter `edc` permite ejecutar el framework con conectores EDC genéricos sin
 reutilizar el runtime de conectores INESData. Mantiene la misma estructura de
 niveles y delega en `deployers/edc`.
@@ -91,12 +96,12 @@ del dashboard/proxy. No deben editarse manualmente ni subirse a Git.
 EDC tiene su propio `deployer.py` y su propio arbol runtime. No debe generar
 credenciales ni certificados dentro de `deployers/inesdata/deployments`.
 
-Los servicios comunes siguen siendo compartidos, pero los artefactos especificos
+Los servicios comunes siguen siendo compartidos, pero los artefactos específicos
 del adapter se materializan bajo `deployers/edc`.
 
 ## Validación
 
-`python3 main.py edc validate --topology local` ejecuta:
+`python3 main.py edc validate --topology vm-distributed` ejecuta:
 
 - Newman sobre los flujos API del dataspace;
 - Playwright con `validation/ui/playwright.edc.config.ts`;

@@ -18,6 +18,17 @@ INESData y EDC. La documentación vigente cubre:
 - evidencias generadas por ejecución bajo `experiments/`;
 - colecciones importables de Postman y ejecución automatizada con Newman.
 
+Para cierre, el alcance validado por adapter y topología es:
+
+| Adapter | `local` | `vm-single` | `vm-distributed` |
+| --- | --- | --- | --- |
+| `inesdata` | Implementado y usado como ruta local de desarrollo/validación | Implementado y validado como entorno VM de referencia | Implementado y validado como entorno distribuido de referencia |
+| `edc` | Implementado; requiere revalidación tras la conciliación reciente de topologías | Implementado; no validado oficialmente tras la conciliación reciente | Ruta probada oficialmente para evidencia de cierre |
+
+Cuando se revise EDC, las evidencias de cierre deben corresponder a
+`vm-distributed` hasta que exista una revalidación posterior de `local` o
+`vm-single`.
+
 ## Fuera de Alcance
 
 La documentación no debe contener contraseñas reales, tokens, claves de
@@ -81,6 +92,10 @@ Todas las topologías deben alinearse con los mismos namespaces funcionales:
 namespaces funcionales y contratos de adapter. La topología `vm-distributed`
 añade separación física por roles y requiere configuración local de red, SSH,
 kubeconfig, DNS/Ingress y URLs públicas antes de ejecutar los niveles.
+
+La existencia de un contrato común no significa que todos los adapters tengan
+evidencia oficial en todas las topologías. La matriz de alcance de este
+documento es la referencia para auditoría.
 
 ## Trazabilidad Histórica
 

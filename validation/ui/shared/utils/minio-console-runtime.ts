@@ -28,6 +28,9 @@ function projectRoot(): string {
 }
 
 function parseKeyValueFile(filePath: string): Record<string, string> {
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
   const content = fs.readFileSync(filePath, "utf8");
   const values: Record<string, string> = {};
 
@@ -78,18 +81,80 @@ function deploymentRoot(adapter: string): string {
   return path.join(root, "deployers", adapter, "deployments");
 }
 
+function cleanSegment(value: string | undefined, fallback: string): string {
+  const segment = (value || fallback || "").trim() || fallback;
+  return segment.replace(/[\\/]/g, "_");
+}
+
+function normalizeTopology(value: string | undefined): string {
+  const topology = (value || "local").trim().toLowerCase().replace(/_/g, "-");
+  return ["local", "vm-single", "vm-distributed"].includes(topology) ? topology : "local";
+}
+
+function deploymentId(config: Record<string, string>): string {
+  return cleanSegment(
+    process.env.PIONERA_DEPLOYMENT_ID ||
+      config.DEPLOYMENT_ID ||
+      config.RUNTIME_ARTIFACT_DEPLOYMENT_ID ||
+      config.VALIDATION_ENVIRONMENT_ID,
+    "",
+  ).replace(/^_+|_+$/g, "");
+}
+
+function configuredRuntimeDir(
+  adapter: string,
+  dataspace: string,
+  environment: string,
+): string {
+  const explicitRuntimeDir = process.env.UI_RUNTIME_DIR?.trim();
+  if (explicitRuntimeDir) {
+    return explicitRuntimeDir;
+  }
+
+  const deployerConfigPath = path.join(projectRoot(), "deployers", adapter, "deployer.config");
+  const deployerConfig = parseKeyValueFile(deployerConfigPath);
+  const topology = normalizeTopology(
+    process.env.UI_TOPOLOGY ||
+      process.env.PIONERA_TOPOLOGY ||
+      process.env.INESDATA_TOPOLOGY ||
+      deployerConfig.TOPOLOGY ||
+      deployerConfig.PIONERA_TOPOLOGY,
+  );
+  if (topology === "local") {
+    return path.join(deploymentRoot(adapter), environment, dataspace);
+  }
+
+  const parts = [deploymentRoot(adapter), environment, topology];
+  const currentDeploymentId = deploymentId(deployerConfig);
+  if (currentDeploymentId) {
+    parts.push(currentDeploymentId);
+  }
+  parts.push(dataspace);
+  return path.join(...parts);
+}
+
 function connectorCredentialsPath(
   adapter: string,
   connectorName: string,
   dataspace: string,
   environment: string,
 ): string {
-  return path.join(
-    deploymentRoot(adapter),
-    environment,
-    dataspace,
-    `credentials-connector-${connectorName}.json`,
-  );
+  const envPrefix = connectorName.toUpperCase().replace(/-/g, "_");
+  const explicitPath = process.env[`UI_${envPrefix}_CREDENTIALS_FILE`]?.trim();
+  if (explicitPath) {
+    return explicitPath;
+  }
+
+  const runtimeDir = configuredRuntimeDir(adapter, dataspace, environment);
+  const scopedPath = path.join(runtimeDir, "connectors", connectorName, "credentials.json");
+  const legacyPath = path.join(runtimeDir, `credentials-connector-${connectorName}.json`);
+  if (fs.existsSync(scopedPath)) {
+    return scopedPath;
+  }
+  if (fs.existsSync(legacyPath)) {
+    return legacyPath;
+  }
+  return scopedPath;
 }
 
 function resolveConnectorMinioCredentials(

@@ -217,12 +217,50 @@ function deploymentRoot(adapter: string): string {
   return path.join(projectRootPath, "deployers", adapter, "deployments");
 }
 
+function cleanSegment(value: string | undefined, fallback: string): string {
+  const segment = (value || fallback || "").trim() || fallback;
+  return segment.replace(/[\\/]/g, "_");
+}
+
+function normalizeTopology(value: string | undefined): string {
+  const topology = (value || "local").trim().toLowerCase().replace(/_/g, "-");
+  return ["local", "vm-single", "vm-distributed"].includes(topology) ? topology : "local";
+}
+
+function deploymentId(config: Record<string, string>): string {
+  return cleanSegment(
+    process.env.PIONERA_DEPLOYMENT_ID ||
+      config.DEPLOYMENT_ID ||
+      config.RUNTIME_ARTIFACT_DEPLOYMENT_ID ||
+      config.VALIDATION_ENVIRONMENT_ID,
+    "",
+  ).replace(/^_+|_+$/g, "");
+}
+
 function configuredRuntimeDir(adapter: string, environment: string, dataspace: string): string {
   const explicitRuntimeDir = process.env.UI_RUNTIME_DIR?.trim();
   if (explicitRuntimeDir) {
     return explicitRuntimeDir;
   }
-  return path.join(deploymentRoot(adapter), environment, dataspace);
+  const deployerConfig = parseKeyValueFile(deployerConfigPath(adapter));
+  const topology = normalizeTopology(
+    process.env.UI_TOPOLOGY ||
+      process.env.PIONERA_TOPOLOGY ||
+      process.env.INESDATA_TOPOLOGY ||
+      deployerConfig.TOPOLOGY ||
+      deployerConfig.PIONERA_TOPOLOGY,
+  );
+  if (topology === "local") {
+    return path.join(deploymentRoot(adapter), environment, dataspace);
+  }
+
+  const parts = [deploymentRoot(adapter), environment, topology];
+  const currentDeploymentId = deploymentId(deployerConfig);
+  if (currentDeploymentId) {
+    parts.push(currentDeploymentId);
+  }
+  parts.push(dataspace);
+  return path.join(...parts);
 }
 
 function deployerConfigPath(adapter: string): string {

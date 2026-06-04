@@ -57,6 +57,7 @@ from deployers.shared.lib.vm_distributed_public_access import (
     is_vm_public_placeholder_url,
     resolve_vm_distributed_public_urls,
 )
+from deployers.shared.lib.components import configured_component_public_url
 
 URL_PRO = '.dataspaceunit-project.eu'
 URL_DEV = '.dev.ds.dataspaceunit.upm'
@@ -275,6 +276,67 @@ def connector_runtime_vault_url(config):
         return configured.rstrip("/")
     namespace = _normalized_config_value(config, "COMMON_SERVICES_NAMESPACE") or "common-srvs"
     return f"http://common-srvs-vault.{namespace}.svc:8200"
+
+
+def _internal_service_hostname_from_url(value):
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return ""
+    try:
+        parsed = urlparse(raw_value if "://" in raw_value else f"http://{raw_value}")
+    except ValueError:
+        return ""
+    hostname = (parsed.hostname or "").strip()
+    if not hostname:
+        return ""
+    if not (
+        hostname.endswith(".svc")
+        or ".svc." in hostname
+        or hostname.endswith(".cluster.local")
+    ):
+        return ""
+    if parsed.port:
+        return f"{hostname}:{parsed.port}"
+    return hostname
+
+
+def _common_service_internal_hostname(config, service_name, default_port):
+    namespace = _normalized_config_value(config, "COMMON_SERVICES_NAMESPACE") or "common-srvs"
+    return f"common-srvs-{service_name}.{namespace}.svc:{int(default_port)}"
+
+
+def registration_service_keycloak_runtime(config, environment):
+    """Return the Keycloak endpoint used by in-cluster registration-service pods."""
+
+    values = config or {}
+    topology = normalize_topology(
+        values.get("TOPOLOGY")
+        or values.get("PIONERA_TOPOLOGY")
+        or values.get("INESDATA_TOPOLOGY")
+        or _active_bootstrap_topology()
+    )
+    configured_internal = _internal_service_hostname_from_url(
+        values.get("KC_INTERNAL_URL") or values.get("KEYCLOAK_INTERNAL_URL")
+    )
+    if configured_internal:
+        return {"hostname": configured_internal, "protocol": "http"}
+
+    if topology in {"vm-single", "vm-distributed"}:
+        return {
+            "hostname": _common_service_internal_hostname(values, "keycloak", 80),
+            "protocol": "http",
+        }
+
+    keycloak_hostname = clean_public_hostname(
+        values.get("KEYCLOAK_HOSTNAME") or values.get("KC_INTERNAL_URL")
+    )
+    if not keycloak_hostname:
+        keycloak_hostname = resolved_common_service_hostnames(values)["keycloak_hostname"]
+
+    protocol = _url_scheme(values.get("KC_INTERNAL_URL")) or (
+        "https" if str(environment or "").strip().upper() == "PRO" else "http"
+    )
+    return {"hostname": keycloak_hostname, "protocol": protocol}
 
 
 @click.group()
@@ -2149,6 +2211,9 @@ def create_dataspace_value_files(name, environment):
     config = load_effective_deployer_config()
     for key_name, value in config.items():
         keys[key_name.lower()] = value
+    keycloak_runtime = registration_service_keycloak_runtime(config, environment)
+    keys["keycloak_hostname"] = keycloak_runtime["hostname"]
+    keys["keycloak_protocol"] = keycloak_runtime["protocol"]
     keys.update(_inesdata_branding_template_keys(config, "portal"))
 
     # Generate registration-service values file
@@ -2198,6 +2263,13 @@ def create_connector_value_files(dataspace_name, connector_name, environment):
 
     for key_name, value in config.items():
         keys[key_name.lower()] = value
+    ontology_public_url = configured_component_public_url(
+        "ontology-hub",
+        config,
+        dataspace_name=dataspace_name,
+    )
+    if ontology_public_url and not str(keys.get("ontology_hub_public_url") or "").strip():
+        keys["ontology_hub_public_url"] = ontology_public_url
     keys.update(_inesdata_branding_template_keys(config, "connector"))
     keys['inesdata_brand_assets_configmap_name'] = (
         f'{connector_name}-interface-branding-assets'

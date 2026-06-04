@@ -560,7 +560,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 os.unlink(temp_path)
 
     def _ontology_hub_public_root_aliases_enabled(self, deployer_config):
-        if not self._is_vm_distributed_topology():
+        if not (self._is_vm_distributed_topology() or self._is_vm_single_topology()):
             return False
         config = dict(deployer_config or {})
         public_path = configured_component_public_path("ontology-hub", config)
@@ -615,6 +615,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         ]
         if not alias_paths:
             return None
+        topology = self._normalized_topology()
 
         return {
             "apiVersion": "networking.k8s.io/v1",
@@ -624,7 +625,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 "namespace": namespace,
                 "labels": {
                     "app.kubernetes.io/managed-by": "validation-environment",
-                    "app.kubernetes.io/part-of": "vm-distributed",
+                    "app.kubernetes.io/part-of": topology,
                     "app.kubernetes.io/component": "ontology-hub",
                     "app.kubernetes.io/route-kind": "public-root-aliases",
                 },

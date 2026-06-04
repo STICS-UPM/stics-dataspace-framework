@@ -11,6 +11,47 @@ function projectRoot() {
   return path.resolve(__dirname, "../../../..");
 }
 
+function parseKeyValueFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
+  const content = fs.readFileSync(filePath, "utf8");
+  const values = {};
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const separator = trimmed.indexOf("=");
+    if (separator <= 0) {
+      continue;
+    }
+    values[trimmed.slice(0, separator).trim()] = trimmed.slice(separator + 1).trim();
+  }
+  return values;
+}
+
+function cleanSegment(value, fallback) {
+  const segment = String(value || fallback || "").trim() || fallback;
+  return segment.replace(/[\\/]/g, "_");
+}
+
+function normalizeTopology(value) {
+  const topology = String(value || "local").trim().toLowerCase().replace(/_/g, "-");
+  return ["local", "vm-single", "vm-distributed"].includes(topology) ? topology : "local";
+}
+
+function deploymentId(config) {
+  return cleanSegment(
+    process.env.PIONERA_DEPLOYMENT_ID ||
+      config.DEPLOYMENT_ID ||
+      config.RUNTIME_ARTIFACT_DEPLOYMENT_ID ||
+      config.VALIDATION_ENVIRONMENT_ID ||
+      "",
+    "",
+  ).replace(/^_+|_+$/g, "");
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -27,24 +68,79 @@ function findConnectorCredentialsFile(dataspace, connectorId) {
     process.env.PIONERA_ADAPTER ||
     "inesdata"
   ).trim().toLowerCase() || "inesdata";
+  const explicitEnvPrefix = connectorId.toUpperCase().replace(/-/g, "_");
+  const explicitPath = (
+    process.env[`AI_MODEL_HUB_${explicitEnvPrefix}_CREDENTIALS_FILE`] ||
+    process.env[`UI_${explicitEnvPrefix}_CREDENTIALS_FILE`] ||
+    ""
+  ).trim();
+  if (explicitPath) {
+    return explicitPath;
+  }
+
+  const deployerConfig = parseKeyValueFile(path.join(projectRoot(), "deployers", adapter, "deployer.config"));
+  const topology = normalizeTopology(
+    process.env.UI_TOPOLOGY ||
+      process.env.PIONERA_TOPOLOGY ||
+      process.env.INESDATA_TOPOLOGY ||
+      deployerConfig.TOPOLOGY ||
+      deployerConfig.PIONERA_TOPOLOGY,
+  );
   const deploymentsRoot = path.join(projectRoot(), "deployers", adapter, "deployments");
   if (!fs.existsSync(deploymentsRoot)) {
     throw new Error(`Deployments directory not found: ${deploymentsRoot}`);
   }
 
-  for (const environmentDir of fs.readdirSync(deploymentsRoot)) {
-    const candidate = path.join(
+  const candidates = [];
+  const explicitRuntimeDir = (process.env.UI_RUNTIME_DIR || "").trim();
+  if (explicitRuntimeDir) {
+    candidates.push(path.join(explicitRuntimeDir, "connectors", connectorId, "credentials.json"));
+    candidates.push(path.join(explicitRuntimeDir, `credentials-connector-${connectorId}.json`));
+  }
+
+  const configuredEnvironment = (
+    process.env.UI_ENVIRONMENT ||
+    deployerConfig.ENVIRONMENT ||
+    "DEV"
+  ).trim();
+  const environments = Array.from(
+    new Set([
+      configuredEnvironment,
+      ...fs.readdirSync(deploymentsRoot).filter((entry) =>
+        fs.statSync(path.join(deploymentsRoot, entry)).isDirectory(),
+      ),
+    ]),
+  ).filter(Boolean);
+
+  for (const environmentDir of environments) {
+    const legacyPath = path.join(deploymentsRoot, environmentDir, dataspace, `credentials-connector-${connectorId}.json`);
+    const scopedParts = [
       deploymentsRoot,
       environmentDir,
-      dataspace,
-      `credentials-connector-${connectorId}.json`,
-    );
+      topology,
+    ];
+    const currentDeploymentId = deploymentId(deployerConfig);
+    if (currentDeploymentId) {
+      scopedParts.push(currentDeploymentId);
+    }
+    scopedParts.push(dataspace, "connectors", connectorId, "credentials.json");
+    const scopedPath = path.join(...scopedParts);
+    if (topology === "local") {
+      candidates.push(legacyPath, scopedPath);
+    } else {
+      candidates.push(scopedPath, legacyPath);
+    }
+  }
+
+  for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
       return candidate;
     }
   }
 
-  throw new Error(`Connector credentials not found for ${connectorId} in dataspace ${dataspace}`);
+  throw new Error(
+    `Connector credentials not found for ${connectorId} in dataspace ${dataspace}. Checked: ${candidates.join(", ")}`,
+  );
 }
 
 function loadConnectorUserCredentials(dataspace, connectorId) {
@@ -397,5 +493,7 @@ async function attachManagementAuthorizationRoutes(page, runtime) {
 
 module.exports = {
   attachManagementAuthorizationRoutes,
+  findConnectorCredentialsFile,
+  loadConnectorUserCredentials,
   requestConnectorManagementToken,
 };

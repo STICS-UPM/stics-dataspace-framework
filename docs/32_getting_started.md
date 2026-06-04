@@ -16,8 +16,21 @@ Para ejecución local, el framework espera:
 
 La topología local usa Minikube en la máquina de desarrollo. La topología
 `vm-single` usa Minikube gestionado dentro de la VM y `Level 1` lo recrea para
-mantener una configuración reproducible. `vm-distributed` sigue modelada como
-topología planificada con guardas de ejecución.
+mantener una configuración reproducible. `vm-distributed` usa configuración
+parametrizable de VMs, SSH, kubeconfig, DNS/Ingress y URLs públicas.
+
+## Alcance de Cierre
+
+Si el objetivo es generar evidencia de cierre, usa esta lectura:
+
+| Adapter | Ruta recomendada |
+| --- | --- |
+| `inesdata` | `local`, `vm-single` o `vm-distributed`, según el entorno que se quiera evidenciar |
+| `edc` | `vm-distributed` |
+
+EDC conserva rutas implementadas en `local` y `vm-single`, pero `local` debe
+revalidarse tras la conciliación reciente de topologías y `vm-single` no se ha
+validado oficialmente tras esa conciliación.
 
 ## Vista Local
 
@@ -143,7 +156,8 @@ menos esa memoria. Si tu Docker Desktop tiene menos margen, reduce
 `PIONERA_MINIKUBE_MEMORY=12288`. Para validar `inesdata` y `edc` coexistiendo en
 la misma topología local, cambia a `LOCAL_RESOURCE_PROFILE=coexistence` y el
 baseline recomendado sigue siendo `10 CPU / 18432 MB`; si Docker no puede
-asignarlo, valida un adapter cada vez o usa `vm-single`. En modo estable,
+asignarlo, valida un adapter cada vez o usa una topología VM adecuada. Para
+evidencia de cierre de `edc`, usa `vm-distributed`. En modo estable,
 `Level 1` avisa si Docker solo soporta un adapter local, y `Level 3/4/5`
 bloquean la instalación del segundo adapter si ya hay otro activo con memoria
 efectiva inferior a ese baseline. En terminal interactiva, ese bloqueo puede

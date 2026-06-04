@@ -34,6 +34,21 @@ reducido versionado.
 
 El nivel 6 es el nivel de validación. Debe validar el dataspace desplegado y los componentes habilitados sin requerir un nivel adicional de validación de servicios.
 
+## Alcance de Validación de Cierre
+
+Para esta versión de cierre, la evidencia de validación se interpreta por
+adapter y topología:
+
+| Adapter | `local` | `vm-single` | `vm-distributed` |
+| --- | --- | --- | --- |
+| `inesdata` | Ruta de desarrollo/validación local implementada | Ruta VM implementada y validada como referencia | Ruta distribuida implementada y validada como referencia |
+| `edc` | Implementado; requiere revalidación tras la conciliación reciente de topologías | Implementado; no validado oficialmente tras la conciliación reciente | Ruta oficial de cierre para EDC |
+
+Las suites de `Level 6` pueden existir para más combinaciones que las usadas
+como evidencia oficial. Antes de usar un resultado como evidencia de cierre,
+comprueba que el experimento corresponde a una combinación validada en esta
+matriz.
+
 Para entornos externos que el framework no despliega, como un INESData
 productivo existente, la ruta objetivo es usar un `validation target` en modo
 `validation-only`. Esa ruta se documenta en
@@ -175,7 +190,7 @@ Comandos típicos:
 
 ```bash
 python3 main.py inesdata validate --topology local
-python3 main.py edc validate --topology local
+python3 main.py edc validate --topology vm-distributed
 ```
 
 ## Limpieza de Datos de Prueba
@@ -230,7 +245,7 @@ Cuando interesa una variante más estable del broker Kafka local sin salir de
 Kubernetes, puede usarse de forma explícita:
 
 ```bash
-PIONERA_KAFKA_PROVISIONER=kubernetes-split-kraft python3 main.py edc validate --topology local
+PIONERA_KAFKA_PROVISIONER=kubernetes-split-kraft python3 main.py inesdata validate --topology local
 ```
 
 Esa variante sigue siendo opt-in. El modo por defecto no cambia automáticamente.

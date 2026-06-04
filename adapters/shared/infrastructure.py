@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 from urllib.parse import urlparse
 
@@ -20,21 +21,48 @@ from deployers.shared.lib.topology import (
     VM_SINGLE_TOPOLOGY,
     normalize_topology,
 )
+from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls
 
 
-def _sudo_write_file(path, content):
+def _sudo_write_file(path, content, allow_interactive=False):
     """Write content to a root-owned path via sudo cp from a temporary file."""
     tmp_fd, tmp_path = tempfile.mkstemp()
     try:
         with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
             handle.write(content)
-        proc = subprocess.run(["sudo", "cp", tmp_path, path], capture_output=True, text=True)
-        return proc.returncode == 0, proc.stderr.strip()
+        proc = subprocess.run(["sudo", "-n", "cp", tmp_path, path], capture_output=True, text=True)
+        if proc.returncode == 0:
+            return True, ""
+        error = proc.stderr.strip()
+        if allow_interactive and sys.stdin.isatty():
+            print(f"sudo password may be required to update {path}.")
+            interactive_proc = subprocess.run(["sudo", "cp", tmp_path, path])
+            if interactive_proc.returncode == 0:
+                return True, ""
+            return False, f"interactive sudo cp exited with {interactive_proc.returncode}: {error}"
+        return False, error
     finally:
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+def _reload_nginx(allow_interactive=False):
+    """Reload local NGINX, allowing an interactive sudo password prompt when appropriate."""
+    reload_proc = subprocess.run(["sudo", "-n", "nginx", "-s", "reload"], capture_output=True, text=True)
+    if reload_proc.returncode == 0:
+        return True, ""
+
+    error = (reload_proc.stderr or reload_proc.stdout or "").strip()
+    if allow_interactive and sys.stdin.isatty():
+        print("sudo password may be required to reload NGINX.")
+        interactive_proc = subprocess.run(["sudo", "nginx", "-s", "reload"])
+        if interactive_proc.returncode == 0:
+            return True, ""
+        return False, f"interactive nginx reload exited with {interactive_proc.returncode}: {error}"
+
+    return False, error
 
 
 class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
@@ -190,6 +218,8 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
         )
         if normalized_topology == VM_DISTRIBUTED_TOPOLOGY:
             self.sync_vm_distributed_routing()
+        elif normalized_topology == VM_SINGLE_TOPOLOGY:
+            self.sync_vm_distributed_public_access(topology=normalized_topology)
         return result
 
     def sync_vm_distributed_routing(self):
@@ -217,11 +247,16 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
         return {"status": "synced"}
 
     def sync_vm_distributed_public_access(self, topology=VM_DISTRIBUTED_TOPOLOGY):
-        """Reconcile the public entrypoints expected by vm-distributed."""
+        """Reconcile the public entrypoints expected by VM-based topologies."""
         normalized_topology = normalize_topology(topology)
+        if hasattr(self.config_adapter, "topology"):
+            self.config_adapter.topology = normalized_topology
+        if normalized_topology == VM_SINGLE_TOPOLOGY:
+            return self._sync_vm_single_public_access()
         if normalized_topology != VM_DISTRIBUTED_TOPOLOGY:
             raise RuntimeError(
-                f"public access reconciliation is only supported for topology '{VM_DISTRIBUTED_TOPOLOGY}'"
+                "public access reconciliation is only supported for topologies "
+                f"'{VM_SINGLE_TOPOLOGY}' and '{VM_DISTRIBUTED_TOPOLOGY}'"
             )
 
         cluster_runtime = self._cluster_runtime_config()
@@ -245,6 +280,159 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
             "routing": routing,
             "common_public_paths": common_paths,
             "component_public_paths": component_paths,
+        }
+
+    def _sync_vm_single_public_access(self):
+        """Reconcile the vm-single public entrypoint on the VM-local NGINX bridge."""
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception as exc:
+            print(f"Warning: vm-single public access sync skipped: could not load configuration: {exc}")
+            return {"status": "skipped", "topology": VM_SINGLE_TOPOLOGY, "reason": "missing-config"}
+
+        cluster_runtime = self._cluster_runtime_config()
+        ingress_service_type = str(cluster_runtime.get("k3s_ingress_service_type") or "").strip()
+        if str(cluster_runtime.get("cluster_type") or "").strip().lower() == "k3s" and ingress_service_type:
+            self._patch_k3s_ingress_nginx_service(ingress_service_type)
+
+        common_paths = self._sync_vm_distributed_common_public_path_ingresses()
+        nginx_http = self._sync_nginx_http_proxy_vm_single(deployer_config)
+        status = "synced"
+        if any(
+            isinstance(item, dict) and item.get("status") == "failed"
+            for item in (common_paths, nginx_http)
+        ):
+            status = "failed"
+        elif any(
+            isinstance(item, dict) and item.get("status") == "skipped"
+            for item in (common_paths, nginx_http)
+        ):
+            status = "partial"
+        return {
+            "status": status,
+            "topology": VM_SINGLE_TOPOLOGY,
+            "ingress_service_type": ingress_service_type,
+            "common_public_paths": common_paths,
+            "nginx_http": nginx_http,
+        }
+
+    def _vm_single_public_http_url(self, deployer_config):
+        values = {**dict(deployer_config or {}), "TOPOLOGY": VM_SINGLE_TOPOLOGY}
+        resolved = resolve_vm_distributed_public_urls(values)
+        return str(
+            values.get("VM_SINGLE_PUBLIC_URL")
+            or values.get("VM_SINGLE_HTTP_URL")
+            or resolved.get("VM_SINGLE_PUBLIC_URL")
+            or resolved.get("VM_COMMON_PUBLIC_URL")
+            or ""
+        ).strip()
+
+    def _vm_single_ingress_http_nodeport(self, deployer_config):
+        configured = self._vm_distributed_config_value(
+            deployer_config,
+            "VM_SINGLE_INGRESS_HTTP_NODEPORT",
+            "K3S_INGRESS_HTTP_NODEPORT",
+        )
+        if configured:
+            return configured
+
+        command = ["kubectl"]
+        kubeconfig = str(os.environ.get("KUBECONFIG") or (deployer_config or {}).get("K3S_KUBECONFIG") or "").strip()
+        if kubeconfig:
+            command.extend(["--kubeconfig", os.path.expanduser(kubeconfig)])
+        command.extend(["get", "svc", "ingress-nginx-controller", "-n", "ingress-nginx", "-o", "json"])
+
+        proc = subprocess.run(command, capture_output=True, text=True)
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            raise RuntimeError(f"could not discover ingress-nginx HTTP NodePort: {detail}")
+
+        try:
+            service = json.loads(proc.stdout or "{}")
+        except ValueError as exc:
+            raise RuntimeError(f"could not parse ingress-nginx service JSON: {exc}") from exc
+
+        for port in (service.get("spec") or {}).get("ports") or []:
+            name = str(port.get("name") or "").strip().lower()
+            number = str(port.get("port") or "").strip()
+            nodeport = str(port.get("nodePort") or "").strip()
+            if nodeport and (name == "http" or number == "80"):
+                return nodeport
+
+        raise RuntimeError("ingress-nginx-controller service does not expose an HTTP NodePort")
+
+    def _sync_nginx_http_proxy_vm_single(self, deployer_config):
+        """Write the VM-local HTTP bridge for the single public domain used by vm-single."""
+        conf_dir = "/etc/nginx/sites-enabled"
+        if not os.path.isdir(conf_dir):
+            print(f"vm-single local NGINX HTTP sync skipped: {conf_dir} is not available.")
+            return {"status": "skipped", "reason": "nginx-sites-enabled-unavailable"}
+
+        public_url = self._vm_single_public_http_url(deployer_config)
+        parsed = urlparse(public_url if "://" in public_url else f"//{public_url}")
+        public_host = str(parsed.hostname or "").strip()
+        if not public_host:
+            print("vm-single local NGINX HTTP sync skipped: VM_SINGLE_HTTP_URL or VM_SINGLE_PUBLIC_URL is required.")
+            return {"status": "skipped", "reason": "missing-public-host"}
+
+        try:
+            nodeport = self._vm_single_ingress_http_nodeport(deployer_config)
+        except Exception as exc:
+            print(f"Warning: vm-single local NGINX HTTP sync skipped: {exc}")
+            return {"status": "failed", "reason": "ingress-nodeport-discovery-failed", "error": str(exc)}
+
+        conf_path = os.path.join(conf_dir, "00-validation-environment-vm-single-public.conf")
+        content = (
+            "# Generated by Validation-Environment for vm-single public access\n"
+            "# This VM-local bridge sends the public domain to the Kubernetes ingress controller.\n"
+            "server {\n"
+            "    listen 80;\n"
+            f"    server_name {public_host};\n"
+            "    client_max_body_size 0;\n\n"
+            "    location / {\n"
+            f"        proxy_pass http://127.0.0.1:{nodeport};\n"
+            "        proxy_http_version 1.1;\n"
+            "        proxy_set_header Host $host;\n"
+            "        proxy_set_header X-Real-IP $remote_addr;\n"
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            "        proxy_set_header X-Forwarded-Host $host;\n"
+            "        proxy_set_header X-Forwarded-Port $server_port;\n"
+            "        proxy_set_header X-Forwarded-Proto https;\n"
+            "        proxy_set_header Upgrade $http_upgrade;\n"
+            '        proxy_set_header Connection "upgrade";\n'
+            "        proxy_buffering off;\n"
+            "        proxy_request_buffering off;\n"
+            "    }\n"
+            "}\n"
+        )
+        ok, error = _sudo_write_file(conf_path, content, allow_interactive=True)
+        if not ok:
+            print(f"Warning: could not write {conf_path}: {error}")
+            return {
+                "status": "failed",
+                "reason": "nginx-write-failed",
+                "path": conf_path,
+                "error": error,
+            }
+
+        reload_ok, reload_error = _reload_nginx(allow_interactive=True)
+        if reload_ok:
+            print(f"NGINX vm-single HTTP routing updated: {conf_path}")
+            return {
+                "status": "synced",
+                "path": conf_path,
+                "host": public_host,
+                "target": f"127.0.0.1:{nodeport}",
+            }
+
+        print(f"Warning: NGINX reload failed after vm-single HTTP sync: {reload_error}")
+        return {
+            "status": "failed",
+            "reason": "nginx-reload-failed",
+            "path": conf_path,
+            "host": public_host,
+            "target": f"127.0.0.1:{nodeport}",
+            "error": reload_error,
         }
 
     def _vm_distributed_component_public_path_ingresses(self, config):

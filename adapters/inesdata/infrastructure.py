@@ -907,6 +907,32 @@ class INESDataInfrastructureAdapter:
             for prefix in prefixes
         ]
 
+        def print_level3_readiness_evidence(ready_names, ignored_names=None, residual_errors=None):
+            residual_errors = list(residual_errors or [])
+            ignored_names = list(ignored_names or [])
+            if residual_errors:
+                print(
+                    "Non-blocking residual Level 3 rollout pods omitted from readiness evidence "
+                    "because healthy replacements are ready: "
+                    + ", ".join(name for name, _status in residual_errors)
+                )
+            if ignored_names:
+                print(
+                    "Omitting non-Level 3 pods from Level 3 readiness evidence: "
+                    + ", ".join(ignored_names)
+                )
+
+            print("\nLevel 3 dataspace pods ready:")
+            pod_names = [name for name in ready_names if name]
+            if pod_names:
+                pod_args = " ".join(shlex.quote(name) for name in pod_names)
+                self.run(
+                    f"kubectl get pods {pod_args} -n {shlex.quote(namespace)}",
+                    check=False,
+                )
+            else:
+                self.run(f"kubectl get pods -n {shlex.quote(namespace)}", check=False)
+
         print(f"\nWaiting for Level 3 dataspace pods in namespace '{namespace}'...")
         start = time.time()
         last_stale_terminal_notice = None
@@ -938,6 +964,7 @@ class INESDataInfrastructureAdapter:
                 if selected:
                     all_ready = True
                     ready_running = []
+                    ready_required_groups = set()
                     fatal_terminal_error = []
                     transient_error = []
                     progressing = []
@@ -947,6 +974,14 @@ class INESDataInfrastructureAdapter:
                         ready = columns[1] if len(columns) > 1 else ""
                         status = columns[2]
                         selected_names.add(name)
+                        group_index = next(
+                            (
+                                index
+                                for index, (_label, prefixes) in enumerate(required_prefix_groups)
+                                if any(name.startswith(prefix) for prefix in prefixes)
+                            ),
+                            None,
+                        )
 
                         is_ready = False
                         if status == "Running" and "/" in ready:
@@ -961,7 +996,7 @@ class INESDataInfrastructureAdapter:
                             continue
 
                         if status == "Error":
-                            transient_error.append((name, status))
+                            transient_error.append((name, status, group_index))
                             transient_error_since.setdefault(name, now)
                             all_ready = False
                             continue
@@ -975,6 +1010,8 @@ class INESDataInfrastructureAdapter:
 
                         if is_ready:
                             ready_running.append(name)
+                            if group_index is not None:
+                                ready_required_groups.add(group_index)
                             continue
 
                         progressing.append((name, status))
@@ -995,13 +1032,7 @@ class INESDataInfrastructureAdapter:
                     }
 
                     if all_ready:
-                        if ignored:
-                            print(
-                                "Ignoring non-Level 3 pods while checking dataspace readiness: "
-                                + ", ".join(ignored)
-                            )
-                        print("\nLevel 3 dataspace pods ready:")
-                        self.run(f"kubectl get pods -n {shlex.quote(namespace)}", check=False)
+                        print_level3_readiness_evidence(ready_running, ignored_names=ignored)
                         return True
 
                     if fatal_terminal_error:
@@ -1009,6 +1040,36 @@ class INESDataInfrastructureAdapter:
                         print(f"\nLevel 3 pod in error state: {name} ({status})")
                         self.run(f"kubectl get pods -n {shlex.quote(namespace)}", check=False)
                         return False
+
+                    stale_transient_error = [
+                        (name, status)
+                        for name, status, group_index in transient_error
+                        if group_index in ready_required_groups
+                    ]
+                    blocking_transient_error = [
+                        (name, status)
+                        for name, status, group_index in transient_error
+                        if group_index not in ready_required_groups
+                    ]
+                    required_groups_ready = len(ready_required_groups) == len(required_prefix_groups)
+                    if (
+                        stale_transient_error
+                        and not blocking_transient_error
+                        and not progressing
+                        and not missing_required_groups
+                        and required_groups_ready
+                    ):
+                        print(
+                            "\nNon-blocking residual Level 3 rollout pods detected; "
+                            "healthy replacements are ready: "
+                            + ", ".join(name for name, _status in stale_transient_error)
+                        )
+                        print_level3_readiness_evidence(
+                            ready_running,
+                            ignored_names=ignored,
+                            residual_errors=stale_transient_error,
+                        )
+                        return True
 
                     if missing_required_groups:
                         missing_notice = ", ".join(missing_required_groups)
@@ -1021,18 +1082,19 @@ class INESDataInfrastructureAdapter:
 
                     if transient_error and (ready_running or progressing):
                         stale_terminal_notice = ", ".join(
-                            f"{name} ({status})" for name, status in transient_error
+                            name for name, _status, _group_index in transient_error
                         )
                         if stale_terminal_notice != last_stale_terminal_notice:
                             print(
-                                "\nWaiting for stale Level 3 rollout pods to disappear: "
+                                "\nWaiting for active Level 3 replacement pods to become ready; "
+                                "residual pods from previous rollouts detected: "
                                 f"{stale_terminal_notice}"
                             )
                             last_stale_terminal_notice = stale_terminal_notice
                     elif transient_error:
                         expired_transient_error = [
                             (name, status)
-                            for name, status in transient_error
+                            for name, status, _group_index in transient_error
                             if now - transient_error_since.get(name, now)
                             >= transient_error_grace_seconds
                         ]
@@ -1043,7 +1105,7 @@ class INESDataInfrastructureAdapter:
                             return False
 
                         stale_terminal_notice = ", ".join(
-                            f"{name} ({status})" for name, status in transient_error
+                            f"{name} ({status})" for name, status, _group_index in transient_error
                         )
                         if stale_terminal_notice != last_stale_terminal_notice:
                             print(

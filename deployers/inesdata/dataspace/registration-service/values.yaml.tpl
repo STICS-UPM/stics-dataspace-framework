@@ -25,7 +25,7 @@ services:
     realm:
       {{ keys.dataspace_name }}
     protocol:
-      {{ 'https' if keys.environment == 'PRO' else 'http' }}
+      {{ keys.keycloak_protocol | default(('https' if keys.environment == 'PRO' else 'http'), true) }}
 ingress:
   registration:
     hostname:

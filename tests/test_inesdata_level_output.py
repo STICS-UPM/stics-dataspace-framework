@@ -334,6 +334,18 @@ minio:
         self.assertTrue(infrastructure._deploy_infrastructure_runtime.call_args.kwargs["skip_hosts"])
         infrastructure.sync_vm_distributed_routing.assert_called_once()
 
+    def test_shared_foundation_vm_single_level2_reconciles_public_access_after_deploy(self):
+        infrastructure = self._make_shared_foundation_infrastructure()
+        infrastructure._deploy_infrastructure_runtime = mock.Mock(return_value={"status": "deployed"})
+        infrastructure.sync_vm_distributed_public_access = mock.Mock(return_value={"status": "synced"})
+
+        result = infrastructure.deploy_infrastructure_for_topology("vm-single")
+
+        self.assertEqual(result, {"status": "deployed"})
+        infrastructure._deploy_infrastructure_runtime.assert_called_once()
+        self.assertTrue(infrastructure._deploy_infrastructure_runtime.call_args.kwargs["skip_hosts"])
+        infrastructure.sync_vm_distributed_public_access.assert_called_once_with(topology="vm-single")
+
     def test_shared_foundation_vm_distributed_routing_writes_common_and_remote_nginx(self):
         self.config_adapter = LevelOutputConfigAdapter(
             {
@@ -425,6 +437,66 @@ minio:
 
         self.assertEqual(result["status"], "synced")
         write_file.assert_not_called()
+
+    def test_shared_foundation_vm_single_public_access_writes_nginx_bridge(self):
+        self.config_adapter = LevelOutputConfigAdapter(
+            {
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "K3S_KUBECONFIG": "/clusters/vm-single.yaml",
+            }
+        )
+        self.config_adapter.topology = "vm-single"
+        infrastructure = self._make_shared_foundation_infrastructure()
+        writes = []
+        commands = []
+
+        def fake_write_file(path, content, **_kwargs):
+            writes.append((path, content))
+            return True, ""
+
+        def fake_subprocess_run(command, **_kwargs):
+            commands.append(command)
+            if command[:1] == ["kubectl"]:
+                payload = {
+                    "spec": {
+                        "ports": [
+                            {"name": "https", "port": 443, "nodePort": 31443},
+                            {"name": "http", "port": 80, "nodePort": 30080},
+                        ]
+                    }
+                }
+                return mock.Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch(
+            "adapters.shared.infrastructure.os.path.isdir",
+            return_value=True,
+        ), mock.patch(
+            "adapters.shared.infrastructure._sudo_write_file",
+            side_effect=fake_write_file,
+        ), mock.patch(
+            "adapters.shared.infrastructure.subprocess.run",
+            side_effect=fake_subprocess_run,
+        ):
+            result = infrastructure._sync_nginx_http_proxy_vm_single(
+                self.config_adapter.load_deployer_config()
+            )
+
+        self.assertEqual(result["status"], "synced")
+        self.assertEqual(result["host"], "org4.pionera.oeg.fi.upm.es")
+        self.assertEqual(result["target"], "127.0.0.1:30080")
+        self.assertEqual(
+            writes[0][0],
+            "/etc/nginx/sites-enabled/00-validation-environment-vm-single-public.conf",
+        )
+        nginx_content = writes[0][1]
+        self.assertIn("server_name org4.pionera.oeg.fi.upm.es;", nginx_content)
+        self.assertIn("proxy_pass http://127.0.0.1:30080;", nginx_content)
+        self.assertIn("proxy_set_header X-Forwarded-Proto https;", nginx_content)
+        self.assertTrue(
+            any(command[:3] == ["kubectl", "--kubeconfig", "/clusters/vm-single.yaml"] for command in commands)
+        )
 
     def test_shared_foundation_forwarded_header_patch_expands_kubeconfig_paths(self):
         infrastructure = self._make_shared_foundation_infrastructure()
@@ -2375,6 +2447,8 @@ minio:
         infrastructure.sync_common_credentials_from_kubernetes = mock.Mock(return_value=True)
         infrastructure.wait_for_dataspace_level3_pods = mock.Mock(return_value=True)
         infrastructure.verify_dataspace_ready_for_level4 = lambda: (True, None)
+        infrastructure.port_forward_service = mock.Mock(return_value=True)
+        infrastructure.stop_port_forward_service = mock.Mock(return_value=True)
         deployment.wait_for_keycloak_admin_ready = lambda *_args, **_kwargs: True
         deployment.restart_registration_service = lambda: None
         deployment.update_helm_values_with_host_aliases = mock.Mock()
@@ -2437,6 +2511,10 @@ minio:
         ), mock.patch(
             "adapters.shared.deployment.subprocess.run",
             side_effect=subprocess_run,
+        ), mock.patch.object(
+            deployment,
+            "_reserve_local_port",
+            return_value=15432,
         ):
             deployment.deploy_dataspace_for_topology("vm-single")
 
@@ -2736,7 +2814,7 @@ minio:
         with contextlib.redirect_stdout(output), mock.patch(
             "adapters.shared.deployment.subprocess.run",
             side_effect=subprocess_results,
-        ):
+        ) as run:
             deployment._cleanup_level3_postgres_state("demoedc_rs", "demoedc_rsusr", "registration-service")
 
         deployment.connectors_adapter.force_clean_postgres_db.assert_called_once_with(
@@ -2744,6 +2822,15 @@ minio:
             "demoedc_rsusr",
         )
         self.assertIn("Reconciling directly", output.getvalue())
+        issued_commands = [
+            " ".join(map(str, call.args[0]))
+            if isinstance(call.args[0], (list, tuple))
+            else str(call.args[0])
+            for call in run.call_args_list
+        ]
+        self.assertTrue(
+            any('DROP DATABASE IF EXISTS "demoedc_rs" WITH (FORCE)' in command for command in issued_commands)
+        )
 
     def test_level3_postgres_cleanup_uses_forwarded_vm_distributed_endpoint(self):
         deployment = INESDataDeploymentAdapter(
@@ -2877,6 +2964,52 @@ minio:
         self.assertEqual(
             observed["kubeconfig"],
             os.path.join(home_dir, ".kube", "common.yaml"),
+        )
+
+    def test_level3_vm_single_postgres_access_uses_temporary_port_forward(self):
+        infrastructure = self._make_infrastructure()
+        observed = {}
+
+        def fake_port_forward(namespace, pattern, local_port, remote_port, quiet=False):
+            observed["namespace"] = namespace
+            observed["pattern"] = pattern
+            observed["local_port"] = local_port
+            observed["remote_port"] = remote_port
+            observed["quiet"] = quiet
+            observed["role"] = os.environ.get("PIONERA_KUBECONFIG_ROLE")
+            return True
+
+        infrastructure.port_forward_service = mock.Mock(side_effect=fake_port_forward)
+        infrastructure.stop_port_forward_service = mock.Mock(return_value=True)
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=infrastructure,
+            config_adapter=LevelOutputConfigAdapter({"PG_PORT": "5432"}),
+            config_cls=self.config,
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            deployment,
+            "_reserve_local_port",
+            return_value=15432,
+        ):
+            access = deployment._start_level3_postgres_access("vm-single")
+            deployment._stop_level3_postgres_access(access)
+
+        self.assertEqual(access["pg_host"], "127.0.0.1")
+        self.assertEqual(access["pg_port"], "15432")
+        self.assertEqual(observed["namespace"], "common")
+        self.assertEqual(observed["pattern"], "common-postgresql")
+        self.assertEqual(observed["local_port"], 15432)
+        self.assertEqual(observed["remote_port"], 5432)
+        self.assertTrue(observed["quiet"])
+        self.assertIsNone(observed["role"])
+        infrastructure.stop_port_forward_service.assert_called_once_with(
+            "common",
+            "common-postgresql",
+            quiet=True,
         )
 
     def test_bootstrap_dataspace_command_passes_postgres_forward_overrides(self):
@@ -4387,7 +4520,7 @@ minio:
         self.assertTrue(result)
         rendered = output.getvalue()
         self.assertIn("Level 3 dataspace pods ready", rendered)
-        self.assertIn("Ignoring non-Level 3 pods", rendered)
+        self.assertIn("Omitting non-Level 3 pods from Level 3 readiness evidence", rendered)
 
     def test_wait_for_dataspace_level3_pods_waits_for_public_portal_when_requested(self):
         infrastructure = self._make_infrastructure()
@@ -4478,9 +4611,49 @@ minio:
 
         self.assertTrue(result)
         rendered = output.getvalue()
-        self.assertIn("Waiting for stale Level 3 rollout pods to disappear", rendered)
+        self.assertIn("Waiting for active Level 3 replacement pods to become ready", rendered)
+        self.assertIn("Non-blocking residual Level 3 rollout pods omitted", rendered)
         self.assertIn("Level 3 dataspace pods ready", rendered)
-        infrastructure.run.assert_called_once_with("kubectl get pods -n demoedc", check=False)
+        self.assertNotIn("(Error)", rendered)
+        infrastructure.run.assert_called_once_with(
+            "kubectl get pods demoedc-registration-service-5795c78bbb-vz97j -n demoedc",
+            check=False,
+        )
+
+    def test_wait_for_dataspace_level3_pods_ignores_stale_error_when_public_portal_ready(self):
+        infrastructure = self._make_infrastructure()
+        infrastructure.run = mock.Mock(return_value=object())
+        snapshots = iter([
+            "\n".join([
+                "pionera-registration-service-7965677fc6-z878k 0/1 Error 0 17h",
+                "pionera-registration-service-7f5bd59b44-hfl5f 1/1 Running 0 82s",
+                "pionera-public-portal-backend-7d64885964-wjf75 1/1 Running 0 76s",
+                "pionera-public-portal-frontend-76cccfd67b-gvdvx 1/1 Running 0 73s",
+            ]),
+        ])
+        infrastructure.run_silent = lambda *_args, **_kwargs: next(snapshots, "")
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = infrastructure.wait_for_dataspace_level3_pods(
+                "core-control",
+                dataspace_name="pionera",
+                timeout=1,
+                include_public_portal=True,
+            )
+
+        self.assertTrue(result)
+        rendered = output.getvalue()
+        self.assertIn("Non-blocking residual Level 3 rollout pods detected", rendered)
+        self.assertIn("Non-blocking residual Level 3 rollout pods omitted", rendered)
+        self.assertIn("Level 3 dataspace pods ready", rendered)
+        self.assertNotIn("(Error)", rendered)
+        infrastructure.run.assert_called_once_with(
+            "kubectl get pods pionera-registration-service-7f5bd59b44-hfl5f "
+            "pionera-public-portal-backend-7d64885964-wjf75 "
+            "pionera-public-portal-frontend-76cccfd67b-gvdvx -n core-control",
+            check=False,
+        )
 
     def test_wait_for_dataspace_level3_pods_tolerates_transient_error_before_running(self):
         infrastructure = self._make_infrastructure()
@@ -4510,7 +4683,10 @@ minio:
         rendered = output.getvalue()
         self.assertIn("Waiting for transient Level 3 pod errors to recover", rendered)
         self.assertIn("Level 3 dataspace pods ready", rendered)
-        infrastructure.run.assert_called_once_with("kubectl get pods -n demo", check=False)
+        infrastructure.run.assert_called_once_with(
+            "kubectl get pods demo-registration-service-677f49d885-nbm85 -n demo",
+            check=False,
+        )
 
 
 if __name__ == "__main__":

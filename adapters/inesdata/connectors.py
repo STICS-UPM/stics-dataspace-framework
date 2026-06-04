@@ -20,7 +20,11 @@ from deployers.shared.lib.inesdata_branding_assets import (
     inesdata_branding_template_keys,
     load_branding_assets,
 )
-from deployers.shared.lib.components import ontology_validator_source_path, patch_ontology_validator_source
+from deployers.shared.lib.components import (
+    configured_component_public_url,
+    ontology_validator_source_path,
+    patch_ontology_validator_source,
+)
 from deployers.shared.lib.connectors import (
     normalize_connector_name,
     parse_connector_mapping,
@@ -85,10 +89,28 @@ class INESDataConnectorsAdapter:
         kubeconfig = str(runtime.get(key) or runtime.get("k3s_kubeconfig") or "").strip()
         return os.path.abspath(os.path.expanduser(kubeconfig)) if kubeconfig else ""
 
+    def _vm_single_kubeconfig(self):
+        if self._normalized_topology() != VM_SINGLE_TOPOLOGY:
+            return ""
+
+        runtime = self._cluster_runtime()
+        if str(runtime.get("cluster_type") or "").strip().lower() != "k3s":
+            return ""
+
+        kubeconfig = str(
+            runtime.get("k3s_kubeconfig")
+            or runtime.get("k3s_kubeconfig_common")
+            or ""
+        ).strip()
+        return os.path.abspath(os.path.expanduser(kubeconfig)) if kubeconfig else ""
+
     @contextmanager
     def _temporary_kubeconfig_role(self, role):
         normalized_role = str(role or "common").strip().lower() or "common"
-        kubeconfig = self._vm_distributed_role_kubeconfig(normalized_role)
+        kubeconfig = (
+            self._vm_distributed_role_kubeconfig(normalized_role)
+            or self._vm_single_kubeconfig()
+        )
         if not kubeconfig:
             yield
             return
@@ -1139,8 +1161,17 @@ class INESDataConnectorsAdapter:
             return
         self._close_temporary_port_forward(bootstrap_access.get("port_forward"))
 
-    def _start_postgres_bootstrap_access(self):
-        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+    def _start_postgres_bootstrap_access(self, purpose="bootstrap commands"):
+        topology = self._normalized_topology()
+        if topology == VM_DISTRIBUTED_TOPOLOGY:
+            needs_port_forward = True
+        elif topology == VM_SINGLE_TOPOLOGY:
+            runtime = self._cluster_runtime()
+            needs_port_forward = str(runtime.get("cluster_type") or "").strip().lower() == "k3s"
+        else:
+            needs_port_forward = False
+
+        if not needs_port_forward:
             return {"pg_host": None, "pg_port": None, "port_forward": None}
 
         if not callable(getattr(self.infrastructure, "port_forward_service", None)):
@@ -1179,7 +1210,7 @@ class INESDataConnectorsAdapter:
 
         local_port = str(port_forward["local_port"])
         print(
-            "Using temporary local PostgreSQL port-forward for Level 4 bootstrap commands "
+            f"Using temporary local PostgreSQL port-forward for Level 4 {purpose} "
             f"({pattern}.{namespace} -> 127.0.0.1:{local_port})."
         )
         return {"pg_host": "127.0.0.1", "pg_port": local_port, "port_forward": port_forward}
@@ -1226,6 +1257,70 @@ class INESDataConnectorsAdapter:
         self._stop_keycloak_bootstrap_access(bootstrap_access.get("keycloak_access"))
         self._stop_postgres_bootstrap_access(bootstrap_access.get("postgres_access"))
         self._stop_vault_bootstrap_access(bootstrap_access.get("vault_access"))
+
+    @contextmanager
+    def _temporary_bootstrap_database_environment(self, pg_host=None, pg_port=None):
+        values = {
+            "PIONERA_PG_HOST": pg_host,
+            "PIONERA_PG_PORT": pg_port,
+        }
+        previous = {key: os.environ.get(key) for key in values}
+        try:
+            for key, value in values.items():
+                if value:
+                    os.environ[key] = str(value)
+            yield
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def _ensure_registration_service_schema_ready_for_level4(self, ds_name, pg_host=None, pg_port=None):
+        verifier = getattr(self.infrastructure, "verify_dataspace_ready_for_level4", None)
+        if not callable(verifier):
+            return True
+
+        cache_key = (
+            str(ds_name or self._dataspace_name()),
+            str(pg_host or ""),
+            str(pg_port or ""),
+        )
+        ready_cache = getattr(self, "_level4_registration_schema_ready", set())
+        if cache_key in ready_cache:
+            return True
+
+        with (
+            self._temporary_kubeconfig_role("common"),
+            self._temporary_bootstrap_database_environment(pg_host=pg_host, pg_port=pg_port),
+        ):
+            result = verifier()
+
+        if isinstance(result, tuple):
+            ready = bool(result[0])
+            reason = str(result[1] or "").strip() if len(result) > 1 else ""
+        elif isinstance(result, bool):
+            ready = result
+            reason = ""
+        else:
+            # Unit-test mocks expose arbitrary callable attributes. Ignore
+            # non-standard verifier results instead of treating them as real
+            # infrastructure failures.
+            return True
+
+        if ready:
+            ready_cache.add(cache_key)
+            self._level4_registration_schema_ready = ready_cache
+            return True
+
+        detail = f" Root cause: {reason}" if reason else ""
+        print(
+            "Level 4 cannot continue because the registration-service schema is not ready."
+            f"{detail}"
+        )
+        print("Run Level 3 again, or wait until registration-service initializes its database schema.")
+        return False
 
     def _ensure_level4_keycloak_ready(self, bootstrap_access, purpose):
         keycloak_url = bootstrap_access.get("keycloak_url") if bootstrap_access else None
@@ -2304,7 +2399,79 @@ class INESDataConnectorsAdapter:
         path = (parsed.path or "").rstrip("/")
         return f"{scheme}://{parsed.netloc}{path}"
 
-    def _connector_model_observer_public_url(self, values, ds_name):
+    def _connector_model_observer_backend_namespace(
+        self,
+        values,
+        connector_name,
+        ds_name,
+        ds_namespace=None,
+        deployer_config=None,
+    ):
+        connector = (values or {}).get("connector") or {}
+        layout = connector.get("layout") or {}
+        candidates = [
+            layout.get("registrationServiceNamespace"),
+            layout.get("runtimeNamespace"),
+        ]
+
+        try:
+            metadata = self._connector_layout_metadata(
+                connector_name,
+                ds_name=ds_name,
+                ds_namespace=ds_namespace,
+            )
+        except Exception:
+            metadata = {}
+        candidates.extend(
+            [
+                metadata.get("registrationServiceNamespace"),
+                metadata.get("runtimeNamespace"),
+            ]
+        )
+
+        namespace_getter = getattr(self.config_adapter, "primary_registration_service_namespace", None)
+        if callable(namespace_getter):
+            try:
+                candidates.append(namespace_getter())
+            except Exception:
+                pass
+
+        config = deployer_config or {}
+        candidates.extend(
+            [
+                config.get("DS_1_REGISTRATION_NAMESPACE"),
+                config.get("DS_1_NAMESPACE"),
+                ds_namespace,
+                self._default_connector_namespace(),
+                ds_name,
+            ]
+        )
+        for candidate in candidates:
+            namespace = str(candidate or "").strip()
+            if namespace:
+                return namespace
+        return str(ds_name or "").strip()
+
+    def _connector_model_observer_internal_url(
+        self,
+        values,
+        connector_name,
+        ds_name,
+        ds_namespace=None,
+        deployer_config=None,
+    ):
+        namespace = self._connector_model_observer_backend_namespace(
+            values,
+            connector_name,
+            ds_name,
+            ds_namespace=ds_namespace,
+            deployer_config=deployer_config,
+        )
+        if not ds_name or not namespace:
+            return ""
+        return f"http://{ds_name}-public-portal-backend.{namespace}.svc.cluster.local:1337"
+
+    def _connector_model_observer_public_url(self, values, connector_name, ds_name, ds_namespace=None):
         try:
             deployer_config = self.config_adapter.load_deployer_config() or {}
         except Exception:
@@ -2325,6 +2492,15 @@ class INESDataConnectorsAdapter:
         ).strip()
         if explicit_api:
             return self._strip_model_observer_api_path(explicit_api)
+
+        if self._normalized_topology() == VM_SINGLE_TOPOLOGY:
+            return self._connector_model_observer_internal_url(
+                values,
+                connector_name,
+                ds_name,
+                ds_namespace=ds_namespace,
+                deployer_config=deployer_config,
+            )
 
         if self._normalized_topology() in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
             public_config = dict(deployer_config or {})
@@ -2379,7 +2555,12 @@ class INESDataConnectorsAdapter:
         resolved_ds_name = str(ds_name or values.get("connector", {}).get("dataspace") or self._dataspace_name()).strip()
         connector_interface = values.setdefault("connectorInterface", {})
         model_observer = connector_interface.setdefault("modelObserver", {})
-        public_url = self._connector_model_observer_public_url(values, resolved_ds_name)
+        public_url = self._connector_model_observer_public_url(
+            values,
+            connector_name,
+            resolved_ds_name,
+            ds_namespace=ds_namespace,
+        )
         if public_url:
             model_observer["proxyTarget"] = public_url
             model_observer["strapiUrl"] = public_url
@@ -2388,6 +2569,35 @@ class INESDataConnectorsAdapter:
                 model_observer["journalBaseUrl"] = journal_url
         else:
             model_observer.setdefault("proxyTarget", "http://127.0.0.1:9")
+
+        with open(values_file, "w") as f:
+            yaml.dump(values, f, sort_keys=False)
+
+    def update_connector_ontology_hub_config(self, values_file, connector_name, ds_name=None):
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception:
+            deployer_config = {}
+
+        with open(values_file) as f:
+            values = yaml.safe_load(f) or {}
+
+        resolved_ds_name = str(
+            ds_name
+            or values.get("connector", {}).get("dataspace")
+            or self._dataspace_name()
+        ).strip()
+        public_url = configured_component_public_url(
+            "ontology-hub",
+            deployer_config,
+            dataspace_name=resolved_ds_name,
+        )
+        if not public_url:
+            return
+
+        connector_interface = values.setdefault("connectorInterface", {})
+        ontology_hub = connector_interface.setdefault("ontologyHub", {})
+        ontology_hub["url"] = public_url
 
         with open(values_file, "w") as f:
             yaml.dump(values, f, sort_keys=False)
@@ -2678,6 +2888,7 @@ class INESDataConnectorsAdapter:
 
         connector = (values or {}).get("connector") or {}
         connector_name = str(connector.get("name") or "").strip()
+        ds_name = str(connector.get("dataspace") or self._dataspace_name()).strip() or self._dataspace_name()
         ingress = connector.get("ingress") or {}
         host, path_prefix = self._public_hostname_and_path(ingress.get("publicHostname"))
         if not connector_name or not host or not path_prefix:
@@ -2721,6 +2932,46 @@ class INESDataConnectorsAdapter:
             }
             for segment, service_name, port in route_specs
         ]
+
+        model_observer_namespace = self._connector_model_observer_backend_namespace(
+            values,
+            connector_name,
+            ds_name,
+            ds_namespace=namespace,
+        )
+        model_observer_ingress = None
+        if model_observer_namespace:
+            model_observer_ingress = {
+                "apiVersion": "networking.k8s.io/v1",
+                "kind": "Ingress",
+                "metadata": {
+                    "name": f"{connector_name}-public-model-observer-ingress",
+                    "namespace": model_observer_namespace,
+                    "annotations": {
+                        **common_annotations,
+                        "nginx.ingress.kubernetes.io/rewrite-target": "/api/model-observer/$2",
+                    },
+                },
+                "spec": {
+                    "rules": [
+                        {
+                            "host": host,
+                            "http": {
+                                "paths": [
+                                    {
+                                        "pathType": "ImplementationSpecific",
+                                        "path": (
+                                            f"{escaped_prefix}/inesdata-connector-interface/"
+                                            "model-observer(/|$)(.*)"
+                                        ),
+                                        "backend": backend(f"{ds_name}-public-portal-backend", 1337),
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                },
+            }
 
         routed_ingress = {
             "apiVersion": "networking.k8s.io/v1",
@@ -2772,7 +3023,11 @@ class INESDataConnectorsAdapter:
             },
         }
 
-        return [routed_ingress, root_ingress]
+        manifests = []
+        if model_observer_ingress:
+            manifests.append(model_observer_ingress)
+        manifests.extend([routed_ingress, root_ingress])
+        return manifests
 
     def _sync_vm_single_connector_public_path_ingresses(self, values_file, namespace):
         if self._normalized_topology() != VM_SINGLE_TOPOLOGY:
@@ -2802,7 +3057,14 @@ class INESDataConnectorsAdapter:
                 tmp_path = handle.name
 
             print("Synchronizing vm-single connector public path ingresses...")
-            return self.run(f"kubectl apply -f {shlex.quote(tmp_path)}", check=False) is not None
+            result = self.run(f"kubectl apply -f {shlex.quote(tmp_path)}", check=False)
+            if result is None:
+                return False
+            returncode = getattr(result, "returncode", 0)
+            if returncode:
+                print(f"Error synchronizing vm-single connector public path ingresses: kubectl apply exited with {returncode}")
+                return False
+            return True
         except Exception as exc:
             print(f"Error synchronizing vm-single connector public path ingresses: {exc}")
             return False
@@ -4620,6 +4882,7 @@ class INESDataConnectorsAdapter:
         print(f"\nCleaning PostgreSQL database '{db_name}'...")
 
         configured_pg_host, pg_user, pg_password = self.config_adapter.get_pg_credentials()
+        explicit_pg_endpoint = pg_host is not None or pg_port is not None
         pg_host = pg_host or configured_pg_host
         pg_port = pg_port or self._pg_port()
         terminate_sql = f"""
@@ -4639,7 +4902,7 @@ class INESDataConnectorsAdapter:
                 "drop database",
                 f"PGPASSWORD={shlex.quote(str(pg_password))} psql -h {shlex.quote(str(pg_host))} "
                 f"-p {shlex.quote(str(pg_port))} -U {shlex.quote(str(pg_user))} "
-                f"-d postgres -c \"DROP DATABASE IF EXISTS {db_name};\"",
+                f"-d postgres -c \"DROP DATABASE IF EXISTS {db_name} WITH (FORCE);\"",
             ),
             (
                 "drop role",
@@ -4671,12 +4934,18 @@ class INESDataConnectorsAdapter:
             if role_exists is not False:
                 remaining.append(f"role '{db_user}'")
             if remaining:
+                retry_context = (
+                    "retrying with the existing PostgreSQL endpoint: "
+                    if explicit_pg_endpoint
+                    else "retrying after infrastructure check: "
+                )
                 print(
-                    "  PostgreSQL cleanup not fully applied yet; retrying after infrastructure check: "
+                    "  PostgreSQL cleanup not fully applied yet; "
+                    + retry_context
                     + ", ".join(remaining)
                 )
 
-            if callable(postgres_ready) and not postgres_ready():
+            if not explicit_pg_endpoint and callable(postgres_ready) and not postgres_ready():
                 print("  Warning: local PostgreSQL access could not be re-established before retrying cleanup")
             time.sleep(2)
 
@@ -4931,6 +5200,13 @@ class INESDataConnectorsAdapter:
         keycloak_bootstrap_url = keycloak_bootstrap_access.get("keycloak_url")
 
         try:
+            if not self._ensure_registration_service_schema_ready_for_level4(
+                ds_name,
+                pg_host=postgres_bootstrap_host,
+                pg_port=postgres_bootstrap_port,
+            ):
+                return False
+
             if not self.wait_for_keycloak_admin_ready(keycloak_url=keycloak_bootstrap_url):
                 if keycloak_bootstrap_url is None and self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
                     keycloak_bootstrap_access = self._start_keycloak_bootstrap_access()
@@ -5050,6 +5326,11 @@ class INESDataConnectorsAdapter:
         self.update_connector_layout_metadata(values_file, connector_name)
         self.update_connector_node_scheduling(values_file, connector_name)
         self.update_connector_public_ingress_config(values_file, connector_name)
+        self.update_connector_ontology_hub_config(
+            values_file,
+            connector_name,
+            ds_name=ds_name,
+        )
         self.update_connector_model_observer_config(
             values_file,
             connector_name,
@@ -5116,7 +5397,7 @@ class INESDataConnectorsAdapter:
 
         return False
 
-    def connector_database_credentials_valid(self, connector_name):
+    def _connector_database_credentials_query_valid(self, connector_name, pg_host=None, pg_port=None):
         creds = self.load_connector_credentials(connector_name)
         if not creds:
             print(f"Connector credentials not found: {connector_name}")
@@ -5126,8 +5407,9 @@ class INESDataConnectorsAdapter:
         db_name = db_creds.get("name")
         db_user = db_creds.get("user")
         db_password = db_creds.get("passwd")
-        pg_host, _, _ = self.config_adapter.get_pg_credentials()
-        pg_port = self._pg_port()
+        configured_pg_host, _, _ = self.config_adapter.get_pg_credentials()
+        effective_pg_host = pg_host or configured_pg_host
+        effective_pg_port = pg_port or self._pg_port()
 
         if not db_name or not db_user or not db_password:
             print(f"Incomplete database credentials for connector: {connector_name}")
@@ -5135,7 +5417,7 @@ class INESDataConnectorsAdapter:
 
         result = self.run_silent(
             f"PGPASSWORD={shlex.quote(str(db_password))} "
-            f"psql -h {shlex.quote(str(pg_host))} -p {shlex.quote(str(pg_port))} "
+            f"psql -h {shlex.quote(str(effective_pg_host))} -p {shlex.quote(str(effective_pg_port))} "
             f"-U {shlex.quote(str(db_user))} -d {shlex.quote(str(db_name))} -t -A -c \"SELECT 1;\""
         )
 
@@ -5148,7 +5430,37 @@ class INESDataConnectorsAdapter:
         )
         return False
 
-    def validate_connectors_deployment(self, connectors):
+    def connector_database_credentials_valid(self, connector_name):
+        topology = self._normalized_topology()
+        needs_temporary_postgres = False
+        if topology == VM_DISTRIBUTED_TOPOLOGY:
+            needs_temporary_postgres = True
+        elif topology == VM_SINGLE_TOPOLOGY:
+            runtime = self._cluster_runtime()
+            needs_temporary_postgres = str(runtime.get("cluster_type") or "").strip().lower() == "k3s"
+
+        if not needs_temporary_postgres:
+            return self._connector_database_credentials_query_valid(connector_name)
+
+        postgres_access = self._start_postgres_bootstrap_access(
+            purpose="database credential validation commands"
+        )
+        if postgres_access is None:
+            print(
+                "Connector database credential validation could not open PostgreSQL "
+                "access for this topology."
+            )
+            return False
+        try:
+            return self._connector_database_credentials_query_valid(
+                connector_name,
+                pg_host=postgres_access.get("pg_host"),
+                pg_port=postgres_access.get("pg_port"),
+            )
+        finally:
+            self._stop_postgres_bootstrap_access(postgres_access)
+
+    def validate_connectors_deployment(self, connectors, *, check_database_credentials=False):
         print("\n========================================")
         print("VALIDATING CONNECTOR DEPLOYMENT")
         print("========================================\n")
@@ -5189,13 +5501,29 @@ class INESDataConnectorsAdapter:
             if not self.wait_for_management_api_ready(connector):
                 print(f"Management API not reachable: {connector}")
                 return False
+            if check_database_credentials:
+                print(f"Checking database credential consistency: {connector}")
+                if not self.connector_database_credentials_valid(connector):
+                    print(f"Connector database credentials do not match the deployed state: {connector}")
+                    return False
 
         print("\nAll connectors reachable\n")
         return True
 
-    def validate_connectors_with_stabilization(self, connectors, retries=2, wait_seconds=20, backoff_factor=2):
+    def validate_connectors_with_stabilization(
+        self,
+        connectors,
+        retries=2,
+        wait_seconds=20,
+        backoff_factor=2,
+        *,
+        check_database_credentials=False,
+    ):
         """Retry connector validation after short stabilization waits with light backoff."""
-        if self.validate_connectors_deployment(connectors):
+        if self.validate_connectors_deployment(
+            connectors,
+            check_database_credentials=check_database_credentials,
+        ):
             return True
 
         retries = max(int(retries or 0), 0)
@@ -5209,7 +5537,10 @@ class INESDataConnectorsAdapter:
             )
             if current_wait > 0:
                 time.sleep(current_wait)
-            if self.validate_connectors_deployment(connectors):
+            if self.validate_connectors_deployment(
+                connectors,
+                check_database_credentials=check_database_credentials,
+            ):
                 print("Connector validation recovered after stabilization retry.")
                 return True
             current_wait *= backoff_factor
@@ -5458,8 +5789,9 @@ class INESDataConnectorsAdapter:
             all_connectors,
             retries=1,
             wait_seconds=30,
+            check_database_credentials=True,
         ):
-            print("Aborting Level 4 because connector Management API readiness failed")
+            print("Aborting Level 4 because connector readiness or credential consistency failed")
             return []
         return all_connectors
 

@@ -2037,6 +2037,20 @@ def _configured_public_connector_base_url(connector_name, deployer_context):
     if not connector:
         return None
 
+    if _config_topology_value(config) == VM_SINGLE_TOPOLOGY:
+        try:
+            from deployers.inesdata.access_urls import connector_public_base_url
+
+            vm_single_url = connector_public_base_url(
+                connector,
+                dataspace,
+                {**config, "TOPOLOGY": VM_SINGLE_TOPOLOGY},
+            )
+        except Exception:
+            vm_single_url = ""
+        if vm_single_url:
+            return normalize_public_endpoint_url(vm_single_url)
+
     public_urls = resolve_vm_distributed_public_urls(config)
     provider_connectors = set(parse_connector_list(config.get("VM_PROVIDER_CONNECTORS"), dataspace))
     consumer_connectors = set(parse_connector_list(config.get("VM_CONSUMER_CONNECTORS"), dataspace))
@@ -4805,6 +4819,8 @@ def _level6_component_validation_environment(deployer_context, deployer_name):
     provider = connectors[0] if connectors else ""
     consumer = connectors[1] if len(connectors) > 1 else ""
     config = dict(getattr(deployer_context, "config", {}) or {})
+    environment = str(getattr(deployer_context, "environment", "") or config.get("ENVIRONMENT") or "DEV").strip()
+    runtime_dir = str(getattr(deployer_context, "runtime_dir", "") or "").strip()
 
     def _connector_base_url(connector, role):
         configured = _configured_public_connector_base_url(connector, deployer_context)
@@ -4830,10 +4846,14 @@ def _level6_component_validation_environment(deployer_context, deployer_name):
         "AI_MODEL_HUB_COMPONENT_ADAPTER": adapter_name,
         "PIONERA_TOPOLOGY": topology,
         "INESDATA_TOPOLOGY": topology,
+        "UI_TOPOLOGY": topology,
         "UI_DATASPACE": dataspace,
+        "UI_ENVIRONMENT": environment,
         "UI_DS_DOMAIN": ds_domain,
         "AI_MODEL_HUB_KEYCLOAK_URL": keycloak_url,
     }
+    if runtime_dir:
+        env["UI_RUNTIME_DIR"] = runtime_dir
     if adapter_name == "edc":
         env["PIONERA_COMPONENT_VALIDATION_MODE"] = "api"
         env["LEVEL6_COMPONENT_VALIDATION_MODE"] = "api"
@@ -16629,16 +16649,16 @@ def _run_interactive_level2_with_shared_foundation(
                 default=True,
             ):
                 public_access_result = None
-                if normalized_topology == VM_DISTRIBUTED_TOPOLOGY:
+                if normalized_topology in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
                     sync_public_access = getattr(infrastructure, "sync_vm_distributed_public_access", None)
                     if callable(sync_public_access):
-                        print("Reconciling vm-distributed public access for reused common services...")
+                        print(f"Reconciling {normalized_topology} public access for reused common services...")
                         try:
                             public_access_result = sync_public_access(topology=normalized_topology)
                         except TypeError:
                             public_access_result = sync_public_access()
                         except Exception as exc:
-                            print(f"Warning: vm-distributed public access reconciliation failed: {exc}")
+                            print(f"Warning: {normalized_topology} public access reconciliation failed: {exc}")
                             public_access_result = {"status": "failed", "error": str(exc)}
                 announcer = getattr(infrastructure, "announce_level", None)
                 if callable(announcer):

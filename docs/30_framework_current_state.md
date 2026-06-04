@@ -3,7 +3,7 @@
 Este documento resume el estado operativo actual del Validation Environment en
 la rama `main`. Está orientado a revisión pública, auditoría técnica y
 onboarding de personas que necesitan entender qué está implementado, qué se
-valida y qué queda fuera del alcance inmediato.
+valida y qué queda fuera del alcance de cierre.
 
 ## Entrada Principal
 
@@ -18,8 +18,8 @@ También existen comandos directos para automatización:
 ```bash
 python3 main.py inesdata deploy --topology local
 python3 main.py inesdata validate --topology local
-python3 main.py edc deploy --topology local
-python3 main.py edc validate --topology local
+python3 main.py edc deploy --topology vm-distributed
+python3 main.py edc validate --topology vm-distributed
 ```
 
 El menú y los comandos comparten el mismo modelo de ejecución por niveles.
@@ -43,12 +43,27 @@ El menú y los comandos comparten el mismo modelo de ejecución por niveles.
 | `vm-single` | Ruta operativa sobre una VM con Kubernetes gestionado | Validación final en entorno tipo VM y smoke de integración |
 | `vm-distributed` | Ruta distribuida parametrizable con roles físicos separados | Validación de entornos con servicios comunes, conectores y componentes en VMs distintas |
 
+## Alcance de Cierre por Adapter y Topología
+
+El soporte de código y la evidencia oficial de cierre no son lo mismo. Para
+auditoría, la lectura vigente es:
+
+| Adapter | `local` | `vm-single` | `vm-distributed` |
+| --- | --- | --- | --- |
+| `inesdata` | Implementado y usado como ruta local de desarrollo/validación | Implementado y validado como entorno VM de referencia | Implementado y validado como entorno distribuido de referencia |
+| `edc` | Implementado; pasó validaciones antes de la conciliación reciente de topologías y debe revalidarse antes de usarse como evidencia vigente | Implementado; no validado oficialmente después de la conciliación reciente | Implementado y probado oficialmente como ruta de cierre para EDC |
+
+La documentación de operación mantiene comandos y configuración para las rutas
+implementadas, pero las evidencias oficiales de `edc` deben generarse en
+`vm-distributed` hasta que se ejecute una revalidación explícita de `local` o
+`vm-single`.
+
 ## Adapters
 
 | Adapter | Estado |
 | --- | --- |
 | `inesdata` | Despliegue y validación `Level 1-6` operativos |
-| `edc` | Despliegue y validación core operativos; componentes compartidos todavía no equivalen a la ruta completa de INESData |
+| `edc` | Despliegue y validación core implementados; evidencia oficial de cierre limitada a `vm-distributed` |
 
 ## Namespaces Actuales
 

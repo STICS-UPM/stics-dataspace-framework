@@ -192,7 +192,7 @@ El framework pide confirmación interactiva antes de hacerlo. En ejecución no
 interactiva debe habilitarse explícitamente:
 
 ```bash
-PIONERA_LEVEL4_REPAIR_COMMON_SERVICES=true python3 main.py edc deploy --topology local
+PIONERA_LEVEL4_REPAIR_COMMON_SERVICES=true python3 main.py inesdata deploy --topology local
 ```
 
 No actives esta variable si quieres preservar el estado actual de
@@ -282,7 +282,7 @@ define overrides explícitos:
 ```bash
 PIONERA_EDC_CONNECTOR_IMAGE_NAME=validation-environment/edc-connector \
 PIONERA_EDC_CONNECTOR_IMAGE_TAG=<tag> \
-python3 main.py edc deploy --topology local
+python3 main.py edc deploy --topology vm-distributed
 ```
 
 Esta protección evita desplegar una imagen por defecto no verificada. Si la
@@ -370,7 +370,7 @@ experiments/<experiment>/ui/inesdata/portal_readiness.json
 
 ```bash
 PIONERA_VM_EXTERNAL_IP=192.0.2.10 \
-python3 main.py edc hosts --topology vm-single --dry-run
+python3 main.py inesdata hosts --topology vm-single --dry-run
 ```
 
 Si no hay dirección configurada, el CLI falla con un error claro de topología.
@@ -437,7 +437,7 @@ Si el broker local integrado en Kubernetes sigue siendo inestable en `local`,
 puede probarse la variante opt-in:
 
 ```bash
-PIONERA_KAFKA_PROVISIONER=kubernetes-split-kraft python3 main.py edc validate --topology local
+PIONERA_KAFKA_PROVISIONER=kubernetes-split-kraft python3 main.py inesdata validate --topology local
 ```
 
 Esta variante mantiene Kafka dentro de Kubernetes, pero separa `controller` y
@@ -531,9 +531,9 @@ kubectl get pods,svc -n <dataspace> -l app=framework-kafka
 
 Si el broker queda `ready`, los topics se crean bien y aun así la transferencia
 termina en `TERMINATED` justo después de `start_transfer`, la causa habitual ya
-no es el broker sino la imagen local del conector EDC. Ese patron indica que el
-control plane acepto la transferencia, pero el runtime desplegado no incluia el
-dataplane Kafka efectivo o seguia reutilizando una `connector.jar` obsoleta.
+no es el broker sino la imagen local del conector EDC. Ese patrón indica que el
+control plane aceptó la transferencia, pero el runtime desplegado no incluía el
+dataplane Kafka efectivo o seguía reutilizando una `connector.jar` obsoleta.
 Desde esta versión, `adapters/edc/scripts/build_image.sh` reconstruye
 automáticamente la jar cuando cambian los inputs del runtime para evitar ese
 desalineamiento.

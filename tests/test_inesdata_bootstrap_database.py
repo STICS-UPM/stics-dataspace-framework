@@ -296,6 +296,44 @@ class InesdataBootstrapDatabaseTests(unittest.TestCase):
 
         self.assertEqual(hostname, "common-srvs-postgresql.shared-foundation.svc")
 
+    def test_registration_service_keycloak_runtime_uses_cluster_service_for_vm_single(self):
+        runtime = bootstrap.registration_service_keycloak_runtime(
+            {
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "COMMON_SERVICES_NAMESPACE": "shared-foundation",
+            },
+            "DEV",
+        )
+
+        self.assertEqual(runtime["hostname"], "common-srvs-keycloak.shared-foundation.svc:80")
+        self.assertEqual(runtime["protocol"], "http")
+
+    def test_registration_service_keycloak_runtime_uses_cluster_service_for_vm_distributed(self):
+        runtime = bootstrap.registration_service_keycloak_runtime(
+            {
+                "TOPOLOGY": "vm-distributed",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.example.test/auth",
+                "COMMON_SERVICES_NAMESPACE": "common-srvs",
+            },
+            "DEV",
+        )
+
+        self.assertEqual(runtime["hostname"], "common-srvs-keycloak.common-srvs.svc:80")
+        self.assertEqual(runtime["protocol"], "http")
+
+    def test_registration_service_keycloak_runtime_keeps_local_hostname(self):
+        runtime = bootstrap.registration_service_keycloak_runtime(
+            {
+                "TOPOLOGY": "local",
+                "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+            },
+            "DEV",
+        )
+
+        self.assertEqual(runtime["hostname"], "auth.dev.ed.dataspaceunit.upm")
+        self.assertEqual(runtime["protocol"], "http")
+
     def test_register_connector_database_inserts_public_ingress_urls_for_dev(self):
         cursor = FakeCursor(fetch_results=[])
         connection = FakeConnection(cursor)

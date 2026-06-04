@@ -51,6 +51,7 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         self.assertIn("public_access_urls", source)
         self.assertIn("access_urls", source)
         self.assertIn("UI_RUNTIME_DIR", source)
+        self.assertIn("UI_TOPOLOGY", source)
         self.assertIn('"connectors", connectorName, "credentials.json"', source)
         self.assertIn("connector_interface_login", source)
         self.assertIn("connector_management_api", source)
@@ -61,6 +62,14 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         self.assertIn("DS_1_CONNECTORS", source)
         self.assertIn("DS_1_VALIDATION_PAIRS", source)
         self.assertIn("UI_CONNECTOR_PROTOCOL_ADDRESS_MODE", source)
+
+    def test_minio_runtime_prefers_topology_scoped_connector_credentials(self):
+        source = _read_ui_file("shared", "utils", "minio-console-runtime.ts")
+
+        self.assertIn("UI_RUNTIME_DIR", source)
+        self.assertIn("UI_TOPOLOGY", source)
+        self.assertIn('"connectors", connectorName, "credentials.json"', source)
+        self.assertIn("credentials-connector-${connectorName}.json", source)
 
     def test_dataspace_runtime_keeps_portal_urls_trailing_slash(self):
         source = _read_ui_file("shared", "utils", "dataspace-runtime.ts")

@@ -37,6 +37,19 @@ Las tres topologías deben compartir namespaces funcionales, contratos de
 adapter y resolución de URLs por topología. Esta regla evita contaminar una
 topología con dominios, credenciales o artefactos generados por otra.
 
+## Alcance de Cierre por Adapter y Topología
+
+La matriz siguiente separa soporte implementado de evidencia oficial de cierre:
+
+| Adapter | `local` | `vm-single` | `vm-distributed` |
+| --- | --- | --- | --- |
+| `inesdata` | Implementado y usado como ruta local de desarrollo/validación | Implementado y validado como entorno VM de referencia | Implementado y validado como entorno distribuido de referencia |
+| `edc` | Implementado; validado antes de la conciliación reciente de topologías y pendiente de revalidación para evidencia actual | Implementado; pendiente de validación oficial tras la conciliación reciente | Implementado y probado oficialmente como ruta de cierre |
+
+Para evidencias auditables de `edc`, usa `vm-distributed`. Las demás rutas de
+EDC se conservan como capacidades del framework y deben revalidarse antes de
+presentarse como resultado de cierre.
+
 ## Convención de Nombres
 
 Para variables de entorno exportadas por el usuario, la convención pública del
@@ -361,7 +374,7 @@ checks de acceso, ingress, storage y permisos.
 Estado actual del framework:
 
 - `inesdata`: `Level 1` a `Level 6` operativos, con `Level 5` compartido para componentes configurados
-- `edc`: `Level 1` a `Level 6` operativos, con `Level 5` compartido para componentes configurados y guarda de extensiones del conector
+- `edc`: ruta implementada, pendiente de validación oficial tras la conciliación reciente de topologías
 
 La topología necesita una dirección externa, suministrada mediante una de estas variables:
 
@@ -381,7 +394,7 @@ Ejemplo:
 
 ```bash
 PIONERA_VM_EXTERNAL_IP=192.0.2.10 \
-python3 main.py edc hosts --topology vm-single --dry-run
+python3 main.py inesdata hosts --topology vm-single --dry-run
 ```
 
 Cómo obtener la IP correcta:
