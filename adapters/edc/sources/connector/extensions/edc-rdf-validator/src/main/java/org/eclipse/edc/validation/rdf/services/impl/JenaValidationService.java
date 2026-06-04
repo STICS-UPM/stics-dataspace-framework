@@ -17,17 +17,35 @@ import org.eclipse.edc.validation.rdf.services.enums.RdfFormat;
 import org.eclipse.edc.validation.rdf.services.RdfValidationService;
 
 import java.io.InputStream;
-import java.net.URL;
+import java.net.URI;
+import java.util.ArrayList;
 import java.util.List;
 
 public class JenaValidationService implements RdfValidationService {
 
     /** External Ontology Hub URL (browser / dashboard). */
     private static final String ONTOLOGY_HUB_EXTERNAL_BASE =
-            "http://ontology-hub-demo.dev.ds.dataspaceunit.upm";
+            getenvOrDefault("ONTOLOGY_HUB_EXTERNAL_BASE", "http://ontology-hub-demo.dev.ds.dataspaceunit.upm");
     /** In-cluster Ontology Hub service (release pionera-edc-ontology-hub @ components). */
     private static final String ONTOLOGY_HUB_INTERNAL_BASE =
-            "http://pionera-edc-ontology-hub.components:3333";
+            getenvOrDefault("ONTOLOGY_HUB_INTERNAL_BASE", "http://pionera-edc-ontology-hub.components:3333");
+    /** Fallback internal host name when the release-specific service URL is unavailable. */
+    private static final String ONTOLOGY_HUB_INTERNAL_FALLBACK =
+            getenvOrDefault("ONTOLOGY_HUB_INTERNAL_FALLBACK", "http://ontology-hub:3333");
+    /** Fully qualified internal host name for Kubernetes service discovery. */
+    private static final String ONTOLOGY_HUB_INTERNAL_CLUSTERLOCAL_FALLBACK =
+            getenvOrDefault("ONTOLOGY_HUB_INTERNAL_CLUSTERLOCAL_FALLBACK", "http://pionera-edc-ontology-hub.components.svc.cluster.local:3333");
+
+    private static final List<String> ONTOLOGY_HUB_INTERNAL_CANDIDATES = List.of(
+            ONTOLOGY_HUB_INTERNAL_BASE,
+            ONTOLOGY_HUB_INTERNAL_CLUSTERLOCAL_FALLBACK,
+            ONTOLOGY_HUB_INTERNAL_FALLBACK
+    );
+
+    private static String getenvOrDefault(String name, String defaultValue) {
+        String value = System.getenv(name);
+        return value != null && !value.isBlank() ? value.trim() : defaultValue;
+    }
 
     @Override
     public ValidationResult validate(
@@ -52,7 +70,7 @@ public class JenaValidationService implements RdfValidationService {
         Model ontologyModel = null;
         if (ontologyUrl != null && !ontologyUrl.isBlank()) {
             try {
-                ontologyModel = loadOntologyModel(ontologyUrl);
+                ontologyModel = loadRemoteModel(ontologyUrl);
             } catch (Exception e) {
                 return failure("Ontology load error", ontologyUrl, e);
             }
@@ -68,7 +86,7 @@ public class JenaValidationService implements RdfValidationService {
         // 4. Load SHACL shapes
         Shapes shapes;
         try {
-            Model shapesModel = RDFDataMgr.loadModel(shaclUrl);
+            Model shapesModel = loadRemoteModel(shaclUrl);
             shapes = Shapes.parse(shapesModel);
         } catch (Exception e) {
             return failure("SHACL shapes load error", shaclUrl, e);
@@ -113,13 +131,85 @@ public class JenaValidationService implements RdfValidationService {
         };
     }
 
-    private Model loadOntologyModel(String ontologyUrl) {
+    private Model loadRemoteModel(String url) {
+        List<String> candidates = createUrlCandidates(url);
+        Exception lastError = null;
+
+        for (String candidate : candidates) {
+            try {
+                return loadModel(candidate);
+            } catch (Exception e) {
+                lastError = e;
+            }
+        }
+
+        if (lastError != null) {
+            throw new IllegalStateException(
+                    "Remote model load failed for candidates: " + candidates,
+                    lastError
+            );
+        }
+
+        throw new IllegalArgumentException("Ontology URL cannot be null or blank");
+    }
+
+    private List<String> createUrlCandidates(String url) {
+        if (url == null || url.isBlank()) {
+            return new ArrayList<>();
+        }
+
+        List<String> candidates = new ArrayList<>();
+        if (url.contains(ONTOLOGY_HUB_EXTERNAL_BASE)) {
+            candidates.addAll(createInternalCandidatesFromExternalUrl(url));
+        } else {
+            candidates.addAll(createInternalCandidatesForInternalUrl(url));
+        }
+
+        if (!candidates.contains(url)) {
+            candidates.add(url);
+        }
+        return candidates;
+    }
+
+    private List<String> createInternalCandidatesFromExternalUrl(String url) {
+        List<String> candidates = new ArrayList<>();
+        for (String internalBase : ONTOLOGY_HUB_INTERNAL_CANDIDATES) {
+            String candidate = url.replace(ONTOLOGY_HUB_EXTERNAL_BASE, internalBase);
+            if (!candidate.isBlank() && !candidates.contains(candidate)) {
+                candidates.add(candidate);
+            }
+        }
+        return candidates;
+    }
+
+    private List<String> createInternalCandidatesForInternalUrl(String url) {
+        List<String> candidates = new ArrayList<>();
+        for (String internalBase : ONTOLOGY_HUB_INTERNAL_CANDIDATES) {
+            if (url.contains(internalBase)) {
+                addReplacementCandidates(url, internalBase, candidates);
+                break;
+            }
+        }
+        return candidates;
+    }
+
+    private void addReplacementCandidates(String url, String internalBase, List<String> candidates) {
+        for (String replacementBase : ONTOLOGY_HUB_INTERNAL_CANDIDATES) {
+            if (!replacementBase.equals(internalBase)) {
+                String candidate = url.replace(internalBase, replacementBase);
+                if (!candidate.isBlank() && !candidates.contains(candidate)) {
+                    candidates.add(candidate);
+                }
+            }
+        }
+    }
+
+    private Model loadModel(String modelUrl) {
         try {
-            Model ontologyModel = RDFDataMgr.loadModel(ontologyUrl);
-            return ontologyModel;
-        } catch (Exception firstError) {
+            return RDFDataMgr.loadModel(modelUrl);
+        } catch (org.apache.jena.riot.RiotException firstError) {
             // Fallback for ontology endpoints serving N3 with weak/incorrect content-type metadata.
-            try (InputStream ontologyStream = new URL(ontologyUrl).openStream()) {
+            try (InputStream ontologyStream = URI.create(modelUrl).toURL().openStream()) {
                 Model ontologyModel = ModelFactory.createDefaultModel();
                 RDFDataMgr.read(ontologyModel, ontologyStream, Lang.N3);
                 return ontologyModel;

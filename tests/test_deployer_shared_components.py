@@ -245,11 +245,7 @@ class SharedComponentsContractTests(unittest.TestCase):
             ontology_validator_url_mapping(context),
             {
                 "external_url": "http://ontology-hub-pionera.dev.ds.dataspaceunit.upm",
-                "internal_url": "http://pionera-ontology-hub.custom-components:3333",
-            },
-        )
-
-    def test_patch_ontology_validator_source_rewrites_placeholder(self):
+                    "internal_url": "http://pionera-ontology-hub.custom-components.svc.cluster.local:3333",
         java_source = (
             "class JenaValidationService {\n"
             "    private String transformUrlForMinikube(String url) {\n"

@@ -109,6 +109,15 @@ def strip_url_scheme(host_or_url: str | None) -> str:
     return value
 
 
+def normalize_url(raw_url: str | None, default_scheme: str = "http") -> str:
+    value = str(raw_url or "").strip().rstrip("/")
+    if not value:
+        return ""
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+    return f"{default_scheme}://{value}"
+
+
 def configured_component_host(
     component: str | None,
     deployer_config: dict[str, Any] | None,
@@ -514,9 +523,16 @@ def ontology_validator_url_mapping(context: Any) -> dict[str, str]:
     ).strip() or "components"
     release_name = resolve_component_release_name("ontology-hub", dataspace_name=dataspace_name)
 
+    internal_base_url = normalize_url(config.get("ONTOLOGY_HUB_INTERNAL_BASE_URL") or "")
+    internal_url = (
+        internal_base_url
+        if internal_base_url
+        else f"http://{release_name}.{components_namespace}.svc.cluster.local:3333"
+    )
+
     return {
         "external_url": f"{protocol}://{external_host}",
-        "internal_url": f"http://{release_name}.{components_namespace}:3333",
+        "internal_url": internal_url,
     }
 
 
