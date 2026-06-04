@@ -44,7 +44,7 @@ adapter y topología:
 | `inesdata` | Ruta de desarrollo/validación local implementada | Ruta VM implementada y validada como referencia | Ruta distribuida implementada y validada como referencia |
 | `edc` | Implementado; requiere revalidación tras la conciliación reciente de topologías | Implementado; no validado oficialmente tras la conciliación reciente | Ruta oficial de cierre para EDC |
 
-Las suites de `Level 6` pueden existir para más combinaciones que las usadas
+El repositorio contiene suites de `Level 6` para más combinaciones que las usadas
 como evidencia oficial. Antes de usar un resultado como evidencia de cierre,
 comprueba que el experimento corresponde a una combinación validada en esta
 matriz.
@@ -54,11 +54,11 @@ productivo existente, la ruta objetivo es usar un `validation target` en modo
 `validation-only`. Esa ruta se documenta en
 [Validación de INESData externo](./29_inesdata_external_validation_targets.md).
 La base actual expone esta ruta desde el menú con `G - Validate target` en modo
-read-only seguro: valida el YAML, muestra el plan y puede ejecutar specs
-Playwright `read-only` explícitamente habilitados en `project_suites`. No
+read-only seguro: valida el YAML, muestra el plan y ejecuta specs Playwright
+`read-only` cuando están explícitamente habilitados en `project_suites`. No
 ejecuta limpieza, escrituras, Newman productivo ni Kafka productivo.
 
-Según el adapter y el perfil del deployer, el nivel 6 puede ejecutar:
+Según el adapter y el perfil del deployer, el nivel 6 ejecuta:
 
 - limpieza de datos de prueba;
 - colecciones Newman/Postman;
@@ -115,9 +115,9 @@ no contra `port-forward` como camino principal.
 En modo estable local, el framework ejecuta además guardas de capacidad y
 estabilidad. `Level 1` avisa si Docker Desktop solo soporta un adapter local.
 `Level 3/4/5` bloquean la instalación del segundo adapter cuando ya hay otro
-activo y la capacidad efectiva está por debajo de `18432 MB`. En ese punto,
-pueden ofrecer un cambio controlado de adapter: con confirmación exacta eliminan
-solo los recursos locales gestionados del adapter anterior y preservan
+activo y la capacidad efectiva está por debajo de `18432 MB`. En terminal
+interactiva, ofrecen un cambio controlado de adapter: con confirmación exacta
+eliminan solo los recursos locales gestionados del adapter anterior y preservan
 `common-srvs`. `Level 6` repite la comprobación antes de las suites para evitar
 falsos resultados por presión de Minikube. Después espera a que el nodo y los
 pods relevantes estén listos, registra reinicios y eventos `NodeNotReady`, y
@@ -131,11 +131,11 @@ local_stability_postflight.json
 
 Si el runtime local no queda listo tras la ventana de espera, el framework falla
 pronto con un mensaje accionable en lugar de ejecutar suites sobre un clúster
-claramente inestable. Para diagnóstico excepcional puede desactivarse con
-`PIONERA_LOCAL_STABILITY_CHECKS=false`. La guarda de capacidad de coexistencia
-puede degradarse a warning con `PIONERA_LOCAL_COEXISTENCE_GUARD=warn` o
-desactivarse con `PIONERA_LOCAL_COEXISTENCE_GUARD=off`. La ventana puede
-ajustarse con `PIONERA_LOCAL_STABILITY_TIMEOUT_SECONDS` y
+claramente inestable. Para diagnóstico excepcional, desactívalo con
+`PIONERA_LOCAL_STABILITY_CHECKS=false`. La guarda de capacidad de coexistencia se
+degrada a warning con `PIONERA_LOCAL_COEXISTENCE_GUARD=warn` o se desactiva con
+`PIONERA_LOCAL_COEXISTENCE_GUARD=off`. Ajusta la ventana con
+`PIONERA_LOCAL_STABILITY_TIMEOUT_SECONDS` y
 `PIONERA_LOCAL_STABILITY_POLL_SECONDS`.
 
 Para automatizar un cambio de adapter en ejecución no interactiva, establece
@@ -155,7 +155,7 @@ Para validaciones sobre conectores ya desplegados, ejecuta `Level 6` desde el
 mismo checkout que ejecutó `Level 4`. Los artefactos locales bajo
 `deployers/<adapter>/deployments/<environment>/<dataspace>/` contienen
 credenciales generadas para Keycloak, MinIO y conectores. Si se valida desde
-otro checkout con artefactos distintos, pueden aparecer errores como
+otro checkout con artefactos distintos, aparecen errores como
 `invalid_grant`, `Invalid user credentials` o `InvalidAccessKeyId`.
 
 ## Newman
@@ -195,7 +195,8 @@ python3 main.py edc validate --topology vm-distributed
 
 ## Limpieza de Datos de Prueba
 
-La validación puede empezar con limpieza para facilitar trazabilidad y evitar saturación por datos de ejecuciones previas.
+La validación empieza con limpieza cuando el perfil activo lo requiere, para
+facilitar trazabilidad y evitar saturación por datos de ejecuciones previas.
 
 La limpieza debe ser segura por defecto y reportar qué eliminó o qué omitió.
 
@@ -211,23 +212,23 @@ Cuando está activa, se ejecuta después de Newman para los adapters compatibles
 y valida el recorrido `asset -> catálogo -> negociación -> transferencia Kafka
 -> consumo del topic destino`.
 
-En modo `fast`, la preparación del broker Kafka puede empezar al inicio de
-`Level 6` mientras Newman sigue ejecutándose en primer plano. En modo `stable`
-local, que es el predeterminado para `local`, esa preparación se difiere hasta
-la fase Kafka para reducir solapamiento operativo y mejorar reproducibilidad.
+En modo `fast`, la preparación del broker Kafka empieza al inicio de `Level 6`
+mientras Newman sigue ejecutándose en primer plano. En modo `stable` local, que
+es el predeterminado para `local`, esa preparación se difiere hasta la fase Kafka
+para reducir solapamiento operativo y mejorar reproducibilidad.
 
 Después de finalizar la negociación de contrato, la suite espera a que el
 acuerdo sea visible en proveedor y consumidor antes de iniciar `Kafka-PUSH`.
 Esta guarda evita carreras transitorias donde el transfer se lanza justo después
 de `FINALIZED`, pero el runtime EDC todavía no puede resolver el acuerdo por
-protocolo y responde `404 Not found`. El timeout por defecto es de 30 segundos y
-puede ajustarse con `KAFKA_EDC_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS`.
+protocolo y responde `404 Not found`. El timeout por defecto es de 30 segundos;
+ajústalo con `KAFKA_EDC_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS`.
 
 El flujo completo de `Level 6` sigue requiriendo que Keycloak, MinIO,
 `registration-service` y los conectores sean accesibles por hostname público. La
-parte Kafka puede usar mecanismos locales de soporte para el propio proceso del
-framework, pero eso no convierte `Level 6` completo en una validación correcta
-si la capa pública local no está disponible.
+parte Kafka usa mecanismos locales de soporte para el propio proceso del
+framework, pero eso no convierte `Level 6` completo en una validación correcta si
+la capa pública local no está disponible.
 
 En topología `local`, el broker gestionado por defecto se despliega dentro de
 Kubernetes. Los conectores usan el endpoint interno de cluster:
@@ -236,13 +237,13 @@ Kubernetes. Los conectores usan el endpoint interno de cluster:
 framework-kafka.<namespace>.svc.cluster.local:9092
 ```
 
-El framework puede usar un `port-forward` temporal para que el proceso Python
-del host cree topics, produzca mensajes de prueba y verifique el topic destino.
+El framework usa un `port-forward` temporal para que el proceso Python del host
+cree topics, produzca mensajes de prueba y verifique el topic destino.
 Ese `port-forward` es un mecanismo de soporte interno de la validación, no un
 endpoint público del dataspace.
 
-Cuando interesa una variante más estable del broker Kafka local sin salir de
-Kubernetes, puede usarse de forma explícita:
+Cuando necesitas una variante más estable del broker Kafka local sin salir de
+Kubernetes, actívala de forma explícita:
 
 ```bash
 PIONERA_KAFKA_PROVISIONER=kubernetes-split-kraft python3 main.py inesdata validate --topology local
@@ -259,8 +260,8 @@ PIONERA_LEVEL6_LOCAL_HTTP_PORT_FORWARD_FALLBACK=true
 
 Ese fallback solo actúa como ayuda técnica de la suite Kafka cuando el flujo ya
 ha llegado a esa fase. No sustituye el preflight público de `Level 6`, ni debe
-usarse para declarar válida una ejecución completa que no puede acceder a los
-hostnames públicos del entorno.
+usarse para declarar válida una ejecución completa sin acceso a los hostnames
+públicos del entorno.
 
 La consola usa mensajes neutrales bajo el nombre `Kafka transfer validation`.
 Por defecto imprime resultado por par de conectores a medida que cada prueba
@@ -274,7 +275,7 @@ PIONERA_KAFKA_TRANSFER_LOG_MESSAGES=true python3 main.py inesdata validate --top
 
 Las preparaciones de componentes evitan imprimir scripts largos en consola por
 defecto. Si durante diagnóstico se necesita ver el comando completo de una
-preparación interna, puede activarse:
+preparación interna, actívalo con:
 
 ```bash
 PIONERA_VERBOSE_COMMANDS=true python3 main.py inesdata validate --topology local
@@ -282,7 +283,7 @@ PIONERA_VERBOSE_COMMANDS=true python3 main.py inesdata validate --topology local
 
 ## Métricas
 
-Las métricas pueden ejecutarse desde menú o CLI:
+Las métricas se ejecutan desde menú o CLI:
 
 ```bash
 python3 main.py inesdata metrics --topology local

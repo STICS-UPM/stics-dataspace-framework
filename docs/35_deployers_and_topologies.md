@@ -10,7 +10,7 @@ vm-single
 vm-distributed
 ```
 
-El menú puede mostrar alias más amigables:
+El menú muestra alias más amigables:
 
 ```text
 local  máquina local
@@ -73,7 +73,7 @@ overrides `PIONERA_*` a las claves internas de configuración.
 ### Nombres Públicos y Recursos SQL
 
 Los nombres públicos de dataspace, namespaces, hostnames y realms de Keycloak
-deben mantenerse en minúsculas. Pueden usar guiones cuando el recurso lo
+deben mantenerse en minúsculas. El framework acepta guiones cuando el recurso lo
 permite; por ejemplo, `pionera-edc` es un nombre válido para un dataspace EDC y
 su realm de Keycloak.
 
@@ -152,7 +152,7 @@ COMPONENTS_NAMESPACE=components
 | `kube-system` | Infraestructura Kubernetes |
 
 Los nombres `provider` y `consumer` son convenciones del entorno de validación,
-no roles funcionales rígidos. Un conector puede actuar como proveedor o consumidor
+no roles funcionales rígidos. Un conector actúa como proveedor o consumidor
 según el flujo de prueba. Para más de dos conectores, define el inventario en
 `DS_1_CONNECTORS` y, si necesitas controlar su ubicación, usa
 `DS_1_CONNECTOR_NAMESPACES`:
@@ -182,8 +182,8 @@ ubicación de cada conector o ejecutar pares de validación distintos al par bas
 `DS_1_VALIDATION_PAIRS` decide qué pares se usan como origen/destino en las
 validaciones automatizadas. `LEVEL4_CONNECTOR_RECONCILIATION_MODE=full`
 conserva el comportamiento histórico de nivel 4: reconcilia el conjunto
-configurado y puede recrear conectores existentes para dejar un despliegue
-limpio. Para añadir conectores sin recrear los que ya están sanos, usa
+configurado y recrea conectores existentes para dejar un despliegue limpio. Para
+añadir conectores sin recrear los que ya están sanos, usa
 `LEVEL4_CONNECTOR_RECONCILIATION_MODE=additive`.
 
 Si las claves de mapeo no se definen, el framework conserva el comportamiento
@@ -218,18 +218,18 @@ explícita y compatible en el resolvedor común de namespaces.
 ## Arranque en Frío y Readiness
 
 En una instalación limpia o después de reiniciar el entorno, algunos servicios
-pueden requerir más tiempo para estar operativos aunque sus recursos de
-Kubernetes ya existan. Esto aplica especialmente a `local` y `vm-single`, donde
-imágenes locales, volúmenes persistentes, DNS interno, Vault, Keycloak, bases de
-datos, conectores y componentes se inicializan en la misma máquina.
+requieren más tiempo para estar operativos aunque sus recursos de Kubernetes ya
+existan. Esto aplica especialmente a `local` y `vm-single`, donde imágenes
+locales, volúmenes persistentes, DNS interno, Vault, Keycloak, bases de datos,
+conectores y componentes se inicializan en la misma máquina.
 
-Si un nivel falla por timeout de readiness, se deben revisar los logs del
-componente y del servicio dependiente antes de relanzar el nivel afectado. Una
-reejecución puede completarse correctamente cuando el primer intento ya dejó
-inicializados recursos persistentes o imágenes locales. Este comportamiento no
-debe ocultar fallos recurrentes: si el error se reproduce tras reinicio o desde
-un entorno limpio, debe tratarse como incidencia del framework, del despliegue o
-del componente correspondiente.
+Si un nivel falla por timeout de readiness, revisa los logs del componente y del
+servicio dependiente antes de relanzar el nivel afectado. Una reejecución se
+completa correctamente cuando el primer intento dejó inicializados recursos
+persistentes o imágenes locales. Este comportamiento no debe ocultar fallos
+recurrentes: si el error se reproduce tras reinicio o desde un entorno limpio,
+debe tratarse como incidencia del framework, del despliegue o del componente
+correspondiente.
 
 ## Local
 
@@ -246,8 +246,8 @@ python3 main.py edc hosts --topology local --dry-run
 Las entradas de `hosts` normalmente resuelven a `127.0.0.1` y dependen de
 `minikube tunnel` para exponer Ingress en topología `local`.
 
-Si un entorno concreto necesita una dirección distinta de loopback, puede
-declararla explícitamente en:
+Si un entorno concreto necesita una dirección distinta de loopback, declárala
+explícitamente en:
 
 ```text
 LOCAL_HOSTS_ADDRESS
@@ -440,11 +440,11 @@ pionera.role=consumer
 ```
 
 Esto valida placement físico por rol y comunicación entre nodos manteniendo un
-único plano de control Kubernetes. Para despliegues con infraestructura externa, donde los
-conectores pueden vivir en VMs o servidores distintos, el asistente del menú
+único plano de control Kubernetes. En despliegues con infraestructura externa,
+donde los conectores viven en VMs o servidores distintos, el asistente del menú
 también recoge kubeconfigs por rol (`common`, `provider`, `consumer`) para que la
-implementación operativa de `vm-distributed` pueda evolucionar sin reabrir el
-modelo de configuración.
+implementación operativa de `vm-distributed` evolucione sin reabrir el modelo de
+configuración.
 
 La ejecución real actual de `vm-distributed` está habilitada tanto para un
 cluster Kubernetes lógico distribuido como para clusters k3s separados por rol.
@@ -452,8 +452,8 @@ cluster Kubernetes lógico distribuido como para clusters k3s separados por rol.
 dataspace. En nivel 4, `K3S_KUBECONFIG_PROVIDER` se usa para Helm, ConfigMaps,
 rollouts, logs y port-forward de conectores provider, y
 `K3S_KUBECONFIG_CONSUMER` se usa para las mismas operaciones de conectores
-consumer. El nivel 5 puede usar `K3S_KUBECONFIG_COMPONENTS` si se necesita
-dirigir los componentes a un contexto específico.
+consumer. El nivel 5 usa `K3S_KUBECONFIG_COMPONENTS` cuando los componentes se
+dirigen a un contexto específico.
 
 En el modo multi-cluster, los conectores siguen necesitando llegar a los
 servicios comunes en tiempo de ejecución: Keycloak, Vault, MinIO, PostgreSQL y
@@ -464,10 +464,10 @@ Para que este modo compartido cumpla el diagrama de PIONERA, el cluster lógico
 debe incluir nodos Kubernetes para las VMs de conectores. Si el kubeconfig solo
 muestra el nodo común, los namespaces `provider` y `consumer` se crearán
 lógicamente, pero sus pods seguirán ejecutándose en la VM común. En
-`vm-distributed`, los charts de conectores aceptan `nodeSelector` y el adapter
-puede derivarlo de `VM_PROVIDER_K8S_NODE` y `VM_CONSUMER_K8S_NODE`; por ejemplo,
-`org2` puede quedar fijado a `pionera20` y `org3` a `pionera3` cuando esas VMs
-ya formen parte del cluster k3s.
+`vm-distributed`, los charts de conectores aceptan `nodeSelector` y el adapter lo
+deriva de `VM_PROVIDER_K8S_NODE` y `VM_CONSUMER_K8S_NODE`; por ejemplo, `org2`
+queda fijado a `pionera20` y `org3` a `pionera3` cuando esas VMs ya forman parte
+del cluster k3s.
 
 ### Asistente de `vm-distributed`
 
@@ -499,11 +499,12 @@ deployers/<adapter>/deployer.config
 El asistente pregunta por dominios, IP/DNS de VMs, usuario SSH opcional para
 sincronización remota de NGINX, metadatos SSH de preflight, kubeconfigs k3s,
 conectores, ubicación de conectores y pares de validación. Si no se conoce un
-dato, se puede escribir `?` en el campo para ver qué significa, cómo elegirlo y
-qué comandos de Ubuntu ayudan a descubrirlo. Para el inventario de conectores,
-el asistente propone una ubicación inicial alternando los grupos `provider` y
-`consumer`; ese valor se puede editar antes de guardar. El asistente solo escribe
-`.config` locales ignorados por Git y no ejecuta despliegues por sí mismo.
+dato, escribe `?` en el campo para ver qué significa, cómo elegirlo y qué
+comandos de Ubuntu ayudan a descubrirlo. Para el inventario de conectores, el
+asistente propone una ubicación inicial alternando los grupos `provider` y
+`consumer`; edita ese valor antes de guardar si tu despliegue usa otra
+distribución. El asistente solo escribe `.config` locales ignorados por Git y no
+ejecuta despliegues por sí mismo.
 
 La configuración versionada usa placeholders. Los valores reales de host, IP,
 usuario, kubeconfig, rutas de workspace remoto o dominios concretos deben vivir
@@ -523,9 +524,9 @@ En `vm-distributed`, los niveles 2, 3 y 4 refrescan de forma idempotente la
 configuración de routing NGINX cuando `VM_COMMON_IP` y `DS_DOMAIN_BASE` están
 definidos. El framework genera routing HTTP para el dataspace, el servicio de
 registro y los conectores configurados, además de un proxy `stream` para
-servicios comunes. Si `VM_SSH_USER` está definido, también intenta sincronizar
-NGINX en las VMs remotas de conectores; si no lo está, omite esa parte con una
-advertencia y no aborta el nivel.
+servicios comunes. Si `VM_SSH_USER` está definido, también sincroniza NGINX en
+las VMs remotas de conectores; si no lo está, omite esa parte con una advertencia
+y no aborta el nivel.
 
 Para despliegues con conectores externos o infraestructura distribuida, revisa
 [Preparación de conectores externos](./45_external_connector_readiness.md)
@@ -583,4 +584,5 @@ registration-service-<dataspace>.<ds-domain>
 conn-<connector>-<dataspace>.<ds-domain>
 ```
 
-El routing path-based puede añadirse más adelante si un único dominio público se convierte en requisito estricto.
+El routing path-based queda como extensión prevista cuando un único dominio
+público se convierta en requisito estricto.

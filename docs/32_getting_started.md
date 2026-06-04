@@ -2,6 +2,15 @@
 
 ## Requisitos
 
+La vía recomendada para operar el framework desde una estación de trabajo es
+Windows con WSL. En ese modo, WSL ejecuta `main.py`, Docker Desktop aporta el
+motor de contenedores para `local`, y el framework gestiona los accesos SSH,
+kubeconfigs y túneles requeridos por `vm-single` y `vm-distributed`.
+
+El framework también soporta ejecución directa dentro de una VM cuando el
+operador instala allí el repositorio, pero la ruta principal de operación y
+depuración documentada para estaciones de trabajo es WSL sobre Windows.
+
 Para ejecución local, el framework espera:
 
 - Python 3.10 o superior;
@@ -51,7 +60,7 @@ bash scripts/bootstrap_framework.sh
 `npm` es obligatorio porque el framework instala Newman y Playwright para las
 validaciones funcionales. Java 17+ es obligatorio para construir las imágenes
 locales de conectores EDC/INESData que después se cargan en Minikube. En una VM
-Ubuntu nueva, el bootstrap intenta instalar Node.js con `npm` y OpenJDK 17
+Ubuntu nueva, el bootstrap instala Node.js con `npm` y OpenJDK 17
 automáticamente mediante `apt-get` cuando faltan. Si usas `--without-system-deps`
 o tu entorno no permite instalar paquetes del sistema, instálalos antes del
 bootstrap:
@@ -62,9 +71,9 @@ sudo apt-get install -y nodejs npm openjdk-17-jdk
 ```
 
 El bootstrap requiere Python `3.10+`. Si `python3` apunta a una versión más
-antigua pero la máquina ya tiene otra versión compatible instalada, el script
-intentará usar automáticamente `python3.10`, `python3.11`, `python3.12` o
-`python3.13`. También puede forzarse explícitamente:
+antigua pero la máquina ya tiene otra versión compatible instalada, el script usa
+automáticamente la primera opción disponible entre `python3.10`, `python3.11`,
+`python3.12` y `python3.13`. También se fuerza explícitamente con:
 
 ```bash
 PIONERA_PYTHON_BIN=python3.11 bash scripts/bootstrap_framework.sh
@@ -121,9 +130,9 @@ deployers/edc/deployer.config
 ```
 
 Usa los ficheros `.example` como plantilla cuando existan. Los ficheros locales
-`deployer.config` y `deployers/infrastructure/topologies/*.config` pueden
-contener credenciales, rutas o direcciones específicas del entorno y no deben
-subirse al repositorio.
+`deployer.config` y `deployers/infrastructure/topologies/*.config` contienen la
+configuración específica del entorno, incluidas credenciales, rutas o direcciones
+cuando el despliegue las requiere. No deben subirse al repositorio.
 
 La topología local tiene un overlay propio en:
 
@@ -160,9 +169,9 @@ asignarlo, valida un adapter cada vez o usa una topología VM adecuada. Para
 evidencia de cierre de `edc`, usa `vm-distributed`. En modo estable,
 `Level 1` avisa si Docker solo soporta un adapter local, y `Level 3/4/5`
 bloquean la instalación del segundo adapter si ya hay otro activo con memoria
-efectiva inferior a ese baseline. En terminal interactiva, ese bloqueo puede
-convertirse en un cambio controlado de adapter: el framework muestra los
-namespaces y artefactos runtime gestionados que va a eliminar, preserva
+efectiva inferior a ese baseline. En terminal interactiva, ese bloqueo abre un
+cambio controlado de adapter: el framework muestra los namespaces y artefactos
+runtime gestionados que va a eliminar, preserva
 `common-srvs`, y solo continúa si confirmas el texto exacto que muestra. En
 ejecución no interactiva, usa la variable `PIONERA_LOCAL_ADAPTER_SWITCH_CONFIRM`
 con el valor `SWITCH TO EDC` o `SWITCH TO INESDATA`, según el adapter destino.
@@ -170,9 +179,8 @@ con el valor `SWITCH TO EDC` o `SWITCH TO INESDATA`, según el adapter destino.
 
 ## Coexistencia de Adapters
 
-`inesdata` y `edc` pueden reutilizar los servicios comunes de `common-srvs`.
-Esa es la ruta esperada cuando se prueban ambos adapters sobre el mismo cluster
-local.
+`inesdata` y `edc` reutilizan los servicios comunes de `common-srvs` cuando se
+prueban ambos adapters sobre el mismo cluster local.
 
 La restricción importante es que cada adapter debe usar un dataspace aislado:
 
@@ -194,7 +202,8 @@ bases de datos, usuarios y artefactos generados por `Level 3`.
 
 ## Hosts
 
-El framework puede planificar o aplicar entradas de `hosts` para el adapter y la topología seleccionados:
+El framework planifica o aplica entradas de `hosts` para el adapter y la
+topología seleccionados:
 
 ```bash
 python3 main.py inesdata hosts --topology local --dry-run
@@ -240,7 +249,8 @@ La referencia completa del menú está en [Referencia del menú](./33_menu_refer
 
 ## Minikube Tunnel
 
-En despliegues locales puede ser necesario mantener `minikube tunnel` abierto para que los servicios sean accesibles por ingress:
+En despliegues locales completos, mantén `minikube tunnel` abierto para que los
+servicios sean accesibles por ingress:
 
 ```bash
 minikube tunnel
@@ -249,11 +259,12 @@ minikube tunnel
 Déjalo ejecutándose en otra terminal durante despliegue y validación.
 
 Las validaciones funcionales deben usar los hostnames locales publicados por
-Ingress. Los `port-forward` quedan reservados para comprobaciones internas o
-diagnóstico de desarrollo; no deben sustituir la ruta normal de navegador o API.
+Ingress. El framework reserva los `port-forward` para comprobaciones internas o
+diagnóstico de desarrollo; no los usa como sustituto de la ruta normal de
+navegador o API.
 
 Para PostgreSQL, el servicio del cluster sigue usando el puerto `5432`. El
-framework intenta usar `PG_PORT=5432` como puerto local preferente. Si ese puerto
-está ocupado por un `kubectl port-forward` antiguo del framework, lo libera y lo
+framework usa `PG_PORT=5432` como puerto local preferente. Si ese puerto está
+ocupado por un `kubectl port-forward` antiguo del framework, lo libera y lo
 recrea. Si pertenece a Windows, WSL u otro entorno local, el framework falla con
 un diagnóstico y no termina procesos externos automáticamente.

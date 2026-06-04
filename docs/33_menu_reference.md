@@ -63,7 +63,9 @@ Despliega componentes opcionales configurados, como Ontology Hub o AI Model Hub 
 
 `6 - Level 6: Run Validation Tests`
 
-Ejecuta la validación integral del adapter activo. Puede incluir limpieza previa, Newman, checks de almacenamiento, Playwright, componentes y métricas según el perfil de validación.
+Ejecuta la validación integral del adapter activo. Según el perfil de validación,
+incluye limpieza previa, Newman, checks de almacenamiento, Playwright,
+componentes y métricas.
 
 Para evidencias de cierre, usa `vm-distributed` con el adapter `edc`. Las rutas
 `local` y `vm-single` de EDC están implementadas, pero deben revalidarse antes
@@ -125,10 +127,10 @@ Planifica o aplica entradas del fichero `hosts`. Por defecto solo planifica. La
 salida muestra los hostnames concretos por nivel y el motivo si el sync queda
 en `Skipped`.
 
-Si el sync automático no está habilitado, el menú interactivo también puede
-ofrecer aplicar el plan en ese momento cuando detecta un fichero `hosts`
-resoluble. Para aplicar cambios de forma explícita fuera del prompt interactivo,
-usa `PIONERA_SYNC_HOSTS=true` y `PIONERA_HOSTS_FILE`.
+Si el sync automático no está habilitado, el menú interactivo ofrece aplicar el
+plan cuando detecta un fichero `hosts` resoluble. Para aplicar cambios de forma
+explícita fuera del prompt interactivo, usa `PIONERA_SYNC_HOSTS=true` y
+`PIONERA_HOSTS_FILE`.
 
 En el menú interactivo, si el adapter elegido para la operación expone
 hostnames públicos y vas a ejecutar niveles `3-6`, el framework verifica
@@ -150,7 +152,7 @@ un formato legible. Es útil después de `Level 2`, `Level 4` o `Level 5` cuando
 quieres ver rápidamente portales, dashboards, APIs, componentes o accesos
 compartidos sin buscar en artefactos o ficheros de configuración.
 
-La salida puede incluir:
+La salida incluye, según la configuración activa:
 
 - `Keycloak`
 - `MinIO API`
@@ -232,11 +234,11 @@ Ejecuta checks de preparación local. Úsalo antes de desplegar o para diagnosti
 
 `R - Repair Local Access / Connectors`
 
-Ejecuta una recuperación guiada del acceso local. Primero puede reconciliar el
-bloque gestionado de `hosts` del framework y, después, opcionalmente reiniciar
-los conectores si el cluster seguía desplegado tras reiniciar WSL o el entorno
-local. Cuando el bloque de `hosts` queda listo, también verifica los endpoints
-públicos mínimos que el framework espera antes de `Level 6`.
+Ejecuta una recuperación guiada del acceso local. Primero reconcilia el bloque
+gestionado de `hosts` del framework y, después, permite reiniciar los conectores
+si el cluster seguía desplegado tras reiniciar WSL o el entorno local. Cuando el
+bloque de `hosts` queda listo, también verifica los endpoints públicos mínimos
+que el framework espera antes de `Level 6`.
 
 La ruta CLI equivalente es:
 
@@ -325,7 +327,7 @@ nivel 6:
   experimento.
 - `2 - Kafka transfer interoperability tests`: ejecuta únicamente la validación
   de transferencias Kafka entre conectores. Requiere confirmación explícita
-  porque puede tardar más que las validaciones Newman.
+  porque suele tardar más que las validaciones Newman.
 
 Estas opciones reutilizan la misma lógica de validación que usa el nivel 6, pero
 permiten repetir solo la parte de interoperabilidad que interese revisar.
@@ -342,7 +344,7 @@ Sale del menú.
 
 ## Topología
 
-La topología puede seleccionarse de dos maneras:
+La topología se selecciona de dos maneras:
 
 - por CLI con `--topology`
 - desde el propio menú con `T - Select topology`

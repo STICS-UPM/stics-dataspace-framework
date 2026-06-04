@@ -23,8 +23,8 @@ un camino claro, verificable y con poca carga cognitiva.
 
 ## Roles de vm-distributed
 
-`vm-distributed` separa el entorno en roles. La implementación puede usar un
-cluster Kubernetes común con varios nodos o varios clusters k3s controlados por
+`vm-distributed` separa el entorno en roles. La implementación admite un cluster
+Kubernetes común con varios nodos y también clusters k3s controlados por
 kubeconfigs distintos.
 
 | Rol | Responsabilidad |
@@ -160,7 +160,7 @@ Ejemplo conceptual:
 | `provider` | `https://org2.<dominio>` |
 | `consumer` | `https://org3.<dominio>` |
 
-En la VM común, los servicios pueden convivir por rutas:
+En la VM común, los servicios conviven por rutas:
 
 ```ini
 VM_COMMON_PUBLIC_URL=https://org1.<dominio-comun>
@@ -235,8 +235,8 @@ El bootstrap SSH debe ser idempotente:
 - no guarda llaves privadas, contraseñas ni kubeconfigs en ficheros
   versionados.
 
-Antes de tocar VMs reales, se puede validar que el framework sabe crear una
-llave SSH nueva desde cero:
+Antes de tocar VMs reales, valida que el framework sabe crear una llave SSH
+nueva desde cero:
 
 ```bash
 python3 main.py inesdata ssh-access self-test --topology vm-distributed
@@ -255,9 +255,9 @@ python3 main.py inesdata ssh-access plan --topology vm-distributed
 
 El comando ya no muestra una lista larga de comandos como primera opción.
 Muestra la guía interactiva recomendada y explica por qué existe: la preparación
-SSH puede pedir contraseñas una sola vez y debe ejecutarse desde la máquina
-correcta. La guía interactiva acompaña al operador paso a paso, pregunta antes
-de ejecutar cada comando y nunca guarda contraseñas.
+SSH pide contraseñas una sola vez cuando la clave aún no está instalada y debe
+ejecutarse desde la máquina correcta. La guía interactiva acompaña al operador
+paso a paso, pregunta antes de ejecutar cada comando y nunca guarda contraseñas.
 
 Con `VM_DISTRIBUTED_EXECUTION_HOST=external`, ejecuta la guía desde la misma
 terminal donde ejecutas el framework, por ejemplo WSL o la estación de operación.
@@ -276,12 +276,12 @@ escribiendo contraseñas únicamente cuando lo solicite el prompt de SSH. Despu�
 de instalar la clave pública, la verificación y los siguientes despliegues deben
 funcionar sin pedir contraseña.
 
-La guía intenta detectar automáticamente si se está ejecutando desde WSL, desde
-la VM de servicios comunes o desde otra terminal de operación. La ruta SSH no se
-pregunta: se lee desde los ficheros de configuración. Si la configuración define
-bastión, la guía lo usa; si define conexión directa, usa conexión directa. Solo
-pregunta por la ubicación cuando lo detectado no encaja con la configuración, y
-muestra el progreso de preguntas como `Question 1/N`.
+La guía detecta automáticamente si se está ejecutando desde WSL, desde la VM de
+servicios comunes o desde otra terminal de operación. La ruta SSH no se pregunta:
+se lee desde los ficheros de configuración. Si la configuración define bastión,
+la guía lo usa; si define conexión directa, usa conexión directa. Solo pregunta
+por la ubicación cuando lo detectado no encaja con la configuración, y muestra el
+progreso de preguntas como `Question 1/N`.
 
 Antes de la primera pregunta, la guía muestra solo un resumen compacto: topología,
 llave dedicada, ubicación detectada, ruta SSH configurada y número de preguntas.
@@ -303,10 +303,10 @@ Para reconciliar explícitamente el acceso SSH dedicado:
 python3 main.py inesdata ssh-access reconcile --topology vm-distributed
 ```
 
-`reconcile` puede crear o reutilizar la llave dedicada local y añadir su clave
-pública a `authorized_keys` en las VMs configuradas. Si no existe una ruta de
-acceso inicial aprobada, el comando falla sin insistir y muestra el siguiente
-paso mínimo.
+`reconcile` crea o reutiliza la llave dedicada local y añade su clave pública a
+`authorized_keys` en las VMs configuradas. Si no existe una ruta de acceso
+inicial aprobada, el comando falla sin insistir y muestra el siguiente paso
+mínimo.
 
 Cuando el framework se ejecute desde la VM común, usa:
 
@@ -356,7 +356,7 @@ J - Add connector to existing dataspace
 
 El asistente pide el nombre corto del conector, su ubicación y el par de
 validación opcional. Antes de escribir ficheros, muestra un plan. Si el operador
-confirma, actualiza el inventario, cambia `Level 4` a modo aditivo y puede
+confirma, actualiza el inventario, cambia `Level 4` a modo aditivo y ofrece
 ejecutar `Level 4` en ese momento.
 
 El resultado equivalente en configuración es:
@@ -370,7 +370,7 @@ DS_1_VALIDATION_PAIRS=org2>org3,partnera>org2
 LEVEL4_CONNECTOR_RECONCILIATION_MODE=additive
 ```
 
-También se puede revisar el plan manualmente con:
+También revisa el plan manualmente con:
 
 ```bash
 python3 main.py inesdata deploy --topology vm-distributed --dry-run
@@ -406,8 +406,7 @@ La opción `sudo -n` evita esperas por contraseña interactiva. Si esa comprobac
 falla, usa un registry accesible por el clúster o configura un permiso
 no interactivo y acotado para importar imágenes en k3s.
 
-Para una validación manual desde una terminal real, puede habilitarse el modo
-interactivo:
+Para una validación manual desde una terminal real, habilita el modo interactivo:
 
 ```ini
 VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE=true

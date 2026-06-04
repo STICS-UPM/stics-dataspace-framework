@@ -13,6 +13,18 @@ El punto de entrada principal es `main.py`. El framework está organizado para
 trabajar con distintos adapters y topologías sin duplicar la lógica común de
 validación.
 
+## Entorno Recomendado de Operación
+
+La vía recomendada para usar el framework desde una estación de trabajo es
+Windows con WSL. En ese modo, WSL ejecuta el CLI, Docker Desktop aporta el motor
+de contenedores para la topología `local`, y el framework gestiona los accesos
+SSH, kubeconfigs y túneles necesarios para operar topologías VM desde la misma
+terminal.
+
+El framework también soporta ejecución directa dentro de una VM cuando el
+operador decide instalarlo allí, pero la ruta principal de operación y
+depuración documentada para estaciones de trabajo es WSL sobre Windows.
+
 ## Estado Consolidado del Proyecto
 
 La rama `main` consolida el framework como herramienta de despliegue, validación
@@ -48,6 +60,7 @@ oficial actualizado en esta versión de cierre.
 
 | Sección | Qué contiene |
 | --- | --- |
+| [Entorno recomendado de operación](#entorno-recomendado-de-operación) | Uso recomendado desde Windows con WSL |
 | [Funcionalidades principales](#funcionalidades-principales) | Capacidades del framework |
 | [Adapters](#adapters) | Implementaciones soportadas |
 | [Topologías](#topologías) | `local`, `vm-single` y `vm-distributed` |
@@ -150,7 +163,7 @@ instalar paquetes del sistema, usa `--without-system-deps`.
 `npm` es obligatorio porque las validaciones usan Newman y Playwright, también
 en topología `vm-single`. Java 17+ es obligatorio para construir las imágenes
 locales de conectores EDC/INESData que después se cargan en Minikube. En una VM
-Ubuntu nueva, el bootstrap intenta instalar Node.js con `npm` y OpenJDK 17
+Ubuntu nueva, el bootstrap instala Node.js con `npm` y OpenJDK 17
 automáticamente mediante `apt-get` cuando faltan. Si usas `--without-system-deps`
 o tu entorno no permite instalar paquetes del sistema, instálalos antes del
 bootstrap:
@@ -264,8 +277,8 @@ Notas prácticas:
 - si entras por el menú con `--topology vm-single` y faltan las claves
   `VM_EXTERNAL_IP`/`INGRESS_EXTERNAL_IP` en
   `deployers/infrastructure/topologies/vm-single.config`,
-  el framework puede detectar una dirección candidata con `hostname -I` o
-  `minikube ip` y ofrecer escribirla automáticamente;
+  el framework detecta una dirección candidata con `hostname -I` o `minikube ip`
+  y ofrece escribirla automáticamente;
 - si mantienes claves de topología dentro de
   `deployers/infrastructure/deployer.config`, el CLI ya avisa con un warning de
   migración y te indica el overlay correcto;
@@ -314,12 +327,12 @@ python3 main.py menu --topology vm-single
 
 ## Hosts Locales
 
-El framework puede planificar o aplicar entradas en el fichero `hosts` del
-sistema. Por defecto, la operación solo planifica.
+El framework planifica o aplica entradas en el fichero `hosts` del sistema. Por
+defecto, la operación solo planifica.
 
 En topología `local`, el camino canónico sigue siendo resolver los hostnames
 públicos hacia `127.0.0.1` y mantener `minikube tunnel` activo. Si un entorno
-necesita una dirección distinta de loopback, puede declararla explícitamente en
+necesita una dirección distinta de loopback, declárala explícitamente en
 `LOCAL_HOSTS_ADDRESS` y `LOCAL_INGRESS_EXTERNAL_IP` dentro de
 `deployers/infrastructure/topologies/local.config`.
 
@@ -351,7 +364,7 @@ Regla práctica:
 - si Docker Desktop no alcanza ese baseline, `Level 1` avisa que el entorno
   queda en modo de un adapter local y `Level 3/4/5` bloquean la instalación del
   segundo adapter mientras el primero siga activo; si la ejecución es
-  interactiva, el framework muestra un plan de cambio y puede eliminar, tras
+  interactiva, el framework muestra un plan de cambio y elimina, tras
   confirmación exacta, solo los recursos locales del adapter anterior;
 - en ejecución no interactiva, el cambio de adapter debe autorizarse de forma
   explícita con `PIONERA_LOCAL_ADAPTER_SWITCH_CONFIRM="SWITCH TO EDC"` o
@@ -398,14 +411,14 @@ Para `Level 6` en topología `local`, la validación completa sigue dependiendo 
 hostnames públicos accesibles por Ingress. Mantén `minikube tunnel` activo y
 asegúrate de que `hosts` resuelve correctamente Keycloak, MinIO,
 `registration-service` y los conectores. Los mecanismos internos de
-`port-forward` que el framework puede usar en validaciones Kafka concretas no
+`port-forward` que el framework reserva para validaciones Kafka concretas no
 sustituyen ese requisito del flujo completo.
 
 ## Coexistencia de Adapters
 
-Los adapters pueden compartir los servicios comunes desplegados en
-`common-srvs` (`Keycloak`, `MinIO`, `PostgreSQL`, `Vault`), pero cada dataspace
-debe tener un nombre y namespace propios.
+Los adapters comparten los servicios comunes desplegados en `common-srvs`
+(`Keycloak`, `MinIO`, `PostgreSQL`, `Vault`) cuando se ejecutan sobre el mismo
+cluster, pero cada dataspace debe tener un nombre y namespace propios.
 
 Por ejemplo, es válido desplegar:
 
@@ -415,10 +428,10 @@ edc      -> DS_1_NAME=demoedc, DS_1_NAMESPACE=demoedc
 ```
 
 No se debe reutilizar el mismo `DS_1_NAME` o `DS_1_NAMESPACE` para dos adapters
-distintos en el mismo cluster local, porque eso puede provocar colisiones de
-namespace, registration-service, bases de datos, usuarios y artefactos
-generados. Los conectores pueden tener nombres similares siempre que el
-dataspace resultante produzca hostnames distintos.
+distintos en el mismo cluster local, porque eso provoca colisiones de namespace,
+registration-service, bases de datos, usuarios y artefactos generados. Usa
+nombres similares para conectores solo cuando el dataspace resultante produce
+hostnames distintos.
 
 ## Guía de Uso con Ejemplos
 
@@ -461,10 +474,10 @@ Opciones operativas del menú:
 Al seleccionar `edc`, el menú recuerda revisar `H` antes de ejecutar niveles que
 dependen de hostnames públicos.
 
-La opción `U` muestra las URLs de acceso en formato legible y puede incluir
-endpoints compartidos como `Keycloak`, `MinIO API`, `MinIO Console`,
+La opción `U` muestra las URLs de acceso en formato legible e incluye endpoints
+compartidos como `Keycloak`, `MinIO API`, `MinIO Console`,
 `registration-service`, URLs de conectores/componentes y el `bucket` MinIO de
-cada conector cuando aplique.
+cada conector cuando aplican en la configuración activa.
 
 Si no preseleccionas adapter con `S`, el menú lo pedirá automáticamente cuando
 una operación de `Level 3` a `Level 6` lo necesite.
@@ -474,7 +487,7 @@ La referencia completa está en
 
 ## Validación Local y Acceso Público
 
-En topología `local`, el framework intenta comportarse de forma coherente con un
+En topología `local`, el framework sigue un comportamiento coherente con un
 entorno más parecido a producción:
 
 - navegador, Playwright y validación completa de `Level 6` usan hostnames
@@ -522,39 +535,39 @@ bash scripts/bootstrap_framework.sh
 ```
 
 El bootstrap requiere Python `3.10+`. Si `python3` apunta a una versión más
-antigua pero la máquina ya tiene otra versión compatible instalada, el script
-intentará usar automáticamente `python3.10`, `python3.11`, `python3.12` o
-`python3.13`. También puede forzarse explícitamente:
+antigua pero la máquina ya tiene otra versión compatible instalada, el script usa
+automáticamente la primera opción disponible entre `python3.10`, `python3.11`,
+`python3.12` y `python3.13`. También se fuerza explícitamente con:
 
 ```bash
 PIONERA_PYTHON_BIN=python3.11 bash scripts/bootstrap_framework.sh
 ```
 
-Si un entorno no permite instalar paquetes del sistema desde el bootstrap, se
-puede usar `bash scripts/bootstrap_framework.sh --without-system-deps`.
+Si un entorno no permite instalar paquetes del sistema desde el bootstrap, usa
+`bash scripts/bootstrap_framework.sh --without-system-deps`.
 
 ## Minikube Tunnel
 
-En despliegues locales puede ser necesario mantener `minikube tunnel` abierto en
-otra terminal:
+En despliegues locales completos, mantén `minikube tunnel` abierto en otra
+terminal mientras ejecutas los niveles y la validación:
 
 ```bash
 minikube tunnel
 ```
 
-Cuando `minikube tunnel` solicite contraseña, puede que la consola no muestre un
+Cuando `minikube tunnel` solicite contraseña, la consola no siempre muestra un
 indicador visible. Introduce la contraseña y pulsa `Enter`.
 
 Los accesos funcionales locales deben ejercitar los hostnames publicados por
-Ingress. El framework puede usar `port-forward` como apoyo interno para
-diagnósticos o clientes host-side, pero no debe sustituir los endpoints de
-navegador o API. El fallback de `port-forward` para conectores está desactivado
-por defecto y solo debe habilitarse temporalmente con
+Ingress. El framework reserva `port-forward` para apoyo interno, diagnósticos o
+clientes host-side, pero no lo usa como sustituto de los endpoints de navegador
+o API. El fallback de `port-forward` para conectores está desactivado por
+defecto y solo debe habilitarse temporalmente con
 `PIONERA_ALLOW_CONNECTOR_PORT_FORWARD_FALLBACK=true`.
 
 PostgreSQL es una excepción operativa interna: el servicio PostgreSQL del
-cluster sigue usando el puerto `5432`. En topología `local`, el framework
-intenta usar `PG_PORT=5432` como puerto local preferente para `psql` y Python.
+cluster sigue usando el puerto `5432`. En topología `local`, el framework usa
+`PG_PORT=5432` como puerto local preferente para `psql` y Python.
 Si ese puerto local está ocupado por un `kubectl port-forward` antiguo del
 framework, lo libera y lo recrea como
 `127.0.0.1:5432 -> common-srvs-postgresql:5432`. Si el puerto pertenece a
@@ -569,11 +582,10 @@ generadas para Keycloak, MinIO y conectores viven bajo
 
 ## Acceso Externo (entorno VM/PIONERA)
 
-En entornos desplegados en VM, los conectores y servicios pueden requerir un
-proxy externo para quedar accesibles desde fuera de la máquina host. El
-framework ya soporta `PUBLIC_HOSTNAME` para ajustar el `frontendUrl` de
-Keycloak, y además incluye un script operativo para preparar el acceso público
-vía nginx en la VM:
+En entornos desplegados en VM, el acceso desde navegador se publica mediante el
+dominio o proxy externo configurado para la VM. El framework soporta
+`PUBLIC_HOSTNAME` para ajustar el `frontendUrl` de Keycloak y mantiene scripts
+operativos para preparar el acceso público vía nginx en la VM:
 
 ```bash
 cd deployers/inesdata/scripts
@@ -641,7 +653,8 @@ python3 main.py edc recreate-dataspace --topology local --confirm-dataspace demo
 
 ## Validación
 
-`Level 6` ejecuta la validación integral del adapter activo. Puede incluir:
+`Level 6` ejecuta la validación integral del adapter activo. Según el adapter y
+el perfil activo, incluye:
 
 - Newman;
 - validación funcional EDC+Kafka después de Newman cuando el adapter la soporta;
@@ -675,7 +688,7 @@ Para forzar el modo rápido en local:
 python3 main.py inesdata validate --topology local --validation-mode fast
 ```
 
-También puede declararse con `PIONERA_VALIDATION_MODE=fast`.
+También se declara con `PIONERA_VALIDATION_MODE=fast`.
 
 En el layout `role-aligned`, `Level 5` publica componentes configurados en
 `components_namespace`. `Level 6` valida esos componentes después de las suites
@@ -729,18 +742,18 @@ bash scripts/run_kafka_benchmark.sh --prepare-only
 bash scripts/run_kafka_benchmark.sh --teardown-only
 ```
 
-El benchmark standalone puede generar `kafka_metrics.json` y mide el broker
-Kafka, no el flujo E2E del dataspace. Además, `Level 6` puede ejecutar la
+El benchmark standalone genera `kafka_metrics.json` cuando se ejecuta y mide el
+broker Kafka, no el flujo E2E del dataspace. Además, `Level 6` ejecuta la
 validación funcional EDC+Kafka después de Newman para adapters compatibles y
-generar `kafka_transfer_results.json`. Esa suite está desactivada por defecto
-para ahorrar tiempo. En ejecuciones interactivas, `Level 6` pregunta
+genera `kafka_transfer_results.json`. Esa suite está desactivada por defecto para
+ahorrar tiempo. En ejecuciones interactivas, `Level 6` pregunta
 `Run Kafka validation suites too?`; en ejecuciones no interactivas, usa
 `PIONERA_LEVEL6_RUN_KAFKA=true`.
 
 En local, esa validación usa por defecto un broker Kafka temporal dentro de
 Kubernetes. Los conectores acceden al broker por DNS de cluster y el proceso
-Python del framework puede usar un `port-forward` temporal solo para crear
-topics y verificar mensajes desde el host.
+Python del framework usa un `port-forward` temporal solo para crear topics y
+verificar mensajes desde el host.
 
 ## Imágenes Locales
 
@@ -814,7 +827,7 @@ El menú incluye accesos directos de desarrollo:
 | `Cleanup Workspace` | Limpia caches y artefactos temporales. |
 | `Build and Deploy Local Images` | Construye imágenes locales y reinicia componentes desplegados cuando aplica. |
 
-El script de limpieza también puede ejecutarse manualmente:
+El script de limpieza también se ejecuta manualmente con:
 
 ```bash
 bash scripts/clean_workspace.sh
@@ -825,8 +838,8 @@ bash scripts/clean_workspace.sh --apply --include-results
 ## Experimentos y Reportes
 
 Un experimento es una ejecución reproducible del flujo de validación y medición.
-Puede incluir despliegue, validación API, validación UI, métricas, Kafka y
-artefactos de componentes.
+Incluye despliegue, validación API, validación UI, métricas, Kafka y artefactos
+de componentes según el alcance ejecutado.
 
 Estructura habitual:
 
@@ -878,7 +891,7 @@ Descubrimiento general:
 python3 -m unittest discover tests
 ```
 
-El descubrimiento general puede incluir suites amplias de Vault, Kafka,
+El descubrimiento general incluye las suites disponibles de Vault, Kafka,
 Ontology, métricas o componentes que dependan del entorno local disponible.
 
 ## Documentación
@@ -906,7 +919,7 @@ Diagramas disponibles:
 - [Entorno distribuido de validación](./docs/pionera_distributed_validation_environment.png)
 - [Arquitectura del entorno de pruebas](./docs/test_environment_architecture.png)
 
-Los vídeos explicativos pueden enlazarse desde `docs/README.md` cuando estén
+Los vídeos explicativos se enlazan desde `docs/README.md` cuando estén
 publicados. La estructura recomendada es:
 
 1. resumen del framework y metodología de validación;
