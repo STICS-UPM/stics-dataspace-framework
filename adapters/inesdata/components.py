@@ -1262,6 +1262,20 @@ class INESDataComponentsAdapter:
             flag = os.environ.get("LEVEL6_ASSUME_LOCAL_IMAGES_AVAILABLE")
         return self._parse_bool(flag, default=False)
 
+    def _default_level5_auto_build_local_images(self) -> bool:
+        return self._normalized_topology() not in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}
+
+    def _level5_auto_build_local_images(self, deployer_config: dict | None = None) -> bool:
+        config = dict(deployer_config or {})
+        flag = config.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
+        if flag is None:
+            flag = config.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
+        if flag is None:
+            flag = os.environ.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
+        if flag is None:
+            flag = os.environ.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
+        return self._parse_bool(flag, default=self._default_level5_auto_build_local_images())
+
     def _vm_single_remote_image_import_target(self, deployer_config: dict | None = None):
         config = dict(deployer_config or {})
         raw_enabled = str(config.get("VM_SINGLE_REMOTE_IMAGE_IMPORT") or "auto").strip().lower()
@@ -1685,14 +1699,7 @@ class INESDataComponentsAdapter:
             or getattr(self.config, "MINIKUBE_PROFILE", "minikube")
             or "minikube"
         ).strip() or "minikube"
-        auto_build_flag = deployer_config.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
-        if auto_build_flag is None:
-            auto_build_flag = deployer_config.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
-        if auto_build_flag is None:
-            auto_build_flag = os.environ.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
-        if auto_build_flag is None:
-            auto_build_flag = os.environ.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
-        auto_build_enabled = self._parse_bool(auto_build_flag, default=True)
+        auto_build_enabled = self._level5_auto_build_local_images(deployer_config)
 
         if normalized_component == "ontology-hub":
             if not image_ref:

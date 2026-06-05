@@ -134,6 +134,7 @@ from validation.orchestration.kafka import (
     KAFKA_LEVEL6_SKIP_FLAG,
     run_kafka_edc_validation,
     should_run_kafka_edc_validation,
+    validate_kafka_runtime_preflight,
 )
 from validation.orchestration.reports import (
     build_experiment_dashboard,
@@ -3092,6 +3093,103 @@ def _save_level6_kafka_preparation_artifact(preparation, experiment_dir):
     return path
 
 
+def _load_level6_kafka_runtime_config(adapter):
+    kafka_config_loader = _resolve_adapter_callable(
+        adapter,
+        "get_kafka_config",
+        default=lambda: {},
+    )
+    if not callable(kafka_config_loader):
+        return {}
+    loaded = kafka_config_loader()
+    return dict(loaded or {}) if isinstance(loaded, dict) else {}
+
+
+def _load_level6_kafka_deployer_config(adapter, deployer_context=None):
+    base_load_deployer_config = _resolve_adapter_callable(
+        adapter,
+        "config_adapter.load_deployer_config",
+        "load_deployer_config",
+        default=lambda: {},
+    )
+    load_deployer_config = _context_config_loader(
+        base_load_deployer_config,
+        deployer_context=deployer_context,
+    )
+    if not callable(load_deployer_config):
+        return {}
+    loaded = load_deployer_config()
+    return dict(loaded or {}) if isinstance(loaded, dict) else {}
+
+
+def _save_level6_kafka_preflight_artifact(preflight, experiment_dir):
+    if not experiment_dir or not isinstance(preflight, dict):
+        return None
+
+    path = os.path.join(experiment_dir, "kafka_runtime_preflight.json")
+    os.makedirs(experiment_dir, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(preflight, handle, indent=2, ensure_ascii=False)
+    print(f"Kafka runtime preflight saved to {path}")
+    return path
+
+
+def _run_level6_kafka_preflight(
+    adapter,
+    *,
+    experiment_dir=None,
+    deployer_context=None,
+    persist=True,
+):
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%S")
+    try:
+        runtime_config = _load_level6_kafka_runtime_config(adapter)
+        deployer_config = _load_level6_kafka_deployer_config(
+            adapter,
+            deployer_context=deployer_context,
+        )
+        preflight = validate_kafka_runtime_preflight(
+            runtime_config,
+            deployer_config,
+        )
+    except Exception as exc:
+        preflight = {
+            "status": "failed",
+            "topology": str(getattr(adapter, "topology", "unknown") or "unknown"),
+            "errors": [str(exc)],
+            "warnings": [],
+            "connector_bootstrap_servers": [],
+            "error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+
+    preflight.setdefault("started_at", started_at)
+    preflight["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    status = str(preflight.get("status") or "unknown").lower()
+    for warning in preflight.get("warnings") or []:
+        print(f"Warning: Kafka preflight: {warning}")
+    if status == "failed":
+        print("Kafka runtime preflight failed:")
+        for error in preflight.get("errors") or []:
+            print(f"- {error}")
+        invalid_servers = preflight.get("invalid_connector_bootstrap_servers") or []
+        for item in invalid_servers:
+            address = item.get("address", "")
+            reason = item.get("reason", "invalid")
+            print(f"- Invalid connector bootstrap server: {address} ({reason})")
+    else:
+        topology = preflight.get("topology", "unknown")
+        if topology == "vm-distributed":
+            servers = ", ".join(preflight.get("connector_bootstrap_servers") or []) or "not configured"
+            print(f"Kafka runtime preflight passed for vm-distributed: {servers}")
+
+    if persist:
+        _save_level6_kafka_preflight_artifact(preflight, experiment_dir)
+    return preflight
+
+
 def _start_level6_kafka_preparation(
     adapter,
     connectors,
@@ -3113,6 +3211,14 @@ def _start_level6_kafka_preparation(
         validation_profile=validation_profile,
         deployer_name=deployer_name,
     ):
+        return None
+
+    preflight = _run_level6_kafka_preflight(adapter, persist=False)
+    if str(preflight.get("status") or "").lower() == "failed":
+        print(
+            "Kafka runtime preparation skipped because preflight failed; "
+            "the Kafka suite will report the failure in Level 6."
+        )
         return None
 
     kafka_manager = build_kafka_manager(adapter, manager_cls=kafka_manager_cls)
@@ -3557,6 +3663,31 @@ def run_level6_kafka_edc_after_newman(
         return results
 
     print_interoperability_suite_header("Kafka transfer interoperability", "Kafka")
+    kafka_preflight = _run_level6_kafka_preflight(
+        adapter,
+        experiment_dir=experiment_dir,
+        deployer_context=deployer_context,
+    )
+    if str(kafka_preflight.get("status") or "").lower() == "failed":
+        if kafka_preparation is not None:
+            kafka_preparation.stop_runtime()
+        message = "; ".join(kafka_preflight.get("errors") or []) or "Kafka runtime preflight failed"
+        results = [
+            {
+                "status": "failed",
+                "reason": "kafka_runtime_preflight_failed",
+                "preflight": kafka_preflight,
+                "error": {
+                    "type": "KafkaRuntimePreflightError",
+                    "message": message,
+                },
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+        ]
+        _save_kafka_edc_results(results, experiment_dir, experiment_storage=experiment_storage)
+        _print_kafka_edc_results(results)
+        return results
+
     kafka_preparation_result = _finalize_level6_kafka_preparation(
         kafka_preparation,
         experiment_dir,
@@ -6177,8 +6308,37 @@ def _prepare_edc_local_dashboard_images(adapter, config):
     }
 
 
-def _edc_topology_supports_local_image_preparation(topology):
-    return normalize_topology(topology or LOCAL_TOPOLOGY) in {LOCAL_TOPOLOGY, "vm-single"}
+def _normalize_local_images_mode(value, default="auto"):
+    raw_value = str(value if value is not None else default).strip().lower()
+    if raw_value in {"0", "false", "no", "off", "disabled", "disable"}:
+        return "disabled"
+    if raw_value in {"1", "true", "yes", "on", "auto", ""}:
+        return "auto"
+    if raw_value in {"required", "require", "strict"}:
+        return "required"
+    return str(default or "auto").strip().lower() or "auto"
+
+
+def _edc_local_images_mode(config, topology):
+    default_mode = "auto" if normalize_topology(topology or LOCAL_TOPOLOGY) == LOCAL_TOPOLOGY else "disabled"
+    for candidate in (
+        os.getenv("PIONERA_EDC_LOCAL_IMAGES_MODE"),
+        os.getenv("EDC_LOCAL_IMAGES_MODE"),
+        (config or {}).get("EDC_LOCAL_IMAGES_MODE"),
+        (config or {}).get("LEVEL4_EDC_LOCAL_IMAGES_MODE"),
+        (config or {}).get("LEVEL4_LOCAL_IMAGES_MODE"),
+    ):
+        if candidate is not None and str(candidate).strip():
+            return _normalize_local_images_mode(candidate, default=default_mode)
+    return default_mode
+
+
+def _edc_topology_supports_local_image_preparation(topology, config=None):
+    normalized_topology = normalize_topology(topology or LOCAL_TOPOLOGY)
+    mode = _edc_local_images_mode(config or {}, normalized_topology)
+    if mode == "disabled":
+        return False
+    return normalized_topology in {LOCAL_TOPOLOGY, "vm-single"}
 
 
 def _ensure_safe_edc_deployer_execution(adapter, deployer_name=None, topology="local"):
@@ -6235,7 +6395,7 @@ def _ensure_safe_edc_deployer_execution(adapter, deployer_name=None, topology="l
 
     if not explicit_image_name or not explicit_image_tag:
         if (
-            _edc_topology_supports_local_image_preparation(normalized_topology)
+            _edc_topology_supports_local_image_preparation(normalized_topology, config)
             and not explicit_image_name
             and not explicit_image_tag
         ):
@@ -6260,7 +6420,7 @@ def _ensure_safe_edc_deployer_execution(adapter, deployer_name=None, topology="l
             f"'{default_image_name}:{default_image_tag}'. Provide an explicit working image override."
         )
 
-    if _edc_topology_supports_local_image_preparation(normalized_topology):
+    if _edc_topology_supports_local_image_preparation(normalized_topology, config):
         _prepare_edc_local_dashboard_images(adapter, config)
 
 
@@ -19473,6 +19633,39 @@ def run_interactive_menu(
             else:
                 os.environ.pop(key, None)
 
+    def activate_interactive_topology(selected_topology):
+        nonlocal topology, current_adapter
+
+        topology = selected_topology
+        print(f"Active topology set to {topology}.")
+        normalized = normalize_topology(topology)
+
+        if normalized == "vm-single":
+            previous_runtime = _interactive_cluster_runtime_label(topology)
+            selected_runtime = "k3s"
+            switch_result = _try_vm_single_cluster_runtime_switch(
+                selected_runtime,
+                previous_runtime=previous_runtime,
+            )
+            if not switch_result.get("allowed"):
+                return False
+            _set_session_cluster_runtime_override(selected_runtime)
+            _apply_interactive_topology_runtime_environment(topology)
+            return True
+
+        if normalized == "vm-distributed":
+            _apply_interactive_topology_runtime_environment(topology)
+            current_adapter, config_result = _offer_vm_distributed_configuration(
+                current_adapter=current_adapter,
+                adapter_registry=registry,
+            )
+            if config_result is not None:
+                _print_action_result(config_result)
+            return True
+
+        _apply_interactive_topology_runtime_environment(topology)
+        return True
+
     try:
         if prompt_initial_topology:
             selected_topology = _select_topology_interactive(
@@ -19490,31 +19683,8 @@ def run_interactive_menu(
                     adapter_registry=registry,
                 )
             else:
-                topology = selected_topology
-                print(f"Active topology set to {topology}.")
-                if normalize_topology(topology) == "vm-single":
-                    previous_runtime = _interactive_cluster_runtime_label(topology)
-                    selected_runtime = _select_cluster_runtime_interactive(topology=topology)
-                    switch_result = _try_vm_single_cluster_runtime_switch(
-                        selected_runtime,
-                        previous_runtime=previous_runtime,
-                    )
-                    if not switch_result.get("allowed"):
-                        return {"status": "exited", "adapter": current_adapter, "topology": topology}
-                    _set_session_cluster_runtime_override(selected_runtime)
-                    _apply_interactive_topology_runtime_environment(topology)
-                    _offer_persist_vm_single_cluster_runtime(selected_runtime, previous_runtime=previous_runtime)
-                    _interactive_offer_vm_single_address_configuration(required=False)
-                elif normalize_topology(topology) == "vm-distributed":
-                    _apply_interactive_topology_runtime_environment(topology)
-                    current_adapter, config_result = _offer_vm_distributed_configuration(
-                        current_adapter=current_adapter,
-                        adapter_registry=registry,
-                    )
-                    if config_result is not None:
-                        _print_action_result(config_result)
-                else:
-                    _apply_interactive_topology_runtime_environment(topology)
+                if not activate_interactive_topology(selected_topology):
+                    return {"status": "exited", "adapter": current_adapter, "topology": topology}
 
         _apply_interactive_topology_runtime_environment(topology)
 
@@ -19547,31 +19717,8 @@ def run_interactive_menu(
                         available_topologies=SUPPORTED_TOPOLOGIES,
                     )
                     if selected_topology != topology:
-                        topology = selected_topology
-                        print(f"Active topology set to {topology}.")
-                        if normalize_topology(topology) == "vm-single":
-                            previous_runtime = _interactive_cluster_runtime_label(topology)
-                            selected_runtime = _select_cluster_runtime_interactive(topology=topology)
-                            switch_result = _try_vm_single_cluster_runtime_switch(
-                                selected_runtime,
-                                previous_runtime=previous_runtime,
-                            )
-                            if not switch_result.get("allowed"):
-                                continue
-                            _set_session_cluster_runtime_override(selected_runtime)
-                            _apply_interactive_topology_runtime_environment(topology)
-                            _offer_persist_vm_single_cluster_runtime(selected_runtime, previous_runtime=previous_runtime)
-                            _interactive_offer_vm_single_address_configuration(required=False)
-                        elif normalize_topology(topology) == "vm-distributed":
-                            _apply_interactive_topology_runtime_environment(topology)
-                            current_adapter, config_result = _offer_vm_distributed_configuration(
-                                current_adapter=current_adapter,
-                                adapter_registry=registry,
-                            )
-                            if config_result is not None:
-                                _print_action_result(config_result)
-                        else:
-                            _apply_interactive_topology_runtime_environment(topology)
+                        if not activate_interactive_topology(selected_topology):
+                            continue
                     continue
 
                 if choice == "K":

@@ -748,6 +748,15 @@ Kubernetes. Los conectores acceden al broker por DNS de cluster y el proceso
 Python del framework usa un `port-forward` temporal solo para crear topics y
 verificar mensajes desde el host.
 
+En `vm-distributed`, los conectores viven en VMs o clusters distintos. Por eso
+`KAFKA_CLUSTER_BOOTSTRAP_SERVERS` debe apuntar a un endpoint Kafka alcanzable
+desde todas las VMs de conectores, normalmente un `NodePort` o una ruta
+equivalente expuesta por la VM de servicios comunes. No debe usarse
+`localhost`, `host.minikube.internal` ni nombres `*.svc` de Kubernetes como
+endpoint del conector. Para INESData, usa una imagen de conector que incluya
+soporte `data-plane-kafka`, o activa de forma explícita el flujo de build e
+importación remota de imágenes cuando el despliegue sea de desarrollo.
+
 ## Imágenes Locales
 
 Durante desarrollo, usa la opción `L - Build and Deploy Local Images` del menú
@@ -769,8 +778,11 @@ hay deployments EDC en ejecución, el framework los reinicia para que tomen la
 imagen nueva sin recrear datos.
 
 Además, `Level 4` de EDC prepara automáticamente esas imágenes locales en modo
-`auto` cuando se despliega en local y no hay una imagen explícita publicada que
-usar.
+`auto` cuando se despliega en topología `local` y no hay una imagen explícita
+publicada que usar. En `vm-single` y `vm-distributed`, el framework usa por
+defecto imágenes de registry o las imágenes declaradas en los ficheros de
+configuración; para compilar e importar desde fuentes en VM hay que activar
+explícitamente el modo local de imágenes.
 
 Si la receta corresponde a un componente de `Level 5` ya desplegado, como
 `Ontology Hub` o `AI Model Hub`, el framework reinicia su deployment para que
@@ -818,7 +830,7 @@ El menú incluye accesos directos de desarrollo:
 | `Run Framework Doctor` | Ejecuta checks del entorno local. |
 | `Repair Local Access / Connectors` | Reconcila `hosts` y, si hace falta, reinicia conectores tras un reinicio local o de WSL. |
 | `Cleanup Workspace` | Limpia caches y artefactos temporales. |
-| `Build and Deploy Local Images` | Construye imágenes locales y reinicia componentes desplegados cuando aplica. |
+| `Build and Deploy Local Images` | Construye imágenes locales y reinicia componentes desplegados cuando aplica; recomendado para desarrollo en topología `local`. |
 
 El script de limpieza también se ejecuta manualmente con:
 

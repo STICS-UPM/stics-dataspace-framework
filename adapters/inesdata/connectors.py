@@ -3181,20 +3181,30 @@ class INESDataConnectorsAdapter:
             return os.path.abspath(repo_resolver())
         return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
+    def _default_level4_local_images_mode(self):
+        if self._normalized_topology() == LOCAL_TOPOLOGY:
+            return "auto"
+        return "disabled"
+
     def _level4_local_images_mode(self):
         try:
             deployer_config = self.config_adapter.load_deployer_config() or {}
         except Exception:
             deployer_config = {}
-        raw_value = (
-            os.environ.get("PIONERA_INESDATA_LOCAL_IMAGES_MODE")
-            or os.environ.get("INESDATA_LOCAL_IMAGES_MODE")
-            or deployer_config.get("INESDATA_LOCAL_IMAGES_MODE")
-            or deployer_config.get("LEVEL4_INESDATA_LOCAL_IMAGES_MODE")
-            or deployer_config.get("LEVEL4_LOCAL_IMAGES_MODE")
-            or "auto"
-        )
-        mode = str(raw_value or "auto").strip().lower()
+        raw_value = None
+        for candidate in (
+            os.environ.get("PIONERA_INESDATA_LOCAL_IMAGES_MODE"),
+            os.environ.get("INESDATA_LOCAL_IMAGES_MODE"),
+            deployer_config.get("INESDATA_LOCAL_IMAGES_MODE"),
+            deployer_config.get("LEVEL4_INESDATA_LOCAL_IMAGES_MODE"),
+            deployer_config.get("LEVEL4_LOCAL_IMAGES_MODE"),
+        ):
+            if candidate is not None and str(candidate).strip():
+                raw_value = candidate
+                break
+        if raw_value is None:
+            raw_value = self._default_level4_local_images_mode()
+        mode = str(raw_value or self._default_level4_local_images_mode()).strip().lower()
         if mode in {"0", "false", "no", "off", "disabled", "disable"}:
             return "disabled"
         if mode in {"1", "true", "yes", "on", "auto", ""}:

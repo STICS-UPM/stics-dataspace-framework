@@ -9,6 +9,9 @@ from deployers.shared.lib.config_loader import (
     AI_MODEL_HUB_MODEL_SERVER_TOPOLOGY_KEYS,
     COMMON_SERVICE_TOPOLOGY_KEYS,
     COMPONENT_IMAGE_TOPOLOGY_KEYS,
+    EDC_IMAGE_TOPOLOGY_KEYS,
+    IMAGE_BUILD_POLICY_TOPOLOGY_KEYS,
+    INESDATA_CONNECTOR_IMAGE_TOPOLOGY_KEYS,
     KUBERNETES_WORKLOAD_TOPOLOGY_KEYS,
     TOPOLOGY_KEY_TARGETS,
     TOPOLOGY_OVERLAY_KEYS,
@@ -436,6 +439,18 @@ class SharedConfigLoaderTests(unittest.TestCase):
             self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed", "vm-single"))
 
         for key in COMPONENT_IMAGE_TOPOLOGY_KEYS:
+            self.assertNotIn(key, TOPOLOGY_OVERLAY_KEYS["local"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
+            self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed", "vm-single"))
+
+        for key in IMAGE_BUILD_POLICY_TOPOLOGY_KEYS:
+            self.assertNotIn(key, TOPOLOGY_OVERLAY_KEYS["local"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
+            self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed", "vm-single"))
+
+        for key in INESDATA_CONNECTOR_IMAGE_TOPOLOGY_KEYS | EDC_IMAGE_TOPOLOGY_KEYS:
             self.assertNotIn(key, TOPOLOGY_OVERLAY_KEYS["local"])
             self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
             self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])

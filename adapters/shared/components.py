@@ -1555,10 +1555,7 @@ spec:
         source_dir = self._ai_model_hub_model_server_source_dir(deployer_config)
         mode = self._ai_model_hub_model_server_mode(deployer_config)
 
-        auto_build_flag = deployer_config.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
-        if auto_build_flag is None:
-            auto_build_flag = deployer_config.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
-        if not self._parse_bool(auto_build_flag, default=True):
+        if not self._level5_auto_build_local_images(deployer_config):
             print(
                 "AI Model Hub model-server auto-build is disabled. "
                 f"Assuming image '{image_ref}' is already available in the cluster runtime."

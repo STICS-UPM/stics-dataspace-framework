@@ -5,6 +5,74 @@ from validation.orchestration import kafka
 
 
 class Level6KafkaTests(unittest.TestCase):
+    def test_preflight_ignores_non_vm_distributed(self):
+        result = kafka.validate_kafka_runtime_preflight(
+            {"topology": "local", "cluster_bootstrap_servers": "framework-kafka.core-control.svc.cluster.local:9092"},
+            env={},
+        )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["topology"], "local")
+
+    def test_vm_distributed_preflight_requires_connector_visible_bootstrap(self):
+        result = kafka.validate_kafka_runtime_preflight(
+            {"topology": "vm-distributed"},
+            env={},
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("requires KAFKA_CLUSTER_BOOTSTRAP_SERVERS", result["errors"][0])
+
+    def test_vm_distributed_preflight_rejects_cluster_dns_bootstrap(self):
+        result = kafka.validate_kafka_runtime_preflight(
+            {
+                "topology": "vm-distributed",
+                "cluster_bootstrap_servers": "framework-kafka.core-control.svc.cluster.local:9092",
+            },
+            env={},
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["invalid_connector_bootstrap_servers"][0]["reason"],
+            "kubernetes-cluster-dns",
+        )
+
+    def test_vm_distributed_preflight_rejects_loopback_bootstrap(self):
+        result = kafka.validate_kafka_runtime_preflight(
+            {"topology": "vm-distributed", "cluster_bootstrap_servers": "127.0.0.1:39092"},
+            env={},
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["invalid_connector_bootstrap_servers"][0]["reason"],
+            "loopback-address",
+        )
+
+    def test_vm_distributed_preflight_accepts_nodeport_and_warns_without_image_override(self):
+        result = kafka.validate_kafka_runtime_preflight(
+            {"topology": "vm-distributed", "cluster_bootstrap_servers": "198.51.100.10:32092"},
+            env={},
+        )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["connector_bootstrap_servers"], ["198.51.100.10:32092"])
+        self.assertTrue(any("data-plane-kafka" in warning for warning in result["warnings"]))
+
+    def test_vm_distributed_preflight_accepts_explicit_connector_image_without_warning(self):
+        result = kafka.validate_kafka_runtime_preflight(
+            {"topology": "vm-distributed", "cluster_bootstrap_servers": "198.51.100.10:32092"},
+            deployer_config={
+                "INESDATA_CONNECTOR_IMAGE_NAME": "ghcr.io/example/inesdata-connector",
+                "INESDATA_CONNECTOR_IMAGE_TAG": "kafka-capable",
+            },
+            env={},
+        )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertFalse(result["warnings"])
+
     def test_should_run_kafka_edc_validation_is_disabled_by_default(self):
         def flag_enabled(name, default):
             return default

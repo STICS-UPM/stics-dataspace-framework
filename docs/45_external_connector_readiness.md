@@ -292,13 +292,14 @@ python3 main.py inesdata hosts --topology vm-distributed --dry-run
 4. Confirmar que los dominios resuelven desde las VMs implicadas.
 5. Confirmar que `kubectl --kubeconfig <ruta> get ns` funciona con los
    kubeconfigs configurados.
-6. Si se usan imágenes locales del repositorio, activar
+6. Usar imágenes publicadas en un registry o declarar overrides explícitos de
+   imagen. Si se activa un flujo de desarrollo con imágenes locales del
+   repositorio, configurar `LEVEL4_LOCAL_IMAGES_MODE=auto` o
+   `INESDATA_LOCAL_IMAGES_MODE=auto`, activar
    `VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT=true` y confirmar que SSH/SCP puede
    llegar a las VMs por el bastión configurado. Para automatización, la
    importación debe usar un comando no interactivo, por ejemplo
-   `sudo -n k3s ctr -n k8s.io images import`, o un registry accesible por el
-   clúster. Para validación manual puede usarse
-   `VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE=true`.
+   `sudo -n k3s ctr -n k8s.io images import`.
 7. Ejecutar nivel 1 para validar runtime Kubernetes e ingress.
 8. Ejecutar nivel 2 para servicios comunes.
 9. Ejecutar nivel 3 para el dataspace.

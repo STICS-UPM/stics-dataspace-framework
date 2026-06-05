@@ -1028,6 +1028,63 @@ class NewmanMetricsTests(unittest.TestCase):
             }
         ])
 
+    def test_collect_newman_request_metrics_marks_negative_response_time_invalid(self):
+        collector = MetricsCollector(experiment_storage=ExperimentStorage)
+        sample_report = {
+            "collection": {"info": {"name": "04_consumer_catalog"}},
+            "run": {
+                "executions": [
+                    {
+                        "item": {"name": "Provider Login"},
+                        "request": {
+                            "method": "POST",
+                            "url": {"path": ["realms", "pionera", "protocol", "openid-connect", "token"]},
+                        },
+                        "response": {"code": 200, "responseTime": -310},
+                        "cursor": {"started": "2026-03-07T10:00:00.000Z"},
+                    },
+                    {
+                        "item": {"name": "Request Federated Catalog"},
+                        "request": {
+                            "method": "POST",
+                            "url": {"raw": "http://connector.example/management/v3/catalog/request"},
+                        },
+                        "response": {"code": 200, "responseTime": 42},
+                        "cursor": {"started": "2026-03-07T10:00:01.000Z"},
+                    },
+                ]
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_dir = ExperimentStorage.newman_reports_dir(tmpdir)
+            pair_dir = os.path.join(report_dir, "run_001", "conn-a__conn-b")
+            os.makedirs(pair_dir, exist_ok=True)
+            report_path = os.path.join(pair_dir, "04_consumer_catalog.json")
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(sample_report, f)
+
+            metrics = collector.collect_newman_request_metrics(report_dir, experiment_dir=tmpdir)
+
+            raw_path = os.path.join(tmpdir, "raw_requests.jsonl")
+            aggregated_path = os.path.join(tmpdir, "aggregated_metrics.json")
+            with open(raw_path, "r", encoding="utf-8") as f:
+                raw_lines = [json.loads(line) for line in f if line.strip()]
+            with open(aggregated_path, "r", encoding="utf-8") as f:
+                aggregated = json.load(f)
+
+        invalid_metric = metrics[0]
+        self.assertIsNone(invalid_metric["latency_ms"])
+        self.assertEqual(invalid_metric["latency_quality"], "invalid_negative_response_time")
+        self.assertEqual(invalid_metric["raw_response_time_ms"], -310)
+        self.assertIsNone(raw_lines[0]["latency_ms"])
+        self.assertEqual(raw_lines[0]["latency_quality"], "invalid_negative_response_time")
+        self.assertNotIn("/realms/pionera/protocol/openid-connect/token", aggregated["request_metrics"])
+        self.assertEqual(
+            aggregated["request_metrics"]["http://connector.example/management/v3/catalog/request"]["average_latency_ms"],
+            42.0,
+        )
+
     def test_collect_newman_request_metrics_aggregates_directory_and_saves(self):
         collector = MetricsCollector(experiment_storage=ExperimentStorage)
         sample_report = {

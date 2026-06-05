@@ -1560,6 +1560,23 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         build_mock.assert_not_called()
         load_mock.assert_not_called()
 
+    def test_prepare_level6_local_image_disables_vm_auto_build_by_default(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-single"
+        deployer_config = {"CLUSTER_TYPE": "k3s"}
+
+        with mock.patch.object(
+            adapter,
+            "_safe_load_yaml_file",
+            return_value={"image": {"repository": "ontology-hub", "tag": "local"}},
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Local image auto-build disabled"):
+                adapter._maybe_prepare_level6_local_image(
+                    "ontology-hub",
+                    "/tmp/ontology-values.yaml",
+                    deployer_config,
+                )
+
     def test_prepare_level6_local_image_skips_ontology_hub_when_prebuilt_image_is_configured(self):
         adapter = self._make_adapter()
         deployer_config = {
@@ -1779,6 +1796,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         deployer_config = {
             "CLUSTER_TYPE": "k3s",
             "AI_MODEL_HUB_MODEL_SERVER_IMAGE": "model-server:latest",
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true",
         }
 
         with mock.patch.object(adapter, "_ai_model_hub_model_server_source_dir", return_value="/tmp/model-server"):

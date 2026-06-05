@@ -928,13 +928,13 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             class DnsVmDistributedConfigAdapter(VmDistributedConnectorRetryConfigAdapter):
                 def load_deployer_config(self):
                     values = super().load_deployer_config()
-                    values["DS_DOMAIN_BASE"] = "linkeddata.es"
-                    values["DOMAIN_BASE"] = "linkeddata.es"
-                    values["VM_COMMON_IP"] = "linkeddata.es"
-                    values["VM_PROVIDER_IP"] = "stics.bavenir.eu"
-                    values["VM_CONSUMER_IP"] = "stics.linkeddata.es"
-                    values["VM_PROVIDER_PUBLIC_URL"] = "https://stics.bavenir.eu"
-                    values["VM_CONSUMER_PUBLIC_URL"] = "https://stics.linkeddata.es"
+                    values["DS_DOMAIN_BASE"] = "example.test"
+                    values["DOMAIN_BASE"] = "example.test"
+                    values["VM_COMMON_IP"] = "common.example.test"
+                    values["VM_PROVIDER_IP"] = "provider.example.test"
+                    values["VM_CONSUMER_IP"] = "consumer.example.test"
+                    values["VM_PROVIDER_PUBLIC_URL"] = "https://provider.example.test"
+                    values["VM_CONSUMER_PUBLIC_URL"] = "https://consumer.example.test"
                     return values
 
             config_adapter = DnsVmDistributedConfigAdapter(tmpdir)
@@ -944,7 +944,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                     {
                         "hostAliases": [
                             {
-                                "ip": "stics.bavenir.eu",
+                                "ip": "provider.example.test",
                                 "hostnames": ["stale.invalid.example"],
                             }
                         ]
@@ -3165,11 +3165,62 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             self.assertTrue(policy["allow_local_image_overrides"])
             self.assertEqual(policy["message"], "")
 
+    def test_level4_local_images_default_to_disabled_for_vm_topologies(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for topology in ("vm-single", "vm-distributed"):
+                config = ConnectorRetryConfig(tmpdir)
+                config_adapter = ConnectorRetryConfigAdapter(tmpdir)
+                config_adapter.topology = topology
+                adapter = INESDataConnectorsAdapter(
+                    run=lambda *_args, **_kwargs: object(),
+                    run_silent=lambda *_args, **_kwargs: "",
+                    auto_mode_getter=lambda: True,
+                    infrastructure_adapter=mock.Mock(),
+                    config_adapter=config_adapter,
+                    config_cls=config,
+                )
+
+                self.assertEqual(adapter._level4_local_images_mode(), "disabled")
+
+    def test_level4_local_images_default_to_auto_for_local_topology(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = ConnectorRetryConfigAdapter(tmpdir)
+            config_adapter.topology = "local"
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+
+            self.assertEqual(adapter._level4_local_images_mode(), "auto")
+
+    def test_level4_local_images_can_be_opted_in_for_vm_single(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = ConnectorRetryConfigAdapter(tmpdir)
+            config_adapter.topology = "vm-single"
+            config_adapter.load_deployer_config = lambda: {"INESDATA_LOCAL_IMAGES_MODE": "auto"}
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+
+            self.assertEqual(adapter._level4_local_images_mode(), "auto")
+
     def test_local_connector_image_override_path_is_used_for_vm_single(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = ConnectorRetryConfig(tmpdir)
             config_adapter = ConnectorRetryConfigAdapter(tmpdir)
             config_adapter.topology = "vm-single"
+            config_adapter.load_deployer_config = lambda: {"INESDATA_LOCAL_IMAGES_MODE": "auto"}
             adapter = INESDataConnectorsAdapter(
                 run=lambda *_args, **_kwargs: object(),
                 run_silent=lambda *_args, **_kwargs: "",
@@ -4685,6 +4736,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                 def load_deployer_config(self):
                     config = super().load_deployer_config()
                     config["CLUSTER_TYPE"] = "k3s"
+                    config["INESDATA_LOCAL_IMAGES_MODE"] = "auto"
                     return config
 
             config = LocalImagesConfig(tmpdir)
@@ -4772,6 +4824,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                             "SSH_IDENTITY_FILE": "/home/operator/.ssh/vm-single",
                             "VM_SINGLE_REMOTE_IMAGE_IMPORT": "auto",
                             "VM_SINGLE_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
+                            "INESDATA_LOCAL_IMAGES_MODE": "auto",
                         }
                     )
                     return config
@@ -4831,6 +4884,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                             "VM_CONSUMER_SSH_HOST": "pionera3",
                             "VM_CONSUMER_SSH_USER": "pionera",
                             "VM_CONSUMER_SSH_PORT": "22",
+                            "INESDATA_LOCAL_IMAGES_MODE": "auto",
                         }
                     )
                     return config
@@ -4883,6 +4937,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                             "VM_PROVIDER_SSH_USER": "pionera",
                             "VM_CONSUMER_SSH_HOST": "pionera3",
                             "VM_CONSUMER_SSH_USER": "pionera",
+                            "INESDATA_LOCAL_IMAGES_MODE": "auto",
                         }
                     )
                     return config

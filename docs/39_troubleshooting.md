@@ -246,6 +246,13 @@ vuelve a ejecutar `Level 4` o fuerza el comportamiento estricto:
 INESDATA_LOCAL_IMAGES_MODE=required python3 main.py inesdata deploy --topology local
 ```
 
+En `vm-distributed`, no se debe asumir que la imagen remota del chart tiene el
+mismo contenido que la imagen local reconstruida desde `sources/`. Si la suite
+Kafka se va a ejecutar en un cierre distribuido, configura
+`INESDATA_CONNECTOR_IMAGE_NAME` e `INESDATA_CONNECTOR_IMAGE_TAG` con una imagen
+publicada que incluya soporte `data-plane-kafka`, o activa explícitamente la
+importación remota de imágenes durante una sesión de desarrollo.
+
 ## Level 4 Falla Preparando Imágenes INESData
 
 En topología `local`, `Level 4` recompila `inesdata-connector` e
@@ -537,6 +544,22 @@ dataplane Kafka efectivo o seguía reutilizando una `connector.jar` obsoleta.
 Desde esta versión, `adapters/edc/scripts/build_image.sh` reconstruye
 automáticamente la jar cuando cambian los inputs del runtime para evitar ese
 desalineamiento.
+
+En `vm-distributed`, `Level 6` ejecuta un preflight específico antes de la suite
+Kafka. Si el resultado queda como `kafka_runtime_preflight_failed`, revisa el
+artefacto `kafka_runtime_preflight.json` del experimento. Las causas más
+habituales son:
+
+- `KAFKA_CLUSTER_BOOTSTRAP_SERVERS` vacío.
+- `KAFKA_CLUSTER_BOOTSTRAP_SERVERS` apuntando a `localhost`, a
+  `host.minikube.internal` o a un DNS interno `*.svc` de Kubernetes.
+- Imagen de conector no fijada y flujo de imágenes locales/importación remota
+  desactivado.
+
+Para distribuida, la dirección Kafka del `DataAddress` debe ser una ruta
+alcanzable desde todas las VMs de conectores, por ejemplo un `NodePort` expuesto
+por la VM de servicios comunes o un endpoint equivalente acordado para ese
+entorno.
 
 ## Se Acumulan Datos de Validación
 

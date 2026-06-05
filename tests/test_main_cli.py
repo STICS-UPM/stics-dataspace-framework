@@ -222,6 +222,39 @@ class KafkaTransferConsoleOutputTests(unittest.TestCase):
         self.assertIn("PIONERA_LEVEL6_RUN_KAFKA=true", output)
         self.assertIn("unset it or set PIONERA_LEVEL6_SKIP_KAFKA=false", output)
 
+    def test_vm_distributed_kafka_preflight_blocks_invalid_connector_bootstrap(self):
+        class VmDistributedKafkaAdapter(FakeAdapter):
+            topology = "vm-distributed"
+
+            def get_kafka_config(self):
+                return {
+                    "topology": "vm-distributed",
+                    "cluster_bootstrap_servers": "framework-kafka.core-control.svc.cluster.local:9092",
+                }
+
+        experiment_storage = mock.Mock()
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as experiment_dir:
+            with mock.patch.object(
+                main,
+                "run_kafka_edc_validation",
+                side_effect=AssertionError("Kafka suite should not run after preflight failure"),
+            ), contextlib.redirect_stdout(stdout):
+                results = main.run_level6_kafka_edc_after_newman(
+                    VmDistributedKafkaAdapter(),
+                    ["conn-a", "conn-b"],
+                    experiment_dir,
+                    deployer_name="inesdata",
+                    experiment_storage=experiment_storage,
+                    kafka_enabled=True,
+                )
+
+        self.assertEqual(results[0]["status"], "failed")
+        self.assertEqual(results[0]["reason"], "kafka_runtime_preflight_failed")
+        self.assertIn("Kubernetes ClusterIP/DNS", results[0]["error"]["message"])
+        experiment_storage.save_kafka_edc_results_json.assert_called_once()
+        self.assertIn("Kafka runtime preflight failed", stdout.getvalue())
+
     def test_level6_kafka_prompt_enables_suite_when_user_confirms(self):
         class KafkaReadyAdapter(FakeAdapter):
             def get_kafka_config(self):
@@ -2121,7 +2154,7 @@ class MainCliTests(unittest.TestCase):
             sys.stdin,
             "isatty",
             return_value=True,
-        ), mock.patch("builtins.input", side_effect=["2", "1", "N", "Q"]), mock.patch.object(
+        ), mock.patch("builtins.input", side_effect=["2", "Q"]), mock.patch.object(
             main,
             "_interactive_offer_vm_single_address_configuration",
             return_value=True,
@@ -2144,12 +2177,11 @@ class MainCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("Available topologies:", rendered)
         self.assertIn("Active topology set to vm-single.", rendered)
-        self.assertIn("Available cluster runtimes for vm-single:", rendered)
-        self.assertNotIn("2 - minikube", rendered)
+        self.assertNotIn("Available cluster runtimes for vm-single:", rendered)
         self.assertIn("Active cluster runtime set to k3s.", rendered)
         self.assertIn("Topology: vm-single", rendered)
         self.assertIn("Cluster runtime: k3s", rendered)
-        vm_single_prompt.assert_called_once_with(required=False)
+        vm_single_prompt.assert_not_called()
 
     def test_menu_selecting_vm_distributed_without_adapter_does_not_report_incomplete_configuration(self):
         registry = {
@@ -2184,7 +2216,7 @@ class MainCliTests(unittest.TestCase):
         stdout = io.StringIO()
         with mock.patch.dict(os.environ, {"PIONERA_CLUSTER_TYPE": "minikube"}, clear=False), mock.patch(
             "builtins.input",
-            side_effect=["2", "2", "N", "Q"],
+            side_effect=["2", "Q"],
         ), mock.patch.object(
             main,
             "_interactive_offer_vm_single_address_configuration",
@@ -2638,7 +2670,7 @@ class MainCliTests(unittest.TestCase):
 
     def test_menu_can_preselect_topology_with_shortcut_t(self):
         stdout = io.StringIO()
-        with mock.patch("builtins.input", side_effect=["T", "2", "1", "N", "Q"]), mock.patch.object(
+        with mock.patch("builtins.input", side_effect=["T", "2", "Q"]), mock.patch.object(
             main,
             "_try_vm_single_cluster_runtime_switch",
             return_value={"allowed": True, "status": "skipped"},
@@ -2661,13 +2693,13 @@ class MainCliTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("Available topologies:", rendered)
         self.assertIn("Active topology set to vm-single.", rendered)
-        self.assertIn("Available cluster runtimes for vm-single:", rendered)
+        self.assertNotIn("Available cluster runtimes for vm-single:", rendered)
         self.assertIn("Topology: vm-single", rendered)
-        vm_single_prompt.assert_called_once_with(required=False)
+        vm_single_prompt.assert_not_called()
 
     def test_menu_level_execution_uses_selected_topology_from_shortcut_t(self):
         stdout = io.StringIO()
-        with mock.patch("builtins.input", side_effect=["T", "2", "1", "N", "1", "Y", "Q"]), mock.patch.object(
+        with mock.patch("builtins.input", side_effect=["T", "2", "1", "Y", "Q"]), mock.patch.object(
             main,
             "run_level",
             return_value={"level": 1, "name": "Setup Cluster", "status": "completed", "result": {}},
@@ -6396,12 +6428,45 @@ class MainCliTests(unittest.TestCase):
         image_prepare.assert_called_once_with(adapter)
         dashboard_prepare.assert_called_once()
 
-    def test_safe_edc_execution_prepares_vm_single_image_when_missing_override(self):
+    def test_safe_edc_execution_refuses_vm_single_missing_image_override_by_default(self):
         adapter = FakeAdapter()
         adapter.config_adapter.load_deployer_config = lambda: {
             "KC_URL": "http://keycloak.local",
             "DS_1_NAME": "fake-ds",
             "EDC_DASHBOARD_ENABLED": "true",
+        }
+
+        with mock.patch.object(
+            main,
+            "_prepare_edc_local_connector_image_override",
+        ) as image_prepare, mock.patch.object(
+            main,
+            "_prepare_edc_local_dashboard_images",
+        ) as dashboard_prepare, mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_USE_DEPLOYER_DEPLOY": "true",
+                "PIONERA_EXECUTE_DEPLOYER_DEPLOY": "true",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "requires explicit EDC connector image overrides"):
+                main._ensure_safe_edc_deployer_execution(
+                    adapter,
+                    deployer_name="edc",
+                    topology="vm-single",
+                )
+
+        image_prepare.assert_not_called()
+        dashboard_prepare.assert_not_called()
+
+    def test_safe_edc_execution_prepares_vm_single_image_when_local_images_opted_in(self):
+        adapter = FakeAdapter()
+        adapter.config_adapter.load_deployer_config = lambda: {
+            "KC_URL": "http://keycloak.local",
+            "DS_1_NAME": "fake-ds",
+            "EDC_DASHBOARD_ENABLED": "true",
+            "EDC_LOCAL_IMAGES_MODE": "auto",
         }
 
         with mock.patch.object(

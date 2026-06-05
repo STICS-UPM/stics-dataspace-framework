@@ -26,6 +26,23 @@ class ExperimentMetricsCollector:
         with open(report_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
+    @staticmethod
+    def _normalize_response_time_ms(value):
+        if value is None:
+            return None, None
+
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            return None, "invalid_non_numeric_response_time"
+
+        if numeric_value < 0:
+            return None, "invalid_negative_response_time"
+
+        if numeric_value.is_integer():
+            return int(numeric_value), None
+        return numeric_value, None
+
     @classmethod
     def load_newman_reports(cls, report_dir):
         reports = []
@@ -53,24 +70,30 @@ class ExperimentMetricsCollector:
                 response = execution.get("response", {}) or {}
                 cursor = execution.get("cursor", {}) or {}
                 item_name = (execution.get("item") or {}).get("name") or execution.get("id") or "unknown_request"
+                raw_response_time = response.get("responseTime")
+                latency_ms, latency_quality = cls._normalize_response_time_ms(raw_response_time)
 
                 endpoint = request_url.get("raw") if isinstance(request_url, dict) else request_url
                 if isinstance(request_url, dict) and not endpoint:
                     path_parts = request_url.get("path") or []
                     endpoint = "/" + "/".join(str(part) for part in path_parts) if path_parts else None
 
-                metrics.append({
+                metric = {
                     "timestamp": cursor.get("started") or response.get("timestamp") or request.get("timestamp"),
                     "endpoint": endpoint,
                     "method": request.get("method"),
                     "status_code": response.get("code"),
-                    "latency_ms": response.get("responseTime"),
+                    "latency_ms": latency_ms,
                     "iteration": run_index,
                     "run_index": run_index,
                     "request_name": item_name,
                     "collection": collection_name,
                     "experiment_id": experiment_id,
-                })
+                }
+                if latency_quality:
+                    metric["latency_quality"] = latency_quality
+                    metric["raw_response_time_ms"] = raw_response_time
+                metrics.append(metric)
         return metrics
 
     @classmethod

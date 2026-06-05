@@ -184,6 +184,39 @@ La ruta local normal no requiere declarar variables Kafka en los
 `deployer.config.example` se mantienen con las claves mínimas del adapter o de
 infraestructura.
 
+En `vm-distributed`, la ruta normal sí debe distinguir entre la vista del
+operador y la vista de los conectores:
+
+- `KAFKA_BOOTSTRAP_SERVERS`: endpoint que usa el proceso del framework para
+  administrar topics, producir sondas y consumir resultados.
+- `KAFKA_CLUSTER_BOOTSTRAP_SERVERS`: endpoint que se inserta en el
+  `DataAddress` del asset Kafka y que debe ser alcanzable desde cada VM o
+  cluster donde vive un conector.
+
+El valor de `KAFKA_CLUSTER_BOOTSTRAP_SERVERS` no puede ser `localhost`,
+`host.minikube.internal`, `host.docker.internal` ni un nombre DNS interno de
+Kubernetes como `framework-kafka.<namespace>.svc.cluster.local`, porque esos
+valores solo son válidos dentro de una máquina o de un cluster concreto. En una
+topología distribuida se debe usar una ruta común para los conectores, por
+ejemplo:
+
+```text
+KAFKA_PROVISIONER=kubernetes
+KAFKA_K8S_EXTERNAL_SERVICE_TYPE=NodePort
+KAFKA_K8S_NODEPORT=32092
+KAFKA_CLUSTER_ADVERTISED_HOST=<ip-o-dns-alcanzable-por-los-conectores>
+KAFKA_CLUSTER_BOOTSTRAP_SERVERS=<ip-o-dns-alcanzable-por-los-conectores>:32092
+```
+
+Además, en INESData el conector desplegado debe incluir el dataplane Kafka. En
+`local`, `Level 4` reconstruye el conector desde `sources/` y carga esa imagen
+en el runtime local. En `vm-distributed`, la ruta recomendada para cierre y
+auditoría es fijar `INESDATA_CONNECTOR_IMAGE_NAME` y
+`INESDATA_CONNECTOR_IMAGE_TAG` a una imagen publicada que ya incluya
+`data-plane-kafka`. Para desarrollo se puede activar explícitamente la
+construcción e importación remota de imágenes, pero no debe ser el modo
+implícito de una validación distribuida estable.
+
 Si un entorno necesita overrides persistentes o experimentales, pueden definirse
 como variables de entorno `PIONERA_KAFKA_*` al entrar por `main.py`, como
 variables `KAFKA_*` al ejecutar helpers específicos, o como claves

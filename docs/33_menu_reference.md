@@ -57,6 +57,11 @@ conectores, siempre que las fuentes existan bajo `adapters/inesdata/sources/`.
 Este comportamiento puede desactivarse con `INESDATA_LOCAL_IMAGES_MODE=disabled`
 o hacerse estricto con `INESDATA_LOCAL_IMAGES_MODE=required`.
 
+En topologías `vm-single` y `vm-distributed`, el framework usa por defecto las
+imágenes configuradas en los charts u overrides explícitos. Para compilar e
+importar imágenes desde fuentes en una VM, activa el modo de desarrollo con
+`INESDATA_LOCAL_IMAGES_MODE=auto` o `LEVEL4_LOCAL_IMAGES_MODE=auto`.
+
 `5 - Level 5: Deploy Components`
 
 Despliega componentes opcionales configurados, como Ontology Hub o AI Model Hub cuando correspondan al adapter y configuración activos.

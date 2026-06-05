@@ -220,7 +220,7 @@ PIONERA_EDC_DASHBOARD_PROXY_IMAGE_NAME
 PIONERA_EDC_DASHBOARD_PROXY_IMAGE_TAG
 ```
 
-La preparación local puede desactivarse con `PIONERA_EDC_LOCAL_IMAGES_MODE=disabled` o hacerse estricta con `PIONERA_EDC_LOCAL_IMAGES_MODE=required`. El valor por defecto es `auto`. Si se desactiva la preparación local, debe existir un override explícito de imagen del conector EDC.
+La preparación local puede activarse con `PIONERA_EDC_LOCAL_IMAGES_MODE=auto` o hacerse estricta con `PIONERA_EDC_LOCAL_IMAGES_MODE=required`. El valor por defecto es `auto` en topología `local` y `disabled` en topologías VM. En `vm-single` y `vm-distributed`, la vía recomendada es definir overrides explícitos de imagen del conector EDC antes de desplegar.
 
 El dashboard EDC es opcional y sirve como apoyo visual para validación UI. Las validaciones API con Newman siguen siendo el mecanismo principal de validación end-to-end.
 

@@ -38,17 +38,24 @@ Comportamiento esperado:
   conector y/o dashboard, y reinician deployments EDC existentes sin recrear
   datos.
 - el `Level 4` de EDC también prepara las imágenes locales necesarias en modo
-  `auto`, antes del despliegue Helm, salvo que se hayan definido overrides
-  explícitos o se desactive con `PIONERA_EDC_LOCAL_IMAGES_MODE=disabled`.
+  `auto` en topología `local`, antes del despliegue Helm, salvo que se hayan
+  definido overrides explícitos. En topologías VM, la vía recomendada es usar
+  imágenes precompiladas y configurar los overrides de imagen.
 
 Modos disponibles para `Level 4 local`:
 
-- `INESDATA_LOCAL_IMAGES_MODE=auto`: valor por defecto; usa fuentes locales si
-  existen y omite el paso si faltan.
+- `INESDATA_LOCAL_IMAGES_MODE=auto`: valor por defecto en topología `local`;
+  usa fuentes locales si existen y omite el paso si faltan.
 - `INESDATA_LOCAL_IMAGES_MODE=required`: falla si no puede preparar las imágenes
   locales.
-- `INESDATA_LOCAL_IMAGES_MODE=disabled`: usa las imágenes configuradas en los
-  valores Helm.
+- `INESDATA_LOCAL_IMAGES_MODE=disabled`: valor por defecto en topologías
+  `vm-single` y `vm-distributed`; usa las imágenes configuradas en los valores
+  Helm o en los overrides explícitos.
+
+Para componentes de `Level 5`, `LEVEL5_AUTO_BUILD_LOCAL_IMAGES=true` es el
+comportamiento de desarrollo local. En topologías VM, el valor por defecto es
+`false`; configura `*_IMAGE_REF` con imágenes de registry o activa el build local
+solo cuando el operador quiera importar imágenes desde fuentes.
 
 Después de cargar una imagen local, valida con una prueba focalizada antes de
 ejecutar toda la suite. Para el conector INESData, el flujo E2E recomendado es:
