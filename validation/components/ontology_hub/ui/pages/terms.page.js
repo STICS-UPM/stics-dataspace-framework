@@ -1,5 +1,5 @@
 const { clickMarked } = require("../support/live-marker");
-const { resolveOntologyHubTimeouts } = require("../runtime");
+const { buildOntologyHubUrl, resolveOntologyHubTimeouts } = require("../runtime");
 
 const {
   readyTimeoutMs,
@@ -12,7 +12,7 @@ class OntologyHubTermsPage {
   }
 
   async goto(baseUrl, query) {
-    const url = new URL("/dataset/terms", baseUrl);
+    const url = new URL(buildOntologyHubUrl(baseUrl, "dataset/terms"));
     if (query) {
       url.searchParams.set("q", query);
     }

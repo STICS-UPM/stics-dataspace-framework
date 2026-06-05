@@ -1,5 +1,9 @@
 const { clickMarked } = require("../support/live-marker");
-const { resolveOntologyHubTimeouts } = require("../runtime");
+const {
+  buildOntologyHubUrl,
+  inferOntologyHubBaseUrl,
+  resolveOntologyHubTimeouts,
+} = require("../runtime");
 
 const { readyTimeoutMs } = resolveOntologyHubTimeouts();
 
@@ -15,7 +19,7 @@ class OntologyHubHomePage {
   }
 
   async goto(baseUrl) {
-    await this.page.goto(`${baseUrl}/dataset`, { waitUntil: "domcontentloaded" });
+    await this.page.goto(buildOntologyHubUrl(baseUrl, "dataset"), { waitUntil: "domcontentloaded" });
   }
 
   async expectReady() {
@@ -69,8 +73,9 @@ class OntologyHubHomePage {
     return this.page.locator("header nav a").filter({ hasText: label }).first();
   }
 
-  async gotoApiDocs() {
-    await this.page.goto(new URL("/dataset/api", this.page.url()).toString(), {
+  async gotoApiDocs(baseUrl = "") {
+    const resolvedBaseUrl = baseUrl || inferOntologyHubBaseUrl(this.page.url());
+    await this.page.goto(buildOntologyHubUrl(resolvedBaseUrl, "dataset/api"), {
       waitUntil: "domcontentloaded",
     });
   }

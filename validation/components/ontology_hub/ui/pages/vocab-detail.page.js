@@ -1,5 +1,9 @@
 const { clickMarked } = require("../support/live-marker");
-const { resolveOntologyHubTimeouts } = require("../runtime");
+const {
+  buildOntologyHubUrl,
+  resolveOntologyHubRedirectUrl,
+  resolveOntologyHubTimeouts,
+} = require("../runtime");
 
 const {
   readyTimeoutMs,
@@ -12,7 +16,7 @@ class OntologyHubVocabDetailPage {
   }
 
   async goto(baseUrl, prefix) {
-    await this.page.goto(`${baseUrl}/dataset/vocabs/${prefix}`, {
+    await this.page.goto(buildOntologyHubUrl(baseUrl, `dataset/vocabs/${prefix}`), {
       waitUntil: "commit",
       timeout: navigationTimeoutMs,
     });
@@ -156,7 +160,7 @@ class OntologyHubVocabDetailPage {
       new Set(
         [...hrefUrls, ...dataSourceUrls]
           .filter((value) => value.includes(`/dataset/vocabs/${prefix}/versions/`))
-          .map((value) => new URL(value, baseUrl).toString()),
+          .map((value) => resolveOntologyHubRedirectUrl(baseUrl, value)),
       ),
     );
   }

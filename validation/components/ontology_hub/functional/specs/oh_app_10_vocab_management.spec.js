@@ -1,7 +1,9 @@
 // Excel traceability: Ontology Hub cases 10, 11, 12, 13 and 14.
 const { test } = require("../../ui/fixtures");
 const {
+  buildVocabularyRuntime,
   createVersion,
+  createVocabularyByUri,
   deleteRunState,
   deleteVersion,
   deleteVocabulary,
@@ -10,7 +12,6 @@ const {
   loadRunState,
   openVocabularyDetail,
   openVersionsPage,
-  REPOSITORY_VOCAB_STATE_KEY,
   URI_VOCAB_STATE_KEY,
   runtimeFromCreatedVocabulary,
   runIndexAllFromEdition,
@@ -19,6 +20,7 @@ const {
   signOut,
   updateVocabularyMetadata,
   VISUALIZATION_N3_STATE_KEY,
+  VERSION_VOCAB_STATE_KEY,
   VERSION_STATE_KEY,
 } = require("../support/excel-flows");
 
@@ -122,13 +124,28 @@ test("OH-APP-11: add a new ontology version", async ({
   captureStep,
   attachJson,
 }, testInfo) => {
-  test.setTimeout(180000);
-  const created = loadRunState(REPOSITORY_VOCAB_STATE_KEY);
+  test.setTimeout(300000);
+  const versionRuntime = buildVocabularyRuntime(ontologyHubRuntime, "OH-APP-11", testInfo, {
+    creationUri: ontologyHubRuntime.versionCreationUri || "https://saref.etsi.org/saref4city/v1.1.2/",
+    creationNamespace: ontologyHubRuntime.versionCreationNamespace || "https://saref.etsi.org/saref4city/",
+    creationTag: "Services",
+    creationReview: "Admin",
+  });
+  const created = {
+    ...(await createVocabularyByUri(page, versionRuntime)),
+    catalogLabel: versionRuntime.creationTitle,
+    creationTag: versionRuntime.creationTag,
+    creationReview: versionRuntime.creationReview,
+  };
+  await runIndexAllFromEdition(page, versionRuntime);
+  saveRunState(VERSION_VOCAB_STATE_KEY, created);
+
   const runtime = runtimeFromCreatedVocabulary(ontologyHubRuntime, created);
   let downloadInfo = resolveVersionSourceDownload();
   if (!downloadInfo) {
     await openVocabularyDetail(page, runtime, created.prefix, created.title || "");
     downloadInfo = await downloadFirstN3(page, testInfo, "11-source-version", {
+      runtime,
       strategy: "request",
     });
   }
@@ -136,7 +153,11 @@ test("OH-APP-11: add a new ontology version", async ({
   await signInToEdition(page, runtime);
   await openVersionsPage(page, runtime, created.prefix);
   const newVersion = versionForCase("1.0", "2026-03-31");
-  await createVersion(page, newVersion, downloadInfo.filePath);
+  await createVersion(page, newVersion, downloadInfo.filePath, {
+    runtime,
+    prefix: created.prefix,
+    recoveryTimeoutMs: POST_VERSION_CRASH_RECOVERY_TIMEOUT_MS,
+  });
   await captureStep(page, "11-version-created");
   await signOut(page, runtime);
   saveRunState(VERSION_STATE_KEY, newVersion);
@@ -155,7 +176,7 @@ test("OH-APP-12: edit an ontology version", async ({
   attachJson,
 }) => {
   test.setTimeout(POST_VERSION_CRASH_TEST_TIMEOUT_MS);
-  const created = loadRunState(REPOSITORY_VOCAB_STATE_KEY);
+  const created = loadRunState(VERSION_VOCAB_STATE_KEY);
   const runtime = runtimeFromCreatedVocabulary(ontologyHubRuntime, created);
   const initialVersion = loadRunState(VERSION_STATE_KEY);
   await signInToEdition(page, runtime);
@@ -183,7 +204,7 @@ test("OH-APP-13: delete an ontology version", async ({
   attachJson,
 }) => {
   test.setTimeout(POST_VERSION_CRASH_TEST_TIMEOUT_MS);
-  const created = loadRunState(REPOSITORY_VOCAB_STATE_KEY);
+  const created = loadRunState(VERSION_VOCAB_STATE_KEY);
   const runtime = runtimeFromCreatedVocabulary(ontologyHubRuntime, created);
   const version = loadRunState(VERSION_STATE_KEY);
   const fallbackVersion = versionForCase("v2026-01-01", "2026-01-01");
@@ -231,14 +252,14 @@ test("OH-APP-14: delete an ontology", async ({
   attachJson,
 }) => {
   test.setTimeout(POST_VERSION_CRASH_TEST_TIMEOUT_MS);
-  const created = loadRunState(REPOSITORY_VOCAB_STATE_KEY);
+  const created = loadRunState(VERSION_VOCAB_STATE_KEY);
   const runtime = runtimeFromCreatedVocabulary(ontologyHubRuntime, created);
   await deleteVocabulary(page, runtime, created.prefix, {
     recoveryTimeoutMs: POST_VERSION_CRASH_RECOVERY_TIMEOUT_MS,
   });
   await captureStep(page, "14-vocabulary-deleted");
   await signOut(page, runtime);
-  deleteRunState(REPOSITORY_VOCAB_STATE_KEY);
+  deleteRunState(VERSION_VOCAB_STATE_KEY);
 
   await attachJson("14-vocabulary-delete-report", {
     prefix: created.prefix,

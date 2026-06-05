@@ -1,7 +1,7 @@
 const fs = require("fs");
 const { checkMarked, clickMarked, fillMarked, highlightMarked, selectOptionMarked } = require("./live-marker");
 const path = require("path");
-const { resolveOntologyHubTimeouts } = require("../runtime");
+const { resolveOntologyHubRedirectUrl, resolveOntologyHubTimeouts } = require("../runtime");
 
 const {
   probeTermSearchApi,
@@ -319,7 +319,7 @@ async function submitVocabularyMetadata(page, runtime) {
         if (response.request().method() !== "POST") {
           return false;
         }
-        return /^\/edition\/vocabs(?:\/[^/]+)?\/?$/.test(new URL(response.url()).pathname);
+        return /\/edition\/vocabs(?:\/[^/]+)?\/?$/.test(new URL(response.url()).pathname);
       },
       { timeout: navigationTimeoutMs },
     )
@@ -345,7 +345,7 @@ async function submitVocabularyMetadata(page, runtime) {
 
   let redirected = await redirectPromise;
   if (!redirected && redirectTarget) {
-    await page.goto(new URL(redirectTarget, runtime.baseUrl).toString(), {
+    await page.goto(resolveOntologyHubRedirectUrl(runtime.baseUrl, redirectTarget), {
       waitUntil: "domcontentloaded",
     });
     redirected = true;
@@ -417,7 +417,7 @@ async function gotoEdition(page, runtime) {
           (response) => {
             const request = response.request();
             try {
-              return request.method() === "POST" && new URL(response.url()).pathname === "/edition/session";
+              return request.method() === "POST" && new URL(response.url()).pathname.endsWith("/edition/session");
             } catch {
               return false;
             }

@@ -25,6 +25,16 @@ function parseKeyValueFile(filePath) {
   return values;
 }
 
+function activeTopology() {
+  const raw =
+    process.env.UI_TOPOLOGY ||
+    process.env.PIONERA_TOPOLOGY ||
+    process.env.INESDATA_TOPOLOGY ||
+    "local";
+  const normalized = String(raw).trim().toLowerCase().replace(/_/g, "-");
+  return ["local", "vm-single", "vm-distributed"].includes(normalized) ? normalized : "local";
+}
+
 function trimTrailingSlash(value) {
   return String(value || "").trim().replace(/\/$/, "");
 }
@@ -44,22 +54,52 @@ function resolveSemanticVirtualizationRuntime() {
   const infrastructureConfig = parseKeyValueFile(
     path.join(projectRoot(), "deployers", "infrastructure", "deployer.config"),
   );
+  const topologyConfig = parseKeyValueFile(
+    path.join(
+      projectRoot(),
+      "deployers",
+      "infrastructure",
+      "topologies",
+      `${activeTopology()}.config`,
+    ),
+  );
+  const config = {
+    ...infrastructureConfig,
+    ...topologyConfig,
+    ...deployerConfig,
+  };
   const dataspace = (process.env.UI_DATASPACE || deployerConfig.DS_1_NAME || "demo").trim();
   const dsDomain = (
     process.env.UI_DS_DOMAIN ||
-    deployerConfig.DS_DOMAIN_BASE ||
-    infrastructureConfig.DS_DOMAIN_BASE ||
+    config.DS_DOMAIN_BASE ||
     "dev.ds.dataspaceunit.upm"
   ).trim();
+  const publicBaseUrl = trimTrailingSlash(
+    config.SEMANTIC_VIRTUALIZATION_PUBLIC_BASE_URL ||
+      config.COMPONENTS_PUBLIC_BASE_URL ||
+      config.VM_SINGLE_PUBLIC_URL ||
+      config.VM_SINGLE_HTTP_URL ||
+      config.VM_COMMON_PUBLIC_URL ||
+      "",
+  );
+  const defaultPublicUrl = publicBaseUrl
+    ? `${publicBaseUrl}/semantic-virtualization`
+    : `http://semantic-virtualization-${dataspace}.${dsDomain}`;
   const baseUrl = trimTrailingSlash(
     process.env.SEMANTIC_VIRTUALIZATION_BASE_URL ||
       process.env.SEMANTIC_VIRTUALIZATION_PUBLIC_URL ||
-      `http://semantic-virtualization-${dataspace}.${dsDomain}`,
+      config.SEMANTIC_VIRTUALIZATION_PUBLIC_URL ||
+      config.SEMANTIC_VIRTUALIZATION_URL ||
+      defaultPublicUrl,
   );
   const mappingEditorBaseUrl = trimTrailingSlash(
     process.env.SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_BASE_URL ||
       process.env.SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL ||
       process.env.MAPPING_EDITOR_BASE_URL ||
+      config.SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL ||
+      config.SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL ||
+      config.MAPPING_EDITOR_PUBLIC_URL ||
+      config.MAPPING_EDITOR_URL ||
       `http://semantic-virtualization-editor-${dataspace}.${dsDomain}`,
   );
 

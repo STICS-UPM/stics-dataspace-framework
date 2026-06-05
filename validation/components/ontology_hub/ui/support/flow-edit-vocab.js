@@ -1,4 +1,5 @@
 const { OntologyHubVocabFormPage } = require("../pages/vocab-form.page");
+const { buildOntologyHubUrl, resolveOntologyHubRedirectUrl } = require("../runtime");
 const { gotoEdition } = require("./bootstrap");
 
 function normalizeText(value) {
@@ -84,7 +85,7 @@ function publicDetailHasMarkersInHtml(html, prefix, title, reviewNeedle) {
 }
 
 async function loginEditionRequestContext(request, runtime) {
-  const loginUrl = new URL("/edition/login", runtime.baseUrl).toString();
+  const loginUrl = buildOntologyHubUrl(runtime.baseUrl, "edition/login");
   const loginPageResponse = await request.get(loginUrl, {
     failOnStatusCode: false,
   });
@@ -94,7 +95,7 @@ async function loginEditionRequestContext(request, runtime) {
     throw new Error("Could not resolve the Ontology Hub login CSRF token.");
   }
 
-  const sessionResponse = await request.post(new URL("/edition/session", runtime.baseUrl).toString(), {
+  const sessionResponse = await request.post(buildOntologyHubUrl(runtime.baseUrl, "edition/session"), {
     failOnStatusCode: false,
     form: {
       _csrf: csrfToken,
@@ -122,7 +123,7 @@ async function editVocabularyForWorkflowHttp(request, runtime, bootstrapContext)
 
   await loginEditionRequestContext(request, runtime);
 
-  const editUrl = new URL(`/edition/vocabs/${encodeURIComponent(prefix)}`, runtime.baseUrl).toString();
+  const editUrl = buildOntologyHubUrl(runtime.baseUrl, `edition/vocabs/${encodeURIComponent(prefix)}`);
   const editResponse = await request.get(editUrl, {
     failOnStatusCode: false,
   });
@@ -221,10 +222,10 @@ async function editVocabularyForWorkflowHttp(request, runtime, bootstrapContext)
     );
   }
 
-  const publicUrl = new URL(
-    (savePayload && savePayload.redirect) || `/dataset/vocabs/${prefix}`,
+  const publicUrl = resolveOntologyHubRedirectUrl(
     runtime.baseUrl,
-  ).toString();
+    (savePayload && savePayload.redirect) || `/dataset/vocabs/${prefix}`,
+  );
   const detailResponse = await request.get(publicUrl, {
     failOnStatusCode: false,
   });
@@ -310,9 +311,12 @@ async function editVocabularyForWorkflow(page, runtime, bootstrapContext) {
     );
   }
 
-  const publicUrl = /\/dataset\/vocabs\/[^/]+\/?$/.test(saveOutcome.finalUrl)
-    ? saveOutcome.finalUrl
-    : new URL(saveOutcome.redirectTarget || `/dataset/vocabs/${prefix}`, runtime.baseUrl).toString();
+  const publicUrl = resolveOntologyHubRedirectUrl(
+    runtime.baseUrl,
+    /\/dataset\/vocabs\/[^/]+\/?$/.test(saveOutcome.finalUrl)
+      ? saveOutcome.finalUrl
+      : saveOutcome.redirectTarget || `/dataset/vocabs/${prefix}`,
+  );
 
   const reviewNeedle = normalizeText(reviewText).split("[edit:")[0].trim();
   if (!page.isClosed() && page.url() !== publicUrl) {

@@ -25,6 +25,7 @@ const DEFAULT_REPOSITORY_URI =
 const URI_VOCAB_STATE_KEY = "oh-app-03-uri-vocabulary";
 const REPOSITORY_VOCAB_STATE_KEY = "oh-app-04-repository-vocabulary";
 const VISUALIZATION_N3_STATE_KEY = "oh-app-05-visualization-n3";
+const VERSION_VOCAB_STATE_KEY = "oh-app-11-version-vocabulary";
 const VERSION_STATE_KEY = "oh-app-11-version-state";
 const { readyTimeoutMs, navigationTimeoutMs } = resolveOntologyHubTimeouts();
 
@@ -285,7 +286,7 @@ async function signInToEdition(page, runtime, credentials = {}) {
           (response) => {
             const request = response.request();
             try {
-              return request.method() === "POST" && new URL(response.url()).pathname === "/edition/session";
+              return request.method() === "POST" && new URL(response.url()).pathname.endsWith("/edition/session");
             } catch {
               return false;
             }
@@ -630,10 +631,7 @@ async function runIndexAllFromEdition(page, runtime) {
     }
 
     await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
-    await page.goto(`${runtime.baseUrl}/edition`, {
-      waitUntil: "domcontentloaded",
-      timeout: 5000,
-    }).catch(() => {});
+    await page.waitForTimeout(1000).catch(() => {});
   } catch (error) {
     console.warn(`[runIndexAllFromEdition] Non-blocking error: ${error.message}`);
   }
@@ -716,6 +714,11 @@ async function createVocabularyByUri(page, runtime) {
 }
 
 async function createVocabularyFromRepository(page, runtime) {
+  const existing = await reuseExistingPublicVocabulary(page, runtime, "repository");
+  if (existing) {
+    return existing;
+  }
+
   await gotoEdition(page, runtime);
   await clickMarked(page.locator(".createVocab"));
   await page.locator("#dialogCreateVocab").waitFor({ state: "visible", timeout: readyTimeoutMs });
@@ -732,17 +735,21 @@ async function createVocabularyFromRepository(page, runtime) {
       .catch(() => ""),
   );
   if (/already exists/i.test(visibleError)) {
-    await waitForPublicVocabularyDetail(page, runtime, runtime.creationPrefix, runtime.creationTitle);
-    return {
-      prefix: runtime.creationPrefix,
-      title: runtime.creationTitle,
-      url: page.url(),
-      method: "repository",
-      reusedExistingImport: true,
-    };
+    const reused = await reuseExistingPublicVocabulary(page, runtime, "repository");
+    if (reused) {
+      return reused;
+    }
   }
   if (visibleError && !/create a new vocabulary/i.test((await page.content()).toLowerCase())) {
-    throw new Error(`Ontology Hub rejected the repository registration: ${visibleError}`);
+    const reused = await reuseExistingPublicVocabulary(page, runtime, "repository");
+    if (reused) {
+      return reused;
+    }
+    const repositoryDiagnostic = await probeRepositoryAccess(page, runtime.creationRepositoryUri).catch(() => "");
+    throw new Error(
+      `Ontology Hub rejected the repository registration: ${visibleError}` +
+        (repositoryDiagnostic ? ` ${repositoryDiagnostic}` : ""),
+    );
   }
 
   await fillVocabularyMetadata(page, runtime);
@@ -753,6 +760,74 @@ async function createVocabularyFromRepository(page, runtime) {
     title: runtime.creationTitle,
     url: page.url(),
     method: "repository",
+  };
+}
+
+function githubContentsApiUrl(repositoryUri) {
+  const rawValue = normalizeText(repositoryUri);
+  if (!rawValue) {
+    return "";
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(rawValue);
+  } catch (error) {
+    return "";
+  }
+
+  if (!["github.com", "www.github.com"].includes(parsed.hostname.toLowerCase())) {
+    return "";
+  }
+
+  const parts = parsed.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "").split("/");
+  if (parts.length < 2 || !parts[0] || !parts[1]) {
+    return "";
+  }
+
+  return `https://api.github.com/repos/${parts[0]}/${parts[1]}/contents/tests`;
+}
+
+async function probeRepositoryAccess(page, repositoryUri) {
+  const apiUrl = githubContentsApiUrl(repositoryUri);
+  if (!apiUrl) {
+    return "";
+  }
+
+  const response = await page.request.get(apiUrl, { timeout: 10000 });
+  const headers = response.headers();
+  const remaining = headers["x-ratelimit-remaining"];
+  const limit = headers["x-ratelimit-limit"];
+  const reset = headers["x-ratelimit-reset"];
+  const resetText = reset ? new Date(Number(reset) * 1000).toISOString() : "";
+  const rateLimit =
+    limit || remaining || reset
+      ? ` GitHub rate limit: remaining=${remaining || "unknown"}/${limit || "unknown"}` +
+        (resetText ? `, reset=${resetText}` : "")
+      : "";
+  return `Runner-side repository diagnostic: ${apiUrl} returned HTTP ${response.status()}.${rateLimit}`;
+}
+
+async function reuseExistingPublicVocabulary(page, runtime, method) {
+  const prefix = normalizeText(runtime.creationPrefix || runtime.expectedVocabularyPrefix);
+  if (!prefix) {
+    return null;
+  }
+
+  const detailProbe = await probeVocabularyDetail(page.request, runtime, prefix, {
+    refresh: true,
+  }).catch(() => null);
+  if (!detailProbe || !detailProbe.available) {
+    return null;
+  }
+
+  await openVocabularyDetail(page, runtime, prefix, runtime.creationTitle || runtime.expectedVocabularyTitle || "");
+  return {
+    prefix,
+    title: normalizeText(runtime.creationTitle || runtime.expectedVocabularyTitle || prefix),
+    url: page.url(),
+    method,
+    reusedExistingImport: true,
   };
 }
 
@@ -1022,25 +1097,25 @@ async function downloadFirstN3(page, testInfo, baseName, options = {}) {
   const filePath = testInfo.outputPath(`${baseName}.n3`);
   let suggestedFilename = path.basename(href || `${baseName}.n3`) || `${baseName}.n3`;
   const strategy = normalizeText(options.strategy || "browser").toLowerCase();
+  const resolvedDownload = resolvePublicDownloadUrl(page.url(), href, options.runtime);
 
   const requestDownload = async () => {
-    if (!href) {
+    if (!resolvedDownload.url) {
       throw new Error("The vocabulary exposes an .n3 link without a usable href.");
     }
 
-    const absoluteUrl = new URL(href, page.url()).toString();
-    const response = await page.request.get(absoluteUrl, { timeout: 5000 });
+    const response = await page.request.get(resolvedDownload.url, { timeout: 5000 });
     if (!response.ok()) {
-      throw new Error(`The .n3 resource returned HTTP ${response.status()} for ${absoluteUrl}`);
+      throw new Error(`The .n3 resource returned HTTP ${response.status()} for ${resolvedDownload.url}`);
     }
 
     const body = await response.text();
     fs.writeFileSync(filePath, body, "utf8");
-    suggestedFilename = path.basename(new URL(absoluteUrl).pathname) || suggestedFilename;
+    suggestedFilename = path.basename(new URL(resolvedDownload.url).pathname) || suggestedFilename;
   };
 
   try {
-    if (strategy === "request") {
+    if (strategy === "request" || resolvedDownload.rewritten) {
       await requestDownload();
     } else {
       const downloadPromise = page.waitForEvent("download", { timeout: 5000 });
@@ -1061,7 +1136,44 @@ async function downloadFirstN3(page, testInfo, baseName, options = {}) {
     suggestedFilename,
     size: stat.size,
     href,
+    resolvedUrl: resolvedDownload.url,
+    rewrittenPublicUrl: resolvedDownload.rewritten,
   };
+}
+
+function resolvePublicDownloadUrl(pageUrl, href, runtime = {}) {
+  if (!href) {
+    return { url: "", rewritten: false };
+  }
+
+  const parsedHref = new URL(href, pageUrl);
+  const runtimeBase = normalizeText(runtime.baseUrl);
+  if (!runtimeBase) {
+    return { url: parsedHref.toString(), rewritten: false };
+  }
+
+  const publicBase = new URL(runtimeBase);
+  const samePublicHost = parsedHref.hostname === publicBase.hostname;
+  const internalHost =
+    parsedHref.hostname.endsWith(".components") ||
+    parsedHref.hostname.includes(".svc") ||
+    parsedHref.hostname.includes("ontology-hub");
+
+  if (samePublicHost || !internalHost) {
+    return { url: parsedHref.toString(), rewritten: false };
+  }
+
+  const publicPathPrefix = publicBase.pathname.replace(/\/+$/, "");
+  const hrefPath = parsedHref.pathname.startsWith("/") ? parsedHref.pathname : `/${parsedHref.pathname}`;
+  const rewritten = new URL(publicBase.toString());
+  rewritten.pathname =
+    publicPathPrefix && !hrefPath.startsWith(`${publicPathPrefix}/`)
+      ? `${publicPathPrefix}${hrefPath}`
+      : hrefPath;
+  rewritten.search = parsedHref.search;
+  rewritten.hash = "";
+
+  return { url: rewritten.toString(), rewritten: true };
 }
 
 async function openVocabularyDetail(page, runtime, prefix, title = "") {
@@ -1084,7 +1196,7 @@ async function openVersionsPage(page, runtime, prefix) {
     .waitFor({ state: "visible", timeout: 5000 });
 }
 
-async function createVersion(page, version, filePath) {
+async function createVersion(page, version, filePath, options = {}) {
   await clickMarked(page.locator(".editionIndexBoxHeader .fieldReviewAddAction"));
   const dialog = page.locator("#dialogNewVersion");
   await dialog.waitFor({ state: "visible", timeout: 5000 });
@@ -1108,6 +1220,18 @@ async function createVersion(page, version, filePath) {
       throw new Error(`Ontology Hub returned an unhealthy page after version submit: ${headingText || "unknown error page"}`);
     }
   } catch (error) {
+    if (options.runtime && options.prefix) {
+      const recovery = await waitForRecoveredVersionRow(
+        page,
+        options.runtime,
+        options.prefix,
+        version,
+        options.recoveryTimeoutMs || Math.max(readyTimeoutMs * 4, 180000),
+      );
+      if (recovery.recovered) {
+        return recovery;
+      }
+    }
     const dialogText = normalizeText(await safeTextContent(dialog));
     const formErrors = normalizeText(await safeTextContent(page.locator("#formErrors, #dialogNewVersionFormErrors")));
     throw new Error(
@@ -1620,6 +1744,7 @@ module.exports = {
   updateVocabularyMetadata,
   VISUALIZATION_N3_STATE_KEY,
   URI_VOCAB_STATE_KEY,
+  VERSION_VOCAB_STATE_KEY,
   VERSION_STATE_KEY,
   waitForThemisPanel,
   waitForRecoveredVersionRow,

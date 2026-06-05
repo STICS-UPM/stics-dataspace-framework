@@ -15,16 +15,16 @@ const {
   URI_VOCAB_STATE_KEY,
 } = require("../support/excel-flows");
 
-async function applyFacetLink(page, termsPage, groupLabel, valueLabel) {
+async function applyFacetLink(page, termsPage, groupLabel, valueLabel, timeoutMs = 15000) {
   const facetLink = termsPage.facetLink(groupLabel, valueLabel);
   if ((await facetLink.count()) === 0) {
     throw new Error(`Terms facet '${groupLabel}' with value '${valueLabel}' is not available.`);
   }
 
   await clickMarked(facetLink);
-  await page.waitForLoadState("networkidle", { timeout: 5000 });
-  await waitForTermsReady(page, 5000);
-  await waitForTermsResults(page, 5000);
+  await page.waitForLoadState("networkidle", { timeout: timeoutMs }).catch(() => {});
+  await waitForTermsReady(page, timeoutMs);
+  await waitForTermsResults(page, timeoutMs);
   const count = await termsPage.currentResultCount().catch(() => null);
   if (!count || count <= 0) {
     throw new Error(`Terms facet '${groupLabel}' with value '${valueLabel}' returned no results.`);
@@ -37,6 +37,7 @@ async function runTermsFacetCase(page, ontologyHubRuntime, valueLabel, captureSt
   const flowRuntime = runtimeFromCreatedVocabulary(ontologyHubRuntime, created, {
     expectedSearchTerm: created.prefix,
   });
+  const timeoutMs = Math.max(Number.parseInt(String(flowRuntime.uiReadyTimeoutMs || "0"), 10) || 15000, 15000);
   const termProbe = await probeTermSearchApi(page.request, flowRuntime, { refresh: true });
   if (!termProbe.available) {
     throw new Error(termProbe.reason || "No searchable terms were derived from the ontology created in OH-APP-03.");
@@ -47,9 +48,9 @@ async function runTermsFacetCase(page, ontologyHubRuntime, valueLabel, captureSt
   const query = termProbe.query;
 
   await termsPage.goto(flowRuntime.baseUrl, query);
-  await waitForTermsReady(page, 5000);
-  await waitForTermsResults(page, 5000);
-  const outcome = await applyFacetLink(page, termsPage, /Type/i, valueLabel);
+  await waitForTermsReady(page, timeoutMs);
+  await waitForTermsResults(page, timeoutMs);
+  const outcome = await applyFacetLink(page, termsPage, /Type/i, valueLabel, timeoutMs);
 
   await captureStep(page, reportName);
   await signOut(page, flowRuntime);

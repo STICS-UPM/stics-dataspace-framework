@@ -39,13 +39,12 @@ test("OH-APP-03: register ontology by URI", async ({
     creationTag: runtime.creationTag,
     creationReview: runtime.creationReview,
   };
-  await runIndexAllFromEdition(page, runtime);
   await captureStep(page, "03-uri-detail");
 
   await expectVocabularyVisibleInCatalog(page, runtime, created);
   await captureStep(page, "03-uri-catalog");
-  await signOut(page, runtime);
   saveRunState(URI_VOCAB_STATE_KEY, created);
+  await signOut(page, runtime);
 
   await attachJson("03-uri-registration-report", created);
 });
@@ -71,9 +70,9 @@ test("OH-APP-04: register ontology from repository", async ({
 
   await expectVocabularyVisibleInCatalog(page, runtime, created);
   await captureStep(page, "04-repository-catalog");
-  await signOut(page, runtime);
   deleteRunState(VERSION_STATE_KEY);
   saveRunState(REPOSITORY_VOCAB_STATE_KEY, created);
+  await signOut(page, runtime);
 
   await attachJson("04-repository-registration-report", created);
 });

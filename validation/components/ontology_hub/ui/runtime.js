@@ -83,8 +83,61 @@ function normalizeRuntime(runtime) {
     uiNavigationTimeoutMs: normalizePositiveInteger(runtime.uiNavigationTimeoutMs, 30000),
     uiReadyTimeoutMs: normalizePositiveInteger(runtime.uiReadyTimeoutMs, 30000),
     preflightTimeout: normalizePositiveInteger(runtime.preflightTimeout, 180),
+    versionTimeoutMs: normalizePositiveInteger(runtime.versionTimeoutMs, 240000),
     strictPreflight: Boolean(runtime.strictPreflight),
   };
+}
+
+function buildOntologyHubUrl(baseUrl, appPath = "") {
+  const base = String(baseUrl || "").trim().replace(/\/+$/, "");
+  if (!base) {
+    return String(appPath || "");
+  }
+  const suffix = String(appPath || "").trim().replace(/^\/+/, "");
+  return suffix ? `${base}/${suffix}` : base;
+}
+
+function resolveOntologyHubRedirectUrl(baseUrl, targetPath = "") {
+  const target = String(targetPath || "").trim();
+  if (!target) {
+    return buildOntologyHubUrl(baseUrl);
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(target)) {
+    try {
+      const base = new URL(buildOntologyHubUrl(baseUrl));
+      const parsedTarget = new URL(target);
+      const basePath = base.pathname.replace(/\/+$/, "");
+      const targetPathname = parsedTarget.pathname || "/";
+      if (
+        base.origin === parsedTarget.origin &&
+        basePath &&
+        basePath !== "/" &&
+        !targetPathname.startsWith(`${basePath}/`) &&
+        targetPathname !== basePath
+      ) {
+        parsedTarget.pathname = `${basePath}${targetPathname.startsWith("/") ? "" : "/"}${targetPathname}`;
+        return parsedTarget.toString();
+      }
+    } catch (error) {
+      return target;
+    }
+    return target;
+  }
+  return buildOntologyHubUrl(baseUrl, target);
+}
+
+function inferOntologyHubBaseUrl(currentUrl) {
+  try {
+    const parsed = new URL(String(currentUrl || ""));
+    const pathname = parsed.pathname.replace(/\/+$/, "");
+    const marker = pathname.match(/^(.*?)(?:\/(?:dataset|edition)(?:\/|$).*)$/);
+    parsed.pathname = marker ? marker[1] || "/" : pathname || "/";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/+$/, "");
+  } catch (error) {
+    return "";
+  }
 }
 
 function resolveRuntimeValue(envName, deployerConfig, fallback, options = {}) {
@@ -156,6 +209,10 @@ function resolveOntologyHubRuntime() {
     latestVersionDate: process.env.ONTOLOGY_HUB_LATEST_VERSION_DATE || "2026-03-22",
     creationUri:
       process.env.ONTOLOGY_HUB_CREATION_URI || "https://saref.etsi.org/saref4grid/v2.1.1/",
+    versionCreationUri:
+      process.env.ONTOLOGY_HUB_VERSION_CREATION_URI || "https://saref.etsi.org/saref4city/v1.1.2/",
+    versionCreationNamespace:
+      process.env.ONTOLOGY_HUB_VERSION_CREATION_NAMESPACE || "https://saref.etsi.org/saref4city/",
     creationRepositoryUri:
       process.env.ONTOLOGY_HUB_CREATION_REPOSITORY_URI ||
       "",
@@ -196,6 +253,10 @@ function resolveOntologyHubRuntime() {
       String(process.env.ONTOLOGY_HUB_UI_STRICT_PREFLIGHT || "").toLowerCase(),
     ),
     preflightTimeout: normalizePositiveInteger(process.env.ONTOLOGY_HUB_UI_PREFLIGHT_TIMEOUT, 180),
+    versionTimeoutMs: normalizePositiveInteger(
+      process.env.ONTOLOGY_HUB_VERSION_TIMEOUT_MS,
+      240000,
+    ),
   };
 
   return normalizeRuntime(fileRuntime ? { ...fallbackRuntime, ...fileRuntime } : fallbackRuntime);
@@ -212,6 +273,9 @@ function resolveOntologyHubTimeouts() {
 }
 
 module.exports = {
+  buildOntologyHubUrl,
+  inferOntologyHubBaseUrl,
   resolveOntologyHubRuntime,
+  resolveOntologyHubRedirectUrl,
   resolveOntologyHubTimeouts,
 };

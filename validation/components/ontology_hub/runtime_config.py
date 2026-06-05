@@ -208,6 +208,16 @@ def resolve_ontology_hub_runtime(
         or _chart_validation_value(chart_values, "validation", "ui", "creationPrefix")
         or ""
     ).strip()
+    explicit_version_creation_uri = (
+        current_env.get("ONTOLOGY_HUB_VERSION_CREATION_URI")
+        or _chart_validation_value(chart_values, "validation", "ui", "versionCreationUri")
+        or ""
+    ).strip()
+    explicit_version_creation_namespace = (
+        current_env.get("ONTOLOGY_HUB_VERSION_CREATION_NAMESPACE")
+        or _chart_validation_value(chart_values, "validation", "ui", "versionCreationNamespace")
+        or ""
+    ).strip()
 
     runtime = {
         "dataspace": dataspace,
@@ -279,6 +289,8 @@ def resolve_ontology_hub_runtime(
         "previousVersionDate": current_env.get("ONTOLOGY_HUB_PREVIOUS_VERSION_DATE") or "2025-01-15",
         "latestVersionDate": current_env.get("ONTOLOGY_HUB_LATEST_VERSION_DATE") or "2026-03-22",
         "creationUri": explicit_creation_uri or "https://saref.etsi.org/saref4grid/v2.1.1/",
+        "versionCreationUri": explicit_version_creation_uri or "https://saref.etsi.org/saref4city/v1.1.2/",
+        "versionCreationNamespace": explicit_version_creation_namespace or "https://saref.etsi.org/saref4city/",
         "creationRepositoryUri": _normalize_repository_uri(explicit_creation_repo),
         "creationNamespace": current_env.get("ONTOLOGY_HUB_CREATION_NAMESPACE")
         or _chart_validation_value(chart_values, "validation", "ui", "creationNamespace")

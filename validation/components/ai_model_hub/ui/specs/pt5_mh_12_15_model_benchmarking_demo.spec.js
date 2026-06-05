@@ -42,8 +42,35 @@ function predictionFor(assetId, expected) {
   return expected.expectedLabel;
 }
 
+function appendPath(baseUrl, pathValue) {
+  const base = String(baseUrl || "").trim().replace(/\/+$/, "");
+  if (!base) {
+    return "";
+  }
+  const pathPart = String(pathValue || "").trim();
+  if (!pathPart) {
+    return base;
+  }
+  return `${base}${pathPart.startsWith("/") ? pathPart : `/${pathPart}`}`;
+}
+
+function normalizeEndpointUrl(value) {
+  const url = new URL(value);
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+function configuredInferEndpoints(runtime) {
+  return Array.from(
+    new Set([
+      appendPath(runtime.consumerDefaultUrl, "/infer"),
+      appendPath(runtime.providerDefaultUrl, "/infer"),
+    ].filter(Boolean).map(normalizeEndpointUrl)),
+  );
+}
+
 async function installBenchmarkInferDemoRoute(page, runtime, rows) {
   const expectedByPayload = buildExpectedByPayload(rows);
+  const inferEndpoints = configuredInferEndpoints(runtime);
   const inferenceCalls = [];
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -52,7 +79,7 @@ async function installBenchmarkInferDemoRoute(page, runtime, rows) {
     "Content-Type": "application/json",
   };
 
-  await page.route("**/api/infer", async (route) => {
+  await page.route((url) => inferEndpoints.includes(normalizeEndpointUrl(url.href)), async (route) => {
     const request = route.request();
     if (request.method().toUpperCase() === "OPTIONS") {
       await route.fulfill({
@@ -87,7 +114,7 @@ async function installBenchmarkInferDemoRoute(page, runtime, rows) {
       expectedLabel: expected.expectedLabel,
       predictedLabel: label,
       path: body?.path || "/infer",
-      endpoint: `${runtime.consumerDefaultUrl}/infer`,
+      endpoint: normalizeEndpointUrl(request.url()),
     });
 
     await route.fulfill({
@@ -117,6 +144,7 @@ async function prepareBenchmarkingDemo({
 }) {
   const fixture = loadFlaresDataset();
   const benchmarkRows = buildFlaresBenchmarkRows(fixture);
+  const authorizedConnectors = await attachManagementAuthorizationRoutes(page, aiModelHubRuntime);
   const inferenceCalls = await installBenchmarkInferDemoRoute(page, aiModelHubRuntime, benchmarkRows);
   const linguisticModels = await ensureFlaresLinguisticModelsPublished(
     request,
@@ -128,7 +156,6 @@ async function prepareBenchmarkingDemo({
     aiModelHubRuntime,
     fixture,
   );
-  const authorizedConnectors = await attachManagementAuthorizationRoutes(page, aiModelHubRuntime);
   const benchmarkingPage = new ModelBenchmarkingPage(page, aiModelHubRuntime);
 
   await benchmarkingPage.goto();
@@ -155,7 +182,7 @@ async function prepareBenchmarkingDemo({
   const resultRowsText = runBenchmark ? await benchmarkingPage.resultRowsText() : [];
   await attachJson(`${stepPrefix}-benchmarking-demo`, {
     demoMode: "playwright-ui-with-controlled-infer-route",
-    inferenceEndpointMockedInBrowser: `${aiModelHubRuntime.consumerDefaultUrl}/infer`,
+    inferenceEndpointMockedInBrowser: configuredInferEndpoints(aiModelHubRuntime),
     route: aiModelHubRuntime.modelBenchmarkingPath,
     selectedModels: linguisticModels.models.map((model) => ({
       assetId: model.assetId,

@@ -11,11 +11,11 @@ const {
   downloadFirstN3,
   loadRunState,
   normalizeText,
-  REPOSITORY_VOCAB_STATE_KEY,
   runtimeFromCreatedVocabulary,
   saveRunState,
   signInToEdition,
   signOut,
+  URI_VOCAB_STATE_KEY,
   VISUALIZATION_N3_STATE_KEY,
 } = require("../support/excel-flows");
 
@@ -25,7 +25,7 @@ test("OH-APP-05: vocabulary detail is visible and the .n3 can be downloaded", as
   captureStep,
   attachJson,
 }, testInfo) => {
-  const created = loadRunState(REPOSITORY_VOCAB_STATE_KEY);
+  const created = loadRunState(URI_VOCAB_STATE_KEY);
   const flowRuntime = runtimeFromCreatedVocabulary(ontologyHubRuntime, created);
   await signInToEdition(page, flowRuntime);
 
@@ -88,7 +88,9 @@ test("OH-APP-05: vocabulary detail is visible and the .n3 can be downloaded", as
   if (await generalTab.isVisible().catch(() => false)) {
     await clickMarked(generalTab);
   }
-  const downloadInfo = await downloadFirstN3(page, testInfo, "05-vocab-download");
+  const downloadInfo = await downloadFirstN3(page, testInfo, "05-vocab-download", {
+    runtime: flowRuntime,
+  });
   saveRunState(VISUALIZATION_N3_STATE_KEY, {
     ...downloadInfo,
     vocabularyPrefix: targetPrefix,

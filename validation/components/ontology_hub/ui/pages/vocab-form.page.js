@@ -1,5 +1,10 @@
 const { clickMarked, fillMarked, selectOptionMarked } = require("../support/live-marker");
-const { resolveOntologyHubTimeouts } = require("../runtime");
+const {
+  buildOntologyHubUrl,
+  inferOntologyHubBaseUrl,
+  resolveOntologyHubRedirectUrl,
+  resolveOntologyHubTimeouts,
+} = require("../runtime");
 
 const { readyTimeoutMs, navigationTimeoutMs } = resolveOntologyHubTimeouts();
 
@@ -12,7 +17,7 @@ class OntologyHubVocabFormPage {
   }
 
   async gotoEdit(baseUrl, prefix) {
-    await this.page.goto(`${baseUrl}/edition/vocabs/${encodeURIComponent(prefix)}`, {
+    await this.page.goto(buildOntologyHubUrl(baseUrl, `edition/vocabs/${encodeURIComponent(prefix)}`), {
       waitUntil: "domcontentloaded",
     });
   }
@@ -161,7 +166,8 @@ class OntologyHubVocabFormPage {
         ? String(responsePayload.redirect || "").trim()
         : "";
     if (!redirected && redirectTarget && !/^500$/i.test(redirectTarget)) {
-      await this.page.goto(new URL(redirectTarget, this.page.url()).toString(), {
+      const baseUrl = inferOntologyHubBaseUrl(this.page.url());
+      await this.page.goto(resolveOntologyHubRedirectUrl(baseUrl, redirectTarget), {
         waitUntil: "domcontentloaded",
       });
       redirected = true;
@@ -239,7 +245,8 @@ class OntologyHubVocabFormPage {
         : "";
     let redirected = false;
     if (redirectTarget && !/^500$/i.test(redirectTarget)) {
-      await this.page.goto(new URL(redirectTarget, this.page.url()).toString(), {
+      const baseUrl = inferOntologyHubBaseUrl(this.page.url());
+      await this.page.goto(resolveOntologyHubRedirectUrl(baseUrl, redirectTarget), {
         waitUntil: "domcontentloaded",
       });
       redirected = true;

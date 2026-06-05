@@ -49,6 +49,54 @@ describe('model observer runtime utilities', () => {
       .toBe('http://conn-citycouncil-demo.dev.ds.dataspaceunit.upm/inesdata-connector-interface/model-observer');
   });
 
+  it('keeps the public connector path prefix when the portal is served below a vm-single route', () => {
+    const runtime: ModelObserverRuntimeConfig = {
+      managementApiUrl: 'https://validation.example.org/c/consumer-a/management',
+      participantId: 'conn-consumer-a-demo'
+    };
+    const vmSingleLocation: BrowserLocationLike = {
+      protocol: 'https:',
+      hostname: 'validation.example.org',
+      origin: 'https://validation.example.org',
+      pathname: '/inesdata-connector-interface/ai-model-observer/participants/qa-ai-model-consumer'
+    };
+
+    expect(resolveModelObserverApiBaseUrl(runtime, vmSingleLocation))
+      .toBe('https://validation.example.org/c/consumer-a/inesdata-connector-interface/model-observer');
+  });
+
+  it('supports relative same-origin management API paths for routed connector deployments', () => {
+    const runtime: ModelObserverRuntimeConfig = {
+      managementApiUrl: '/c/consumer-b/management',
+      participantId: 'conn-consumer-b-demo'
+    };
+    const routedLocation: BrowserLocationLike = {
+      protocol: 'https:',
+      hostname: 'validation.example.org',
+      origin: 'https://validation.example.org',
+      pathname: '/c/consumer-b/inesdata-connector-interface/ai-model-observer'
+    };
+
+    expect(resolveModelObserverApiBaseUrl(runtime, routedLocation))
+      .toBe('https://validation.example.org/c/consumer-b/inesdata-connector-interface/model-observer');
+  });
+
+  it('prefers the current public route prefix when management API is same-origin without that prefix', () => {
+    const runtime: ModelObserverRuntimeConfig = {
+      managementApiUrl: 'https://validation.example.org/management',
+      participantId: 'conn-consumer-c-demo'
+    };
+    const routedLocation: BrowserLocationLike = {
+      protocol: 'https:',
+      hostname: 'validation.example.org',
+      origin: 'https://validation.example.org',
+      pathname: '/c/consumer-c/inesdata-connector-interface/ai-model-observer/participants'
+    };
+
+    expect(resolveModelObserverApiBaseUrl(runtime, routedLocation))
+      .toBe('https://validation.example.org/c/consumer-c/inesdata-connector-interface/model-observer');
+  });
+
   it('sanitizes oauth allowed urls and appends the derived backend origin once', () => {
     const runtime: ModelObserverRuntimeConfig = {
       participantId: 'conn-citycouncil-demo',

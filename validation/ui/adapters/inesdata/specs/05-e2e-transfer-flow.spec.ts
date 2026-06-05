@@ -37,10 +37,21 @@ type RecordedSession = {
   page: Page;
 };
 
+function numericEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 function getUploadFileSizeMb(): number {
-  const raw = process.env.PORTAL_TEST_FILE_MB ?? "60";
-  const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? value : 60;
+  return numericEnv("PORTAL_TEST_FILE_MB", 60);
+}
+
+function getE2eTransferTimeoutMs(): number {
+  return numericEnv("UI_E2E_TRANSFER_TIMEOUT_MS", 360_000);
+}
+
+function getRecordedSessionCloseTimeoutMs(): number {
+  return numericEnv("UI_RECORDED_SESSION_CLOSE_TIMEOUT_MS", 20_000);
 }
 
 function createUploadFile(): UploadFileHandle {
@@ -56,6 +67,21 @@ function createUploadFile(): UploadFileHandle {
       }
     },
   };
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 async function captureStep(testInfo: TestInfo, page: Page, name: string): Promise<string> {
@@ -107,10 +133,18 @@ async function closeRecordedSession(testInfo: TestInfo, session?: RecordedSessio
   }
 
   const video = session.page.video();
-  await session.context.close().catch(() => undefined);
+  await withTimeout(
+    session.context.close().catch(() => undefined),
+    getRecordedSessionCloseTimeoutMs(),
+    `Timed out while closing recorded session ${session.label}`,
+  ).catch(() => undefined);
 
   if (video) {
-    const videoPath = await video.path().catch(() => undefined);
+    const videoPath = await withTimeout(
+      video.path().catch(() => undefined),
+      getRecordedSessionCloseTimeoutMs(),
+      `Timed out while resolving recorded video path for ${session.label}`,
+    ).catch(() => undefined);
     if (videoPath && fs.existsSync(videoPath)) {
       await testInfo.attach(`${session.label}-video`, {
         path: videoPath,
@@ -124,6 +158,8 @@ test("05 e2e transfer flow: provider UI bootstrap + consumer negotiation and tra
   browser,
   request,
 }, testInfo) => {
+  test.setTimeout(getE2eTransferTimeoutMs());
+
   const runtime = resolveDataspacePortalRuntime();
   const suffix = `${Date.now()}`;
   const assetId = `qa-ui-transfer-${suffix}`;

@@ -15,6 +15,14 @@ const {
   URI_VOCAB_STATE_KEY,
 } = require("../support/excel-flows");
 
+function loadOptionalRunState(key) {
+  try {
+    return loadRunState(key);
+  } catch (error) {
+    return null;
+  }
+}
+
 function escapeRegExp(value) {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -171,7 +179,7 @@ async function applyFacetLink(page, catalogPage, baseUrl, query, groupLabel, val
 
 async function runFacetCase(page, ontologyHubRuntime, facetGroup, facetValue, captureStep, attachJson, reportName) {
   const uriVocabulary = loadRunState(URI_VOCAB_STATE_KEY);
-  const repositoryVocabulary = loadRunState(REPOSITORY_VOCAB_STATE_KEY);
+  const repositoryVocabulary = loadOptionalRunState(REPOSITORY_VOCAB_STATE_KEY);
   const flowRuntime = runtimeFromCreatedVocabulary(ontologyHubRuntime, uriVocabulary, {
     listingSearchTerm: "",
   });
@@ -207,14 +215,19 @@ async function runFacetCase(page, ontologyHubRuntime, facetGroup, facetValue, ca
           reason: String((diagnosticError && diagnosticError.message) || diagnosticError || ""),
         }),
       ),
-      repositoryVocabulary: await collectVocabularyMetadataEvidence(
-        page,
-        flowRuntime,
-        repositoryVocabulary,
-      ).catch((diagnosticError) => ({
-        available: false,
-        reason: String((diagnosticError && diagnosticError.message) || diagnosticError || ""),
-      })),
+      repositoryVocabulary: repositoryVocabulary
+        ? await collectVocabularyMetadataEvidence(
+            page,
+            flowRuntime,
+            repositoryVocabulary,
+          ).catch((diagnosticError) => ({
+            available: false,
+            reason: String((diagnosticError && diagnosticError.message) || diagnosticError || ""),
+          }))
+        : {
+            available: false,
+            reason: "Repository vocabulary was not created in this run.",
+          },
     };
     await attachJson(`${reportName}-diagnostic`, diagnostic);
     throw new Error(
@@ -226,7 +239,7 @@ async function runFacetCase(page, ontologyHubRuntime, facetGroup, facetValue, ca
     );
   }
   if (/tag|language/i.test(String(facetGroup))) {
-    const expectedLabel = uriVocabulary.catalogLabel || repositoryVocabulary.catalogLabel || uriVocabulary.title;
+    const expectedLabel = uriVocabulary.catalogLabel || repositoryVocabulary?.catalogLabel || uriVocabulary.title;
     await catalogPage.expectResultVisible(expectedLabel);
   }
   await captureStep(page, reportName);

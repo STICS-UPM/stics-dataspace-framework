@@ -11,9 +11,11 @@ export interface BrowserLocationLike {
   protocol: string;
   hostname: string;
   origin: string;
+  pathname?: string;
 }
 
-const MODEL_OBSERVER_PROXY_PATH = '/inesdata-connector-interface/model-observer';
+const CONNECTOR_INTERFACE_PATH = '/inesdata-connector-interface';
+const MODEL_OBSERVER_PROXY_SUFFIX = '/model-observer';
 
 function getBrowserLocation(): BrowserLocationLike | null {
   if (typeof window === 'undefined' || !window.location) {
@@ -40,6 +42,14 @@ function normalizeProtocol(protocol?: string | null): string {
 function parseUrl(url: string): URL | null {
   try {
     return new URL(url);
+  } catch {
+    return null;
+  }
+}
+
+function parseUrlWithBase(url: string, baseOrigin?: string | null): URL | null {
+  try {
+    return baseOrigin ? new URL(url, baseOrigin) : new URL(url);
   } catch {
     return null;
   }
@@ -100,7 +110,48 @@ function buildOrigin(protocol: string, hostname: string): string {
 
 function resolveModelObserverProxyBaseUrl(location: BrowserLocationLike | null): string {
   const origin = normalizeUrl(location?.origin);
-  return origin ? `${origin}${MODEL_OBSERVER_PROXY_PATH}` : '';
+  if (!origin) {
+    return '';
+  }
+
+  const pathname = `${location?.pathname ?? ''}`;
+  const interfacePathIndex = pathname.indexOf(CONNECTOR_INTERFACE_PATH);
+  const interfaceBasePath = interfacePathIndex >= 0
+    ? pathname.slice(0, interfacePathIndex + CONNECTOR_INTERFACE_PATH.length)
+    : CONNECTOR_INTERFACE_PATH;
+
+  return `${origin}${interfaceBasePath}${MODEL_OBSERVER_PROXY_SUFFIX}`;
+}
+
+function hasRoutedConnectorInterfacePrefix(location: BrowserLocationLike | null): boolean {
+  const pathname = `${location?.pathname ?? ''}`;
+  const interfacePathIndex = pathname.indexOf(CONNECTOR_INTERFACE_PATH);
+  return interfacePathIndex > 0;
+}
+
+function resolveModelObserverProxyBaseUrlFromManagement(
+  runtime: ModelObserverRuntimeConfig,
+  location: BrowserLocationLike | null
+): string {
+  const origin = normalizeUrl(location?.origin);
+  const managementApiUrl = normalizeUrl(runtime.managementApiUrl);
+  if (!origin || !managementApiUrl) {
+    return '';
+  }
+
+  const managementUrl = parseUrlWithBase(managementApiUrl, origin);
+  if (!managementUrl || normalizeUrl(managementUrl.origin) !== origin) {
+    return '';
+  }
+
+  const managementPath = managementUrl.pathname.replace(/\/+$/, '');
+  const managementSuffix = '/management';
+  if (!managementPath.endsWith(managementSuffix)) {
+    return '';
+  }
+
+  const connectorPathPrefix = managementPath.slice(0, -managementSuffix.length);
+  return `${origin}${connectorPathPrefix}${CONNECTOR_INTERFACE_PATH}${MODEL_OBSERVER_PROXY_SUFFIX}`;
 }
 
 function resolvePortalBackendOrigin(
@@ -136,6 +187,15 @@ export function resolveModelObserverApiBaseUrl(
   location: BrowserLocationLike | null = getBrowserLocation()
 ): string {
   const proxyBaseUrl = resolveModelObserverProxyBaseUrl(location);
+  if (proxyBaseUrl && hasRoutedConnectorInterfacePrefix(location)) {
+    return proxyBaseUrl;
+  }
+
+  const managementProxyBaseUrl = resolveModelObserverProxyBaseUrlFromManagement(runtime, location);
+  if (managementProxyBaseUrl) {
+    return managementProxyBaseUrl;
+  }
+
   if (proxyBaseUrl) {
     return proxyBaseUrl;
   }

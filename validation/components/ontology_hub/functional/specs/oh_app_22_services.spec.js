@@ -2,6 +2,7 @@
 const fs = require("fs");
 
 const { test, expect } = require("../../ui/fixtures");
+const { buildOntologyHubUrl } = require("../../ui/runtime");
 const { checkMarked, clickMarked, setInputFilesMarked } = require("../../ui/support/live-marker");
 const { OntologyHubHomePage } = require("../../ui/pages/home.page");
 const { OntologyHubVocabCatalogPage } = require("../../ui/pages/vocab-catalog.page");
@@ -90,7 +91,7 @@ function resolvePatternsQuery(runtime) {
 }
 
 function buildPatternsUrl(runtime, query) {
-  const url = new URL("/dataset/patterns", runtime.baseUrl);
+  const url = new URL(buildOntologyHubUrl(runtime.baseUrl, "dataset/patterns"));
   url.searchParams.set("q", query);
   return url.toString();
 }
@@ -103,6 +104,7 @@ test("OH-APP-22: patterns page generates a zip", async ({
 }, testInfo) => {
   test.setTimeout(360000);
   const patternsRuntime = resolvePatternsRuntime(ontologyHubRuntime);
+  const created = loadRunState(URI_VOCAB_STATE_KEY);
   const patternsQuery = resolvePatternsQuery(patternsRuntime);
   const patternsUrl = buildPatternsUrl(patternsRuntime, patternsQuery);
 

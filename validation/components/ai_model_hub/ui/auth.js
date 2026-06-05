@@ -256,19 +256,39 @@ function matchesConnectorSegment(segment, descriptor) {
   );
 }
 
-function connectorForDirectManagementRequest(requestUrl, descriptors) {
+function connectorForDirectConnectorRequest(requestUrl, descriptors) {
   const requestHref = trimTrailingSlash(requestUrl.href.split("?")[0]);
   const requestHost = normalize(requestUrl.hostname);
 
-  return descriptors.find((descriptor) => {
-    const managementUrl = trimTrailingSlash(descriptor.managementUrl);
-    const managementHost = managementUrl ? normalize(new URL(managementUrl).hostname) : "";
-    return (
-      requestHost.startsWith(normalize(descriptor.connectorId)) ||
-      (managementHost && requestHost === managementHost) ||
-      (managementUrl && requestHref.startsWith(managementUrl))
-    );
-  });
+  for (const descriptor of descriptors) {
+    const directUrls = [
+      ["management", descriptor.managementUrl],
+      ["api", descriptor.defaultUrl],
+      ["protocol", descriptor.protocolUrl],
+    ];
+
+    for (const [serviceName, directUrl] of directUrls) {
+      const normalizedDirectUrl = trimTrailingSlash(directUrl);
+      if (!normalizedDirectUrl) {
+        continue;
+      }
+      const directHost = normalize(new URL(normalizedDirectUrl).hostname);
+      const hostMatchesLegacyConnectorSubdomain = serviceName === "management"
+        && requestHost.startsWith(normalize(descriptor.connectorId));
+
+      if (
+        hostMatchesLegacyConnectorSubdomain ||
+        (directHost && requestHost === directHost && requestHref.startsWith(normalizedDirectUrl))
+      ) {
+        return {
+          descriptor,
+          serviceName,
+        };
+      }
+    }
+  }
+
+  return null;
 }
 
 function parseDashboardProxyPath(requestUrl, descriptors) {
@@ -389,7 +409,17 @@ function corsHeaders(requestHeaders) {
   };
 }
 
-async function fulfillDirectManagementRequest(route, connector) {
+function authorizationForService(connectorRequest) {
+  if (!connectorRequest || !connectorRequest.descriptor) {
+    return undefined;
+  }
+  if (connectorRequest.serviceName === "protocol") {
+    return undefined;
+  }
+  return connectorRequest.descriptor.authorization;
+}
+
+async function fulfillDirectConnectorRequest(route, connectorRequest) {
   const request = route.request();
   const headers = request.headers();
 
@@ -404,7 +434,7 @@ async function fulfillDirectManagementRequest(route, connector) {
 
   const response = await fetchManagementBridge(request.url(), {
     method: request.method(),
-    headers: filteredHeaders(headers, connector.authorization),
+    headers: filteredHeaders(headers, authorizationForService(connectorRequest)),
     body: ["GET", "HEAD"].includes(request.method().toUpperCase()) ? undefined : request.postDataBuffer(),
   });
 
@@ -476,16 +506,16 @@ async function attachManagementAuthorizationRoutes(page, runtime) {
       return;
     }
 
-    const connector = connectorForDirectManagementRequest(requestUrl, descriptors);
-    if (!connector || !connector.authorization) {
+    const connectorRequest = connectorForDirectConnectorRequest(requestUrl, descriptors);
+    if (!connectorRequest) {
       await route.continue();
       return;
     }
 
-    await fulfillDirectManagementRequest(route, connector);
+    await fulfillDirectConnectorRequest(route, connectorRequest);
   };
 
-  await page.route("**/management/**", routeHandler);
+  await page.route("**/*", routeHandler);
   await page.route("**/edc-dashboard-api/connectors/**", routeHandler);
 
   return authorizationByConnector;
