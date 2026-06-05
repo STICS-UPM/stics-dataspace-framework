@@ -1115,9 +1115,19 @@ def _vm_single_k3s_active(service_name="k3s"):
     return result.returncode == 0 and str(result.stdout or "").strip() == "active"
 
 
+def _normalized_previous_cluster_runtime(previous_runtime):
+    raw_value = str(previous_runtime or "").strip()
+    if not raw_value or raw_value.lower().startswith("invalid"):
+        return None
+    try:
+        return normalize_cluster_type(raw_value, topology="local")
+    except ValueError:
+        return None
+
+
 def _build_vm_single_cluster_runtime_switch_plan(target_runtime, previous_runtime=None):
     target = normalize_cluster_type(target_runtime, topology="vm-single")
-    previous = normalize_cluster_type(previous_runtime, topology="vm-single") if previous_runtime else None
+    previous = _normalized_previous_cluster_runtime(previous_runtime)
     if previous == target:
         return {"status": "skipped", "reason": "runtime-unchanged", "target_runtime": target}
 
@@ -1128,17 +1138,6 @@ def _build_vm_single_cluster_runtime_switch_plan(target_runtime, previous_runtim
             "detected_runtime": "minikube",
             "cleanup_action": "delete-minikube-profile",
             "cleanup_command": ["minikube", "delete", "-p", "minikube"],
-            "confirmation_token": _vm_single_cluster_switch_confirmation_token(target),
-        }
-
-    if target == "minikube" and _vm_single_k3s_active():
-        return {
-            "status": "planned",
-            "target_runtime": target,
-            "detected_runtime": "k3s",
-            "cleanup_action": "stop-k3s-service",
-            "cleanup_command": ["sudo", "-n", "systemctl", "stop", "k3s"],
-            "manual_cleanup": "sudo systemctl stop k3s",
             "confirmation_token": _vm_single_cluster_switch_confirmation_token(target),
         }
 
@@ -5233,9 +5232,9 @@ def _normalized_topology_address(value):
 def _effective_vm_single_cluster_type():
     try:
         config = _load_effective_infrastructure_deployer_config(topology="vm-single")
-        return build_cluster_runtime(config, topology="vm-single").get("cluster_type", "minikube")
+        return build_cluster_runtime(config, topology="vm-single").get("cluster_type", "k3s")
     except Exception:
-        return "minikube"
+        return "k3s"
 
 
 def _configured_vm_single_address():
@@ -5243,7 +5242,6 @@ def _configured_vm_single_address():
     cluster_type = _effective_vm_single_cluster_type()
     candidates = _detect_vm_single_address_candidates() if cluster_type == "k3s" else {}
     vm_ip = _normalized_topology_address(candidates.get("vm_ip"))
-    minikube_ip = _normalized_topology_address(candidates.get("minikube_ip"))
     for key in (
         "VM_SINGLE_ADDRESS",
         "VM_SINGLE_IP",
@@ -5253,8 +5251,6 @@ def _configured_vm_single_address():
     ):
         value = _normalized_topology_address(config.get(key))
         if value:
-            if cluster_type == "k3s" and vm_ip and minikube_ip and value == minikube_ip:
-                continue
             return value
     return ""
 
@@ -5278,22 +5274,11 @@ def _detect_vm_single_address_candidates():
             vm_ip = candidate
             break
 
-    minikube_ip = ""
-    for token in _command_stdout(["minikube", "ip"]).split():
-        candidate = _normalized_topology_address(token)
-        if candidate:
-            minikube_ip = candidate
-            break
-
-    if cluster_type == "k3s" and vm_ip:
-        recommended_source = "vm"
-        recommended_address = vm_ip
-    else:
-        recommended_source = "minikube" if minikube_ip else ("vm" if vm_ip else "")
-        recommended_address = minikube_ip or vm_ip
+    recommended_source = "vm" if vm_ip else ""
+    recommended_address = vm_ip
     return {
         "vm_ip": vm_ip,
-        "minikube_ip": minikube_ip,
+        "minikube_ip": "",
         "recommended_address": recommended_address,
         "recommended_source": recommended_source,
         "cluster_type": cluster_type,
@@ -5302,14 +5287,13 @@ def _detect_vm_single_address_candidates():
 
 def _synchronize_vm_single_addresses_after_level1():
     candidates = _detect_vm_single_address_candidates()
-    minikube_ip = _normalized_topology_address(candidates.get("minikube_ip"))
     vm_ip = _normalized_topology_address(candidates.get("vm_ip"))
+    stale_minikube_ip = _normalized_topology_address(candidates.get("minikube_ip"))
     cluster_type = str(candidates.get("cluster_type") or _effective_vm_single_cluster_type()).strip()
-    target_ip = vm_ip if cluster_type == "k3s" else minikube_ip
-    source = "vm" if cluster_type == "k3s" else "minikube"
+    target_ip = vm_ip
+    source = "vm"
     if not target_ip:
-        reason = "vm-ip-unavailable" if cluster_type == "k3s" else "minikube-ip-unavailable"
-        return {"status": "skipped", "reason": reason}
+        return {"status": "skipped", "reason": "vm-ip-unavailable"}
 
     _seed_infrastructure_deployer_config_if_missing()
     config_path = _seed_infrastructure_topology_config_if_missing("vm-single")
@@ -5325,7 +5309,7 @@ def _synchronize_vm_single_addresses_after_level1():
             return True
         if current_value == target_ip:
             return False
-        if cluster_type == "k3s" and minikube_ip and current_value == minikube_ip:
+        if cluster_type == "k3s" and stale_minikube_ip and current_value == stale_minikube_ip:
             return True
         return bool(vm_ip) and current_value == vm_ip
 
@@ -5341,7 +5325,7 @@ def _synchronize_vm_single_addresses_after_level1():
         current_value = _normalized_topology_address(raw_config.get(key))
         if current_value == target_ip:
             continue
-        if cluster_type == "k3s" and minikube_ip and current_value == minikube_ip:
+        if cluster_type == "k3s" and stale_minikube_ip and current_value == stale_minikube_ip:
             updates[key] = target_ip
             continue
         if not current_value:
@@ -5444,15 +5428,13 @@ def _interactive_offer_vm_single_address_configuration(required=False):
     print("vm-single needs a topology address for ingress hostnames and public URLs.")
     if candidates.get("vm_ip"):
         print("Detected a candidate address from hostname -I.")
-    if candidates.get("minikube_ip"):
-        print("Detected a candidate address from minikube ip.")
 
     if not recommended_address:
         print("Could not detect a vm-single address automatically.")
         print("Set VM_EXTERNAL_IP or INGRESS_EXTERNAL_IP in deployers/infrastructure/topologies/vm-single.config.")
         return not required
 
-    source_label = "minikube ip" if recommended_source == "minikube" else "hostname -I"
+    source_label = "hostname -I"
     if not _interactive_confirm(
         f"Populate VM_EXTERNAL_IP and INGRESS_EXTERNAL_IP from detected {source_label} now?",
         default=required,
@@ -10144,6 +10126,7 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "VM_CONSUMER_IP",
     "VM_PROVIDER_K8S_NODE",
     "VM_CONSUMER_K8S_NODE",
+    "FRAMEWORK_EXECUTION_MODE",
     "VM_CONNECTORS_IP",
     "VM_COMPONENTS_IP",
     "VM_OBSERVABILITY_IP",
@@ -10475,6 +10458,7 @@ def _vm_distributed_help_topic_base(topic):
     aliases = {
         "common-domain": "domain",
         "dataspace-domain": "domain",
+        "framework-execution": "framework-execution",
         "routing": "ingress",
         "common-address": "address",
         "provider-address": "address",
@@ -10524,6 +10508,17 @@ def _vm_distributed_discovery_details(topic):
             "choice": [
                 "Use a domain delegated to the distributed environment, often a subdomain of the common domain.",
                 "All machines that run validation should be able to resolve or map this domain through hosts entries.",
+            ],
+        },
+        "framework-execution": {
+            "purpose": [
+                "Defines where the framework process is expected to run for VM topologies.",
+                "orchestrator is the recommended workstation/WSL flow; target-vm means running directly inside the target or common-services VM.",
+            ],
+            "choice": [
+                "Use auto unless you need to force one behavior.",
+                "Use orchestrator from WSL or an operator workstation.",
+                "Use target-vm when launching the framework directly inside the VM that owns the deployment.",
             ],
         },
         "routing": {
@@ -11168,26 +11163,107 @@ def _vm_single_connect_timeout_seconds(topology_config):
     return min(max(timeout, 1), 60)
 
 
-def _normalized_vm_single_level_execution_mode(topology_config):
+def _normalized_framework_execution_mode(topology_config):
     raw_value = (
-        os.getenv("PIONERA_VM_SINGLE_LEVEL_EXECUTION_MODE")
-        or _vm_distributed_config_value(
-            topology_config,
-            "VM_SINGLE_LEVEL_EXECUTION_MODE",
-            "VM_SINGLE_REMOTE_EXECUTION_MODE",
-            default="local",
-        )
-    ).lower().replace("_", "-")
+        os.getenv("PIONERA_FRAMEWORK_EXECUTION_MODE")
+        or _vm_distributed_config_value(topology_config, "FRAMEWORK_EXECUTION_MODE", default="auto")
+    )
+    normalized = str(raw_value or "auto").strip().lower().replace("_", "-")
+    aliases = {
+        "": "auto",
+        "detect": "auto",
+        "detected": "auto",
+        "operator": "orchestrator",
+        "workstation": "orchestrator",
+        "wsl": "orchestrator",
+        "external": "orchestrator",
+        "remote": "orchestrator",
+        "common": "target-vm",
+        "common-vm": "target-vm",
+        "common-services": "target-vm",
+        "common-services-vm": "target-vm",
+        "inside-vm": "target-vm",
+        "current-vm": "target-vm",
+        "direct-vm": "target-vm",
+        "local-vm": "target-vm",
+        "vm": "target-vm",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _framework_execution_mode_is_explicit(mode):
+    return str(mode or "").strip().lower() not in {"", "auto"}
+
+
+def _normalized_vm_single_level_execution_mode(topology_config):
+    specific_env = os.getenv("PIONERA_VM_SINGLE_LEVEL_EXECUTION_MODE")
+    specific_config = _vm_distributed_config_value(
+        topology_config,
+        "VM_SINGLE_LEVEL_EXECUTION_MODE",
+        "VM_SINGLE_REMOTE_EXECUTION_MODE",
+    )
+    framework_mode = _normalized_framework_execution_mode(topology_config)
+    if specific_env:
+        raw_value = specific_env
+    elif (
+        _framework_execution_mode_is_explicit(framework_mode)
+        and str(specific_config or "").strip().lower().replace("_", "-") in {"", "auto"}
+    ):
+        raw_value = {
+            "orchestrator": "tunnel",
+            "target-vm": "local",
+        }.get(framework_mode, framework_mode)
+    else:
+        raw_value = specific_config or "local"
+
+    raw_value = str(raw_value or "local").lower().replace("_", "-")
     aliases = {
         "direct": "local",
         "current": "local",
         "inside-vm": "local",
         "operator": "tunnel",
         "external": "tunnel",
+        "orchestrator": "tunnel",
+        "workstation": "tunnel",
+        "target-vm": "local",
+        "common-services": "local",
+        "common-services-vm": "local",
         "ssh": "remote",
         "wsl": "auto",
     }
     return aliases.get(raw_value, raw_value)
+
+
+def _normalized_vm_distributed_execution_host(topology_config):
+    specific = _vm_distributed_config_value(
+        topology_config,
+        "VM_DISTRIBUTED_EXECUTION_HOST",
+    ).lower().replace("_", "-")
+    framework_mode = _normalized_framework_execution_mode(topology_config)
+    if specific in {"", "auto"} and _framework_execution_mode_is_explicit(framework_mode):
+        raw_value = {
+            "orchestrator": "external",
+            "target-vm": "common-services",
+        }.get(framework_mode, framework_mode)
+    else:
+        raw_value = specific or "external"
+    aliases = {
+        "local": "external",
+        "operator": "external",
+        "orchestrator": "external",
+        "workstation": "external",
+        "common": "common-services",
+        "common-vm": "common-services",
+        "common-services-vm": "common-services",
+        "target-vm": "common-services",
+        "inside-vm": "common-services",
+        "detect": "auto",
+        "detected": "auto",
+    }
+    normalized = aliases.get(raw_value, raw_value)
+    if normalized == "auto":
+        return "common-services" if _vm_distributed_running_on_common_services(topology_config) else "external"
+    return normalized
 
 
 def _vm_single_remote_python(topology_config):
@@ -11209,28 +11285,6 @@ def _normalized_vm_single_ssh_bootstrap_mode(topology_config):
         "reconcile": "auto",
     }
     return aliases.get(raw_value, raw_value)
-
-
-def _normalized_vm_distributed_execution_host(topology_config):
-    raw_value = _vm_distributed_config_value(
-        topology_config,
-        "VM_DISTRIBUTED_EXECUTION_HOST",
-        default="external",
-    ).lower().replace("_", "-")
-    aliases = {
-        "local": "external",
-        "operator": "external",
-        "orchestrator": "external",
-        "common": "common-services",
-        "common-vm": "common-services",
-        "common-services-vm": "common-services",
-        "detect": "auto",
-        "detected": "auto",
-    }
-    normalized = aliases.get(raw_value, raw_value)
-    if normalized == "auto":
-        return "common-services" if _vm_distributed_running_on_common_services(topology_config) else "external"
-    return normalized
 
 
 def _vm_distributed_running_on_common_services(topology_config):
@@ -14028,6 +14082,7 @@ VM_DISTRIBUTED_PROFILE_TEMPLATE_KEYS = (
     "PROFILE_TOPOLOGY",
     "PROFILE_ADAPTER",
     "ENVIRONMENT_NAME",
+    "FRAMEWORK_EXECUTION_MODE",
     "DOMAIN_BASE",
     "DS_DOMAIN_BASE",
     "TOPOLOGY_ROUTING_MODE",
@@ -14040,6 +14095,25 @@ VM_DISTRIBUTED_PROFILE_TEMPLATE_KEYS = (
     "COMPONENTS_PUBLIC_BASE_URL",
     "COMPONENTS_PUBLIC_PATH_REWRITE",
     "VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER",
+    "COMPONENTS_IMAGE_PULL_POLICY",
+    "ONTOLOGY_HUB_IMAGE_REF",
+    "AI_MODEL_HUB_IMAGE_REF",
+    "SEMANTIC_VIRTUALIZATION_IMAGE_REF",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_IMAGE_REF",
+    "AI_MODEL_HUB_MODEL_SERVER_IMAGE",
+    "AI_MODEL_HUB_MODEL_SERVER_MODE",
+    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
+    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
+    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
+    "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
+    "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
+    "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
+    "AI_MODEL_HUB_MODEL_SERVER_DOCKER_BASE_IMAGE",
+    "AI_MODEL_HUB_MODEL_SERVER_UVICORN_APP",
+    "AI_MODEL_HUB_MODEL_SERVER_IMAGE_PULL_POLICY",
+    "AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES",
+    "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
+    "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
     "VM_EXTERNAL_IP",
     "VM_COMMON_IP",
     "VM_DATASPACE_IP",
@@ -14143,6 +14217,7 @@ VM_SINGLE_PROFILE_TEMPLATE_KEYS = (
     "PROFILE_TOPOLOGY",
     "PROFILE_ADAPTER",
     "ENVIRONMENT_NAME",
+    "FRAMEWORK_EXECUTION_MODE",
     "DOMAIN_BASE",
     "DS_DOMAIN_BASE",
     "KEYCLOAK_FRONTEND_URL",
@@ -14159,6 +14234,25 @@ VM_SINGLE_PROFILE_TEMPLATE_KEYS = (
     "AI_MODEL_HUB_PUBLIC_URL",
     "SEMANTIC_VIRTUALIZATION_PUBLIC_URL",
     "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL",
+    "COMPONENTS_IMAGE_PULL_POLICY",
+    "ONTOLOGY_HUB_IMAGE_REF",
+    "AI_MODEL_HUB_IMAGE_REF",
+    "SEMANTIC_VIRTUALIZATION_IMAGE_REF",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_IMAGE_REF",
+    "AI_MODEL_HUB_MODEL_SERVER_IMAGE",
+    "AI_MODEL_HUB_MODEL_SERVER_MODE",
+    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
+    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
+    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
+    "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
+    "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
+    "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
+    "AI_MODEL_HUB_MODEL_SERVER_DOCKER_BASE_IMAGE",
+    "AI_MODEL_HUB_MODEL_SERVER_UVICORN_APP",
+    "AI_MODEL_HUB_MODEL_SERVER_IMAGE_PULL_POLICY",
+    "AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES",
+    "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
+    "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
     "VM_EXTERNAL_IP",
     "VM_COMMON_IP",
     "VM_DATASPACE_IP",
@@ -14178,10 +14272,6 @@ VM_SINGLE_PROFILE_TEMPLATE_KEYS = (
     "VM_SINGLE_K3S_TUNNEL_MODE",
     "VM_SINGLE_K3S_API_LOCAL_PORT",
     "VM_SINGLE_K3S_API_REMOTE_PORT",
-    "MINIKUBE_DRIVER",
-    "MINIKUBE_CPUS",
-    "MINIKUBE_MEMORY",
-    "MINIKUBE_PROFILE",
     "VM_SSH_USER",
     "SSH_ACCESS_MODE",
     "SSH_BASTION_HOST",
@@ -14231,6 +14321,7 @@ def _vm_distributed_profile_template_keys(topology="vm-distributed", adapter_nam
             "PROFILE_TOPOLOGY",
             "PROFILE_ADAPTER",
             "ENVIRONMENT_NAME",
+            "FRAMEWORK_EXECUTION_MODE",
             "DOMAIN_BASE",
             "DS_DOMAIN_BASE",
             "VM_EXTERNAL_IP",
@@ -14259,7 +14350,7 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
             (
                 "Local validation-environment profile.\n"
                 "This file is ignored by Git and must not contain passwords, tokens or private keys.",
-                ("PROFILE_TOPOLOGY", "PROFILE_ADAPTER", "ENVIRONMENT_NAME"),
+                ("PROFILE_TOPOLOGY", "PROFILE_ADAPTER", "ENVIRONMENT_NAME", "FRAMEWORK_EXECUTION_MODE"),
             ),
             (
                 "Public domain and common routes",
@@ -14285,6 +14376,35 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
                     "AI_MODEL_HUB_PUBLIC_URL",
                     "SEMANTIC_VIRTUALIZATION_PUBLIC_URL",
                     "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL",
+                ),
+            ),
+            (
+                "Component images",
+                (
+                    "COMPONENTS_IMAGE_PULL_POLICY",
+                    "ONTOLOGY_HUB_IMAGE_REF",
+                    "AI_MODEL_HUB_IMAGE_REF",
+                    "SEMANTIC_VIRTUALIZATION_IMAGE_REF",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_IMAGE_REF",
+                ),
+            ),
+            (
+                "AI Model Hub model server",
+                (
+                    "AI_MODEL_HUB_MODEL_SERVER_IMAGE",
+                    "AI_MODEL_HUB_MODEL_SERVER_MODE",
+                    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
+                    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
+                    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
+                    "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
+                    "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
+                    "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
+                    "AI_MODEL_HUB_MODEL_SERVER_DOCKER_BASE_IMAGE",
+                    "AI_MODEL_HUB_MODEL_SERVER_UVICORN_APP",
+                    "AI_MODEL_HUB_MODEL_SERVER_IMAGE_PULL_POLICY",
+                    "AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES",
+                    "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
+                    "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
                 ),
             ),
             (
@@ -14314,10 +14434,6 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
                     "VM_SINGLE_K3S_TUNNEL_MODE",
                     "VM_SINGLE_K3S_API_LOCAL_PORT",
                     "VM_SINGLE_K3S_API_REMOTE_PORT",
-                    "MINIKUBE_DRIVER",
-                    "MINIKUBE_CPUS",
-                    "MINIKUBE_MEMORY",
-                    "MINIKUBE_PROFILE",
                 ),
             ),
             (
@@ -14396,7 +14512,7 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
         (
             "Local validation-environment profile.\n"
             "This file is ignored by Git and must not contain passwords, tokens or private keys.",
-            ("PROFILE_TOPOLOGY", "PROFILE_ADAPTER", "ENVIRONMENT_NAME"),
+            ("PROFILE_TOPOLOGY", "PROFILE_ADAPTER", "ENVIRONMENT_NAME", "FRAMEWORK_EXECUTION_MODE"),
         ),
         (
             "Common and dataspace domains",
@@ -14414,6 +14530,35 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
                 "COMPONENTS_PUBLIC_BASE_URL",
                 "COMPONENTS_PUBLIC_PATH_REWRITE",
                 "VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER",
+            ),
+        ),
+        (
+            "Component images",
+            (
+                "COMPONENTS_IMAGE_PULL_POLICY",
+                "ONTOLOGY_HUB_IMAGE_REF",
+                "AI_MODEL_HUB_IMAGE_REF",
+                "SEMANTIC_VIRTUALIZATION_IMAGE_REF",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_IMAGE_REF",
+            ),
+        ),
+        (
+            "AI Model Hub model server",
+            (
+                "AI_MODEL_HUB_MODEL_SERVER_IMAGE",
+                "AI_MODEL_HUB_MODEL_SERVER_MODE",
+                "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
+                "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
+                "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
+                "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
+                "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
+                "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
+                "AI_MODEL_HUB_MODEL_SERVER_DOCKER_BASE_IMAGE",
+                "AI_MODEL_HUB_MODEL_SERVER_UVICORN_APP",
+                "AI_MODEL_HUB_MODEL_SERVER_IMAGE_PULL_POLICY",
+                "AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES",
+                "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
+                "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
             ),
         ),
         (
@@ -14803,6 +14948,14 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
         help_topic="dataspace-domain",
         profile_value=profile_value("DS_DOMAIN_BASE"),
     )
+    framework_execution_mode = _prompt_vm_distributed_value(
+        "Framework execution mode (auto/orchestrator/target-vm)",
+        current=topology_config.get("FRAMEWORK_EXECUTION_MODE"),
+        default="auto",
+        required=True,
+        help_topic="framework-execution",
+        profile_value=profile_value("FRAMEWORK_EXECUTION_MODE"),
+    )
     routing_mode = _prompt_vm_distributed_value(
         "Topology routing mode",
         current=topology_config.get("TOPOLOGY_ROUTING_MODE") or infrastructure_config.get("TOPOLOGY_ROUTING_MODE"),
@@ -15084,6 +15237,9 @@ def _run_vm_distributed_configuration_wizard_impl(current_adapter=None, adapter_
     topology_updates = {
         "DOMAIN_BASE": domain_base,
         "DS_DOMAIN_BASE": ds_domain_base,
+        "FRAMEWORK_EXECUTION_MODE": _normalized_framework_execution_mode(
+            {"FRAMEWORK_EXECUTION_MODE": framework_execution_mode}
+        ),
         **common_service_updates,
         "VM_EXTERNAL_IP": common_ip,
         "VM_COMMON_IP": common_ip,
@@ -17890,7 +18046,7 @@ def _print_interactive_help():
     print("    If you skip it, the menu still asks automatically when an action needs an adapter.")
     print("T - Use when you want to change the active topology for this menu session.")
     print("    It switches between local, vm-single and vm-distributed without editing configuration files.")
-    print("K - Use when vm-single is active and you want to choose Minikube or k3s for this menu session.")
+    print("K - Use when vm-single is active and you want to confirm or persist the k3s runtime for this menu session.")
     print("W - Use before selecting vm-distributed to open the configuration wizard, or with vm-distributed active to open the assistant.")
     print("    The assistant can write ignored .config files, show the VM plan, preview hosts/deployment, run non-destructive checks, show artifact paths, and guide SSH setup.")
     print("P - Use before deploying to inspect the plan without changing the environment.")
@@ -18046,14 +18202,18 @@ def _select_cluster_runtime_interactive(current_runtime=None, topology="local"):
         print(f"Cluster runtime selection is currently only configurable for vm-single. Active runtime: {runtime}")
         return current_runtime or runtime
 
-    current = normalize_cluster_type(
-        current_runtime or _resolve_interactive_cluster_runtime(normalized_topology).get("cluster_type"),
-        topology=normalized_topology,
-    )
+    available_cluster_types = ("k3s",)
+    try:
+        current = normalize_cluster_type(
+            current_runtime or _resolve_interactive_cluster_runtime(normalized_topology).get("cluster_type"),
+            topology=normalized_topology,
+        )
+    except ValueError:
+        current = "k3s"
 
     print()
     print("Available cluster runtimes for vm-single:")
-    for index, cluster_type in enumerate(SUPPORTED_CLUSTER_TYPES, start=1):
+    for index, cluster_type in enumerate(available_cluster_types, start=1):
         marker = " (current)" if cluster_type == current else ""
         print(f"{index} - {cluster_type}{marker}")
     print("B - Back")
@@ -18068,10 +18228,10 @@ def _select_cluster_runtime_interactive(current_runtime=None, topology="local"):
         print("Invalid selection.")
         return current
 
-    if index < 0 or index >= len(SUPPORTED_CLUSTER_TYPES):
+    if index < 0 or index >= len(available_cluster_types):
         print("Invalid selection.")
         return current
-    return SUPPORTED_CLUSTER_TYPES[index]
+    return available_cluster_types[index]
 
 
 def _detect_k3s_kubeconfig_candidate():
@@ -18158,7 +18318,7 @@ def _persist_vm_single_cluster_runtime(cluster_runtime):
 
 def _offer_persist_vm_single_cluster_runtime(cluster_runtime, previous_runtime=None):
     normalized = normalize_cluster_type(cluster_runtime, topology="vm-single")
-    previous = normalize_cluster_type(previous_runtime, topology="vm-single") if previous_runtime else None
+    previous = _normalized_previous_cluster_runtime(previous_runtime)
     if previous == normalized:
         return None
     if not _interactive_confirm(

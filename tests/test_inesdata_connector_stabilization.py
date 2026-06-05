@@ -62,7 +62,7 @@ class _FakeConnectorsAdapter(INESDataConnectorsAdapter):
     def __init__(self, validation_results):
         self.validation_results = list(validation_results)
 
-    def validate_connectors_deployment(self, connectors):
+    def validate_connectors_deployment(self, connectors, **_kwargs):
         if not self.validation_results:
             return False
         return self.validation_results.pop(0)

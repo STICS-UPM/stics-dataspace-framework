@@ -15,7 +15,7 @@ const {
   saveRunState,
   signInToEdition,
   signOut,
-  URI_VOCAB_STATE_KEY,
+  REPOSITORY_VOCAB_STATE_KEY,
   VISUALIZATION_N3_STATE_KEY,
 } = require("../support/excel-flows");
 
@@ -25,7 +25,7 @@ test("OH-APP-05: vocabulary detail is visible and the .n3 can be downloaded", as
   captureStep,
   attachJson,
 }, testInfo) => {
-  const created = loadRunState(URI_VOCAB_STATE_KEY);
+  const created = loadRunState(REPOSITORY_VOCAB_STATE_KEY);
   const flowRuntime = runtimeFromCreatedVocabulary(ontologyHubRuntime, created);
   await signInToEdition(page, flowRuntime);
 

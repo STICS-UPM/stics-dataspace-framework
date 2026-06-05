@@ -25,7 +25,7 @@ DEFAULT_K3S_WRITE_KUBECONFIG_MODE = "0644"
 
 
 def normalize_cluster_type(value: Any = None, topology: str = LOCAL_TOPOLOGY) -> str:
-    """Return a supported cluster runtime, preserving current Minikube defaults."""
+    """Return the supported cluster runtime for the selected topology."""
 
     normalized_topology = normalize_topology(topology)
     fallback = DEFAULT_CLUSTER_TYPE_BY_TOPOLOGY.get(normalized_topology, MINIKUBE_CLUSTER_TYPE)
@@ -33,6 +33,8 @@ def normalize_cluster_type(value: Any = None, topology: str = LOCAL_TOPOLOGY) ->
     if cluster_type not in SUPPORTED_CLUSTER_TYPES:
         supported = ", ".join(SUPPORTED_CLUSTER_TYPES)
         raise ValueError(f"Unsupported cluster runtime '{cluster_type}'. Supported runtimes: {supported}")
+    if normalized_topology == VM_SINGLE_TOPOLOGY and cluster_type != K3S_CLUSTER_TYPE:
+        raise ValueError("Unsupported cluster runtime 'minikube' for topology 'vm-single'. Use k3s.")
     return cluster_type
 
 

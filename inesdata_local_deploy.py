@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.parse import urlsplit, urlunsplit
 import requests
 
 from runtime_dependencies import ensure_runtime_dependencies
@@ -27,6 +28,7 @@ ensure_runtime_dependencies(
 )
 
 from adapters.inesdata import InesdataAdapter
+from deployers.shared.lib.config_loader import load_layered_deployer_config
 
 
 def _is_retryable_command(cmd: str) -> bool:
@@ -120,6 +122,115 @@ def build_script_path() -> str:
 
 def seed_assets_script_path() -> str:
     return os.path.join(project_dir(), "scripts", "seed_ml_assets_for_connectors.sh")
+
+
+def deployer_config_path() -> str:
+    return os.environ.get(
+        "DEPLOYER_CONFIG_FILE",
+        os.path.join(project_dir(), "deployers", "inesdata", "deployer.config"),
+    )
+
+
+def _load_seed_deployer_config() -> dict:
+    topology = os.environ.get("PIONERA_TOPOLOGY") or os.environ.get("TOPOLOGY") or ""
+    return load_layered_deployer_config(
+        [deployer_config_path()],
+        topology=topology,
+    )
+
+
+def _join_url_path(base_url: str, path_value: str) -> str:
+    base = str(base_url or "").strip().rstrip("/")
+    path = str(path_value or "").strip()
+    if not base:
+        return ""
+    if not path:
+        return base
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"{base}{path.rstrip('/')}"
+
+
+def _force_url_scheme(base_url: str, scheme: str) -> str:
+    raw_value = str(base_url or "").strip().rstrip("/")
+    if not raw_value:
+        return ""
+    parsed = urlsplit(raw_value if "://" in raw_value else f"{scheme}://{raw_value}")
+    if not parsed.netloc:
+        return ""
+    return urlunsplit((scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+
+
+def _seed_model_server_base_url(config: dict) -> str:
+    explicit = str(
+        os.environ.get("MODEL_SERVER_BASE")
+        or os.environ.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
+        or os.environ.get("MODEL_SERVER_CONNECTOR_BASE_URL")
+        or config.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
+        or config.get("MODEL_SERVER_CONNECTOR_BASE_URL")
+        or config.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_URL")
+        or config.get("MODEL_SERVER_CONNECTOR_URL")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit.rstrip("/")
+
+    topology = str(
+        os.environ.get("PIONERA_TOPOLOGY")
+        or os.environ.get("TOPOLOGY")
+        or config.get("TOPOLOGY")
+        or ""
+    ).strip().lower()
+    if topology != "vm-distributed":
+        return ""
+
+    public_path = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_PATH")
+        or config.get("MODEL_SERVER_PUBLIC_PATH")
+        or "/model-server"
+    ).strip()
+    for base_candidate in (
+        config.get("VM_COMMON_HTTP_URL"),
+        config.get("VM_COMMON_PUBLIC_URL"),
+        config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_BASE_URL"),
+        config.get("COMPONENTS_PUBLIC_BASE_URL"),
+    ):
+        base_url = _force_url_scheme(str(base_candidate or "").strip(), "http")
+        if base_url:
+            return _join_url_path(base_url, public_path)
+    return ""
+
+
+def _normalize_seed_model_server_mode(value: str) -> str:
+    mode = str(value or "").strip().lower().replace("_", "-")
+    aliases = {
+        "": "mock",
+        "fixture": "mock",
+        "deterministic": "mock",
+        "real": "use-cases",
+        "usecases": "use-cases",
+        "combined-real": "combined",
+        "real-combined": "combined",
+        "remote": "external",
+    }
+    return aliases.get(mode, mode)
+
+
+def _seed_model_server_mode(config: dict) -> str:
+    raw_mode = (
+        os.environ.get("MODEL_SERVER_MODE")
+        or os.environ.get("AI_MODEL_HUB_MODEL_SERVER_MODE")
+        or config.get("AI_MODEL_HUB_MODEL_SERVER_MODE")
+        or config.get("LEVEL5_AI_MODEL_HUB_MODEL_SERVER_MODE")
+        or config.get("MODEL_SERVER_MODE")
+        or "mock"
+    )
+    mode = _normalize_seed_model_server_mode(raw_mode)
+    if mode == "external":
+        return "use-cases"
+    if mode not in {"mock", "use-cases", "combined"}:
+        return "mock"
+    return mode
 
 
 def fast_step1_script_path() -> str:
@@ -529,6 +640,7 @@ def run_seed_assets_pipeline(args):
     if not os.path.isfile(script):
         raise RuntimeError(f"Seed assets script not found: {script}")
 
+    deployer_config = _load_seed_deployer_config()
     command_parts = [
         "bash",
         script,
@@ -553,7 +665,24 @@ def run_seed_assets_pipeline(args):
     if args.seed_keycloak_token_url:
         command_parts.extend(["--keycloak-token-url", args.seed_keycloak_token_url])
 
+    components_namespace = str(deployer_config.get("COMPONENTS_NAMESPACE") or "").strip()
+    if components_namespace:
+        command_parts.extend(["--components-namespace", components_namespace])
+
+    model_server_mode = _seed_model_server_mode(deployer_config)
+    if model_server_mode != "mock":
+        command_parts.extend(["--model-set", model_server_mode])
+
+    env_parts = []
+    model_server_base = _seed_model_server_base_url(deployer_config)
+    if model_server_base:
+        env_parts.append(f"MODEL_SERVER_BASE={shlex.quote(model_server_base)}")
+        if model_server_mode != "mock":
+            env_parts.append(f"USE_CASE_MODEL_SERVER_BASE_URL={shlex.quote(model_server_base)}")
+
     command = " ".join(shlex.quote(part) for part in command_parts)
+    if env_parts:
+        command = f"{' '.join(env_parts)} {command}"
     if run(command, cwd=project_dir()) is None:
         raise RuntimeError("Step 6 assets seeding failed")
 

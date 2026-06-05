@@ -635,6 +635,114 @@ class INESDataComponentsAdapter:
             return None
         return f"{repository}:{tag}"
 
+    def _component_image_config_prefixes(self, normalized_component: str):
+        normalized = self._normalize_component_key(normalized_component)
+        if normalized == "ontology-hub":
+            return ("ONTOLOGY_HUB",)
+        if normalized == "ai-model-hub":
+            return ("AI_MODEL_HUB",)
+        if normalized == "semantic-virtualization":
+            return ("SEMANTIC_VIRTUALIZATION",)
+        if normalized == "semantic-virtualization-editor":
+            return (
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR",
+                "SEMANTIC_VIRTUALIZATION_EDITOR",
+                "MAPPING_EDITOR",
+            )
+        return (normalized.upper().replace("-", "_"),)
+
+    @staticmethod
+    def _split_image_ref(image_ref: str):
+        resolved = str(image_ref or "").strip()
+        if not resolved:
+            return None
+        slash_index = resolved.rfind("/")
+        colon_index = resolved.rfind(":")
+        if colon_index <= slash_index:
+            return None
+        repository = resolved[:colon_index].strip()
+        tag = resolved[colon_index + 1 :].strip()
+        if not repository or not tag:
+            return None
+        return {"repository": repository, "tag": tag}
+
+    def _configured_component_image_override(self, normalized_component: str, deployer_config: dict):
+        config = dict(deployer_config or {})
+        prefixes = self._component_image_config_prefixes(normalized_component)
+
+        image_ref = ""
+        for prefix in prefixes:
+            image_ref = str(
+                config.get(f"{prefix}_IMAGE_REF")
+                or config.get(f"{prefix}_PREBUILT_IMAGE_REF")
+                or config.get(f"{prefix}_PREBUILT_IMAGE")
+                or ""
+            ).strip()
+            if image_ref:
+                break
+
+        image = None
+        if image_ref:
+            image = self._split_image_ref(image_ref)
+            if not image:
+                self._fail(
+                    "Invalid prebuilt component image reference",
+                    root_cause=(
+                        f"{normalized_component}: {image_ref}. "
+                        "Use a full image reference with an explicit tag, for example "
+                        "registry.example.org/project/component:1.0.0."
+                    ),
+                )
+        else:
+            repository = ""
+            tag = ""
+            for prefix in prefixes:
+                repository = str(
+                    config.get(f"{prefix}_IMAGE_REPOSITORY")
+                    or config.get(f"{prefix}_PREBUILT_IMAGE_REPOSITORY")
+                    or ""
+                ).strip()
+                tag = str(
+                    config.get(f"{prefix}_IMAGE_TAG")
+                    or config.get(f"{prefix}_PREBUILT_IMAGE_TAG")
+                    or ""
+                ).strip()
+                if repository or tag:
+                    break
+            if repository or tag:
+                if not repository or not tag:
+                    self._fail(
+                        "Incomplete prebuilt component image configuration",
+                        root_cause=(
+                            f"{normalized_component}: set both IMAGE_REPOSITORY and IMAGE_TAG, "
+                            "or use IMAGE_REF."
+                        ),
+                    )
+                image = {"repository": repository, "tag": tag}
+
+        if not image:
+            return {}
+
+        pull_policy = ""
+        for prefix in prefixes:
+            pull_policy = str(
+                config.get(f"{prefix}_IMAGE_PULL_POLICY")
+                or config.get(f"{prefix}_PREBUILT_IMAGE_PULL_POLICY")
+                or ""
+            ).strip()
+            if pull_policy:
+                break
+        if not pull_policy:
+            pull_policy = str(config.get("COMPONENTS_IMAGE_PULL_POLICY") or "").strip()
+        if pull_policy:
+            if pull_policy not in {"Always", "IfNotPresent", "Never"}:
+                self._fail(
+                    "Invalid component image pull policy",
+                    root_cause=f"{normalized_component}: {pull_policy}. Use Always, IfNotPresent or Never.",
+                )
+            image["pullPolicy"] = pull_policy
+        return image
+
     def _minikube_is_available(self, profile: str) -> bool:
         profile_q = shlex.quote(profile)
         return self.run_silent(f"minikube -p {profile_q} status") is not None
@@ -1548,6 +1656,14 @@ class INESDataComponentsAdapter:
             image_values.update(image_overrides)
             values["image"] = image_values
 
+        mapping_editor_overrides = (overrides.get("mappingEditor") or {}).get("image") or {}
+        if mapping_editor_overrides:
+            mapping_editor_values = dict(values.get("mappingEditor") or {})
+            mapping_editor_image_values = dict(mapping_editor_values.get("image") or {})
+            mapping_editor_image_values.update(mapping_editor_overrides)
+            mapping_editor_values["image"] = mapping_editor_image_values
+            values["mappingEditor"] = mapping_editor_values
+
         return values
 
     def _maybe_prepare_level6_local_image(self, normalized_component: str, values_file: str, deployer_config: dict) -> bool:
@@ -1559,6 +1675,10 @@ class INESDataComponentsAdapter:
         image_ref = self._extract_primary_image_ref(values)
         runtime = self._cluster_runtime(deployer_config)
         cluster_type = str(runtime.get("cluster_type") or "minikube").strip().lower() or "minikube"
+        configured_image_override = self._configured_component_image_override(
+            normalized_component,
+            deployer_config,
+        )
 
         profile = (
             deployer_config.get("MINIKUBE_PROFILE")
@@ -1581,8 +1701,14 @@ class INESDataComponentsAdapter:
                     root_cause=f"Values file: {values_file}",
                 )
             if not image_ref.lower().endswith(":local"):
+                if configured_image_override:
+                    print(
+                        "Ontology-Hub is configured with a prebuilt image. "
+                        f"Skipping local image build: {image_ref}"
+                    )
+                    return False
                 self._fail(
-                    "Ontology-Hub must use a local image in Level 5/6",
+                    "Ontology-Hub must use a local image in Level 5/6 unless a prebuilt image is configured",
                     root_cause=f"Configured image: {image_ref}",
                 )
             if not auto_build_enabled:
@@ -1918,6 +2044,10 @@ class INESDataComponentsAdapter:
         normalized = self._normalize_component_key(normalized_component)
         overrides = {}
 
+        image_override = self._configured_component_image_override(normalized, deployer_config)
+        if image_override:
+            overrides["image"] = image_override
+
         if normalized == "ontology-hub":
             host = self._configured_component_host(normalized, deployer_config)
             if host:
@@ -2017,6 +2147,12 @@ class INESDataComponentsAdapter:
             if self._semantic_virtualization_mapping_editor_enabled(deployer_config):
                 editor_host = self._semantic_virtualization_mapping_editor_host(deployer_config)
                 mapping_editor = {"enabled": True}
+                editor_image_override = self._configured_component_image_override(
+                    "semantic-virtualization-editor",
+                    deployer_config,
+                )
+                if editor_image_override:
+                    mapping_editor["image"] = editor_image_override
                 service_type = self._semantic_virtualization_mapping_editor_service_type(deployer_config)
                 service_node_port = self._semantic_virtualization_mapping_editor_service_node_port(deployer_config)
                 if service_type or service_node_port:

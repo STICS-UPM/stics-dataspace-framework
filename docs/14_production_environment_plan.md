@@ -7,7 +7,7 @@
 
 El entorno productivo de validación se representa con topologías Kubernetes
 distintas al modo local. El modo local usa `Minikube` en la máquina de
-desarrollo; `vm-single` usa un Minikube gestionado dentro de la VM para hacer
+desarrollo; `vm-single` usa k3s gestionado dentro de la VM para hacer
 reproducible el quickstart; y las topologías VM mantienen la misma separación
 por niveles del framework.
 

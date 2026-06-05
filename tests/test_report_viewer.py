@@ -554,6 +554,56 @@ class ReportViewerTests(unittest.TestCase):
         self.assertEqual(inspected["suites"][0]["audit_suite"], "Ontology Hub")
         self.assertEqual(inspected["suites"][0]["audit_group"], "API integration")
 
+    def test_dashboard_marks_suites_with_skipped_tests_as_partial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_14-00-00"
+            self._write_json(experiment / "metadata.json", {"adapter": "InesdataAdapter"})
+            self._write_json(
+                experiment / "ui" / "inesdata" / "results.json",
+                {
+                    "suites": [
+                        {
+                            "specs": [
+                                {
+                                    "file": "validation/ui/adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts",
+                                    "tests": [
+                                        {"status": "expected"},
+                                        {"status": "skipped"},
+                                    ],
+                                },
+                            ]
+                        }
+                    ]
+                },
+            )
+
+            inspected = reports.inspect_experiment(experiment)
+            dashboard = reports.build_experiment_dashboard(inspected)
+            content = dashboard.read_text(encoding="utf-8")
+
+        suite = next(item for item in inspected["suites"] if item["kind"] == "playwright-json")
+        self.assertEqual(suite["status"], "skipped")
+        self.assertEqual(inspected["result"], "Partial")
+        self.assertIn('<span class="badge neutral">skipped</span>', content)
+
+    def test_component_summary_with_skipped_tests_is_not_reported_as_passed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_14-30-00"
+            self._write_json(
+                experiment / "components" / "ai-model-hub" / "ai_model_hub_component_validation.json",
+                {
+                    "component": "ai-model-hub",
+                    "status": "passed",
+                    "summary": {"total": 3, "passed": 2, "failed": 0, "skipped": 1},
+                },
+            )
+
+            inspected = reports.inspect_experiment(experiment)
+
+        suite = next(item for item in inspected["suites"] if item["kind"] == "component")
+        self.assertEqual(suite["status"], "skipped")
+        self.assertEqual(inspected["result"], "Partial")
+
     def test_static_report_server_binds_only_to_loopback(self):
         with tempfile.TemporaryDirectory() as tmp:
             fake_subprocess = FakeSubprocess()

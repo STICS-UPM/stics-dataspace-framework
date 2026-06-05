@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -740,6 +741,128 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             "semantic-virtualization-editor-demo.custom.ds.example.org",
         )
 
+    def test_component_override_payload_accepts_prebuilt_image_ref(self):
+        adapter = self._make_adapter()
+
+        payload = adapter._component_values_override_payload(
+            "ai-model-hub",
+            {
+                "AI_MODEL_HUB_IMAGE_REF": "registry.example.org:5000/pionera/ai-model-hub:1.0.0",
+                "COMPONENTS_IMAGE_PULL_POLICY": "IfNotPresent",
+            },
+        )
+
+        self.assertEqual(
+            payload["image"],
+            {
+                "repository": "registry.example.org:5000/pionera/ai-model-hub",
+                "tag": "1.0.0",
+                "pullPolicy": "IfNotPresent",
+            },
+        )
+
+    def test_component_override_payload_accepts_prebuilt_repository_and_tag(self):
+        adapter = self._make_adapter()
+
+        payload = adapter._component_values_override_payload(
+            "ontology-hub",
+            {
+                "ONTOLOGY_HUB_IMAGE_REPOSITORY": "registry.example.org/pionera/ontology-hub",
+                "ONTOLOGY_HUB_IMAGE_TAG": "2026.06.05",
+                "ONTOLOGY_HUB_IMAGE_PULL_POLICY": "Always",
+            },
+        )
+
+        self.assertEqual(
+            payload["image"],
+            {
+                "repository": "registry.example.org/pionera/ontology-hub",
+                "tag": "2026.06.05",
+                "pullPolicy": "Always",
+            },
+        )
+
+    def test_component_override_payload_rejects_prebuilt_image_without_tag(self):
+        adapter = self._make_adapter()
+
+        with self.assertRaisesRegex(RuntimeError, "Invalid prebuilt component image reference"):
+            adapter._component_values_override_payload(
+                "ai-model-hub",
+                {"AI_MODEL_HUB_IMAGE_REF": "registry.example.org/pionera/ai-model-hub"},
+            )
+
+    def test_component_override_payload_rejects_incomplete_prebuilt_image_parts(self):
+        adapter = self._make_adapter()
+
+        with self.assertRaisesRegex(RuntimeError, "Incomplete prebuilt component image configuration"):
+            adapter._component_values_override_payload(
+                "ontology-hub",
+                {"ONTOLOGY_HUB_IMAGE_REPOSITORY": "registry.example.org/pionera/ontology-hub"},
+            )
+
+    def test_semantic_virtualization_mapping_editor_accepts_prebuilt_image_ref(self):
+        adapter = self._make_adapter()
+
+        payload = adapter._component_values_override_payload(
+            "semantic-virtualization",
+            {
+                "DS_DOMAIN_BASE": "custom.ds.example.org",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED": "true",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_IMAGE_REF": "registry.example.org/pionera/mapping-editor:2.0.0",
+                "COMPONENTS_IMAGE_PULL_POLICY": "IfNotPresent",
+            },
+        )
+
+        self.assertEqual(
+            payload["mappingEditor"]["image"],
+            {
+                "repository": "registry.example.org/pionera/mapping-editor",
+                "tag": "2.0.0",
+                "pullPolicy": "IfNotPresent",
+            },
+        )
+
+    def test_effective_component_values_merges_mapping_editor_image_override(self):
+        adapter = self._make_adapter()
+
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".yaml", delete=False) as handle:
+            yaml.safe_dump(
+                {
+                    "image": {"repository": "morph-kgv", "tag": "local"},
+                    "mappingEditor": {
+                        "enabled": True,
+                        "image": {"repository": "mapping-editor", "tag": "local"},
+                    },
+                },
+                handle,
+                sort_keys=False,
+            )
+            values_path = handle.name
+
+        try:
+            values = adapter._effective_component_values(
+                "semantic-virtualization",
+                values_path,
+                {
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED": "true",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_IMAGE_REF": (
+                        "registry.example.org/pionera/mapping-editor:2.0.0"
+                    ),
+                    "COMPONENTS_IMAGE_PULL_POLICY": "IfNotPresent",
+                },
+            )
+        finally:
+            os.unlink(values_path)
+
+        self.assertEqual(
+            values["mappingEditor"]["image"],
+            {
+                "repository": "registry.example.org/pionera/mapping-editor",
+                "tag": "2.0.0",
+                "pullPolicy": "IfNotPresent",
+            },
+        )
+
     def test_shared_components_adapter_plans_override_values_payload(self):
         adapter = self._make_shared_adapter()
 
@@ -1437,6 +1560,34 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         build_mock.assert_not_called()
         load_mock.assert_not_called()
 
+    def test_prepare_level6_local_image_skips_ontology_hub_when_prebuilt_image_is_configured(self):
+        adapter = self._make_adapter()
+        deployer_config = {
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true",
+            "ONTOLOGY_HUB_IMAGE_REF": "registry.example.org/pionera/ontology-hub:1.0.0",
+        }
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_safe_load_yaml_file",
+                return_value={"image": {"repository": "ontology-hub", "tag": "local"}},
+            ),
+            mock.patch.object(adapter, "_minikube_is_available") as minikube_available_mock,
+            mock.patch.object(adapter, "_build_ontology_hub_image_on_host") as build_mock,
+            mock.patch.object(adapter, "_load_image_into_cluster_runtime") as load_mock,
+        ):
+            result = adapter._maybe_prepare_level6_local_image(
+                "ontology-hub",
+                "/tmp/ontology-values.yaml",
+                deployer_config,
+            )
+
+        self.assertFalse(result)
+        minikube_available_mock.assert_not_called()
+        build_mock.assert_not_called()
+        load_mock.assert_not_called()
+
     def test_prepare_level6_local_image_imports_ontology_hub_into_k3s(self):
         adapter = self._make_adapter()
         adapter.config_adapter.topology = "vm-single"
@@ -1639,6 +1790,212 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                     )
 
         adapter.run.assert_not_called()
+
+    def test_ai_model_hub_model_server_external_mode_skips_deployment(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        deployer_config = {
+            "AI_MODEL_HUB_MODEL_SERVER_MODE": "external",
+            "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL": "http://org1.example.test/model-server",
+            "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL": "https://org1.example.test/model-server",
+        }
+
+        result = adapter._ensure_ai_model_hub_model_server("components", deployer_config)
+
+        self.assertEqual(result["mode"], "external")
+        self.assertEqual(result["service"], "http://model-server.components.svc.cluster.local:8080")
+        self.assertEqual(result["connector_base_url"], "http://org1.example.test/model-server")
+        self.assertEqual(result["public_url"], "https://org1.example.test/model-server")
+        self.assertFalse(result["built_local_image"])
+        adapter.run.assert_not_called()
+
+    def test_ai_model_hub_model_server_uses_configurable_real_source(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        applied_manifests = []
+
+        def fake_run(command, *args, **kwargs):
+            if command.startswith("kubectl apply -f "):
+                temp_path = command.rsplit(" ", 1)[1].strip("'\"")
+                with open(temp_path, encoding="utf-8") as handle:
+                    applied_manifests.append(handle.read())
+            return "ok"
+
+        adapter.run = mock.Mock(side_effect=fake_run)
+
+        with tempfile.TemporaryDirectory() as source_dir:
+            manifest_path = os.path.join(source_dir, "k8s-model-server.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "\n".join(
+                        [
+                            "apiVersion: apps/v1",
+                            "kind: Deployment",
+                            "metadata:",
+                            "  name: model-server",
+                            "  namespace: demo",
+                            "spec:",
+                            "  template:",
+                            "    spec:",
+                            "      containers:",
+                            "        - name: model-server",
+                            "          image: model-server:latest",
+                            "          readinessProbe:",
+                            "            httpGet:",
+                            "              path: /api/v1/health",
+                            "---",
+                            "apiVersion: v1",
+                            "kind: Service",
+                            "metadata:",
+                            "  name: model-server",
+                            "  namespace: demo",
+                        ]
+                    )
+                )
+
+            deployer_config = {
+                "AI_MODEL_HUB_MODEL_SERVER_MODE": "combined",
+                "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": source_dir,
+                "AI_MODEL_HUB_MODEL_SERVER_IMAGE": "local/real-model-server:latest",
+                "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL": "http://org1.example.test/model-server",
+            }
+
+            with (
+                mock.patch.object(adapter, "_prepare_ai_model_hub_model_server_image", return_value=True),
+                mock.patch.object(adapter, "_wait_for_component_rollout", return_value=True),
+                mock.patch.object(
+                    adapter,
+                    "_sync_ai_model_hub_model_server_public_ingress",
+                    return_value="https://org1.example.test/model-server",
+                ),
+            ):
+                result = adapter._ensure_ai_model_hub_model_server("components-real", deployer_config)
+
+        self.assertEqual(result["mode"], "combined")
+        self.assertEqual(result["connector_base_url"], "http://org1.example.test/model-server")
+        self.assertEqual(result["public_url"], "https://org1.example.test/model-server")
+        self.assertTrue(result["built_local_image"])
+        self.assertTrue(applied_manifests)
+        rendered_manifest = applied_manifests[0]
+        self.assertIn("namespace: components-real", rendered_manifest)
+        self.assertIn("image: local/real-model-server:latest", rendered_manifest)
+        self.assertIn("path: /models", rendered_manifest)
+
+    def test_ai_model_hub_use_case_model_server_generates_build_context(self):
+        adapter = self._make_shared_adapter()
+
+        with tempfile.TemporaryDirectory() as source_dir:
+            os.makedirs(os.path.join(source_dir, "src"), exist_ok=True)
+            with open(os.path.join(source_dir, "requirements.txt"), "w", encoding="utf-8") as handle:
+                handle.write("fastapi\nuvicorn\n")
+            with open(os.path.join(source_dir, "src", "server.py"), "w", encoding="utf-8") as handle:
+                handle.write("from fastapi import FastAPI\napp = FastAPI()\n")
+
+            build_context, generated = adapter._prepare_ai_model_hub_model_server_build_context(
+                source_dir,
+                "combined",
+                {
+                    "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT": "8090",
+                    "AI_MODEL_HUB_MODEL_SERVER_DOCKER_BASE_IMAGE": "python:3.11-slim",
+                },
+            )
+            try:
+                self.assertTrue(generated)
+                with open(os.path.join(build_context, "Dockerfile"), encoding="utf-8") as handle:
+                    dockerfile = handle.read()
+                self.assertIn("FROM python:3.11-slim", dockerfile)
+                self.assertIn("COPY use_cases /app/use_cases", dockerfile)
+                self.assertIn("COPY combined_model_server /app/combined_model_server", dockerfile)
+                self.assertIn('"--port", "8090"', dockerfile)
+                self.assertTrue(os.path.isfile(os.path.join(build_context, "use_cases", "src", "server.py")))
+                self.assertTrue(os.path.isfile(os.path.join(build_context, "combined_model_server", "server.py")))
+            finally:
+                shutil.rmtree(build_context, ignore_errors=True)
+
+    def test_ai_model_hub_use_case_model_server_generates_manifest_when_missing(self):
+        adapter = self._make_shared_adapter()
+
+        with tempfile.TemporaryDirectory() as source_dir:
+            manifest = adapter._render_ai_model_hub_model_server_manifest(
+                source_dir,
+                "components-real",
+                "local/real-model-server:latest",
+                "use-cases",
+                {
+                    "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT": "8090",
+                    "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH": "/models",
+                },
+            )
+
+        self.assertIn("namespace: components-real", manifest)
+        self.assertIn("image: local/real-model-server:latest", manifest)
+        self.assertIn("imagePullPolicy: Never", manifest)
+        self.assertIn("containerPort: 8090", manifest)
+        self.assertIn("path: /models", manifest)
+        self.assertIn("port: 8080", manifest)
+
+    def test_ai_model_hub_model_server_source_repository_clones_when_source_is_missing(self):
+        adapter = self._make_shared_adapter()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = os.path.join(tmpdir, "AIModelHub-Use-Cases")
+            clone_calls = []
+
+            def fake_run(args, check):
+                clone_calls.append((tuple(args), check))
+                os.makedirs(os.path.join(source_dir, "src"), exist_ok=True)
+                with open(os.path.join(source_dir, "requirements.txt"), "w", encoding="utf-8") as handle:
+                    handle.write("fastapi\nuvicorn\n")
+                with open(os.path.join(source_dir, "src", "server.py"), "w", encoding="utf-8") as handle:
+                    handle.write("from fastapi import FastAPI\napp = FastAPI()\n")
+                return None
+
+            with mock.patch("adapters.shared.components.subprocess.run", side_effect=fake_run):
+                resolved = adapter._ai_model_hub_model_server_source_dir(
+                    {
+                        "AI_MODEL_HUB_MODEL_SERVER_MODE": "combined",
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": source_dir,
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": "https://example.test/use-cases.git",
+                    }
+                )
+
+        self.assertEqual(resolved, source_dir)
+        self.assertEqual(
+            clone_calls,
+            [
+                (
+                    (
+                        "git",
+                        "clone",
+                        "https://example.test/use-cases.git",
+                        source_dir,
+                    ),
+                    True,
+                )
+            ],
+        )
+
+    def test_ai_model_hub_model_server_source_repository_keeps_populated_source_dir(self):
+        adapter = self._make_shared_adapter()
+
+        with tempfile.TemporaryDirectory() as source_dir:
+            os.makedirs(os.path.join(source_dir, "src"), exist_ok=True)
+            with open(os.path.join(source_dir, "requirements.txt"), "w", encoding="utf-8") as handle:
+                handle.write("fastapi\nuvicorn\n")
+            with open(os.path.join(source_dir, "src", "server.py"), "w", encoding="utf-8") as handle:
+                handle.write("from fastapi import FastAPI\napp = FastAPI()\n")
+
+            with mock.patch("adapters.shared.components.subprocess.run") as run_mock:
+                resolved = adapter._ai_model_hub_model_server_source_dir(
+                    {
+                        "AI_MODEL_HUB_MODEL_SERVER_MODE": "combined",
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": source_dir,
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": "https://example.test/use-cases.git",
+                    }
+                )
+
+        self.assertEqual(resolved, source_dir)
+        run_mock.assert_not_called()
 
     def test_load_image_into_k3s_uses_remote_import_for_vm_distributed_components(self):
         adapter = self._make_adapter()
@@ -1899,6 +2256,48 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 mock.call("minikube", "morph-kgv:local"),
                 mock.call("minikube", "mapping-editor:local"),
             ],
+        )
+
+    def test_prepare_level6_local_image_does_not_build_prebuilt_mapping_editor(self):
+        adapter = self._make_adapter()
+        deployer_config = {
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true",
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ENABLED": "true",
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_IMAGE_REF": (
+                "registry.example.org/pionera/mapping-editor:2.0.0"
+            ),
+        }
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_safe_load_yaml_file",
+                return_value={
+                    "image": {"repository": "morph-kgv", "tag": "local"},
+                    "mappingEditor": {
+                        "image": {"repository": "mapping-editor", "tag": "local"},
+                    },
+                },
+            ),
+            mock.patch.object(adapter, "_minikube_is_available", return_value=True),
+            mock.patch.object(adapter, "_build_semantic_virtualization_image_on_host") as build_api_mock,
+            mock.patch.object(adapter, "_build_mapping_editor_image_on_host") as build_editor_mock,
+            mock.patch.object(adapter, "_load_images_into_cluster_runtime") as load_mock,
+        ):
+            result = adapter._maybe_prepare_level6_local_image(
+                "semantic-virtualization",
+                "/tmp/semantic-virtualization-values.yaml",
+                deployer_config,
+            )
+
+        self.assertTrue(result)
+        build_api_mock.assert_called_once_with("morph-kgv:local", deployer_config)
+        build_editor_mock.assert_not_called()
+        load_mock.assert_called_once_with(
+            "minikube",
+            "minikube",
+            ["morph-kgv:local"],
+            deployer_config,
         )
 
     def test_prepare_level6_local_image_imports_semantic_virtualization_images_into_k3s(self):

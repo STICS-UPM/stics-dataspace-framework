@@ -598,6 +598,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 "validation.example.local",
                 "ds.validation.example.local",
                 "",
+                "",
                 "10.0.0.10",
                 "10.0.0.20",
                 "10.0.0.30",
@@ -675,6 +676,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertIn("K3S_KUBECONFIG_COMPONENTS=", topology_config)
         self.assertIn("SSH_ACCESS_MODE=", topology_config)
         self.assertIn("SSH_CONNECT_TIMEOUT_SECONDS=5", topology_config)
+        self.assertIn("FRAMEWORK_EXECUTION_MODE=auto", topology_config)
         self.assertIn("VM_DISTRIBUTED_EXECUTION_HOST=auto", topology_config)
         self.assertIn("VM_DISTRIBUTED_COMMON_VM_DIRECT_SSH=true", topology_config)
         self.assertIn("VM_DISTRIBUTED_INFER_LOCAL_WORKDIR=true", topology_config)
@@ -735,6 +737,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             inputs = [
                 "validation.example.local",
                 "ds.validation.example.local",
+                "",
                 "",
                 "10.0.0.10",
                 "10.0.0.20",

@@ -367,8 +367,8 @@ El diagrama local de referencia está disponible en [Inicio rápido](./32_gettin
 ## VM Single
 
 `vm-single` representa una máquina virtual respaldada por Kubernetes. Para que
-el quickstart sea reproducible, `Level 1` recrea por defecto el cluster
-Minikube gestionado por el framework dentro de la VM y después ejecuta los
+el quickstart sea reproducible, `Level 1` prepara por defecto el clúster
+k3s gestionado por el framework dentro de la VM y después ejecuta los
 checks de acceso, ingress, storage y permisos.
 
 Estado actual del framework:
@@ -401,16 +401,19 @@ Cómo obtener la IP correcta:
 
 ```bash
 hostname -I
-minikube ip
 kubectl get ingress -A
 ```
 
 Regla práctica:
 
-- usa la IP de `hostname -I` solo como valor provisional inicial;
-- en la mayoría de instalaciones con Minikube `docker`, el valor final bueno será `minikube ip`;
-- deja la IP de la VM como valor final solo si el ingress está publicado explícitamente sobre esa IP o detrás de un proxy externo que termina allí;
-- después de `Level 1`, si `minikube ip` no coincide con la IP configurada, actualiza el override de entorno `PIONERA_VM_EXTERNAL_IP` o la clave `VM_EXTERNAL_IP` dentro de `deployers/infrastructure/topologies/vm-single.config` antes de `Levels 3-6`.
+- usa la IP de `hostname -I` como punto de partida si ejecutas el framework
+  directamente en la VM;
+- deja como valor final la IP/DNS público que termina en la VM o en el proxy
+  externo que publica el Ingress;
+- después de `Level 1`, si el proxy público o la IP de la VM no coinciden con
+  la configuración activa, actualiza el override de entorno
+  `PIONERA_VM_EXTERNAL_IP` o la clave `VM_EXTERNAL_IP` dentro de
+  `deployers/infrastructure/topologies/vm-single.config` antes de `Levels 3-6`.
 
 Las claves persistidas de `vm-single` deben vivir en:
 

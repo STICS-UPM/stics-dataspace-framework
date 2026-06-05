@@ -731,11 +731,11 @@ minio:
         self.assertEqual(result["status"], "ready")
         self.assertEqual(result["mode"], "managed-recreate")
         self.assertEqual(result["topology"], "vm-single")
-        self.assertEqual(result["cluster_runtime"], "minikube")
+        self.assertEqual(result["cluster_runtime"], "k3s")
         self.assertEqual(result["current_context"], "vm-single-context")
         self.assertEqual(result["cluster_creation"], "recreated")
         infrastructure.setup_cluster.assert_called_once_with()
-        self.assertIn("Level 1 will prepare the managed minikube cluster", output.getvalue())
+        self.assertIn("Level 1 will prepare the managed k3s cluster", output.getvalue())
         self.assertEqual(result["checks"][-1]["label"], "create namespace permission")
         self.assertEqual(result["checks"][-1]["status"], "passed")
 

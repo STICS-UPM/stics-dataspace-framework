@@ -187,7 +187,7 @@ class ConnectorDeployHostsTests(unittest.TestCase):
             self.assertTrue(adapter._maybe_prepare_level4_local_connector_images("pionera"))
             self.assertIn(
                 'url.replace("http://ontology-hub-pionera.dev.ds.dataspaceunit.upm", '
-                '"http://pionera-ontology-hub.components-runtime:3333")',
+                '"http://pionera-ontology-hub.components-runtime.svc.cluster.local:3333")',
                 observed["java_during_build"],
             )
             with open(java_path, encoding="utf-8") as handle:

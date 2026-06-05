@@ -24,7 +24,7 @@ Para ejecución local, el framework espera:
 - permisos para actualizar el fichero `hosts` del sistema cuando la sincronización de hosts esté habilitada.
 
 La topología local usa Minikube en la máquina de desarrollo. La topología
-`vm-single` usa Minikube gestionado dentro de la VM y `Level 1` lo recrea para
+`vm-single` usa k3s gestionado dentro de la VM y `Level 1` lo prepara para
 mantener una configuración reproducible. `vm-distributed` usa configuración
 parametrizable de VMs, SSH, kubeconfig, DNS/Ingress y URLs públicas.
 

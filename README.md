@@ -277,8 +277,8 @@ Notas prácticas:
 - si entras por el menú con `--topology vm-single` y faltan las claves
   `VM_EXTERNAL_IP`/`INGRESS_EXTERNAL_IP` en
   `deployers/infrastructure/topologies/vm-single.config`,
-  el framework detecta una dirección candidata con `hostname -I` o `minikube ip`
-  y ofrece escribirla automáticamente;
+  el framework detecta una dirección candidata de la VM y ofrece escribirla
+  automáticamente;
 - si mantienes claves de topología dentro de
   `deployers/infrastructure/deployer.config`, el CLI ya avisa con un warning de
   migración y te indica el overlay correcto;
@@ -297,28 +297,21 @@ hostname -I
 
 - usa esa IP de la VM solo como valor provisional inicial en
   `VM_EXTERNAL_IP` e `INGRESS_EXTERNAL_IP`;
-- en `vm-single`, `Level 1` recrea el cluster Minikube gestionado por el
-  framework en la VM para asegurar una configuración reproducible;
-- después de `Level 1`, obtén la IP real del cluster recreado con:
+- en `vm-single`, `Level 1` prepara el clúster k3s gestionado en la VM para
+  asegurar una configuración reproducible;
+- después de `Level 1`, comprueba que el clúster k3s y el Ingress están
+  disponibles con:
 
 ```bash
-minikube ip
-```
-
-- comprueba los hostnames públicos ya publicados por ingress con:
-
-```bash
+kubectl get nodes
 kubectl get ingress -A
 ```
 
-- regla práctica:
-  - en la mayoría de instalaciones con Minikube `docker`, el valor final bueno
-    será `minikube ip`;
-  - usa la IP de la VM como valor final solo si has publicado el ingress
-    explícitamente sobre esa IP o a través de un proxy externo que termina allí;
-- si `minikube ip` es distinto del valor provisional, actualiza esas claves en
-    `deployers/infrastructure/topologies/vm-single.config` o exporta los overrides
-    `PIONERA_VM_EXTERNAL_IP` y `PIONERA_INGRESS_EXTERNAL_IP` antes de `Levels 3-6`;
+- regla práctica: usa como valor final la IP/DNS público que termina en la VM o
+  en el proxy externo que publica el Ingress;
+- si la IP/DNS publicada cambia, actualiza esas claves en
+  `deployers/infrastructure/topologies/vm-single.config` o exporta los overrides
+  `PIONERA_VM_EXTERNAL_IP` y `PIONERA_INGRESS_EXTERNAL_IP` antes de `Levels 3-6`;
 - para `vm-single`, entra directamente por:
 
 ```bash

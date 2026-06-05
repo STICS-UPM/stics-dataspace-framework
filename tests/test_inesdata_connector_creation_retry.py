@@ -1930,7 +1930,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             adapter._prepare_vault_management_access = lambda *_args, **_kwargs: True
 
             with (
-                mock.patch.object(adapter, "_reserve_local_port", return_value=19082),
+                mock.patch.object(adapter, "_reserve_local_port", side_effect=[19082, 15432]),
                 mock.patch("adapters.inesdata.connectors.ensure_python_requirements", lambda *_args, **_kwargs: None),
             ):
                 self.assertTrue(adapter.create_connector("conn-a-demo", ["conn-a-demo", "conn-b-demo"]))
@@ -1941,22 +1941,34 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             self.assertEqual(len(delete_calls), 1)
             self.assertIn("PIONERA_VT_URL=http://127.0.0.1:19082", create_calls[0])
             self.assertIn("PIONERA_VT_URL=http://127.0.0.1:19082", delete_calls[0])
+            self.assertIn("PIONERA_PG_HOST=127.0.0.1", create_calls[0])
+            self.assertIn("PIONERA_PG_PORT=15432", create_calls[0])
+            self.assertIn("PIONERA_PG_HOST=127.0.0.1", delete_calls[0])
+            self.assertIn("PIONERA_PG_PORT=15432", delete_calls[0])
             self.assertEqual(
                 infra.port_forwards,
                 [
                     (
                         ("common-srvs", "common-srvs-vault", 19082, 8200),
                         {"quiet": True},
-                    )
+                    ),
+                    (
+                        ("common-srvs", "common-srvs-postgresql", 15432, 5432),
+                        {"quiet": True},
+                    ),
                 ],
             )
             self.assertEqual(
                 infra.stops,
                 [
                     (
+                        ("common-srvs", "common-srvs-postgresql"),
+                        {"quiet": True},
+                    ),
+                    (
                         ("common-srvs", "common-srvs-vault"),
                         {"quiet": True},
-                    )
+                    ),
                 ],
             )
 

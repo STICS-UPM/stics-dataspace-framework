@@ -2121,7 +2121,7 @@ class MainCliTests(unittest.TestCase):
             sys.stdin,
             "isatty",
             return_value=True,
-        ), mock.patch("builtins.input", side_effect=["2", "2", "N", "Q"]), mock.patch.object(
+        ), mock.patch("builtins.input", side_effect=["2", "1", "N", "Q"]), mock.patch.object(
             main,
             "_interactive_offer_vm_single_address_configuration",
             return_value=True,
@@ -2145,6 +2145,7 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("Available topologies:", rendered)
         self.assertIn("Active topology set to vm-single.", rendered)
         self.assertIn("Available cluster runtimes for vm-single:", rendered)
+        self.assertNotIn("2 - minikube", rendered)
         self.assertIn("Active cluster runtime set to k3s.", rendered)
         self.assertIn("Topology: vm-single", rendered)
         self.assertIn("Cluster runtime: k3s", rendered)
@@ -2232,14 +2233,9 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(plan["cleanup_command"], ["minikube", "delete", "-p", "minikube"])
         self.assertEqual(plan["confirmation_token"], "SWITCH VM-SINGLE TO K3S")
 
-    def test_vm_single_runtime_switch_plan_stops_active_k3s_before_minikube(self):
-        with mock.patch.object(main, "_vm_single_k3s_active", return_value=True):
-            plan = main._build_vm_single_cluster_runtime_switch_plan("minikube", previous_runtime="k3s")
-
-        self.assertEqual(plan["status"], "planned")
-        self.assertEqual(plan["detected_runtime"], "k3s")
-        self.assertEqual(plan["cleanup_command"], ["sudo", "-n", "systemctl", "stop", "k3s"])
-        self.assertEqual(plan["manual_cleanup"], "sudo systemctl stop k3s")
+    def test_vm_single_runtime_switch_plan_rejects_minikube_target(self):
+        with self.assertRaisesRegex(ValueError, "Use k3s"):
+            main._build_vm_single_cluster_runtime_switch_plan("minikube", previous_runtime="k3s")
 
     def test_vm_single_runtime_switch_decline_blocks_menu_switch(self):
         plan = {
@@ -2703,7 +2699,7 @@ class MainCliTests(unittest.TestCase):
         ) as confirm, mock.patch.object(
             main,
             "_interactive_cluster_runtime_label",
-            return_value="minikube",
+            return_value="k3s",
         ), contextlib.redirect_stdout(stdout):
             result = main.main(
                 ["menu", "--topology", "vm-single"],
@@ -2716,7 +2712,7 @@ class MainCliTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "exited")
         confirm.assert_called_once_with(
-            "Run Level 1: Setup Cluster (shared foundation) (topology: vm-single, cluster: minikube)?",
+            "Run Level 1: Setup Cluster (shared foundation) (topology: vm-single, cluster: k3s)?",
             default=False,
         )
 
@@ -4300,6 +4296,33 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["result"]["status"], "deployed")
         self.assertEqual(adapter.infrastructure.seen_kubeconfig, "/tmp/vm-single-k3s.yaml")
         ensure_access.assert_called_once_with(adapter_name="fake")
+
+    def test_framework_execution_mode_orchestrator_maps_vm_single_to_tunnel(self):
+        topology_config = {
+            "FRAMEWORK_EXECUTION_MODE": "orchestrator",
+            "VM_SINGLE_LEVEL_EXECUTION_MODE": "auto",
+        }
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(main._normalized_vm_single_level_execution_mode(topology_config), "tunnel")
+
+    def test_framework_execution_mode_target_vm_maps_vm_single_to_local(self):
+        topology_config = {
+            "FRAMEWORK_EXECUTION_MODE": "target-vm",
+            "VM_SINGLE_LEVEL_EXECUTION_MODE": "auto",
+        }
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(main._normalized_vm_single_level_execution_mode(topology_config), "local")
+
+    def test_specific_vm_single_execution_mode_overrides_framework_execution_mode(self):
+        topology_config = {
+            "FRAMEWORK_EXECUTION_MODE": "orchestrator",
+            "VM_SINGLE_LEVEL_EXECUTION_MODE": "local",
+        }
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(main._normalized_vm_single_level_execution_mode(topology_config), "local")
 
     def test_run_level_one_vm_single_auto_syncs_vm_ip_after_preflight(self):
         adapter = FakeAdapterWithInfrastructure()
@@ -5940,6 +5963,30 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(detection["ssh_route"], "bastion")
         self.assertEqual(detection["bastion"]["host"], "bastion.example.test")
         self.assertEqual(detection["bastion"]["port"], "2222")
+
+    def test_framework_execution_mode_orchestrator_maps_vm_distributed_to_external(self):
+        topology_config = {
+            "FRAMEWORK_EXECUTION_MODE": "orchestrator",
+            "VM_DISTRIBUTED_EXECUTION_HOST": "auto",
+        }
+
+        self.assertEqual(main._normalized_vm_distributed_execution_host(topology_config), "external")
+
+    def test_framework_execution_mode_target_vm_maps_vm_distributed_to_common_services(self):
+        topology_config = {
+            "FRAMEWORK_EXECUTION_MODE": "target-vm",
+            "VM_DISTRIBUTED_EXECUTION_HOST": "auto",
+        }
+
+        self.assertEqual(main._normalized_vm_distributed_execution_host(topology_config), "common-services")
+
+    def test_specific_vm_distributed_execution_host_overrides_framework_execution_mode(self):
+        topology_config = {
+            "FRAMEWORK_EXECUTION_MODE": "target-vm",
+            "VM_DISTRIBUTED_EXECUTION_HOST": "external",
+        }
+
+        self.assertEqual(main._normalized_vm_distributed_execution_host(topology_config), "external")
 
     def test_ssh_access_execution_detection_warns_when_running_inside_vm_with_bastion(self):
         plan = {

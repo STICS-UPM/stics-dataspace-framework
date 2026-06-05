@@ -89,6 +89,10 @@ class SharedClusterRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported cluster runtime"):
             normalize_cluster_type("kind", topology="vm-single")
 
+    def test_vm_single_rejects_minikube_runtime(self):
+        with self.assertRaisesRegex(ValueError, "Use k3s"):
+            normalize_cluster_type("minikube", topology="vm-single")
+
 
 if __name__ == "__main__":
     unittest.main()

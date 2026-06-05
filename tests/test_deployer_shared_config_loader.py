@@ -6,7 +6,9 @@ import unittest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from deployers.shared.lib.config_loader import (
+    AI_MODEL_HUB_MODEL_SERVER_TOPOLOGY_KEYS,
     COMMON_SERVICE_TOPOLOGY_KEYS,
+    COMPONENT_IMAGE_TOPOLOGY_KEYS,
     KUBERNETES_WORKLOAD_TOPOLOGY_KEYS,
     TOPOLOGY_KEY_TARGETS,
     TOPOLOGY_OVERLAY_KEYS,
@@ -267,8 +269,45 @@ class SharedConfigLoaderTests(unittest.TestCase):
             "COMPONENTS_PUBLIC_BASE_URL",
             "COMPONENTS_PUBLIC_PATH_REWRITE",
             "VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER",
+            "AI_MODEL_HUB_MODEL_SERVER_MODE",
+            "LEVEL5_AI_MODEL_HUB_MODEL_SERVER_MODE",
+            "MODEL_SERVER_MODE",
+            "AI_MODEL_HUB_MODEL_SERVER_IMAGE",
+            "MODEL_SERVER_IMAGE",
+            "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
+            "MODEL_SERVER_SOURCE_DIR",
+            "AI_MODEL_HUB_REAL_MODEL_SERVER_SOURCE_DIR",
+            "AI_MODEL_HUB_USE_CASE_MODEL_SERVER_SOURCE_DIR",
+            "MODEL_SERVER_REAL_SOURCE_DIR",
+            "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
+            "AI_MODEL_HUB_USE_CASE_MODEL_SERVER_REPOSITORY",
+            "AI_MODEL_HUB_REAL_MODEL_SERVER_REPOSITORY",
+            "MODEL_SERVER_SOURCE_REPOSITORY",
+            "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
+            "MODEL_SERVER_SOURCE_REF",
+            "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
+            "MODEL_SERVER_MANIFEST_PATH",
+            "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
+            "MODEL_SERVER_READINESS_PATH",
+            "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
+            "MODEL_SERVER_CONTAINER_PORT",
+            "AI_MODEL_HUB_MODEL_SERVER_DOCKER_BASE_IMAGE",
+            "MODEL_SERVER_DOCKER_BASE_IMAGE",
+            "AI_MODEL_HUB_MODEL_SERVER_UVICORN_APP",
+            "MODEL_SERVER_UVICORN_APP",
+            "AI_MODEL_HUB_MODEL_SERVER_IMAGE_PULL_POLICY",
+            "MODEL_SERVER_IMAGE_PULL_POLICY",
+            "AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES",
+            "MODEL_SERVER_COPY_EXCLUDES",
+            "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
+            "MODEL_SERVER_PUBLIC_URL",
+            "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_BASE_URL",
+            "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_PATH",
+            "MODEL_SERVER_PUBLIC_PATH",
             "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
             "MODEL_SERVER_CONNECTOR_BASE_URL",
+            "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_URL",
+            "MODEL_SERVER_CONNECTOR_URL",
             "AI_MODEL_OBSERVER_JOURNAL_BASE_URL",
             "AI_MODEL_HUB_OBSERVER_JOURNAL_BASE_URL",
             "MODEL_OBSERVER_JOURNAL_BASE_URL",
@@ -388,6 +427,19 @@ class SharedConfigLoaderTests(unittest.TestCase):
         ):
             self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
             self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed",))
+
+    def test_component_image_keys_are_vm_topology_scoped(self):
+        for key in AI_MODEL_HUB_MODEL_SERVER_TOPOLOGY_KEYS:
+            self.assertNotIn(key, TOPOLOGY_OVERLAY_KEYS["local"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
+            self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed", "vm-single"))
+
+        for key in COMPONENT_IMAGE_TOPOLOGY_KEYS:
+            self.assertNotIn(key, TOPOLOGY_OVERLAY_KEYS["local"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
+            self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed", "vm-single"))
 
     def test_load_deployer_config_reads_key_value_pairs(self):
         with tempfile.TemporaryDirectory() as tmpdir:

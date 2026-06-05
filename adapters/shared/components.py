@@ -4,6 +4,8 @@ from contextlib import contextmanager
 import json
 import os
 import shlex
+import shutil
+import subprocess
 import tempfile
 import time
 from urllib.parse import urlsplit
@@ -566,12 +568,665 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             flag = config.get("LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED")
         return self._parse_bool(flag, default=True)
 
-    def _ai_model_hub_model_server_source_dir(self):
+    @staticmethod
+    def _normalize_ai_model_hub_model_server_mode(mode):
+        normalized = str(mode or "").strip().lower().replace("_", "-")
+        aliases = {
+            "": "mock",
+            "fixture": "mock",
+            "deterministic": "mock",
+            "real": "use-cases",
+            "usecases": "use-cases",
+            "use-cases": "use-cases",
+            "combined-real": "combined",
+            "real-combined": "combined",
+            "remote": "external",
+        }
+        return aliases.get(normalized, normalized)
+
+    def _ai_model_hub_model_server_mode(self, deployer_config):
+        config = dict(deployer_config or {})
+        raw_mode = (
+            config.get("AI_MODEL_HUB_MODEL_SERVER_MODE")
+            or config.get("LEVEL5_AI_MODEL_HUB_MODEL_SERVER_MODE")
+            or config.get("MODEL_SERVER_MODE")
+            or "mock"
+        )
+        mode = self._normalize_ai_model_hub_model_server_mode(raw_mode)
+        allowed_modes = {"mock", "use-cases", "combined", "external"}
+        if mode not in allowed_modes:
+            self._fail(
+                "Invalid AI Model Hub model-server mode",
+                root_cause=(
+                    f"Unsupported mode '{raw_mode}'. "
+                    "Allowed values are: mock, use-cases, combined, external."
+                ),
+            )
+        return mode
+
+    def _project_root_dir(self):
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        return os.path.join(project_root, "adapters", "inesdata", "sources", "model-server")
+        return project_root
+
+    def _resolve_project_path(self, value):
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            return ""
+        expanded = os.path.expanduser(raw_value)
+        if os.path.isabs(expanded):
+            return expanded
+        return os.path.abspath(os.path.join(self._project_root_dir(), expanded))
+
+    def _ai_model_hub_model_server_source_dir(self, deployer_config=None):
+        config = dict(deployer_config or {})
+        explicit = str(
+            config.get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR")
+            or config.get("MODEL_SERVER_SOURCE_DIR")
+            or ""
+        ).strip()
+        if explicit:
+            source_dir = self._resolve_project_path(explicit)
+            repository_url = self._ai_model_hub_model_server_source_repository(config)
+            if repository_url:
+                return self._ensure_ai_model_hub_model_server_source_checkout(
+                    source_dir,
+                    repository_url,
+                    config,
+                )
+            return source_dir
+
+        mode = self._ai_model_hub_model_server_mode(config)
+        if mode in {"use-cases", "combined"}:
+            real_source = str(
+                config.get("AI_MODEL_HUB_REAL_MODEL_SERVER_SOURCE_DIR")
+                or config.get("AI_MODEL_HUB_USE_CASE_MODEL_SERVER_SOURCE_DIR")
+                or config.get("MODEL_SERVER_REAL_SOURCE_DIR")
+                or ""
+            ).strip()
+            if real_source:
+                source_dir = self._resolve_project_path(real_source)
+                repository_url = self._ai_model_hub_model_server_source_repository(config)
+                if repository_url:
+                    return self._ensure_ai_model_hub_model_server_source_checkout(
+                        source_dir,
+                        repository_url,
+                        config,
+                    )
+                return source_dir
+            repository_url = self._ai_model_hub_model_server_source_repository(config)
+            if repository_url:
+                source_dir = os.path.join(
+                    self._project_root_dir(),
+                    "adapters",
+                    "inesdata",
+                    "sources",
+                    "AIModelHub-Use-Cases",
+                )
+                return self._ensure_ai_model_hub_model_server_source_checkout(
+                    source_dir,
+                    repository_url,
+                    config,
+                )
+            self._fail(
+                "AI Model Hub real model-server source is not configured",
+                root_cause=(
+                    "Set AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR or "
+                    "AI_MODEL_HUB_REAL_MODEL_SERVER_SOURCE_DIR for use-cases/combined mode. "
+                    "Alternatively set AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY."
+                ),
+            )
+
+        return os.path.join(self._project_root_dir(), "adapters", "inesdata", "sources", "model-server")
+
+    @staticmethod
+    def _ai_model_hub_model_server_source_repository(deployer_config):
+        return str(
+            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY")
+            or (deployer_config or {}).get("AI_MODEL_HUB_USE_CASE_MODEL_SERVER_REPOSITORY")
+            or (deployer_config or {}).get("AI_MODEL_HUB_REAL_MODEL_SERVER_REPOSITORY")
+            or (deployer_config or {}).get("MODEL_SERVER_SOURCE_REPOSITORY")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _ai_model_hub_model_server_source_ref(deployer_config):
+        return str(
+            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF")
+            or (deployer_config or {}).get("MODEL_SERVER_SOURCE_REF")
+            or ""
+        ).strip()
+
+    def _ensure_ai_model_hub_model_server_source_checkout(self, source_dir, repository_url, deployer_config):
+        resolved_source_dir = os.path.abspath(os.path.expanduser(str(source_dir or "").strip()))
+        resolved_repository_url = str(repository_url or "").strip()
+        if not resolved_source_dir or not resolved_repository_url:
+            return resolved_source_dir
+
+        should_clone = not os.path.isdir(resolved_source_dir)
+        if not should_clone:
+            try:
+                entries = [entry for entry in os.listdir(resolved_source_dir) if entry not in {".gitkeep"}]
+            except OSError:
+                entries = []
+            should_clone = len(entries) == 0
+
+        if should_clone:
+            os.makedirs(os.path.dirname(resolved_source_dir), exist_ok=True)
+            print(
+                "Cloning AI Model Hub model-server source repository into "
+                f"{resolved_source_dir}"
+            )
+            try:
+                subprocess.run(
+                    ["git", "clone", resolved_repository_url, resolved_source_dir],
+                    check=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                self._fail(
+                    "Could not clone AI Model Hub model-server source repository",
+                    root_cause=f"{resolved_repository_url}: {exc}",
+                )
+
+        source_ref = self._ai_model_hub_model_server_source_ref(deployer_config)
+        if source_ref:
+            try:
+                subprocess.run(
+                    ["git", "-C", resolved_source_dir, "checkout", source_ref],
+                    check=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                self._fail(
+                    "Could not checkout AI Model Hub model-server source ref",
+                    root_cause=f"{source_ref}: {exc}",
+                )
+
+        return resolved_source_dir
 
     def _ai_model_hub_model_server_image_ref(self, deployer_config):
         return str((deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_IMAGE") or "model-server:latest").strip()
+
+    def _ai_model_hub_model_server_manifest_path(self, source_dir, deployer_config):
+        config = dict(deployer_config or {})
+        explicit = str(
+            config.get("AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH")
+            or config.get("MODEL_SERVER_MANIFEST_PATH")
+            or ""
+        ).strip()
+        if explicit:
+            return self._resolve_project_path(explicit)
+        return os.path.join(source_dir, "k8s-model-server.yaml")
+
+    def _ai_model_hub_model_server_explicit_manifest_path(self, deployer_config):
+        config = dict(deployer_config or {})
+        explicit = str(
+            config.get("AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH")
+            or config.get("MODEL_SERVER_MANIFEST_PATH")
+            or ""
+        ).strip()
+        return self._resolve_project_path(explicit) if explicit else ""
+
+    def _ai_model_hub_model_server_readiness_path(self, deployer_config):
+        config = dict(deployer_config or {})
+        explicit = str(
+            config.get("AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH")
+            or config.get("MODEL_SERVER_READINESS_PATH")
+            or ""
+        ).strip()
+        if explicit:
+            return explicit if explicit.startswith("/") else f"/{explicit}"
+        mode = self._ai_model_hub_model_server_mode(config)
+        if mode in {"use-cases", "combined"}:
+            return "/models"
+        return "/api/v1/health"
+
+    def _ai_model_hub_model_server_service_url(self, namespace):
+        resolved_namespace = str(namespace or "").strip() or "components"
+        return f"http://model-server.{resolved_namespace}.svc.cluster.local:8080"
+
+    @staticmethod
+    def _ai_model_hub_model_server_container_port(deployer_config):
+        raw_value = str(
+            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT")
+            or (deployer_config or {}).get("MODEL_SERVER_CONTAINER_PORT")
+            or "8080"
+        ).strip()
+        try:
+            port = int(raw_value)
+        except ValueError:
+            port = 8080
+        return port if 1 <= port <= 65535 else 8080
+
+    @staticmethod
+    def _ai_model_hub_model_server_docker_base_image(deployer_config):
+        return str(
+            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_DOCKER_BASE_IMAGE")
+            or (deployer_config or {}).get("MODEL_SERVER_DOCKER_BASE_IMAGE")
+            or "python:3.10-slim"
+        ).strip()
+
+    @staticmethod
+    def _ai_model_hub_model_server_uvicorn_app(deployer_config, mode):
+        explicit = str(
+            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_UVICORN_APP")
+            or (deployer_config or {}).get("MODEL_SERVER_UVICORN_APP")
+            or ""
+        ).strip()
+        if explicit:
+            return explicit
+        return "combined_model_server.server:app" if mode == "combined" else "src.server:app"
+
+    @staticmethod
+    def _ai_model_hub_model_server_image_pull_policy(image_ref, deployer_config):
+        explicit = str(
+            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_IMAGE_PULL_POLICY")
+            or (deployer_config or {}).get("MODEL_SERVER_IMAGE_PULL_POLICY")
+            or ""
+        ).strip()
+        if explicit in {"Always", "IfNotPresent", "Never"}:
+            return explicit
+        normalized_image = str(image_ref or "").strip().lower()
+        if normalized_image.endswith(":local") or normalized_image.endswith(":latest") or normalized_image.startswith("local/"):
+            return "Never"
+        return "IfNotPresent"
+
+    @staticmethod
+    def _ai_model_hub_model_server_copy_excludes(deployer_config):
+        raw_value = str(
+            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES")
+            or (deployer_config or {}).get("MODEL_SERVER_COPY_EXCLUDES")
+            or ""
+        ).strip()
+        excludes = [
+            ".git",
+            "__pycache__",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".venv",
+            "venv",
+            "node_modules",
+        ]
+        for token in raw_value.replace(";", ",").split(","):
+            value = token.strip()
+            if value and value not in excludes:
+                excludes.append(value)
+        return excludes
+
+    def _validate_ai_model_hub_use_case_source(self, source_dir):
+        required_paths = [
+            os.path.join(source_dir, "requirements.txt"),
+            os.path.join(source_dir, "src", "server.py"),
+        ]
+        missing = [path for path in required_paths if not os.path.isfile(path)]
+        if missing:
+            self._fail(
+                "AI Model Hub use-case model-server source is not usable",
+                root_cause=(
+                    "Missing required file(s): "
+                    + ", ".join(missing)
+                    + ". The source directory must contain the real FastAPI server repository."
+                ),
+            )
+
+    @staticmethod
+    def _ai_model_hub_combined_model_server_source():
+        return '''"""Combined use-case and deterministic mock model server."""
+
+from __future__ import annotations
+
+import hashlib
+import importlib
+import os
+import sys
+from typing import Any, Dict, Iterable, List
+
+from fastapi import Request
+
+
+DEFAULT_MOCK_HTTP_COUNT = 10
+MAX_MOCK_HTTP_COUNT = 15
+
+MOCK_MODELS: List[Dict[str, str]] = [
+    {"slug": "chest-xray", "endpoint": "/api/v1/vision/chest-xray", "group": "vision"},
+    {"slug": "pneumonia", "endpoint": "/api/v1/vision/pneumonia", "group": "vision"},
+    {"slug": "covid19", "endpoint": "/api/v1/vision/covid19", "group": "vision"},
+    {"slug": "lung-nodule", "endpoint": "/api/v1/vision/lung-nodule", "group": "vision"},
+    {"slug": "tuberculosis", "endpoint": "/api/v1/vision/tuberculosis", "group": "vision"},
+    {"slug": "ecommerce-sentiment", "endpoint": "/api/v1/nlp/ecommerce-sentiment", "group": "nlp"},
+    {"slug": "twitter-sentiment", "endpoint": "/api/v1/nlp/twitter-sentiment", "group": "nlp"},
+    {"slug": "product-review", "endpoint": "/api/v1/nlp/product-review", "group": "nlp"},
+    {"slug": "customer-feedback", "endpoint": "/api/v1/nlp/customer-feedback", "group": "nlp"},
+    {"slug": "social-media-sentiment", "endpoint": "/api/v1/nlp/social-media", "group": "nlp"},
+    {"slug": "bmi", "endpoint": "/api/v1/health/bmi", "group": "health"},
+    {"slug": "body-fat", "endpoint": "/api/v1/health/body-fat", "group": "health"},
+    {"slug": "bmr", "endpoint": "/api/v1/health/bmr", "group": "health"},
+    {"slug": "ideal-weight", "endpoint": "/api/v1/health/ideal-weight", "group": "health"},
+    {"slug": "health-risk", "endpoint": "/api/v1/health/risk-assessment", "group": "health"},
+]
+
+
+def _use_case_server_dir() -> str:
+    configured_dir = os.environ.get("USE_CASE_SERVER_DIR") or os.environ.get("USE_CASE_MODEL_SERVER_DIR")
+    return os.path.abspath(os.path.expanduser(configured_dir or "/app/use_cases"))
+
+
+def _mock_http_count() -> int:
+    raw_value = os.environ.get("COMBINED_MOCK_HTTP_COUNT", str(DEFAULT_MOCK_HTTP_COUNT))
+    try:
+        count = int(raw_value)
+    except ValueError:
+        count = DEFAULT_MOCK_HTTP_COUNT
+    return max(1, min(count, MAX_MOCK_HTTP_COUNT))
+
+
+def _load_use_case_app():
+    server_dir = _use_case_server_dir()
+    if server_dir not in sys.path:
+        sys.path.insert(0, server_dir)
+    try:
+        module = importlib.import_module("src.server")
+    except Exception as exc:
+        raise RuntimeError(
+            "Unable to import AIModelHub-Use-Cases src.server. "
+            f"Check USE_CASE_SERVER_DIR={server_dir} and the prepared model artifacts."
+        ) from exc
+    return module.app
+
+
+app = _load_use_case_app()
+
+
+def _records_from_payload(payload: Any) -> List[Dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item if isinstance(item, dict) else {"value": item} for item in payload]
+    if isinstance(payload, dict):
+        return [payload]
+    return [{"value": payload}]
+
+
+def _score(slug: str, record: Dict[str, Any]) -> float:
+    digest = hashlib.sha256(f"{slug}:{record}".encode("utf-8")).hexdigest()
+    return round(0.70 + (int(digest[:4], 16) % 2500) / 10000, 4)
+
+
+def _numeric(record: Dict[str, Any], key: str, default: float) -> float:
+    try:
+        return float(record.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _vision_prediction(slug: str, record: Dict[str, Any]) -> Dict[str, Any]:
+    labels = {
+        "chest-xray": "no_acute_finding",
+        "pneumonia": "pneumonia_not_detected",
+        "covid19": "covid19_not_detected",
+        "lung-nodule": "low_nodule_risk",
+        "tuberculosis": "tuberculosis_not_detected",
+    }
+    return {
+        "label": labels.get(slug, "normal"),
+        "confidence": _score(slug, record),
+        "explanation": "deterministic mock image classification",
+    }
+
+
+def _nlp_prediction(slug: str, record: Dict[str, Any]) -> Dict[str, Any]:
+    text = str(record.get("text", record.get("message", ""))).lower()
+    positive_terms = ("good", "great", "excellent", "useful", "bueno", "excelente", "positivo")
+    negative_terms = ("bad", "poor", "terrible", "malo", "negativo", "problema")
+    if any(term in text for term in positive_terms):
+        label = "positive"
+    elif any(term in text for term in negative_terms):
+        label = "negative"
+    else:
+        label = "neutral"
+    return {
+        "label": label,
+        "confidence": _score(slug, record),
+        "explanation": "deterministic mock text classification",
+    }
+
+
+def _health_prediction(slug: str, record: Dict[str, Any]) -> Dict[str, Any]:
+    weight = _numeric(record, "weight_kg", 70.0)
+    height = max(_numeric(record, "height_m", 1.75), 0.5)
+    age = _numeric(record, "age", 40.0)
+    bmi = round(weight / (height * height), 2)
+    outputs = {
+        "bmi": {"value": bmi, "unit": "kg/m2", "category": "normal" if bmi < 25 else "elevated"},
+        "body-fat": {"value": round(1.2 * bmi + 0.23 * age - 16.2, 2), "unit": "percent"},
+        "bmr": {"value": round(10 * weight + 625 * height - 5 * age + 5, 2), "unit": "kcal/day"},
+        "ideal-weight": {"value": round(22 * height * height, 2), "unit": "kg"},
+        "health-risk": {"value": "low" if bmi < 25 else "moderate", "score": min(round(bmi / 40, 3), 1.0)},
+    }
+    return {
+        "label": slug,
+        "confidence": _score(slug, record),
+        "output": outputs.get(slug, outputs["health-risk"]),
+    }
+
+
+def _predict(model: Dict[str, str], record: Dict[str, Any]) -> Dict[str, Any]:
+    group = model["group"]
+    slug = model["slug"]
+    if group == "vision":
+        result = _vision_prediction(slug, record)
+    elif group == "nlp":
+        result = _nlp_prediction(slug, record)
+    else:
+        result = _health_prediction(slug, record)
+    return {"input": record, "result": result}
+
+
+def _register_mock_endpoint(model: Dict[str, str]) -> None:
+    async def endpoint(request: Request) -> Dict[str, Any]:
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        records = _records_from_payload(payload)
+        return {
+            "model": model["slug"],
+            "serverMode": "combined",
+            "predictions": [_predict(model, record) for record in records],
+        }
+
+    route_name = f"combined_{model['slug'].replace('-', '_')}"
+    endpoint.__name__ = route_name
+    app.add_api_route(model["endpoint"], endpoint, methods=["POST"], name=route_name)
+
+
+def _active_mock_models() -> Iterable[Dict[str, str]]:
+    return MOCK_MODELS[:_mock_http_count()]
+
+
+for _model in _active_mock_models():
+    _register_mock_endpoint(_model)
+
+
+@app.get("/combined-models")
+def combined_models() -> Dict[str, Any]:
+    return {
+        "mode": "combined",
+        "useCaseServerDir": _use_case_server_dir(),
+        "mockHttp": [
+            {"slug": model["slug"], "endpoint": model["endpoint"], "group": model["group"]}
+            for model in _active_mock_models()
+        ],
+    }
+'''
+
+    def _prepare_ai_model_hub_model_server_build_context(self, source_dir, mode, deployer_config):
+        dockerfile_path = os.path.join(source_dir, "Dockerfile")
+        if os.path.isfile(dockerfile_path):
+            return source_dir, False
+
+        if mode not in {"use-cases", "combined"}:
+            self._fail(
+                "AI Model Hub model-server Dockerfile not found",
+                root_cause=(
+                    f"Expected Dockerfile at: {dockerfile_path}. "
+                    "Set AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR when using a custom model server source."
+                ),
+            )
+
+        self._validate_ai_model_hub_use_case_source(source_dir)
+        build_context = tempfile.mkdtemp(prefix="pionera-ai-model-hub-model-server-")
+        target_dir = os.path.join(build_context, "use_cases")
+        shutil.copytree(
+            source_dir,
+            target_dir,
+            ignore=shutil.ignore_patterns(*self._ai_model_hub_model_server_copy_excludes(deployer_config)),
+        )
+
+        if mode == "combined":
+            wrapper_dir = os.path.join(build_context, "combined_model_server")
+            os.makedirs(wrapper_dir, exist_ok=True)
+            with open(os.path.join(wrapper_dir, "__init__.py"), "w", encoding="utf-8") as handle:
+                handle.write("")
+            with open(os.path.join(wrapper_dir, "server.py"), "w", encoding="utf-8") as handle:
+                handle.write(self._ai_model_hub_combined_model_server_source())
+
+        container_port = self._ai_model_hub_model_server_container_port(deployer_config)
+        uvicorn_app = self._ai_model_hub_model_server_uvicorn_app(deployer_config, mode)
+        dockerfile_lines = [
+            f"FROM {self._ai_model_hub_model_server_docker_base_image(deployer_config)}",
+            "ENV PYTHONUNBUFFERED=1",
+            "ENV PIP_NO_CACHE_DIR=1",
+            "WORKDIR /app",
+            "COPY use_cases/requirements.txt /tmp/use-case-requirements.txt",
+            "RUN python -m pip install --upgrade pip && python -m pip install -r /tmp/use-case-requirements.txt",
+            "COPY use_cases /app/use_cases",
+            "ENV PYTHONPATH=/app/use_cases:/app",
+            "ENV USE_CASE_SERVER_DIR=/app/use_cases",
+        ]
+        if mode == "combined":
+            dockerfile_lines.append("COPY combined_model_server /app/combined_model_server")
+        dockerfile_lines.extend(
+            [
+                f"EXPOSE {container_port}",
+                f'CMD ["python", "-m", "uvicorn", "{uvicorn_app}", "--host", "0.0.0.0", "--port", "{container_port}"]',
+                "",
+            ]
+        )
+        with open(os.path.join(build_context, "Dockerfile"), "w", encoding="utf-8") as handle:
+            handle.write("\n".join(dockerfile_lines))
+
+        return build_context, True
+
+    def _generated_ai_model_hub_model_server_manifest(self, namespace, image_ref, mode, deployer_config):
+        container_port = self._ai_model_hub_model_server_container_port(deployer_config)
+        readiness_path = self._ai_model_hub_model_server_readiness_path(deployer_config)
+        image_pull_policy = self._ai_model_hub_model_server_image_pull_policy(image_ref, deployer_config)
+        return f"""apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-server
+  namespace: {namespace}
+  labels:
+    app.kubernetes.io/name: model-server
+    app.kubernetes.io/component: ai-model-hub-model-server
+    app.kubernetes.io/managed-by: validation-environment
+    app.kubernetes.io/mode: {mode}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: model-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: model-server
+        app.kubernetes.io/component: ai-model-hub-model-server
+        app.kubernetes.io/mode: {mode}
+    spec:
+      containers:
+        - name: model-server
+          image: {image_ref}
+          imagePullPolicy: {image_pull_policy}
+          ports:
+            - name: http
+              containerPort: {container_port}
+          readinessProbe:
+            httpGet:
+              path: {readiness_path}
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: {readiness_path}
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 8
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-server
+  namespace: {namespace}
+  labels:
+    app.kubernetes.io/name: model-server
+    app.kubernetes.io/component: ai-model-hub-model-server
+    app.kubernetes.io/managed-by: validation-environment
+spec:
+  selector:
+    app.kubernetes.io/name: model-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+"""
+
+    def _render_ai_model_hub_model_server_manifest(self, source_dir, namespace, image_ref, mode, deployer_config):
+        manifest_path = self._ai_model_hub_model_server_manifest_path(source_dir, deployer_config)
+        explicit_manifest = self._ai_model_hub_model_server_explicit_manifest_path(deployer_config)
+        if os.path.isfile(manifest_path):
+            with open(manifest_path, encoding="utf-8") as handle:
+                manifest = handle.read()
+        elif explicit_manifest:
+            self._fail(
+                "AI Model Hub model-server Kubernetes manifest not found",
+                root_cause=f"Expected configured manifest at: {explicit_manifest}",
+            )
+        elif mode in {"use-cases", "combined"}:
+            manifest = self._generated_ai_model_hub_model_server_manifest(
+                namespace,
+                image_ref,
+                mode,
+                deployer_config,
+            )
+        else:
+            self._fail(
+                "AI Model Hub model-server Kubernetes manifest not found",
+                root_cause=(
+                    f"Expected manifest at: {manifest_path}. "
+                    "Set AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH when using a custom model server source."
+                ),
+            )
+
+        manifest = manifest.replace("namespace: demo", f"namespace: {namespace}")
+        manifest = manifest.replace("image: model-server:latest", f"image: {image_ref}")
+        readiness_path = self._ai_model_hub_model_server_readiness_path(deployer_config)
+        manifest = manifest.replace("path: /api/v1/health", f"path: {readiness_path}")
+        return manifest
+
+    def _ai_model_hub_model_server_connector_base_url(self, namespace, deployer_config):
+        config = dict(deployer_config or {})
+        explicit = str(
+            config.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
+            or config.get("MODEL_SERVER_CONNECTOR_BASE_URL")
+            or config.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_URL")
+            or config.get("MODEL_SERVER_CONNECTOR_URL")
+            or ""
+        ).strip()
+        if explicit:
+            return explicit.rstrip("/")
+        return self._ai_model_hub_model_server_service_url(namespace)
 
     def _ai_model_hub_model_server_public_url(self, deployer_config):
         config = dict(deployer_config or {})
@@ -897,16 +1552,8 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         return results
 
     def _prepare_ai_model_hub_model_server_image(self, image_ref, deployer_config):
-        source_dir = self._ai_model_hub_model_server_source_dir()
-        dockerfile_path = os.path.join(source_dir, "Dockerfile")
-        if not os.path.isfile(dockerfile_path):
-            self._fail(
-                "AI Model Hub model-server Dockerfile not found",
-                root_cause=(
-                    f"Expected Dockerfile at: {dockerfile_path}. "
-                    "Level 5 needs this deterministic fixture for A5.2 model execution and benchmarking validation."
-                ),
-            )
+        source_dir = self._ai_model_hub_model_server_source_dir(deployer_config)
+        mode = self._ai_model_hub_model_server_mode(deployer_config)
 
         auto_build_flag = deployer_config.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
         if auto_build_flag is None:
@@ -936,10 +1583,21 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
 
         image_q = shlex.quote(image_ref)
         docker_q = shlex.quote(self._docker_cmd())
-        print(f"\nBuilding local image on host: {image_ref}")
-        if self.run(f"{docker_q} build -t {image_q} .", check=False, cwd=source_dir) is None:
-            self._fail("Failed to build AI Model Hub model-server image on host", root_cause=image_ref)
-        self._load_image_into_cluster_runtime(cluster_type, profile, image_ref, deployer_config)
+        build_context, generated_context = self._prepare_ai_model_hub_model_server_build_context(
+            source_dir,
+            mode,
+            deployer_config,
+        )
+        try:
+            print(f"\nBuilding local image on host: {image_ref}")
+            if generated_context:
+                print(f"Generated AI Model Hub model-server build context for mode '{mode}'.")
+            if self.run(f"{docker_q} build -t {image_q} .", check=False, cwd=build_context) is None:
+                self._fail("Failed to build AI Model Hub model-server image on host", root_cause=image_ref)
+            self._load_image_into_cluster_runtime(cluster_type, profile, image_ref, deployer_config)
+        finally:
+            if generated_context:
+                shutil.rmtree(build_context, ignore_errors=True)
         return True
 
     def _ensure_ai_model_hub_model_server(self, namespace, deployer_config):
@@ -948,14 +1606,40 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             return {"enabled": False, "namespace": namespace}
 
         resolved_namespace = str(namespace or "").strip() or "components"
-        image_ref = self._ai_model_hub_model_server_image_ref(deployer_config)
-        source_dir = self._ai_model_hub_model_server_source_dir()
-        manifest_path = os.path.join(source_dir, "k8s-model-server.yaml")
-        if not os.path.isfile(manifest_path):
-            self._fail(
-                "AI Model Hub model-server Kubernetes manifest not found",
-                root_cause=manifest_path,
+        mode = self._ai_model_hub_model_server_mode(deployer_config)
+        service_url = self._ai_model_hub_model_server_service_url(resolved_namespace)
+        connector_base_url = self._ai_model_hub_model_server_connector_base_url(
+            resolved_namespace,
+            deployer_config,
+        )
+        public_url = self._ai_model_hub_model_server_public_url(deployer_config)
+
+        if mode == "external":
+            if not connector_base_url or connector_base_url == service_url:
+                self._fail(
+                    "AI Model Hub external model-server URL is not configured",
+                    root_cause=(
+                        "Set AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL to the URL "
+                        "reachable from connector runtimes."
+                    ),
+                )
+            print(
+                "AI Model Hub model-server deployment skipped: external mode. "
+                f"Connector URL: {connector_base_url}"
             )
+            return {
+                "enabled": True,
+                "mode": mode,
+                "namespace": resolved_namespace,
+                "image": "",
+                "service": service_url,
+                "connector_base_url": connector_base_url,
+                "public_url": public_url,
+                "built_local_image": False,
+            }
+
+        image_ref = self._ai_model_hub_model_server_image_ref(deployer_config)
+        source_dir = self._ai_model_hub_model_server_source_dir(deployer_config)
 
         built_local_image = self._prepare_ai_model_hub_model_server_image(image_ref, deployer_config)
 
@@ -964,10 +1648,13 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             if self.run(f"kubectl create namespace {ns_q}", check=False) is None:
                 self._fail("Failed to create namespace for AI Model Hub model-server", root_cause=resolved_namespace)
 
-        with open(manifest_path, encoding="utf-8") as handle:
-            manifest = handle.read()
-        manifest = manifest.replace("namespace: demo", f"namespace: {resolved_namespace}")
-        manifest = manifest.replace("image: model-server:latest", f"image: {image_ref}")
+        manifest = self._render_ai_model_hub_model_server_manifest(
+            source_dir,
+            resolved_namespace,
+            image_ref,
+            mode,
+            deployer_config,
+        )
 
         temp_path = None
         try:
@@ -975,7 +1662,10 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(manifest)
             temp_q = shlex.quote(temp_path)
-            print(f"\nDeploying AI Model Hub model-server fixture in namespace '{resolved_namespace}'")
+            print(
+                f"\nDeploying AI Model Hub model-server ({mode}) in namespace "
+                f"'{resolved_namespace}'"
+            )
             if self.run(f"kubectl apply -f {temp_q}", check=False) is None:
                 self._fail("Failed to apply AI Model Hub model-server manifest", root_cause=temp_path)
         finally:
@@ -996,9 +1686,11 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         )
         return {
             "enabled": True,
+            "mode": mode,
             "namespace": resolved_namespace,
             "image": image_ref,
-            "service": f"http://model-server.{resolved_namespace}.svc.cluster.local:8080",
+            "service": service_url,
+            "connector_base_url": connector_base_url,
             "public_url": public_url,
             "built_local_image": bool(built_local_image),
         }

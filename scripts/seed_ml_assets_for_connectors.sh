@@ -16,6 +16,10 @@ VOCABULARY_CATEGORY="${VOCABULARY_CATEGORY:-machineLearning}"
 VOCABULARY_SCHEMA_FILE="${VOCABULARY_SCHEMA_FILE:-}"
 MODEL_FILE="$WORK_DIR/LGBM_Classifier_1.pkl"
 STRICT_MODE="${STRICT_MODE:-0}"
+MODEL_SET="${MODEL_SET:-mock}"
+USE_CASE_MODEL_SERVER_BASE_URL="${USE_CASE_MODEL_SERVER_BASE_URL:-}"
+COMBINED_HTTP_COUNT="${COMBINED_HTTP_COUNT:-10}"
+COMBINED_INESDATA_COUNT="${COMBINED_INESDATA_COUNT:-$COUNT}"
 
 usage() {
   cat <<'EOF'
@@ -32,6 +36,12 @@ Options:
   --vocabulary-name <name>    Vocabulary display name (default: JS Metadata Daimo)
   --vocabulary-category <cat> Vocabulary category (default: machineLearning)
   --vocabulary-schema <path>  JSON schema file. Default auto-detect from project root
+  --model-set <mode>          mock, use-cases or combined (default: mock)
+  --use-case-model-server-base-url <url>
+                              Base URL for the real use-case model server
+  --combined-http-count <n>   Mock HttpData assets kept in combined mode (default: 10)
+  --combined-inesdata-count <n>
+                              InesDataStore assets kept in combined mode (default: --count)
   --strict                    Fail if any connector fails (default: disabled)
   -h, --help                  Show this help
 
@@ -84,6 +94,22 @@ while [[ $# -gt 0 ]]; do
       VOCABULARY_SCHEMA_FILE="${2:-}"
       shift 2
       ;;
+    --model-set)
+      MODEL_SET="${2:-}"
+      shift 2
+      ;;
+    --use-case-model-server-base-url)
+      USE_CASE_MODEL_SERVER_BASE_URL="${2:-}"
+      shift 2
+      ;;
+    --combined-http-count)
+      COMBINED_HTTP_COUNT="${2:-}"
+      shift 2
+      ;;
+    --combined-inesdata-count)
+      COMBINED_INESDATA_COUNT="${2:-}"
+      shift 2
+      ;;
     --strict)
       STRICT_MODE=1
       shift
@@ -104,6 +130,24 @@ mkdir -p "$WORK_DIR"
 
 if ! [[ "$COUNT" =~ ^[0-9]+$ ]] || [[ "$COUNT" -lt 1 ]]; then
   echo "Invalid --count value: $COUNT" >&2
+  exit 1
+fi
+
+MODEL_SET="$(echo "$MODEL_SET" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+case "$MODEL_SET" in
+  ""|"fixture"|"deterministic") MODEL_SET="mock" ;;
+  "real"|"usecases") MODEL_SET="use-cases" ;;
+esac
+if [[ "$MODEL_SET" != "mock" && "$MODEL_SET" != "use-cases" && "$MODEL_SET" != "combined" ]]; then
+  echo "Invalid --model-set value: $MODEL_SET. Expected mock, use-cases or combined." >&2
+  exit 1
+fi
+if ! [[ "$COMBINED_HTTP_COUNT" =~ ^[0-9]+$ ]] || [[ "$COMBINED_HTTP_COUNT" -lt 1 ]]; then
+  echo "Invalid --combined-http-count value: $COMBINED_HTTP_COUNT" >&2
+  exit 1
+fi
+if ! [[ "$COMBINED_INESDATA_COUNT" =~ ^[0-9]+$ ]] || [[ "$COMBINED_INESDATA_COUNT" -lt 1 ]]; then
+  echo "Invalid --combined-inesdata-count value: $COMBINED_INESDATA_COUNT" >&2
   exit 1
 fi
 
@@ -317,7 +361,12 @@ EOF
 # MODEL DEFINITIONS — 25 HttpData models served by model-server
 # =============================================================================
 
-MODEL_SERVER_BASE="${MODEL_SERVER_BASE:-http://model-server.${COMPONENTS_NAMESPACE}.svc.cluster.local:8080}"
+MODEL_SERVER_BASE="${MODEL_SERVER_BASE:-${AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL:-${MODEL_SERVER_CONNECTOR_BASE_URL:-${AI_MODEL_HUB_MODEL_SERVER_BASE_URL:-http://model-server.${COMPONENTS_NAMESPACE}.svc.cluster.local:8080}}}}"
+MODEL_SERVER_BASE="${MODEL_SERVER_BASE%/}"
+if [[ -z "$USE_CASE_MODEL_SERVER_BASE_URL" ]]; then
+  USE_CASE_MODEL_SERVER_BASE_URL="$MODEL_SERVER_BASE"
+fi
+USE_CASE_MODEL_SERVER_BASE_URL="${USE_CASE_MODEL_SERVER_BASE_URL%/}"
 
 MODEL_SLUGS=(
   chest-xray pneumonia covid19 lung-nodule tuberculosis
@@ -444,10 +493,15 @@ input_example_json() {
 
 seed_http_data_assets() {
   local connector="$1" token="$2" mgmt_url="$3"
-  local tag created=0
+  local max_assets="${4:-${#MODEL_SLUGS[@]}}"
+  local tag created=0 attempted=0
   tag="$(connector_tag "$connector")"
 
   for idx in "${!MODEL_SLUGS[@]}"; do
+    if [[ "$idx" -ge "$max_assets" ]]; then
+      break
+    fi
+    attempted=$((attempted + 1))
     local slug="${MODEL_SLUGS[$idx]}"
     local title="${MODEL_TITLES[$idx]}"
     local endpoint="${MODEL_ENDPOINTS[$idx]}"
@@ -548,7 +602,190 @@ ASSET_EOF
     fi
   done
 
-  echo "[$connector] HttpData assets created: $created/25"
+  echo "[$connector] HttpData assets created: $created/$attempted"
+  return 0
+}
+
+discover_use_case_model_specs() {
+  local output_file="$1"
+  local models_response="$WORK_DIR/use_case_models.response.json"
+  local models_code
+
+  models_code="$(curl -s --max-time 45 -o "$models_response" -w '%{http_code}' \
+    "$USE_CASE_MODEL_SERVER_BASE_URL/models")" || true
+  if [[ "$models_code" != "200" ]]; then
+    echo "Use-case model-server discovery failed at $USE_CASE_MODEL_SERVER_BASE_URL/models (HTTP ${models_code:-NA})" >&2
+    cat "$models_response" >&2 2>/dev/null || true
+    return 1
+  fi
+
+  set +e
+  python3 - "$models_response" > "$output_file" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+def slugify(value: str) -> str:
+    value = re.sub(r"[^A-Za-z0-9]+", "-", str(value).strip().lower())
+    return value.strip("-") or "model"
+
+rows = []
+for model_name in payload.get("flares") or []:
+    slug = f"flares-{slugify(model_name)}"
+    endpoint = f"/flares/{model_name}"
+    subtask = "5W1H extraction" if "5w1h" in str(model_name).lower() else "text reliability classification"
+    rows.append(
+        [
+            slug,
+            f"FLARES model {model_name}",
+            endpoint,
+            f"Real FLARES model exposed by the AI Model Hub use-case server: {model_name}.",
+            "Natural Language Processing",
+            subtask,
+            "Transformer",
+            "PyTorch",
+            "Transformers",
+        ]
+    )
+
+for model_name in payload.get("mobility") or []:
+    slug = f"mobility-{slugify(model_name)}"
+    endpoint = f"/mobility/{model_name}"
+    rows.append(
+        [
+            slug,
+            f"Mobility model {model_name}",
+            endpoint,
+            f"Real GTFS mobility prediction model exposed by the AI Model Hub use-case server: {model_name}.",
+            "Time series regression",
+            "Public transport travel-time prediction",
+            "Supervised regression",
+            "scikit-learn",
+            "joblib",
+        ]
+    )
+
+if not rows:
+    sys.exit(2)
+
+for row in rows:
+    print("\t".join(item.replace("\t", " ") for item in row))
+PY
+  local py_status=$?
+  set -e
+  if [[ "$py_status" -eq 2 ]]; then
+    echo "Use-case model-server returned no models at $USE_CASE_MODEL_SERVER_BASE_URL/models" >&2
+    return 1
+  fi
+  if [[ "$py_status" -ne 0 ]]; then
+    echo "Use-case model-server discovery response could not be parsed" >&2
+    return 1
+  fi
+}
+
+json_escape() {
+  python3 -c 'import json,sys; print(json.dumps(sys.argv[1])[1:-1])' "$1"
+}
+
+seed_use_case_http_data_assets() {
+  local connector="$1" token="$2" mgmt_url="$3"
+  local tag created=0 specs_file
+  tag="$(connector_tag "$connector")"
+  specs_file="$WORK_DIR/use_case_model_specs.tsv"
+
+  if ! discover_use_case_model_specs "$specs_file"; then
+    return 1
+  fi
+
+  while IFS=$'\t' read -r slug title endpoint desc task subtask algo fw library; do
+    [[ -z "$slug" ]] && continue
+    local asset_id="${tag}-${slug}"
+    local asset_title="${title} - ${tag}"
+    local json_file="$WORK_DIR/${connector}_${asset_id}.json"
+    local escaped_title escaped_desc escaped_task escaped_subtask escaped_algo escaped_fw escaped_library
+    escaped_title="$(json_escape "$asset_title")"
+    escaped_desc="$(json_escape "$desc")"
+    escaped_task="$(json_escape "$task")"
+    escaped_subtask="$(json_escape "$subtask")"
+    escaped_algo="$(json_escape "$algo")"
+    escaped_fw="$(json_escape "$fw")"
+    escaped_library="$(json_escape "$library")"
+
+    cat > "$json_file" <<ASSET_EOF
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "daimo": "https://w3id.org/daimo/ns#",
+    "mls": "http://www.w3.org/ns/mls#"
+  },
+  "@id": "${asset_id}",
+  "properties": {
+    "name": "${escaped_title}",
+    "version": "1.0.0",
+    "contenttype": "application/json",
+    "assetType": "machineLearning",
+    "shortDescription": "${escaped_desc}",
+    "dct:description": "${escaped_desc}",
+    "dcterms:description": "${escaped_desc}",
+    "dcat:keyword": ["machine-learning","use-case","real-model","${tag}"],
+    "assetData": {
+      "${VOCABULARY_ID}": {
+        "dct:title": "${escaped_title}",
+        "dcterms:title": "${escaped_title}",
+        "dct:description": "${escaped_desc}",
+        "dcterms:description": "${escaped_desc}",
+        "daimo:task": "${escaped_task}",
+        "daimo:subtask": "${escaped_subtask}",
+        "daimo:algorithm": "${escaped_algo}",
+        "daimo:framework": "${escaped_fw}",
+        "daimo:library": "${escaped_library}",
+        "dct:language": ["English","Spanish"],
+        "dcterms:language": ["English","Spanish"],
+        "dct:license": "apache-2.0",
+        "dcterms:license": "apache-2.0",
+        "daimo:input_features": [{"name":"records","type":"array","description":"Batch input accepted by the deployed use-case model endpoint","nullable":false}],
+        "daimo:input_example": "[{}]",
+        "mls:ModelEvaluation": [{"metric":"validated_deployment","value":1.0}]
+      }
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "name": "${asset_id}",
+    "baseUrl": "${USE_CASE_MODEL_SERVER_BASE_URL}${endpoint}",
+    "proxyMethod": "true",
+    "proxyBody": "true",
+    "method": "POST",
+    "contentType": "application/json"
+  }
+}
+ASSET_EOF
+
+    local out_file="$WORK_DIR/${connector}_${asset_id}.create.out"
+    local code
+    code="$(curl -s --max-time 30 -o "$out_file" -w '%{http_code}' \
+      -X POST "$mgmt_url/v3/assets" \
+      -H "Authorization: Bearer $token" \
+      -H 'Content-Type: application/json' \
+      --data-binary "@$json_file")" || true
+
+    if [[ "$code" == "200" || "$code" == "204" || "$code" == "409" ]]; then
+      created=$((created + 1))
+      echo "[$connector] use-case HttpData asset $asset_id created (HTTP $code)"
+    else
+      echo "[$connector] use-case HttpData asset $asset_id FAILED (HTTP ${code:-NA})" >&2
+      cat "$out_file" >&2 2>/dev/null || true
+      return 1
+    fi
+  done < "$specs_file"
+
+  echo "[$connector] use-case HttpData assets created: $created"
   return 0
 }
 
@@ -838,17 +1075,47 @@ seed_connector() {
     return 1
   fi
 
-  # Seed 25 HttpData assets
-  if ! seed_http_data_assets "$connector" "$token" "$mgmt_url"; then
-    cleanup_pf
-    return 1
-  fi
+  local http_assets_label="25 HttpData"
+  case "$MODEL_SET" in
+    mock)
+      if ! seed_http_data_assets "$connector" "$token" "$mgmt_url"; then
+        cleanup_pf
+        return 1
+      fi
+      ;;
+    use-cases)
+      if ! seed_use_case_http_data_assets "$connector" "$token" "$mgmt_url"; then
+        cleanup_pf
+        return 1
+      fi
+      http_assets_label="use-case HttpData"
+      ;;
+    combined)
+      if ! seed_use_case_http_data_assets "$connector" "$token" "$mgmt_url"; then
+        cleanup_pf
+        return 1
+      fi
+      if ! seed_http_data_assets "$connector" "$token" "$mgmt_url" "$COMBINED_HTTP_COUNT"; then
+        cleanup_pf
+        return 1
+      fi
+      http_assets_label="use-case HttpData + $COMBINED_HTTP_COUNT mock HttpData"
+      ;;
+  esac
 
-  # Seed 10 InesDataStore assets
+  # Seed InesDataStore assets
+  local original_count="$COUNT"
+  local inesdata_count_label="$COUNT"
+  if [[ "$MODEL_SET" == "combined" ]]; then
+    COUNT="$COMBINED_INESDATA_COUNT"
+    inesdata_count_label="$COMBINED_INESDATA_COUNT"
+  fi
   if ! seed_inesdata_store_assets "$connector" "$token" "$mgmt_url"; then
+    COUNT="$original_count"
     cleanup_pf
     return 1
   fi
+  COUNT="$original_count"
 
   # Create policy + contract definition
   if ! create_policy_and_contract "$connector" "$token" "$mgmt_url"; then
@@ -857,7 +1124,7 @@ seed_connector() {
   fi
 
   cleanup_pf
-  echo "[$connector] seeding complete: 25 HttpData + $COUNT InesDataStore + policy + contract"
+  echo "[$connector] seeding complete: $http_assets_label + $inesdata_count_label InesDataStore + policy + contract"
   return 0
 }
 
@@ -1131,7 +1398,7 @@ for connector in "${connectors[@]}"; do
 done
 
 echo ""
-echo "Connector seeding summary: $total_ok/${#connectors[@]} succeeded (25 HttpData + $COUNT InesDataStore each)"
+echo "Connector seeding summary: $total_ok/${#connectors[@]} succeeded (model-set=$MODEL_SET, InesDataStore=$COUNT each)"
 
 if [[ "${#failed_connectors[@]}" -gt 0 ]]; then
   echo "failed_connectors=${failed_connectors[*]}" >&2

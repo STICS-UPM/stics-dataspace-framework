@@ -192,6 +192,36 @@ def _summarize_status_items(items: list[dict[str, Any]], status_key: str = "stat
     return summary
 
 
+def _summary_count(summary: dict[str, Any], key: str) -> int:
+    try:
+        return int(summary.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _summary_status(summary: dict[str, Any], fallback: Any = None) -> str:
+    """Return the dashboard status implied by test counters."""
+
+    normalized_fallback = str(fallback or "").strip().lower()
+    if normalized_fallback in {"failed", "fail", "error", "terminated"}:
+        return "failed"
+
+    failed = _summary_count(summary, "failed")
+    skipped = _summary_count(summary, "skipped")
+    other = _summary_count(summary, "other")
+    total = _summary_count(summary, "total")
+
+    if failed:
+        return "failed"
+    if skipped:
+        return "skipped"
+    if other:
+        return "partial"
+    if total:
+        return "passed"
+    return normalized_fallback or "unknown"
+
+
 def _with_suite_taxonomy(suite: dict[str, Any]) -> dict[str, Any]:
     if suite.get("audit_suite") and suite.get("audit_group"):
         return suite
@@ -275,7 +305,7 @@ def _summarize_kafka(experiment_path: Path) -> dict[str, Any] | None:
     return {
         "kind": "kafka",
         "title": "Kafka transfer",
-        "status": "failed" if summary["failed"] else "passed",
+        "status": _summary_status(summary),
         "summary": summary,
         "average_latency_ms": round(sum(latencies) / len(latencies), 2) if latencies else None,
         "average_throughput": round(sum(throughputs) / len(throughputs), 2) if throughputs else None,
@@ -351,7 +381,7 @@ def _summarize_components(experiment_path: Path) -> list[dict[str, Any]]:
             {
                 "kind": "component",
                 "title": str(payload.get("display_name") or payload.get("component") or path.parent.name),
-                "status": str(payload.get("status") or "unknown"),
+                "status": _summary_status(summary, payload.get("status")),
                 "summary": {
                     "total": summary.get("total", 0),
                     "passed": summary.get("passed", 0),
@@ -412,7 +442,7 @@ def _summarize_component_report_json(experiment_path: Path) -> list[dict[str, An
             {
                 "kind": "component-report",
                 "title": f"{component} / {suite}",
-                "status": str(payload.get("status") or "unknown"),
+                "status": _summary_status(summary, payload.get("status")),
                 "summary": {
                     "total": summary.get("total", 0),
                     "passed": summary.get("passed", 0),
@@ -444,7 +474,7 @@ def _summarize_playwright_json(experiment_path: Path) -> list[dict[str, Any]]:
             {
                 "kind": "playwright-json",
                 "title": _display_name_from_path(relative_parent),
-                "status": "failed" if stats["failed"] else "passed",
+                "status": _summary_status(stats),
                 "summary": stats,
                 "artifacts": [_relative(path, experiment_path)],
                 **taxonomy,
@@ -981,6 +1011,8 @@ def inspect_experiment(path: str | Path) -> dict[str, Any]:
         result = "Issues detected"
     elif any(str(suite.get("status")).lower() in {"warning", "warning-existing"} for suite in suites):
         result = "Warnings detected"
+    elif any(str(suite.get("status")).lower() in {"skipped", "partial"} for suite in suites):
+        result = "Partial"
     elif not suites and not playwright_reports:
         result = "Partial"
 
@@ -1039,7 +1071,7 @@ def _badge(status: Any) -> str:
     normalized = str(status or "unknown").strip().lower()
     if normalized in {"succeeded", "passed", "success", "covered", "no failed suites detected"}:
         css = "ok"
-    elif normalized in {"warning", "warning-existing", "warnings detected"}:
+    elif normalized in {"warning", "warning-existing", "warnings detected", "partial"}:
         css = "warn"
     elif normalized in {"failed", "error", "issues detected"}:
         css = "fail"

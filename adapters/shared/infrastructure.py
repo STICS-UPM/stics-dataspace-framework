@@ -71,8 +71,10 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
     def setup_cluster_preflight(self, topology=LOCAL_TOPOLOGY):
         """Prepare and validate the cluster required by VM-based execution."""
         normalized_topology = normalize_topology(topology)
-        if hasattr(self.config_adapter, "topology"):
+        try:
             self.config_adapter.topology = normalized_topology
+        except Exception:
+            pass
         if normalized_topology == LOCAL_TOPOLOGY:
             return self.setup_cluster()
         if normalized_topology not in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:

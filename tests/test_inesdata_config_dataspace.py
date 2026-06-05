@@ -317,7 +317,7 @@ class InesdataConfigDataspaceTests(unittest.TestCase):
         self.assertEqual(runtime["memory"], "16384")
         self.assertEqual(runtime["profile"], "vm-override")
 
-    def test_cluster_runtime_preserves_vm_single_minikube_default(self):
+    def test_cluster_runtime_defaults_vm_single_to_k3s(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, "deployers", "infrastructure"), exist_ok=True)
             os.makedirs(os.path.join(tmpdir, "deployers", "inesdata"), exist_ok=True)
@@ -329,7 +329,7 @@ class InesdataConfigDataspaceTests(unittest.TestCase):
 
             runtime = INESDataConfigAdapter(TempConfig, topology="vm-single").cluster_runtime()
 
-        self.assertEqual(runtime["cluster_type"], "minikube")
+        self.assertEqual(runtime["cluster_type"], "k3s")
         self.assertEqual(runtime["k3s_kubeconfig"], "/etc/rancher/k3s/k3s.yaml")
 
     def test_cluster_runtime_reads_vm_single_k3s_overlay(self):
