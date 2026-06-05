@@ -20,6 +20,7 @@ from deployers.shared.lib.components import (
     strip_url_scheme,
 )
 from deployers.shared.lib.cluster_runtime import build_cluster_runtime
+from deployers.shared.lib import image_runtime
 from deployers.shared.lib import local_images
 from deployers.shared.lib.remote_k3s_images import remote_k3s_image_import_target, shell_join
 from deployers.shared.lib.topology import VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY, normalize_topology
@@ -617,24 +618,11 @@ class INESDataComponentsAdapter:
 
     @staticmethod
     def _extract_primary_image_ref(values: dict):
-        image = (values or {}).get("image") or {}
-        repository = (image.get("repository") or "").strip()
-        tag_raw = image.get("tag")
-        tag = str(tag_raw).strip() if tag_raw is not None else ""
-        if not repository or not tag:
-            return None
-        return f"{repository}:{tag}"
+        return image_runtime.image_ref_from_values(values)
 
     @staticmethod
     def _extract_mapping_editor_image_ref(values: dict):
-        mapping_editor = (values or {}).get("mappingEditor") or {}
-        image = mapping_editor.get("image") or {}
-        repository = (image.get("repository") or "").strip()
-        tag_raw = image.get("tag")
-        tag = str(tag_raw).strip() if tag_raw is not None else ""
-        if not repository or not tag:
-            return None
-        return f"{repository}:{tag}"
+        return image_runtime.nested_image_ref_from_values(values, "mappingEditor")
 
     def _component_image_config_prefixes(self, normalized_component: str):
         normalized = self._normalize_component_key(normalized_component)
@@ -1122,38 +1110,14 @@ class INESDataComponentsAdapter:
 
     @staticmethod
     def _k3s_cri_image_ref_alias(image_ref: str) -> str:
-        normalized = str(image_ref or "").strip()
-        if not normalized:
-            return ""
-        has_path = "/" in normalized
-        first_segment = normalized.split("/", 1)[0]
-        if has_path and ("." in first_segment or ":" in first_segment or first_segment == "localhost"):
-            return normalized
-        if has_path:
-            return f"docker.io/{normalized}"
-        return f"docker.io/library/{normalized}"
+        return image_runtime.k3s_cri_image_ref_alias(image_ref)
 
     @staticmethod
     def _dedupe_image_refs(image_refs) -> list[str]:
-        deduped = []
-        seen = set()
-        for raw_ref in list(image_refs or []):
-            image_ref = str(raw_ref or "").strip()
-            if not image_ref or image_ref in seen:
-                continue
-            seen.add(image_ref)
-            deduped.append(image_ref)
-        return deduped
+        return image_runtime.dedupe_image_refs(image_refs)
 
     def _k3s_image_save_refs(self, image_ref: str) -> list[str]:
-        image_ref = str(image_ref or "").strip()
-        if not image_ref:
-            return []
-        save_refs = [image_ref]
-        cri_alias = self._k3s_cri_image_ref_alias(image_ref)
-        if cri_alias and cri_alias != image_ref:
-            save_refs.append(cri_alias)
-        return save_refs
+        return image_runtime.k3s_image_save_refs(image_ref)
 
     def _normalized_topology(self) -> str:
         return normalize_topology(getattr(self.config_adapter, "topology", None) or "local")
@@ -1696,7 +1660,7 @@ class INESDataComponentsAdapter:
                     "Ontology-Hub chart image is not declared",
                     root_cause=f"Values file: {values_file}",
                 )
-            if not image_ref.lower().endswith(":local"):
+            if not image_runtime.is_local_image_ref(image_ref):
                 if configured_image_override:
                     print(
                         "Ontology-Hub is configured with a prebuilt image. "
@@ -1741,7 +1705,7 @@ class INESDataComponentsAdapter:
         if not auto_build_enabled:
             if (
                 image_ref
-                and image_ref.lower().endswith(":local")
+                and image_runtime.is_local_image_ref(image_ref)
                 and cluster_type == "k3s"
                 and self._normalized_topology() in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}
                 and not self._assume_level5_local_images_available(deployer_config)
@@ -1760,7 +1724,7 @@ class INESDataComponentsAdapter:
         if not image_ref:
             return False
 
-        if not image_ref.lower().endswith(":local"):
+        if not image_runtime.is_local_image_ref(image_ref):
             return False
 
         if cluster_type == "minikube" and not self._minikube_is_available(profile):
@@ -1788,7 +1752,7 @@ class INESDataComponentsAdapter:
                         "mapping-editor chart image is not declared",
                         root_cause=f"Values file: {values_file}",
                     )
-                if editor_image_ref.lower().endswith(":local"):
+                if image_runtime.is_local_image_ref(editor_image_ref):
                     if cluster_type == "k3s":
                         self._ensure_k3s_local_image_import_supported(editor_image_ref, deployer_config)
                     self._build_mapping_editor_image_on_host(editor_image_ref, deployer_config)

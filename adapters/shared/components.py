@@ -21,6 +21,7 @@ from deployers.shared.lib.components import (
     summarize_components_for_adapter,
 )
 from deployers.shared.lib import ai_model_hub_model_server as model_server
+from deployers.shared.lib import image_runtime
 
 
 class SharedComponentsAdapter(INESDataComponentsAdapter):
@@ -428,10 +429,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 f"kubectl get deployment {deployment_q} -n {namespace_q} "
                 "-o jsonpath='{range .spec.template.spec.containers[*]}{.image}{\"\\n\"}{end}'"
             )
-            for raw_image in str(raw_images or "").splitlines():
-                image_ref = raw_image.strip().strip("'").strip('"')
-                if not image_ref or not image_ref.lower().endswith(":local"):
-                    continue
+            for image_ref in image_runtime.rendered_local_image_refs(raw_images):
                 if image_ref not in images_to_import:
                     images_to_import.append(image_ref)
                     image_labels[image_ref] = str(label or "").strip()
@@ -501,9 +499,10 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             f"kubectl get deployment {release_q} -n {namespace_q} "
             "-o jsonpath='{.spec.template.spec.containers[0].image}'"
         )
-        image_ref = str(image_ref or "").strip().strip("'").strip('"')
-        if not image_ref or not image_ref.lower().endswith(":local"):
+        image_refs = image_runtime.rendered_local_image_refs(image_ref)
+        if not image_refs:
             return False
+        image_ref = image_refs[0]
 
         print(
             "Ensuring vm-single AI Model Hub local image is available in k3s before rollout: "
