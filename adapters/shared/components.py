@@ -20,6 +20,7 @@ from deployers.shared.lib.components import (
     resolve_component_release_name,
     summarize_components_for_adapter,
 )
+from deployers.shared.lib import ai_model_hub_model_server as model_server
 
 
 class SharedComponentsAdapter(INESDataComponentsAdapter):
@@ -562,37 +563,14 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             yield
 
     def _ai_model_hub_model_server_enabled(self, deployer_config):
-        config = dict(deployer_config or {})
-        flag = config.get("AI_MODEL_HUB_MODEL_SERVER_ENABLED")
-        if flag is None:
-            flag = config.get("LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED")
-        return self._parse_bool(flag, default=True)
+        return model_server.model_server_enabled(deployer_config)
 
     @staticmethod
     def _normalize_ai_model_hub_model_server_mode(mode):
-        normalized = str(mode or "").strip().lower().replace("_", "-")
-        aliases = {
-            "": "mock",
-            "fixture": "mock",
-            "deterministic": "mock",
-            "real": "use-cases",
-            "usecases": "use-cases",
-            "use-cases": "use-cases",
-            "combined-real": "combined",
-            "real-combined": "combined",
-            "remote": "external",
-        }
-        return aliases.get(normalized, normalized)
+        return model_server.normalize_model_server_mode(mode)
 
     def _ai_model_hub_model_server_mode(self, deployer_config):
-        config = dict(deployer_config or {})
-        raw_mode = (
-            config.get("AI_MODEL_HUB_MODEL_SERVER_MODE")
-            or config.get("LEVEL5_AI_MODEL_HUB_MODEL_SERVER_MODE")
-            or config.get("MODEL_SERVER_MODE")
-            or "mock"
-        )
-        mode = self._normalize_ai_model_hub_model_server_mode(raw_mode)
+        mode, raw_mode = model_server.model_server_mode(deployer_config)
         allowed_modes = {"mock", "use-cases", "combined", "external"}
         if mode not in allowed_modes:
             self._fail(
@@ -680,21 +658,11 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
 
     @staticmethod
     def _ai_model_hub_model_server_source_repository(deployer_config):
-        return str(
-            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY")
-            or (deployer_config or {}).get("AI_MODEL_HUB_USE_CASE_MODEL_SERVER_REPOSITORY")
-            or (deployer_config or {}).get("AI_MODEL_HUB_REAL_MODEL_SERVER_REPOSITORY")
-            or (deployer_config or {}).get("MODEL_SERVER_SOURCE_REPOSITORY")
-            or ""
-        ).strip()
+        return model_server.source_repository(deployer_config)
 
     @staticmethod
     def _ai_model_hub_model_server_source_ref(deployer_config):
-        return str(
-            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF")
-            or (deployer_config or {}).get("MODEL_SERVER_SOURCE_REF")
-            or ""
-        ).strip()
+        return model_server.source_ref(deployer_config)
 
     def _ensure_ai_model_hub_model_server_source_checkout(self, source_dir, repository_url, deployer_config):
         resolved_source_dir = os.path.abspath(os.path.expanduser(str(source_dir or "").strip()))
@@ -743,7 +711,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         return resolved_source_dir
 
     def _ai_model_hub_model_server_image_ref(self, deployer_config):
-        return str((deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_IMAGE") or "model-server:latest").strip()
+        return model_server.image_ref(deployer_config)
 
     def _ai_model_hub_model_server_manifest_path(self, source_dir, deployer_config):
         config = dict(deployer_config or {})
@@ -757,99 +725,37 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         return os.path.join(source_dir, "k8s-model-server.yaml")
 
     def _ai_model_hub_model_server_explicit_manifest_path(self, deployer_config):
-        config = dict(deployer_config or {})
-        explicit = str(
-            config.get("AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH")
-            or config.get("MODEL_SERVER_MANIFEST_PATH")
-            or ""
-        ).strip()
+        explicit = model_server.manifest_path(deployer_config)
         return self._resolve_project_path(explicit) if explicit else ""
 
     def _ai_model_hub_model_server_readiness_path(self, deployer_config):
-        config = dict(deployer_config or {})
-        explicit = str(
-            config.get("AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH")
-            or config.get("MODEL_SERVER_READINESS_PATH")
-            or ""
-        ).strip()
-        if explicit:
-            return explicit if explicit.startswith("/") else f"/{explicit}"
-        mode = self._ai_model_hub_model_server_mode(config)
-        if mode in {"use-cases", "combined"}:
-            return "/models"
-        return "/api/v1/health"
+        return model_server.readiness_path(
+            deployer_config,
+            self._ai_model_hub_model_server_mode(deployer_config),
+        )
 
     def _ai_model_hub_model_server_service_url(self, namespace):
-        resolved_namespace = str(namespace or "").strip() or "components"
-        return f"http://model-server.{resolved_namespace}.svc.cluster.local:8080"
+        return model_server.service_url(namespace)
 
     @staticmethod
     def _ai_model_hub_model_server_container_port(deployer_config):
-        raw_value = str(
-            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT")
-            or (deployer_config or {}).get("MODEL_SERVER_CONTAINER_PORT")
-            or "8080"
-        ).strip()
-        try:
-            port = int(raw_value)
-        except ValueError:
-            port = 8080
-        return port if 1 <= port <= 65535 else 8080
+        return model_server.container_port(deployer_config)
 
     @staticmethod
     def _ai_model_hub_model_server_docker_base_image(deployer_config):
-        return str(
-            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_DOCKER_BASE_IMAGE")
-            or (deployer_config or {}).get("MODEL_SERVER_DOCKER_BASE_IMAGE")
-            or "python:3.10-slim"
-        ).strip()
+        return model_server.docker_base_image(deployer_config)
 
     @staticmethod
     def _ai_model_hub_model_server_uvicorn_app(deployer_config, mode):
-        explicit = str(
-            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_UVICORN_APP")
-            or (deployer_config or {}).get("MODEL_SERVER_UVICORN_APP")
-            or ""
-        ).strip()
-        if explicit:
-            return explicit
-        return "combined_model_server.server:app" if mode == "combined" else "src.server:app"
+        return model_server.uvicorn_app(deployer_config, mode)
 
     @staticmethod
     def _ai_model_hub_model_server_image_pull_policy(image_ref, deployer_config):
-        explicit = str(
-            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_IMAGE_PULL_POLICY")
-            or (deployer_config or {}).get("MODEL_SERVER_IMAGE_PULL_POLICY")
-            or ""
-        ).strip()
-        if explicit in {"Always", "IfNotPresent", "Never"}:
-            return explicit
-        normalized_image = str(image_ref or "").strip().lower()
-        if normalized_image.endswith(":local") or normalized_image.endswith(":latest") or normalized_image.startswith("local/"):
-            return "Never"
-        return "IfNotPresent"
+        return model_server.image_pull_policy(image_ref, deployer_config)
 
     @staticmethod
     def _ai_model_hub_model_server_copy_excludes(deployer_config):
-        raw_value = str(
-            (deployer_config or {}).get("AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES")
-            or (deployer_config or {}).get("MODEL_SERVER_COPY_EXCLUDES")
-            or ""
-        ).strip()
-        excludes = [
-            ".git",
-            "__pycache__",
-            ".pytest_cache",
-            ".mypy_cache",
-            ".venv",
-            "venv",
-            "node_modules",
-        ]
-        for token in raw_value.replace(";", ",").split(","):
-            value = token.strip()
-            if value and value not in excludes:
-                excludes.append(value)
-        return excludes
+        return model_server.copy_excludes(deployer_config)
 
     def _validate_ai_model_hub_use_case_source(self, source_dir):
         required_paths = [
@@ -1115,72 +1021,12 @@ def combined_models() -> Dict[str, Any]:
         return build_context, True
 
     def _generated_ai_model_hub_model_server_manifest(self, namespace, image_ref, mode, deployer_config):
-        container_port = self._ai_model_hub_model_server_container_port(deployer_config)
-        readiness_path = self._ai_model_hub_model_server_readiness_path(deployer_config)
-        image_pull_policy = self._ai_model_hub_model_server_image_pull_policy(image_ref, deployer_config)
-        return f"""apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: model-server
-  namespace: {namespace}
-  labels:
-    app.kubernetes.io/name: model-server
-    app.kubernetes.io/component: ai-model-hub-model-server
-    app.kubernetes.io/managed-by: validation-environment
-    app.kubernetes.io/mode: {mode}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: model-server
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: model-server
-        app.kubernetes.io/component: ai-model-hub-model-server
-        app.kubernetes.io/mode: {mode}
-    spec:
-      containers:
-        - name: model-server
-          image: {image_ref}
-          imagePullPolicy: {image_pull_policy}
-          ports:
-            - name: http
-              containerPort: {container_port}
-          readinessProbe:
-            httpGet:
-              path: {readiness_path}
-              port: http
-            initialDelaySeconds: 10
-            periodSeconds: 5
-            timeoutSeconds: 3
-            failureThreshold: 24
-          livenessProbe:
-            httpGet:
-              path: {readiness_path}
-              port: http
-            initialDelaySeconds: 30
-            periodSeconds: 15
-            timeoutSeconds: 3
-            failureThreshold: 8
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: model-server
-  namespace: {namespace}
-  labels:
-    app.kubernetes.io/name: model-server
-    app.kubernetes.io/component: ai-model-hub-model-server
-    app.kubernetes.io/managed-by: validation-environment
-spec:
-  selector:
-    app.kubernetes.io/name: model-server
-  ports:
-    - name: http
-      port: 8080
-      targetPort: http
-"""
+        return model_server.generated_manifest(
+            namespace,
+            image_ref,
+            mode,
+            deployer_config,
+        )
 
     def _render_ai_model_hub_model_server_manifest(self, source_dir, namespace, image_ref, mode, deployer_config):
         manifest_path = self._ai_model_hub_model_server_manifest_path(source_dir, deployer_config)
@@ -1216,93 +1062,17 @@ spec:
         return manifest
 
     def _ai_model_hub_model_server_connector_base_url(self, namespace, deployer_config):
-        config = dict(deployer_config or {})
-        explicit = str(
-            config.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
-            or config.get("MODEL_SERVER_CONNECTOR_BASE_URL")
-            or config.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_URL")
-            or config.get("MODEL_SERVER_CONNECTOR_URL")
-            or ""
-        ).strip()
-        if explicit:
-            return explicit.rstrip("/")
-        return self._ai_model_hub_model_server_service_url(namespace)
+        return model_server.connector_base_url(namespace, deployer_config)
 
     def _ai_model_hub_model_server_public_url(self, deployer_config):
-        config = dict(deployer_config or {})
-        explicit = str(
-            config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL")
-            or config.get("MODEL_SERVER_PUBLIC_URL")
-            or ""
-        ).strip()
-        if explicit:
-            return explicit.rstrip("/")
-
-        public_base = str(
-            config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_BASE_URL")
-            or config.get("COMPONENTS_PUBLIC_BASE_URL")
-            or ""
-        ).strip().rstrip("/")
-        if not public_base:
-            return ""
-        public_path = str(
-            config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_PATH")
-            or config.get("MODEL_SERVER_PUBLIC_PATH")
-            or "/model-server"
-        ).strip()
-        if not public_path.startswith("/"):
-            public_path = f"/{public_path}"
-        return f"{public_base}{public_path.rstrip('/')}"
+        return model_server.public_url(deployer_config)
 
     def _ai_model_hub_model_server_public_ingress(self, namespace, deployer_config):
-        public_url = self._ai_model_hub_model_server_public_url(deployer_config)
-        if not public_url:
-            return None
-        parsed = urlsplit(public_url if "://" in public_url else f"http://{public_url}")
-        host = str(parsed.netloc or parsed.path.split("/", 1)[0]).strip()
-        path = str(parsed.path or "").strip().rstrip("/")
-        if not host or not path:
-            return None
-
-        return {
-            "apiVersion": "networking.k8s.io/v1",
-            "kind": "Ingress",
-            "metadata": {
-                "name": "model-server-public-path",
-                "namespace": namespace,
-                "labels": {
-                    "app.kubernetes.io/managed-by": "validation-environment",
-                    "app.kubernetes.io/part-of": "vm-distributed",
-                    "app.kubernetes.io/component": "model-server",
-                },
-                "annotations": {
-                    "nginx.ingress.kubernetes.io/use-regex": "true",
-                    "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
-                },
-            },
-            "spec": {
-                "ingressClassName": "nginx",
-                "rules": [
-                    {
-                        "host": host,
-                        "http": {
-                            "paths": [
-                                {
-                                    "path": f"{path}(/|$)(.*)",
-                                    "pathType": "ImplementationSpecific",
-                                    "backend": {
-                                        "service": {
-                                            "name": "model-server",
-                                            "port": {"number": 8080},
-                                        }
-                                    },
-                                }
-                            ]
-                        },
-                    }
-                ],
-            },
-        }
+        return model_server.public_ingress(
+            namespace,
+            deployer_config,
+            topology=self._normalized_topology(),
+        )
 
     def _sync_ai_model_hub_model_server_public_ingress(self, namespace, deployer_config):
         ingress = self._ai_model_hub_model_server_public_ingress(namespace, deployer_config)

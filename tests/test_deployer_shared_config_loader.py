@@ -12,6 +12,7 @@ from deployers.shared.lib.config_loader import (
     EDC_IMAGE_TOPOLOGY_KEYS,
     IMAGE_BUILD_POLICY_TOPOLOGY_KEYS,
     INESDATA_CONNECTOR_IMAGE_TOPOLOGY_KEYS,
+    KAFKA_TOPOLOGY_KEYS,
     KUBERNETES_WORKLOAD_TOPOLOGY_KEYS,
     TOPOLOGY_KEY_TARGETS,
     TOPOLOGY_OVERLAY_KEYS,
@@ -455,6 +456,12 @@ class SharedConfigLoaderTests(unittest.TestCase):
             self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
             self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
             self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed", "vm-single"))
+
+        for key in KAFKA_TOPOLOGY_KEYS:
+            self.assertNotIn(key, TOPOLOGY_OVERLAY_KEYS["local"])
+            self.assertNotIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
+            self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed",))
 
     def test_load_deployer_config_reads_key_value_pairs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
