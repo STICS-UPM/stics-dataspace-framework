@@ -4,6 +4,7 @@
 {{- if $enabled }}
 {{- $serviceType := $service.type | default "ClusterIP" }}
 {{- $servicePort := $service.port | default 8501 }}
+{{- $nodePort := $service.nodePort | default "" }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -18,6 +19,9 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+      {{- if and (eq $serviceType "NodePort") $nodePort }}
+      nodePort: {{ $nodePort }}
+      {{- end }}
   selector:
     app.kubernetes.io/name: {{ include "semantic-virtualization.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}

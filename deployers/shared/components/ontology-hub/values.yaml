@@ -67,6 +67,13 @@ elasticsearch:
     username: elastic
     password: changeme
   javaOpts: "-Xms512m -Xmx512m"
+  diskThreshold:
+    # Validation VMs can run close to disk watermarks while still being usable.
+    # Keep this configurable so production-like deployments may leave it enabled.
+    enabled: true
+    low: ""
+    high: ""
+    floodStage: ""
   persistence:
     enabled: false
     size: 5Gi

@@ -39,13 +39,21 @@ spec:
         - name: wait-elasticsearch
           image: curlimages/curl:8.7.1
           imagePullPolicy: IfNotPresent
+          env:
+            - name: ELASTIC_SEARCH_USER
+              value: {{ default (.Values.elasticsearch.auth.username | default "elastic") (index .Values.env "ELASTIC_SEARCH_USER") | quote }}
+            - name: ELASTIC_SEARCH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ontology-hub.secretName" . }}
+                  key: ELASTIC_SEARCH_PASSWORD
           command:
             - sh
             - -c
             - |
               ES_URL="http://{{ .Values.elasticsearch.serviceName | default "elasticsearch" }}:{{ .Values.elasticsearch.port | default 9200 }}"
-              until code="$(curl -sS -o /dev/null -w '%{http_code}' "$ES_URL" || true)"; [ "$code" = "200" ] || [ "$code" = "401" ]; do
-                echo "Waiting for Elasticsearch... (HTTP $code)"
+              until curl -fsS -u "${ELASTIC_SEARCH_USER}:${ELASTIC_SEARCH_PASSWORD}" "$ES_URL/_cluster/health?wait_for_status=yellow&timeout=5s" >/dev/null; do
+                echo "Waiting for Elasticsearch authenticated health..."
                 sleep 2
               done
         {{- end }}

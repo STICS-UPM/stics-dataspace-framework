@@ -184,6 +184,22 @@ class SharedComponentsContractTests(unittest.TestCase):
             "https://org4.pionera.oeg.fi.upm.es/ontology-hub",
         )
 
+    def test_mapping_editor_public_url_alias_overrides_vm_single_base_path(self):
+        config = {
+            "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL": "https://streamlit.example.org",
+        }
+
+        self.assertEqual(
+            configured_component_host("semantic-virtualization-editor", config, dataspace_name="pionera"),
+            "streamlit.example.org",
+        )
+        self.assertEqual(configured_component_public_path("semantic-virtualization-editor", config), "")
+        self.assertEqual(
+            configured_component_public_url("semantic-virtualization-editor", config, dataspace_name="pionera"),
+            "https://streamlit.example.org",
+        )
+
     def test_component_public_url_preserves_explicit_url_path_but_ingress_uses_host(self):
         config = {"AI_MODEL_HUB_PUBLIC_URL": "https://org1.pionera.oeg.fi.upm.es/ai-model-hub"}
 

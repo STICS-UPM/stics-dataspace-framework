@@ -14,6 +14,8 @@ spec:
       app.kubernetes.io/component: elasticsearch
   template:
     metadata:
+      annotations:
+        checksum/elasticsearch-config: {{ include (print $.Template.BasePath "/elasticsearch-configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: elasticsearch
@@ -41,10 +43,15 @@ spec:
             - name: data
               mountPath: /usr/share/elasticsearch/data
           readinessProbe:
-            tcpSocket:
-              port: http
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  curl -fsS -u "elastic:${ELASTIC_PASSWORD}" "http://127.0.0.1:{{ .Values.elasticsearch.port }}/_cluster/health?wait_for_status=yellow&timeout=2s" >/dev/null
             initialDelaySeconds: 10
             periodSeconds: 5
+            timeoutSeconds: 3
           livenessProbe:
             tcpSocket:
               port: http

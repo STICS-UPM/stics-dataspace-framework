@@ -13,4 +13,14 @@ data:
     xpack.security.enabled: true
     xpack.security.http.ssl.enabled: false
     xpack.security.transport.ssl.enabled: false
+    cluster.routing.allocation.disk.threshold_enabled: {{ .Values.elasticsearch.diskThreshold.enabled }}
+    {{- with .Values.elasticsearch.diskThreshold.low }}
+    cluster.routing.allocation.disk.watermark.low: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.elasticsearch.diskThreshold.high }}
+    cluster.routing.allocation.disk.watermark.high: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.elasticsearch.diskThreshold.floodStage }}
+    cluster.routing.allocation.disk.watermark.flood_stage: {{ . | quote }}
+    {{- end }}
 {{- end }}

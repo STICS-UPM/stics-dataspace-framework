@@ -4,6 +4,7 @@
 {{- $defaultEnv := dict "STREAMLIT_BROWSER_GATHER_USAGE_STATS" "false" "STREAMLIT_SERVER_HEADLESS" "true" }}
 {{- $env := $mappingEditor.env | default $defaultEnv }}
 {{- $health := $mappingEditor.health | default (dict) }}
+{{- $hostPortConfig := $mappingEditor.hostPort | default (dict) }}
 {{- $startupProbe := $health.startupProbe | default (dict) }}
 {{- $resources := $mappingEditor.resources | default (dict) }}
 {{- $enabled := $mappingEditor.enabled | default false }}
@@ -13,6 +14,9 @@
 {{- $imageTag := $image.tag | default "local" }}
 {{- $imagePullPolicy := $image.pullPolicy | default "IfNotPresent" }}
 {{- $containerPort := $mappingEditor.containerPort | default 8501 }}
+{{- $hostPortEnabled := $hostPortConfig.enabled | default false }}
+{{- $hostPort := $hostPortConfig.port | default "" }}
+{{- $strategy := $mappingEditor.strategy | default (dict) }}
 {{- $servicePort := $service.port | default 8501 }}
 {{- $healthPath := $health.path | default "/_stcore/health" }}
 {{- $healthInitialDelay := $health.initialDelaySeconds | default 30 }}
@@ -33,6 +37,13 @@ metadata:
     {{- include "semantic-virtualization.labels" . | nindent 4 }}
     app.kubernetes.io/component: mapping-editor
 spec:
+  {{- if $strategy }}
+  strategy:
+    {{- toYaml $strategy | nindent 4 }}
+  {{- else if and $hostPortEnabled $hostPort }}
+  strategy:
+    type: Recreate
+  {{- end }}
   replicas: {{ $replicaCount }}
   selector:
     matchLabels:
@@ -53,6 +64,9 @@ spec:
           ports:
             - name: http
               containerPort: {{ $containerPort }}
+              {{- if and $hostPortEnabled $hostPort }}
+              hostPort: {{ $hostPort }}
+              {{- end }}
               protocol: TCP
           env:
             - name: PORT

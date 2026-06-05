@@ -145,6 +145,24 @@ class OntologyHubChartSampleDataTests(unittest.TestCase):
         self.assertIn("claimName: ontology-hub-test-versions", rendered)
         self.assertIn('storage: "2Gi"', rendered)
 
+    def test_elasticsearch_disk_threshold_and_authenticated_readiness_are_rendered(self):
+        rendered = self._render_chart_with_values(
+            textwrap.dedent(
+                """
+                elasticsearch:
+                  diskThreshold:
+                    enabled: false
+                    high: "95%"
+                """
+            )
+        )
+
+        self.assertIn("cluster.routing.allocation.disk.threshold_enabled: false", rendered)
+        self.assertIn('cluster.routing.allocation.disk.watermark.high: "95%"', rendered)
+        self.assertIn("checksum/elasticsearch-config:", rendered)
+        self.assertIn('curl -fsS -u "elastic:${ELASTIC_PASSWORD}"', rendered)
+        self.assertIn("Waiting for Elasticsearch authenticated health", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

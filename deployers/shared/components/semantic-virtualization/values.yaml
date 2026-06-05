@@ -52,6 +52,13 @@ mappingEditor:
   service:
     type: ClusterIP
     port: 8501
+    nodePort: null
+  hostPort:
+    enabled: false
+    port: null
+  # When hostPort is enabled, the chart defaults to Recreate to avoid a rolling
+  # update deadlock on single-node clusters that can bind the host port only once.
+  strategy: {}
   health:
     path: /_stcore/health
     initialDelaySeconds: 30
