@@ -32,6 +32,7 @@ from deployers.shared.lib.connectors import (
     parse_connector_mapping,
     parse_connector_pairs,
 )
+from deployers.shared.lib import local_images
 from deployers.shared.lib.public_hostnames import resolved_common_service_hostnames
 from deployers.shared.lib.remote_k3s_images import remote_k3s_image_import_target
 from deployers.shared.lib.topology import (
@@ -398,58 +399,13 @@ class INESDataConnectorsAdapter:
         return True
 
     def _resolve_level4_local_image_policy(self, *, mode, label):
-        normalized_mode = str(mode or "auto").strip().lower() or "auto"
-        topology = self._normalized_topology()
-        if topology in self.LEVEL4_LOCAL_IMAGE_TOPOLOGIES:
-            return {
-                "topology": topology,
-                "mode": normalized_mode,
-                "prepare_local_images": True,
-                "allow_local_image_overrides": True,
-                "message": "",
-                "error": "",
-            }
-
-        if topology == VM_DISTRIBUTED_TOPOLOGY and self._vm_distributed_remote_image_import_configured():
-            return {
-                "topology": topology,
-                "mode": normalized_mode,
-                "prepare_local_images": True,
-                "allow_local_image_overrides": True,
-                "message": (
-                    f"Preparing {label} local images for vm-distributed through remote k3s image import."
-                ),
-                "error": "",
-            }
-
-        if normalized_mode == "required":
-            supported = ", ".join(sorted(self.LEVEL4_LOCAL_IMAGE_TOPOLOGIES))
-            return {
-                "topology": topology,
-                "mode": normalized_mode,
-                "prepare_local_images": False,
-                "allow_local_image_overrides": False,
-                "message": "",
-                "error": (
-                    f"{label} local image preparation mode 'required' is only supported in "
-                    f"topologies {supported}, or in vm-distributed when "
-                    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT=true and VM_*_SSH_HOST are configured. "
-                    f"Configure pullable image references before running Level 4 on topology '{topology}' "
-                    "or enable the remote import path."
-                ),
-            }
-
-        return {
-            "topology": topology,
-            "mode": normalized_mode,
-            "prepare_local_images": False,
-            "allow_local_image_overrides": False,
-            "message": (
-                f"Skipping {label} local image preparation for topology '{topology}'. "
-                "Using chart-configured image references."
-            ),
-            "error": "",
-        }
+        return local_images.resolve_level4_policy(
+            topology=self._normalized_topology(),
+            mode=mode,
+            label=label,
+            supported_topologies=self.LEVEL4_LOCAL_IMAGE_TOPOLOGIES,
+            vm_distributed_remote_import_configured=self._vm_distributed_remote_image_import_configured(),
+        )
 
     @staticmethod
     def _is_connector_interface_pod(pod_name):
@@ -3182,9 +3138,7 @@ class INESDataConnectorsAdapter:
         return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
     def _default_level4_local_images_mode(self):
-        if self._normalized_topology() == LOCAL_TOPOLOGY:
-            return "auto"
-        return "disabled"
+        return local_images.default_level4_mode(self._normalized_topology())
 
     def _level4_local_images_mode(self):
         try:
@@ -3204,15 +3158,12 @@ class INESDataConnectorsAdapter:
                 break
         if raw_value is None:
             raw_value = self._default_level4_local_images_mode()
-        mode = str(raw_value or self._default_level4_local_images_mode()).strip().lower()
-        if mode in {"0", "false", "no", "off", "disabled", "disable"}:
-            return "disabled"
-        if mode in {"1", "true", "yes", "on", "auto", ""}:
-            return "auto"
-        if mode in {"required", "require", "strict"}:
-            return "required"
-        print(f"Unknown INESData local images mode '{raw_value}'. Falling back to auto.")
-        return "auto"
+        if not local_images.is_known_level4_mode(raw_value):
+            print(f"Unknown INESData local images mode '{raw_value}'. Falling back to auto.")
+        return local_images.normalize_level4_mode(
+            raw_value,
+            default=self._default_level4_local_images_mode(),
+        )
 
     def _local_minikube_profile(self):
         env_profile = os.getenv("PIONERA_MINIKUBE_PROFILE") or os.getenv("MINIKUBE_PROFILE")

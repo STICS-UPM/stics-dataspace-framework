@@ -20,6 +20,7 @@ from deployers.shared.lib.components import (
     strip_url_scheme,
 )
 from deployers.shared.lib.cluster_runtime import build_cluster_runtime
+from deployers.shared.lib import local_images
 from deployers.shared.lib.remote_k3s_images import remote_k3s_image_import_target, shell_join
 from deployers.shared.lib.topology import VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY, normalize_topology
 from deployers.infrastructure.lib.paths import shared_artifact_roots
@@ -1252,29 +1253,17 @@ class INESDataComponentsAdapter:
         )
 
     def _assume_level5_local_images_available(self, deployer_config: dict | None = None) -> bool:
-        config = dict(deployer_config or {})
-        flag = config.get("LEVEL5_ASSUME_LOCAL_IMAGES_AVAILABLE")
-        if flag is None:
-            flag = config.get("LEVEL6_ASSUME_LOCAL_IMAGES_AVAILABLE")
-        if flag is None:
-            flag = os.environ.get("LEVEL5_ASSUME_LOCAL_IMAGES_AVAILABLE")
-        if flag is None:
-            flag = os.environ.get("LEVEL6_ASSUME_LOCAL_IMAGES_AVAILABLE")
-        return self._parse_bool(flag, default=False)
+        return local_images.assume_level5_local_images_available(deployer_config, os.environ)
 
     def _default_level5_auto_build_local_images(self) -> bool:
-        return self._normalized_topology() not in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}
+        return local_images.default_level5_auto_build(self._normalized_topology())
 
     def _level5_auto_build_local_images(self, deployer_config: dict | None = None) -> bool:
-        config = dict(deployer_config or {})
-        flag = config.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
-        if flag is None:
-            flag = config.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
-        if flag is None:
-            flag = os.environ.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
-        if flag is None:
-            flag = os.environ.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
-        return self._parse_bool(flag, default=self._default_level5_auto_build_local_images())
+        return local_images.level5_auto_build_enabled(
+            deployer_config,
+            topology=self._normalized_topology(),
+            environ=os.environ,
+        )
 
     def _vm_single_remote_image_import_target(self, deployer_config: dict | None = None):
         config = dict(deployer_config or {})
