@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shlex
+
 
 def image_ref_from_values(values: dict | None, image_key: str = "image") -> str | None:
     image = (values or {}).get(image_key) or {}
@@ -63,3 +65,22 @@ def rendered_local_image_refs(raw_images) -> list[str]:
         if is_local_image_ref(image_ref):
             refs.append(image_ref)
     return dedupe_image_refs(refs)
+
+
+def docker_build_command(
+    docker_cmd: str,
+    image_ref: str,
+    *,
+    dockerfile: str | None = None,
+    build_args: dict | None = None,
+    context: str = ".",
+) -> str:
+    cmd = f"{shlex.quote(docker_cmd or 'docker')} build -t {shlex.quote(image_ref)}"
+    for key, value in (build_args or {}).items():
+        if value is None or str(value).strip() == "":
+            continue
+        cmd += f" --build-arg {shlex.quote(f'{key}={value}')}"
+    if dockerfile:
+        cmd += f" -f {shlex.quote(dockerfile)}"
+    cmd += f" {shlex.quote(context or '.')}"
+    return cmd

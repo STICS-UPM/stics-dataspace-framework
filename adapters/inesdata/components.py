@@ -1505,19 +1505,13 @@ class INESDataComponentsAdapter:
                 root_cause=f"Missing keys: {', '.join(missing)} (see {os.path.join(ontology_hub_dir, 'docker-compose.yml')})",
             )
 
-        image_q = shlex.quote(image_ref)
-        docker_q = shlex.quote(self._docker_cmd())
-        arg_flags = " ".join(
-            f"--build-arg {shlex.quote(f'{k}={v}')}"
-            for k, v in build_args.items()
-            if (v is not None and str(v).strip() != "")
-        )
-
         print(f"\nBuilding local image on host: {image_ref}")
-        cmd = f"{docker_q} build -t {image_q}"
-        if arg_flags:
-            cmd += f" {arg_flags}"
-        cmd += " -f Dockerfile ."
+        cmd = image_runtime.docker_build_command(
+            self._docker_cmd(),
+            image_ref,
+            dockerfile="Dockerfile",
+            build_args=build_args,
+        )
         if self.run(cmd, check=False, cwd=ontology_hub_dir) is None:
             self._fail("Failed to build ontology-hub image on host", root_cause=image_ref)
 
@@ -1533,10 +1527,8 @@ class INESDataComponentsAdapter:
                 ),
             )
 
-        image_q = shlex.quote(image_ref)
-        docker_q = shlex.quote(self._docker_cmd())
         print(f"\nBuilding local image on host: {image_ref}")
-        cmd = f"{docker_q} build -t {image_q} ."
+        cmd = image_runtime.docker_build_command(self._docker_cmd(), image_ref)
         if self.run(cmd, check=False, cwd=dashboard_dir) is None:
             self._fail("Failed to build AI Model Hub image on host", root_cause=image_ref)
 
@@ -1581,13 +1573,14 @@ class INESDataComponentsAdapter:
                 ),
             )
 
-        image_q = shlex.quote(image_ref)
-        dockerfile_q = shlex.quote(dockerfile_path)
-        docker_q = shlex.quote(self._docker_cmd())
         build_context = self._prepare_semantic_virtualization_api_build_context(morph_kgv_dir)
         try:
             print(f"\nBuilding local image on host: {image_ref}")
-            cmd = f"{docker_q} build -t {image_q} -f {dockerfile_q} ."
+            cmd = image_runtime.docker_build_command(
+                self._docker_cmd(),
+                image_ref,
+                dockerfile=dockerfile_path,
+            )
             if self.run(cmd, check=False, cwd=build_context) is None:
                 self._fail("Failed to build Semantic Virtualization image on host", root_cause=image_ref)
         finally:
@@ -1605,11 +1598,12 @@ class INESDataComponentsAdapter:
                 ),
             )
 
-        image_q = shlex.quote(image_ref)
-        dockerfile_q = shlex.quote(dockerfile_path)
-        docker_q = shlex.quote(self._docker_cmd())
         print(f"\nBuilding local image on host: {image_ref}")
-        cmd = f"{docker_q} build -t {image_q} -f {dockerfile_q} ."
+        cmd = image_runtime.docker_build_command(
+            self._docker_cmd(),
+            image_ref,
+            dockerfile=dockerfile_path,
+        )
         if self.run(cmd, check=False, cwd=mapping_editor_dir) is None:
             self._fail("Failed to build mapping-editor image on host", root_cause=image_ref)
 

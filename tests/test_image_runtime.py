@@ -83,6 +83,35 @@ class ImageRuntimeTests(unittest.TestCase):
             ["ontology-hub:local", "mapping-editor:local"],
         )
 
+    def test_docker_build_command_preserves_existing_order(self):
+        self.assertEqual(
+            image_runtime.docker_build_command(
+                "docker",
+                "ontology-hub:local",
+                dockerfile="Dockerfile",
+                build_args={
+                    "REPO_URL": "https://example.test/repo.git",
+                    "BRANCH_NAME": "dev",
+                    "EMPTY": "",
+                },
+            ),
+            "docker build -t ontology-hub:local "
+            "--build-arg REPO_URL=https://example.test/repo.git "
+            "--build-arg BRANCH_NAME=dev -f Dockerfile .",
+        )
+
+    def test_docker_build_command_quotes_shell_sensitive_values(self):
+        self.assertEqual(
+            image_runtime.docker_build_command(
+                "/opt/Docker Desktop/docker",
+                "local/image:tag",
+                dockerfile="/tmp/source Dockerfile",
+                context="/tmp/build context",
+            ),
+            "'/opt/Docker Desktop/docker' build -t local/image:tag "
+            "-f '/tmp/source Dockerfile' '/tmp/build context'",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
