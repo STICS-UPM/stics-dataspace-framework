@@ -192,6 +192,20 @@ Con esa configuración, los componentes se publican como:
 | `ai-model-hub` | `https://org1.<dominio-comun>/ai-model-hub` |
 | `semantic-virtualization` | `https://org1.<dominio-comun>/semantic-virtualization` |
 
+El editor gráfico de Semantic Virtualization está basado en Streamlit y usa
+WebSocket. En el entorno PIONERA distribuido se publica mediante un dominio
+dedicado para evitar los problemas habituales de proxy inverso por subruta:
+
+```ini
+SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL=https://streamlit.pionera.linkeddata.es
+SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE=host-port
+SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT=5678
+```
+
+Con ese patrón, el servicio interno sigue viviendo en la VM de servicios comunes
+y componentes, pero el acceso público al editor no depende de
+`/semantic-virtualization-editor`.
+
 Si un frontend carga HTML pero falla al cargar JavaScript, CSS o rutas internas,
 el problema suele ser de base path del componente. En ese caso se debe configurar
 el base path de la imagen o usar dominios dedicados para ese componente.

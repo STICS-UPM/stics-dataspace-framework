@@ -910,6 +910,7 @@ Orden recomendado:
 - [Troubleshooting](./docs/39_troubleshooting.md)
 - [Acceso externo a conectores](./docs/41_pionera_connector_external_access.md)
 - [Guía operativa de vm-distributed](./docs/46_vm_distributed_runbook.md)
+- [Entregable E5.2 de validación de componentes](./docs/47_entregable_e52_validacion_componentes.md)
 
 ## Imágenes, Diagramas y Vídeos Explicativos
 
@@ -918,6 +919,7 @@ Diagramas disponibles:
 - [Entorno local de validación](./docs/pionera_local_validation_environment.png)
 - [Entorno distribuido de validación](./docs/pionera_distributed_validation_environment.png)
 - [Arquitectura del entorno de pruebas](./docs/test_environment_architecture.png)
+- [Entregable E5.2 consolidado](./docs/47_entregable_e52_validacion_componentes.md)
 
 Los vídeos explicativos se enlazan desde `docs/README.md` cuando estén
 publicados. La estructura recomendada es:

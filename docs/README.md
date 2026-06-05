@@ -20,7 +20,7 @@ documentación estable de `docs/`.
 | Ejecutar validación | [Validación](./37_validation.md) |
 | Revisar resultados | [Visor de reportes](./40_report_viewer.md) |
 | Resolver errores | [Troubleshooting](./39_troubleshooting.md) |
-| Auditar el framework | [Guía de navegación para auditoría](./44_audit_navigation_guide.md) |
+| Auditar el framework | [Entregable E5.2](./47_entregable_e52_validacion_componentes.md) y [Guía de navegación para auditoría](./44_audit_navigation_guide.md) |
 
 ## Estructura Pública del Repositorio Software
 
@@ -88,6 +88,7 @@ uso y auditoría.
 5. [Validación](./37_validation.md)
 6. [Colecciones Newman y Postman](./31_postman_newman_collections.md)
 7. [Visor de reportes](./40_report_viewer.md)
+8. [Entregable E5.2](./47_entregable_e52_validacion_componentes.md)
 
 ## Entrada Principal
 
@@ -123,6 +124,7 @@ Para EDC, la ruta oficial de cierre documentada es `vm-distributed`.
 | [44 Guía de auditoría](./44_audit_navigation_guide.md) | Orden de lectura, alcance, evidencias y límites de seguridad |
 | [45 Conectores externos](./45_external_connector_readiness.md) | Checklist para conectores y entornos externos |
 | [46 vm-distributed](./46_vm_distributed_runbook.md) | Procedimiento operativo de topología distribuida |
+| [47 E5.2 validación de componentes](./47_entregable_e52_validacion_componentes.md) | Entregable consolidado: reporte de validación, manual técnico, manual de usuario, pruebas, resultados y checklist UNE |
 
 ## Trazabilidad Histórica
 
@@ -146,6 +148,7 @@ solo como referencia de trazabilidad.
 - [Entorno distribuido de validación](<./pionera_distributed_validation_environment.png>)
 - [Arquitectura del entorno de pruebas](<./test_environment_architecture.png>)
 - [Inventario del entorno de pruebas](./test_environment_inventory.pdf)
+- [Entregable E5.2 consolidado](./47_entregable_e52_validacion_componentes.md)
 - [Resultados de validación de componentes](./E5.2_Resultados_Validacion_Componentes.xlsx)
 - [Casos de prueba](./A5.2_Casos_Prueba_.xlsx)
 

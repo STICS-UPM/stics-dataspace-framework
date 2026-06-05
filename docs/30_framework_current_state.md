@@ -149,11 +149,12 @@ La guía específica está en
 Para entender el framework actual, la ruta recomendada es:
 
 1. [README de documentación](./README.md)
-2. [Inicio rápido](./32_getting_started.md)
-3. [Arquitectura](./34_architecture.md)
-4. [Deployers y topologías](./35_deployers_and_topologies.md)
-5. [Validación](./37_validation.md)
-6. [Colecciones Newman/Postman](./31_postman_newman_collections.md)
+2. [Entregable E5.2](./47_entregable_e52_validacion_componentes.md)
+3. [Inicio rápido](./32_getting_started.md)
+4. [Arquitectura](./34_architecture.md)
+5. [Deployers y topologías](./35_deployers_and_topologies.md)
+6. [Validación](./37_validation.md)
+7. [Colecciones Newman/Postman](./31_postman_newman_collections.md)
 
 Los documentos numerados históricos siguen disponibles como trazabilidad de
 diseño, pero este documento y el índice público deben considerarse la referencia
