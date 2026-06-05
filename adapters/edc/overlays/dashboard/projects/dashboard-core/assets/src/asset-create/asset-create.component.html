@@ -1,0 +1,553 @@
+<!--
+    Copyright (c) 2025 Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V.
+
+    This program and the accompanying materials are made available under the
+    terms of the Apache License, Version 2.0 which is available at
+    https://www.apache.org/licenses/LICENSE-2.0
+
+    SPDX-License-Identifier: Apache-2.0
+
+    Contributors:
+         Fraunhofer-Gesellschaft zur Förderung der angewandten Forschung e.V. - initial API and implementation
+-->
+
+<form
+  [formGroup]="assetForm"
+  (ngSubmit)="createAsset()"
+  class="grid grid-cols-1 2xl:grid-cols-2 gap-4 gap-x-6 items-start overflow-y-auto h-full [&_label]:shrink-0"
+>
+  <h1 class="text-xl text-center divider m-0 2xl:col-span-2">Asset</h1>
+
+  <div class="flex flex-col [&_>*]:mb-4 [&_>*]:last:mb-0">
+    <fieldset class="fieldset w-lg bg-base-200 border border-base-300 p-4 rounded-box">
+      <legend class="fieldset-legend text-sm">Common Fields</legend>
+      <legend class="fieldset-label">ID</legend>
+      <label
+        class="input input-bordered !border-[var(--input-color)] flex items-center tooltip tooltip-info tooltip-top w-full"
+        data-tip="If not set a random UUID will be generated"
+      >
+        <span class="material-symbols-rounded opacity-50">deployed_code_update</span>
+        <input type="text" class="grow" placeholder="ID" formControlName="id" name="id" />
+        <span class="badge badge-info">Optional</span>
+      </label>
+      <legend class="fieldset-label">Name</legend>
+      <label
+        class="input flex items-center tooltip tooltip-info tooltip-top w-full"
+        data-tip="Can be filtered by and could be used as e.g. display name"
+      >
+        <span class="material-symbols-rounded opacity-50">assignment_ind</span>
+        <input type="text" class="grow" placeholder="Name" formControlName="name" />
+        <span class="badge badge-info">Optional</span>
+      </label>
+      <legend class="fieldset-label">Content-Type</legend>
+      <label
+        class="input flex items-center tooltip tooltip-info tooltip-top w-full"
+        data-tip="Content-Type of the asset, e.g. 'application/json'"
+      >
+        <span class="material-symbols-rounded opacity-50">unknown_document</span>
+        <input type="text" class="grow" placeholder="Content-Type" formControlName="contenttype" name="contenttype" />
+        <span class="badge badge-info">Optional</span>
+      </label>
+    </fieldset>
+
+    <fieldset class="fieldset w-lg bg-base-200 border border-base-300 p-4 rounded-box">
+      <legend class="fieldset-legend text-sm">Ontology Information (optional)</legend>
+      <p class="text-xs opacity-70 mb-2">
+        Select ontology and SHACL from Ontology Hub (configured in dashboard runtime). RDF validation on transfer works
+        best with <strong>Amazon S3</strong> data addresses; object location is set in Data Address below.
+      </p>
+      <lib-ontology-asset-fields (selectionChange)="onOntologySelectionChange($event)"></lib-ontology-asset-fields>
+      <div class="divider my-2"></div>
+      <legend class="fieldset-label">RDF test file</legend>
+      <p class="text-xs opacity-70 mb-2">
+        Optional sample RDF file to test validation against the selected ontology and SHACL before creating the asset.
+      </p>
+      <input type="file" class="file-input file-input-bordered w-full mb-2" (change)="onRdfTestFileSelected($event)" />
+      @if (showOntologyTestButton) {
+        <button
+          type="button"
+          class="btn btn-outline btn-sm"
+          (click)="runOntologyTest()"
+          [disabled]="ontologyTestRunning"
+        >
+          Validate Ontology
+        </button>
+      }
+      @if (ontologyTestMessage) {
+        <p class="text-xs mt-2" [class.text-success]="ontologyTestSuccess" [class.text-error]="!ontologyTestSuccess">
+          {{ ontologyTestMessage }}
+        </p>
+      }
+    </fieldset>
+
+    <fieldset class="fieldset w-lg bg-base-200 border border-base-300 p-4 rounded-box">
+      <legend class="fieldset-legend text-sm">Data Address</legend>
+      <lib-data-address-form
+        [parentForm]="assetForm"
+        [dataAddress]="dataAddress"
+        (dataAddressChange)="onDataAddressChange($event)"
+      ></lib-data-address-form>
+    </fieldset>
+
+    <fieldset class="fieldset w-lg bg-base-200 border border-base-300 p-4 rounded-box">
+      <legend class="fieldset-legend text-sm">ML Metadata</legend>
+      <label class="label cursor-pointer justify-start gap-3 py-1">
+        <input type="checkbox" class="toggle toggle-primary toggle-sm" formControlName="mlEnabled" />
+        <span class="label-text">Enable ML metadata helper</span>
+      </label>
+
+      @if (assetForm.get('mlEnabled')?.value) {
+        <div class="grid grid-cols-1 gap-3 mt-2">
+          <legend class="fieldset-label">Short Description</legend>
+          <textarea
+            class="textarea textarea-bordered w-full"
+            rows="2"
+            formControlName="mlDescription"
+            placeholder="Briefly describe what the model does"
+          ></textarea>
+
+          <legend class="fieldset-label">Version</legend>
+          <label class="input input-bordered flex items-center w-full">
+            <span class="material-symbols-rounded opacity-50">new_releases</span>
+            <input type="text" class="grow" placeholder="v1.0.0" formControlName="mlVersion" />
+          </label>
+
+          <legend class="fieldset-label">Asset Type</legend>
+          <label class="select w-full">
+            <span class="label">Model or Dataset</span>
+            <select class="input" formControlName="mlAssetKind">
+              @for (kind of mlAssetKindOptions; track kind) {
+                <option [value]="kind">{{ kind }}</option>
+              }
+            </select>
+          </label>
+
+          <legend class="fieldset-label">Task</legend>
+          <label class="select w-full">
+            <span class="label">Task</span>
+            <select class="input" formControlName="mlTask">
+              <option value="">Not selected</option>
+              @for (task of mlTaskOptions; track task) {
+                <option [value]="task">{{ task }}</option>
+              }
+            </select>
+          </label>
+
+          <legend class="fieldset-label">Modality</legend>
+          <div class="flex flex-wrap gap-2">
+            @for (modality of mlModalityOptions; track modality) {
+              <label class="label cursor-pointer gap-2 px-3 py-2 border border-base-300 rounded-box bg-base-100">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-xs"
+                  [checked]="isMultiValueSelected('mlModality', modality)"
+                  (change)="toggleMultiValue('mlModality', modality)"
+                />
+                <span class="label-text">{{ modality }}</span>
+              </label>
+            }
+          </div>
+
+          <legend class="fieldset-label">Keywords</legend>
+          <div class="flex flex-wrap gap-2">
+            @for (keyword of mlKeywordOptions; track keyword) {
+              <label class="label cursor-pointer gap-2 px-3 py-2 border border-base-300 rounded-box bg-base-100">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-xs"
+                  [checked]="isMultiValueSelected('mlKeywords', keyword)"
+                  (change)="toggleMultiValue('mlKeywords', keyword)"
+                />
+                <span class="label-text">{{ keyword }}</span>
+              </label>
+            }
+          </div>
+
+          <legend class="fieldset-label">License</legend>
+          <label class="select w-full">
+            <span class="label">License</span>
+            <select class="input" formControlName="mlLicense">
+              <option value="">Not selected</option>
+              @for (license of mlLicenseOptions; track license) {
+                <option [value]="license">{{ license }}</option>
+              }
+            </select>
+          </label>
+
+          <legend class="fieldset-label">Maturity Status</legend>
+          <label class="select w-full">
+            <span class="label">Maturity</span>
+            <select class="input" formControlName="mlMaturity">
+              <option value="">Not selected</option>
+              @for (maturity of mlMaturityOptions; track maturity) {
+                <option [value]="maturity">{{ maturity }}</option>
+              }
+            </select>
+          </label>
+
+          <details class="mt-2 border border-base-300 rounded-box bg-base-100 p-3">
+            <summary class="cursor-pointer text-sm font-semibold">Advanced Fields</summary>
+            <div class="grid grid-cols-1 gap-3 mt-3">
+              <legend class="fieldset-label">Library / Runtime</legend>
+              <div class="flex flex-wrap gap-2">
+                @for (runtime of mlRuntimeOptions; track runtime) {
+                  <label class="label cursor-pointer gap-2 px-3 py-2 border border-base-300 rounded-box bg-base-200">
+                    <input
+                      type="checkbox"
+                      class="checkbox checkbox-xs"
+                      [checked]="isMultiValueSelected('mlRuntime', runtime)"
+                      (change)="toggleMultiValue('mlRuntime', runtime)"
+                    />
+                    <span class="label-text">{{ runtime }}</span>
+                  </label>
+                }
+              </div>
+
+              @if (hasTextModalitySelected()) {
+                <legend class="fieldset-label">Languages</legend>
+                <div class="flex flex-wrap gap-2">
+                  @for (language of mlLanguageOptions; track language) {
+                    <label class="label cursor-pointer gap-2 px-3 py-2 border border-base-300 rounded-box bg-base-200">
+                      <input
+                        type="checkbox"
+                        class="checkbox checkbox-xs"
+                        [checked]="isMultiValueSelected('mlLanguages', language)"
+                        (change)="toggleMultiValue('mlLanguages', language)"
+                      />
+                      <span class="label-text">{{ language }}</span>
+                    </label>
+                  }
+                </div>
+              }
+
+              <legend class="fieldset-label">Architecture / Family</legend>
+              <label class="input input-bordered flex items-center w-full">
+                <span class="material-symbols-rounded opacity-50">account_tree</span>
+                <input type="text" class="grow" placeholder="ViT, CNN, Llama-like, XGBoost" formControlName="mlArchitecture" />
+              </label>
+
+              <legend class="fieldset-label">Base Model</legend>
+              <label class="input input-bordered flex items-center w-full">
+                <span class="material-symbols-rounded opacity-50">model_training</span>
+                <input type="text" class="grow" placeholder="e.g. bert-base-uncased" formControlName="mlBaseModel" />
+              </label>
+
+              <legend class="fieldset-label">Model Size</legend>
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <label class="input input-bordered flex items-center w-full">
+                  <span class="label">Parameters</span>
+                  <input type="text" class="grow" placeholder="e.g. 7B" formControlName="mlParameterCount" />
+                </label>
+                <label class="input input-bordered flex items-center w-full">
+                  <span class="label">Artifact MB</span>
+                  <input type="text" class="grow" placeholder="e.g. 820" formControlName="mlArtifactSize" />
+                </label>
+                <label class="select w-full">
+                  <span class="label">Quantization</span>
+                  <select class="input" formControlName="mlQuantization">
+                    <option value="">Not selected</option>
+                    @for (quantization of mlQuantizationOptions; track quantization) {
+                      <option [value]="quantization">{{ quantization }}</option>
+                    }
+                  </select>
+                </label>
+              </div>
+
+              <legend class="fieldset-label">Performance Claims</legend>
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <label class="select w-full">
+                  <span class="label">Metric</span>
+                  <select class="input" formControlName="mlPerformanceMetric">
+                    <option value="">Not selected</option>
+                    @for (metric of mlMetricOptions; track metric) {
+                      <option [value]="metric">{{ metric }}</option>
+                    }
+                  </select>
+                </label>
+                <label class="select w-full">
+                  <span class="label">Dataset</span>
+                  <select class="input" formControlName="mlPerformanceDataset">
+                    <option value="">Not selected</option>
+                    @for (dataset of mlDatasetOptions; track dataset) {
+                      <option [value]="dataset">{{ dataset }}</option>
+                    }
+                  </select>
+                </label>
+                <label class="input input-bordered flex items-center w-full">
+                  <span class="label">Report URL</span>
+                  <input type="text" class="grow" placeholder="https://..." formControlName="mlPerformanceReport" />
+                </label>
+              </div>
+
+              <legend class="fieldset-label">Service Integration</legend>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <label class="select w-full">
+                  <span class="label">Model Format</span>
+                  <select class="input" formControlName="mlFormat">
+                    <option value="">Not selected</option>
+                    @for (format of mlFormatOptions; track format) {
+                      <option [value]="format">{{ format }}</option>
+                    }
+                  </select>
+                </label>
+                <label class="select w-full">
+                  <span class="label">Inference Path</span>
+                  <select class="input" formControlName="mlInferencePath">
+                    <option value="">Not selected</option>
+                    @for (inferencePath of mlInferencePathOptions; track inferencePath) {
+                      <option [value]="inferencePath">{{ inferencePath }}</option>
+                    }
+                  </select>
+                </label>
+              </div>
+
+              <legend class="fieldset-label">Input Contract (Schema)</legend>
+              <div class="grid grid-cols-1 gap-3 border border-base-300 rounded-box bg-base-200 p-3">
+                <label class="select w-full md:max-w-xs">
+                  <span class="label">Schema Draft</span>
+                  <select class="input" formControlName="mlInputSchemaDraft">
+                    <option value="">Not selected</option>
+                    @for (draft of mlSchemaDraftOptions; track draft) {
+                      <option [value]="draft">{{ draft }}</option>
+                    }
+                  </select>
+                </label>
+
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-xs font-semibold opacity-80">Quick templates:</span>
+                  @for (preset of schemaTemplatePresets; track preset.id) {
+                    <button type="button" class="btn btn-xs btn-soft" (click)="applySchemaTemplate(preset.id)">{{ preset.label }}</button>
+                  }
+                </div>
+
+                <div class="rounded-box border border-base-300 bg-base-100 p-2">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="text-sm font-semibold">Interactive Input Field Builder</div>
+                    <button type="button" class="btn btn-xs" (click)="addSchemaBuilderField()">Add Field</button>
+                  </div>
+
+                  @if (schemaBuilderFields.length > 0) {
+                    <div class="overflow-x-auto">
+                      <table class="table table-xs">
+                        <thead>
+                          <tr>
+                            <th>Field Path</th>
+                            <th>Type</th>
+                            <th>Req</th>
+                            <th>Example</th>
+                            <th>Description</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          @for (field of schemaBuilderFields; track field.id) {
+                            <tr>
+                              <td>
+                                <input
+                                  type="text"
+                                  class="input input-xs input-bordered w-44"
+                                  placeholder="text or features.age"
+                                  [value]="field.path"
+                                  (input)="onSchemaFieldTextInput(field.id, 'path', $event)"
+                                />
+                              </td>
+                              <td>
+                                <select class="select select-xs select-bordered w-28" [value]="field.type" (change)="onSchemaFieldTypeInput(field.id, $event)">
+                                  @for (type of schemaFieldTypeOptions; track type) {
+                                    <option [value]="type">{{ type }}</option>
+                                  }
+                                </select>
+                              </td>
+                              <td>
+                                <input
+                                  type="checkbox"
+                                  class="checkbox checkbox-xs"
+                                  [checked]="field.required"
+                                  (change)="onSchemaFieldRequiredInput(field.id, $event)"
+                                />
+                              </td>
+                              <td>
+                                <input
+                                  type="text"
+                                  class="input input-xs input-bordered w-36"
+                                  placeholder="example value"
+                                  [value]="field.example"
+                                  (input)="onSchemaFieldTextInput(field.id, 'example', $event)"
+                                />
+                              </td>
+                              <td>
+                                <input
+                                  type="text"
+                                  class="input input-xs input-bordered w-48"
+                                  placeholder="what this field means"
+                                  [value]="field.description"
+                                  (input)="onSchemaFieldTextInput(field.id, 'description', $event)"
+                                />
+                              </td>
+                              <td>
+                                <button type="button" class="btn btn-xs btn-ghost text-error" (click)="removeSchemaBuilderField(field.id)">Remove</button>
+                              </td>
+                            </tr>
+                          }
+                        </tbody>
+                      </table>
+                    </div>
+                  } @else {
+                    <div class="text-xs opacity-70">No fields yet. Add fields manually or load a template.</div>
+                  }
+
+                  <div class="flex flex-wrap gap-2 mt-2">
+                    <button type="button" class="btn btn-xs btn-soft" (click)="syncSchemaFromBuilder()" [disabled]="schemaBuilderFields.length === 0">
+                      Generate JSON Schema
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-xs btn-soft"
+                      (click)="generateExampleFromBuilder()"
+                      [disabled]="schemaBuilderFields.length === 0"
+                    >
+                      Generate Example
+                    </button>
+                    <button type="button" class="btn btn-xs btn-soft" (click)="loadSchemaBuilderFromCurrentSchema()">Load From JSON</button>
+                    <button type="button" class="btn btn-xs btn-ghost" (click)="clearSchemaBuilder()">Clear Builder</button>
+                  </div>
+                  @if (schemaBuilderMessage) {
+                    <p class="text-xs mt-2 opacity-80">{{ schemaBuilderMessage }}</p>
+                  }
+                </div>
+
+                <label class="fieldset-label">JSON Schema (Advanced)</label>
+                <textarea
+                  class="textarea textarea-bordered w-full font-mono text-xs"
+                  rows="8"
+                  placeholder='JSON Schema object, e.g. { "type":"object", "properties": { "text": { "type":"string" } }, "required": ["text"] }'
+                  formControlName="mlInputSchema"
+                ></textarea>
+                <label class="fieldset-label">Input Example JSON</label>
+                <textarea
+                  class="textarea textarea-bordered w-full font-mono text-xs"
+                  rows="5"
+                  placeholder='Example payload, e.g. { "text": "The interface is now much easier to use." }'
+                  formControlName="mlInputExample"
+                ></textarea>
+                <p class="text-xs opacity-70">
+                  Use the builder for fast input contract creation. Advanced JSON fields remain available for full control.
+                </p>
+              </div>
+
+              <legend class="fieldset-label">Intended Use</legend>
+              <textarea
+                class="textarea textarea-bordered w-full"
+                rows="2"
+                placeholder="Who should use this model and for which use cases"
+                formControlName="mlIntendedUse"
+              ></textarea>
+
+              <legend class="fieldset-label">Limitations</legend>
+              <textarea
+                class="textarea textarea-bordered w-full"
+                rows="2"
+                placeholder="Known failure modes, data gaps, or constraints"
+                formControlName="mlLimitations"
+              ></textarea>
+
+              <legend class="fieldset-label">Safety / Compliance</legend>
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <label class="label cursor-pointer justify-start gap-2 border border-base-300 rounded-box bg-base-200 px-3 py-2">
+                  <input type="checkbox" class="checkbox checkbox-xs" formControlName="mlPiiSafe" />
+                  <span class="label-text">PII-safe</span>
+                </label>
+                <label class="label cursor-pointer justify-start gap-2 border border-base-300 rounded-box bg-base-200 px-3 py-2">
+                  <input type="checkbox" class="checkbox checkbox-xs" formControlName="mlRegulatedDomain" />
+                  <span class="label-text">Regulated domain</span>
+                </label>
+                <label class="label cursor-pointer justify-start gap-2 border border-base-300 rounded-box bg-base-200 px-3 py-2">
+                  <input type="checkbox" class="checkbox checkbox-xs" formControlName="mlHumanInLoop" />
+                  <span class="label-text">Human-in-the-loop required</span>
+                </label>
+              </div>
+
+              <legend class="fieldset-label">Cost & SLO</legend>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <label class="input input-bordered flex items-center w-full">
+                  <span class="label">Latency p95 (ms)</span>
+                  <input type="text" class="grow" placeholder="e.g. 120" formControlName="mlLatencyP95" />
+                </label>
+                <label class="input input-bordered flex items-center w-full">
+                  <span class="label">Throughput (rps)</span>
+                  <input type="text" class="grow" placeholder="e.g. 45" formControlName="mlThroughput" />
+                </label>
+                <label class="input input-bordered flex items-center w-full">
+                  <span class="label">Rate Limits</span>
+                  <input type="text" class="grow" placeholder="e.g. 100 req/min" formControlName="mlRateLimits" />
+                </label>
+                <label class="select w-full">
+                  <span class="label">Availability Tier</span>
+                  <select class="input" formControlName="mlAvailabilityTier">
+                    <option value="">Not selected</option>
+                    @for (availability of mlAvailabilityOptions; track availability) {
+                      <option [value]="availability">{{ availability }}</option>
+                    }
+                  </select>
+                </label>
+              </div>
+            </div>
+          </details>
+
+          <p class="text-xs opacity-65 mt-1">
+            Use the predefined options for clean filtering. Leave a field empty when it is not applicable.
+          </p>
+        </div>
+      }
+    </fieldset>
+  </div>
+
+  <div class="flex flex-col [&_>*]:mb-4 [&_>*]:last:mb-0">
+    <fieldset class="fieldset w-lg bg-base-200 border border-base-300 p-4 rounded-box">
+      <legend class="fieldset-legend text-sm">Properties</legend>
+      <lib-json-object-input
+        [object]="properties"
+        [excludeKeys]="['@context', 'id', 'name', 'contenttype']"
+        (objectChange)="properties = $event"
+      >
+      </lib-json-object-input>
+    </fieldset>
+
+    <fieldset class="fieldset w-lg bg-base-200 border border-base-300 p-4 rounded-box">
+      <legend class="fieldset-legend text-sm">Private Properties</legend>
+      <lib-json-object-input
+        [object]="privateProperties"
+        [excludeKeys]="['@context']"
+        (objectChange)="privateProperties = $event"
+      >
+      </lib-json-object-input>
+    </fieldset>
+  </div>
+
+  <div class="2xl:col-span-2 flex flex-col items-center">
+    <div class="divider mt-0"></div>
+    @if (errorMsg) {
+      <lib-alert
+        title="Error"
+        [msg]="errorMsg"
+        (closeEvent)="errorMsg = ''"
+        type="error"
+        class="max-w-lg 2xl:max-w-xl mb-4"
+      ></lib-alert>
+    }
+    <button
+      type="submit"
+      [disabled]="assetForm.invalid"
+      class="btn btn-lg w-lg 2xl:w-xl"
+      [ngClass]="mode === 'update' ? 'btn-warning' : 'btn-primary'"
+    >
+      @if (mode === 'update') {
+        <i class="material-symbols-rounded">update</i>
+        Update Asset
+      } @else {
+        <i class="material-symbols-rounded">add</i>
+        Create Asset
+      }
+    </button>
+  </div>
+</form>

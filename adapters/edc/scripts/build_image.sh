@@ -206,6 +206,53 @@ if [[ ! -d "$SOURCE_DIR" || ! -x "$SOURCE_DIR/gradlew" ]]; then
   fi
 fi
 
+APPLY_OVERLAYS_SCRIPT="$ADAPTER_DIR/scripts/apply_overlays.sh"
+if [[ -f "$APPLY_OVERLAYS_SCRIPT" ]]; then
+  if [[ "$APPLY" -eq 1 ]]; then
+    bash "$APPLY_OVERLAYS_SCRIPT" --apply --target connector
+  else
+    echo "+ bash \"$APPLY_OVERLAYS_SCRIPT\" --apply --target connector"
+  fi
+fi
+
+FRAMEWORK_ROOT="$(cd "$ADAPTER_DIR/../.." && pwd)"
+PATCH_ONTOLOGY_SCRIPT="$ADAPTER_DIR/scripts/patch_ontology_validator_urls.py"
+ONTOLOGY_PATCH_SNAPSHOT=""
+DOCKER_BUILD_TEMP_CONTEXT=""
+restore_ontology_validator_patch() {
+  if [[ -n "$ONTOLOGY_PATCH_SNAPSHOT" && -f "$ONTOLOGY_PATCH_SNAPSHOT" && -f "$PATCH_ONTOLOGY_SCRIPT" ]]; then
+    python3 "$PATCH_ONTOLOGY_SCRIPT" --restore --snapshot "$ONTOLOGY_PATCH_SNAPSHOT" --project-root "$FRAMEWORK_ROOT" || true
+    rm -f "$ONTOLOGY_PATCH_SNAPSHOT"
+    ONTOLOGY_PATCH_SNAPSHOT=""
+  fi
+}
+cleanup_on_exit() {
+  restore_ontology_validator_patch
+  if [[ -n "$DOCKER_BUILD_TEMP_CONTEXT" && -d "$DOCKER_BUILD_TEMP_CONTEXT" ]]; then
+    rm -rf "$DOCKER_BUILD_TEMP_CONTEXT"
+  fi
+}
+
+if [[ "$APPLY" -eq 1 ]]; then
+  trap cleanup_on_exit EXIT
+fi
+
+if [[ -f "$PATCH_ONTOLOGY_SCRIPT" && -n "${PIONERA_ONTOLOGY_PATCH_DATASPACE:-}" ]]; then
+  if [[ "$APPLY" -eq 1 ]]; then
+    ONTOLOGY_PATCH_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/edc-ontology-patch-XXXXXX.json")"
+    echo "Applying Ontology Hub URL patch for EDC connector build (dataspace=${PIONERA_ONTOLOGY_PATCH_DATASPACE})..."
+    python3 "$PATCH_ONTOLOGY_SCRIPT" \
+      --patch \
+      --targets edc \
+      --project-root "$FRAMEWORK_ROOT" \
+      --snapshot-out "$ONTOLOGY_PATCH_SNAPSHOT"
+  else
+    echo "+ python3 \"$PATCH_ONTOLOGY_SCRIPT\" --patch --targets edc --project-root \"$FRAMEWORK_ROOT\" --snapshot-out <tmp>"
+  fi
+elif [[ -n "${PIONERA_ONTOLOGY_PATCH_DATASPACE:-}" ]]; then
+  echo "Ontology Hub URL patch script not found: $PATCH_ONTOLOGY_SCRIPT" >&2
+fi
+
 if [[ -z "$SOURCE_DIR" || ! -d "$SOURCE_DIR" ]]; then
   echo "Source directory not found after synchronization: $SOURCE_DIR" >&2
   exit 1
@@ -262,6 +309,12 @@ connector_jar_rebuild_reason() {
     done < <(find "$ABSOLUTE_CONNECTOR_RUNTIME_DIR/src" -type f | sort)
   fi
 
+  if [[ -d "$SOURCE_DIR/extensions" ]]; then
+    while IFS= read -r input_path; do
+      inputs+=("$input_path")
+    done < <(find "$SOURCE_DIR/extensions" -type f \( -name '*.java' -o -name '*.kts' -o -name 'build.gradle.kts' \) | sort)
+  fi
+
   for input_path in "${inputs[@]}"; do
     if [[ ! -e "$input_path" ]]; then
       continue
@@ -308,11 +361,8 @@ fi
 DOCKER_BUILD_CONTEXT="$SOURCE_DIR"
 DOCKER_BUILD_JAR="$CONNECTOR_JAR"
 if [[ "$APPLY" -eq 1 ]]; then
-  DOCKER_BUILD_CONTEXT="$(mktemp -d)"
-  cleanup_build_context() {
-    rm -rf "$DOCKER_BUILD_CONTEXT"
-  }
-  trap cleanup_build_context EXIT
+  DOCKER_BUILD_TEMP_CONTEXT="$(mktemp -d)"
+  DOCKER_BUILD_CONTEXT="$DOCKER_BUILD_TEMP_CONTEXT"
   cp "$ABSOLUTE_CONNECTOR_JAR" "$DOCKER_BUILD_CONTEXT/connector.jar"
   DOCKER_BUILD_JAR="connector.jar"
 fi

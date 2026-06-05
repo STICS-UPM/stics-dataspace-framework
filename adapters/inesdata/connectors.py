@@ -22,8 +22,10 @@ from deployers.shared.lib.inesdata_branding_assets import (
 )
 from deployers.shared.lib.components import (
     configured_component_public_url,
-    ontology_validator_source_path,
+    ontology_validator_source_paths,
     patch_ontology_validator_source,
+    restore_ontology_validator_sources,
+    snapshot_ontology_validator_sources,
 )
 from deployers.shared.lib.connectors import (
     normalize_connector_name,
@@ -3247,6 +3249,7 @@ class INESDataConnectorsAdapter:
             return patch_ontology_validator_source(
                 self._ontology_validator_patch_context(),
                 root_dir,
+                targets=("inesdata",),
             )
         except Exception as exc:
             print(f"Ontology validator URL patch skipped: {exc}")
@@ -3764,10 +3767,9 @@ class INESDataConnectorsAdapter:
             print(f"Skipping Level 4 local connector image preparation; missing script: {detail}")
             return True
 
-        validator_source_path = ontology_validator_source_path(root_dir)
-        original_validator_source = None
-        if not skip_build and validator_source_path is not None:
-            original_validator_source = validator_source_path.read_text(encoding="utf-8")
+        validator_source_paths = ontology_validator_source_paths(root_dir, targets=("inesdata",))
+        validator_snapshots = snapshot_ontology_validator_sources(validator_source_paths)
+        if not skip_build and validator_source_paths:
             self._patch_ontology_validator_source_for_level4_build(root_dir)
         original_connector_interface_sources = {}
         if not skip_build:
@@ -3809,11 +3811,8 @@ class INESDataConnectorsAdapter:
         try:
             result = self.run(command, check=False)
         finally:
-            if validator_source_path is not None and original_validator_source is not None:
-                current_source = validator_source_path.read_text(encoding="utf-8")
-                if current_source != original_validator_source:
-                    validator_source_path.write_text(original_validator_source, encoding="utf-8", newline="\n")
-                    print("Ontology validator source restored after local image build.")
+            if validator_snapshots:
+                restore_ontology_validator_sources(validator_snapshots)
             self._restore_connector_interface_branding_source(original_connector_interface_sources)
         if result is None:
             print("Error preparing local INESData connector images for Level 4.")

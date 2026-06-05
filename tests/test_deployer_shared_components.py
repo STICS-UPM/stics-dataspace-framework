@@ -302,7 +302,7 @@ class SharedComponentsContractTests(unittest.TestCase):
             ontology_validator_url_mapping(context),
             {
                 "external_url": "http://ontology-hub-pionera.dev.ds.dataspaceunit.upm",
-                "internal_url": "http://pionera-ontology-hub.custom-components:3333",
+                "internal_url": "http://pionera-ontology-hub.custom-components.svc.cluster.local:3333",
             },
         )
 
@@ -351,7 +351,7 @@ class SharedComponentsContractTests(unittest.TestCase):
             updated = source_path.read_text(encoding="utf-8")
             self.assertIn(
                 'url.replace("http://ontology-hub-pionera.dev.ds.dataspaceunit.upm", '
-                '"http://pionera-ontology-hub.components-runtime:3333")',
+                '"http://pionera-ontology-hub.components-runtime.svc.cluster.local:3333")',
                 updated,
             )
 

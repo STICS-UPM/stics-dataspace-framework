@@ -8,6 +8,7 @@ Current convention:
 Recommended workflow:
 
 - Keep `connector/` under version control so a fresh framework clone can build the generic EDC connector without cloning upstream sources first.
+- RDF validation extensions are **not** committed into `connector/` directly; they live under `../overlays/` and are merged by `scripts/apply_overlays.sh` during `build_image.sh --apply`.
 - Keep a prepared local working copy in `dashboard/` only when working on dashboard image sources.
 - If a local source directory is passed explicitly to `scripts/sync_sources.sh --source <path>`, the synchronization copies the connector source and excludes generated build outputs.
 - `scripts/build_image.sh --apply` builds the connector from `connector/final-connector`.

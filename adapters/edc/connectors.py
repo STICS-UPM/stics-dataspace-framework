@@ -27,6 +27,8 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
     MANAGED_LABEL_KEY = "validation-environment-adapter"
     DASHBOARD_PROXY_PREFIX = "/edc-dashboard-api"
     LEVEL4_LOCAL_IMAGE_TOPOLOGIES = {LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY}
+    # Parity with inesdata-connector-interface src/assets/config/app.config.json
+    DEFAULT_ONTOLOGY_HUB_URL = "http://ontology-hub-demo.dev.ds.dataspaceunit.upm"
 
     def __init__(self, run, run_silent, auto_mode_getter, infrastructure_adapter, config_adapter=None, config_cls=None, topology="local"):
         self.topology = topology or EdcConfig.DEFAULT_TOPOLOGY
@@ -240,6 +242,34 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         )
         return self.run(command, cwd=root_dir, check=False) is not None
 
+    def _export_ontology_validator_patch_env_for_edc_build(self):
+        try:
+            context = self._ontology_validator_patch_context()
+        except Exception as exc:
+            print(f"Ontology validator URL patch env skipped: {exc}")
+            return
+
+        config = dict(getattr(context, "config", {}) or {})
+        dataspace_name = str(getattr(context, "dataspace_name", "") or "").strip()
+        if not dataspace_name:
+            print("Ontology validator URL patch env skipped: dataspace name is not configured.")
+            return
+
+        namespace_roles = getattr(context, "namespace_roles", None)
+        components_namespace = str(
+            getattr(namespace_roles, "components_namespace", "")
+            or config.get("COMPONENTS_NAMESPACE")
+            or "components"
+        ).strip() or "components"
+
+        os.environ["PIONERA_ONTOLOGY_PATCH_DATASPACE"] = dataspace_name
+        os.environ["PIONERA_ONTOLOGY_PATCH_DS_DOMAIN_BASE"] = str(config.get("DS_DOMAIN_BASE") or "")
+        os.environ["PIONERA_ONTOLOGY_PATCH_COMPONENTS_NAMESPACE"] = components_namespace
+
+        ontology_url = self._resolve_ontology_hub_url(config)
+        if ontology_url:
+            os.environ["PIONERA_ONTOLOGY_PATCH_ONTOLOGY_HUB_URL"] = ontology_url
+
     def _maybe_prepare_level4_local_edc_connector_image(self, mode):
         if self._is_truthy(os.environ.get("PIONERA_EDC_LOCAL_CONNECTOR_IMAGE_PREPARED")):
             print("Level 4 local EDC connector image already prepared for this execution.")
@@ -281,6 +311,7 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         repo_subdir_getter = getattr(self.config_adapter, "edc_reference_repo_subdir", None)
         repo_url = repo_url_getter() if callable(repo_url_getter) else "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
         repo_subdir = repo_subdir_getter() if callable(repo_subdir_getter) else "asset-filter-template"
+        self._export_ontology_validator_patch_env_for_edc_build()
         if not self._run_level4_edc_image_script(
             script_path,
             args=[
@@ -1034,6 +1065,21 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 "divider": True,
             },
             {
+                "text": "ML Assets",
+                "materialSymbol": "deployed_code_update",
+                "routerPath": "ml-assets",
+            },
+            {
+                "text": "Model Execution",
+                "materialSymbol": "smart_toy",
+                "routerPath": "model-execution",
+            },
+            {
+                "text": "Model Benchmarking",
+                "materialSymbol": "query_stats",
+                "routerPath": "model-benchmarking",
+            },
+            {
                 "text": "Catalog",
                 "materialSymbol": "book_ribbon",
                 "routerPath": "catalog",
@@ -1055,6 +1101,14 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 "divider": True,
             },
             {
+                "text": "Ontologies",
+                "materialSymbol": "account_tree",
+                "routerPath": "ontologies",
+                "viewDescription": (
+                    "Browse ontologies registered in Ontology Hub and open the hub to create or edit vocabularies."
+                ),
+            },
+            {
                 "text": "Contracts",
                 "materialSymbol": "handshake",
                 "routerPath": "contracts",
@@ -1072,7 +1126,37 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             "healthCheckIntervalSeconds": 30,
             "enableUserConfig": False,
             "menuItems": self._dashboard_menu_items(),
+            "runtime": self._dashboard_runtime_config_block(),
         }
+
+    def _dashboard_runtime_config_block(self):
+        config = self.config_adapter.load_deployer_config()
+        ontology_url = self._resolve_ontology_hub_url(config)
+        return {
+            "ontologyUrl": ontology_url,
+            "ontologyAdminUser": str(config.get("ONTOLOGY_HUB_ADMIN_EMAIL") or "").strip(),
+            "ontologyAdminPassword": str(config.get("ONTOLOGY_HUB_ADMIN_PASSWORD") or "").strip(),
+            "transferProcessBasePath": "transferprocesses",
+        }
+
+    @staticmethod
+    def _resolve_ontology_hub_url(config):
+        explicit = str(
+            config.get("ONTOLOGY_HUB_URL") or config.get("ONTOLOGY_HUB_BASE_URL") or ""
+        ).strip()
+        if explicit:
+            return explicit.rstrip("/")
+
+        raw_host = str(
+            config.get("ONTOLOGY_HUB_HOST")
+            or config.get("ONTOLOGY_HUB_HOSTNAME")
+            or ""
+        ).strip()
+        if not raw_host:
+            return EDCConnectorsAdapter.DEFAULT_ONTOLOGY_HUB_URL
+        if raw_host.startswith("http://") or raw_host.startswith("https://"):
+            return raw_host.rstrip("/")
+        return f"http://{raw_host}".rstrip("/")
 
     def _dashboard_connector_config_payload(self, connector_name, connector_hostnames):
         ordered_connectors = [connector_name] + [

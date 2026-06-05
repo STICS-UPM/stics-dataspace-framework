@@ -59,7 +59,15 @@ dashboard:
       appTitle: EDC Dashboard
       healthCheckIntervalSeconds: 30
       enableUserConfig: false
-      menuItems: []
+      # Populated at deploy time by adapters/edc/connectors.py (includes Ontologies). Do not leave empty.
+      menuItems:
+        - text: Home
+          materialSymbol: home_app_logo
+          routerPath: home
+          divider: true
+        - text: Ontologies
+          materialSymbol: account_tree
+          routerPath: ontologies
     connectorConfig: []
     baseHref: /edc-dashboard/
 
