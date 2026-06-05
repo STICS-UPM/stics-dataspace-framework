@@ -1,4 +1,5 @@
 import unittest
+import os
 from unittest import mock
 
 from validation.orchestration import components
@@ -57,31 +58,40 @@ class Level6ComponentsTests(unittest.TestCase):
         self.assertEqual(results[1]["reason"], "component_url_not_inferred")
 
     def test_run_component_validations_ignores_auxiliary_urls_not_requested_as_groups(self):
-        run_registered = mock.Mock(
-            return_value=[
+        seen_env = {}
+
+        def fake_registered(component_urls, experiment_dir=None):
+            seen_env["mapping_editor"] = os.environ.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_BASE_URL")
+            return [
                 {
                     "component": "semantic-virtualization",
                     "status": "passed",
                 }
             ]
+
+        run_registered = mock.Mock(
+            side_effect=fake_registered
         )
 
-        results = components.run_component_validations(
-            ["semantic-virtualization"],
-            infer_component_urls=mock.Mock(
-                return_value={
-                    "semantic-virtualization": "http://semantic.example.local",
-                    "semantic-virtualization-editor": "http://semantic-editor.example.local",
-                }
-            ),
-            run_component_validations_fn=run_registered,
-            experiment_dir="/tmp/experiment",
-        )
+        with mock.patch.dict(os.environ, {}, clear=True):
+            results = components.run_component_validations(
+                ["semantic-virtualization"],
+                infer_component_urls=mock.Mock(
+                    return_value={
+                        "semantic-virtualization": "http://semantic.example.local",
+                        "semantic-virtualization-editor": "http://semantic-editor.example.local",
+                    }
+                ),
+                run_component_validations_fn=run_registered,
+                experiment_dir="/tmp/experiment",
+            )
 
         run_registered.assert_called_once_with(
             {"semantic-virtualization": "http://semantic.example.local"},
             experiment_dir="/tmp/experiment",
         )
+        self.assertEqual(seen_env["mapping_editor"], "http://semantic-editor.example.local")
+        self.assertIsNone(os.environ.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_BASE_URL"))
         self.assertEqual(results, [{"component": "semantic-virtualization", "status": "passed"}])
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Callable
 
@@ -32,6 +34,25 @@ def should_run_component_validation(
     return env_flag_enabled("LEVEL6_RUN_COMPONENT_VALIDATION", True)
 
 
+@contextmanager
+def _component_auxiliary_environment(component_urls: dict[str, str]):
+    auxiliary_env = {}
+    mapping_editor_url = str(component_urls.get("semantic-virtualization-editor") or "").strip()
+    if mapping_editor_url and not os.environ.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_BASE_URL"):
+        auxiliary_env["SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_BASE_URL"] = mapping_editor_url
+
+    previous_values = {key: os.environ.get(key) for key in auxiliary_env}
+    try:
+        os.environ.update(auxiliary_env)
+        yield
+    finally:
+        for key, previous_value in previous_values.items():
+            if previous_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous_value
+
+
 def run_component_validations(
     components: list[str],
     *,
@@ -42,12 +63,14 @@ def run_component_validations(
     if not components:
         return []
 
+    inferred_urls = infer_component_urls(components) or {}
     component_urls = {
         component: url
-        for component, url in (infer_component_urls(components) or {}).items()
+        for component, url in inferred_urls.items()
         if component in set(components)
     }
-    results = run_component_validations_fn(component_urls, experiment_dir=experiment_dir)
+    with _component_auxiliary_environment(inferred_urls):
+        results = run_component_validations_fn(component_urls, experiment_dir=experiment_dir)
     results = list(results or [])
     resolved_components = {result.get("component") for result in results}
     for component in components:

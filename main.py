@@ -1,4 +1,5 @@
 import argparse
+import atexit
 import contextlib
 import getpass
 import ipaddress
@@ -4807,7 +4808,35 @@ def _temporary_environment(overrides):
                 os.environ[key] = value
 
 
-def _level6_component_validation_environment(deployer_context, deployer_name):
+def _normalized_component_tokens(values):
+    if values is None:
+        return []
+    if isinstance(values, str):
+        raw_values = values.split(",")
+    else:
+        raw_values = values
+    return _unique_non_empty(
+        str(value or "").strip().lower().replace("_", "-")
+        for value in raw_values
+        if str(value or "").strip()
+    )
+
+
+def _level6_component_validation_needs_vm_single_mapping_editor(config, components=None):
+    configured_components = _normalized_component_tokens(components)
+    if not configured_components:
+        configured_components = _normalized_component_tokens((config or {}).get("COMPONENTS"))
+    if "semantic-virtualization" not in configured_components:
+        return False
+    enabled = str(
+        os.environ.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI")
+        or (config or {}).get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI")
+        or "1"
+    ).strip().lower()
+    return enabled not in {"0", "false", "no", "off", "disabled"}
+
+
+def _level6_component_validation_environment(deployer_context, deployer_name, components=None):
     if deployer_context is None:
         return {}
     adapter_name = str(deployer_name or "").strip().lower()
@@ -4858,6 +4887,11 @@ def _level6_component_validation_environment(deployer_context, deployer_name):
         env["PIONERA_COMPONENT_VALIDATION_MODE"] = "api"
         env["LEVEL6_COMPONENT_VALIDATION_MODE"] = "api"
     env.update(_topology_runtime_environment_overrides(topology=topology, level=5, role="components"))
+    if normalize_topology(topology) == "vm-single" and _level6_component_validation_needs_vm_single_mapping_editor(
+        config,
+        components=components,
+    ):
+        env.update(_vm_single_component_validation_tunnel_environment(config))
     if provider:
         provider_base_url = _connector_base_url(provider, "provider")
         provider_protocol_base_url = _connector_protocol_base_url(provider, "provider", provider_base_url)
@@ -8632,6 +8666,7 @@ def run_validate(
                         component_env = _level6_component_validation_environment(
                             deployer_context,
                             resolved_deployer_name,
+                            components=component_groups,
                         )
                         with _temporary_environment(component_env):
                             if callable(sync_component_public_routes):
@@ -9129,7 +9164,7 @@ def _topology_runtime_environment_overrides(topology="local", level=None, role=N
             kubeconfig,
         )
     else:
-        kubeconfig = _vm_single_local_kubeconfig_path(config)
+        kubeconfig = _vm_single_effective_kubeconfig_path(config)
     if not kubeconfig:
         return {}
     overrides = {"KUBECONFIG": kubeconfig}
@@ -9796,7 +9831,14 @@ def run_level(
             adapter_name=resolved_deployer_name,
         )
     if normalized_topology == VM_SINGLE_TOPOLOGY:
-        vm_single_plan = _current_vm_single_topology_plan(adapter_name=resolved_deployer_name)
+        vm_single_bundle = _load_vm_single_configuration_bundle(adapter_name=resolved_deployer_name)
+        _ensure_vm_single_k3s_runtime_config(vm_single_bundle.get("topology") or {})
+        vm_single_plan = _build_vm_single_topology_plan(
+            vm_single_bundle["infrastructure"],
+            vm_single_bundle["topology"],
+            vm_single_bundle["adapter"],
+        )
+        vm_single_plan["config_files"] = vm_single_bundle["paths"]
         if _vm_single_should_run_level_remotely(level_id, vm_single_plan):
             return _run_vm_single_level_remotely(
                 resolved_deployer_name,
@@ -9805,7 +9847,7 @@ def run_level(
         if _vm_single_should_prepare_k3s_tunnel(
             level_id,
             vm_single_plan,
-            _load_vm_single_configuration_bundle(adapter_name=resolved_deployer_name).get("topology") or {},
+            vm_single_bundle.get("topology") or {},
         ):
             if level_id == 1:
                 result = _run_vm_single_level1_via_ssh_tunnel(adapter, resolved_deployer_name)
@@ -10130,6 +10172,9 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "AI_MODEL_HUB_PUBLIC_URL",
     "SEMANTIC_VIRTUALIZATION_PUBLIC_URL",
     "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_MODE",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_LOCAL_PORT",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_REMOTE_HOST",
     "TOPOLOGY_ROUTING_MODE",
     "VM_PROVIDER_CONNECTORS",
     "VM_CONSUMER_CONNECTORS",
@@ -15421,6 +15466,33 @@ def _vm_single_local_kubeconfig_path(topology_config):
     return os.path.abspath(os.path.expanduser(configured))
 
 
+def _vm_single_effective_kubeconfig_path(topology_config, adapter_name=None):
+    config = dict(topology_config or {})
+    try:
+        bundle = _load_vm_single_configuration_bundle(adapter_name=adapter_name)
+        plan = _build_vm_single_topology_plan(
+            bundle["infrastructure"],
+            config or bundle["topology"],
+            bundle["adapter"],
+        )
+        if _vm_single_running_on_target(plan):
+            return _vm_single_remote_kubeconfig_path(config or bundle["topology"])
+    except Exception:
+        pass
+    return _vm_single_local_kubeconfig_path(config)
+
+
+def _ensure_vm_single_k3s_runtime_config(topology_config):
+    runtime = build_cluster_runtime(topology_config or {}, topology=VM_SINGLE_TOPOLOGY)
+    if runtime.get("cluster_type") != "k3s":
+        raise RuntimeError(
+            "Topology 'vm-single' must use k3s. "
+            "Set CLUSTER_TYPE=k3s in deployers/infrastructure/topologies/vm-single.config "
+            "or in the selected .profiles/*.env profile."
+        )
+    return runtime
+
+
 def _vm_single_k3s_api_remote_port(topology_config):
     return _vm_distributed_config_value(
         topology_config,
@@ -15463,13 +15535,11 @@ def _vm_single_should_prepare_k3s_tunnel(level_id, plan, topology_config):
         return False
     if os.environ.get("PIONERA_LEVEL_RUNTIME_ENV_ACTIVE") == "true":
         return False
-    if int(level_id) not in {1, 2, 3, 4, 5}:
+    if int(level_id) not in {1, 2, 3, 4, 5, 6}:
         return False
     try:
-        runtime = build_cluster_runtime(topology_config, topology=VM_SINGLE_TOPOLOGY)
+        runtime = _ensure_vm_single_k3s_runtime_config(topology_config)
     except Exception:
-        return False
-    if runtime.get("cluster_type") != "k3s":
         return False
     mode = _normalized_vm_single_level_execution_mode(topology_config)
     if mode == "remote":
@@ -15482,7 +15552,7 @@ def _vm_single_should_prepare_k3s_tunnel(level_id, plan, topology_config):
 def _vm_single_should_run_level_remotely(level_id, plan):
     if os.environ.get("PIONERA_VM_SINGLE_REMOTE_LEVEL_ACTIVE") == "true":
         return False
-    if int(level_id) not in {1, 2, 3, 4, 5}:
+    if int(level_id) not in {1, 2, 3, 4, 5, 6}:
         return False
     topology = _load_vm_single_configuration_bundle(adapter_name=None).get("topology") or {}
     mode = _normalized_vm_single_level_execution_mode(topology)
@@ -15577,6 +15647,481 @@ def _vm_single_k3s_tunnel_command(plan, topology_config, local_port):
         "ExitOnForwardFailure=yes",
     ]
     return command[:1] + tunnel_args + command[1:]
+
+
+def _vm_single_mapping_editor_tunnel_mode(topology_config):
+    raw_value = _vm_distributed_config_value(
+        topology_config,
+        "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_MODE",
+        default="auto",
+    ).lower().replace("_", "-")
+    aliases = {
+        "1": "auto",
+        "true": "auto",
+        "yes": "auto",
+        "on": "auto",
+        "enabled": "auto",
+        "0": "disabled",
+        "false": "disabled",
+        "no": "disabled",
+        "off": "disabled",
+    }
+    return aliases.get(raw_value, raw_value)
+
+
+def _vm_single_mapping_editor_host_port(topology_config):
+    configured = _vm_distributed_config_value(
+        topology_config,
+        "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT",
+        "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_PORT",
+        "MAPPING_EDITOR_HOST_PORT",
+        "MAPPING_EDITOR_PUBLIC_PORT",
+    )
+    if configured:
+        try:
+            return int(str(configured).strip())
+        except (TypeError, ValueError):
+            return 0
+    url = _vm_distributed_config_value(
+        topology_config,
+        "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL",
+        "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL",
+        "MAPPING_EDITOR_PUBLIC_URL",
+        "MAPPING_EDITOR_URL",
+    )
+    try:
+        parsed = urllib.parse.urlparse(url if "://" in str(url) else f"//{url}")
+    except Exception:
+        return 0
+    return int(parsed.port or 0)
+
+
+def _vm_single_mapping_editor_tunnel_local_port(topology_config):
+    configured = _vm_distributed_config_value(
+        topology_config,
+        "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_LOCAL_PORT",
+        "MAPPING_EDITOR_TUNNEL_LOCAL_PORT",
+    )
+    if configured:
+        try:
+            return int(str(configured).strip())
+        except (TypeError, ValueError):
+            return 0
+    return _vm_single_mapping_editor_host_port(topology_config)
+
+
+def _vm_single_mapping_editor_tunnel_remote_host(topology_config):
+    return (
+        _vm_distributed_config_value(
+            topology_config,
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_REMOTE_HOST",
+            "MAPPING_EDITOR_TUNNEL_REMOTE_HOST",
+            default="127.0.0.1",
+        )
+        or "127.0.0.1"
+    )
+
+
+_VM_SINGLE_MAPPING_EDITOR_PORT_FORWARD_PROCESSES = []
+
+
+def _cleanup_vm_single_mapping_editor_port_forwards():
+    for item in list(_VM_SINGLE_MAPPING_EDITOR_PORT_FORWARD_PROCESSES):
+        process = getattr(item, "process", None)
+        if process and process.poll() is None:
+            try:
+                process.terminate()
+                process.wait(timeout=3)
+            except Exception:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+        for attr in ("stdout_file", "stderr_file"):
+            handle = getattr(item, attr, None)
+            if handle:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+        try:
+            _VM_SINGLE_MAPPING_EDITOR_PORT_FORWARD_PROCESSES.remove(item)
+        except ValueError:
+            pass
+
+
+atexit.register(_cleanup_vm_single_mapping_editor_port_forwards)
+
+
+def _reserve_loopback_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _vm_single_mapping_editor_service_namespace(topology_config):
+    return (
+        _vm_distributed_config_value(
+            topology_config,
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_NAMESPACE",
+            "SEMANTIC_VIRTUALIZATION_NAMESPACE",
+            "COMPONENTS_NAMESPACE",
+            "NS_COMPONENTS",
+            default="components",
+        )
+        or "components"
+    ).strip()
+
+
+def _vm_single_mapping_editor_service_name(topology_config):
+    configured = _vm_distributed_config_value(
+        topology_config,
+        "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SERVICE_NAME",
+        "MAPPING_EDITOR_SERVICE_NAME",
+    )
+    if configured:
+        return configured.strip()
+    dataspace = (
+        _vm_distributed_config_value(
+            topology_config,
+            "DS_NAME",
+            "DS_1_NAME",
+            "DATASPACE_NAME",
+            default="pionera",
+        )
+        or "pionera"
+    ).strip()
+    return f"{dataspace}-semantic-virtualization-editor"
+
+
+def _vm_single_mapping_editor_service_port(topology_config):
+    configured = _vm_distributed_config_value(
+        topology_config,
+        "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SERVICE_PORT",
+        "MAPPING_EDITOR_SERVICE_PORT",
+        default="8501",
+    )
+    try:
+        return int(str(configured or "8501").strip())
+    except (TypeError, ValueError):
+        return 8501
+
+
+def _vm_single_mapping_editor_is_k3s(topology_config):
+    try:
+        runtime = build_cluster_runtime(topology_config or {}, topology=VM_SINGLE_TOPOLOGY)
+    except Exception:
+        return str((topology_config or {}).get("CLUSTER_TYPE") or "").strip().lower() == "k3s"
+    return runtime.get("cluster_type") == "k3s"
+
+
+def _vm_single_mapping_editor_health_url(url):
+    return f"{str(url or '').rstrip('/')}/_stcore/health"
+
+
+def _vm_single_mapping_editor_http_ready(url, timeout_seconds=2):
+    if not url:
+        return False
+    try:
+        response = requests.get(
+            _vm_single_mapping_editor_health_url(url),
+            timeout=max(float(timeout_seconds), 0.5),
+        )
+    except requests.RequestException:
+        return False
+    return int(getattr(response, "status_code", 0) or 0) == 200
+
+
+def _vm_single_mapping_editor_port_forward_command(topology_config, local_port):
+    namespace = _vm_single_mapping_editor_service_namespace(topology_config)
+    service_name = _vm_single_mapping_editor_service_name(topology_config)
+    service_port = _vm_single_mapping_editor_service_port(topology_config)
+    return [
+        "kubectl",
+        "port-forward",
+        "--address",
+        "127.0.0.1",
+        "-n",
+        namespace,
+        f"svc/{service_name}",
+        f"{int(local_port)}:{int(service_port)}",
+    ]
+
+
+def _ensure_vm_single_mapping_editor_kubectl_port_forward(topology_config):
+    preferred_port = _vm_single_mapping_editor_tunnel_local_port(topology_config)
+    candidate_ports = [int(preferred_port)] if preferred_port else []
+    candidate_ports.append(_reserve_loopback_port())
+    last_failure = None
+
+    for index, candidate_port in enumerate(candidate_ports):
+        local_port = int(candidate_port or _reserve_loopback_port())
+        url = f"http://127.0.0.1:{local_port}"
+        if _vm_single_mapping_editor_http_ready(url):
+            return {
+                "status": "ready",
+                "mode": "kubectl-port-forward",
+                "local_port": local_port,
+                "url": url,
+            }
+        if _local_tcp_port_open(local_port):
+            if index == 0:
+                continue
+            local_port = _reserve_loopback_port()
+            url = f"http://127.0.0.1:{local_port}"
+
+        command = _vm_single_mapping_editor_port_forward_command(topology_config, local_port)
+        env = os.environ.copy()
+        kubeconfig = _vm_single_effective_kubeconfig_path(topology_config)
+        if kubeconfig:
+            env["KUBECONFIG"] = kubeconfig
+        stdout_file = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+        stderr_file = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                text=True,
+                env=env,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            stdout_file.close()
+            stderr_file.close()
+            last_failure = {
+                "status": "failed",
+                "mode": "kubectl-port-forward",
+                "reason": "kubectl-port-forward-start-failed",
+                "url": url,
+                "command": _vm_distributed_format_command(command),
+                "error": str(exc),
+            }
+            continue
+
+        proc = types.SimpleNamespace(
+            process=process,
+            stdout_file=stdout_file,
+            stderr_file=stderr_file,
+        )
+        deadline = time.time() + 25
+        while time.time() < deadline:
+            if _vm_single_mapping_editor_http_ready(url, timeout_seconds=0.5):
+                _VM_SINGLE_MAPPING_EDITOR_PORT_FORWARD_PROCESSES.append(proc)
+                return {
+                    "status": "started",
+                    "mode": "kubectl-port-forward",
+                    "local_port": local_port,
+                    "service": _vm_single_mapping_editor_service_name(topology_config),
+                    "namespace": _vm_single_mapping_editor_service_namespace(topology_config),
+                    "service_port": _vm_single_mapping_editor_service_port(topology_config),
+                    "url": url,
+                    "command": _vm_distributed_format_command(command),
+                    "pid": getattr(process, "pid", None),
+                }
+            if process.poll() is not None:
+                break
+            time.sleep(0.25)
+
+        try:
+            process.terminate()
+            process.wait(timeout=3)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+        for handle in (stdout_file, stderr_file):
+            try:
+                handle.seek(0)
+            except OSError:
+                pass
+        stdout = stdout_file.read() if stdout_file else ""
+        stderr = stderr_file.read() if stderr_file else ""
+        stdout_file.close()
+        stderr_file.close()
+        error_text = (stderr or stdout or "Streamlit health endpoint did not become ready").strip()
+        last_failure = {
+            "status": "failed",
+            "mode": "kubectl-port-forward",
+            "reason": "kubectl-port-forward-timeout",
+            "url": url,
+            "command": _vm_distributed_format_command(command),
+            "error": error_text[:500],
+        }
+        if "address already in use" in error_text.lower() or "unable to listen" in error_text.lower():
+            continue
+
+    return last_failure or {
+        "status": "failed",
+        "mode": "kubectl-port-forward",
+        "reason": "kubectl-port-forward-unavailable",
+    }
+
+
+def _vm_single_mapping_editor_exposure_mode(topology_config):
+    raw_value = _vm_distributed_config_value(
+        topology_config,
+        "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE",
+        "MAPPING_EDITOR_EXPOSURE_MODE",
+        default="",
+    ).lower().replace("_", "-")
+    if raw_value:
+        return raw_value
+    if _vm_single_mapping_editor_host_port(topology_config):
+        return "host-port"
+    return "ingress"
+
+
+def _vm_single_mapping_editor_should_use_tunnel(plan, topology_config):
+    if os.environ.get("PIONERA_VM_SINGLE_REMOTE_LEVEL_ACTIVE") == "true":
+        return False
+    if os.environ.get("PIONERA_LEVEL_RUNTIME_ENV_ACTIVE") == "true":
+        return False
+    if _vm_single_running_on_target(plan):
+        return False
+    mode = _vm_single_mapping_editor_tunnel_mode(topology_config)
+    if mode in {"manual", "disabled", "skip", "off"}:
+        return False
+    if mode == "always":
+        return True
+    exposure = _vm_single_mapping_editor_exposure_mode(topology_config)
+    return exposure in {"direct", "host-port", "hostport", "vm-port"}
+
+
+def _vm_single_mapping_editor_tunnel_command(plan, topology_config, local_port, remote_host, remote_port):
+    payload = dict(plan or {})
+    vms = [item for item in list(payload.get("vms") or []) if isinstance(item, dict)]
+    vm = vms[0] if vms else {}
+    command = _vm_distributed_build_ssh_command(payload, vm)
+    if not command:
+        return []
+    tunnel_args = [
+        "-N",
+        "-L",
+        f"127.0.0.1:{int(local_port)}:{remote_host}:{int(remote_port)}",
+        "-o",
+        "ExitOnForwardFailure=yes",
+    ]
+    return command[:1] + tunnel_args + command[1:]
+
+
+def _ensure_vm_single_mapping_editor_tunnel(plan, topology_config):
+    if _vm_single_mapping_editor_is_k3s(topology_config):
+        return _ensure_vm_single_mapping_editor_kubectl_port_forward(topology_config)
+
+    remote_port = _vm_single_mapping_editor_host_port(topology_config)
+    local_port = _vm_single_mapping_editor_tunnel_local_port(topology_config)
+    remote_host = _vm_single_mapping_editor_tunnel_remote_host(topology_config)
+    if not remote_port or not local_port:
+        return {"status": "skipped", "reason": "missing-mapping-editor-port"}
+    if _local_tcp_port_open(local_port):
+        return {
+            "status": "ready",
+            "local_port": local_port,
+            "remote_host": remote_host,
+            "remote_port": remote_port,
+            "url": f"http://127.0.0.1:{int(local_port)}",
+        }
+
+    command = _vm_single_mapping_editor_tunnel_command(
+        plan,
+        topology_config,
+        local_port,
+        remote_host,
+        remote_port,
+    )
+    if not command:
+        return {
+            "status": "failed",
+            "reason": "missing-ssh-config",
+            "local_port": local_port,
+            "remote_host": remote_host,
+            "remote_port": remote_port,
+        }
+
+    proc = _run_vm_distributed_background_ssh_command(command, timeout_seconds=20)
+    if proc.returncode not in {None, 0}:
+        return {
+            "status": "failed",
+            "reason": "ssh-tunnel-failed",
+            "local_port": local_port,
+            "remote_host": remote_host,
+            "remote_port": remote_port,
+            "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+            "error": (proc.stderr or proc.stdout or "").strip()[:500],
+        }
+
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        if _local_tcp_port_open(local_port):
+            _close_vm_distributed_background_ssh_process_files(proc)
+            return {
+                "status": "started",
+                "local_port": local_port,
+                "remote_host": remote_host,
+                "remote_port": remote_port,
+                "url": f"http://127.0.0.1:{int(local_port)}",
+                "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+                "pid": getattr(getattr(proc, "process", None), "pid", None),
+            }
+        process = getattr(proc, "process", None)
+        if process and process.poll() is not None:
+            proc = _vm_distributed_background_ssh_process_output(proc)
+            return {
+                "status": "failed",
+                "reason": "ssh-tunnel-failed",
+                "local_port": local_port,
+                "remote_host": remote_host,
+                "remote_port": remote_port,
+                "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+                "error": (proc.stderr or proc.stdout or f"ssh exited with {proc.returncode}").strip()[:500],
+            }
+        time.sleep(0.25)
+
+    _terminate_vm_distributed_background_ssh_process(proc)
+    return {
+        "status": "failed",
+        "reason": "ssh-tunnel-timeout",
+        "local_port": local_port,
+        "remote_host": remote_host,
+        "remote_port": remote_port,
+        "command": _vm_distributed_format_command(_vm_distributed_public_ssh_command(command)),
+    }
+
+
+def _vm_single_component_validation_tunnel_environment(config):
+    topology_config = dict(config or {})
+    plan_bundle = _load_vm_single_configuration_bundle(adapter_name=None)
+    plan = _build_vm_single_topology_plan(
+        plan_bundle["infrastructure"],
+        plan_bundle["topology"],
+        plan_bundle["adapter"],
+    )
+    effective_topology = {**dict(plan_bundle.get("topology") or {}), **topology_config}
+    if not _vm_single_mapping_editor_should_use_tunnel(plan, effective_topology):
+        return {}
+    tunnel = _ensure_vm_single_mapping_editor_tunnel(plan, effective_topology)
+    status = str(tunnel.get("status") or "").strip().lower()
+    if status not in {"ready", "started"}:
+        reason = tunnel.get("reason") or tunnel.get("error") or "tunnel unavailable"
+        command = tunnel.get("command")
+        suffix = f" Command: {command}" if command else ""
+        print(
+            "Warning: vm-single mapping editor tunnel could not be prepared. "
+            f"Semantic Virtualization editor UI tests may fail. {reason}.{suffix}"
+        )
+        return {}
+    url = str(tunnel.get("url") or "").rstrip("/")
+    if not url:
+        return {}
+    print(f"vm-single mapping editor tunnel ready: {url}")
+    return {
+        "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_BASE_URL": url,
+        "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL": url,
+        "MAPPING_EDITOR_BASE_URL": url,
+    }
 
 
 def _ensure_vm_single_k3s_tunnel(plan, topology_config):
@@ -18719,7 +19264,17 @@ def _run_legacy_menu_action(action_name, current_adapter="inesdata", topology="l
 
     migrated_action = migrated_actions.get(action_name)
     if callable(migrated_action):
-        return migrated_action()
+        normalized_topology = normalize_topology(topology or LOCAL_TOPOLOGY)
+        runtime_env = {
+            "PIONERA_TOPOLOGY": normalized_topology,
+            "INESDATA_TOPOLOGY": normalized_topology,
+            "UI_TOPOLOGY": normalized_topology,
+        }
+        if current_adapter:
+            runtime_env["PIONERA_ADAPTER"] = current_adapter
+            runtime_env["UI_ADAPTER"] = current_adapter
+        with _temporary_environment(runtime_env):
+            return migrated_action()
 
     raise ValueError(f"Unknown legacy menu action: {action_name}")
 
@@ -18988,19 +19543,19 @@ def run_interactive_menu(
                     continue
 
                 if choice == "I":
-                    _run_legacy_menu_action("inesdata_ui")
+                    _run_legacy_menu_action("inesdata_ui", current_adapter=current_adapter, topology=topology)
                     continue
 
                 if choice == "O":
-                    _run_legacy_menu_action("ontology_hub_ui")
+                    _run_legacy_menu_action("ontology_hub_ui", current_adapter=current_adapter, topology=topology)
                     continue
 
                 if choice == "A":
-                    _run_legacy_menu_action("ai_model_hub_ui")
+                    _run_legacy_menu_action("ai_model_hub_ui", current_adapter=current_adapter, topology=topology)
                     continue
 
                 if choice == "V":
-                    _run_legacy_menu_action("semantic_virtualization_ui")
+                    _run_legacy_menu_action("semantic_virtualization_ui", current_adapter=current_adapter, topology=topology)
                     continue
 
                 if choice in {"Y", "Z"}:

@@ -337,7 +337,7 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
             return configured
 
         command = ["kubectl"]
-        kubeconfig = str(os.environ.get("KUBECONFIG") or (deployer_config or {}).get("K3S_KUBECONFIG") or "").strip()
+        kubeconfig = str((deployer_config or {}).get("K3S_KUBECONFIG") or os.environ.get("KUBECONFIG") or "").strip()
         if kubeconfig:
             command.extend(["--kubeconfig", os.path.expanduser(kubeconfig)])
         command.extend(["get", "svc", "ingress-nginx-controller", "-n", "ingress-nginx", "-o", "json"])

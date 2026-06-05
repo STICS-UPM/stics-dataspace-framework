@@ -6,6 +6,7 @@ import socket
 import tempfile
 import time
 import ipaddress
+from contextlib import contextmanager
 
 import yaml
 
@@ -111,9 +112,38 @@ class INESDataComponentsAdapter:
         )
         if explicit:
             return str(explicit).strip().rstrip("/")
+        if self._is_vm_single_topology():
+            return self._ontology_hub_internal_service_url(deployer_config).rstrip("/")
         if self._is_vm_distributed_topology():
             return self._to_http_url(public_url).rstrip("/")
         return (public_url or "").strip().rstrip("/")
+
+    def _ontology_hub_internal_service_url(self, deployer_config: dict) -> str:
+        config = dict(deployer_config or {})
+        service_name = str(
+            config.get("ONTOLOGY_HUB_SELF_HOST_SERVICE_NAME")
+            or config.get("ONTOLOGY_HUB_SERVICE_NAME")
+            or f"{self._dataspace_name()}-ontology-hub"
+        ).strip()
+        namespace = str(
+            config.get("ONTOLOGY_HUB_SELF_HOST_NAMESPACE")
+            or config.get("ONTOLOGY_HUB_SERVICE_NAMESPACE")
+            or config.get("COMPONENTS_NAMESPACE")
+            or "components"
+        ).strip()
+        port = str(
+            config.get("ONTOLOGY_HUB_SELF_HOST_SERVICE_PORT")
+            or config.get("ONTOLOGY_HUB_SELF_HOST_PORT")
+            or config.get("ONTOLOGY_HUB_SERVICE_PORT")
+            or "3333"
+        ).strip()
+        if not service_name:
+            service_name = f"{self._dataspace_name()}-ontology-hub"
+        if not namespace:
+            namespace = "components"
+        if not port:
+            port = "3333"
+        return f"http://{service_name}.{namespace}:{port}"
 
     def _component_chart_roots(self):
         return shared_artifact_roots("components")
@@ -355,6 +385,17 @@ class INESDataComponentsAdapter:
         if raw in ("0", "false", "no", "n", "off"):
             return False
         return default
+
+    @staticmethod
+    def _parse_positive_int(value) -> int | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
 
     @staticmethod
     def _strip_url_scheme(host_or_url: str) -> str:
@@ -626,6 +667,56 @@ class INESDataComponentsAdapter:
                 config = {}
         topology = str(getattr(self.config_adapter, "topology", "local") or "local").strip().lower() or "local"
         return build_cluster_runtime(config, topology=topology)
+
+    def _component_kubeconfig(self, deployer_config: dict | None = None) -> str:
+        runtime = self._cluster_runtime(deployer_config)
+        if str(runtime.get("cluster_type") or "").strip().lower() != "k3s":
+            return ""
+
+        if self._is_vm_distributed_topology():
+            kubeconfig = str(
+                runtime.get("k3s_kubeconfig_components")
+                or runtime.get("k3s_kubeconfig_common")
+                or runtime.get("k3s_kubeconfig")
+                or ""
+            ).strip()
+        elif self._is_vm_single_topology():
+            config = dict(deployer_config or {})
+            kubeconfig = str(
+                config.get("VM_SINGLE_LOCAL_KUBECONFIG")
+                or runtime.get("k3s_kubeconfig")
+                or runtime.get("k3s_kubeconfig_common")
+                or config.get("K3S_KUBECONFIG")
+                or ""
+            ).strip()
+        else:
+            kubeconfig = ""
+
+        return os.path.abspath(os.path.expanduser(kubeconfig)) if kubeconfig else ""
+
+    @contextmanager
+    def _temporary_component_kubeconfig(self, deployer_config: dict | None = None):
+        kubeconfig = self._component_kubeconfig(deployer_config)
+        if not kubeconfig:
+            yield
+            return
+
+        previous_kubeconfig = os.environ.get("KUBECONFIG")
+        previous_role = os.environ.get("PIONERA_KUBECONFIG_ROLE")
+        os.environ["KUBECONFIG"] = kubeconfig
+        os.environ["PIONERA_KUBECONFIG_ROLE"] = "components"
+        try:
+            yield
+        finally:
+            if previous_kubeconfig is None:
+                os.environ.pop("KUBECONFIG", None)
+            else:
+                os.environ["KUBECONFIG"] = previous_kubeconfig
+
+            if previous_role is None:
+                os.environ.pop("PIONERA_KUBECONFIG_ROLE", None)
+            else:
+                os.environ["PIONERA_KUBECONFIG_ROLE"] = previous_role
 
     def _resolve_ontology_hub_source_dir(self, deployer_config: dict) -> str:
         sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")
@@ -933,6 +1024,28 @@ class INESDataComponentsAdapter:
             return f"docker.io/{normalized}"
         return f"docker.io/library/{normalized}"
 
+    @staticmethod
+    def _dedupe_image_refs(image_refs) -> list[str]:
+        deduped = []
+        seen = set()
+        for raw_ref in list(image_refs or []):
+            image_ref = str(raw_ref or "").strip()
+            if not image_ref or image_ref in seen:
+                continue
+            seen.add(image_ref)
+            deduped.append(image_ref)
+        return deduped
+
+    def _k3s_image_save_refs(self, image_ref: str) -> list[str]:
+        image_ref = str(image_ref or "").strip()
+        if not image_ref:
+            return []
+        save_refs = [image_ref]
+        cri_alias = self._k3s_cri_image_ref_alias(image_ref)
+        if cri_alias and cri_alias != image_ref:
+            save_refs.append(cri_alias)
+        return save_refs
+
     def _normalized_topology(self) -> str:
         return normalize_topology(getattr(self.config_adapter, "topology", None) or "local")
 
@@ -1029,6 +1142,17 @@ class INESDataComponentsAdapter:
             str(config.get("CLUSTER_TYPE") or runtime.get("cluster_type") or "minikube").strip().lower()
             or "minikube"
         )
+
+    def _assume_level5_local_images_available(self, deployer_config: dict | None = None) -> bool:
+        config = dict(deployer_config or {})
+        flag = config.get("LEVEL5_ASSUME_LOCAL_IMAGES_AVAILABLE")
+        if flag is None:
+            flag = config.get("LEVEL6_ASSUME_LOCAL_IMAGES_AVAILABLE")
+        if flag is None:
+            flag = os.environ.get("LEVEL5_ASSUME_LOCAL_IMAGES_AVAILABLE")
+        if flag is None:
+            flag = os.environ.get("LEVEL6_ASSUME_LOCAL_IMAGES_AVAILABLE")
+        return self._parse_bool(flag, default=False)
 
     def _vm_single_remote_image_import_target(self, deployer_config: dict | None = None):
         config = dict(deployer_config or {})
@@ -1179,7 +1303,7 @@ class INESDataComponentsAdapter:
                 f"Image '{image_ref}' must be available in the remote k3s runtime. "
                 "Publish the component image to a registry reachable by the cluster, "
                 "or set VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT=true with VM_COMPONENTS_SSH_HOST "
-                "(or VM_COMMON_SSH_HOST) so the framework can import it on pionera40. "
+                "(or VM_COMMON_SSH_HOST) so the framework can import it on the components VM. "
                 "A local 'sudo k3s ctr images import' would target the WSL host, not the remote cluster."
             ),
         )
@@ -1192,27 +1316,40 @@ class INESDataComponentsAdapter:
             self._fail("Failed to load image into minikube", root_cause=image_ref)
 
     def _load_image_into_k3s(self, image_ref: str, deployer_config: dict | None = None):
-        image_q = shlex.quote(image_ref)
+        self._load_images_into_k3s([image_ref], deployer_config)
+
+    def _load_images_into_k3s(self, image_refs, deployer_config: dict | None = None):
+        image_refs = self._dedupe_image_refs(image_refs)
+        if not image_refs:
+            return
+
         docker_q = shlex.quote(self._docker_cmd())
-        cri_alias = self._k3s_cri_image_ref_alias(image_ref)
-        save_refs = [image_ref]
-        if cri_alias and cri_alias != image_ref:
+        save_refs = []
+        for image_ref in image_refs:
+            image_q = shlex.quote(image_ref)
+            cri_alias = self._k3s_cri_image_ref_alias(image_ref)
+            if not cri_alias or cri_alias == image_ref:
+                save_refs.append(image_ref)
+                continue
             cri_alias_q = shlex.quote(cri_alias)
             if self.run(f"{docker_q} tag {image_q} {cri_alias_q}", check=False) is None:
                 self._fail("Failed to tag local image with k3s CRI alias", root_cause=f"{image_ref} -> {cri_alias}")
-            save_refs.append(cri_alias)
+            save_refs.extend(self._k3s_image_save_refs(image_ref))
+
+        save_refs = self._dedupe_image_refs(save_refs)
         save_refs_q = " ".join(shlex.quote(ref) for ref in save_refs)
-        fd, archive_path = tempfile.mkstemp(prefix="pionera-component-image-", suffix=".tar")
+        fd, archive_path = tempfile.mkstemp(prefix="pionera-component-images-", suffix=".tar")
         os.close(fd)
         archive_q = shlex.quote(archive_path)
+        refs_label = ", ".join(image_refs)
         try:
             remote_target = self._remote_k3s_image_import_target(deployer_config)
             if remote_target:
-                print(f"\nLoading image into remote k3s containerd ({remote_target.host}): {image_ref}")
+                print(f"\nLoading image(s) into remote k3s containerd ({remote_target.host}): {refs_label}")
             else:
-                print(f"\nLoading image into k3s containerd: {image_ref}")
+                print(f"\nLoading image(s) into k3s containerd: {refs_label}")
             if self.run(f"{docker_q} save {save_refs_q} -o {archive_q}", check=False) is None:
-                self._fail("Failed to export local image for k3s", root_cause=image_ref)
+                self._fail("Failed to export local image(s) for k3s", root_cause=refs_label)
             if remote_target:
                 remote_archive_path = remote_target.remote_archive_path(archive_path)
                 scp_command = shell_join(remote_target.scp_upload_args(archive_path, remote_archive_path))
@@ -1231,10 +1368,10 @@ class INESDataComponentsAdapter:
                     remote_target.ssh_import_args(remote_archive_path, interactive=interactive_import)
                 )
                 if self.run(ssh_command, check=False) is None:
-                    self._fail("Failed to import image into remote k3s containerd", root_cause=image_ref)
+                    self._fail("Failed to import image(s) into remote k3s containerd", root_cause=refs_label)
                 return
             if self.run(f"sudo k3s ctr -n k8s.io images import {archive_q}", check=False) is None:
-                self._fail("Failed to import image into k3s containerd", root_cause=image_ref)
+                self._fail("Failed to import image(s) into k3s containerd", root_cause=refs_label)
         finally:
             try:
                 os.unlink(archive_path)
@@ -1253,6 +1390,24 @@ class INESDataComponentsAdapter:
             self._load_image_into_k3s(image_ref, deployer_config)
             return
         self._load_image_into_minikube(profile, image_ref)
+
+    def _load_images_into_cluster_runtime(
+        self,
+        cluster_runtime: str,
+        profile: str,
+        image_refs,
+        deployer_config: dict | None = None,
+    ):
+        image_refs = self._dedupe_image_refs(image_refs)
+        if not image_refs:
+            return
+        if cluster_runtime == "k3s":
+            for image_ref in image_refs:
+                self._ensure_k3s_local_image_import_supported(image_ref, deployer_config)
+            self._load_images_into_k3s(image_refs, deployer_config)
+            return
+        for image_ref in image_refs:
+            self._load_image_into_minikube(profile, image_ref)
 
     def _build_ontology_hub_image_on_host(self, image_ref: str, deployer_config: dict):
         ontology_hub_dir = self._resolve_ontology_hub_source_dir(deployer_config)
@@ -1413,6 +1568,10 @@ class INESDataComponentsAdapter:
         auto_build_flag = deployer_config.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
         if auto_build_flag is None:
             auto_build_flag = deployer_config.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
+        if auto_build_flag is None:
+            auto_build_flag = os.environ.get("LEVEL5_AUTO_BUILD_LOCAL_IMAGES")
+        if auto_build_flag is None:
+            auto_build_flag = os.environ.get("LEVEL6_AUTO_BUILD_LOCAL_IMAGES")
         auto_build_enabled = self._parse_bool(auto_build_flag, default=True)
 
         if normalized_component == "ontology-hub":
@@ -1427,6 +1586,20 @@ class INESDataComponentsAdapter:
                     root_cause=f"Configured image: {image_ref}",
                 )
             if not auto_build_enabled:
+                if (
+                    cluster_type == "k3s"
+                    and self._normalized_topology() in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}
+                    and not self._assume_level5_local_images_available(deployer_config)
+                ):
+                    self._fail(
+                        f"Local image auto-build disabled for '{normalized_component}'",
+                        root_cause=(
+                            f"Image '{image_ref}' uses the local tag and must already exist in the k3s runtime. "
+                            "Enable LEVEL5_AUTO_BUILD_LOCAL_IMAGES, configure a registry image, or set "
+                            "LEVEL5_ASSUME_LOCAL_IMAGES_AVAILABLE=true only when the image has already been "
+                            "imported into the target k3s cluster."
+                        ),
+                    )
                 print(
                     f"Local image auto-build disabled for '{normalized_component}'. "
                     f"Using existing cluster image '{image_ref}'."
@@ -1444,6 +1617,22 @@ class INESDataComponentsAdapter:
             return True
 
         if not auto_build_enabled:
+            if (
+                image_ref
+                and image_ref.lower().endswith(":local")
+                and cluster_type == "k3s"
+                and self._normalized_topology() in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}
+                and not self._assume_level5_local_images_available(deployer_config)
+            ):
+                self._fail(
+                    f"Local image auto-build disabled for '{normalized_component}'",
+                    root_cause=(
+                        f"Image '{image_ref}' uses the local tag and must already exist in the k3s runtime. "
+                        "Enable LEVEL5_AUTO_BUILD_LOCAL_IMAGES, configure a registry image, or set "
+                        "LEVEL5_ASSUME_LOCAL_IMAGES_AVAILABLE=true only when the image has already been "
+                        "imported into the target k3s cluster."
+                    ),
+                )
             return False
 
         if not image_ref:
@@ -1468,8 +1657,8 @@ class INESDataComponentsAdapter:
             return True
 
         if normalized_component == "semantic-virtualization":
+            image_refs_to_load = [image_ref]
             self._build_semantic_virtualization_image_on_host(image_ref, deployer_config)
-            self._load_image_into_cluster_runtime(cluster_type, profile, image_ref, deployer_config)
             if self._semantic_virtualization_mapping_editor_enabled(deployer_config):
                 editor_image_ref = self._extract_mapping_editor_image_ref(values)
                 if not editor_image_ref:
@@ -1481,7 +1670,13 @@ class INESDataComponentsAdapter:
                     if cluster_type == "k3s":
                         self._ensure_k3s_local_image_import_supported(editor_image_ref, deployer_config)
                     self._build_mapping_editor_image_on_host(editor_image_ref, deployer_config)
-                    self._load_image_into_cluster_runtime(cluster_type, profile, editor_image_ref, deployer_config)
+                    image_refs_to_load.append(editor_image_ref)
+            self._load_images_into_cluster_runtime(
+                cluster_type,
+                profile,
+                image_refs_to_load,
+                deployer_config,
+            )
             return True
 
         if cluster_type == "minikube" and self._minikube_has_image(profile, image_ref):
@@ -1594,6 +1789,51 @@ class INESDataComponentsAdapter:
             return ""
         return self._to_http_url(f"{resolved_connector_id}.{resolved_domain}")
 
+    @staticmethod
+    def _connector_short_name(connector_id: str, dataspace: str) -> str:
+        short_name = str(connector_id or "").strip()
+        if short_name.startswith("conn-"):
+            short_name = short_name[len("conn-"):]
+        suffix = f"-{dataspace}"
+        if dataspace and short_name.endswith(suffix):
+            short_name = short_name[: -len(suffix)]
+        return short_name
+
+    @staticmethod
+    def _vm_single_connector_public_path_prefix(deployer_config: dict) -> str:
+        prefix = str((deployer_config or {}).get("VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX") or "/c").strip()
+        if not prefix:
+            prefix = "/c"
+        if not prefix.startswith("/"):
+            prefix = f"/{prefix}"
+        return prefix.rstrip("/")
+
+    def _vm_single_connector_public_base_url(self, connector_id: str, deployer_config: dict) -> str:
+        config = dict(deployer_config or {})
+        topology = normalize_topology(
+            config.get("TOPOLOGY")
+            or config.get("PIONERA_TOPOLOGY")
+            or config.get("INESDATA_TOPOLOGY")
+            or self._normalized_topology()
+        )
+        if topology != VM_SINGLE_TOPOLOGY:
+            return ""
+
+        common_base = str(
+            config.get("VM_SINGLE_PUBLIC_URL")
+            or config.get("VM_SINGLE_HTTP_URL")
+            or config.get("VM_COMMON_PUBLIC_URL")
+            or config.get("VM_COMMON_HTTP_URL")
+            or ""
+        ).strip().rstrip("/")
+        if not common_base:
+            return ""
+
+        short_name = self._connector_short_name(connector_id, self._dataspace_name())
+        if not short_name:
+            return ""
+        return f"{common_base}{self._vm_single_connector_public_path_prefix(config)}/{short_name}"
+
     def _connector_external_base_url(self, connector_id: str, deployer_config: dict, *, role: str = "") -> str:
         config = dict(deployer_config or {})
         normalized_role = str(role or "").strip().lower()
@@ -1605,6 +1845,10 @@ class INESDataComponentsAdapter:
             explicit = str(config.get(role_key) or "").strip()
             if explicit:
                 return explicit.rstrip("/")
+
+        vm_single_base = self._vm_single_connector_public_base_url(connector_id, config)
+        if vm_single_base:
+            return vm_single_base.rstrip("/")
 
         return self._connector_public_base_url(connector_id, config)
 
@@ -1700,6 +1944,56 @@ class INESDataComponentsAdapter:
                     deployer_config.get("ONTOLOGY_HUB_SAMPLE_DATA_ENABLED"),
                     default=True,
                 )
+            persistence_enabled = deployer_config.get("ONTOLOGY_HUB_VERSIONS_PERSISTENCE_ENABLED")
+            if persistence_enabled is None:
+                persistence_enabled = deployer_config.get("COMPONENTS_VERSIONS_PERSISTENCE_ENABLED")
+            if persistence_enabled is None and (self._is_vm_single_topology() or self._is_vm_distributed_topology()):
+                persistence_enabled = True
+            if persistence_enabled is not None:
+                versions = overrides.setdefault("versions", {})
+                persistence = versions.setdefault("persistence", {})
+                persistence["enabled"] = self._parse_bool(persistence_enabled, default=True)
+                persistence_size = str(
+                    deployer_config.get("ONTOLOGY_HUB_VERSIONS_PERSISTENCE_SIZE")
+                    or deployer_config.get("COMPONENTS_VERSIONS_PERSISTENCE_SIZE")
+                    or ""
+                ).strip()
+                if persistence_size:
+                    persistence["size"] = persistence_size
+
+            disk_threshold_enabled = deployer_config.get("ONTOLOGY_HUB_ELASTICSEARCH_DISK_THRESHOLD_ENABLED")
+            if disk_threshold_enabled is None:
+                disk_threshold_enabled = deployer_config.get("COMPONENTS_ELASTICSEARCH_DISK_THRESHOLD_ENABLED")
+            if disk_threshold_enabled is None and self._is_vm_single_topology():
+                runtime = self._cluster_runtime(deployer_config)
+                cluster_type = str(runtime.get("cluster_type") or "minikube").strip().lower() or "minikube"
+                if cluster_type == "k3s":
+                    disk_threshold_enabled = False
+            if disk_threshold_enabled is not None:
+                disk_threshold = overrides.setdefault("elasticsearch", {}).setdefault("diskThreshold", {})
+                disk_threshold["enabled"] = self._parse_bool(disk_threshold_enabled, default=True)
+                watermark_keys = {
+                    "low": (
+                        "ONTOLOGY_HUB_ELASTICSEARCH_DISK_WATERMARK_LOW",
+                        "COMPONENTS_ELASTICSEARCH_DISK_WATERMARK_LOW",
+                    ),
+                    "high": (
+                        "ONTOLOGY_HUB_ELASTICSEARCH_DISK_WATERMARK_HIGH",
+                        "COMPONENTS_ELASTICSEARCH_DISK_WATERMARK_HIGH",
+                    ),
+                    "floodStage": (
+                        "ONTOLOGY_HUB_ELASTICSEARCH_DISK_WATERMARK_FLOOD_STAGE",
+                        "COMPONENTS_ELASTICSEARCH_DISK_WATERMARK_FLOOD_STAGE",
+                    ),
+                }
+                for target_key, source_keys in watermark_keys.items():
+                    value = ""
+                    for source_key in source_keys:
+                        value = str(deployer_config.get(source_key) or "").strip()
+                        if value:
+                            break
+                    if value:
+                        disk_threshold[target_key] = value
 
         if normalized == "ai-model-hub":
             host = self._configured_component_host(normalized, deployer_config)
@@ -1723,7 +2017,23 @@ class INESDataComponentsAdapter:
             if self._semantic_virtualization_mapping_editor_enabled(deployer_config):
                 editor_host = self._semantic_virtualization_mapping_editor_host(deployer_config)
                 mapping_editor = {"enabled": True}
-                if editor_host:
+                service_type = self._semantic_virtualization_mapping_editor_service_type(deployer_config)
+                service_node_port = self._semantic_virtualization_mapping_editor_service_node_port(deployer_config)
+                if service_type or service_node_port:
+                    mapping_editor["service"] = {}
+                    if service_type:
+                        mapping_editor["service"]["type"] = service_type
+                    if service_node_port:
+                        mapping_editor["service"]["nodePort"] = service_node_port
+
+                host_port = self._semantic_virtualization_mapping_editor_host_port(deployer_config)
+                if host_port:
+                    mapping_editor["hostPort"] = {
+                        "enabled": True,
+                        "port": host_port,
+                    }
+
+                if editor_host and self._semantic_virtualization_mapping_editor_uses_ingress(deployer_config):
                     mapping_editor["ingress"] = self._component_ingress_override(
                         "semantic-virtualization-editor",
                         editor_host,
@@ -1761,8 +2071,88 @@ class INESDataComponentsAdapter:
             return f"semantic-virtualization-editor-{ds_name}.{ds_domain}"
         return ""
 
+    def _semantic_virtualization_mapping_editor_host_port(self, deployer_config: dict) -> int | None:
+        config = dict(deployer_config or {})
+        return self._parse_positive_int(
+            config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT")
+            or config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_PORT")
+            or config.get("MAPPING_EDITOR_HOST_PORT")
+            or config.get("MAPPING_EDITOR_PUBLIC_PORT")
+        )
+
+    def _semantic_virtualization_mapping_editor_service_node_port(self, deployer_config: dict) -> int | None:
+        config = dict(deployer_config or {})
+        return self._parse_positive_int(
+            config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_NODE_PORT")
+            or config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_NODEPORT")
+            or config.get("MAPPING_EDITOR_NODE_PORT")
+            or config.get("MAPPING_EDITOR_NODEPORT")
+        )
+
+    def _semantic_virtualization_mapping_editor_service_type(self, deployer_config: dict) -> str:
+        config = dict(deployer_config or {})
+        service_type = str(
+            config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SERVICE_TYPE")
+            or config.get("MAPPING_EDITOR_SERVICE_TYPE")
+            or ""
+        ).strip()
+        if service_type:
+            return service_type
+        if self._semantic_virtualization_mapping_editor_service_node_port(config):
+            return "NodePort"
+        return ""
+
+    def _semantic_virtualization_mapping_editor_exposure_mode(self, deployer_config: dict) -> str:
+        config = dict(deployer_config or {})
+        mode = str(
+            config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE")
+            or config.get("MAPPING_EDITOR_EXPOSURE_MODE")
+            or ""
+        ).strip().lower()
+        if mode:
+            return mode.replace("_", "-")
+        if self._semantic_virtualization_mapping_editor_host_port(config):
+            return "host-port"
+        return "ingress"
+
+    def _semantic_virtualization_mapping_editor_direct_public_url(self, deployer_config: dict) -> str:
+        config = dict(deployer_config or {})
+        host_port = self._semantic_virtualization_mapping_editor_host_port(config)
+        if not host_port:
+            return ""
+        host = str(
+            config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_HOST")
+            or config.get("MAPPING_EDITOR_PUBLIC_HOST")
+            or config.get("VM_COMPONENTS_IP")
+            or config.get("VM_SINGLE_IP")
+            or config.get("VM_EXTERNAL_IP")
+            or config.get("INGRESS_EXTERNAL_IP")
+            or ""
+        ).strip()
+        if not host:
+            return ""
+        return f"http://{host}:{host_port}"
+
     def _semantic_virtualization_mapping_editor_public_url(self, deployer_config: dict) -> str:
-        return self._configured_component_public_url("semantic-virtualization-editor", dict(deployer_config or {}))
+        config = dict(deployer_config or {})
+        direct_url = self._semantic_virtualization_mapping_editor_direct_public_url(config)
+        configured_url = self._configured_component_public_url("semantic-virtualization-editor", config)
+        explicit_url = str(
+            config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL")
+            or config.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL")
+            or config.get("MAPPING_EDITOR_PUBLIC_URL")
+            or config.get("MAPPING_EDITOR_URL")
+            or ""
+        ).strip()
+        return (explicit_url or direct_url or configured_url).rstrip("/")
+
+    def _semantic_virtualization_mapping_editor_uses_ingress(self, deployer_config: dict) -> bool:
+        return self._semantic_virtualization_mapping_editor_exposure_mode(deployer_config) not in {
+            "direct",
+            "host-port",
+            "hostport",
+            "vm-port",
+        }
 
     def _additional_component_public_hosts(self, normalized_component: str, deployer_config: dict) -> list[str]:
         normalized = self._normalize_component_key(normalized_component)
@@ -2040,14 +2430,21 @@ class INESDataComponentsAdapter:
                 f"Skipping local PostgreSQL/Vault/MinIO port-forward checks for topology '{topology}'."
             )
 
-        if not self.infrastructure.ensure_vault_unsealed():
-            self._fail("Vault is not initialized or unsealed")
-
-        reconcile_vault_state = getattr(self.infrastructure, "reconcile_vault_state_for_local_runtime", None)
-        if callable(reconcile_vault_state) and not reconcile_vault_state():
-            self._fail("Vault token could not be synchronized with the shared local runtime")
-
         deployer_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        with self._temporary_component_kubeconfig(deployer_config):
+            if not self.infrastructure.ensure_vault_unsealed():
+                self._fail("Vault is not initialized or unsealed")
+
+            reconcile_vault_state = getattr(self.infrastructure, "reconcile_vault_state_for_local_runtime", None)
+            if callable(reconcile_vault_state) and not reconcile_vault_state():
+                if topology == "local":
+                    self._fail("Vault token could not be synchronized with the shared local runtime")
+                print(
+                    "Warning: Vault token synchronization with the shared local runtime failed. "
+                    f"Continuing Level 5 for topology '{topology}' because component chart reconciliation "
+                    "does not require the local Vault token."
+                )
+
         ds_name = str(ds_name or self._dataspace_name() or "").strip()
         namespace = self._resolve_components_namespace(
             ds_name=ds_name,
@@ -2227,139 +2624,157 @@ class INESDataComponentsAdapter:
                 }
             )
 
-        self._cleanup_legacy_component_releases(
-            components,
-            active_namespace=namespace,
-            ds_name=ds_name,
-            deployer_config=deployer_config,
-        )
-        self._cleanup_components(components, namespace)
-        self._cleanup_vm_distributed_legacy_public_path_ingresses(
-            deployment_items,
-            namespace=namespace,
-            deployer_config=deployer_config,
-        )
-
         deployed = []
-        for item in deployment_items:
-            component = item["component"]
-            normalized = item["normalized"]
-            chart_dir = item["chart_dir"]
-            values_file = item["values_file"]
-            release_name = item["release_name"]
-            override_plan = item["override_plan"]
-            current_deployment_plan = item["deployment_plan"]
-
-            if callable(runtime_execution_preparer):
-                execution = runtime_execution_preparer(
-                    normalized,
-                    deployment_plan=current_deployment_plan,
-                    namespace=namespace,
-                    deployer_config=deployer_config,
-                )
-            else:
-                built_local_image = False
-                try:
-                    built_local_image = self._maybe_prepare_level6_local_image(normalized, values_file, deployer_config)
-                except Exception as exc:
-                    self._fail(
-                        f"Error preparing local images for component '{normalized}'",
-                        root_cause=str(exc),
+        with self._temporary_component_kubeconfig(deployer_config):
+            prepared_executions = {}
+            for item in deployment_items:
+                normalized = item["normalized"]
+                release_name = item["release_name"]
+                values_file = item["values_file"]
+                current_deployment_plan = item["deployment_plan"]
+                if callable(runtime_execution_preparer):
+                    execution = runtime_execution_preparer(
+                        normalized,
+                        deployment_plan=current_deployment_plan,
+                        namespace=namespace,
+                        deployer_config=deployer_config,
                     )
-                execution = {
-                    "component": normalized,
-                    "release_name": release_name,
-                    "namespace": namespace,
-                    "deployer_config": deployer_config,
-                    "built_local_image": built_local_image,
-                }
-            built_local_image = bool(execution.get("built_local_image"))
-
-            if callable(shared_runtime_deployer):
-                shared_runtime_result = shared_runtime_deployer(
-                    normalized,
-                    deployment_plan=current_deployment_plan,
-                    namespace=namespace,
-                    deployer_config=deployer_config,
-                    prepared_execution=execution,
-                )
-                if shared_runtime_result is not None:
-                    deployed.append(normalized)
-                    continue
-
-            if callable(component_release_deployer):
-                component_release_deployer(
-                    normalized,
-                    deployment_plan=current_deployment_plan,
-                    namespace=namespace,
-                    deployer_config=deployer_config,
-                )
-            else:
-                override_values_file = None
-                print(f"\nDeploying component: {normalized}")
-                print(f"  Chart: {chart_dir}")
-                print(f"  Values: {os.path.basename(values_file)}")
-                print(f"  Release: {release_name}")
-                print(f"  Namespace: {namespace}")
-                try:
-                    if override_plan.get("has_override"):
-                        override_values_file = self._write_component_values_override_file(
-                            chart_dir,
+                else:
+                    built_local_image = False
+                    try:
+                        built_local_image = self._maybe_prepare_level6_local_image(
                             normalized,
+                            values_file,
                             deployer_config,
                         )
-                    else:
-                        override_values_file = None
-                    values_files = [os.path.basename(values_file)]
-                    if override_values_file:
-                        values_files.append(override_values_file)
-                        print(f"  Override values: {os.path.basename(override_values_file)}")
+                    except Exception as exc:
+                        self._fail(
+                            f"Error preparing local images for component '{normalized}'",
+                            root_cause=str(exc),
+                        )
+                    execution = {
+                        "component": normalized,
+                        "release_name": release_name,
+                        "namespace": namespace,
+                        "deployer_config": deployer_config,
+                        "built_local_image": built_local_image,
+                    }
+                prepared_executions[normalized] = execution
 
-                    if not self.infrastructure.deploy_helm_release(
-                        release_name,
-                        namespace,
-                        values_files,
-                        cwd=chart_dir,
-                    ):
-                        self._fail(f"Error deploying component '{normalized}'")
-                finally:
-                    if override_values_file and os.path.exists(override_values_file):
-                        os.unlink(override_values_file)
+            self._cleanup_legacy_component_releases(
+                components,
+                active_namespace=namespace,
+                ds_name=ds_name,
+                deployer_config=deployer_config,
+            )
+            self._cleanup_components(components, namespace)
+            self._cleanup_vm_distributed_legacy_public_path_ingresses(
+                deployment_items,
+                namespace=namespace,
+                deployer_config=deployer_config,
+            )
 
-            if callable(runtime_finalizer):
-                runtime_finalizer(
-                    normalized,
-                    release_name=release_name,
-                    namespace=namespace,
-                    built_local_image=built_local_image,
-                    deployer_config=deployer_config,
-                )
-            else:
-                if built_local_image:
-                    print(f"Restarting deployment/{release_name} to pick up local image...\n")
-                    self.run(
-                        f"kubectl rollout restart deployment/{release_name} -n {namespace}",
-                        check=False,
+            for item in deployment_items:
+                component = item["component"]
+                normalized = item["normalized"]
+                chart_dir = item["chart_dir"]
+                values_file = item["values_file"]
+                release_name = item["release_name"]
+                override_plan = item["override_plan"]
+                current_deployment_plan = item["deployment_plan"]
+                execution = prepared_executions.get(normalized) or {}
+                built_local_image = bool(execution.get("built_local_image"))
+
+                if callable(shared_runtime_deployer):
+                    shared_runtime_result = shared_runtime_deployer(
+                        normalized,
+                        deployment_plan=current_deployment_plan,
+                        namespace=namespace,
+                        deployer_config=deployer_config,
+                        prepared_execution=execution,
                     )
+                    if shared_runtime_result is not None:
+                        deployed.append(normalized)
+                        continue
 
-                    if normalized == "ontology-hub":
-                        timeout_seconds = 1800
+                if callable(component_release_deployer):
+                    component_release_deployer(
+                        normalized,
+                        deployment_plan=current_deployment_plan,
+                        namespace=namespace,
+                        deployer_config=deployer_config,
+                    )
+                else:
+                    override_values_file = None
+                    print(f"\nDeploying component: {normalized}")
+                    print(f"  Chart: {chart_dir}")
+                    print(f"  Values: {os.path.basename(values_file)}")
+                    print(f"  Release: {release_name}")
+                    print(f"  Namespace: {namespace}")
+                    try:
+                        if override_plan.get("has_override"):
+                            override_values_file = self._write_component_values_override_file(
+                                chart_dir,
+                                normalized,
+                                deployer_config,
+                            )
+                        else:
+                            override_values_file = None
+                        values_files = [os.path.basename(values_file)]
+                        if override_values_file:
+                            values_files.append(override_values_file)
+                            print(f"  Override values: {os.path.basename(override_values_file)}")
+
+                        if not self.infrastructure.deploy_helm_release(
+                            release_name,
+                            namespace,
+                            values_files,
+                            cwd=chart_dir,
+                        ):
+                            self._fail(f"Error deploying component '{normalized}'")
+                    finally:
+                        if override_values_file and os.path.exists(override_values_file):
+                            os.unlink(override_values_file)
+
+                if callable(runtime_finalizer):
+                    runtime_finalizer(
+                        normalized,
+                        release_name=release_name,
+                        namespace=namespace,
+                        built_local_image=built_local_image,
+                        deployer_config=deployer_config,
+                    )
+                else:
+                    restart_reason = ""
+                    if built_local_image:
+                        restart_reason = "local image"
+                    elif override_plan.get("has_override"):
+                        restart_reason = "configuration overrides"
+
+                    if restart_reason:
+                        print(f"Restarting deployment/{release_name} to pick up {restart_reason}...\n")
+                        self.run(
+                            f"kubectl rollout restart deployment/{release_name} -n {namespace}",
+                            check=False,
+                        )
+
+                        timeout_seconds = 1800 if normalized == "ontology-hub" else 300
                         if not self._wait_for_component_rollout(
                             namespace,
                             release_name,
-                        timeout_seconds=timeout_seconds,
-                        label=normalized,
+                            timeout_seconds=timeout_seconds,
+                            label=normalized,
                         ):
                             self._fail(f"Timeout waiting for component '{normalized}' deployment rollout")
 
-            if callable(publication_verifier):
-                publication_verifier(
-                    normalized,
-                    deployment_plan=current_deployment_plan,
-                    namespace=namespace,
-                )
+                if callable(publication_verifier):
+                    publication_verifier(
+                        normalized,
+                        deployment_plan=current_deployment_plan,
+                        namespace=namespace,
+                    )
 
-            deployed.append(normalized)
+                deployed.append(normalized)
 
         inferred_hosts = self._add_additional_component_url_hosts(
             inferred_hosts,

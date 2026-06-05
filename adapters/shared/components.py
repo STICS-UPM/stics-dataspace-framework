@@ -315,6 +315,21 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             resolved_config,
         )
 
+        if normalized == "ai-model-hub" and not built_local_image:
+            built_local_image = self._ensure_vm_single_ai_model_hub_image_before_rollout(
+                resolved_release_name,
+                resolved_namespace,
+                resolved_config,
+            )
+
+        if normalized in {"ontology-hub", "ai-model-hub", "semantic-virtualization"}:
+            rendered_images_imported = self._ensure_vm_single_local_images_before_rollout(
+                rollout_targets,
+                resolved_namespace,
+                resolved_config,
+            )
+            built_local_image = bool(built_local_image or rendered_images_imported)
+
         if built_local_image:
             for deployment_name, _label in rollout_targets:
                 print(f"Restarting deployment/{deployment_name} to pick up local image...\n")
@@ -384,6 +399,123 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             result["model_server"] = model_server
         return result
 
+    def _ensure_vm_single_local_images_before_rollout(self, rollout_targets, namespace, deployer_config):
+        if not self._is_vm_single_topology():
+            return False
+
+        resolved_config = dict(deployer_config or {})
+        runtime = self._cluster_runtime(resolved_config)
+        cluster_type = str(runtime.get("cluster_type") or "minikube").strip().lower() or "minikube"
+        if cluster_type != "k3s":
+            return False
+
+        resolved_namespace = str(namespace or "").strip()
+        if not resolved_namespace:
+            return False
+
+        images_to_import = []
+        image_labels = {}
+        for deployment_name, label in list(rollout_targets or []):
+            deployment = str(deployment_name or "").strip()
+            if not deployment:
+                continue
+            deployment_q = shlex.quote(deployment)
+            namespace_q = shlex.quote(resolved_namespace)
+            raw_images = self.run_silent(
+                f"kubectl get deployment {deployment_q} -n {namespace_q} "
+                "-o jsonpath='{range .spec.template.spec.containers[*]}{.image}{\"\\n\"}{end}'"
+            )
+            for raw_image in str(raw_images or "").splitlines():
+                image_ref = raw_image.strip().strip("'").strip('"')
+                if not image_ref or not image_ref.lower().endswith(":local"):
+                    continue
+                if image_ref not in images_to_import:
+                    images_to_import.append(image_ref)
+                    image_labels[image_ref] = str(label or "").strip()
+
+        if not images_to_import:
+            return False
+
+        print(
+            "Ensuring vm-single local component image(s) are available in k3s before rollout: "
+            f"{', '.join(images_to_import)}"
+        )
+        for image_ref in images_to_import:
+            self._ensure_k3s_local_image_import_supported(image_ref, resolved_config)
+            if not self._host_has_image(image_ref):
+                self._build_component_local_image_for_rollout(
+                    image_labels.get(image_ref, ""),
+                    image_ref,
+                    resolved_config,
+                )
+
+        profile = (
+            resolved_config.get("MINIKUBE_PROFILE")
+            or getattr(self.config, "MINIKUBE_PROFILE", "minikube")
+            or "minikube"
+        ).strip() or "minikube"
+        self._load_images_into_cluster_runtime(
+            "k3s",
+            profile,
+            images_to_import,
+            resolved_config,
+        )
+        return True
+
+    def _build_component_local_image_for_rollout(self, component_label, image_ref, deployer_config):
+        label = self._normalize_component_key(component_label)
+        if label == "ontology-hub":
+            self._build_ontology_hub_image_on_host(image_ref, deployer_config)
+            return
+        if label == "ai-model-hub":
+            self._build_ai_model_hub_image_on_host(image_ref, deployer_config)
+            return
+        if label == "semantic-virtualization":
+            self._build_semantic_virtualization_image_on_host(image_ref, deployer_config)
+            return
+        if label == "semantic-virtualization-editor":
+            self._build_mapping_editor_image_on_host(image_ref, deployer_config)
+            return
+
+        self._fail(
+            "No local image build recipe is available for component rollout",
+            root_cause=f"{component_label}: {image_ref}",
+        )
+
+    def _ensure_vm_single_ai_model_hub_image_before_rollout(self, release_name, namespace, deployer_config):
+        if not self._is_vm_single_topology():
+            return False
+
+        resolved_config = dict(deployer_config or {})
+        runtime = self._cluster_runtime(resolved_config)
+        cluster_type = str(runtime.get("cluster_type") or "minikube").strip().lower() or "minikube"
+        if cluster_type != "k3s":
+            return False
+
+        release_q = shlex.quote(str(release_name or "").strip())
+        namespace_q = shlex.quote(str(namespace or "").strip())
+        image_ref = self.run_silent(
+            f"kubectl get deployment {release_q} -n {namespace_q} "
+            "-o jsonpath='{.spec.template.spec.containers[0].image}'"
+        )
+        image_ref = str(image_ref or "").strip().strip("'").strip('"')
+        if not image_ref or not image_ref.lower().endswith(":local"):
+            return False
+
+        print(
+            "Ensuring vm-single AI Model Hub local image is available in k3s before rollout: "
+            f"{image_ref}"
+        )
+        profile = (
+            resolved_config.get("MINIKUBE_PROFILE")
+            or getattr(self.config, "MINIKUBE_PROFILE", "minikube")
+            or "minikube"
+        ).strip() or "minikube"
+        self._ensure_k3s_local_image_import_supported(image_ref, resolved_config)
+        self._build_ai_model_hub_image_on_host(image_ref, resolved_config)
+        self._load_image_into_cluster_runtime(cluster_type, profile, image_ref, resolved_config)
+        return True
+
     def _component_runtime_rollout_targets(self, normalized_component, release_name, deployer_config=None):
         normalized = self._normalize_component_key(normalized_component)
         resolved_release_name = str(release_name or "").strip()
@@ -424,31 +556,8 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
 
     @contextmanager
     def _temporary_component_kubeconfig(self, deployer_config=None):
-        if not self._is_vm_distributed_topology():
+        with super()._temporary_component_kubeconfig(deployer_config):
             yield
-            return
-
-        kubeconfig = self._vm_distributed_role_kubeconfig("components", deployer_config)
-        if not kubeconfig:
-            yield
-            return
-
-        previous_kubeconfig = os.environ.get("KUBECONFIG")
-        previous_role = os.environ.get("PIONERA_KUBECONFIG_ROLE")
-        os.environ["KUBECONFIG"] = kubeconfig
-        os.environ["PIONERA_KUBECONFIG_ROLE"] = "components"
-        try:
-            yield
-        finally:
-            if previous_kubeconfig is None:
-                os.environ.pop("KUBECONFIG", None)
-            else:
-                os.environ["KUBECONFIG"] = previous_kubeconfig
-
-            if previous_role is None:
-                os.environ.pop("PIONERA_KUBECONFIG_ROLE", None)
-            else:
-                os.environ["PIONERA_KUBECONFIG_ROLE"] = previous_role
 
     def _ai_model_hub_model_server_enabled(self, deployer_config):
         config = dict(deployer_config or {})

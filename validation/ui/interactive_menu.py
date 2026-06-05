@@ -5,6 +5,7 @@ import subprocess
 import sys
 import getpass
 import contextlib
+import importlib
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +13,9 @@ import yaml
 
 from adapters.inesdata.adapter import InesdataAdapter
 from adapters.inesdata.config import InesdataConfig
+from deployers.inesdata.access_urls import connector_public_base_url, resolved_public_urls_for_config
+from deployers.shared.lib.components import configured_component_public_url
+from deployers.shared.lib.topology import VM_SINGLE_TOPOLOGY, normalize_topology
 from framework.experiment_storage import ExperimentStorage
 from validation.components.ontology_hub.functional.runtime_preparation import (
     prepare_ontology_hub_for_functional,
@@ -25,13 +29,32 @@ LEVEL6_UI_DATASPACE_SPECS = orchestration_ui.LEVEL6_UI_DATASPACE_SPECS
 LEVEL6_UI_OPS_SPEC = orchestration_ui.LEVEL6_UI_OPS_SPEC
 LEVEL6_UI_OPS_CONFIG = orchestration_ui.LEVEL6_UI_OPS_CONFIG
 
+SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TEST_IDS = frozenset(
+    {
+        "PT5-VS-07",
+        "PT5-VS-08",
+        "SV-UI-04",
+        "SV-UI-05",
+        "SV-UI-06",
+        "SV-UI-07",
+        "SV-UI-08",
+        "SV-UI-10",
+    }
+)
+
 
 def project_root():
     return Path(__file__).resolve().parents[2]
 
 
 def _default_inesdata_adapter():
-    return InesdataAdapter()
+    topology = _normalize_topology(
+        os.environ.get("UI_TOPOLOGY")
+        or os.environ.get("PIONERA_TOPOLOGY")
+        or os.environ.get("INESDATA_TOPOLOGY")
+        or "local"
+    )
+    return InesdataAdapter(topology=topology)
 
 
 def _ui_runtime_env_from_adapter(adapter):
@@ -288,7 +311,7 @@ def _finalize_playwright_run(label, completed_process, json_report_file, html_re
     }
 
 
-def _run_ontology_hub_ui_functional(mode, test_grep=None):
+def _run_ontology_hub_ui_functional(mode, test_grep=None, adapter_name=None, topology=None):
     from validation.components.ontology_hub.runtime_config import resolve_ontology_hub_runtime
 
     experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
@@ -301,7 +324,8 @@ def _run_ontology_hub_ui_functional(mode, test_grep=None):
     os.makedirs(html_report_dir, exist_ok=True)
     os.makedirs(blob_report_dir, exist_ok=True)
 
-    runtime = resolve_ontology_hub_runtime()
+    runtime_env = _ontology_hub_functional_runtime_env(adapter_name=adapter_name, topology=topology)
+    runtime = resolve_ontology_hub_runtime(environ={**os.environ, **runtime_env})
     if not prepare_ontology_hub_for_functional(runtime):
         print("\nOntology Hub Functional preparation failed. Execution aborted.\n")
         return None
@@ -311,6 +335,7 @@ def _run_ontology_hub_ui_functional(mode, test_grep=None):
 
     env = {
         **os.environ,
+        **runtime_env,
         "ONTOLOGY_HUB_BASE_URL": runtime.get("baseUrl", ""),
         "ONTOLOGY_HUB_RUNTIME_FILE": runtime_path,
         "ONTOLOGY_HUB_UI_WORKERS": "1",
@@ -410,13 +435,40 @@ def _run_ontology_hub_ui_integration_with_inesdata(mode, test_grep=None):
 
 def _resolve_ai_model_hub_base_url(adapter=None):
     adapter = adapter or _default_inesdata_adapter()
-    deployer_config = adapter.load_deployer_config() or {}
+    adapter_config = adapter.load_deployer_config() or {}
+    if not isinstance(adapter_config, dict):
+        adapter_config = {}
+    topology = _normalize_topology(
+        os.environ.get("UI_TOPOLOGY")
+        or os.environ.get("PIONERA_TOPOLOGY")
+        or os.environ.get("INESDATA_TOPOLOGY")
+        or adapter_config.get("TOPOLOGY")
+        or adapter_config.get("PIONERA_TOPOLOGY")
+        or adapter_config.get("INESDATA_TOPOLOGY")
+    )
+    deployer_config = {
+        **_infrastructure_runtime_config(topology),
+        **adapter_config,
+        "TOPOLOGY": topology,
+        "PIONERA_TOPOLOGY": topology,
+        "INESDATA_TOPOLOGY": topology,
+    }
+    deployer_config.update(resolved_public_urls_for_config(deployer_config))
     ds_name = (
         os.environ.get("UI_DATASPACE")
         or deployer_config.get("DS_1_NAME")
         or InesdataConfig.dataspace_name()
         or "demo"
     ).strip()
+
+    public_url = configured_component_public_url(
+        "ai-model-hub",
+        deployer_config,
+        dataspace_name=ds_name,
+    )
+    if public_url:
+        return public_url.rstrip("/")
+
     ds_domain = (
         deployer_config.get("DS_DOMAIN_BASE")
         or "dev.ds.dataspaceunit.upm"
@@ -445,9 +497,242 @@ def _resolve_ai_model_hub_base_url(adapter=None):
     return f"http://{host}".rstrip("/")
 
 
-def _resolve_semantic_virtualization_base_url(adapter=None):
+def _normalize_topology(value):
+    topology = str(value or "local").strip().lower().replace("_", "-")
+    return topology if topology in {"local", "vm-single", "vm-distributed"} else "local"
+
+
+def _connector_full_name(connector, dataspace):
+    value = str(connector or "").strip()
+    if not value:
+        return ""
+    if value.startswith("conn-"):
+        return value
+    return f"conn-{value}-{dataspace}"
+
+
+def _first_config_value(config, public_urls, *keys):
+    for key in keys:
+        value = str((config or {}).get(key) or "").strip()
+        if value:
+            return value.rstrip("/")
+        value = str((public_urls or {}).get(key) or "").strip()
+        if value:
+            return value.rstrip("/")
+    return ""
+
+
+def _keycloak_base_without_realm(url, dataspace):
+    normalized = str(url or "").strip().rstrip("/")
+    if not normalized:
+        return ""
+    realm_suffix = f"/realms/{dataspace}"
+    if dataspace and normalized.endswith(realm_suffix):
+        normalized = normalized[: -len(realm_suffix)]
+    if normalized.endswith("/realms/master"):
+        normalized = normalized[: -len("/realms/master")]
+    return normalized.rstrip("/")
+
+
+def _infrastructure_runtime_config(topology):
+    root = project_root()
+    values = {}
+    for config_path in (
+        root / "deployers" / "infrastructure" / "deployer.config",
+        root / "deployers" / "infrastructure" / "topologies" / f"{_normalize_topology(topology)}.config",
+    ):
+        values.update(_parse_key_value_file(config_path))
+    return values
+
+
+def _ontology_hub_functional_runtime_env(adapter=None, adapter_name=None, topology=None):
+    normalized_adapter = str(adapter_name or os.environ.get("PIONERA_ADAPTER") or "inesdata").strip().lower()
+    adapter = adapter or _build_validation_adapter(adapter_name=normalized_adapter, topology=topology)
+    config_loader = getattr(adapter, "load_deployer_config", None)
+    adapter_config = config_loader() if callable(config_loader) else {}
+    if not isinstance(adapter_config, dict):
+        adapter_config = {}
+
+    normalized_topology = _normalize_topology(
+        topology
+        or os.environ.get("UI_TOPOLOGY")
+        or os.environ.get("PIONERA_TOPOLOGY")
+        or os.environ.get("INESDATA_TOPOLOGY")
+        or adapter_config.get("TOPOLOGY")
+        or adapter_config.get("PIONERA_TOPOLOGY")
+        or adapter_config.get("INESDATA_TOPOLOGY")
+    )
+    deployer_config = {
+        **_infrastructure_runtime_config(normalized_topology),
+        **adapter_config,
+        "TOPOLOGY": normalized_topology,
+        "PIONERA_TOPOLOGY": normalized_topology,
+        "INESDATA_TOPOLOGY": normalized_topology,
+    }
+    deployer_config.update(resolved_public_urls_for_config(deployer_config))
+
+    dataspace = str(
+        os.environ.get("UI_DATASPACE")
+        or deployer_config.get("DS_1_NAME")
+        or InesdataConfig.dataspace_name()
+        or "demo"
+    ).strip()
+    ds_domain = str(
+        os.environ.get("UI_DS_DOMAIN")
+        or deployer_config.get("DS_DOMAIN_BASE")
+        or "dev.ds.dataspaceunit.upm"
+    ).strip()
+    explicit_base_url = str(
+        os.environ.get("ONTOLOGY_HUB_BASE_URL")
+        or os.environ.get("ONTOLOGY_HUB_PUBLIC_URL")
+        or deployer_config.get("ONTOLOGY_HUB_PUBLIC_URL")
+        or deployer_config.get("ONTOLOGY_HUB_URL")
+        or ""
+    ).strip()
+    base_url = explicit_base_url or configured_component_public_url(
+        "ontology-hub",
+        deployer_config,
+        dataspace_name=dataspace,
+    )
+    if not base_url and dataspace and ds_domain:
+        base_url = f"http://ontology-hub-{dataspace}.{ds_domain}"
+
+    env = {
+        "PIONERA_ADAPTER": normalized_adapter,
+        "UI_ADAPTER": normalized_adapter,
+        "PIONERA_TOPOLOGY": normalized_topology,
+        "INESDATA_TOPOLOGY": normalized_topology,
+        "UI_TOPOLOGY": normalized_topology,
+        "UI_DATASPACE": dataspace,
+        "UI_DS_DOMAIN": ds_domain,
+        "ONTOLOGY_HUB_BASE_URL": base_url.rstrip("/") if base_url else "",
+        "ONTOLOGY_HUB_COMPONENTS_NAMESPACE": str(
+            deployer_config.get("COMPONENTS_NAMESPACE") or "components"
+        ).strip(),
+    }
+    return {key: value for key, value in env.items() if str(value or "").strip()}
+
+
+def _ai_model_hub_functional_runtime_env(adapter=None):
     adapter = adapter or _default_inesdata_adapter()
-    deployer_config = adapter.load_deployer_config() or {}
+    config_loader = getattr(adapter, "load_deployer_config", None)
+    adapter_config = config_loader() if callable(config_loader) else {}
+    if not isinstance(adapter_config, dict):
+        adapter_config = {}
+
+    topology = _normalize_topology(
+        os.environ.get("UI_TOPOLOGY")
+        or os.environ.get("PIONERA_TOPOLOGY")
+        or os.environ.get("INESDATA_TOPOLOGY")
+        or adapter_config.get("TOPOLOGY")
+        or adapter_config.get("PIONERA_TOPOLOGY")
+        or adapter_config.get("INESDATA_TOPOLOGY")
+    )
+    config = {
+        **_infrastructure_runtime_config(topology),
+        **adapter_config,
+        "TOPOLOGY": topology,
+        "PIONERA_TOPOLOGY": topology,
+        "INESDATA_TOPOLOGY": topology,
+    }
+    dataspace = str(
+        os.environ.get("UI_DATASPACE")
+        or config.get("DS_1_NAME")
+        or InesdataConfig.dataspace_name()
+        or "demo"
+    ).strip()
+    ds_domain = str(
+        os.environ.get("UI_DS_DOMAIN")
+        or config.get("DS_DOMAIN_BASE")
+        or "dev.ds.dataspaceunit.upm"
+    ).strip()
+    public_config = {**config, "TOPOLOGY": topology}
+    public_urls = resolved_public_urls_for_config(public_config)
+    keycloak_url = _keycloak_base_without_realm(
+        _first_config_value(
+            public_config,
+            public_urls,
+            "KEYCLOAK_FRONTEND_URL",
+            "KEYCLOAK_PUBLIC_URL",
+            "KC_INTERNAL_URL",
+            "KC_URL",
+        ),
+        dataspace,
+    )
+
+    connectors = [
+        _connector_full_name(value, dataspace)
+        for value in str(config.get("DS_1_CONNECTORS") or "").split(",")
+        if str(value or "").strip()
+    ]
+    provider = connectors[0] if connectors else ""
+    consumer = connectors[1] if len(connectors) > 1 else ""
+
+    def connector_base(connector):
+        if not connector:
+            return ""
+        public_base = connector_public_base_url(connector, dataspace, public_config)
+        if public_base:
+            return public_base.rstrip("/")
+        if ds_domain:
+            return f"http://{connector}.{ds_domain}"
+        return ""
+
+    env = {
+        "PIONERA_ADAPTER": "inesdata",
+        "UI_ADAPTER": "inesdata",
+        "AI_MODEL_HUB_COMPONENT_ADAPTER": "inesdata",
+        "PIONERA_TOPOLOGY": topology,
+        "INESDATA_TOPOLOGY": topology,
+        "UI_TOPOLOGY": topology,
+        "UI_DATASPACE": dataspace,
+        "UI_DS_DOMAIN": ds_domain,
+    }
+    if keycloak_url:
+        env["AI_MODEL_HUB_KEYCLOAK_URL"] = keycloak_url
+    if provider:
+        base = connector_base(provider)
+        env.update(
+            {
+                "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID": provider,
+                "AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL": f"{base}/management" if base else "",
+                "AI_MODEL_HUB_PROVIDER_PROTOCOL_URL": f"{base}/protocol" if base else "",
+                "AI_MODEL_HUB_PROVIDER_DEFAULT_URL": f"{base}/api" if base else "",
+            }
+        )
+    if consumer:
+        base = connector_base(consumer)
+        env.update(
+            {
+                "AI_MODEL_HUB_CONSUMER_CONNECTOR_ID": consumer,
+                "AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL": f"{base}/management" if base else "",
+                "AI_MODEL_HUB_CONSUMER_PROTOCOL_URL": f"{base}/protocol" if base else "",
+                "AI_MODEL_HUB_CONSUMER_DEFAULT_URL": f"{base}/api" if base else "",
+            }
+        )
+    return {key: value for key, value in env.items() if str(value or "").strip()}
+
+
+def _resolve_semantic_virtualization_base_url(adapter=None, topology=None):
+    normalized_topology = _normalize_topology(
+        topology
+        or os.environ.get("UI_TOPOLOGY")
+        or os.environ.get("PIONERA_TOPOLOGY")
+        or os.environ.get("INESDATA_TOPOLOGY")
+        or "local"
+    )
+    adapter = adapter or _build_validation_adapter(topology=normalized_topology)
+    adapter_config = adapter.load_deployer_config() or {}
+    if not isinstance(adapter_config, dict):
+        adapter_config = {}
+    deployer_config = {
+        **_infrastructure_runtime_config(normalized_topology),
+        **adapter_config,
+        "TOPOLOGY": normalized_topology,
+        "PIONERA_TOPOLOGY": normalized_topology,
+        "INESDATA_TOPOLOGY": normalized_topology,
+    }
+    deployer_config.update(resolved_public_urls_for_config(deployer_config))
     ds_name = (
         os.environ.get("UI_DATASPACE")
         or deployer_config.get("DS_1_NAME")
@@ -467,6 +752,14 @@ def _resolve_semantic_virtualization_base_url(adapter=None):
     ).strip()
     if explicit_url:
         return explicit_url.rstrip("/")
+
+    public_url = configured_component_public_url(
+        "semantic-virtualization",
+        deployer_config,
+        dataspace_name=ds_name,
+    )
+    if public_url:
+        return public_url.rstrip("/")
 
     chart_dir = project_root() / "deployers" / "shared" / "components" / "semantic-virtualization"
     values_path = chart_dir / f"values-{ds_name}.yaml"
@@ -491,8 +784,68 @@ def _resolve_semantic_virtualization_base_url(adapter=None):
     return f"http://{host}".rstrip("/")
 
 
-def _run_semantic_virtualization_ui_tests(mode, test_grep=None):
-    base_url = _resolve_semantic_virtualization_base_url()
+def _main_validation_runtime_module():
+    current_main = sys.modules.get("__main__")
+    required = (
+        "_load_effective_infrastructure_deployer_config",
+        "_vm_single_component_validation_tunnel_environment",
+    )
+    if current_main is not None and all(hasattr(current_main, name) for name in required):
+        return current_main
+    return importlib.import_module("main")
+
+
+def _semantic_virtualization_test_grep_needs_mapping_editor(test_grep=None):
+    raw_grep = str(test_grep or "").strip()
+    if not raw_grep:
+        return True
+    normalized = re.sub(r"\\(.)", r"\1", raw_grep.upper())
+    return any(test_id in normalized for test_id in SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TEST_IDS)
+
+
+def _semantic_virtualization_vm_single_menu_environment(topology=None, test_grep=None, needs_mapping_editor=None):
+    normalized_topology = normalize_topology(topology or os.environ.get("PIONERA_TOPOLOGY") or "local")
+    if normalized_topology != VM_SINGLE_TOPOLOGY:
+        return {}
+    if needs_mapping_editor is None:
+        needs_mapping_editor = _semantic_virtualization_test_grep_needs_mapping_editor(test_grep)
+    if not needs_mapping_editor:
+        return {}
+
+    try:
+        main_runtime = _main_validation_runtime_module()
+        load_config = getattr(main_runtime, "_load_effective_infrastructure_deployer_config", None)
+        prepare_tunnel_env = getattr(main_runtime, "_vm_single_component_validation_tunnel_environment", None)
+        if not callable(load_config) or not callable(prepare_tunnel_env):
+            return {}
+        config = load_config(topology=VM_SINGLE_TOPOLOGY)
+        return prepare_tunnel_env(config) or {}
+    except Exception as exc:
+        print(
+            "Warning: vm-single mapping editor tunnel could not be prepared for the validation menu. "
+            f"Semantic Virtualization editor UI tests may fail. {exc}"
+        )
+        return {}
+
+
+def _run_semantic_virtualization_ui_tests(
+    mode,
+    test_grep=None,
+    adapter_name=None,
+    topology=None,
+    needs_mapping_editor=None,
+):
+    normalized_adapter = str(adapter_name or os.environ.get("PIONERA_ADAPTER") or "inesdata").strip().lower()
+    normalized_topology = normalize_topology(topology or os.environ.get("PIONERA_TOPOLOGY") or "local")
+    mapping_editor_needed = (
+        _semantic_virtualization_test_grep_needs_mapping_editor(test_grep)
+        if needs_mapping_editor is None
+        else bool(needs_mapping_editor)
+    )
+    base_url = _resolve_semantic_virtualization_base_url(
+        adapter=_build_validation_adapter(adapter_name=normalized_adapter, topology=normalized_topology),
+        topology=normalized_topology,
+    )
     if not base_url:
         print("Semantic Virtualization base URL could not be resolved; aborting.")
         return None
@@ -509,6 +862,11 @@ def _run_semantic_virtualization_ui_tests(mode, test_grep=None):
 
     env = {
         **os.environ,
+        "PIONERA_ADAPTER": normalized_adapter,
+        "UI_ADAPTER": normalized_adapter,
+        "PIONERA_TOPOLOGY": normalized_topology,
+        "INESDATA_TOPOLOGY": normalized_topology,
+        "UI_TOPOLOGY": normalized_topology,
         "SEMANTIC_VIRTUALIZATION_BASE_URL": base_url,
         "PLAYWRIGHT_OUTPUT_DIR": output_dir,
         "PLAYWRIGHT_HTML_REPORT_DIR": html_report_dir,
@@ -517,6 +875,16 @@ def _run_semantic_virtualization_ui_tests(mode, test_grep=None):
         "PLAYWRIGHT_INTERACTION_MARKERS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKERS", "1"),
         "PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "350"),
     }
+    if normalized_topology == VM_SINGLE_TOPOLOGY and mapping_editor_needed:
+        env["SEMANTIC_VIRTUALIZATION_ENABLE_UI_VALIDATION"] = "1"
+        env["SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI"] = "1"
+    env.update(
+        _semantic_virtualization_vm_single_menu_environment(
+            topology=normalized_topology,
+            test_grep=test_grep,
+            needs_mapping_editor=mapping_editor_needed,
+        )
+    )
     env.update(mode.get("env") or {})
     cmd = [
         "./node_modules/.bin/playwright",
@@ -608,8 +976,11 @@ def _run_semantic_virtualization_ui_integration_with_inesdata(mode, test_grep=No
     )
 
 
-def _run_ai_model_hub_ui_functional(mode, test_grep=None):
-    base_url = _resolve_ai_model_hub_base_url()
+def _run_ai_model_hub_ui_functional(mode, test_grep=None, adapter_name=None, topology=None):
+    normalized_adapter = str(adapter_name or os.environ.get("PIONERA_ADAPTER") or "inesdata").strip().lower()
+    normalized_topology = normalize_topology(topology or os.environ.get("PIONERA_TOPOLOGY") or "local")
+    adapter = _build_validation_adapter(adapter_name=normalized_adapter, topology=normalized_topology)
+    base_url = _resolve_ai_model_hub_base_url(adapter)
     if not base_url:
         print("AI Model Hub base URL could not be resolved; aborting.")
         return None
@@ -626,6 +997,7 @@ def _run_ai_model_hub_ui_functional(mode, test_grep=None):
 
     env = {
         **os.environ,
+        **_ai_model_hub_functional_runtime_env(adapter),
         "AI_MODEL_HUB_ENABLE_UI_VALIDATION": "1",
         "AI_MODEL_HUB_BASE_URL": base_url,
         "PLAYWRIGHT_OUTPUT_DIR": output_dir,
@@ -1117,7 +1489,8 @@ def _resolve_component_api_base_url(component, *, adapter_name=None, topology=No
     if normalized_component == "ontology-hub":
         from validation.components.ontology_hub.runtime_config import resolve_ontology_hub_runtime
 
-        return str(resolve_ontology_hub_runtime().get("baseUrl") or "").rstrip("/")
+        runtime_env = _ontology_hub_functional_runtime_env(adapter=adapter, adapter_name=adapter_name, topology=topology)
+        return str(resolve_ontology_hub_runtime(environ={**os.environ, **runtime_env}).get("baseUrl") or "").rstrip("/")
     if normalized_component == "ai-model-hub":
         return _resolve_ai_model_hub_base_url(adapter)
     if normalized_component == "semantic-virtualization":
@@ -1455,14 +1828,41 @@ def _select_validation_route_kind_interactive():
         print("\nInvalid selection. Please try again.\n")
 
 
-def _run_validation_ui_route_by_id(route):
+def _run_validation_ui_route_by_id(route, adapter_name=None, topology=None):
     mode = _resolve_ui_mode()
     if mode is None:
         return None
 
     runner = route["runner"]
     if runner is _run_inesdata_ui_specs_by_id:
-        return runner(mode, route)
+        return runner(
+            mode,
+            route,
+            adapter_name=adapter_name,
+            topology=topology,
+        )
+    if runner is _run_ai_model_hub_ui_functional:
+        return runner(
+            mode,
+            test_grep=route.get("grep"),
+            adapter_name=adapter_name,
+            topology=topology,
+        )
+    if runner is _run_semantic_virtualization_ui_tests:
+        return runner(
+            mode,
+            test_grep=route.get("grep"),
+            adapter_name=adapter_name,
+            topology=topology,
+            needs_mapping_editor=route.get("needs_mapping_editor"),
+        )
+    if runner is _run_ontology_hub_ui_functional:
+        return runner(
+            mode,
+            test_grep=route.get("grep"),
+            adapter_name=adapter_name,
+            topology=topology,
+        )
     return runner(mode, test_grep=route.get("grep"))
 
 
@@ -1550,7 +1950,7 @@ def run_validation_api_test_by_id_interactive(adapter_name=None, topology=None):
     return _run_validation_api_route_by_id(route, adapter_name=adapter_name, topology=topology)
 
 
-def _run_inesdata_ui_specs_by_id(mode, route):
+def _run_inesdata_ui_specs_by_id(mode, route, adapter_name=None, topology=None):
     test_id = route["id"]
     experiment_id = f"experiment_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     base_dir = str(
@@ -1569,9 +1969,18 @@ def _run_inesdata_ui_specs_by_id(mode, route):
     os.makedirs(html_report_dir, exist_ok=True)
     os.makedirs(blob_report_dir, exist_ok=True)
 
-    env = _ui_runtime_env_from_adapter(_default_inesdata_adapter())
+    normalized_adapter = str(adapter_name or os.environ.get("PIONERA_ADAPTER") or "inesdata").strip().lower()
+    normalized_topology = normalize_topology(topology or os.environ.get("PIONERA_TOPOLOGY") or "local")
+    env = _ui_runtime_env_from_adapter(
+        _build_validation_adapter(adapter_name=normalized_adapter, topology=normalized_topology)
+    )
     env.update(
         {
+            "PIONERA_ADAPTER": normalized_adapter,
+            "UI_ADAPTER": normalized_adapter,
+            "PIONERA_TOPOLOGY": normalized_topology,
+            "INESDATA_TOPOLOGY": normalized_topology,
+            "UI_TOPOLOGY": normalized_topology,
             "PLAYWRIGHT_OUTPUT_DIR": output_dir,
             "PLAYWRIGHT_HTML_REPORT_DIR": html_report_dir,
             "PLAYWRIGHT_BLOB_REPORT_DIR": blob_report_dir,
@@ -1636,6 +2045,7 @@ def _resolve_validation_ui_test_route(test_id):
             "label": f"Semantic Virtualization UI test {normalized}",
             "runner": _run_semantic_virtualization_ui_tests,
             "grep": _playwright_grep_for_id(normalized),
+            "needs_mapping_editor": normalized in SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TEST_IDS,
         }
 
     inesdata_routes = {
@@ -1767,12 +2177,16 @@ def run_validation_test_by_id_interactive(adapter_name=None, topology=None):
             )
         if choice in {"both", "ui"}:
             print(f"\nResolved test type: Playwright UI ({ui_route['id']})")
-            results["ui"] = _run_validation_ui_route_by_id(ui_route)
+            results["ui"] = _run_validation_ui_route_by_id(
+                ui_route,
+                adapter_name=adapter_name,
+                topology=topology,
+            )
         return results if choice == "both" else next(iter(results.values()), None)
 
     if ui_route is not None:
         print(f"\nResolved test type: Playwright UI ({ui_route['id']})")
-        return _run_validation_ui_route_by_id(ui_route)
+        return _run_validation_ui_route_by_id(ui_route, adapter_name=adapter_name, topology=topology)
 
     if api_route is not None:
         print(f"\nResolved test type: Component API ({api_route['id']})")

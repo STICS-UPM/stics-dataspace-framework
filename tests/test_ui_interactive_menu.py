@@ -32,6 +32,31 @@ class FakeInteractiveAdapter:
         }
 
 
+class FakeVmSingleInteractiveAdapter(FakeInteractiveAdapter):
+    def load_deployer_config(self):
+        return {
+            "TOPOLOGY": "vm-single",
+            "DS_1_NAME": "pionera",
+            "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+            "DS_1_CONNECTORS": "org2,org3",
+            "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+            "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+            "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX": "/c",
+        }
+
+
+class FakeVmDistributedInteractiveAdapter(FakeInteractiveAdapter):
+    def load_deployer_config(self):
+        return {
+            "TOPOLOGY": "vm-distributed",
+            "DS_1_NAME": "pionera",
+            "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+            "DS_1_CONNECTORS": "org2,org3",
+            "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+            "VM_COMMON_PUBLIC_URL": "https://org1.pionera.oeg.fi.upm.es",
+        }
+
+
 class UiInteractiveMenuTests(unittest.TestCase):
     def test_resolve_ui_mode_rejects_live_without_display_on_linux(self):
         output = io.StringIO()
@@ -200,6 +225,8 @@ class UiInteractiveMenuTests(unittest.TestCase):
         mock_runner.assert_called_once_with(
             {"label": "Normal", "args": [], "env": {}},
             test_grep=r"OH\-APP\-10\b",
+            adapter_name=None,
+            topology=None,
         )
 
     @mock.patch.object(interactive_menu, "_run_inesdata_ui_specs_by_id")
@@ -210,11 +237,36 @@ class UiInteractiveMenuTests(unittest.TestCase):
         mock_runner,
     ):
         with mock.patch("builtins.input", side_effect=["DS-UI-OH-01"]):
-            interactive_menu.run_validation_test_by_id_interactive()
+            interactive_menu.run_validation_test_by_id_interactive(
+                adapter_name="inesdata",
+                topology="vm-single",
+            )
 
         route = mock_runner.call_args.args[1]
         self.assertEqual(route["id"], "DS-UI-OH-01")
         self.assertEqual(route["specs"], ["adapters/inesdata/specs/08-ontology-hub-inesdata-readonly.spec.ts"])
+        self.assertEqual(mock_runner.call_args.kwargs["adapter_name"], "inesdata")
+        self.assertEqual(mock_runner.call_args.kwargs["topology"], "vm-single")
+
+    @mock.patch.object(interactive_menu, "_run_ai_model_hub_ui_functional")
+    @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
+    def test_run_validation_test_by_id_interactive_routes_ai_model_hub_with_topology(
+        self,
+        _mock_resolve_mode,
+        mock_runner,
+    ):
+        with mock.patch("builtins.input", side_effect=["PT5-MH-01"]):
+            interactive_menu.run_validation_test_by_id_interactive(
+                adapter_name="inesdata",
+                topology="vm-single",
+            )
+
+        mock_runner.assert_called_once_with(
+            {"label": "Normal", "args": [], "env": {}},
+            test_grep=r"PT5\-MH\-01\b",
+            adapter_name="inesdata",
+            topology="vm-single",
+        )
 
     @mock.patch.object(interactive_menu, "_run_validation_api_route_by_id")
     def test_run_validation_test_by_id_interactive_routes_api_test(self, mock_api_runner):
@@ -252,6 +304,27 @@ class UiInteractiveMenuTests(unittest.TestCase):
             interactive_menu.run_validation_test_by_id_interactive()
 
         self.assertIn("No automated test route is mapped", output.getvalue())
+
+    @mock.patch.object(interactive_menu, "_run_semantic_virtualization_ui_tests")
+    @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
+    def test_run_validation_test_by_id_interactive_prepares_vm_single_semantic_editor_test(
+        self,
+        _mock_resolve_mode,
+        mock_runner,
+    ):
+        with mock.patch("builtins.input", side_effect=["SV-UI-10"]):
+            interactive_menu.run_validation_test_by_id_interactive(
+                adapter_name="inesdata",
+                topology="vm-single",
+            )
+
+        mock_runner.assert_called_once_with(
+            {"label": "Normal", "args": [], "env": {}},
+            test_grep=r"SV\-UI\-10\b",
+            adapter_name="inesdata",
+            topology="vm-single",
+            needs_mapping_editor=True,
+        )
 
     @mock.patch.object(interactive_menu, "_run_ai_model_hub_ui_functional")
     @mock.patch.object(interactive_menu, "_resolve_ui_mode", return_value={"label": "Normal", "args": [], "env": {}})
@@ -365,6 +438,63 @@ class UiInteractiveMenuTests(unittest.TestCase):
             self.assertTrue(os.path.isdir(env["PLAYWRIGHT_HTML_REPORT_DIR"]))
             self.assertTrue(os.path.isdir(env["PLAYWRIGHT_BLOB_REPORT_DIR"]))
 
+    def test_ai_model_hub_functional_runtime_env_uses_vm_single_public_routes(self):
+        env = interactive_menu._ai_model_hub_functional_runtime_env(FakeVmSingleInteractiveAdapter())
+
+        self.assertEqual(env["UI_TOPOLOGY"], "vm-single")
+        self.assertEqual(env["AI_MODEL_HUB_KEYCLOAK_URL"], "https://org4.pionera.oeg.fi.upm.es/auth")
+        self.assertEqual(env["AI_MODEL_HUB_PROVIDER_CONNECTOR_ID"], "conn-org2-pionera")
+        self.assertEqual(
+            env["AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL"],
+            "https://org4.pionera.oeg.fi.upm.es/c/org2/management",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL"],
+            "https://org4.pionera.oeg.fi.upm.es/c/org3/management",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_PROVIDER_PROTOCOL_URL"],
+            "https://org4.pionera.oeg.fi.upm.es/c/org2/protocol",
+        )
+
+    def test_ai_model_hub_base_url_uses_vm_single_public_route(self):
+        base_url = interactive_menu._resolve_ai_model_hub_base_url(FakeVmSingleInteractiveAdapter())
+
+        self.assertEqual(base_url, "https://org4.pionera.oeg.fi.upm.es/ai-model-hub")
+
+    @mock.patch.object(interactive_menu, "_infrastructure_runtime_config", return_value={})
+    def test_ontology_hub_runtime_env_uses_local_component_host(self, _mock_infra_config):
+        with mock.patch.dict(interactive_menu.os.environ, {}, clear=True):
+            env = interactive_menu._ontology_hub_functional_runtime_env(
+                adapter=FakeInteractiveAdapter(),
+                topology="local",
+            )
+
+        self.assertEqual(env["UI_TOPOLOGY"], "local")
+        self.assertEqual(env["ONTOLOGY_HUB_BASE_URL"], "http://ontology-hub-demo.dev.ds.dataspaceunit.upm")
+
+    @mock.patch.object(interactive_menu, "_infrastructure_runtime_config", return_value={})
+    def test_ontology_hub_runtime_env_uses_vm_single_public_path(self, _mock_infra_config):
+        with mock.patch.dict(interactive_menu.os.environ, {}, clear=True):
+            env = interactive_menu._ontology_hub_functional_runtime_env(
+                adapter=FakeVmSingleInteractiveAdapter(),
+                topology="vm-single",
+            )
+
+        self.assertEqual(env["UI_TOPOLOGY"], "vm-single")
+        self.assertEqual(env["ONTOLOGY_HUB_BASE_URL"], "https://org4.pionera.oeg.fi.upm.es/ontology-hub")
+
+    @mock.patch.object(interactive_menu, "_infrastructure_runtime_config", return_value={})
+    def test_ontology_hub_runtime_env_uses_vm_distributed_common_public_path(self, _mock_infra_config):
+        with mock.patch.dict(interactive_menu.os.environ, {}, clear=True):
+            env = interactive_menu._ontology_hub_functional_runtime_env(
+                adapter=FakeVmDistributedInteractiveAdapter(),
+                topology="vm-distributed",
+            )
+
+        self.assertEqual(env["UI_TOPOLOGY"], "vm-distributed")
+        self.assertEqual(env["ONTOLOGY_HUB_BASE_URL"], "https://org1.pionera.oeg.fi.upm.es/ontology-hub")
+
     @mock.patch.object(interactive_menu, "_cleanup_playwright_processes")
     @mock.patch.object(interactive_menu.subprocess, "run")
     @mock.patch.object(interactive_menu, "project_root")
@@ -396,6 +526,85 @@ class UiInteractiveMenuTests(unittest.TestCase):
             self.assertTrue(os.path.isdir(env["PLAYWRIGHT_OUTPUT_DIR"]))
             self.assertTrue(os.path.isdir(env["PLAYWRIGHT_HTML_REPORT_DIR"]))
             self.assertTrue(os.path.isdir(env["PLAYWRIGHT_BLOB_REPORT_DIR"]))
+
+    @mock.patch.object(interactive_menu, "_main_validation_runtime_module")
+    def test_semantic_virtualization_menu_tunnel_environment_is_vm_single_only(self, mock_main_runtime):
+        env = interactive_menu._semantic_virtualization_vm_single_menu_environment(
+            topology="local",
+            test_grep=r"SV\-UI\-10\b",
+        )
+
+        self.assertEqual(env, {})
+        mock_main_runtime.assert_not_called()
+
+    @mock.patch.object(interactive_menu, "_main_validation_runtime_module")
+    def test_semantic_virtualization_menu_tunnel_environment_uses_vm_single_helper(self, mock_main_runtime):
+        fake_runtime = mock.Mock()
+        fake_runtime._load_effective_infrastructure_deployer_config.return_value = {"TOPOLOGY": "vm-single"}
+        fake_runtime._vm_single_component_validation_tunnel_environment.return_value = {
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_BASE_URL": "http://127.0.0.1:5678",
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL": "http://127.0.0.1:5678",
+            "MAPPING_EDITOR_BASE_URL": "http://127.0.0.1:5678",
+        }
+        mock_main_runtime.return_value = fake_runtime
+
+        env = interactive_menu._semantic_virtualization_vm_single_menu_environment(
+            topology="vm-single",
+            test_grep=r"SV\-UI\-10\b",
+        )
+
+        fake_runtime._load_effective_infrastructure_deployer_config.assert_called_once_with(topology="vm-single")
+        fake_runtime._vm_single_component_validation_tunnel_environment.assert_called_once_with(
+            {"TOPOLOGY": "vm-single"}
+        )
+        self.assertEqual(env["SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_BASE_URL"], "http://127.0.0.1:5678")
+
+    @mock.patch.object(
+        interactive_menu,
+        "_semantic_virtualization_vm_single_menu_environment",
+        return_value={
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_BASE_URL": "http://127.0.0.1:5678",
+            "MAPPING_EDITOR_BASE_URL": "http://127.0.0.1:5678",
+        },
+    )
+    @mock.patch.object(interactive_menu, "_build_validation_adapter", return_value=FakeVmSingleInteractiveAdapter())
+    @mock.patch.object(interactive_menu, "_cleanup_playwright_processes")
+    @mock.patch.object(interactive_menu.subprocess, "run")
+    @mock.patch.object(interactive_menu, "project_root")
+    @mock.patch.object(interactive_menu, "_resolve_semantic_virtualization_base_url", return_value="https://org4.example.test/semantic-virtualization")
+    def test_run_semantic_virtualization_ui_tests_injects_vm_single_editor_tunnel_env(
+        self,
+        _mock_resolve_base_url,
+        mock_project_root,
+        mock_subprocess_run,
+        _mock_cleanup,
+        _mock_build_adapter,
+        mock_tunnel_env,
+    ):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_project_root.return_value = Path(tmpdir)
+            mock_subprocess_run.return_value = mock.Mock(returncode=0)
+
+            interactive_menu._run_semantic_virtualization_ui_tests(
+                {"label": "Normal", "args": [], "env": {}},
+                test_grep=r"SV\-UI\-10\b",
+                adapter_name="inesdata",
+                topology="vm-single",
+                needs_mapping_editor=True,
+            )
+
+            env = mock_subprocess_run.call_args.kwargs["env"]
+            mock_tunnel_env.assert_called_once_with(
+                topology="vm-single",
+                test_grep=r"SV\-UI\-10\b",
+                needs_mapping_editor=True,
+            )
+            self.assertEqual(env["PIONERA_TOPOLOGY"], "vm-single")
+            self.assertEqual(env["UI_TOPOLOGY"], "vm-single")
+            self.assertEqual(env["SEMANTIC_VIRTUALIZATION_ENABLE_UI_VALIDATION"], "1")
+            self.assertEqual(env["SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI"], "1")
+            self.assertEqual(env["SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_BASE_URL"], "http://127.0.0.1:5678")
+            self.assertEqual(env["MAPPING_EDITOR_BASE_URL"], "http://127.0.0.1:5678")
 
     @mock.patch.object(interactive_menu, "_cleanup_playwright_processes")
     @mock.patch.object(interactive_menu.subprocess, "run")

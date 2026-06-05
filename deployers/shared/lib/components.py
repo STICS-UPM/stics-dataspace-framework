@@ -114,6 +114,27 @@ def _component_env_key(component: str | None) -> str:
     return normalize_component_key(component).upper().replace("-", "_")
 
 
+def _component_env_keys(component: str | None) -> list[str]:
+    normalized = normalize_component_key(component)
+    primary = _component_env_key(normalized)
+    keys = [primary] if primary else []
+    if normalized == "semantic-virtualization-editor":
+        keys.extend([
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR",
+            "MAPPING_EDITOR",
+        ])
+    return list(dict.fromkeys(keys))
+
+
+def _first_config_value(config: dict[str, Any], keys: list[str], suffixes: tuple[str, ...]) -> str:
+    for key in keys:
+        for suffix in suffixes:
+            value = str(config.get(f"{key}{suffix}") or "").strip()
+            if value:
+                return value
+    return ""
+
+
 def _host_from_host_or_url(host_or_url: str | None) -> str:
     value = str(host_or_url or "").strip().rstrip("/")
     if not value:
@@ -148,21 +169,14 @@ def configured_component_public_path(
         return ""
 
     config = dict(deployer_config or {})
-    env_key = _component_env_key(normalized)
-    explicit_path = (
-        config.get(f"{env_key}_PUBLIC_PATH")
-        or config.get(f"{env_key}_PATH")
-    )
+    env_keys = _component_env_keys(normalized)
+    explicit_path = _first_config_value(config, env_keys, ("_PUBLIC_PATH", "_PATH"))
     if explicit_path:
         return _normalize_public_path(explicit_path)
 
-    explicit_url = (
-        config.get(f"{env_key}_PUBLIC_URL")
-        or config.get(f"{env_key}_URL")
-    )
-    explicit_url_path = _path_from_host_or_url(explicit_url)
-    if explicit_url_path:
-        return explicit_url_path
+    explicit_url = _first_config_value(config, env_keys, ("_PUBLIC_URL", "_URL"))
+    if explicit_url:
+        return _path_from_host_or_url(explicit_url)
 
     if _component_public_base_url(normalized, config):
         return f"/{normalized}"
@@ -181,8 +195,8 @@ def configured_component_public_url(
         return ""
 
     config = dict(deployer_config or {})
-    env_key = _component_env_key(normalized)
-    explicit_url = str(config.get(f"{env_key}_PUBLIC_URL") or "").strip()
+    env_keys = _component_env_keys(normalized)
+    explicit_url = _first_config_value(config, env_keys, ("_PUBLIC_URL", "_URL"))
     if explicit_url:
         return explicit_url.rstrip("/")
 
@@ -212,13 +226,10 @@ def configured_component_host(
         return ""
 
     config = dict(deployer_config or {})
-    env_key = normalized.upper().replace("-", "_")
+    env_keys = _component_env_keys(normalized)
     explicit = (
-        config.get(f"{env_key}_HOST")
-        or config.get(f"{env_key}_HOSTNAME")
-        or config.get(f"{env_key}_PUBLIC_URL")
+        _first_config_value(config, env_keys, ("_HOST", "_HOSTNAME", "_PUBLIC_URL", "_URL"))
         or _component_public_base_url(normalized, config)
-        or config.get(f"{env_key}_URL")
     )
     explicit_host = _host_from_host_or_url(explicit)
     if explicit_host:

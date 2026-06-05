@@ -3750,6 +3750,33 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result, "ai-model-ui-ok")
         migrated_action.assert_called_once_with()
 
+    def test_migrated_ai_model_hub_ui_action_exports_active_topology(self):
+        observed_env = {}
+
+        def capture_env():
+            observed_env["PIONERA_TOPOLOGY"] = os.environ.get("PIONERA_TOPOLOGY")
+            observed_env["INESDATA_TOPOLOGY"] = os.environ.get("INESDATA_TOPOLOGY")
+            observed_env["UI_TOPOLOGY"] = os.environ.get("UI_TOPOLOGY")
+            observed_env["PIONERA_ADAPTER"] = os.environ.get("PIONERA_ADAPTER")
+            return "ai-model-ui-ok"
+
+        with mock.patch.object(
+            main.ui_interactive_menu,
+            "run_ai_model_hub_ui_tests_interactive",
+            side_effect=capture_env,
+        ):
+            result = main._run_legacy_menu_action(
+                "ai_model_hub_ui",
+                current_adapter="inesdata",
+                topology="vm-single",
+            )
+
+        self.assertEqual(result, "ai-model-ui-ok")
+        self.assertEqual(observed_env["PIONERA_TOPOLOGY"], "vm-single")
+        self.assertEqual(observed_env["INESDATA_TOPOLOGY"], "vm-single")
+        self.assertEqual(observed_env["UI_TOPOLOGY"], "vm-single")
+        self.assertEqual(observed_env["PIONERA_ADAPTER"], "inesdata")
+
     def test_migrated_semantic_virtualization_ui_action_does_not_import_inesdata_py(self):
         with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch.object(
             main.ui_interactive_menu,
@@ -4274,7 +4301,7 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(adapter.infrastructure.seen_kubeconfig, "/tmp/vm-single-k3s.yaml")
         ensure_access.assert_called_once_with(adapter_name="fake")
 
-    def test_run_level_one_vm_single_auto_syncs_minikube_ip_after_preflight(self):
+    def test_run_level_one_vm_single_auto_syncs_vm_ip_after_preflight(self):
         adapter = FakeAdapterWithInfrastructure()
         adapter.infrastructure = mock.Mock()
         adapter.infrastructure.setup_cluster_preflight = mock.Mock(
@@ -4311,8 +4338,9 @@ class MainCliTests(unittest.TestCase):
                     return_value={
                         "vm_ip": "198.51.100.20",
                         "minikube_ip": "192.0.2.10",
-                        "recommended_address": "192.0.2.10",
-                        "recommended_source": "minikube",
+                        "recommended_address": "198.51.100.20",
+                        "recommended_source": "vm",
+                        "cluster_type": "k3s",
                     },
                 ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
                 result = main.run_level(adapter, 1, deployer_name="fake", topology="vm-single")
@@ -4322,12 +4350,12 @@ class MainCliTests(unittest.TestCase):
 
         self.assertEqual(result["level"], 1)
         self.assertEqual(result["status"], "completed")
-        self.assertIn("VM_EXTERNAL_IP=192.0.2.10\n", config_text)
-        self.assertIn("VM_COMMON_IP=192.0.2.10\n", config_text)
-        self.assertIn("VM_DATASPACE_IP=192.0.2.10\n", config_text)
-        self.assertIn("VM_CONNECTORS_IP=192.0.2.10\n", config_text)
-        self.assertIn("VM_COMPONENTS_IP=192.0.2.10\n", config_text)
-        self.assertIn("INGRESS_EXTERNAL_IP=192.0.2.10\n", config_text)
+        self.assertIn("VM_EXTERNAL_IP=198.51.100.20\n", config_text)
+        self.assertIn("VM_COMMON_IP=198.51.100.20\n", config_text)
+        self.assertIn("VM_DATASPACE_IP=198.51.100.20\n", config_text)
+        self.assertIn("VM_CONNECTORS_IP=198.51.100.20\n", config_text)
+        self.assertIn("VM_COMPONENTS_IP=198.51.100.20\n", config_text)
+        self.assertIn("INGRESS_EXTERNAL_IP=198.51.100.20\n", config_text)
 
     def test_run_level_one_vm_single_preserves_explicit_custom_address_after_preflight(self):
         adapter = FakeAdapterWithInfrastructure()
@@ -4487,6 +4515,44 @@ class MainCliTests(unittest.TestCase):
             overrides = main._topology_runtime_environment_overrides("vm-single", level=4)
 
         self.assertEqual(overrides["KUBECONFIG"], "/home/operator/.kube/pionera4.yaml")
+
+    def test_topology_runtime_environment_overrides_use_vm_single_remote_kubeconfig_on_target_vm(self):
+        topology_config = {
+            "CLUSTER_TYPE": "k3s",
+            "K3S_KUBECONFIG": "/etc/rancher/k3s/k3s.yaml",
+            "VM_SINGLE_LOCAL_KUBECONFIG": "/home/operator/.kube/pionera4.yaml",
+            "VM_SINGLE_REMOTE_KUBECONFIG": "/etc/rancher/k3s/k3s.yaml",
+        }
+        with mock.patch.object(
+            main,
+            "_load_effective_infrastructure_deployer_config",
+            return_value=topology_config,
+        ), mock.patch.object(
+            main,
+            "_load_vm_single_configuration_bundle",
+            return_value={"infrastructure": {}, "topology": topology_config, "adapter": {}},
+        ), mock.patch.object(
+            main,
+            "_build_vm_single_topology_plan",
+            return_value={"vms": [{"address": "127.0.0.1"}]},
+        ), mock.patch.object(main, "_vm_single_running_on_target", return_value=True):
+            overrides = main._topology_runtime_environment_overrides("vm-single", level=6)
+
+        self.assertEqual(overrides["KUBECONFIG"], "/etc/rancher/k3s/k3s.yaml")
+
+    def test_vm_single_k3s_tunnel_preparation_includes_level6(self):
+        topology_config = {
+            "CLUSTER_TYPE": "k3s",
+            "VM_SINGLE_LEVEL_EXECUTION_MODE": "auto",
+        }
+        plan = {"vms": [{"address": "192.0.2.52"}]}
+
+        with mock.patch.object(main, "_vm_single_running_on_target", return_value=False), mock.patch.dict(
+            os.environ,
+            {},
+            clear=True,
+        ):
+            self.assertTrue(main._vm_single_should_prepare_k3s_tunnel(6, plan, topology_config))
 
     def test_interactive_runtime_environment_applies_vm_single_kubeconfig(self):
         with mock.patch.object(
@@ -6921,6 +6987,57 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(
             env["AI_MODEL_HUB_PROVIDER_PROTOCOL_URL"],
             "https://org4.pionera.oeg.fi.upm.es/c/org2/protocol",
+        )
+
+    def test_vm_single_mapping_editor_k3s_prefers_kubectl_port_forward(self):
+        with mock.patch.object(main, "_vm_single_mapping_editor_is_k3s", return_value=True), mock.patch.object(
+            main,
+            "_ensure_vm_single_mapping_editor_kubectl_port_forward",
+            return_value={
+                "status": "started",
+                "mode": "kubectl-port-forward",
+                "url": "http://127.0.0.1:5678",
+            },
+        ) as port_forward_mock, mock.patch.object(
+            main,
+            "_vm_single_mapping_editor_host_port",
+            side_effect=AssertionError("hostPort fallback should not be used first for vm-single k3s"),
+        ):
+            result = main._ensure_vm_single_mapping_editor_tunnel(
+                {"vms": [{"address": "192.168.122.52"}]},
+                {
+                    "CLUSTER_TYPE": "k3s",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT": "5678",
+                },
+            )
+
+        port_forward_mock.assert_called_once()
+        self.assertEqual(result["status"], "started")
+        self.assertEqual(result["mode"], "kubectl-port-forward")
+        self.assertEqual(result["url"], "http://127.0.0.1:5678")
+
+    def test_vm_single_mapping_editor_port_forward_command_is_parametrized(self):
+        command = main._vm_single_mapping_editor_port_forward_command(
+            {
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_NAMESPACE": "custom-components",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SERVICE_NAME": "custom-editor",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SERVICE_PORT": "8502",
+            },
+            45678,
+        )
+
+        self.assertEqual(
+            command,
+            [
+                "kubectl",
+                "port-forward",
+                "--address",
+                "127.0.0.1",
+                "-n",
+                "custom-components",
+                "svc/custom-editor",
+                "45678:8502",
+            ],
         )
 
     def test_local_adapter_install_capacity_preflight_switches_when_explicitly_confirmed(self):

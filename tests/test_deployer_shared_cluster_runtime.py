@@ -22,10 +22,10 @@ class SharedClusterRuntimeTests(unittest.TestCase):
         self.assertEqual(normalize_cluster_type(topology="local"), "minikube")
         self.assertEqual(build_cluster_runtime(topology="local")["cluster_type"], "minikube")
 
-    def test_vm_single_preserves_minikube_default_until_k3s_is_validated(self):
+    def test_vm_single_defaults_to_k3s_runtime(self):
         runtime = build_cluster_runtime(topology="vm-single")
 
-        self.assertEqual(runtime["cluster_type"], "minikube")
+        self.assertEqual(runtime["cluster_type"], "k3s")
         self.assertEqual(runtime["k3s_kubeconfig"], DEFAULT_K3S_KUBECONFIG)
         self.assertEqual(runtime["k3s_install_exec"], DEFAULT_K3S_INSTALL_EXEC)
         self.assertEqual(runtime["k3s_service_name"], DEFAULT_K3S_SERVICE_NAME)
