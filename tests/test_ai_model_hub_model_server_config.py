@@ -5,7 +5,7 @@ from deployers.shared.lib import ai_model_hub_model_server as model_server
 
 class AIModelHubModelServerConfigTests(unittest.TestCase):
     def test_mode_aliases_match_existing_configuration_contract(self):
-        self.assertEqual(model_server.normalize_model_server_mode(""), "combined")
+        self.assertEqual(model_server.normalize_model_server_mode(""), "mock")
         self.assertEqual(model_server.normalize_model_server_mode("deterministic"), "mock")
         self.assertEqual(model_server.normalize_model_server_mode("real"), "use-cases")
         self.assertEqual(model_server.normalize_model_server_mode("usecases"), "use-cases")
@@ -28,11 +28,8 @@ class AIModelHubModelServerConfigTests(unittest.TestCase):
 
     def test_runtime_defaults_are_stable(self):
         self.assertTrue(model_server.model_server_enabled({}))
-        self.assertEqual(model_server.model_server_mode({})[0], "combined")
-        self.assertEqual(
-            model_server.source_repository({}),
-            model_server.DEFAULT_USE_CASES_SOURCE_REPOSITORY,
-        )
+        self.assertEqual(model_server.model_server_mode({})[0], "mock")
+        self.assertEqual(model_server.source_repository({}), "")
         self.assertEqual(model_server.image_ref({}), "model-server:latest")
         self.assertEqual(model_server.container_port({}), 8080)
         self.assertEqual(model_server.docker_base_image({}), "python:3.10-slim")

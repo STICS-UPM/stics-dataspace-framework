@@ -334,7 +334,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertTrue(os.path.exists(result["artifacts"]["artifact_manifest_json"]))
 
     def test_model_server_use_cases_validation_is_enabled_by_real_modes(self):
-        self.assertTrue(model_server_use_case_validation_enabled({}))
+        self.assertFalse(model_server_use_case_validation_enabled({}))
         self.assertFalse(model_server_use_case_validation_enabled({"AI_MODEL_HUB_MODEL_SERVER_MODE": "mock"}))
         self.assertTrue(model_server_use_case_validation_enabled({"AI_MODEL_HUB_MODEL_SERVER_MODE": "use-cases"}))
         self.assertTrue(model_server_use_case_validation_enabled({"AI_MODEL_HUB_MODEL_SERVER_MODE": "combined"}))

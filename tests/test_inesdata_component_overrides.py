@@ -2029,6 +2029,19 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertEqual(resolved, source_dir)
         run_mock.assert_not_called()
 
+    def test_ai_model_hub_mock_model_server_ignores_stale_real_source_configuration(self):
+        adapter = self._make_shared_adapter()
+
+        resolved = adapter._ai_model_hub_model_server_source_dir(
+            {
+                "AI_MODEL_HUB_MODEL_SERVER_MODE": "mock",
+                "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": "/tmp/stale-real-source",
+                "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": "https://example.test/use-cases.git",
+            }
+        )
+
+        self.assertTrue(resolved.endswith("adapters/inesdata/sources/model-server"))
+
     def test_load_image_into_k3s_uses_remote_import_for_vm_distributed_components(self):
         adapter = self._make_adapter()
         adapter.config_adapter.topology = "vm-distributed"

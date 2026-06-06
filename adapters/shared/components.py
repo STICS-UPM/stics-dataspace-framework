@@ -615,6 +615,10 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
 
     def _ai_model_hub_model_server_source_dir(self, deployer_config=None):
         config = dict(deployer_config or {})
+        mode = self._ai_model_hub_model_server_mode(config)
+        if mode == "mock":
+            return os.path.join(self._project_root_dir(), "adapters", "inesdata", "sources", "model-server")
+
         explicit = str(
             config.get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR")
             or config.get("MODEL_SERVER_SOURCE_DIR")
@@ -631,7 +635,6 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 )
             return source_dir
 
-        mode = self._ai_model_hub_model_server_mode(config)
         if mode in {"use-cases", "combined"}:
             real_source = str(
                 config.get("AI_MODEL_HUB_REAL_MODEL_SERVER_SOURCE_DIR")

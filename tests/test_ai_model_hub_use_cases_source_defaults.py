@@ -7,14 +7,11 @@ from deployers.shared.lib import ai_model_hub_model_server as model_server
 
 
 class AIModelHubUseCasesSourceDefaultsTests(unittest.TestCase):
-    def test_blank_model_server_mode_uses_real_use_cases_server(self):
-        self.assertEqual(model_server.model_server_mode({})[0], "combined")
-        self.assertEqual(
-            model_server.source_repository({}),
-            model_server.DEFAULT_USE_CASES_SOURCE_REPOSITORY,
-        )
+    def test_blank_model_server_mode_uses_controlled_mock_server(self):
+        self.assertEqual(model_server.model_server_mode({})[0], "mock")
+        self.assertEqual(model_server.source_repository({}), "")
 
-    def test_default_real_source_is_prepared_under_sources_directory(self):
+    def test_explicit_real_source_is_prepared_under_sources_directory(self):
         adapter = SharedComponentsAdapter.__new__(SharedComponentsAdapter)
         source_dir = os.path.join(
             adapter._project_root_dir(),
@@ -34,7 +31,9 @@ class AIModelHubUseCasesSourceDefaultsTests(unittest.TestCase):
             mock.patch("adapters.shared.components.os.makedirs"),
             mock.patch("adapters.shared.components.subprocess.run", side_effect=fake_run),
         ):
-            resolved = adapter._ai_model_hub_model_server_source_dir({})
+            resolved = adapter._ai_model_hub_model_server_source_dir(
+                {"AI_MODEL_HUB_MODEL_SERVER_MODE": "combined"}
+            )
 
         self.assertEqual(resolved, source_dir)
         self.assertEqual(

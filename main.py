@@ -119,7 +119,7 @@ from deployers.shared.lib.vm_distributed_public_access import (
     is_vm_public_placeholder_url,
     resolve_vm_distributed_public_urls,
 )
-from deployers.shared.lib import runtime_artifacts
+from deployers.shared.lib import ai_model_hub_model_server, runtime_artifacts
 from validation.core.test_data_cleanup import run_pre_validation_cleanup
 from validation.orchestration.hosts import (
     ensure_public_endpoints_accessible,
@@ -14676,6 +14676,7 @@ VM_DISTRIBUTED_PROFILE_TEMPLATE_KEYS = (
     "AI_MODEL_HUB_MODEL_SERVER_MODE",
     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
+    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
     "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
     "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
     "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
@@ -14689,6 +14690,8 @@ VM_DISTRIBUTED_PROFILE_TEMPLATE_KEYS = (
     "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH",
     "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS",
     "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD",
+    "AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR",
+    "AI_MODEL_HUB_REAL_MODELS_TRAIN_COMMAND",
     "VM_EXTERNAL_IP",
     "VM_COMMON_IP",
     "VM_DATASPACE_IP",
@@ -14818,6 +14821,7 @@ VM_SINGLE_PROFILE_TEMPLATE_KEYS = (
     "AI_MODEL_HUB_MODEL_SERVER_MODE",
     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
+    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
     "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
     "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
     "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
@@ -14827,6 +14831,8 @@ VM_SINGLE_PROFILE_TEMPLATE_KEYS = (
     "AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES",
     "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
     "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
+    "AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR",
+    "AI_MODEL_HUB_REAL_MODELS_TRAIN_COMMAND",
     "VM_EXTERNAL_IP",
     "VM_COMMON_IP",
     "VM_DATASPACE_IP",
@@ -14969,6 +14975,7 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
                     "AI_MODEL_HUB_MODEL_SERVER_MODE",
                     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
                     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
+                    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
                     "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
                     "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
                     "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
@@ -14978,6 +14985,8 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
                     "AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES",
                     "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
                     "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
+                    "AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR",
+                    "AI_MODEL_HUB_REAL_MODELS_TRAIN_COMMAND",
                 ),
             ),
             (
@@ -15122,6 +15131,7 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
                 "AI_MODEL_HUB_MODEL_SERVER_MODE",
                 "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
                 "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
+                "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
                 "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
                 "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
                 "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
@@ -15131,6 +15141,8 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
                 "AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES",
                 "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
                 "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
+                "AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR",
+                "AI_MODEL_HUB_REAL_MODELS_TRAIN_COMMAND",
             ),
         ),
         (
@@ -17603,6 +17615,402 @@ def _print_vm_distributed_manual_commands(plan):
     print("  python3 main.py <adapter> deploy --topology vm-distributed --dry-run")
 
 
+def _ai_model_hub_real_models_default_source_dir(profile_values=None):
+    values = dict(profile_values or {})
+    configured = str(
+        values.get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR")
+        or values.get("AI_MODEL_HUB_REAL_MODEL_SERVER_SOURCE_DIR")
+        or values.get("AI_MODEL_HUB_USE_CASE_MODEL_SERVER_SOURCE_DIR")
+        or ""
+    ).strip()
+    if configured:
+        expanded = os.path.expanduser(configured)
+        if os.path.isabs(expanded):
+            return os.path.abspath(expanded)
+        return os.path.abspath(os.path.join(os.path.dirname(__file__), expanded))
+    return os.path.join(
+        os.path.dirname(__file__),
+        "adapters",
+        "inesdata",
+        "sources",
+        "AIModelHub-Use-Cases",
+    )
+
+
+def _ai_model_hub_real_models_artifact_dir(profile_values=None):
+    values = dict(profile_values or {})
+    configured = str(values.get("AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR") or "").strip()
+    if configured:
+        expanded = os.path.expanduser(configured)
+        if os.path.isabs(expanded):
+            return os.path.abspath(expanded)
+        return os.path.abspath(os.path.join(os.path.dirname(__file__), expanded))
+    return os.path.join(os.path.dirname(__file__), ".local", "artifacts", "ai-model-hub", "use-cases")
+
+
+def _ai_model_hub_real_models_train_command(profile_values=None):
+    values = dict(profile_values or {})
+    configured = str(values.get("AI_MODEL_HUB_REAL_MODELS_TRAIN_COMMAND") or "").strip()
+    if configured:
+        return configured
+    return "python3 -m pip install -r requirements.txt && bash scripts/create_models.sh"
+
+
+def _ai_model_hub_real_models_repository(profile_values=None):
+    values = dict(profile_values or {})
+    return str(
+        values.get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY")
+        or values.get("AI_MODEL_HUB_USE_CASE_MODEL_SERVER_REPOSITORY")
+        or values.get("AI_MODEL_HUB_REAL_MODEL_SERVER_REPOSITORY")
+        or ai_model_hub_model_server.DEFAULT_USE_CASES_SOURCE_REPOSITORY
+    ).strip()
+
+
+def _ai_model_hub_real_models_source_ref(profile_values=None):
+    values = dict(profile_values or {})
+    return str(
+        values.get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF")
+        or values.get("MODEL_SERVER_SOURCE_REF")
+        or ""
+    ).strip()
+
+
+def _ai_model_hub_real_models_public_url(profile_values=None):
+    values = dict(profile_values or {})
+    explicit = str(values.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL") or "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    public_base = str(
+        values.get("COMPONENTS_PUBLIC_BASE_URL")
+        or values.get("VM_COMMON_PUBLIC_URL")
+        or ""
+    ).strip().rstrip("/")
+    if not public_base:
+        return ""
+    return f"{public_base}/model-server"
+
+
+def _ensure_ai_model_hub_real_models_source(profile_values=None):
+    values = dict(profile_values or {})
+    source_dir = _ai_model_hub_real_models_default_source_dir(values)
+    repository = _ai_model_hub_real_models_repository(values)
+    source_ref = _ai_model_hub_real_models_source_ref(values)
+    should_clone = not os.path.isdir(source_dir)
+    if not should_clone:
+        entries = [entry for entry in os.listdir(source_dir) if entry != ".gitkeep"]
+        should_clone = len(entries) == 0
+    if should_clone:
+        if not repository:
+            return {"status": "failed", "reason": "missing-repository", "source_dir": source_dir}
+        os.makedirs(os.path.dirname(source_dir), exist_ok=True)
+        subprocess.run(["git", "clone", repository, source_dir], check=True)
+
+    if source_ref:
+        try:
+            subprocess.run(["git", "-C", source_dir, "checkout", "--detach", source_ref], check=True)
+        except subprocess.CalledProcessError:
+            subprocess.run(["git", "-C", source_dir, "fetch", "--all", "--tags"], check=True)
+            subprocess.run(["git", "-C", source_dir, "checkout", "--detach", source_ref], check=True)
+
+    missing = [
+        path
+        for path in (
+            os.path.join(source_dir, "requirements.txt"),
+            os.path.join(source_dir, "src", "server.py"),
+            os.path.join(source_dir, "scripts", "create_models.sh"),
+        )
+        if not os.path.isfile(path)
+    ]
+    if missing:
+        return {
+            "status": "failed",
+            "reason": "invalid-source",
+            "source_dir": source_dir,
+            "missing": missing,
+        }
+    return {
+        "status": "ready",
+        "source_dir": source_dir,
+        "repository": repository,
+        "source_ref": source_ref,
+    }
+
+
+def _count_ai_model_hub_real_model_files(path):
+    count = 0
+    if not os.path.isdir(path):
+        return 0
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [entry for entry in dirs if not entry.startswith(".") and entry != "__pycache__"]
+        count += sum(1 for filename in files if not filename.startswith("."))
+    return count
+
+
+def _ai_model_hub_real_models_status(profile_values=None):
+    values = dict(profile_values or {})
+    source_dir = _ai_model_hub_real_models_default_source_dir(values)
+    flares_dir = os.path.join(source_dir, "models", "flares")
+    mobility_dir = os.path.join(source_dir, "models", "mobility")
+    flares_files = _count_ai_model_hub_real_model_files(flares_dir)
+    mobility_files = _count_ai_model_hub_real_model_files(mobility_dir)
+    resolved_commit = ""
+    if os.path.isdir(os.path.join(source_dir, ".git")):
+        try:
+            result = subprocess.run(
+                ["git", "-C", source_dir, "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            resolved_commit = str(result.stdout or "").strip()
+        except (OSError, subprocess.CalledProcessError):
+            resolved_commit = ""
+    return {
+        "source_dir": source_dir,
+        "source_exists": os.path.isdir(source_dir),
+        "repository": _ai_model_hub_real_models_repository(values),
+        "source_ref": _ai_model_hub_real_models_source_ref(values),
+        "resolved_commit": resolved_commit,
+        "artifact_dir": _ai_model_hub_real_models_artifact_dir(values),
+        "train_command": _ai_model_hub_real_models_train_command(values),
+        "models_dir": os.path.join(source_dir, "models"),
+        "flares_files": flares_files,
+        "mobility_files": mobility_files,
+        "ready": bool(flares_files and mobility_files),
+        "public_url": _ai_model_hub_real_models_public_url(values),
+    }
+
+
+def _print_ai_model_hub_real_models_status(status, topology_config=None):
+    payload = dict(status or {})
+    execution_host = _normalized_vm_distributed_execution_host(topology_config or {})
+    print()
+    print("AI Model Hub real model-server status:")
+    print(f"  Execution host: {execution_host}")
+    print(f"  Source: {_framework_relative_path(payload.get('source_dir'))}")
+    print(f"  Repository: {payload.get('repository') or '(not configured)'}")
+    print(f"  Source ref: {payload.get('source_ref') or '(default branch)'}")
+    print(f"  Resolved commit: {payload.get('resolved_commit') or '(not resolved yet)'}")
+    print(f"  Models: {_framework_relative_path(payload.get('models_dir'))}")
+    print(f"  FLARES files: {payload.get('flares_files', 0)}")
+    print(f"  Mobility files: {payload.get('mobility_files', 0)}")
+    print(f"  Ready for real mode: {'yes' if payload.get('ready') else 'no'}")
+    print(f"  Artifacts: {_framework_relative_path(payload.get('artifact_dir'))}")
+    print(f"  Train command: {payload.get('train_command')}")
+    if payload.get("public_url"):
+        print(f"  Public URL after promotion: {payload.get('public_url')}")
+
+
+def _start_ai_model_hub_real_models_training(profile_values=None, topology_config=None):
+    values = dict(profile_values or {})
+    execution_host = _normalized_vm_distributed_execution_host(topology_config or {})
+    if execution_host != "common-services":
+        return {
+            "status": "skipped",
+            "reason": "run-from-common-services-vm",
+            "execution_host": execution_host,
+        }
+
+    source_result = _ensure_ai_model_hub_real_models_source(values)
+    if source_result.get("status") != "ready":
+        return source_result
+
+    artifact_dir = _ai_model_hub_real_models_artifact_dir(values)
+    os.makedirs(artifact_dir, exist_ok=True)
+    log_path = os.path.join(artifact_dir, f"train-{time.strftime('%Y%m%d-%H%M%S')}.log")
+    command = _ai_model_hub_real_models_train_command(values)
+    with open(log_path, "ab") as log_handle:
+        process = subprocess.Popen(
+            command,
+            cwd=source_result["source_dir"],
+            shell=True,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    return {
+        "status": "started",
+        "pid": process.pid,
+        "source_dir": source_result["source_dir"],
+        "artifact_dir": artifact_dir,
+        "log_path": log_path,
+        "command": command,
+    }
+
+
+def _write_ai_model_hub_real_models_profile_updates(profile_path, updates):
+    _write_key_value_updates(
+        profile_path,
+        updates,
+        (
+            "AI_MODEL_HUB_MODEL_SERVER_MODE",
+            "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
+            "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
+            "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
+            "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
+            "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
+            "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL",
+            "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH",
+            "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES",
+            "AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR",
+            "AI_MODEL_HUB_REAL_MODELS_TRAIN_COMMAND",
+        ),
+    )
+
+
+def _promote_ai_model_hub_real_models_profile(profile_path, profile_values=None, adapter_name="inesdata"):
+    values = dict(profile_values or {})
+    status = _ai_model_hub_real_models_status(values)
+    if not status.get("ready"):
+        return {"status": "failed", "reason": "models-not-ready", "model_status": status}
+
+    updates = {
+        "AI_MODEL_HUB_MODEL_SERVER_MODE": "use-cases",
+        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": _framework_relative_path(status["source_dir"]),
+        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": status.get("repository") or "",
+        "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH": "/models",
+        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH": "/models",
+        "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES": "true",
+    }
+    if status.get("public_url"):
+        updates["AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL"] = status["public_url"]
+        updates["AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL"] = status["public_url"]
+    _write_ai_model_hub_real_models_profile_updates(profile_path, updates)
+    apply_result = apply_environment_configuration_profile(
+        profile_path,
+        topology="vm-distributed",
+        adapter_name=adapter_name,
+    )
+    return {
+        "status": "promoted",
+        "profile": profile_path,
+        "updates": updates,
+        "apply_result": apply_result,
+        "model_status": status,
+    }
+
+
+def _restore_ai_model_hub_mock_model_server_profile(profile_path, adapter_name="inesdata"):
+    updates = {
+        "AI_MODEL_HUB_MODEL_SERVER_MODE": "mock",
+        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": "",
+        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": "",
+        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF": "",
+        "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH": "",
+        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL": "",
+        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH": "",
+        "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES": "",
+    }
+    _write_ai_model_hub_real_models_profile_updates(profile_path, updates)
+    apply_result = apply_environment_configuration_profile(
+        profile_path,
+        topology="vm-distributed",
+        adapter_name=adapter_name,
+    )
+    return {"status": "restored", "profile": profile_path, "updates": updates, "apply_result": apply_result}
+
+
+def _print_ai_model_hub_real_models_action_result(result):
+    payload = dict(result or {})
+    print()
+    print(f"Result: {payload.get('status') or 'unknown'}")
+    if payload.get("reason"):
+        print(f"Reason: {payload.get('reason')}")
+    if payload.get("execution_host"):
+        print(f"Execution host: {payload.get('execution_host')}")
+    if payload.get("source_dir"):
+        print(f"Source: {_framework_relative_path(payload.get('source_dir'))}")
+    if payload.get("artifact_dir"):
+        print(f"Artifacts: {_framework_relative_path(payload.get('artifact_dir'))}")
+    if payload.get("log_path"):
+        print(f"Training log: {_framework_relative_path(payload.get('log_path'))}")
+    if payload.get("pid"):
+        print(f"Background PID: {payload.get('pid')}")
+    if payload.get("command"):
+        print(f"Command: {payload.get('command')}")
+    for item in list(payload.get("missing") or []):
+        print(f"Missing: {_framework_relative_path(item)}")
+    if payload.get("model_status"):
+        _print_ai_model_hub_real_models_status(payload.get("model_status"))
+    if payload.get("apply_result"):
+        _print_vm_distributed_profile_result(payload.get("apply_result"))
+
+
+def _run_ai_model_hub_real_models_assistant(current_adapter=None, adapter_registry=None):
+    registry = adapter_registry or ADAPTER_REGISTRY
+    selected_adapter = _interactive_require_adapter_selection(current_adapter, adapter_registry=registry)
+    if not selected_adapter:
+        return {"status": "cancelled", "topology": "vm-distributed"}
+
+    profile_state = _ensure_vm_distributed_profile_file(adapter_name=selected_adapter)
+    profile_path = profile_state["path"]
+    profile_values, parse_errors = _load_vm_distributed_profile(profile_path)
+    if parse_errors:
+        return {"status": "failed", "reason": "invalid-profile", "profile": profile_path, "errors": parse_errors}
+    topology_config = dict(_load_effective_infrastructure_deployer_config(topology="vm-distributed") or {})
+    topology_config.update({key: value for key, value in profile_values.items() if str(value).strip()})
+
+    while True:
+        status = _ai_model_hub_real_models_status(profile_values)
+        _print_ai_model_hub_real_models_status(status, topology_config=topology_config)
+        print()
+        print("1 - Prepare or update source checkout")
+        print("2 - Start real model training in background")
+        print("3 - Promote profile to real use-case model-server")
+        print("4 - Restore controlled mock model-server")
+        print("B/Q - Back")
+        choice = _interactive_read("\nSelection: ").strip().upper()
+        if not choice or choice in {"B", "Q"}:
+            return {"status": "completed", "adapter": selected_adapter, "topology": "vm-distributed"}
+
+        if choice == "1":
+            try:
+                result = _ensure_ai_model_hub_real_models_source(profile_values)
+            except subprocess.CalledProcessError as exc:
+                result = {"status": "failed", "reason": "source-command-failed", "error": str(exc)}
+            _print_ai_model_hub_real_models_action_result(result)
+            profile_values, _parse_errors = _load_vm_distributed_profile(profile_path)
+            continue
+
+        if choice == "2":
+            print()
+            print("Training can take a long time and may download model dependencies.")
+            print("Run this only from the common-services/components VM.")
+            if not _interactive_confirm("Start background training now?", default=False):
+                print("Training cancelled.")
+                continue
+            try:
+                result = _start_ai_model_hub_real_models_training(profile_values, topology_config=topology_config)
+            except subprocess.CalledProcessError as exc:
+                result = {"status": "failed", "reason": "training-command-failed", "error": str(exc)}
+            _print_ai_model_hub_real_models_action_result(result)
+            continue
+
+        if choice == "3":
+            if not _interactive_confirm("Promote this environment to the real use-case model-server?", default=False):
+                print("Promotion cancelled.")
+                continue
+            result = _promote_ai_model_hub_real_models_profile(
+                profile_path,
+                profile_values,
+                adapter_name=selected_adapter,
+            )
+            _print_ai_model_hub_real_models_action_result(result)
+            profile_values, _parse_errors = _load_vm_distributed_profile(profile_path)
+            continue
+
+        if choice == "4":
+            if not _interactive_confirm("Restore controlled mock model-server mode?", default=False):
+                print("Restore cancelled.")
+                continue
+            result = _restore_ai_model_hub_mock_model_server_profile(profile_path, adapter_name=selected_adapter)
+            _print_ai_model_hub_real_models_action_result(result)
+            profile_values, _parse_errors = _load_vm_distributed_profile(profile_path)
+            continue
+
+        print("Invalid AI Model Hub real model-server selection.")
+
+
 def _print_vm_distributed_assistant_menu(current_adapter=None):
     print()
     print("=" * 50)
@@ -17620,6 +18028,7 @@ def _print_vm_distributed_assistant_menu(current_adapter=None):
     print("7 - Local SSH key self-test")
     print("8 - Prepare local k3s kubeconfigs")
     print("9 - Show runtime artifact paths")
+    print("10 - AI Model Hub real model-server preparation")
     print("B/Q - Back")
     print("=" * 50)
 
@@ -17798,6 +18207,17 @@ def _run_vm_distributed_assistant(
                     topology="vm-distributed",
                 )
             )
+            continue
+
+        if choice == "10":
+            result = _run_ai_model_hub_real_models_assistant(
+                current_adapter=current_adapter,
+                adapter_registry=registry,
+            )
+            if isinstance(result, dict):
+                current_adapter = result.get("adapter") or current_adapter
+                if result.get("status") not in {"completed", "cancelled"}:
+                    _print_ai_model_hub_real_models_action_result(result)
             continue
 
         print("Invalid vm-distributed assistant selection.")

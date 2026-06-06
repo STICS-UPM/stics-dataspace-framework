@@ -28,7 +28,7 @@ def model_server_enabled(config: dict | None) -> bool:
 def normalize_model_server_mode(mode) -> str:
     normalized = str(mode or "").strip().lower().replace("_", "-")
     aliases = {
-        "": "combined",
+        "": "mock",
         "fixture": "mock",
         "deterministic": "mock",
         "development-mock": "mock",
@@ -48,7 +48,7 @@ def model_server_mode(config: dict | None) -> tuple[str, str]:
         values.get("AI_MODEL_HUB_MODEL_SERVER_MODE")
         or values.get("LEVEL5_AI_MODEL_HUB_MODEL_SERVER_MODE")
         or values.get("MODEL_SERVER_MODE")
-        or "combined"
+        or "mock"
     )
     return normalize_model_server_mode(raw_mode), str(raw_mode)
 
