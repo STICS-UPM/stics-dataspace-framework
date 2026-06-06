@@ -144,6 +144,7 @@ adapters/inesdata/sources/automap
 adapters/inesdata/sources/gtfs-bench
 adapters/inesdata/sources/inesdata-connector/extensions/vocabulary-shared-retrieval/src/main/java/org/upm/inesdata/vocabulary/shared/retrieval/VocabularySharedRetrievalExtension.java
 adapters/inesdata/sources/AIModelHub
+adapters/inesdata/sources/AIModelHub-Use-Cases
 validation/components/ontology_hub/functional/generated
 validation/components/ontology_hub/functional/state/
 validation/datasets/sources/

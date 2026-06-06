@@ -307,15 +307,14 @@ contrato desde la UI de INESData y confirma por API que el agreement queda
 registrado en el conector consumidor. La segunda prueba reutiliza una fixture
 controlada como asset `machineLearning` para validar `AI Model Browser`:
 búsqueda, filtros por origen y tarea, metadatos visibles y apertura del detalle
-del modelo. La tercera prueba usa el `model-server` determinista incluido en
-`adapters/inesdata/sources/model-server` como endpoint temporal para validar
-`AI Model Execution`: selección del modelo, payload de ejemplo, ejecución,
-salida visible e historial. La cuarta prueba usa dos endpoints comparables del
-mismo `model-server`, carga un CSV pequeño de validación y comprueba ranking,
-métricas y acceso a evidencia de benchmark. Estas pruebas no sustituyen a los
-modelos reales de A5.2; validan el gobierno visual, contractual, de
-descubrimiento especializado, ejecución y comparación mientras se integran
-modelos productivos.
+del modelo. La tercera prueba usa el servidor real
+`adapters/inesdata/sources/AIModelHub-Use-Cases` para validar `AI Model
+Execution`: selección del modelo, payload de ejemplo, ejecución, salida visible
+e historial. La cuarta prueba usa dos endpoints comparables del mismo servidor
+de casos de uso, carga un CSV pequeño de validación y comprueba ranking,
+métricas y acceso a evidencia de benchmark. Estas pruebas validan el gobierno
+visual, contractual, de descubrimiento especializado, ejecución y comparación
+con el servidor real de modelos configurado por el framework.
 `UI_AI_MODEL_HUB_MODEL_URL` permite fijar la URL completa del endpoint y
 `UI_AI_MODEL_HUB_MODEL_PATH` cambia la ruta por defecto
 `/api/v1/nlp/ecommerce-sentiment`. Si no se define una URL explícita, las

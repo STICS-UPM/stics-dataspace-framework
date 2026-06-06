@@ -357,9 +357,9 @@ test("13 AI Model Benchmarking: compare two local model-server endpoints from IN
           sourceObjectName: `${model.assetId}.json`,
           name: model.name,
           version: "1.0.0",
-          shortDescription: "Temporary deterministic model-server endpoint for AI Model Benchmarking validation",
+          shortDescription: "AIModelHub-Use-Cases endpoint for AI Model Benchmarking validation",
           description:
-            "Controlled model-server endpoint used to validate model comparison from the INESData connector interface before replacing the fixture with real A5.2 models.",
+            "AIModelHub-Use-Cases model-server endpoint used to validate model comparison from the INESData connector interface.",
           assetType: "machineLearning",
           keywords: ["validation", "ai-model-benchmarking", "model-server", "sentiment", "machine-learning", "HttpData", "A5.2"],
           properties: {

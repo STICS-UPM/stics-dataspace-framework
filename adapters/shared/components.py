@@ -682,6 +682,49 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
     def _ai_model_hub_model_server_source_ref(deployer_config):
         return model_server.source_ref(deployer_config)
 
+    @staticmethod
+    def _git_stdout(args):
+        try:
+            result = subprocess.run(
+                list(args),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            return ""
+        return str(result.stdout or "").strip()
+
+    def _ai_model_hub_model_server_source_metadata(self, source_dir, deployer_config):
+        resolved_source_dir = os.path.abspath(os.path.expanduser(str(source_dir or "").strip()))
+        repository_url = self._ai_model_hub_model_server_source_repository(deployer_config)
+        source_ref = self._ai_model_hub_model_server_source_ref(deployer_config)
+        resolved_commit = ""
+        git_branch = ""
+        dirty = None
+        if resolved_source_dir and os.path.isdir(os.path.join(resolved_source_dir, ".git")):
+            resolved_commit = self._git_stdout(["git", "-C", resolved_source_dir, "rev-parse", "HEAD"])
+            git_branch = self._git_stdout(["git", "-C", resolved_source_dir, "rev-parse", "--abbrev-ref", "HEAD"])
+            dirty = bool(self._git_stdout(["git", "-C", resolved_source_dir, "status", "--short"]))
+
+        warnings = []
+        reproducibility = "resolved" if resolved_commit else "unresolved"
+        if repository_url and source_ref and not resolved_commit:
+            warnings.append("Could not resolve the checked-out model-server source commit.")
+        if dirty:
+            warnings.append("The model-server source checkout has uncommitted changes.")
+
+        return {
+            "source_dir": resolved_source_dir,
+            "source_repository": repository_url,
+            "source_ref": source_ref,
+            "resolved_commit": resolved_commit,
+            "git_branch": git_branch,
+            "dirty": dirty,
+            "reproducibility": reproducibility,
+            "warnings": warnings,
+        }
+
     def _ensure_ai_model_hub_model_server_source_checkout(self, source_dir, repository_url, deployer_config):
         resolved_source_dir = os.path.abspath(os.path.expanduser(str(source_dir or "").strip()))
         resolved_repository_url = str(repository_url or "").strip()
@@ -714,17 +757,24 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 )
 
         source_ref = self._ai_model_hub_model_server_source_ref(deployer_config)
+        if not source_ref:
+            print(
+                "AI Model Hub model-server source ref not configured; using the repository default branch "
+                "and recording the resolved commit as deployment evidence."
+            )
         if source_ref:
+            checkout_args = ["git", "-C", resolved_source_dir, "checkout", "--detach", source_ref]
             try:
-                subprocess.run(
-                    ["git", "-C", resolved_source_dir, "checkout", source_ref],
-                    check=True,
-                )
+                subprocess.run(checkout_args, check=True)
             except subprocess.CalledProcessError as exc:
-                self._fail(
-                    "Could not checkout AI Model Hub model-server source ref",
-                    root_cause=f"{source_ref}: {exc}",
-                )
+                try:
+                    subprocess.run(["git", "-C", resolved_source_dir, "fetch", "--all", "--tags"], check=True)
+                    subprocess.run(checkout_args, check=True)
+                except subprocess.CalledProcessError:
+                    self._fail(
+                        "Could not checkout AI Model Hub model-server source ref",
+                        root_cause=f"{source_ref}: {exc}",
+                    )
 
         return resolved_source_dir
 
@@ -1425,6 +1475,14 @@ def combined_models() -> Dict[str, Any]:
 
         image_ref = self._ai_model_hub_model_server_image_ref(deployer_config)
         source_dir = self._ai_model_hub_model_server_source_dir(deployer_config)
+        source_metadata = self._ai_model_hub_model_server_source_metadata(source_dir, deployer_config)
+        if source_metadata.get("resolved_commit"):
+            print(
+                "AI Model Hub model-server source commit: "
+                f"{source_metadata['resolved_commit']}"
+            )
+        for warning in source_metadata.get("warnings") or []:
+            print(f"Warning: {warning}")
 
         built_local_image = self._prepare_ai_model_hub_model_server_image(image_ref, deployer_config)
 
@@ -1478,6 +1536,7 @@ def combined_models() -> Dict[str, Any]:
             "connector_base_url": connector_base_url,
             "public_url": public_url,
             "built_local_image": bool(built_local_image),
+            "source": source_metadata,
         }
 
     def _resolve_component_public_ingress_host(self, namespace, ingress_name):

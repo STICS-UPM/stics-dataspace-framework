@@ -6,14 +6,13 @@ import {
   waitForInputValue,
   waitForUiTransition,
 } from "../../../shared/utils/waiting";
+import { gotoEdcDashboardRoute } from "./edc-dashboard.page";
 
 export class EdcContractDefinitionsPage {
   constructor(private readonly page: Page) {}
 
   async goto(baseUrl: string): Promise<void> {
-    await this.page.goto(`${baseUrl.replace(/\/$/, "")}/contract-definitions`, {
-      waitUntil: "domcontentloaded",
-    });
+    await gotoEdcDashboardRoute(this.page, baseUrl, "contract-definitions", "Contract Definitions");
   }
 
   async expectReady(): Promise<void> {

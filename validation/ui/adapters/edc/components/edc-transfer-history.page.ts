@@ -1,6 +1,7 @@
 import { expect, Page } from "@playwright/test";
 
 import { waitForEventualConsistencyPoll } from "../../../shared/utils/waiting";
+import { gotoEdcDashboardRoute } from "./edc-dashboard.page";
 
 const SUCCESS_STATES = new Set(["COMPLETED", "STARTED"]);
 const FAILURE_STATES = new Set(["TERMINATED", "DEPROVISIONED", "SUSPENDED", "ERROR"]);
@@ -9,9 +10,7 @@ export class EdcTransferHistoryPage {
   constructor(private readonly page: Page) {}
 
   async goto(baseUrl: string): Promise<void> {
-    await this.page.goto(`${baseUrl.replace(/\/$/, "")}/transfer-history`, {
-      waitUntil: "domcontentloaded",
-    });
+    await gotoEdcDashboardRoute(this.page, baseUrl, "transfer-history", "Transfer History");
   }
 
   async expectReady(): Promise<void> {

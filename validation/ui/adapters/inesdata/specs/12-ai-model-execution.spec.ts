@@ -300,9 +300,9 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
         sourceObjectName: `ai-model-execution-model-${suffix}.json`,
         name: modelName,
         version: "1.0.0",
-        shortDescription: "Temporary deterministic model-server endpoint for AI Model Execution validation",
+        shortDescription: "AIModelHub-Use-Cases endpoint for AI Model Execution validation",
         description:
-          "Controlled model-server endpoint used to validate model execution from the INESData connector interface before replacing the fixture with real A5.2 models.",
+          "AIModelHub-Use-Cases model-server endpoint used to validate model execution from the INESData connector interface.",
         assetType: "machineLearning",
         keywords: ["validation", "ai-model-execution", "model-server", "machine-learning", "HttpData", "A5.2"],
         properties: {

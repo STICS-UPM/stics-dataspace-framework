@@ -6,10 +6,7 @@ import {
   waitForInputValue,
   waitForUiTransition,
 } from "../../../shared/utils/waiting";
-
-function dashboardUrl(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\/+/, "")}`;
-}
+import { gotoEdcDashboardRoute } from "./edc-dashboard.page";
 
 function nowMs(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -19,9 +16,7 @@ export class EdcMlAssetsPage {
   constructor(private readonly page: Page) {}
 
   async goto(baseUrl: string): Promise<void> {
-    await this.page.goto(dashboardUrl(baseUrl, "ml-assets"), {
-      waitUntil: "domcontentloaded",
-    });
+    await gotoEdcDashboardRoute(this.page, baseUrl, "ml-assets", "ML Assets");
   }
 
   async expectReady(): Promise<void> {
@@ -160,9 +155,7 @@ export class EdcModelExecutionPage {
   constructor(private readonly page: Page) {}
 
   async goto(baseUrl: string): Promise<void> {
-    await this.page.goto(dashboardUrl(baseUrl, "model-execution"), {
-      waitUntil: "domcontentloaded",
-    });
+    await gotoEdcDashboardRoute(this.page, baseUrl, "model-execution", "Model Execution");
   }
 
   async expectReady(): Promise<void> {
@@ -218,9 +211,7 @@ export class EdcModelBenchmarkingPage {
   constructor(private readonly page: Page) {}
 
   async goto(baseUrl: string): Promise<void> {
-    await this.page.goto(dashboardUrl(baseUrl, "model-benchmarking"), {
-      waitUntil: "domcontentloaded",
-    });
+    await gotoEdcDashboardRoute(this.page, baseUrl, "model-benchmarking", "Model Benchmarking");
   }
 
   async expectReady(): Promise<void> {
@@ -307,9 +298,7 @@ export class EdcOntologyHubPage {
   constructor(private readonly page: Page) {}
 
   async goto(baseUrl: string): Promise<void> {
-    await this.page.goto(dashboardUrl(baseUrl, "ontologies"), {
-      waitUntil: "domcontentloaded",
-    });
+    await gotoEdcDashboardRoute(this.page, baseUrl, "ontologies", "Ontologies");
   }
 
   async expectReady(): Promise<void> {

@@ -377,7 +377,7 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
         sourceObjectName: `ai-model-external-execution-model-${suffix}.json`,
         name: modelName,
         version: "1.0.0",
-        shortDescription: "External deterministic model-server endpoint for AI Model Execution validation",
+        shortDescription: "External AIModelHub-Use-Cases endpoint for AI Model Execution validation",
         description:
           "Controlled provider-side HttpData model used to validate consumer execution after contract negotiation from the INESData connector interface.",
         assetType: "machineLearning",

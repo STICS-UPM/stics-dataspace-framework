@@ -348,7 +348,7 @@ integration_cases:
     mapping_status: mapped
     preconditions:
       - INESData provider connector portal is reachable
-      - The deterministic model-server service is deployed and reachable from connector pods
+      - The AIModelHub-Use-Cases model-server service is deployed and reachable from connector pods
       - AI Model Execution is integrated in the INESData connector interface
     steps:
       - Bootstrap a local provider asset with machine-learning metadata and an HttpData address pointing to model-server
@@ -369,7 +369,7 @@ integration_cases:
       - validate_execution_output
       - inspect_execution_history
       - validate_execution_observer_evidence
-    expected_result: AI Model Execution validates payloads against the model input metadata, runs the controlled model-server endpoint from INESData, displays a successful deterministic inference result and links execution activity to Observer evidence when the backend is available
+    expected_result: AI Model Execution validates payloads against the model input metadata, runs the AIModelHub-Use-Cases model-server endpoint, displays a successful inference result and links execution activity to Observer evidence when the backend is available
     automation:
       status: automated
       mode: ui_api
@@ -377,9 +377,9 @@ integration_cases:
       runtime_env:
         UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
       fixture:
-        source: adapters/inesdata/sources/model-server
+        source: adapters/inesdata/sources/AIModelHub-Use-Cases
         endpoint: /api/v1/nlp/ecommerce-sentiment
-        note: Temporary deterministic fixture until real A5.2 models are integrated.
+        note: Official PIONERA AIModelHub-Use-Cases model-server source.
       notes: The spec checks malformed JSON, missing required input fields, successful execution output, in-session execution history and Observer timeline evidence for the generated execution correlationId. Observer evidence is recorded as a controlled subcheck when the backend is not available in the environment.
       linked_cases:
         - PT5-MH-10
@@ -398,7 +398,7 @@ integration_cases:
     mapping_status: mapped
     preconditions:
       - INESData provider and consumer connector portals are reachable
-      - The deterministic model-server service is deployed and reachable from connector pods
+      - The AIModelHub-Use-Cases model-server service is deployed and reachable from connector pods
       - A provider-side machine-learning HttpData asset can be negotiated by the consumer
       - AI Model Execution is integrated in the INESData consumer connector interface
     steps:
@@ -428,10 +428,10 @@ integration_cases:
       runtime_env:
         UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
       fixture:
-        source: adapters/inesdata/sources/model-server
+        source: adapters/inesdata/sources/AIModelHub-Use-Cases
         endpoint: /api/v1/nlp/twitter-sentiment
         transfer_type: HttpData-PULL
-        note: Temporary deterministic fixture until real A5.2 models are integrated.
+        note: Official PIONERA AIModelHub-Use-Cases model-server source.
       notes: The spec validates the agreed external execution path without invoking Kafka. It creates a run-scoped provider model, negotiates access from the consumer, selects it from External Assets With Agreement and executes it through the model execution API.
       linked_cases:
         - PT5-MH-10
@@ -452,7 +452,7 @@ integration_cases:
     mapping_status: mapped
     preconditions:
       - INESData provider connector portal is reachable
-      - The deterministic model-server service is deployed and reachable from connector pods
+      - The AIModelHub-Use-Cases model-server service is deployed and reachable from connector pods
       - AI Model Benchmarking is integrated in the INESData connector interface
     steps:
       - Bootstrap two local provider assets with comparable machine-learning HttpData metadata
@@ -478,7 +478,7 @@ integration_cases:
       - validate_benchmark_ranking
       - export_benchmark_results
       - validate_observer_benchmark_evidence
-    expected_result: AI Model Benchmarking validates benchmark input, obtains outputs for both controlled model-server endpoints, provides a suggested CSV dataset, compares the models from INESData, displays ranking evidence, exports the ranking CSV and links the generated benchmarkRunId to Observer evidence when the backend is available
+    expected_result: AI Model Benchmarking validates benchmark input, obtains outputs from AIModelHub-Use-Cases model-server endpoints, provides a suggested CSV dataset, compares the models from INESData, displays ranking evidence, exports the ranking CSV and links the generated benchmarkRunId to Observer evidence when the backend is available
     automation:
       status: automated
       mode: ui_api
@@ -486,12 +486,12 @@ integration_cases:
       runtime_env:
         UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
       fixture:
-        source: adapters/inesdata/sources/model-server
+        source: adapters/inesdata/sources/AIModelHub-Use-Cases
         endpoints:
           - /api/v1/nlp/ecommerce-sentiment
           - /api/v1/nlp/twitter-sentiment
         dataset_rows: 5
-        note: Temporary deterministic fixture until real A5.2 models are integrated.
+        note: Official PIONERA AIModelHub-Use-Cases model-server source.
       notes: The spec validates generated single input, obtains outputs for the selected models, downloads a suggested CSV dataset, uploads the controlled validation CSV, runs the ranking benchmark, verifies the exported ranking CSV and opens Observer benchmark evidence for the generated benchmarkRunId. Observer evidence is recorded as a controlled subcheck when the backend is not available in the environment.
       linked_cases:
         - PT5-MH-12

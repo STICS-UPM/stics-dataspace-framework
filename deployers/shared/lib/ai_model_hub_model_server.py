@@ -3,6 +3,9 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 
+DEFAULT_USE_CASES_SOURCE_REPOSITORY = "https://github.com/ProyectoPIONERA/AIModelHub-Use-Cases.git"
+
+
 def parse_bool(value, *, default: bool = False) -> bool:
     if value is None:
         return default
@@ -25,9 +28,10 @@ def model_server_enabled(config: dict | None) -> bool:
 def normalize_model_server_mode(mode) -> str:
     normalized = str(mode or "").strip().lower().replace("_", "-")
     aliases = {
-        "": "mock",
+        "": "combined",
         "fixture": "mock",
         "deterministic": "mock",
+        "development-mock": "mock",
         "real": "use-cases",
         "usecases": "use-cases",
         "use-cases": "use-cases",
@@ -44,20 +48,26 @@ def model_server_mode(config: dict | None) -> tuple[str, str]:
         values.get("AI_MODEL_HUB_MODEL_SERVER_MODE")
         or values.get("LEVEL5_AI_MODEL_HUB_MODEL_SERVER_MODE")
         or values.get("MODEL_SERVER_MODE")
-        or "mock"
+        or "combined"
     )
     return normalize_model_server_mode(raw_mode), str(raw_mode)
 
 
 def source_repository(config: dict | None) -> str:
     values = dict(config or {})
-    return str(
+    explicit = str(
         values.get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY")
         or values.get("AI_MODEL_HUB_USE_CASE_MODEL_SERVER_REPOSITORY")
         or values.get("AI_MODEL_HUB_REAL_MODEL_SERVER_REPOSITORY")
         or values.get("MODEL_SERVER_SOURCE_REPOSITORY")
         or ""
     ).strip()
+    if explicit:
+        return explicit
+    mode, _raw_mode = model_server_mode(values)
+    if mode in {"use-cases", "combined"}:
+        return DEFAULT_USE_CASES_SOURCE_REPOSITORY
+    return ""
 
 
 def source_ref(config: dict | None) -> str:

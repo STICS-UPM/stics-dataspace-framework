@@ -57,6 +57,58 @@ support_checks:
         path: /config/app-config.json
       notes: Bootstrap support check used to confirm that runtime configuration is wired before UI flows are automated.
 
+  - id: MH-MODEL-SERVER-01
+    component: ai_model_hub
+    case_group: support
+    description: Real use-case model-server discovery endpoint
+    type: api
+    validation_type: support
+    dataspace_dimension: component-runtime
+    execution_mode: api_support
+    coverage_status: automated
+    mapping_status: supporting
+    preconditions:
+      - AI Model Hub model-server mode is use-cases or combined
+      - A public or validation URL for the model-server is configured
+    steps:
+      - Request the configured discovery endpoint
+      - Confirm that the endpoint returns a non-empty JSON payload
+    expected_result: The real AI Model Hub model-server exposes discoverable use-case metadata
+    automation:
+      status: automated
+      mode: api_support
+      runner_case: mh_model_server_01_discovery
+      real_flow:
+        method: GET
+        path: /models
+      notes: Executed when the framework is configured to deploy or validate the real AIModelHub-Use-Cases model-server.
+
+  - id: MH-MODEL-SERVER-02
+    component: ai_model_hub
+    case_group: support
+    description: Configured real use-case model-server inference endpoints
+    type: api
+    validation_type: support
+    dataspace_dimension: component-runtime
+    execution_mode: api_support
+    coverage_status: automated
+    mapping_status: supporting
+    preconditions:
+      - AI Model Hub model-server mode is use-cases or combined
+      - One or more validation endpoint paths are configured
+    steps:
+      - Send the configured validation payload to each endpoint
+      - Confirm that each endpoint returns a JSON HTTP 2xx response
+    expected_result: Configured real model-server endpoints can execute validation inputs
+    automation:
+      status: automated
+      mode: api_support
+      runner_case: mh_model_server_02_endpoint_execution
+      real_flow:
+        method: POST
+        path: configurable
+      notes: Optional endpoint-level support check controlled by AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS.
+
 test_cases:
   - id: PT5-MH-01
     component: ai_model_hub
@@ -363,7 +415,7 @@ test_cases:
     traceability:
       - MH-34
       - MH-35
-    notes: Automated controlled baseline for connector-side execution of HttpData model endpoints. INESData UI execution is covered by DS-UI-AMH-EXEC-01 using a local deterministic model-server fixture and DS-UI-AMH-EXEC-02 using an external provider model after consumer agreement. Real A5.2 models remain a component evolution item and are not required to close this baseline.
+    notes: Automated controlled baseline for connector-side execution of HttpData model endpoints. INESData UI execution is covered by DS-UI-AMH-EXEC-01 using the AIModelHub-Use-Cases model-server and DS-UI-AMH-EXEC-02 using an external provider model after consumer agreement.
     automation:
       status: automated
       mode: api
@@ -375,7 +427,7 @@ test_cases:
       latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
       latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner creates a temporary HttpData asset, calls /management/v3/modelexecutions/execute and deletes the asset after execution as the A5.2 controlled baseline. The local UI spec creates a run-scoped machineLearning HttpData asset pointing to adapters/inesdata/sources/model-server, checks input validation errors, and validates visible execution output/history from AI Model Execution. The external UI spec validates that the consumer sees and executes the model only after a contract agreement exists.
+      notes: The runner creates a temporary HttpData asset, calls /management/v3/modelexecutions/execute and deletes the asset after execution as the A5.2 controlled baseline. The local UI spec creates a run-scoped machineLearning HttpData asset pointing to adapters/inesdata/sources/AIModelHub-Use-Cases, checks input validation errors, and validates visible execution output/history from AI Model Execution. The external UI spec validates that the consumer sees and executes the model only after a contract agreement exists.
 
   - id: PT5-MH-11
     component: ai_model_hub
@@ -436,7 +488,7 @@ test_cases:
       ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
       latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner selects two controlled FLARES compatible model assets and records the benchmark-ready dataset mapping. The Playwright UI demo reuses the same fixture and controlled infer route without touching AIModelHub sources. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two deterministic model-server endpoints; it validates the generated benchmark input and downloads a suggested CSV dataset before uploading the small validation CSV.
+      notes: The runner selects two controlled FLARES compatible model assets and records the benchmark-ready dataset mapping. The Playwright UI demo reuses the same validation input and controlled infer route without touching AIModelHub sources. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two AIModelHub-Use-Cases model-server endpoints; it validates the generated benchmark input and downloads a suggested CSV dataset before uploading the small validation CSV.
 
   - id: PT5-MH-13
     component: ai_model_hub
@@ -470,7 +522,7 @@ test_cases:
       ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
       latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner executes both controlled models over the same FLARES input fingerprints and stores per-model execution evidence. The Playwright demo clicks Run Benchmark and shows those executions in the UI. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two deterministic model-server endpoints; it obtains visible preliminary outputs for both models before running the dataset benchmark.
+      notes: The runner executes both controlled models over the same FLARES input fingerprints and stores per-model execution evidence. The Playwright demo clicks Run Benchmark and shows those executions in the UI. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two AIModelHub-Use-Cases model-server endpoints; it obtains visible preliminary outputs for both models before running the dataset benchmark.
 
   - id: PT5-MH-14
     component: ai_model_hub
@@ -503,7 +555,7 @@ test_cases:
       ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
       latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner calculates accuracy, success rate, latency, throughput and score, then validates ranking coherence. The Playwright demo asserts that the UI renders the metrics columns. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two deterministic model-server endpoints and a small validation CSV after input validation and output preparation.
+      notes: The runner calculates accuracy, success rate, latency, throughput and score, then validates ranking coherence. The Playwright demo asserts that the UI renders the metrics columns. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two AIModelHub-Use-Cases model-server endpoints and a small validation CSV after input validation and output preparation.
 
   - id: PT5-MH-15
     component: ai_model_hub
@@ -540,7 +592,7 @@ test_cases:
       ui_demo_enable_with: AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO=1
       latest_ui_evidence: experiments/ai-model-hub-benchmarking-ui-marked-20260506/components/ai-model-hub/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-    notes: The runner produces renderable table rows and chart series for the comparison dashboard. The Playwright demo validates the visible table and best-model summary for auditors. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two deterministic model-server endpoints, the visible ranking summary, the exported ranking CSV and the generated benchmarkRunId Observer evidence route.
+    notes: The runner produces renderable table rows and chart series for the comparison dashboard. The Playwright demo validates the visible table and best-model summary for auditors. INESData UI integration is covered by DS-UI-AMH-BENCH-01 using two AIModelHub-Use-Cases model-server endpoints, the visible ranking summary, the exported ranking CSV and the generated benchmarkRunId Observer evidence route.
 
   - id: PT5-MH-16
     component: ai_model_hub
@@ -970,7 +1022,7 @@ functional_use_cases:
       runtime_env:
         UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
       fixture:
-        source: adapters/inesdata/sources/model-server
+        source: adapters/inesdata/sources/AIModelHub-Use-Cases
         endpoint: /api/v1/nlp/twitter-sentiment
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
       notes: Level 6 includes this spec in the INESData integration profile. The spec creates a run-scoped provider model, negotiates a consumer agreement, selects the external agreed model from the consumer UI and validates execution output/history.

@@ -9,6 +9,9 @@ from validation.components.artifact_contract import attach_component_artifact_ma
 from validation.components.console_output import print_component_case_results, print_component_suite_header
 from validation.components.ai_model_hub.runner import run_ai_model_hub_validation
 from validation.components.ai_model_hub.functional_runner import run_ai_model_hub_functional_validation
+from validation.components.ai_model_hub.model_server_use_cases_api import (
+    run_ai_model_hub_model_server_use_cases_validation,
+)
 from validation.components.ai_model_hub.ui_runner import run_ai_model_hub_ui_validation
 from validation.components.execution_mode import component_api_only_enabled
 from validation.components.fail_fast import component_fail_fast_enabled
@@ -564,6 +567,18 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
     if not api_only and playwright_failed and component_fail_fast_enabled():
         print("AI Model Hub integration suites skipped after Playwright failure because Level 6 fail-fast is enabled.")
     else:
+        print_suite_header("AI Model Hub functional", "api")
+        model_server_use_cases_result = run_ai_model_hub_model_server_use_cases_validation(
+            experiment_dir=experiment_dir,
+        )
+        model_server_use_cases_result.setdefault("execution_channel", "api")
+        print_component_case_results(model_server_use_cases_result.get("executed_cases") or [])
+        functional_suite_results.append(
+            (
+                "model_server_use_cases",
+                model_server_use_cases_result,
+            )
+        )
         if _model_benchmarking_enabled():
             print_suite_header("AI Model Hub functional", "api")
             model_benchmarking_result = run_ai_model_hub_model_benchmarking_validation(experiment_dir=experiment_dir)

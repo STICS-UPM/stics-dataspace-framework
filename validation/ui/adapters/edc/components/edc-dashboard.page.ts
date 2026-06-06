@@ -1,4 +1,4 @@
-import { expect, Page } from "@playwright/test";
+import { expect, Page, Response } from "@playwright/test";
 
 import { clickMarked } from "../../../shared/utils/live-marker";
 import { errorBanner } from "../../../shared/utils/selectors";
@@ -24,6 +24,70 @@ type DashboardAuthState = {
 
 const pageMarkerTimeoutMs = 30_000;
 const pageMarkerPollIntervalMs = 500;
+const transientGatewayStatuses = new Set([502, 503, 504]);
+const transientGatewayTextPattern =
+  /\b(?:502|503|504)\b|Bad Gateway|Service Temporarily Unavailable|Gateway Time-?out/i;
+
+function numericEnv(name: string, defaultValue: number): number {
+  const parsed = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
+}
+
+function dashboardUrl(baseUrl: string, path: string): string {
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+  if (path.startsWith("/")) {
+    return new URL(path, baseUrl).toString();
+  }
+  return `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+async function pageShowsTransientGateway(page: Page): Promise<boolean> {
+  const bodyText = await page.locator("body").textContent({ timeout: 1_000 }).catch(() => "");
+  return transientGatewayTextPattern.test(bodyText || "");
+}
+
+function responseShowsTransientGateway(response: Response | null): boolean {
+  return Boolean(response && transientGatewayStatuses.has(response.status()));
+}
+
+export async function gotoEdcDashboardRoute(
+  page: Page,
+  baseUrl: string,
+  path: string,
+  context = path,
+): Promise<void> {
+  const url = dashboardUrl(baseUrl, path);
+  const timeoutMs = numericEnv("UI_EDC_DASHBOARD_ROUTE_READY_TIMEOUT_MS", 90_000);
+  const retryIntervalMs = numericEnv("UI_EDC_DASHBOARD_ROUTE_RETRY_INTERVAL_MS", 2_000);
+  const deadline = Date.now() + timeoutMs;
+  let lastStatus: number | undefined;
+  let lastBodyWasGateway = false;
+
+  do {
+    const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch((error) => {
+      lastStatus = undefined;
+      throw error;
+    });
+    lastStatus = response?.status();
+    lastBodyWasGateway = await pageShowsTransientGateway(page);
+
+    if (!responseShowsTransientGateway(response) && !lastBodyWasGateway) {
+      return;
+    }
+
+    if (Date.now() < deadline) {
+      await page.waitForTimeout(retryIntervalMs);
+    }
+  } while (Date.now() < deadline);
+
+  throw new Error(
+    `EDC dashboard route '${context}' stayed unavailable after ${timeoutMs}ms at ${url}. ` +
+      `Last HTTP status: ${lastStatus ?? "unknown"}. ` +
+      `Gateway body detected: ${lastBodyWasGateway ? "yes" : "no"}.`,
+  );
+}
 
 export class EdcDashboardPage {
   constructor(private readonly page: Page) {}
@@ -123,9 +187,7 @@ export class EdcDashboardPage {
       await clickMarked(navButton);
       await waitForUiTransition(this.page);
     } else {
-      await this.page.goto(new URL(expectedPath, this.page.url()).toString(), {
-        waitUntil: "domcontentloaded",
-      });
+      await gotoEdcDashboardRoute(this.page, new URL(".", this.page.url()).toString(), expectedPath, sectionName);
     }
 
     await expect(this.page).toHaveURL(new RegExp(`${escapeRegExp(expectedPath)}(?:\\?.*)?$`), {

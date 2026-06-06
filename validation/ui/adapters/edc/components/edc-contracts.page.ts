@@ -3,6 +3,7 @@ import { expect, Page } from "@playwright/test";
 import type { ConnectorPortalRuntime } from "../../../shared/utils/dataspace-runtime";
 import { checkMarked, clickMarked, fillMarked, selectOptionMarked } from "../../../shared/utils/live-marker";
 import { waitForEventualConsistencyPoll, waitForUiTransition } from "../../../shared/utils/waiting";
+import { gotoEdcDashboardRoute } from "./edc-dashboard.page";
 
 const PUSH_TRANSFER_PATTERN = /push/i;
 
@@ -10,9 +11,7 @@ export class EdcContractsPage {
   constructor(private readonly page: Page) {}
 
   async goto(baseUrl: string): Promise<void> {
-    await this.page.goto(`${baseUrl.replace(/\/$/, "")}/contracts`, {
-      waitUntil: "domcontentloaded",
-    });
+    await gotoEdcDashboardRoute(this.page, baseUrl, "contracts", "Contracts");
   }
 
   async expectReady(): Promise<void> {
