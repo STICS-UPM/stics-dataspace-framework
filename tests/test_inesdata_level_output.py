@@ -2584,6 +2584,42 @@ minio:
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertTrue(deployment._should_prepull_level3_images("vm-single"))
 
+    def test_shared_vm_single_k3s_level3_prepull_respects_disabled_config(self):
+        deployment = SharedDataspaceDeploymentAdapter(
+            run=mock.Mock(),
+            run_silent=mock.Mock(),
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=None,
+            config_adapter=LevelOutputConfigAdapter(
+                {
+                    "CLUSTER_TYPE": "k3s",
+                    "VM_SINGLE_K3S_LEVEL3_IMAGE_PREPULL": "false",
+                }
+            ),
+            config_cls=LevelOutputPublicPortalConfig(self.tmpdir.name),
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(deployment._should_prepull_level3_images("vm-single"))
+
+    def test_shared_vm_single_k3s_level3_prepull_can_be_enabled_from_config(self):
+        deployment = SharedDataspaceDeploymentAdapter(
+            run=mock.Mock(),
+            run_silent=mock.Mock(),
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=None,
+            config_adapter=LevelOutputConfigAdapter(
+                {
+                    "CLUSTER_TYPE": "k3s",
+                    "VM_SINGLE_K3S_LEVEL3_IMAGE_PREPULL": "true",
+                }
+            ),
+            config_cls=LevelOutputPublicPortalConfig(self.tmpdir.name),
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(deployment._should_prepull_level3_images("vm-single"))
+
     def test_level3_k3s_prepull_retries_interactively_only_when_sudo_requires_password(self):
         deployment = SharedDataspaceDeploymentAdapter(
             run=mock.Mock(),

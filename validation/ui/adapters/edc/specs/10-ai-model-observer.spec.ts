@@ -23,14 +23,14 @@ test("10 edc AI Model Observer: dashboard route is available for model evidence"
   await loginPage.loginIfNeeded();
   await dashboardPage.expectShellReady();
 
-  const observerNavCount = await page.locator("a, button").filter({ hasText: /AI Model Observer/i }).count();
+  const observerNavCount = await page.locator("a, button").filter({ hasText: /Model Observer/i }).count();
   expect(
     observerNavCount,
-    "EDC dashboard does not currently expose an AI Model Observer route. This is a real UI parity gap, not a framework skip.",
+    "EDC dashboard does not currently expose the official Model Observer route. This is a real UI parity gap, not a framework skip.",
   ).toBeGreaterThan(0);
 
-  await dashboardPage.navigateToSection("AI Model Observer", "/edc-dashboard/ai-model-observer");
-  await dashboardPage.expectNoServerErrorBanner("EDC AI Model Observer");
-  await expect(page.getByText(/AI Model Observer/i).first()).toBeVisible({ timeout: 30_000 });
+  await dashboardPage.navigateToSection("Model Observer", "/edc-dashboard/model-observer");
+  await dashboardPage.expectNoServerErrorBanner("EDC Model Observer");
+  await expect(page.getByText(/Model Observer/i).first()).toBeVisible({ timeout: 30_000 });
   await captureStep(page, "01-edc-ai-model-observer");
 });

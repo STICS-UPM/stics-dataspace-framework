@@ -113,6 +113,7 @@ from deployers.shared.lib.connectors import (
     parse_connector_mapping,
     parse_connector_pairs,
 )
+from deployers.shared.lib.remote_k3s_images import remote_k3s_image_import_target
 from deployers.shared.lib.vm_distributed_public_access import (
     VM_PUBLIC_PLACEHOLDER_DOMAINS,
     is_vm_public_placeholder_url,
@@ -1520,19 +1521,66 @@ def _mapping_value(mapping, *keys, default=None):
     return default
 
 
-def _edc_dashboard_runtime_present(deployer_context):
+def _edc_dashboard_runtime_validation(deployer_context):
     runtime_dir = str(getattr(deployer_context, "runtime_dir", "") or "").strip()
     connectors = list(getattr(deployer_context, "connectors", []) or [])
+    result = {
+        "present": False,
+        "valid": False,
+        "issues": [],
+        "checked_connectors": [],
+    }
     if not runtime_dir or not connectors:
-        return False
+        result["issues"].append("dashboard runtime directory or connector list is empty")
+        return result
 
     for connector in connectors:
         dashboard_dir = os.path.join(runtime_dir, "dashboard", connector)
-        if os.path.isfile(os.path.join(dashboard_dir, "app-config.json")) and os.path.isfile(
-            os.path.join(dashboard_dir, "edc-connector-config.json")
-        ):
-            return True
-    return False
+        app_config_path = os.path.join(dashboard_dir, "app-config.json")
+        connector_config_path = os.path.join(dashboard_dir, "edc-connector-config.json")
+        if not os.path.isfile(app_config_path) or not os.path.isfile(connector_config_path):
+            result["issues"].append(f"{connector}: dashboard runtime files are missing")
+            continue
+
+        result["present"] = True
+        result["checked_connectors"].append(connector)
+        try:
+            with open(app_config_path, "r", encoding="utf-8") as handle:
+                app_config = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            result["issues"].append(f"{connector}: app-config.json is not readable JSON ({exc})")
+            continue
+
+        menu_paths = {
+            str(item.get("routerPath") or "").strip()
+            for item in (app_config.get("menuItems") or [])
+            if isinstance(item, dict)
+        }
+        if "model-observer" not in menu_paths:
+            result["issues"].append(f"{connector}: Model Observer menu item is missing")
+        if "ontologies" not in menu_paths:
+            result["issues"].append(f"{connector}: Ontologies menu item is missing")
+
+        runtime = app_config.get("runtime") or {}
+        ontology_url = str(runtime.get("ontologyUrl") or "").strip()
+        if ontology_url != "/edc-dashboard-api/components/ontology-hub":
+            result["issues"].append(
+                f"{connector}: ontologyUrl must be /edc-dashboard-api/components/ontology-hub"
+            )
+        model_observer_url = str(runtime.get("modelObserverUrl") or "").strip()
+        expected_observer_prefix = f"/edc-dashboard-api/connectors/{connector}/api"
+        if not model_observer_url.startswith(expected_observer_prefix):
+            result["issues"].append(
+                f"{connector}: modelObserverUrl must start with {expected_observer_prefix}"
+            )
+
+    result["valid"] = bool(result["present"] and not result["issues"])
+    return result
+
+
+def _edc_dashboard_runtime_present(deployer_context):
+    validation = _edc_dashboard_runtime_validation(deployer_context)
+    return bool(validation.get("present") and validation.get("valid"))
 
 
 def _edc_dashboard_runtime_auth_mode(deployer_context):
@@ -6383,6 +6431,95 @@ def _edc_local_cluster_runtime(adapter, topology="local"):
     return build_cluster_runtime(config, topology=normalized_topology).get("cluster_type", "minikube")
 
 
+def _first_non_empty_config_value(config, *keys, default=""):
+    values = dict(config or {})
+    for key in keys:
+        value = str(values.get(key) or "").strip()
+        if value:
+            return value
+    return default
+
+
+def _edc_vm_single_remote_image_import_target(config):
+    values = dict(config or {})
+    raw_enabled = str(values.get("VM_SINGLE_REMOTE_IMAGE_IMPORT") or "auto").strip().lower()
+    if raw_enabled in {"0", "false", "no", "n", "off", "disabled", "disable", "never", "none"}:
+        return None
+
+    host = _first_non_empty_config_value(values, "VM_SINGLE_SSH_HOST", "VM_EXTERNAL_IP", "VM_SINGLE_IP")
+    if not host:
+        return None
+
+    remote_config = dict(values)
+    remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT"] = "true"
+    remote_config["VM_COMMON_SSH_HOST"] = host
+    remote_config["VM_COMMON_IP"] = _first_non_empty_config_value(values, "VM_EXTERNAL_IP", "VM_SINGLE_IP", default=host)
+    remote_config["VM_COMMON_SSH_PORT"] = _first_non_empty_config_value(values, "VM_SINGLE_SSH_PORT", default="22")
+    remote_config["VM_COMMON_SSH_USER"] = _first_non_empty_config_value(
+        values,
+        "VM_SINGLE_SSH_USER",
+        "VM_SSH_USER",
+        "SSH_BASTION_USER",
+    )
+    remote_config["VM_COMMON_SSH_IDENTITY_FILE"] = _first_non_empty_config_value(
+        values,
+        "VM_SINGLE_SSH_IDENTITY_FILE",
+        "SSH_IDENTITY_FILE",
+        "SSH_BASTION_IDENTITY_FILE",
+    )
+    access_mode = _first_non_empty_config_value(values, "VM_SINGLE_SSH_ACCESS_MODE")
+    if access_mode:
+        remote_config["SSH_ACCESS_MODE"] = access_mode
+    remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND"] = _first_non_empty_config_value(
+        values,
+        "VM_SINGLE_REMOTE_IMAGE_IMPORT_COMMAND",
+        "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND",
+        "K3S_IMAGE_IMPORT_COMMAND",
+    )
+    remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR"] = _first_non_empty_config_value(
+        values,
+        "VM_SINGLE_REMOTE_IMAGE_IMPORT_DIR",
+        "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_DIR",
+        default="/tmp",
+    )
+    remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE"] = _first_non_empty_config_value(
+        values,
+        "VM_SINGLE_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+        "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE",
+        default="auto",
+    )
+    remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY"] = _first_non_empty_config_value(
+        values,
+        "VM_SINGLE_REMOTE_IMAGE_IMPORT_TTY",
+        "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY",
+    )
+    remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE"] = _first_non_empty_config_value(
+        values,
+        "VM_SINGLE_REMOTE_IMAGE_PRUNE",
+        "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE",
+    )
+    remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP"] = _first_non_empty_config_value(
+        values,
+        "VM_SINGLE_REMOTE_IMAGE_PRUNE_KEEP",
+        "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP",
+        default="2",
+    )
+    return remote_k3s_image_import_target(remote_config, role="common")
+
+
+def _edc_local_image_build_env(adapter, topology, cluster_runtime):
+    env = os.environ.copy()
+    if normalize_topology(topology) != VM_SINGLE_TOPOLOGY or str(cluster_runtime or "").strip().lower() != "k3s":
+        return env
+    config_adapter = getattr(adapter, "config_adapter", None)
+    config_loader = getattr(config_adapter, "load_deployer_config", None)
+    config = dict(config_loader() or {}) if callable(config_loader) else {}
+    target = _edc_vm_single_remote_image_import_target(config)
+    if target is not None:
+        env.update(target.shell_env())
+    return env
+
+
 def _prepare_edc_local_connector_image_override(adapter):
     if _env_flag("PIONERA_SKIP_EDC_LOCAL_CONNECTOR_IMAGE_BUILD", default=False):
         raise RuntimeError(
@@ -6445,7 +6582,8 @@ def _prepare_edc_local_connector_image_override(adapter):
         f"Preparing local image automatically: {image_name}:{image_tag} "
         f"(cluster runtime: {cluster_runtime})"
     )
-    result = subprocess.run(command, cwd=root_dir, check=False)
+    env = _edc_local_image_build_env(adapter, getattr(adapter, "topology", "local"), cluster_runtime)
+    result = subprocess.run(command, cwd=root_dir, check=False, env=env)
     if result.returncode != 0:
         raise RuntimeError(
             "Automatic EDC connector image preparation failed. "
@@ -6508,7 +6646,7 @@ def _prepare_edc_local_dashboard_images(adapter, config):
     _ensure_docker_client_ready_for_local_image_build(adapter)
     minikube_profile = _edc_local_minikube_profile(adapter)
     cluster_runtime = _edc_local_cluster_runtime(adapter, topology=getattr(adapter, "topology", "local"))
-    env = dict(os.environ)
+    env = _edc_local_image_build_env(adapter, getattr(adapter, "topology", "local"), cluster_runtime)
     env["PIONERA_EDC_DASHBOARD_IMAGE_NAME"] = images["dashboard_name"]
     env["PIONERA_EDC_DASHBOARD_IMAGE_TAG"] = images["dashboard_tag"]
     env["PIONERA_EDC_DASHBOARD_PROXY_IMAGE_NAME"] = images["proxy_name"]
@@ -8914,7 +9052,15 @@ def run_validate(
                 adapter_name = getattr(validation_profile, "adapter", "").strip().lower()
                 is_edc_playwright = adapter_name == "edc"
                 is_inesdata_playwright = adapter_name == "inesdata"
-                dashboard_runtime_present = _edc_dashboard_runtime_present(deployer_context) if is_edc_playwright else False
+                dashboard_runtime_validation = (
+                    _edc_dashboard_runtime_validation(deployer_context)
+                    if is_edc_playwright
+                    else {}
+                )
+                dashboard_runtime_present = bool(
+                    dashboard_runtime_validation.get("present")
+                    and dashboard_runtime_validation.get("valid")
+                )
                 if (
                     is_edc_playwright
                     and not (
@@ -8924,6 +9070,15 @@ def run_validate(
                 ):
                     raise RuntimeError(
                         "Playwright validation for 'edc' requires EDC_DASHBOARD_ENABLED=true and a deployed dashboard runtime"
+                    )
+                if is_edc_playwright and not dashboard_runtime_present:
+                    issues = dashboard_runtime_validation.get("issues") or []
+                    detail = "; ".join(str(issue) for issue in issues[:6]) or "dashboard runtime is missing"
+                    raise RuntimeError(
+                        "Playwright validation for 'edc' requires an EDC dashboard runtime "
+                        "that satisfies the current UI contract. Run Level 4 for the EDC "
+                        "adapter before Level 6 to regenerate the dashboard runtime. Root cause: "
+                        + detail
                     )
                 edc_dashboard_auth_mode = str(
                     getattr(deployer_context, "config", {}).get(

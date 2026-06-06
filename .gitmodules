@@ -1,0 +1,3 @@
+[submodule "adapters/edc/sources/dashboard"]
+	path = adapters/edc/sources/dashboard
+	url = https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard

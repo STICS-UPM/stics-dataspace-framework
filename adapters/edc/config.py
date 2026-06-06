@@ -23,6 +23,7 @@ class EdcConfig(InesdataConfig):
     EDC_REFERENCE_REPO_URL = "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
     EDC_REFERENCE_REPO_SUBDIR = "asset-filter-template"
     EDC_DASHBOARD_REPO_URL = "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
+    EDC_DASHBOARD_REPO_REF = "a4cb3e659e1fd3abfa9516a036c261b19432ec13"
     EDC_MANAGEMENT_PORT = 19193
     EDC_PROTOCOL_PORT = 19194
     EDC_MANAGEMENT_PATH = "/management"
@@ -200,6 +201,10 @@ class EDCConfigAdapter(INESDataConfigAdapter):
 
     def edc_dashboard_repo_url(self):
         return self.config.EDC_DASHBOARD_REPO_URL
+
+    def edc_dashboard_repo_ref(self):
+        config = self.load_deployer_config()
+        return str(config.get("EDC_DASHBOARD_REPO_REF", self.config.EDC_DASHBOARD_REPO_REF)).strip()
 
     def edc_adapter_dir(self):
         return os.path.join(self.config.script_dir(), "adapters", "edc")

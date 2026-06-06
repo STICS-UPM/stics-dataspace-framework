@@ -7,6 +7,7 @@ OVERLAY_DIR="$ADAPTER_DIR/overlays"
 CONNECTOR_SRC="$ADAPTER_DIR/sources/connector"
 DASHBOARD_SRC="$ADAPTER_DIR/sources/dashboard"
 DASHBOARD_APP="$DASHBOARD_SRC/DataDashboard"
+DASHBOARD_APP_OVERRIDE=""
 
 APPLY=0
 TARGET="all"
@@ -15,13 +16,14 @@ OVERLAY_MARKER="validation-environment-edc-rdf-overlay"
 
 usage() {
   cat <<'EOF'
-Usage: apply_overlays.sh [--apply] [--target connector|dashboard|all]
+Usage: apply_overlays.sh [--apply] [--target connector|dashboard|all] [--dashboard-app-dir <path>]
 
 Copy versioned overlays from adapters/edc/overlays onto synced upstream sources.
 
 Options:
   --apply              Execute overlay application. Default is dry-run.
   --target <name>      Apply connector, dashboard, or all overlays (default: all).
+  --dashboard-app-dir  Dashboard application directory to patch.
   -h, --help           Show this help message.
 EOF
 }
@@ -253,18 +255,10 @@ ontologies_marker = sys.argv[2]
 observer_marker = sys.argv[3]
 content = routes_path.read_text(encoding="utf-8")
 
-if observer_marker not in content and "path: 'ai-model-observer'" not in content:
-    observer_block = """  {
-    path: 'ai-model-observer',
-    loadComponent: () => import('./features/model-observer/model-observer.component').then(m => m.ModelObserverComponent),
-  },
-  // validation-environment-edc-model-observer-route
-"""
-    observer_anchor = "  {\n    path: 'assets',"
-    if observer_anchor not in content:
-        print("Could not find assets route anchor in app.routes.ts", file=sys.stderr)
-        sys.exit(1)
-    content = content.replace(observer_anchor, observer_block + observer_anchor, 1)
+if observer_marker not in content:
+    # Model Observer belongs to the upstream dashboard repository. The validation
+    # framework must not inject or overwrite that feature from the overlay.
+    pass
 
 if ontologies_marker not in content and "path: 'ontologies'" not in content:
     ontologies_block = """  {
@@ -322,22 +316,20 @@ PY
 patch_dashboard_app_config_menu() {
   local app_config_file="$1"
   local ontologies_menu_item_file="$OVERLAY_DIR/dashboard/patches/ontologies-menu-item.json"
-  local observer_menu_item_file="$OVERLAY_DIR/dashboard/patches/model-observer-menu-item.json"
 
-  if [[ ! -f "$app_config_file" || ! -f "$ontologies_menu_item_file" || ! -f "$observer_menu_item_file" ]]; then
+  if [[ ! -f "$app_config_file" || ! -f "$ontologies_menu_item_file" ]]; then
     echo "Dashboard app-config or validation menu patch not found" >&2
     return 1
   fi
 
   if [[ "$APPLY" -eq 1 ]]; then
-    python3 - "$app_config_file" "$ontologies_menu_item_file" "$observer_menu_item_file" <<'PY'
+    python3 - "$app_config_file" "$ontologies_menu_item_file" <<'PY'
 import json
 import pathlib
 import sys
 
 app_config_path = pathlib.Path(sys.argv[1])
 ontologies_menu_item_path = pathlib.Path(sys.argv[2])
-observer_menu_item_path = pathlib.Path(sys.argv[3])
 config = json.loads(app_config_path.read_text(encoding="utf-8"))
 menu_items = config.setdefault("menuItems", [])
 
@@ -352,7 +344,6 @@ def insert_if_missing(router_path, item_path, anchor_router_path):
             break
     menu_items.insert(insert_at, new_item)
 
-insert_if_missing("ai-model-observer", observer_menu_item_path, "model-benchmarking")
 insert_if_missing("ontologies", ontologies_menu_item_path, "contract-definitions")
 app_config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 PY
@@ -371,6 +362,10 @@ while [[ $# -gt 0 ]]; do
       TARGET="${2:-all}"
       shift 2
       ;;
+    --dashboard-app-dir)
+      DASHBOARD_APP_OVERRIDE="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -382,6 +377,19 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "$DASHBOARD_APP_OVERRIDE" ]]; then
+  DASHBOARD_APP="$DASHBOARD_APP_OVERRIDE"
+fi
+
+case "$TARGET" in
+  dashboard|all)
+    if [[ ! -d "$DASHBOARD_APP" ]]; then
+      echo "Dashboard app not found: $DASHBOARD_APP" >&2
+      exit 1
+    fi
+    ;;
+esac
 
 case "$TARGET" in
   connector)

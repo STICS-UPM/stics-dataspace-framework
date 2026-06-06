@@ -1916,7 +1916,45 @@ class EdcConnectorAdapterTests(unittest.TestCase):
             connector_config[0]["protocolUrl"],
             "/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/protocol",
         )
+        self.assertIn(
+            "model-observer",
+            {item["routerPath"] for item in app_config["menuItems"]},
+        )
+        self.assertEqual(
+            app_config["runtime"]["ontologyUrl"],
+            "/edc-dashboard-api/components/ontology-hub",
+        )
+        self.assertEqual(
+            app_config["runtime"]["modelObserverUrl"],
+            "/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/api/check",
+        )
         self.assertEqual(base_href, "/edc-dashboard/")
+
+    def test_dashboard_runtime_validation_rejects_incompatible_component_runtime(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = self._make_adapter(tmpdir)
+            adapter.config_adapter.edc_dashboard_enabled = lambda: True
+            runtime_payload = {
+                "appConfig": {
+                    "menuItems": [
+                        {"text": "Home", "routerPath": "home"},
+                        {"text": "Ontologies", "routerPath": "ontologies"},
+                    ],
+                    "runtime": {
+                        "ontologyUrl": "http://ontology-hub-pionera-edc.dev.ds.dataspaceunit.upm",
+                        "modelObserverUrl": "",
+                    },
+                },
+                "connectorConfig": [],
+                "baseHref": "/edc-dashboard/",
+            }
+
+            with self.assertRaisesRegex(RuntimeError, "Generated EDC dashboard runtime is incomplete"):
+                adapter._write_dashboard_runtime_config(
+                    "conn-citycounciledc-demoedc",
+                    "demoedc",
+                    runtime_payload,
+                )
 
     def test_stage_bootstrap_artifacts_copies_certs_and_rewrites_credentials_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:

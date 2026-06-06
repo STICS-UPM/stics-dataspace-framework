@@ -1507,6 +1507,51 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
         self.assertEqual(metrics["late_confirmation"]["status"], "completed")
         self.assertEqual(metrics["late_confirmation"]["messages_consumed"], 2)
 
+    def test_kubernetes_exec_measure_scans_past_probe_messages_without_offsets(self):
+        ids = iter(["id1", "id2"])
+        counter = itertools.count(1000, 5)
+        suite = KafkaEdcValidationSuite(
+            uuid_factory=ids.__next__,
+            time_provider=lambda: float(next(counter)),
+        )
+        runtime = {
+            "message_count": 2,
+            "message_sample_limit": 2,
+            "consumer_poll_timeout_seconds": 1,
+            "late_transfer_confirmation_seconds": 0,
+        }
+        observed_consume_calls = []
+
+        def fake_consume(runtime_arg, topic, timeout_ms=2000, max_messages=50, offset=None):
+            observed_consume_calls.append({
+                "max_messages": max_messages,
+                "offset": offset,
+            })
+            probes = [
+                {"message_id": f"kafka-transfer-probe-{index}", "probe": True}
+                for index in range(5)
+            ]
+            transfer_messages = [
+                {"message_id": "kafka-transfer-0-id1", "producer_timestamp_ms": 1000},
+                {"message_id": "kafka-transfer-1-id2", "producer_timestamp_ms": 1005},
+            ]
+            return probes + transfer_messages
+
+        with patch.object(suite, "_produce_kubernetes_exec_message"):
+            with patch.object(suite, "_consume_kubernetes_exec_messages", side_effect=fake_consume):
+                metrics = suite._measure_transfer_latency_with_kubernetes_exec(
+                    runtime,
+                    "source-topic",
+                    "destination-topic",
+                    probe_result={"status": "ready", "attempts": 5},
+                )
+
+        self.assertEqual(metrics["status"], "completed")
+        self.assertEqual(metrics["messages_produced"], 2)
+        self.assertEqual(metrics["messages_consumed"], 2)
+        self.assertGreaterEqual(observed_consume_calls[0]["max_messages"], 100)
+        self.assertIsNone(observed_consume_calls[0]["offset"])
+
     def test_kubernetes_exec_stabilization_waits_for_dataplane_group_before_probe(self):
         suite = KafkaEdcValidationSuite()
         runtime = {

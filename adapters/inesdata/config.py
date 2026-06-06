@@ -647,6 +647,7 @@ class INESDataConfigAdapter:
             "stabilization_probe_timeout_seconds": "KAFKA_EDC_STABILIZATION_PROBE_TIMEOUT_SECONDS",
             "kubernetes_exec_timeout_seconds": "KAFKA_EDC_KUBERNETES_EXEC_TIMEOUT_SECONDS",
             "kubernetes_exec_use_topic_offsets": "KAFKA_EDC_KUBERNETES_EXEC_USE_TOPIC_OFFSETS",
+            "kubernetes_exec_scan_max_messages": "KAFKA_EDC_KUBERNETES_EXEC_SCAN_MAX_MESSAGES",
             "pair_attempts": "KAFKA_EDC_PAIR_ATTEMPTS",
             "pair_retry_seconds": "KAFKA_EDC_PAIR_RETRY_SECONDS",
         }

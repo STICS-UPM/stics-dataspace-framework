@@ -1208,9 +1208,9 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 "routerPath": "model-benchmarking",
             },
             {
-                "text": "AI Model Observer",
-                "materialSymbol": "monitor_heart",
-                "routerPath": "ai-model-observer",
+                "text": "Model Observer",
+                "materialSymbol": "fact_check",
+                "routerPath": "model-observer",
             },
             {
                 "text": "Catalog",
@@ -1474,7 +1474,55 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         with open(target_path, "w", encoding="utf-8") as handle:
             handle.write(content)
 
+    def _validate_dashboard_runtime_payload(self, connector_name, runtime_payload):
+        if not self.config_adapter.edc_dashboard_enabled():
+            return True
+
+        app_config = runtime_payload.get("appConfig") or {}
+        runtime = app_config.get("runtime") or {}
+        menu_items = app_config.get("menuItems") or []
+        menu_paths = {
+            str(item.get("routerPath") or "").strip()
+            for item in menu_items
+            if isinstance(item, dict)
+        }
+
+        issues = []
+        if "model-observer" not in menu_paths:
+            issues.append("menuItems must include routerPath 'model-observer'")
+        if "ontologies" not in menu_paths:
+            issues.append("menuItems must include routerPath 'ontologies'")
+
+        try:
+            config = self.config_adapter.load_deployer_config() or {}
+        except Exception:
+            config = {}
+        if self._dashboard_component_proxy_enabled(config):
+            expected_ontology_url = self._dashboard_component_proxy_path("ontology-hub")
+            if str(runtime.get("ontologyUrl") or "").strip() != expected_ontology_url:
+                issues.append(
+                    "runtime.ontologyUrl must use the dashboard component proxy "
+                    f"'{expected_ontology_url}'"
+                )
+
+        if connector_name:
+            observer_url = str(runtime.get("modelObserverUrl") or "").strip()
+            expected_prefix = self._dashboard_proxy_connector_path(connector_name, "api")
+            if not observer_url.startswith(expected_prefix):
+                issues.append(
+                    "runtime.modelObserverUrl must point to the selected connector proxy "
+                    f"'{expected_prefix}'"
+                )
+
+        if issues:
+            raise RuntimeError(
+                "Generated EDC dashboard runtime is incomplete for "
+                f"{connector_name}: " + "; ".join(issues)
+            )
+        return True
+
     def _write_dashboard_runtime_config(self, connector_name, ds_name, runtime_payload):
+        self._validate_dashboard_runtime_payload(connector_name, runtime_payload)
         self._ensure_dashboard_runtime_dir(connector_name, ds_name=ds_name)
         app_config_path = self.config_adapter.edc_dashboard_app_config_file(
             connector_name,

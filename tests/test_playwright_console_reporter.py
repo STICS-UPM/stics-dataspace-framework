@@ -276,6 +276,158 @@ for (const test of tests) {
             ],
         )
 
+    def test_console_reporter_counts_edc_groups_from_suite_tree(self):
+        script = """
+const Reporter = require('./validation/ui/reporters/console-test-name-reporter.cjs');
+const reporter = new Reporter();
+reporter.colors = false;
+reporter.interactive = false;
+process.env.PIONERA_PLAYWRIGHT_SUITE_NAME = 'EDC UI';
+const tests = [
+  {
+    title: '01 edc readiness: dashboard authentication and shell loaded',
+    location: { file: 'validation/ui/adapters/edc/specs/01-login-readiness.spec.ts' },
+  },
+  {
+    title: '04 edc catalog: provider asset is discoverable',
+    location: { file: 'validation/ui/adapters/edc/specs/04-consumer-catalog.spec.ts' },
+  },
+  {
+    title: 'MinIO browser: provider bucket visible by direct URL',
+    location: { file: 'validation/ui/adapters/edc/specs/06b-minio-bucket-visibility.spec.ts' },
+  },
+  {
+    title: '07 edc semantic virtualization: HTTP data asset is discoverable',
+    location: { file: 'validation/ui/adapters/edc/specs/07-semantic-virtualization-httpdata.spec.ts' },
+  },
+  {
+    title: '08 edc ontology hub: read-only dashboard integration surfaces ontology endpoint',
+    location: { file: 'validation/ui/adapters/edc/specs/08-ontology-hub-edc-readonly.spec.ts' },
+  },
+  {
+    title: '09 EDC AI Model Hub: HTTP data publication is discoverable',
+    location: { file: 'validation/ui/adapters/edc/specs/09-ai-model-hub-httpdata.spec.ts' },
+  },
+  {
+    title: '10 EDC AI model observer: transfer events are visible',
+    location: { file: 'validation/ui/adapters/edc/specs/10-ai-model-observer.spec.ts' },
+  },
+];
+reporter.onBegin(null, { allTests: () => tests });
+for (const test of tests) {
+  reporter.onTestEnd(test, { status: 'passed' });
+}
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+
+        self.assertEqual(
+            completed.stdout.strip().splitlines(),
+            [
+                "Suite: EDC UI (7 tests)",
+                "Group: Core (2 tests)",
+                "  ✓ 01 edc readiness: dashboard authentication and shell loaded",
+                "  ✓ 04 edc catalog: provider asset is discoverable",
+                "Group: Operational Storage (1 test)",
+                "  ✓ MinIO browser: provider bucket visible by direct URL",
+                "Group: Semantic Virtualization (1 test)",
+                "  ✓ 07 edc semantic virtualization: HTTP data asset is discoverable",
+                "Group: Ontology Hub (1 test)",
+                "  ✓ 08 edc ontology hub: read-only dashboard integration surfaces ontology endpoint",
+                "Group: AI Model Hub (2 tests)",
+                "  ✓ 09 EDC AI Model Hub: HTTP data publication is discoverable",
+                "  ✓ 10 EDC AI model observer: transfer events are visible",
+            ],
+        )
+
+    def test_console_reporter_never_attaches_unknown_tests_to_previous_group(self):
+        script = """
+const Reporter = require('./validation/ui/reporters/console-test-name-reporter.cjs');
+const reporter = new Reporter();
+reporter.colors = false;
+reporter.interactive = false;
+process.env.PIONERA_PLAYWRIGHT_SUITE_NAME = 'Experimental UI';
+const tests = [
+  {
+    title: 'known semantic virtualization check',
+    location: { file: 'validation/ui/adapters/edc/specs/07-semantic-virtualization-httpdata.spec.ts' },
+  },
+  {
+    title: 'unknown future integration check',
+    location: { file: 'validation/ui/experimental/specs/99-future-component.spec.ts' },
+  },
+];
+reporter.onBegin(null, { allTests: () => tests });
+for (const test of tests) {
+  reporter.onTestEnd(test, { status: 'passed' });
+}
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+
+        self.assertEqual(
+            completed.stdout.strip().splitlines(),
+            [
+                "Suite: Experimental UI (2 tests)",
+                "Group: Semantic Virtualization (1 test)",
+                "  ✓ known semantic virtualization check",
+                "Group: Unclassified (1 test)",
+                "  ✓ unknown future integration check",
+            ],
+        )
+
+    def test_console_reporter_classifies_future_edc_adapter_specs_as_core(self):
+        script = """
+const Reporter = require('./validation/ui/reporters/console-test-name-reporter.cjs');
+const reporter = new Reporter();
+reporter.colors = false;
+reporter.interactive = false;
+process.env.PIONERA_PLAYWRIGHT_SUITE_NAME = 'EDC UI';
+const tests = [
+  {
+    title: '01 edc readiness: dashboard authentication and shell loaded',
+    location: { file: 'validation/ui/adapters/edc/specs/01-login-readiness.spec.ts' },
+  },
+  {
+    title: '17 edc future adapter check',
+    location: { file: 'validation/ui/adapters/edc/specs/17-future-adapter-check.spec.ts' },
+  },
+  {
+    title: '07 edc semantic virtualization: HTTP data asset is discoverable',
+    location: { file: 'validation/ui/adapters/edc/specs/07-semantic-virtualization-httpdata.spec.ts' },
+  },
+];
+reporter.onBegin(null, { allTests: () => tests });
+for (const test of tests) {
+  reporter.onTestEnd(test, { status: 'passed' });
+}
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+
+        output = completed.stdout.strip().splitlines()
+        self.assertIn("Group: Core (2 tests)", output)
+        self.assertIn("  ✓ 17 edc future adapter check", output)
+        self.assertNotIn("Group: Unclassified (1 test)", output)
+
     def test_console_reporter_colors_failed_test_name(self):
         script = """
 const Reporter = require('./validation/ui/reporters/console-test-name-reporter.cjs');

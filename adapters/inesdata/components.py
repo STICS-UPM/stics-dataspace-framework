@@ -749,6 +749,19 @@ class INESDataComponentsAdapter:
                 return True
         return False
 
+    def _remove_minikube_image_if_present(self, profile: str, image_ref: str):
+        profile_value = str(profile or "").strip()
+        image_value = str(image_ref or "").strip()
+        if not profile_value or not image_value:
+            return
+        profile_q = shlex.quote(profile_value)
+        image_q = shlex.quote(image_value)
+        self.run_silent(
+            "minikube -p "
+            f"{profile_q} ssh "
+            f"\"docker image rm -f {image_q} >/dev/null 2>&1 || true\""
+        )
+
     def _cluster_runtime(self, deployer_config: dict | None = None) -> dict:
         runtime_getter = getattr(self.config_adapter, "cluster_runtime", None)
         if callable(runtime_getter):
@@ -1387,6 +1400,7 @@ class INESDataComponentsAdapter:
         profile_q = shlex.quote(profile)
         image_q = shlex.quote(image_ref)
         print(f"\nLoading image into minikube: {image_ref}")
+        self._remove_minikube_image_if_present(profile, image_ref)
         if self.run(f"minikube -p {profile_q} image load {image_q}", check=False) is None:
             self._fail("Failed to load image into minikube", root_cause=image_ref)
 

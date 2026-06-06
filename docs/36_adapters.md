@@ -214,11 +214,19 @@ PIONERA_EDC_LOCAL_CONNECTOR_IMAGE_TAG
 Variables opcionales para cambiar las imágenes del dashboard:
 
 ```text
+PIONERA_EDC_DASHBOARD_REPO_URL
+PIONERA_EDC_DASHBOARD_REPO_REF
 PIONERA_EDC_DASHBOARD_IMAGE_NAME
 PIONERA_EDC_DASHBOARD_IMAGE_TAG
 PIONERA_EDC_DASHBOARD_PROXY_IMAGE_NAME
 PIONERA_EDC_DASHBOARD_PROXY_IMAGE_TAG
 ```
+
+El dashboard EDC se mantiene como submódulo Git en
+`adapters/edc/sources/dashboard` y apunta al repositorio oficial
+`ProyectoPIONERA/EDC-asset-filter-dashboard`. El framework conserva su propia
+configuración y overlays en rutas separadas para no mezclar autoría ni generar
+copias divergentes del dashboard oficial.
 
 La preparación local puede activarse con `PIONERA_EDC_LOCAL_IMAGES_MODE=auto` o hacerse estricta con `PIONERA_EDC_LOCAL_IMAGES_MODE=required`. El valor por defecto es `auto` en topología `local` y `disabled` en topologías VM. En `vm-single` y `vm-distributed`, la vía recomendada es definir overrides explícitos de imagen del conector EDC antes de desplegar.
 

@@ -43,8 +43,10 @@ El adapter `edc` incluye dashboard, proxy y suites Playwright propias para los
 flujos del conector EDC. La ruta oficial de cierre para `edc` es
 `vm-distributed`.
 
-La integración UI de componentes en EDC se implementa en el dashboard EDC
-versionado mediante overlays del framework. El dashboard incorpora:
+La integración UI de componentes en EDC se apoya en el dashboard EDC oficial
+versionado como submódulo Git del framework. Los overlays del framework solo
+añaden configuración o adaptación necesaria para la validación. El dashboard
+incorpora:
 
 - navegación de activos de modelos (`ML Assets`);
 - ejecución de modelos (`Model Execution`);
@@ -68,14 +70,15 @@ La suite Playwright de EDC incluye pruebas análogas a las de INESData para:
 - `AI Model Browser`;
 - `AI Model Execution`;
 - `AI Model Benchmarking`;
+- `Model Observer`;
 - metadatos DAIMO de modelos;
 - ejecución externa de modelos negociados.
 
-El dashboard EDC aún no expone una ruta real de `AI Model Observer`. Por ello,
-las pruebas de paridad `10` y `16` existen como comprobaciones explícitas bajo
-la variable `UI_EDC_MODEL_OBSERVER_DEMO=1`: si se activan antes de implementar
-esa ruta, fallan con una causa directa. El framework no transforma esa ausencia
-en un falso éxito.
+Las pruebas de paridad de `Model Observer` se ejecutan contra la ruta real
+`/edc-dashboard/model-observer` cuando se habilita
+`UI_EDC_MODEL_OBSERVER_DEMO=1`. El framework no convierte una ausencia de UI en
+un falso éxito: si el dashboard desplegado no contiene esa ruta, la validación
+falla con causa explícita.
 
 ## Topologías
 
@@ -107,8 +110,7 @@ El framework queda preparado para presentar la integración UI de componentes
 como cerrada para `inesdata`, con suites automatizadas, rutas de interfaz y
 evidencias de `Level 6`.
 
-Para `edc`, el framework queda preparado con dashboard propio, integración UI
-de `AI Model Hub` y `Ontology Hub`, y validación de componentes por dashboard,
-contrato/API y evidencias asociadas a la ruta `vm-distributed`. La brecha
-pendiente de UI en EDC es `AI Model Observer`; la suite la declara de forma
-explícita para que pueda cerrarse cuando exista una implementación real.
+Para `edc`, el framework queda preparado con el dashboard oficial versionado,
+integración UI de `AI Model Hub`, `Ontology Hub` y `Model Observer`, y
+validación de componentes por dashboard, contrato/API y evidencias asociadas a
+la ruta `vm-distributed`.

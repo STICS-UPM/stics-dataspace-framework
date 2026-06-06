@@ -32,6 +32,14 @@ normalize_cluster_runtime() {
   esac
 }
 
+remove_minikube_image_if_present() {
+  local image_ref="$1"
+
+  if command -v minikube >/dev/null 2>&1; then
+    minikube -p "$MINIKUBE_PROFILE" ssh "docker image rm -f '$image_ref' >/dev/null 2>&1 || true"
+  fi
+}
+
 load_image_into_k3s() {
   local image_ref="$1"
   local archive_file
@@ -108,6 +116,7 @@ docker build -f "$DOCKERFILE" -t "$IMAGE_NAME:$IMAGE_TAG" "$CONTEXT_DIR"
 case "$CLUSTER_RUNTIME" in
   minikube)
     if command -v minikube >/dev/null 2>&1; then
+      remove_minikube_image_if_present "$IMAGE_NAME:$IMAGE_TAG"
       minikube -p "$MINIKUBE_PROFILE" image load "$IMAGE_NAME:$IMAGE_TAG" >/dev/null
     fi
     ;;

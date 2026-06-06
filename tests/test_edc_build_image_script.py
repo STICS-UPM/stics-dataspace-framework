@@ -15,6 +15,13 @@ DASHBOARD_SCRIPT_PATH = os.path.join(
     "scripts",
     "build_dashboard_image.sh",
 )
+SYNC_DASHBOARD_SCRIPT_PATH = os.path.join(
+    PROJECT_ROOT,
+    "adapters",
+    "edc",
+    "scripts",
+    "sync_dashboard_sources.sh",
+)
 LOCAL_EDC_SERVICE_EXTENSIONS_PATH = os.path.join(
     PROJECT_ROOT,
     "adapters",
@@ -59,8 +66,28 @@ class EdcBuildImageScriptTests(unittest.TestCase):
         with open(DASHBOARD_SCRIPT_PATH, "r", encoding="utf-8") as handle:
             script = handle.read()
 
-        self.assertIn('bash "$SCRIPT_DIR/sync_dashboard_sources.sh" --apply', script)
-        self.assertNotIn('\n  "$SCRIPT_DIR/sync_dashboard_sources.sh" --apply', script)
+        self.assertIn('bash "$SCRIPT_DIR/sync_dashboard_sources.sh" --apply --source "$DASHBOARD_REPO_URL" --ref "$DASHBOARD_REPO_REF"', script)
+        self.assertIn('--dashboard-app-dir "$CONTEXT_DIR/app"', script)
+        self.assertNotIn("if [[ ! -d \"$DASHBOARD_REPO_DIR/.git\" ]]", script)
+        self.assertNotIn('bash "$APPLY_OVERLAYS_SCRIPT" --apply --target dashboard\n', script)
+
+    def test_dashboard_image_script_pins_official_dashboard_reference(self):
+        with open(DASHBOARD_SCRIPT_PATH, "r", encoding="utf-8") as handle:
+            script = handle.read()
+
+        self.assertIn("PIONERA_EDC_DASHBOARD_REPO_REF", script)
+        self.assertIn("a4cb3e659e1fd3abfa9516a036c261b19432ec13", script)
+
+    def test_sync_dashboard_sources_supports_pinned_reference_without_overwriting_local_changes(self):
+        with open(SYNC_DASHBOARD_SCRIPT_PATH, "r", encoding="utf-8") as handle:
+            script = handle.read()
+
+        self.assertIn("--ref|--revision|--commit", script)
+        self.assertIn('git -C "$TARGET_DIR" rev-parse --is-inside-work-tree', script)
+        self.assertIn('git -C "$TARGET_DIR" checkout --detach "$SOURCE_REF"', script)
+        self.assertIn("Dashboard source tree has local changes", script)
+        self.assertIn("Dashboard source target exists but is not a Git working tree", script)
+        self.assertIn("Refusing to checkout", script)
 
     def test_local_edc_service_extensions_register_adapter_kafka_bridge(self):
         if not os.path.isfile(LOCAL_EDC_SERVICE_EXTENSIONS_PATH):

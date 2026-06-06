@@ -23,14 +23,14 @@ test("16 edc AI Model Observer: participant summary aggregates model evidence", 
   await loginPage.loginIfNeeded();
   await dashboardPage.expectShellReady();
 
-  const observerNavCount = await page.locator("a, button").filter({ hasText: /AI Model Observer/i }).count();
+  const observerNavCount = await page.locator("a, button").filter({ hasText: /Model Observer/i }).count();
   expect(
     observerNavCount,
-    "EDC dashboard does not currently expose AI Model Observer participant-summary navigation. This is a real UI parity gap.",
+    "EDC dashboard does not currently expose official Model Observer participant-summary navigation. This is a real UI parity gap.",
   ).toBeGreaterThan(0);
 
-  await dashboardPage.navigateToSection("AI Model Observer", "/edc-dashboard/ai-model-observer");
-  await dashboardPage.expectNoServerErrorBanner("EDC AI Model Observer participant summary");
+  await dashboardPage.navigateToSection("Model Observer", "/edc-dashboard/model-observer");
+  await dashboardPage.expectNoServerErrorBanner("EDC Model Observer participant summary");
   await expect(page.getByText(/participant|summary|evidence/i).first()).toBeVisible({ timeout: 30_000 });
   await captureStep(page, "01-edc-ai-model-observer-participant-summary");
 });

@@ -69,43 +69,58 @@ class ConsoleTestNameReporter {
     return this._normalizedPath((test && test.location && test.location.file) || "");
   }
 
+  _isAdapterSpec(file, adapter) {
+    return (
+      file.includes(`/ui/${adapter}/`) ||
+      file.includes(`validation/ui/adapters/${adapter}/specs/`) ||
+      file.startsWith(`adapters/${adapter}/specs/`)
+    );
+  }
+
   _testGroup(test) {
     const file = this._testFile(test);
     if (!file) {
       return "";
     }
-    if (file.includes("08-ontology-hub-inesdata-readonly.spec")) {
+    const isEdcSpec = this._isAdapterSpec(file, "edc");
+    const isInesdataSpec = this._isAdapterSpec(file, "inesdata") || file.includes("validation/ui/core/") || file.startsWith("core/");
+    const isAdapterIntegrationSpec = isEdcSpec || isInesdataSpec;
+
+    if (
+      isAdapterIntegrationSpec &&
+      (
+        file.includes("08-ontology-hub-edc-readonly.spec") ||
+        file.includes("08-ontology-hub-inesdata-readonly.spec")
+      )
+    ) {
       return "Ontology Hub";
     }
     if (
-      file.includes("09-ai-model-hub-httpdata.spec") ||
-      file.includes("10-ai-model-observer.spec") ||
-      file.includes("11-ai-model-browser.spec") ||
-      file.includes("12-ai-model-execution.spec") ||
-      file.includes("13-ai-model-benchmarking.spec") ||
-      file.includes("14-ai-model-daimo-vocabulary.spec") ||
-      file.includes("15-ai-model-external-execution.spec") ||
-      file.includes("16-ai-model-observer-participant-summary.spec")
+      isAdapterIntegrationSpec &&
+      (
+        file.includes("09-ai-model-hub-httpdata.spec") ||
+        file.includes("10-ai-model-observer.spec") ||
+        file.includes("11-ai-model-browser.spec") ||
+        file.includes("12-ai-model-execution.spec") ||
+        file.includes("13-ai-model-benchmarking.spec") ||
+        file.includes("14-ai-model-daimo-vocabulary.spec") ||
+        file.includes("15-ai-model-external-execution.spec") ||
+        file.includes("16-ai-model-observer-participant-summary.spec")
+      )
     ) {
       return "AI Model Hub";
     }
-    if (file.includes("07-semantic-virtualization-httpdata.spec")) {
+    if (isAdapterIntegrationSpec && file.includes("07-semantic-virtualization-httpdata.spec")) {
       return "Semantic Virtualization";
     }
     if (
-      file.includes("06b-minio-bucket-visibility.spec") ||
+      (isAdapterIntegrationSpec && file.includes("06b-minio-bucket-visibility.spec")) ||
       file.includes("ops/minio-bucket-visibility.spec") ||
       file.includes("shared/specs/minio-bucket-visibility")
     ) {
       return "Operational Storage";
     }
-    if (
-      file.includes("/ui/inesdata/") ||
-      file.includes("validation/ui/adapters/inesdata/specs/") ||
-      file.includes("validation/ui/core/") ||
-      file.startsWith("core/") ||
-      file.startsWith("adapters/inesdata/specs/")
-    ) {
+    if (isAdapterIntegrationSpec) {
       return "Core";
     }
     if (file.includes("components/ontology-hub/functional/")) {
@@ -141,7 +156,9 @@ class ConsoleTestNameReporter {
     if (!Array.isArray(tests)) {
       return;
     }
-    const groups = tests.map((test) => this._testGroup(test));
+    const rawGroups = tests.map((test) => this._testGroup(test));
+    const hasKnownGroup = rawGroups.some(Boolean);
+    const groups = hasKnownGroup ? rawGroups.map((group) => group || "Unclassified") : rawGroups;
     const uniqueGroups = new Set(groups.filter(Boolean));
     this.printGroupHeaders = uniqueGroups.size > 1;
     if (!this.printGroupHeaders) {

@@ -131,7 +131,36 @@ async function waitForBodyText(page, expectedPattern) {
   return bodyText(page);
 }
 
+function mappingEditorStepTimeoutMs() {
+  const raw = process.env.SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_STEP_TIMEOUT_MS || "90000";
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : 90 * 1000;
+}
+
+function mappingEditorIdleTimeoutMs() {
+  const raw = process.env.SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_IDLE_TIMEOUT_MS || "90000";
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : 90 * 1000;
+}
+
+async function editorStep(title, body) {
+  return test.step(title, body, { timeout: mappingEditorStepTimeoutMs() });
+}
+
+async function waitForStreamlitIdle(page, timeout = mappingEditorIdleTimeoutMs()) {
+  await expect
+    .poll(
+      async () => {
+        const stopButton = page.getByRole("button", { name: /^Stop$/ }).first();
+        return (await stopButton.isVisible().catch(() => false)) ? "busy" : "idle";
+      },
+      { timeout, intervals: [500, 1000, 2000, 5000] },
+    )
+    .toBe("idle");
+}
+
 async function openSidebarPage(page, labelPattern) {
+  await waitForStreamlitIdle(page);
   const sidebarLink = page.getByRole("link", { name: labelPattern }).first();
   await expect(sidebarLink).toBeVisible({ timeout: 30 * 1000 });
   await clickMarked(sidebarLink);
@@ -150,6 +179,7 @@ async function createEphemeralMapping(page) {
   const createButton = page.getByRole("button", { name: /^Create$/ }).first();
   await expect(createButton).toBeVisible({ timeout: 30 * 1000 });
   await clickMarked(createButton);
+  await waitForStreamlitIdle(page);
 
   await waitForBodyText(page, new RegExp(mappingLabel, "i"));
   return mappingLabel;
@@ -164,6 +194,7 @@ async function uploadStreamlitFileMarked(page, labelPattern, filePath) {
   await expect(fileInput).toBeAttached({ timeout: 30 * 1000 });
   await fileInput.setInputFiles(filePath);
   await page.waitForLoadState("networkidle").catch(() => {});
+  await waitForStreamlitIdle(page);
 }
 
 async function chooseStreamlitSelectboxOptionMarked(page, labelPattern, optionPattern) {
@@ -184,6 +215,7 @@ async function chooseStreamlitSelectboxOptionMarked(page, labelPattern, optionPa
 
   await clickMarked(option);
   await page.waitForLoadState("networkidle").catch(() => {});
+  await waitForStreamlitIdle(page);
 }
 
 async function importMappingFixture(page) {
@@ -216,6 +248,7 @@ async function importMappingFixture(page) {
   const importButton = page.getByRole("button", { name: /^Import$/ }).first();
   await expect(importButton).toBeVisible({ timeout: 45 * 1000 });
   await clickMarked(importButton);
+  await waitForStreamlitIdle(page);
 
   await waitForBodyText(page, new RegExp(mappingLabel, "i"));
   const importedText = await expect
@@ -243,6 +276,7 @@ async function importOntologyFixture(page) {
   const addButton = page.getByRole("button", { name: /^Add$/ }).first();
   await expect(addButton).toBeVisible({ timeout: 45 * 1000 });
   await clickMarked(addButton);
+  await waitForStreamlitIdle(page);
 
   const importedText = await waitForBodyText(
     page,
@@ -411,7 +445,7 @@ test("SV-UI-07: mapping editor manages namespaces and exports a mapping", async 
 
   const { url, status } = await openMappingEditor(page, semanticVirtualizationRuntime);
 
-  await test.step("Create an ephemeral mapping from Global Configuration", async () => {
+  await editorStep("Create an ephemeral mapping from Global Configuration", async () => {
     await openSidebarPage(page, /Global Configuration/i);
     await waitForBodyText(page, /Select Mapping|Configure Namespaces|Save Mapping|Set Style/i);
   });
@@ -421,7 +455,7 @@ test("SV-UI-07: mapping editor manages namespaces and exports a mapping", async 
   const namespacePrefix = `qa${String(Date.now()).slice(-6)}`;
   const namespaceIri = `https://pionera.example/ns/${namespacePrefix}#`;
 
-  await test.step("Bind a custom namespace for the mapping", async () => {
+  await editorStep("Bind a custom namespace for the mapping", async () => {
     await clickMarked(page.getByRole("tab", { name: /Configure Namespaces/i }));
     await waitForBodyText(page, /Enter prefix|Enter IRI|Base|Predefined/i);
 
@@ -434,13 +468,14 @@ test("SV-UI-07: mapping editor manages namespaces and exports a mapping", async 
     const bindButton = page.getByRole("button", { name: /^Bind$/ }).first();
     await expect(bindButton).toBeVisible({ timeout: 30 * 1000 });
     await clickMarked(bindButton);
+    await waitForStreamlitIdle(page);
 
     await waitForBodyText(page, new RegExp(`${namespacePrefix}|Namespace|bound`, "i"));
     await highlightMarked(page.getByText(new RegExp(`${namespacePrefix}|Namespace|bound`, "i")).first());
     await captureStep(page, "sv-ui-07-custom-namespace-bound");
   });
 
-  await test.step("Export the mapping from the UI", async () => {
+  await editorStep("Export the mapping from the UI", async () => {
     await clickMarked(page.getByRole("tab", { name: /Save Mapping/i }));
     await waitForBodyText(page, /Export mapping|Select format|Enter filename/i);
 
@@ -473,7 +508,7 @@ test("SV-UI-07: mapping editor manages namespaces and exports a mapping", async 
     });
   });
 
-  await test.step("Open style controls for visual evidence", async () => {
+  await editorStep("Open style controls for visual evidence", async () => {
     await clickMarked(page.getByRole("tab", { name: /Set Style/i }));
     const styleText = await waitForBodyText(page, /Style|Dark|Light|theme|mode/i);
     const toggle = page.getByRole("checkbox").first();
@@ -507,13 +542,13 @@ test("SV-UI-08: mapping editor imports ontology and data source fixtures", async
 
   const { url, status } = await openMappingEditor(page, semanticVirtualizationRuntime);
 
-  await test.step("Create an isolated mapping session", async () => {
+  await editorStep("Create an isolated mapping session", async () => {
     await openSidebarPage(page, /Global Configuration/i);
     await waitForBodyText(page, /Select Mapping|Configure Namespaces|Save Mapping|Set Style/i);
   });
   const mappingLabel = await createEphemeralMapping(page);
 
-  await test.step("Import the mobility ontology fixture from the UI", async () => {
+  await editorStep("Import the mobility ontology fixture from the UI", async () => {
     await openSidebarPage(page, /Ontologies/i);
     await waitForBodyText(page, /Import Ontology|Explore Ontology|View Ontology|Custom Terms/i);
 
@@ -530,6 +565,7 @@ test("SV-UI-08: mapping editor imports ontology and data source fixtures", async
     const addButton = page.getByRole("button", { name: /^Add$/ }).first();
     await expect(addButton).toBeVisible({ timeout: 45 * 1000 });
     await clickMarked(addButton);
+    await waitForStreamlitIdle(page);
 
     const importedText = await waitForBodyText(
       page,
@@ -558,7 +594,7 @@ test("SV-UI-08: mapping editor imports ontology and data source fixtures", async
     });
   });
 
-  await test.step("Upload the CSV data source fixture from the UI", async () => {
+  await editorStep("Upload the CSV data source fixture from the UI", async () => {
     await openSidebarPage(page, /Data Files/i);
     await waitForBodyText(page, /Manage Files|Display Data|Manage Paths|Upload File/i);
 
@@ -567,6 +603,7 @@ test("SV-UI-08: mapping editor imports ontology and data source fixtures", async
     const saveButton = page.getByRole("button", { name: /^Save$/ }).first();
     await expect(saveButton).toBeVisible({ timeout: 45 * 1000 });
     await clickMarked(saveButton);
+    await waitForStreamlitIdle(page);
 
     const uploadedText = await waitForBodyText(
       page,
@@ -612,7 +649,7 @@ test("SV-UI-10: mapping editor explores a non-empty mapping with ontology lens",
   const ontologyText = await importOntologyFixture(page);
   await captureStep(page, "sv-ui-10-ontology-imported");
 
-  await test.step("Explore the imported mapping as a network", async () => {
+  await editorStep("Explore the imported mapping as a network", async () => {
     await openSidebarPage(page, /Explore Mapping/i);
     const networkText = await waitForBodyText(
       page,
@@ -632,7 +669,7 @@ test("SV-UI-10: mapping editor explores a non-empty mapping with ontology lens",
   let predicateObjectText = "";
   let previewText = "";
 
-  await test.step("Inspect predefined mapping searches", async () => {
+  await editorStep("Inspect predefined mapping searches", async () => {
     await clickMarked(page.getByRole("tab", { name: /Predefined Searches/i }));
     await waitForBodyText(page, /Predefined Searches|Select search/i);
 
@@ -671,7 +708,7 @@ test("SV-UI-10: mapping editor explores a non-empty mapping with ontology lens",
     await captureStep(page, "sv-ui-10-predefined-predicate-object-maps");
   });
 
-  await test.step("Preview the imported mapping serialisation", async () => {
+  await editorStep("Preview the imported mapping serialisation", async () => {
     await clickMarked(page.getByRole("tab", { name: /Preview/i }));
     previewText = await waitForBodyText(
       page,
@@ -690,7 +727,7 @@ test("SV-UI-10: mapping editor explores a non-empty mapping with ontology lens",
   let propertyUsageText = "";
   let externalTermsText = "";
 
-  await test.step("Explain the mapping through Ontology-Mapping Lens", async () => {
+  await editorStep("Explain the mapping through Ontology-Mapping Lens", async () => {
     await openSidebarPage(page, /Ontology-Mapping Lens/i);
     compositionText = await waitForBodyText(
       page,

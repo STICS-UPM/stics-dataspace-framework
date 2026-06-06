@@ -145,7 +145,13 @@ de alcance antes de preparar una ejecución para auditoría.
 ```bash
 git clone https://github.com/ProyectoPIONERA/Validation-Environment.git
 cd Validation-Environment
+git submodule update --init --recursive
 ```
+
+También puedes clonar todo en un solo paso con
+`git clone --recurse-submodules`. El submódulo del dashboard EDC apunta al
+repositorio oficial `ProyectoPIONERA/EDC-asset-filter-dashboard` para conservar
+su autoría y fijar una versión reproducible.
 
 2. Prepara dependencias del framework:
 
@@ -819,6 +825,16 @@ El dashboard EDC se sincroniza desde:
 ```text
 https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard
 ```
+
+Ese dashboard está versionado como submódulo en:
+
+```text
+adapters/edc/sources/dashboard
+```
+
+El framework fija por defecto el commit declarado en `EDC_DASHBOARD_REPO_REF`.
+Los overlays propios del framework se mantienen separados bajo
+`adapters/edc/overlays/dashboard`.
 
 ## Limpieza y Doctor
 

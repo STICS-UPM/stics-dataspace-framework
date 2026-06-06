@@ -2082,6 +2082,43 @@ class MainCliTests(unittest.TestCase):
     def tearDown(self):
         self.module_patcher.stop()
 
+    def _write_edc_dashboard_runtime(
+        self,
+        runtime_dir,
+        connector,
+        *,
+        menu_paths=None,
+        ontology_url="/edc-dashboard-api/components/ontology-hub",
+        model_observer_url=None,
+        auth_mode="oidc-bff",
+    ):
+        dashboard_dir = os.path.join(runtime_dir, "dashboard", connector)
+        os.makedirs(dashboard_dir, exist_ok=True)
+        if menu_paths is None:
+            menu_paths = ["home", "ontologies", "model-observer"]
+        if model_observer_url is None:
+            model_observer_url = f"/edc-dashboard-api/connectors/{connector}/api/check"
+        app_config = {
+            "menuItems": [
+                {"text": router_path.replace("-", " ").title(), "routerPath": router_path}
+                for router_path in menu_paths
+            ],
+            "runtime": {
+                "ontologyUrl": ontology_url,
+                "modelObserverUrl": model_observer_url,
+            },
+        }
+        with open(os.path.join(dashboard_dir, "app-config.json"), "w", encoding="utf-8") as handle:
+            json.dump(app_config, handle)
+        with open(
+            os.path.join(dashboard_dir, "edc-connector-config.json"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            handle.write("[]\n")
+        with open(os.path.join(runtime_dir, f"values-{connector}.yaml"), "w", encoding="utf-8") as handle:
+            handle.write(f"dashboard:\n  authMode: {auth_mode}\n")
+
     def test_list_command_prints_available_adapters(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
@@ -5030,6 +5067,37 @@ class MainCliTests(unittest.TestCase):
         image_prepare.assert_called_once_with(adapter)
         dashboard_prepare.assert_called_once()
 
+    def test_prepare_edc_local_connector_image_uses_vm_single_remote_k3s_import_env(self):
+        adapter = FakeAdapter()
+        adapter.topology = "vm-single"
+        adapter.config_adapter.load_deployer_config = lambda: {
+            "CLUSTER_TYPE": "k3s",
+            "VM_EXTERNAL_IP": "192.168.122.52",
+            "VM_SINGLE_SSH_HOST": "192.168.122.52",
+            "VM_SINGLE_SSH_USER": "pionera",
+            "VM_SINGLE_SSH_PORT": "22",
+            "SSH_ACCESS_MODE": "bastion",
+            "SSH_BASTION_HOST": "orion.example.test",
+            "SSH_BASTION_USER": "pionera",
+            "SSH_BASTION_PORT": "2222",
+            "SSH_IDENTITY_FILE": "/home/operator/.ssh/vm-single",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT": "auto",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_COMMAND": "sudo -n k3s ctr -n k8s.io images import",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
+        }
+
+        with mock.patch("main.subprocess.run", return_value=mock.Mock(returncode=0)) as run_command, \
+                mock.patch.dict(os.environ, {}, clear=True):
+            result = main._prepare_edc_local_connector_image_override(adapter)
+
+        self.assertEqual(result["cluster_runtime"], "k3s")
+        run_env = run_command.call_args.kwargs["env"]
+        self.assertEqual(run_env["K3S_REMOTE_IMPORT_HOST"], "192.168.122.52")
+        self.assertEqual(run_env["K3S_REMOTE_IMPORT_USER"], "pionera")
+        self.assertEqual(run_env["K3S_REMOTE_IMPORT_BASTION_HOST"], "orion.example.test")
+        self.assertEqual(run_env["K3S_REMOTE_IMPORT_INTERACTIVE"], "auto")
+        self.assertEqual(run_env["K3S_IMAGE_IMPORT_COMMAND"], "sudo -n k3s ctr -n k8s.io images import")
+
     def test_run_available_access_urls_for_edc_includes_registration_service_and_connectors(self):
         adapter = FakeAdapter()
         fake_context = types.SimpleNamespace(
@@ -6632,6 +6700,48 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(dashboard_tag, "local-ui")
         self.assertEqual(proxy_tag, "local-proxy")
         self.assertEqual(prepared_flag, "true")
+
+    def test_prepare_edc_local_dashboard_images_uses_vm_single_remote_k3s_import_env(self):
+        adapter = FakeAdapter()
+        adapter.topology = "vm-single"
+        adapter.config_adapter.load_deployer_config = lambda: {
+            "CLUSTER_TYPE": "k3s",
+            "VM_EXTERNAL_IP": "192.168.122.52",
+            "VM_SINGLE_SSH_HOST": "192.168.122.52",
+            "VM_SINGLE_SSH_USER": "pionera",
+            "VM_SINGLE_SSH_PORT": "22",
+            "SSH_ACCESS_MODE": "bastion",
+            "SSH_BASTION_HOST": "orion.example.test",
+            "SSH_BASTION_USER": "pionera",
+            "SSH_BASTION_PORT": "2222",
+            "SSH_IDENTITY_FILE": "/home/operator/.ssh/vm-single",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT": "auto",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_COMMAND": "sudo -n k3s ctr -n k8s.io images import",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
+        }
+        config = {
+            "DS_1_NAME": "fake-ds",
+            "CLUSTER_TYPE": "k3s",
+            "EDC_DASHBOARD_ENABLED": "true",
+            "EDC_DASHBOARD_IMAGE_NAME": "validation-environment/edc-dashboard",
+            "EDC_DASHBOARD_IMAGE_TAG": "local-ui",
+            "EDC_DASHBOARD_PROXY_IMAGE_NAME": "validation-environment/edc-dashboard-proxy",
+            "EDC_DASHBOARD_PROXY_IMAGE_TAG": "local-proxy",
+        }
+
+        with mock.patch("main.subprocess.run", return_value=mock.Mock(returncode=0)) as run_command, \
+                mock.patch.dict(os.environ, {}, clear=True):
+            result = main._prepare_edc_local_dashboard_images(adapter, config)
+
+        self.assertEqual(result["cluster_runtime"], "k3s")
+        self.assertEqual(run_command.call_count, 2)
+        for call in run_command.call_args_list:
+            run_env = call.kwargs["env"]
+            self.assertEqual(run_env["K3S_REMOTE_IMPORT_HOST"], "192.168.122.52")
+            self.assertEqual(run_env["K3S_REMOTE_IMPORT_USER"], "pionera")
+            self.assertEqual(run_env["K3S_REMOTE_IMPORT_BASTION_HOST"], "orion.example.test")
+            self.assertEqual(run_env["K3S_REMOTE_IMPORT_INTERACTIVE"], "auto")
+            self.assertEqual(run_env["K3S_IMAGE_IMPORT_COMMAND"], "sudo -n k3s ctr -n k8s.io images import")
 
     def test_deploy_command_refuses_real_edc_execution_on_shared_demo_dataspace(self):
         adapter = FakeAdapter()
@@ -8384,72 +8494,103 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("EDC_DASHBOARD_ENABLED=true", str(exc.exception))
 
     def test_validate_command_fails_clearly_when_edc_playwright_auth_mode_is_not_oidc_bff(self):
-        def resolve_context_without_oidc(self, topology="local"):
-            return {
-                "deployer": "edc",
-                "topology": topology,
-                "environment": "DEV",
-                "dataspace_name": "fake-ds",
-                "ds_domain_base": "example.local",
-                "connectors": ["conn-a", "conn-b"],
-                "components": [],
-                "namespace_roles": {
-                    "registration_service_namespace": "fake-ds",
-                    "provider_namespace": "fake-ds",
-                    "consumer_namespace": "fake-ds",
-                },
-                "runtime_dir": "/tmp/fake-ds",
-                "config": {
-                    "DS_1_NAME": "fake-ds",
-                    "EDC_DASHBOARD_ENABLED": "true",
-                    "EDC_DASHBOARD_PROXY_AUTH_MODE": "service-account",
-                },
-            }
+        with tempfile.TemporaryDirectory() as runtime_root:
+            runtime_dir = os.path.join(runtime_root, "fake-ds")
+            os.makedirs(runtime_dir, exist_ok=True)
+            self._write_edc_dashboard_runtime(runtime_dir, "conn-a", auth_mode="service-account")
 
-        with mock.patch.object(
-            FakeDeployer,
-            "get_validation_profile",
-            return_value={
-                "adapter": "edc",
-                "newman_enabled": True,
-                "playwright_enabled": True,
-                "playwright_config": "validation/ui/playwright.edc.config.ts",
-            },
-        ), mock.patch.object(
-            FakeDeployer,
-            "resolve_context",
-            new=resolve_context_without_oidc,
-        ), mock.patch.dict(
-            os.environ,
-            {"PIONERA_ENABLE_DEPLOYER_PLAYWRIGHT": "true"},
-            clear=False,
-        ):
-            with self.assertRaises(RuntimeError) as exc:
-                main.main(
-                    ["fake", "validate"],
-                    adapter_registry=self.registry,
-                    deployer_registry={"fake": "fake_deployer_module:FakeDeployer"},
-                    validation_engine_cls=FakeValidationEngine,
-                    experiment_storage=FakeStorage,
-                )
+            def resolve_context_without_oidc(self, topology="local"):
+                return {
+                    "deployer": "edc",
+                    "topology": topology,
+                    "environment": "DEV",
+                    "dataspace_name": "fake-ds",
+                    "ds_domain_base": "example.local",
+                    "connectors": ["conn-a"],
+                    "components": [],
+                    "namespace_roles": {
+                        "registration_service_namespace": "fake-ds",
+                        "provider_namespace": "fake-ds",
+                        "consumer_namespace": "fake-ds",
+                    },
+                    "runtime_dir": runtime_dir,
+                    "config": {
+                        "DS_1_NAME": "fake-ds",
+                        "EDC_DASHBOARD_ENABLED": "true",
+                        "EDC_DASHBOARD_PROXY_AUTH_MODE": "service-account",
+                    },
+                }
+
+            with mock.patch.object(
+                FakeDeployer,
+                "get_validation_profile",
+                return_value={
+                    "adapter": "edc",
+                    "newman_enabled": True,
+                    "playwright_enabled": True,
+                    "playwright_config": "validation/ui/playwright.edc.config.ts",
+                },
+            ), mock.patch.object(
+                FakeDeployer,
+                "resolve_context",
+                new=resolve_context_without_oidc,
+            ), mock.patch.dict(
+                os.environ,
+                {"PIONERA_ENABLE_DEPLOYER_PLAYWRIGHT": "true"},
+                clear=False,
+            ):
+                with self.assertRaises(RuntimeError) as exc:
+                    main.main(
+                        ["fake", "validate"],
+                        adapter_registry=self.registry,
+                        deployer_registry={"fake": "fake_deployer_module:FakeDeployer"},
+                        validation_engine_cls=FakeValidationEngine,
+                        experiment_storage=FakeStorage,
+                    )
 
         self.assertIn("EDC_DASHBOARD_PROXY_AUTH_MODE=oidc-bff", str(exc.exception))
+
+    def test_edc_dashboard_runtime_validation_accepts_current_runtime_shape(self):
+        with tempfile.TemporaryDirectory() as runtime_root:
+            runtime_dir = os.path.join(runtime_root, "fake-ds")
+            os.makedirs(runtime_dir, exist_ok=True)
+            self._write_edc_dashboard_runtime(runtime_dir, "conn-a")
+            context = types.SimpleNamespace(runtime_dir=runtime_dir, connectors=["conn-a"])
+
+            validation = main._edc_dashboard_runtime_validation(context)
+
+        self.assertTrue(validation["present"])
+        self.assertTrue(validation["valid"])
+        self.assertEqual(validation["issues"], [])
+        self.assertEqual(validation["checked_connectors"], ["conn-a"])
+
+    def test_edc_dashboard_runtime_validation_rejects_incompatible_local_runtime(self):
+        with tempfile.TemporaryDirectory() as runtime_root:
+            runtime_dir = os.path.join(runtime_root, "fake-ds")
+            os.makedirs(runtime_dir, exist_ok=True)
+            self._write_edc_dashboard_runtime(
+                runtime_dir,
+                "conn-a",
+                menu_paths=["home", "ontologies"],
+                ontology_url="http://ontology-hub-pionera-edc.dev.ds.dataspaceunit.upm",
+                model_observer_url="",
+            )
+            context = types.SimpleNamespace(runtime_dir=runtime_dir, connectors=["conn-a"])
+
+            validation = main._edc_dashboard_runtime_validation(context)
+
+        self.assertTrue(validation["present"])
+        self.assertFalse(validation["valid"])
+        self.assertTrue(any("Model Observer menu item is missing" in issue for issue in validation["issues"]))
+        self.assertTrue(any("ontologyUrl must be" in issue for issue in validation["issues"]))
+        self.assertTrue(any("modelObserverUrl must start" in issue for issue in validation["issues"]))
 
     def test_validate_command_allows_edc_playwright_when_dashboard_runtime_artifacts_exist(self):
         with tempfile.TemporaryDirectory() as runtime_root:
             runtime_dir = os.path.join(runtime_root, "fake-ds")
-            dashboard_dir = os.path.join(runtime_dir, "dashboard", "conn-a")
-            os.makedirs(dashboard_dir, exist_ok=True)
-            with open(os.path.join(dashboard_dir, "app-config.json"), "w", encoding="utf-8") as handle:
-                handle.write("{}\n")
-            with open(
-                os.path.join(dashboard_dir, "edc-connector-config.json"),
-                "w",
-                encoding="utf-8",
-            ) as handle:
-                handle.write("[]\n")
-            with open(os.path.join(runtime_dir, "values-conn-a.yaml"), "w", encoding="utf-8") as handle:
-                handle.write("dashboard:\n  authMode: oidc-bff\n")
+            os.makedirs(runtime_dir, exist_ok=True)
+            self._write_edc_dashboard_runtime(runtime_dir, "conn-a")
+            self._write_edc_dashboard_runtime(runtime_dir, "conn-b")
 
             def resolve_context_from_runtime(self, topology="local"):
                 return {
@@ -8515,18 +8656,8 @@ class MainCliTests(unittest.TestCase):
     def test_validate_command_fails_clearly_when_edc_dashboard_services_are_not_ready(self):
         with tempfile.TemporaryDirectory() as runtime_root:
             runtime_dir = os.path.join(runtime_root, "fake-ds")
-            dashboard_dir = os.path.join(runtime_dir, "dashboard", "conn-a")
-            os.makedirs(dashboard_dir, exist_ok=True)
-            with open(os.path.join(dashboard_dir, "app-config.json"), "w", encoding="utf-8") as handle:
-                handle.write("{}\n")
-            with open(
-                os.path.join(dashboard_dir, "edc-connector-config.json"),
-                "w",
-                encoding="utf-8",
-            ) as handle:
-                handle.write("[]\n")
-            with open(os.path.join(runtime_dir, "values-conn-a.yaml"), "w", encoding="utf-8") as handle:
-                handle.write("dashboard:\n  authMode: oidc-bff\n")
+            os.makedirs(runtime_dir, exist_ok=True)
+            self._write_edc_dashboard_runtime(runtime_dir, "conn-a")
 
             def resolve_context_from_runtime(self, topology="local"):
                 return {

@@ -1,6 +1,0 @@
-{
-  "text": "AI Model Observer",
-  "materialSymbol": "monitor_heart",
-  "routerPath": "ai-model-observer",
-  "viewDescription": "Inspect connector observability evidence for AI model discovery, execution and benchmarking routes."
-}

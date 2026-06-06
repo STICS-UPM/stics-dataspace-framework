@@ -7,6 +7,8 @@ ADAPTER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FRAMEWORK_ROOT="$(cd "$ADAPTER_DIR/../.." && pwd)"
 SOURCES_DIR="$ADAPTER_DIR/sources"
 DASHBOARD_REPO_DIR="$SOURCES_DIR/dashboard"
+DASHBOARD_REPO_URL="${PIONERA_EDC_DASHBOARD_REPO_URL:-${EDC_DASHBOARD_REPO_URL:-https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard}}"
+DASHBOARD_REPO_REF="${PIONERA_EDC_DASHBOARD_REPO_REF:-${EDC_DASHBOARD_REPO_REF:-a4cb3e659e1fd3abfa9516a036c261b19432ec13}}"
 BUILD_DIR="$ADAPTER_DIR/build"
 DOCKERFILE="$BUILD_DIR/docker/dashboard.Dockerfile"
 NGINX_CONF="$BUILD_DIR/docker/dashboard-nginx.conf"
@@ -32,6 +34,14 @@ normalize_cluster_runtime() {
       exit 1
       ;;
   esac
+}
+
+remove_minikube_image_if_present() {
+  local image_ref="$1"
+
+  if command -v minikube >/dev/null 2>&1; then
+    minikube -p "$MINIKUBE_PROFILE" ssh "docker image rm -f '$image_ref' >/dev/null 2>&1 || true"
+  fi
 }
 
 load_image_into_k3s() {
@@ -76,18 +86,9 @@ done
 
 normalize_cluster_runtime
 
-if [[ ! -d "$DASHBOARD_REPO_DIR/.git" ]]; then
-  bash "$SCRIPT_DIR/sync_dashboard_sources.sh" --apply
-fi
+bash "$SCRIPT_DIR/sync_dashboard_sources.sh" --apply --source "$DASHBOARD_REPO_URL" --ref "$DASHBOARD_REPO_REF"
 
 APPLY_OVERLAYS_SCRIPT="$ADAPTER_DIR/scripts/apply_overlays.sh"
-if [[ -f "$APPLY_OVERLAYS_SCRIPT" ]]; then
-  if [[ "$APPLY" == true ]]; then
-    bash "$APPLY_OVERLAYS_SCRIPT" --apply --target dashboard
-  else
-    echo "Would run: bash \"$APPLY_OVERLAYS_SCRIPT\" --apply --target dashboard"
-  fi
-fi
 
 DASHBOARD_DIR="$DASHBOARD_REPO_DIR"
 if [[ -d "$DASHBOARD_REPO_DIR/DataDashboard" ]]; then
@@ -102,6 +103,9 @@ if [[ "$APPLY" != true ]]; then
   echo "  context: $CONTEXT_DIR"
   echo "  image: $IMAGE_NAME:$IMAGE_TAG"
   echo "  cluster_runtime: $CLUSTER_RUNTIME"
+  if [[ -f "$APPLY_OVERLAYS_SCRIPT" ]]; then
+    echo "  overlays: bash \"$APPLY_OVERLAYS_SCRIPT\" --apply --target dashboard --dashboard-app-dir \"$CONTEXT_DIR/app\""
+  fi
   if [[ "$CLUSTER_RUNTIME" == "minikube" ]]; then
     echo "  minikube_profile: $MINIKUBE_PROFILE"
   else
@@ -131,11 +135,16 @@ rsync -a \
   "$DASHBOARD_DIR"/ "$CONTEXT_DIR/app/"
 cp "$NGINX_CONF" "$CONTEXT_DIR/dashboard-nginx.conf"
 
+if [[ -f "$APPLY_OVERLAYS_SCRIPT" ]]; then
+  bash "$APPLY_OVERLAYS_SCRIPT" --apply --target dashboard --dashboard-app-dir "$CONTEXT_DIR/app"
+fi
+
 docker build -f "$DOCKERFILE" -t "$IMAGE_NAME:$IMAGE_TAG" "$CONTEXT_DIR"
 
 case "$CLUSTER_RUNTIME" in
   minikube)
     if command -v minikube >/dev/null 2>&1; then
+      remove_minikube_image_if_present "$IMAGE_NAME:$IMAGE_TAG"
       minikube -p "$MINIKUBE_PROFILE" image load "$IMAGE_NAME:$IMAGE_TAG" >/dev/null
     fi
     ;;

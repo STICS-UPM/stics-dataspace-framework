@@ -52,6 +52,7 @@ class KafkaEdcValidationSuite:
     DEFAULT_STABILIZATION_REQUEST_TIMEOUT_MS = 5000
     DEFAULT_CONTINUE_AFTER_REQUESTED_TRANSFER_TIMEOUT = True
     DEFAULT_KUBERNETES_EXEC_USE_TOPIC_OFFSETS = False
+    DEFAULT_KUBERNETES_EXEC_SCAN_MAX_MESSAGES = 100
 
     def __init__(
         self,
@@ -136,6 +137,7 @@ class KafkaEdcValidationSuite:
             "stabilization_probe_timeout_seconds": "KAFKA_EDC_STABILIZATION_PROBE_TIMEOUT_SECONDS",
             "kubernetes_exec_timeout_seconds": "KAFKA_EDC_KUBERNETES_EXEC_TIMEOUT_SECONDS",
             "kubernetes_exec_use_topic_offsets": "KAFKA_EDC_KUBERNETES_EXEC_USE_TOPIC_OFFSETS",
+            "kubernetes_exec_scan_max_messages": "KAFKA_EDC_KUBERNETES_EXEC_SCAN_MAX_MESSAGES",
             "pair_attempts": "KAFKA_EDC_PAIR_ATTEMPTS",
             "pair_retry_seconds": "KAFKA_EDC_PAIR_RETRY_SECONDS",
             "validation_backend": "KAFKA_EDC_VALIDATION_BACKEND",
@@ -184,6 +186,7 @@ class KafkaEdcValidationSuite:
             "stabilization_group_wait_seconds",
             "stabilization_probe_timeout_seconds",
             "kubernetes_exec_timeout_seconds",
+            "kubernetes_exec_scan_max_messages",
             "pair_attempts",
             "pair_retry_seconds",
         ):
@@ -727,6 +730,26 @@ class KafkaEdcValidationSuite:
         if not self._use_kubernetes_exec_topic_offsets(runtime):
             return None
         return self._kubernetes_topic_end_offset(runtime, topic_name)
+
+    def _kubernetes_exec_consume_window(self, runtime, message_count, probe_result=None, offset=None):
+        if offset is not None:
+            return max(1, int(message_count))
+        probe_attempts = 0
+        if isinstance(probe_result, dict):
+            try:
+                probe_attempts = int(probe_result.get("attempts") or 0)
+            except (TypeError, ValueError):
+                probe_attempts = 0
+        configured = self._runtime_int(
+            runtime,
+            "kubernetes_exec_scan_max_messages",
+            self.DEFAULT_KUBERNETES_EXEC_SCAN_MAX_MESSAGES,
+            minimum=1,
+        )
+        # Without explicit offsets, kafka-console-consumer starts at the beginning on every
+        # invocation. The destination topic may already contain stabilization probes, so the
+        # scan window must be wider than the transfer payload count.
+        return max(configured, int(message_count) + probe_attempts + 5)
 
     @staticmethod
     def _command_to_text(command):
@@ -2528,6 +2551,12 @@ class KafkaEdcValidationSuite:
             )
 
         destination_start_offset = self._kubernetes_consumer_start_offset(runtime, destination_topic)
+        consume_window = self._kubernetes_exec_consume_window(
+            runtime,
+            message_count,
+            probe_result=probe_result,
+            offset=destination_start_offset,
+        )
         start_ms = self.time_provider()
         for index in range(message_count):
             message_id = f"kafka-transfer-{index}-{self.uuid_factory()}"
@@ -2555,7 +2584,7 @@ class KafkaEdcValidationSuite:
                 runtime,
                 destination_topic,
                 timeout_ms=2000,
-                max_messages=max(1, message_count),
+                max_messages=consume_window,
                 offset=destination_start_offset,
             )
             for payload in messages:
@@ -2588,7 +2617,7 @@ class KafkaEdcValidationSuite:
                     runtime,
                     destination_topic,
                     timeout_ms=2000,
-                    max_messages=max(1, message_count),
+                    max_messages=consume_window,
                     offset=destination_start_offset,
                 )
                 for payload in messages:

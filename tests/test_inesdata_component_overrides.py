@@ -1196,7 +1196,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 "_resolve_component_release_name",
                 return_value="demo-ai-model-hub",
             ):
-                with self.assertRaisesRegex(RuntimeError, "Local image auto-build disabled"):
+                with self.assertRaisesRegex(RuntimeError, "Remote k3s image import is not configured"):
                     adapter.deploy_components(
                         ["ai-model-hub"],
                         ds_name="demo",
@@ -1511,6 +1511,20 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             "registry.example.org/ns/image:tag",
         )
 
+    def test_load_image_into_minikube_refreshes_existing_runtime_tag_before_load(self):
+        adapter = self._make_adapter()
+
+        adapter._load_image_into_minikube("minikube", "eclipse-edc/data-dashboard:local")
+
+        adapter.run_silent.assert_called_once_with(
+            'minikube -p minikube ssh "docker image rm -f '
+            'eclipse-edc/data-dashboard:local >/dev/null 2>&1 || true"'
+        )
+        adapter.run.assert_called_once_with(
+            "minikube -p minikube image load eclipse-edc/data-dashboard:local",
+            check=False,
+        )
+
     def test_prepare_level6_local_image_builds_on_host_and_loads_into_minikube(self):
         adapter = self._make_adapter()
         deployer_config = {"LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true"}
@@ -1570,7 +1584,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             "_safe_load_yaml_file",
             return_value={"image": {"repository": "ontology-hub", "tag": "local"}},
         ):
-            with self.assertRaisesRegex(RuntimeError, "Local image auto-build disabled"):
+            with self.assertRaisesRegex(RuntimeError, "Remote k3s image import is not configured"):
                 adapter._maybe_prepare_level6_local_image(
                     "ontology-hub",
                     "/tmp/ontology-values.yaml",
@@ -3298,6 +3312,8 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             side_effect=[
                 "morph-kgv:local\n",
                 "mapping-editor:local\n",
+                "",
+                "",
             ]
         )
         adapter._ensure_k3s_local_image_import_supported = mock.Mock()

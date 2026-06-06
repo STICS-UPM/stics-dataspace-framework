@@ -574,6 +574,17 @@ class SharedDataspaceDeploymentAdapter:
         return raw_value not in {"0", "false", "no", "off", "disabled"}
 
     @staticmethod
+    def _explicit_bool(value):
+        raw_value = str(value or "").strip().lower()
+        if not raw_value:
+            return None
+        if raw_value in {"1", "true", "yes", "y", "on", "enabled", "enable"}:
+            return True
+        if raw_value in {"0", "false", "no", "n", "off", "disabled", "disable", "never", "none"}:
+            return False
+        return None
+
+    @staticmethod
     def _k3s_image_pull_timeout_seconds():
         raw_value = str(os.environ.get("PIONERA_K3S_IMAGE_PULL_TIMEOUT", "1800")).strip()
         try:
@@ -586,8 +597,20 @@ class SharedDataspaceDeploymentAdapter:
         normalized_topology = normalize_topology(topology)
         if normalized_topology != VM_SINGLE_TOPOLOGY:
             return False
-        if not self._env_flag_enabled("PIONERA_K3S_LEVEL3_IMAGE_PREPULL", default=True):
-            return False
+        env_value = str(os.environ.get("PIONERA_K3S_LEVEL3_IMAGE_PREPULL") or "").strip()
+        if env_value:
+            if not self._env_flag_enabled("PIONERA_K3S_LEVEL3_IMAGE_PREPULL", default=True):
+                return False
+        else:
+            deployer_config = self._deployer_config()
+            for key in ("VM_SINGLE_K3S_LEVEL3_IMAGE_PREPULL", "K3S_LEVEL3_IMAGE_PREPULL"):
+                configured = self._explicit_bool(deployer_config.get(key))
+                if configured is not None:
+                    if not configured:
+                        return False
+                    break
+            else:
+                return False
         cluster_type = str(
             self._cluster_runtime(normalized_topology).get("cluster_type") or "minikube"
         ).strip().lower()
