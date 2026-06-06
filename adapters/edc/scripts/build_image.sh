@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADAPTER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SYNC_SCRIPT="$ADAPTER_DIR/scripts/sync_sources.sh"
+FRAMEWORK_ROOT="$(cd "$ADAPTER_DIR/../.." && pwd)"
+REMOTE_K3S_IMPORT_HELPER="$FRAMEWORK_ROOT/deployers/shared/lib/remote_k3s_image_import_cli.py"
 
 DEFAULT_SOURCE_DIR="$ADAPTER_DIR/sources/connector"
 SOURCE_DIR="$DEFAULT_SOURCE_DIR"
@@ -13,6 +15,7 @@ IMAGE_TAG="local"
 MINIKUBE_PROFILE="minikube"
 CLUSTER_RUNTIME="${CLUSTER_RUNTIME:-minikube}"
 K3S_IMAGE_IMPORT_COMMAND="${K3S_IMAGE_IMPORT_COMMAND:-sudo k3s ctr -n k8s.io images import}"
+K3S_REMOTE_IMPORT_HOST="${K3S_REMOTE_IMPORT_HOST:-}"
 GRADLE_TASK=":final-connector:shadowJar"
 CONNECTOR_JAR="final-connector/build/libs/connector.jar"
 CONNECTOR_RUNTIME_DIR="final-connector"
@@ -162,7 +165,15 @@ load_image_into_k3s() {
 
   archive_file="$(mktemp "${TMPDIR:-/tmp}/edc-image-XXXXXX.tar")"
   run_cmd "docker save \"$image_ref\" -o \"$archive_file\""
-  run_cmd "$K3S_IMAGE_IMPORT_COMMAND \"$archive_file\""
+  if [[ -n "$K3S_REMOTE_IMPORT_HOST" ]]; then
+    if ! run_cmd "python3 \"$REMOTE_K3S_IMPORT_HELPER\" --archive \"$archive_file\" --image \"$image_ref\""; then
+      run_cmd "rm -f \"$archive_file\""
+      return 1
+    fi
+  elif ! run_cmd "$K3S_IMAGE_IMPORT_COMMAND \"$archive_file\""; then
+    run_cmd "rm -f \"$archive_file\""
+    return 1
+  fi
   run_cmd "rm -f \"$archive_file\""
 }
 
@@ -287,7 +298,6 @@ if [[ -f "$APPLY_OVERLAYS_SCRIPT" ]]; then
   fi
 fi
 
-FRAMEWORK_ROOT="$(cd "$ADAPTER_DIR/../.." && pwd)"
 PATCH_ONTOLOGY_SCRIPT="$ADAPTER_DIR/scripts/patch_ontology_validator_urls.py"
 ONTOLOGY_PATCH_SNAPSHOT=""
 DOCKER_BUILD_TEMP_CONTEXT=""

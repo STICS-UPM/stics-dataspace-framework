@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -86,6 +87,77 @@ def _first_non_empty(*values: Any) -> str:
         if text:
             return text
     return ""
+
+
+def _configured_playwright_ingress_proxy_port(config: dict[str, Any]) -> str:
+    return _first_non_empty(
+        os.environ.get("PLAYWRIGHT_INGRESS_PROXY_PORT"),
+        os.environ.get("UI_INGRESS_PORT"),
+        config.get("PLAYWRIGHT_INGRESS_PROXY_PORT"),
+        config.get("UI_INGRESS_PORT"),
+        config.get("LOCAL_PLAYWRIGHT_INGRESS_PROXY_PORT"),
+        config.get("LOCAL_INGRESS_PROXY_PORT"),
+        config.get("LOCAL_INGRESS_PORT"),
+        config.get("INGRESS_PROXY_PORT"),
+    )
+
+
+def _configured_playwright_ingress_proxy_host(config: dict[str, Any]) -> str:
+    return _first_non_empty(
+        os.environ.get("PLAYWRIGHT_INGRESS_PROXY_HOST"),
+        config.get("PLAYWRIGHT_INGRESS_PROXY_HOST"),
+        config.get("LOCAL_PLAYWRIGHT_INGRESS_PROXY_HOST"),
+        config.get("LOCAL_INGRESS_PROXY_HOST"),
+        "127.0.0.1",
+    )
+
+
+def _detect_local_ingress_proxy_port(config: dict[str, Any]) -> str:
+    enabled = str(
+        os.environ.get("PLAYWRIGHT_INGRESS_PROXY_AUTO_DETECT")
+        or config.get("PLAYWRIGHT_INGRESS_PROXY_AUTO_DETECT")
+        or config.get("LOCAL_INGRESS_PROXY_AUTO_DETECT")
+        or "true"
+    ).strip().lower()
+    if enabled in {"0", "false", "no", "off"}:
+        return ""
+
+    try:
+        completed = subprocess.run(
+            ["ps", "-eo", "args"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return ""
+
+    output = getattr(completed, "stdout", "")
+    if not isinstance(output, str):
+        return ""
+
+    for line in output.splitlines():
+        normalized = line.lower()
+        if "kubectl" not in normalized or "port-forward" not in normalized:
+            continue
+        if "ingress-nginx" not in normalized or "ingress-nginx-controller" not in normalized:
+            continue
+        match = re.search(r"(?:(?:127\.0\.0\.1|localhost):)?([0-9]{2,5}):80\b", line)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _resolve_playwright_ingress_proxy(config: dict[str, Any], topology: str) -> tuple[str, str]:
+    explicit_port = _configured_playwright_ingress_proxy_port(config)
+    if explicit_port:
+        return _configured_playwright_ingress_proxy_host(config), explicit_port
+    if topology != LOCAL_TOPOLOGY:
+        return "", ""
+    detected_port = _detect_local_ingress_proxy_port(config)
+    if detected_port:
+        return _configured_playwright_ingress_proxy_host(config), detected_port
+    return "", ""
 
 
 def _hostname_from_url_or_raw(value: Any) -> str:
@@ -271,6 +343,7 @@ def _build_playwright_environment(
     fallback_domain = _first_non_empty(config.get("DOMAIN_BASE"), context.ds_domain_base)
     keycloak_url = _resolve_ui_keycloak_url(config, topology, fallback_domain=fallback_domain)
     minio_console_url = _resolve_ui_minio_console_url(config, topology, fallback_domain=fallback_domain)
+    ingress_proxy_host, ingress_proxy_port = _resolve_playwright_ingress_proxy(config, topology)
 
     env["UI_ADAPTER"] = adapter
     env["UI_DATASPACE"] = context.dataspace_name
@@ -279,6 +352,10 @@ def _build_playwright_environment(
     env["UI_DOMAIN_BASE"] = str(config.get("DOMAIN_BASE") or "").strip()
     env["UI_TOPOLOGY"] = topology
     env["UI_KEYCLOAK_URL"] = keycloak_url
+    if ingress_proxy_port:
+        env["UI_INGRESS_PORT"] = ingress_proxy_port
+        env["PLAYWRIGHT_INGRESS_PROXY_PORT"] = ingress_proxy_port
+        env["PLAYWRIGHT_INGRESS_PROXY_HOST"] = ingress_proxy_host or "127.0.0.1"
     if minio_console_url:
         env["UI_MINIO_CONSOLE_URL"] = minio_console_url
     runtime_dir = str(getattr(context, "runtime_dir", "") or "").strip()
@@ -306,10 +383,13 @@ def _build_playwright_environment(
         or config.get("CONNECTOR_PROTOCOL_ADDRESS_MODE")
         or ""
     ).strip()
+    adapter_name = str(adapter or "").strip().lower()
     if explicit_ui_protocol_address_mode:
         protocol_address_mode = explicit_ui_protocol_address_mode
     elif configured_protocol_address_mode:
         protocol_address_mode = configured_protocol_address_mode
+    elif adapter_name == "edc" and topology in {LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
+        protocol_address_mode = "internal"
     elif topology in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
         protocol_address_mode = "public"
     else:
@@ -346,7 +426,11 @@ def _build_playwright_environment(
         env.setdefault("UI_AI_MODEL_HUB_HTTPDATA_DEMO", "1")
         env.setdefault("UI_AI_MODEL_OBSERVER_DEMO", "1")
     elif adapter.lower() == "edc":
-        env.setdefault("PIONERA_PLAYWRIGHT_SUITE_NAME", "EDC Playwright")
+        env.setdefault("PIONERA_PLAYWRIGHT_SUITE_NAME", "EDC UI")
+        env.setdefault("UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO", "1")
+        env.setdefault("UI_ONTOLOGY_HUB_EDC_DEMO", "1")
+        env.setdefault("UI_AI_MODEL_HUB_HTTPDATA_DEMO", "1")
+        env.setdefault("UI_EDC_MODEL_OBSERVER_DEMO", "1")
     else:
         env.setdefault("PIONERA_PLAYWRIGHT_SUITE_NAME", f"{adapter} Playwright")
     env.setdefault("PLAYWRIGHT_INTERACTION_MARKERS", "1")
@@ -414,6 +498,9 @@ def run_playwright_validation(
     profile: ValidationProfile,
     context: DeploymentContext,
     experiment_dir: str,
+    specs: list[str] | None = None,
+    extra_args: list[str] | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     adapter_name = profile.adapter or context.deployer or "unknown"
     artifact_paths = build_playwright_artifact_paths(experiment_dir, adapter_name)
@@ -425,6 +512,8 @@ def run_playwright_validation(
         profile=profile,
         artifact_paths=artifact_paths,
     )
+    if extra_env:
+        env.update(extra_env)
     command = [
         "npx",
         "playwright",
@@ -439,6 +528,10 @@ def run_playwright_validation(
     ).strip()
     if max_failures:
         command.extend(["--max-failures", max_failures])
+    if specs:
+        command.extend(specs)
+    if extra_args:
+        command.extend(extra_args)
 
     error = None
     try:
@@ -465,6 +558,7 @@ def run_playwright_validation(
         "exit_code": exit_code,
         "experiment_dir": experiment_dir,
         "command": command,
+        "specs": list(specs or []),
         "artifacts": artifact_paths,
         "summary": _summarize_playwright_json(artifact_paths["json_report_file"]),
         "error": error,

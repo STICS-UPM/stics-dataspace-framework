@@ -68,7 +68,12 @@ test("14 edc AI Model Hub DAIMO metadata: model metadata is rendered in ML Asset
       dataspaceRuntime,
       assetId,
       suffix,
-      aiModelAssetOptions({ suffix, modelUrl, modelPath }),
+      aiModelAssetOptions({
+        suffix,
+        modelUrl,
+        modelPath,
+        modelName: `EDC AI Model Hub DAIMO metadata model ${assetId}`,
+      }),
     );
 
     await loginPage.open(dataspaceRuntime.provider.portalBaseUrl);
@@ -80,8 +85,10 @@ test("14 edc AI Model Hub DAIMO metadata: model metadata is rendered in ML Asset
     await dashboardPage.expectNoServerErrorBanner("EDC AI Model DAIMO metadata");
     await mlAssetsPage.expectReady();
     await mlAssetsPage.waitForAssetVisible(assetId, 120_000);
-    await expect(page.getByText(expectedTask).first()).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(expectedFramework).first()).toBeVisible({ timeout: 30_000 });
+    await mlAssetsPage.openDetails(assetId);
+    const details = page.locator("app-ml-asset-details-modal").filter({ hasText: assetId }).first();
+    await expect(details.getByText(expectedTask).first()).toBeVisible({ timeout: 30_000 });
+    await expect(details.getByText(expectedFramework).first()).toBeVisible({ timeout: 30_000 });
     await captureStep(page, "02-edc-ai-model-daimo-card");
 
     expect(

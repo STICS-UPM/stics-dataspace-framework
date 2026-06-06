@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADAPTER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+FRAMEWORK_ROOT="$(cd "$ADAPTER_DIR/../.." && pwd)"
 BUILD_DIR="$ADAPTER_DIR/build"
 DOCKERFILE="$BUILD_DIR/docker/dashboard-proxy.Dockerfile"
 SERVER_FILE="$BUILD_DIR/dashboard-proxy/server.py"
@@ -13,6 +14,8 @@ IMAGE_TAG="${PIONERA_EDC_DASHBOARD_PROXY_IMAGE_TAG:-latest}"
 MINIKUBE_PROFILE="${MINIKUBE_PROFILE:-minikube}"
 CLUSTER_RUNTIME="${CLUSTER_RUNTIME:-minikube}"
 K3S_IMAGE_IMPORT_COMMAND="${K3S_IMAGE_IMPORT_COMMAND:-sudo k3s ctr -n k8s.io images import}"
+K3S_REMOTE_IMPORT_HOST="${K3S_REMOTE_IMPORT_HOST:-}"
+REMOTE_K3S_IMPORT_HELPER="$FRAMEWORK_ROOT/deployers/shared/lib/remote_k3s_image_import_cli.py"
 
 APPLY=false
 
@@ -35,8 +38,13 @@ load_image_into_k3s() {
 
   archive_file="$(mktemp "${TMPDIR:-/tmp}/edc-dashboard-proxy-image-XXXXXX.tar")"
   docker save "$image_ref" -o "$archive_file"
+  if [[ -n "$K3S_REMOTE_IMPORT_HOST" ]]; then
+    if ! python3 "$REMOTE_K3S_IMPORT_HELPER" --archive "$archive_file" --image "$image_ref"; then
+      rm -f "$archive_file"
+      return 1
+    fi
   # shellcheck disable=SC2086
-  if ! $K3S_IMAGE_IMPORT_COMMAND "$archive_file"; then
+  elif ! $K3S_IMAGE_IMPORT_COMMAND "$archive_file"; then
     rm -f "$archive_file"
     return 1
   fi

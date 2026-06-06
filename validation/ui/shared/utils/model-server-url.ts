@@ -150,3 +150,36 @@ export function modelServerUrlForPath(
   const namespace = (process.env.UI_AI_MODEL_HUB_MODEL_NAMESPACE || componentsNamespace || "components").trim();
   return `http://model-server.${namespace}.svc.cluster.local:8080${normalizePath(pathValue)}`;
 }
+
+export function modelServerBaseUrlFromUrl(fullUrl: string, pathValue: string): string {
+  const trimmedUrl = withoutTrailingSlash(fullUrl.trim());
+  const normalizedPath = normalizePath(pathValue);
+  if (!trimmedUrl || normalizedPath === "/") {
+    return trimmedUrl;
+  }
+
+  try {
+    const parsed = new URL(trimmedUrl);
+    if (parsed.pathname.endsWith(normalizedPath)) {
+      const basePath = parsed.pathname.slice(0, -normalizedPath.length);
+      parsed.pathname = basePath || "/";
+      parsed.search = "";
+      parsed.hash = "";
+      return withoutTrailingSlash(parsed.toString());
+    }
+  } catch {
+    if (trimmedUrl.endsWith(normalizedPath)) {
+      return withoutTrailingSlash(trimmedUrl.slice(0, -normalizedPath.length));
+    }
+  }
+
+  return trimmedUrl;
+}
+
+export function modelServerBaseUrlForPath(
+  pathValue: string,
+  componentsNamespace: string,
+  options: { explicitUrlEnv?: string } = {},
+): string {
+  return modelServerBaseUrlFromUrl(modelServerUrlForPath(pathValue, componentsNamespace, options), pathValue);
+}

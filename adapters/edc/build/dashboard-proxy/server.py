@@ -26,6 +26,7 @@ HOP_BY_HOP_HEADERS = {
 }
 
 PROXY_CONNECTOR_PREFIX = "/edc-dashboard-api/connectors/"
+PROXY_COMPONENT_PREFIX = "/edc-dashboard-api/components/"
 
 
 class ProxySettings:
@@ -57,6 +58,11 @@ class ProxySettings:
             for entry in config_payload.get("connectors", [])
             if entry.get("connectorName")
         }
+        self.components = {
+            entry.get("name"): entry
+            for entry in config_payload.get("components", [])
+            if entry.get("name") and entry.get("target")
+        }
         self.passwords = {
             entry.get("connectorName"): entry.get("password", "")
             for entry in auth_payload.get("connectors", [])
@@ -79,6 +85,9 @@ class ProxySettings:
 
     def connector_config(self, connector_name):
         return self.connectors.get(connector_name)
+
+    def component_config(self, component_name):
+        return self.components.get(component_name)
 
     def connector_password(self, connector_name):
         return self.passwords.get(connector_name, "")
@@ -550,6 +559,76 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
             url = f"{url}?{query_string}"
         return url
 
+    def _component_target_url(self, component_name, remaining_path, query_string):
+        component = SETTINGS.component_config(component_name)
+        if not component:
+            raise KeyError(f"Unknown component: {component_name}")
+
+        base_url = (component.get("target") or "").rstrip("/")
+        suffix = f"/{remaining_path}" if remaining_path else ""
+        url = f"{base_url}{suffix}"
+        if query_string:
+            url = f"{url}?{query_string}"
+        return url
+
+    def _proxy_component_request(self, component_name, remaining_path, query_string):
+        if SETTINGS.auth_mode == "oidc-bff":
+            session = self._oidc_session()
+            if not session:
+                self._send_json(
+                    401,
+                    {
+                        "message": "Authentication required",
+                        "authMode": SETTINGS.auth_mode,
+                        "loginPath": SETTINGS.login_path,
+                        "authEvent": "session-expired",
+                    },
+                )
+                return
+
+        target_url = self._component_target_url(component_name, remaining_path, query_string)
+        request = urllib.request.Request(
+            target_url,
+            data=self._read_request_body(),
+            headers=self._forward_component_headers(),
+            method=self.command,
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                body = response.read()
+                status = response.getcode()
+                response_headers = response.headers
+        except urllib.error.HTTPError as exc:
+            body = exc.read()
+            status = exc.code
+            response_headers = exc.headers
+        except Exception as exc:
+            self._send_json(502, {"message": str(exc)})
+            return
+
+        self.send_response(status)
+        for header_name, header_value in response_headers.items():
+            if header_name.lower() in HOP_BY_HOP_HEADERS:
+                continue
+            if header_name.lower() == "content-length":
+                continue
+            self.send_header(header_name, header_value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _forward_component_headers(self):
+        forwarded = {}
+        for header_name, header_value in self.headers.items():
+            if header_name.lower() in HOP_BY_HOP_HEADERS:
+                continue
+            if header_name.lower() in {"host", "cookie", "content-length"}:
+                continue
+            forwarded[header_name] = header_value
+        return forwarded
+
     def _proxy_request(self, connector_name, service_name, remaining_path, query_string):
         access_token = None
         if SETTINGS.auth_mode == "oidc-bff" and service_name in {"management", "api", "control"}:
@@ -751,6 +830,21 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
                 self._send_json(501, {"message": "Logout is only available in oidc-bff mode"})
             else:
                 self._handle_oidc_logout()
+            return
+
+        if parsed.path.startswith(PROXY_COMPONENT_PREFIX):
+            relative = parsed.path[len(PROXY_COMPONENT_PREFIX):]
+            parts = [part for part in relative.split("/") if part]
+            if len(parts) < 1:
+                self._send_json(404, {"message": "Component segment missing"})
+                return
+
+            component_name = parts[0]
+            remaining_path = "/".join(parts[1:])
+            try:
+                self._proxy_component_request(component_name, remaining_path, parsed.query)
+            except KeyError as exc:
+                self._send_json(404, {"message": str(exc)})
             return
 
         if not parsed.path.startswith(PROXY_CONNECTOR_PREFIX):

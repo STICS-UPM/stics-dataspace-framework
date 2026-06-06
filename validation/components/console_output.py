@@ -12,10 +12,15 @@ STATUS_ICONS = {
     "error": ("✗", "31"),
     "skipped": ("-", "33"),
     "pending": ("-", "33"),
+    "partial": ("-", "33"),
 }
 CHANNEL_LABELS = {
     "api": "API",
     "playwright": "Playwright",
+}
+SUMMARY_CHANNEL_LABELS = {
+    **CHANNEL_LABELS,
+    "playwright": "UI",
 }
 COMPONENT_LABELS = {
     "ontology-hub": "Ontology Hub",
@@ -35,6 +40,7 @@ STATUS_LABELS = {
     "error": "failed",
     "skipped": "skipped",
     "pending": "skipped",
+    "partial": "partial",
 }
 DEFAULT_TEST_INDENT = "  "
 HEADER_COLOR = "33;1"
@@ -124,6 +130,57 @@ def _status_label(status: Any) -> tuple[str, str]:
     return raw, _color(raw, color)
 
 
+def _summary_status(summary: Mapping[str, Any] | None, fallback_status: Any = None) -> str:
+    if not isinstance(summary, Mapping):
+        return _normalized_status(fallback_status)
+
+    total = _summary_value(summary, "total")
+    if total <= 0:
+        return _normalized_status(fallback_status)
+
+    passed = _summary_value(summary, "passed")
+    failed = _summary_value(summary, "failed")
+    skipped = _summary_value(summary, "skipped")
+    other = max(total - passed - failed - skipped, 0)
+    if failed or other:
+        return "failed"
+    if skipped:
+        return "partial"
+    if passed == total:
+        return "passed"
+    return _normalized_status(fallback_status)
+
+
+def _component_result_status(component_result: Mapping[str, Any]) -> str:
+    phases = component_result.get("phases")
+    phase_statuses: list[str] = []
+    if isinstance(phases, Mapping) and phases:
+        phase_order = list(component_result.get("phase_order") or phases.keys())
+        for phase in phase_order:
+            phase_result = phases.get(phase)
+            if not isinstance(phase_result, Mapping):
+                continue
+            summary = phase_result.get("summary") if isinstance(phase_result.get("summary"), Mapping) else {}
+            status = phase_result.get("status")
+            if not summary and _normalized_status(status) == "failed":
+                summary = {"total": 1, "passed": 0, "failed": 1, "skipped": 0}
+            phase_statuses.append(_summary_status(summary, status))
+        if phase_statuses:
+            if any(status == "failed" for status in phase_statuses):
+                return "failed"
+            if any(status in {"partial", "skipped"} for status in phase_statuses):
+                return "partial"
+            if all(status == "passed" for status in phase_statuses):
+                return "passed"
+            return phase_statuses[0]
+
+    summary = component_result.get("summary") if isinstance(component_result.get("summary"), Mapping) else {}
+    status = component_result.get("status")
+    if not summary and _normalized_status(status) == "failed":
+        summary = {"total": 1, "passed": 0, "failed": 1, "skipped": 0}
+    return _summary_status(summary, status)
+
+
 def _format_channels(channels: Any) -> str:
     if isinstance(channels, str):
         candidates = [channels]
@@ -136,7 +193,7 @@ def _format_channels(channels: Any) -> str:
         channel_key = channel.strip().lower()
         if not channel_key:
             continue
-        labels.append(CHANNEL_LABELS.get(channel_key, channel_key.replace("-", " ").title()))
+        labels.append(SUMMARY_CHANNEL_LABELS.get(channel_key, channel_key.replace("-", " ").title()))
     return ", ".join(dict.fromkeys(labels)) or "n/a"
 
 
@@ -175,7 +232,7 @@ def _component_summary_rows(component_results: Iterable[Mapping[str, Any]] | Non
                 status = phase_result.get("status")
                 if not summary and _normalized_status(status) == "failed":
                     summary = {"total": 1, "passed": 0, "failed": 1, "skipped": 0}
-                status_raw, status_rendered = _status_label(status)
+                status_raw, status_rendered = _status_label(_summary_status(summary, status))
                 rows.append(
                     {
                         "component": component,
@@ -195,7 +252,7 @@ def _component_summary_rows(component_results: Iterable[Mapping[str, Any]] | Non
         status = component_result.get("status")
         if not summary and _normalized_status(status) == "failed":
             summary = {"total": 1, "passed": 0, "failed": 1, "skipped": 0}
-        status_raw, status_rendered = _status_label(status)
+        status_raw, status_rendered = _status_label(_summary_status(summary, status))
         rows.append(
             {
                 "component": component,
@@ -247,7 +304,7 @@ def print_component_validation_summary(component_results: Iterable[Mapping[str, 
     if not rows:
         return
 
-    print(f"\n{_color('Component validation summary', HEADER_COLOR)}\n")
+    print(f"\n{_color('Component validation layer summary', HEADER_COLOR)}\n")
     columns = [
         ("component", "Component", 25),
         ("type", "Type", 16),
@@ -276,19 +333,33 @@ def print_component_validation_summary(component_results: Iterable[Mapping[str, 
             cells.append((raw, rendered))
         _print_table_row(cells, widths)
 
-    statuses = [_normalized_status(result.get("status")) for result in component_result_list if isinstance(result, Mapping)]
+    statuses = [_component_result_status(result) for result in component_result_list if isinstance(result, Mapping)]
     total = len(statuses)
     passed = sum(1 for status in statuses if status == "passed")
     failed = sum(1 for status in statuses if status == "failed")
-    skipped = sum(1 for status in statuses if status == "skipped")
+    skipped = sum(1 for status in statuses if status in {"skipped", "partial"})
     overall_status = "failed" if failed else "skipped" if skipped else "passed"
     label_color = {"passed": "32", "failed": "31", "skipped": "33"}.get(overall_status, "36")
     failed_color = "31" if failed else "32"
     skipped_color = "33"
+    case_total = sum(int(row.get("total") or 0) for row in rows)
+    case_passed = sum(int(row.get("passed") or 0) for row in rows)
+    case_failed = sum(int(row.get("failed") or 0) for row in rows)
+    case_skipped = sum(int(row.get("skipped") or 0) for row in rows)
+    case_status = "failed" if case_failed else "skipped" if case_skipped else "passed"
+    case_label_color = {"passed": "32", "failed": "31", "skipped": "33"}.get(case_status, "36")
+    case_failed_color = "31" if case_failed else "32"
     print(
         "\n"
-        f"{_color('Components:', label_color)} "
+        f"{_color('Component groups:', label_color)} "
         f"{_color(f'{passed}/{total} passed', '32')}, "
         f"{_color(f'{failed} failed', failed_color)}, "
-        f"{_color(f'{skipped} skipped', skipped_color)}"
+        f"{_color(f'{skipped} partial/skipped', skipped_color)}"
     )
+    print(
+        f"{_color('Component test cases:', case_label_color)} "
+        f"{_color(f'{case_passed}/{case_total} passed', '32')}, "
+        f"{_color(f'{case_failed} failed', case_failed_color)}, "
+        f"{_color(f'{case_skipped} skipped', skipped_color)}"
+    )
+    print("Scope: component validation layer only; see Level 6 validation summary for the global verdict.")

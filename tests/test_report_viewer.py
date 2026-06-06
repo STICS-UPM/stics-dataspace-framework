@@ -310,8 +310,9 @@ class ReportViewerTests(unittest.TestCase):
             "✓ SV-UI-01: semantic virtualization root is reachable from a browser\n"
             "✗ SV-UI-02: failing test\n"
             "  ✓ Kafka transfer: provider -> consumer\n"
-            "Component validation summary\n"
-            "Components: 3/3 passed, 0 failed, 0 skipped\n"
+            "Component validation layer summary\n"
+            "Component groups: 3/3 passed, 0 failed, 0 partial/skipped\n"
+            "Component test cases: 12/13 passed, 0 failed, 1 skipped\n"
         )
 
         html_content = reports._ansi_to_html(rendered)
@@ -326,7 +327,7 @@ class ReportViewerTests(unittest.TestCase):
             html_content,
         )
         self.assertIn(
-            "<span class='ansi-bold ansi-fg-yellow'>Component validation summary</span>",
+            "<span class='ansi-bold ansi-fg-yellow'>Component validation layer summary</span>",
             html_content,
         )
         self.assertIn("<span class='ansi-fg-green'>✓</span> SV-API-01", html_content)
@@ -335,7 +336,11 @@ class ReportViewerTests(unittest.TestCase):
         self.assertIn("<span class='ansi-fg-red'>✗</span> SV-UI-02", html_content)
         self.assertIn("  <span class='ansi-fg-green'>✓</span> Kafka transfer: provider -&gt; consumer", html_content)
         self.assertIn(
-            "<span class='ansi-fg-green'>Components: 3/3 passed, 0 failed, 0 skipped</span>",
+            "<span class='ansi-fg-green'>Component groups: 3/3 passed, 0 failed, 0 partial/skipped</span>",
+            html_content,
+        )
+        self.assertIn(
+            "<span class='ansi-fg-yellow'>Component test cases: 12/13 passed, 0 failed, 1 skipped</span>",
             html_content,
         )
 

@@ -8,8 +8,37 @@ import type {
 
 type TokenCache = Map<string, string>;
 
+const EDC_COUNTER_PARTY_ADDRESS_IRI = "https://w3id.org/edc/v0.0.1/ns/counterPartyAddress";
+const EDC_COUNTER_PARTY_ID_IRI = "https://w3id.org/edc/v0.0.1/ns/counterPartyId";
+const EDC_PROTOCOL_IRI = "https://w3id.org/edc/v0.0.1/ns/protocol";
+
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+function ingressProxyTarget(urlValue: string): { url: string; hostHeader?: string } {
+  const proxyPort = (process.env.PLAYWRIGHT_INGRESS_PROXY_PORT || process.env.UI_INGRESS_PORT || "").trim();
+  if (!proxyPort) {
+    return { url: urlValue };
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(urlValue);
+  } catch {
+    return { url: urlValue };
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
+    return { url: urlValue };
+  }
+
+  const proxyHost = (process.env.PLAYWRIGHT_INGRESS_PROXY_HOST || "127.0.0.1").trim();
+  return {
+    url: `http://${proxyHost}:${proxyPort}${parsed.pathname}${parsed.search}`,
+    hostHeader: parsed.host,
+  };
 }
 
 async function issueConnectorToken(
@@ -65,6 +94,19 @@ function resolveConnectorRuntime(
   throw new Error(`Unknown connector in dashboard bridge: ${connectorName}`);
 }
 
+function otherConnectorRuntime(
+  runtime: DataspacePortalRuntime,
+  connectorName: string,
+): ConnectorPortalRuntime {
+  if (runtime.provider.connectorName === connectorName) {
+    return runtime.consumer;
+  }
+  if (runtime.consumer.connectorName === connectorName) {
+    return runtime.provider;
+  }
+  throw new Error(`Unknown connector in dashboard bridge: ${connectorName}`);
+}
+
 function targetUrlFor(
   connector: ConnectorPortalRuntime,
   serviceName: string,
@@ -92,7 +134,188 @@ function targetUrlFor(
   return null;
 }
 
-function filteredHeaders(route: Route, bearerToken?: string): Record<string, string> {
+function isCatalogRequest(
+  serviceName: string,
+  remainingPath: string,
+  method: string,
+): boolean {
+  if (serviceName !== "management" || method.toUpperCase() !== "POST") {
+    return false;
+  }
+
+  const rest = remainingPath.replace(/^\/+/, "");
+  return /^v3\/catalog\/request\/?$/i.test(rest) || /^catalog\/request\/?$/i.test(rest);
+}
+
+function textValue(payload: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+    if (
+      Array.isArray(value) &&
+      value.length > 0 &&
+      typeof value[0] === "object" &&
+      value[0] !== null &&
+      typeof (value[0] as Record<string, unknown>)["@value"] === "string"
+    ) {
+      const expandedValue = ((value[0] as Record<string, unknown>)["@value"] as string).trim();
+      if (expandedValue) {
+        return expandedValue;
+      }
+    }
+  }
+  return undefined;
+}
+
+function hasUsableCounterPartyAddress(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  return /^(https?:\/\/|wss?:\/\/)/i.test(value);
+}
+
+function requestedCounterPartyRuntime(
+  runtime: DataspacePortalRuntime,
+  currentConnectorName: string,
+  payload: Record<string, unknown>,
+): ConnectorPortalRuntime {
+  const requestedId = textValue(payload, [
+    "counterPartyId",
+    "edc:counterPartyId",
+    EDC_COUNTER_PARTY_ID_IRI,
+    "connectorId",
+  ]);
+
+  if (requestedId) {
+    if (requestedId === runtime.provider.connectorName) {
+      return runtime.provider;
+    }
+    if (requestedId === runtime.consumer.connectorName) {
+      return runtime.consumer;
+    }
+  }
+
+  return otherConnectorRuntime(runtime, currentConnectorName);
+}
+
+function counterPartyFromDashboardPath(
+  runtime: DataspacePortalRuntime,
+  value: string | undefined,
+): ConnectorPortalRuntime | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const match = value.match(/\/edc-dashboard-api\/connectors\/([^/]+)\/protocol\/?$/i);
+  if (!match) {
+    return undefined;
+  }
+
+  const connectorName = decodeURIComponent(match[1]);
+  if (connectorName === runtime.provider.connectorName) {
+    return runtime.provider;
+  }
+  if (connectorName === runtime.consumer.connectorName) {
+    return runtime.consumer;
+  }
+  return undefined;
+}
+
+function defaultQuerySpec(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {
+    offset: 0,
+    limit: 100,
+    filterExpression: [],
+  };
+}
+
+function catalogRequestCompatibilityAliasesEnabled(): boolean {
+  return ["1", "true", "yes"].includes(
+    (process.env.UI_EDC_CATALOG_REQUEST_COMPAT_ALIASES || "").trim().toLowerCase(),
+  );
+}
+
+function normalizedCatalogRequestData(
+  route: Route,
+  runtime: DataspacePortalRuntime,
+  connectorName: string,
+  serviceName: string,
+  remainingPath: string,
+): Buffer | undefined {
+  const originalData = route.request().postDataBuffer() ?? undefined;
+  if (!originalData || !isCatalogRequest(serviceName, remainingPath, route.request().method())) {
+    return originalData;
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(originalData.toString("utf8"));
+  } catch {
+    return originalData;
+  }
+
+  const currentAddress = textValue(payload, [
+    "counterPartyAddress",
+    "edc:counterPartyAddress",
+    EDC_COUNTER_PARTY_ADDRESS_IRI,
+  ]);
+  const counterParty =
+    counterPartyFromDashboardPath(runtime, currentAddress) ||
+    requestedCounterPartyRuntime(runtime, connectorName, payload);
+  const counterPartyAddress = counterParty.protocolBaseUrl || currentAddress;
+  if (!hasUsableCounterPartyAddress(counterPartyAddress)) {
+    return originalData;
+  }
+  payload["@context"] = {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    ...((payload["@context"] && typeof payload["@context"] === "object") ? payload["@context"] as Record<string, unknown> : {}),
+  };
+  payload["@type"] = typeof payload["@type"] === "string" ? payload["@type"] : "CatalogRequest";
+  payload.counterPartyAddress = counterPartyAddress;
+  delete payload["edc:counterPartyAddress"];
+  delete payload[EDC_COUNTER_PARTY_ADDRESS_IRI];
+
+  const currentId = textValue(payload, [
+    "counterPartyId",
+    "edc:counterPartyId",
+    EDC_COUNTER_PARTY_ID_IRI,
+  ]);
+  if (!currentId) {
+    payload.counterPartyId = counterParty.connectorName;
+  }
+  delete payload["edc:counterPartyId"];
+  delete payload[EDC_COUNTER_PARTY_ID_IRI];
+
+  const currentProtocol = textValue(payload, ["protocol", "edc:protocol", EDC_PROTOCOL_IRI]);
+  if (!currentProtocol) {
+    payload.protocol = "dataspace-protocol-http";
+  }
+  delete payload["edc:protocol"];
+  delete payload[EDC_PROTOCOL_IRI];
+  payload.querySpec = defaultQuerySpec(payload.querySpec);
+
+  if (catalogRequestCompatibilityAliasesEnabled()) {
+    payload["@context"] = {
+      ...((payload["@context"] && typeof payload["@context"] === "object") ? payload["@context"] as Record<string, unknown> : {}),
+      edc: "https://w3id.org/edc/v0.0.1/ns/",
+    };
+    payload["edc:counterPartyAddress"] = counterPartyAddress;
+    payload[EDC_COUNTER_PARTY_ADDRESS_IRI] = counterPartyAddress;
+    payload["edc:counterPartyId"] = payload.counterPartyId;
+    payload[EDC_COUNTER_PARTY_ID_IRI] = payload.counterPartyId;
+    payload["edc:protocol"] = payload.protocol;
+    payload[EDC_PROTOCOL_IRI] = payload.protocol;
+  }
+
+  return Buffer.from(JSON.stringify(payload));
+}
+
+function filteredHeaders(route: Route, bearerToken?: string, hostHeader?: string): Record<string, string> {
   const requestHeaders = route.request().headers();
   const headers: Record<string, string> = {};
 
@@ -106,6 +329,9 @@ function filteredHeaders(route: Route, bearerToken?: string): Record<string, str
 
   if (bearerToken) {
     headers.Authorization = `Bearer ${bearerToken}`;
+  }
+  if (hostHeader) {
+    headers.Host = hostHeader;
   }
 
   return headers;
@@ -124,6 +350,15 @@ async function fulfillRoute(
     }
     throw error;
   }
+}
+
+async function passThroughRoute(route: Route): Promise<void> {
+  const fallback = (route as Route & { fallback?: () => Promise<void> }).fallback;
+  if (typeof fallback === "function") {
+    await fallback.call(route);
+    return;
+  }
+  await route.continue();
 }
 
 export async function installEdcDashboardRouteBridge(
@@ -166,6 +401,11 @@ export async function installEdcDashboardRouteBridge(
       return;
     }
 
+    if (serviceName === "api" || serviceName === "control") {
+      await passThroughRoute(route);
+      return;
+    }
+
     const connector = resolveConnectorRuntime(runtime, connectorName);
     const targetUrl = targetUrlFor(connector, serviceName, remainingPath);
     if (!targetUrl) {
@@ -185,10 +425,11 @@ export async function installEdcDashboardRouteBridge(
       ? `${targetUrl}${requestUrl.search}`
       : targetUrl;
 
-    const upstreamResponse = await bridgeRequest.fetch(targetUrlWithQuery, {
+    const upstreamTarget = ingressProxyTarget(targetUrlWithQuery);
+    const upstreamResponse = await bridgeRequest.fetch(upstreamTarget.url, {
       method: route.request().method(),
-      headers: filteredHeaders(route, bearerToken),
-      data: route.request().postDataBuffer() ?? undefined,
+      headers: filteredHeaders(route, bearerToken, upstreamTarget.hostHeader),
+      data: normalizedCatalogRequestData(route, runtime, connectorName, serviceName, remainingPath),
     });
 
     await fulfillRoute(route, {

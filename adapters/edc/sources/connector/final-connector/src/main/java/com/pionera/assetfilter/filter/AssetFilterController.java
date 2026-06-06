@@ -92,7 +92,7 @@ public class AssetFilterController {
             var datasets = extractDatasets(responseNode);
             var filtered = applyFilters(datasets, uriInfo.getQueryParameters());
             var sorted = applySorting(filtered, uriInfo.getQueryParameters());
-            var result = rebuildCatalog(responseNode, sorted);
+            var result = buildFilterResponse(responseNode, sorted, uriInfo.getQueryParameters());
 
             return Response.ok(mapper.writeValueAsString(result)).build();
         } catch (Exception e) {
@@ -144,6 +144,65 @@ public class AssetFilterController {
             result.add(datasetsNode);
         }
         return result;
+    }
+
+    private JsonNode buildFilterResponse(JsonNode original, List<JsonNode> datasets, Map<String, List<String>> queryParams) {
+        var shape = Optional.ofNullable(firstQueryValue(queryParams, "responseShape"))
+                .orElse(firstQueryValue(queryParams, "shape"));
+        if ("assets".equalsIgnoreCase(shape) || "assetList".equalsIgnoreCase(shape)) {
+            return buildAssetList(datasets);
+        }
+        return rebuildCatalog(original, datasets);
+    }
+
+    private JsonNode buildAssetList(List<JsonNode> datasets) {
+        var array = mapper.createArrayNode();
+        for (JsonNode dataset : datasets) {
+            array.add(toDashboardAsset(dataset));
+        }
+        return array;
+    }
+
+    private JsonNode toDashboardAsset(JsonNode dataset) {
+        if (!(dataset instanceof ObjectNode)) {
+            return dataset;
+        }
+
+        var source = (ObjectNode) dataset;
+        var asset = mapper.createObjectNode();
+        var properties = mapper.createObjectNode();
+        var existingProperties = firstNode(dataset, "properties");
+        if (existingProperties instanceof ObjectNode existing) {
+            properties.setAll(existing);
+        }
+
+        source.fields().forEachRemaining(entry -> {
+            var key = entry.getKey();
+            if (key.equals("@context") || key.equals("@type") || key.equals("properties") || key.equals("dataAddress")) {
+                return;
+            }
+            properties.set(key, entry.getValue().deepCopy());
+        });
+
+        var assetId = firstText(dataset, "@id", "id");
+        if (assetId != null) {
+            asset.put("@id", assetId);
+            if (!properties.has("id")) {
+                properties.put("id", assetId);
+            }
+        }
+        asset.put("@type", "Asset");
+        asset.set("properties", properties);
+
+        var dataAddress = firstNode(dataset, "dataAddress");
+        if (dataAddress != null && !dataAddress.isNull()) {
+            asset.set("dataAddress", dataAddress.deepCopy());
+        }
+        var context = firstNode(dataset, "@context");
+        if (context != null && !context.isNull()) {
+            asset.set("@context", context.deepCopy());
+        }
+        return asset;
     }
 
     private JsonNode rebuildCatalog(JsonNode original, List<JsonNode> datasets) {
@@ -243,6 +302,7 @@ public class AssetFilterController {
         }
         var q = query.toLowerCase(Locale.ROOT);
         return containsValue(extractValues(dataset, "name"), q) ||
+                containsValue(extractValues(dataset, "@id"), q) ||
                 containsValue(extractValues(dataset, "id"), q) ||
                 containsValue(extractValues(dataset, "daimo:tags"), q) ||
                 containsValue(extractValues(dataset, "daimo:pipeline_tag"), q) ||
@@ -555,6 +615,19 @@ public class AssetFilterController {
         for (String key : keys) {
             if (node.has(key)) {
                 return node.get(key);
+            }
+        }
+        return null;
+    }
+
+    private String firstText(JsonNode node, String... keys) {
+        if (node == null || keys == null) {
+            return null;
+        }
+        for (String key : keys) {
+            var value = firstNode(node, key);
+            if (value != null && !value.isNull() && value.isTextual() && !value.asText().isBlank()) {
+                return value.asText();
             }
         }
         return null;

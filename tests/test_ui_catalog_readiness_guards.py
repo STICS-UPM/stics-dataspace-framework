@@ -63,6 +63,15 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         self.assertIn("DS_1_VALIDATION_PAIRS", source)
         self.assertIn("UI_CONNECTOR_PROTOCOL_ADDRESS_MODE", source)
 
+    def test_dataspace_runtime_applies_ingress_proxy_port_to_api_runtime_urls(self):
+        source = _read_ui_file("shared", "utils", "dataspace-runtime.ts")
+
+        self.assertIn("PLAYWRIGHT_INGRESS_PROXY_PORT", source)
+        self.assertIn("withOptionalIngressPort(", source)
+        self.assertIn("const managementBaseUrl = withOptionalIngressPort(", source)
+        self.assertIn("const protocolBaseUrl = withOptionalIngressPort(", source)
+        self.assertIn("const transferEndpointOverride = withOptionalIngressPort(", source)
+
     def test_minio_runtime_prefers_topology_scoped_connector_credentials(self):
         source = _read_ui_file("shared", "utils", "minio-console-runtime.ts")
 
@@ -87,6 +96,58 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         self.assertIn("deployerConfig.UI_CONNECTOR_PROTOCOL_ADDRESS_MODE", source)
         self.assertIn("deployerConfig.CONNECTOR_PROTOCOL_ADDRESS_MODE", source)
 
+    def test_edc_dashboard_bridge_normalizes_catalog_request_runtime_addresses(self):
+        source = _read_ui_file("shared", "utils", "edc-dashboard-route-bridge.ts")
+
+        self.assertIn("normalizedCatalogRequestData", source)
+        self.assertIn("counterPartyFromDashboardPath", source)
+        self.assertIn("/edc-dashboard-api/connectors/", source)
+        self.assertIn("counterParty.protocolBaseUrl", source)
+        self.assertIn('payload["@type"]', source)
+        self.assertIn('"CatalogRequest"', source)
+        self.assertIn("payload.querySpec = defaultQuerySpec(payload.querySpec)", source)
+        self.assertIn("UI_EDC_CATALOG_REQUEST_COMPAT_ALIASES", source)
+        self.assertIn('delete payload["edc:counterPartyAddress"]', source)
+        self.assertIn("EDC_COUNTER_PARTY_ADDRESS_IRI", source)
+        self.assertIn("dataspace-protocol-http", source)
+
+    def test_edc_ml_assets_uses_configurable_page_size_before_polling_cards(self):
+        source = _read_ui_file("adapters", "edc", "components", "edc-ml-components.page.ts")
+
+        self.assertIn("UI_EDC_ML_ASSETS_PAGE_SIZE", source)
+        self.assertIn("preferLargestPageSize", source)
+        self.assertIn("scanRenderedPagesForAsset", source)
+        self.assertIn("currentPageLabel", source)
+        self.assertIn("function nowMs", source)
+        self.assertIn("performance.now", source)
+        self.assertIn("assetText(assetId)", source)
+
+    def test_edc_ml_browser_search_contract_includes_asset_ids_and_visible_metadata(self):
+        service = os.path.join(
+            VALIDATION_ROOT,
+            "adapters",
+            "edc",
+            "sources",
+            "dashboard",
+            "DataDashboard",
+            "src",
+            "app",
+            "services",
+            "dashboard-ml-browser.service.ts",
+        )
+        with open(service, "r", encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("(asset.id || '').toLowerCase().includes(term)", source)
+
+        browser_spec = _read_ui_file("adapters", "edc", "specs", "11-ai-model-browser.spec.ts")
+        self.assertIn("modelName: `EDC AI Model Browser sentiment model ${modelAssetId}`", browser_spec)
+        self.assertIn("modelName: `EDC AI Model Browser forecast model ${comparisonAssetId}`", browser_spec)
+
+        daimo_spec = _read_ui_file("adapters", "edc", "specs", "14-ai-model-daimo-vocabulary.spec.ts")
+        self.assertIn("modelName: `EDC AI Model Hub DAIMO metadata model ${assetId}`", daimo_spec)
+        self.assertIn("await mlAssetsPage.openDetails(assetId)", daimo_spec)
+        self.assertIn('page.locator("app-ml-asset-details-modal")', daimo_spec)
+
     def test_ai_model_specs_build_model_urls_from_public_model_server_base(self):
         helper = _read_ui_file("shared", "utils", "model-server-url.ts")
         self.assertIn("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL", helper)
@@ -98,6 +159,7 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         self.assertIn("UI_DS_DOMAIN", helper)
         self.assertIn("org1.${domain}", helper)
         self.assertIn("model-server.${namespace}.svc.cluster.local", helper)
+        self.assertIn("export function modelServerBaseUrlFromUrl", helper)
 
         expected_specs = [
             ("adapters", "inesdata", "specs", "09-ai-model-hub-httpdata.spec.ts"),
@@ -109,6 +171,54 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         for parts in expected_specs:
             source = _read_ui_file(*parts)
             self.assertIn("modelServerUrlForPath", source, "/".join(parts))
+
+    def test_edc_ai_model_assets_keep_model_base_url_separate_from_inference_path(self):
+        helper = _read_ui_file("shared", "utils", "model-server-url.ts")
+        edc_fixtures = _read_ui_file("adapters", "edc", "utils", "edc-component-fixtures.ts")
+
+        self.assertIn("modelServerBaseUrlFromUrl", helper)
+        self.assertIn("parsed.pathname.endsWith(normalizedPath)", helper)
+        self.assertIn("modelServerBaseUrlFromUrl(modelUrl, modelPath)", edc_fixtures)
+        self.assertIn('"daimo:inference_path": inferencePath', edc_fixtures)
+        self.assertIn('"daimo:license": "Apache-2.0"', edc_fixtures)
+        self.assertIn('"daimo:language": ["en"]', edc_fixtures)
+        self.assertIn('"daimo:datasets": ["validation-controlled"]', edc_fixtures)
+        self.assertIn('"daimo:base_model": "controlled-httpdata"', edc_fixtures)
+        self.assertIn('proxyPath: "true"', edc_fixtures)
+
+    def test_edc_asset_filter_searches_jsonld_dataset_ids(self):
+        connector_filter = os.path.join(
+            VALIDATION_ROOT,
+            "adapters",
+            "edc",
+            "sources",
+            "connector",
+            "connector",
+            "src",
+            "main",
+            "java",
+            "com",
+            "pionera",
+            "assetfilter",
+            "filter",
+            "AssetFilterController.java",
+        )
+        final_connector_filter = connector_filter.replace(
+            os.path.join("sources", "connector", "connector"),
+            os.path.join("sources", "connector", "final-connector"),
+        )
+
+        for source_path in [connector_filter, final_connector_filter]:
+            with open(source_path, "r", encoding="utf-8") as handle:
+                source = handle.read()
+            self.assertIn('containsValue(extractValues(dataset, "@id"), q)', source)
+            self.assertIn('containsValue(extractValues(dataset, "id"), q)', source)
+            self.assertIn("buildFilterResponse", source)
+            self.assertIn('firstQueryValue(queryParams, "responseShape")', source)
+            self.assertIn('"assets".equalsIgnoreCase(shape)', source)
+            self.assertIn('"assetList".equalsIgnoreCase(shape)', source)
+            self.assertIn("buildAssetList", source)
+            self.assertIn("toDashboardAsset", source)
 
     def test_inesdata_playwright_suite_includes_minio_ops_by_default(self):
         source = _read_ui_file("playwright.inesdata.config.ts")

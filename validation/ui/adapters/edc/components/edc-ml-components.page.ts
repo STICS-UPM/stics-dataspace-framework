@@ -11,6 +11,10 @@ function dashboardUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
+function nowMs(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
 export class EdcMlAssetsPage {
   constructor(private readonly page: Page) {}
 
@@ -26,6 +30,7 @@ export class EdcMlAssetsPage {
     });
     await expect(this.searchInput()).toBeVisible({ timeout: 30_000 });
     await expect(this.page.getByText(/^Filters$/i).first()).toBeVisible({ timeout: 30_000 });
+    await this.preferLargestPageSize();
   }
 
   async search(term: string): Promise<void> {
@@ -35,18 +40,28 @@ export class EdcMlAssetsPage {
   }
 
   async waitForAssetVisible(assetId: string, timeoutMs = 120_000): Promise<void> {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
+    const startedAt = nowMs();
+    while (nowMs() - startedAt < timeoutMs) {
       await this.search(assetId);
-      if (await this.assetCard(assetId).isVisible().catch(() => false)) {
-        await expect(this.assetCard(assetId)).toBeVisible({ timeout: 15_000 });
+      if (await this.scanRenderedPagesForAsset(assetId)) {
         return;
+      }
+      const remainingMs = Math.max(timeoutMs - (nowMs() - startedAt), 1_000);
+      const card = this.assetCard(assetId);
+      try {
+        await expect(card).toBeVisible({ timeout: Math.min(10_000, remainingMs) });
+        return;
+      } catch {
+        // The dashboard can lag behind EDC catalog propagation; reload and poll again.
       }
       await this.page.reload({ waitUntil: "domcontentloaded" });
       await this.expectReady();
       await waitForEventualConsistencyPoll(this.page);
     }
 
+    if (await this.assetText(assetId).isVisible().catch(() => false)) {
+      return;
+    }
     throw new Error(`EDC ML Assets did not render asset ${assetId} within ${timeoutMs}ms`);
   }
 
@@ -72,7 +87,72 @@ export class EdcMlAssetsPage {
   }
 
   private assetCard(assetId: string) {
-    return this.page.locator("article.card").filter({ hasText: assetId }).first();
+    return this.page.locator("article").filter({ hasText: assetId }).first();
+  }
+
+  private assetText(assetId: string) {
+    return this.page.getByText(assetId).first();
+  }
+
+  private itemsPerPageSelect() {
+    return this.page.getByRole("combobox", { name: /^Items$/i }).first();
+  }
+
+  private nextPageButton() {
+    return this.page.getByRole("button", { name: /^»$/ }).first();
+  }
+
+  private currentPageLabel() {
+    return this.page.getByRole("button", { name: /^Page \d+ of \d+$/ }).first();
+  }
+
+  private async preferLargestPageSize(): Promise<void> {
+    const preferredSize = (process.env.UI_EDC_ML_ASSETS_PAGE_SIZE || "100").trim();
+    if (!preferredSize) {
+      return;
+    }
+
+    const select = this.itemsPerPageSelect();
+    if (!(await select.isVisible().catch(() => false))) {
+      return;
+    }
+
+    const currentValue = await select.inputValue().catch(() => "");
+    if (currentValue === preferredSize) {
+      return;
+    }
+
+    await selectOptionMarked(select, { value: preferredSize }).catch(async () => {
+      await selectOptionMarked(select, { label: preferredSize }).catch(() => undefined);
+    });
+    await waitForUiTransition(this.page);
+  }
+
+  private async scanRenderedPagesForAsset(assetId: string): Promise<boolean> {
+    const visitedPages = new Set<string>();
+
+    while (true) {
+      if (
+        (await this.assetCard(assetId).isVisible().catch(() => false)) ||
+        (await this.assetText(assetId).isVisible().catch(() => false))
+      ) {
+        return true;
+      }
+
+      const pageLabel = (await this.currentPageLabel().textContent().catch(() => ""))?.trim() || "single-page";
+      if (visitedPages.has(pageLabel)) {
+        return false;
+      }
+      visitedPages.add(pageLabel);
+
+      const next = this.nextPageButton();
+      if (!(await next.isVisible().catch(() => false)) || await next.isDisabled().catch(() => true)) {
+        return false;
+      }
+
+      await clickMarked(next);
+      await waitForUiTransition(this.page);
+    }
   }
 }
 
@@ -97,8 +177,8 @@ export class EdcModelExecutionPage {
   }
 
   async waitForExecutableAsset(assetId: string, timeoutMs = 120_000): Promise<void> {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
+    const startedAt = nowMs();
+    while (nowMs() - startedAt < timeoutMs) {
       const options = await this.assetSelect().locator("option").allTextContents();
       if (options.some((option) => option.includes(assetId))) {
         return;
@@ -156,11 +236,13 @@ export class EdcModelBenchmarkingPage {
   }
 
   async waitForExecutableAssets(assetIds: string[], timeoutMs = 120_000): Promise<void> {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
+    const startedAt = nowMs();
+    while (nowMs() - startedAt < timeoutMs) {
       const missing = [];
       for (const assetId of assetIds) {
-        if (!(await this.page.getByText(assetId).first().isVisible().catch(() => false))) {
+        try {
+          await expect(this.page.getByText(assetId).first()).toBeVisible({ timeout: 5_000 });
+        } catch {
           missing.push(assetId);
         }
       }
@@ -191,11 +273,33 @@ export class EdcModelBenchmarkingPage {
     await expect(this.page.getByText(/Loaded \d+ rows from/i).first()).toBeVisible({ timeout: 30_000 });
   }
 
+  async configureMapping(options: {
+    inputPath?: string;
+    expectedPath?: string;
+    predictionPath?: string;
+  }): Promise<void> {
+    if (options.inputPath !== undefined) {
+      const inputPath = this.page.getByRole("textbox", { name: /^Input path$/i }).first();
+      await fillMarked(inputPath, options.inputPath);
+      await waitForInputValue(inputPath, options.inputPath);
+    }
+    if (options.expectedPath !== undefined) {
+      const expectedPath = this.page.getByRole("textbox", { name: /^Expected path$/i }).first();
+      await fillMarked(expectedPath, options.expectedPath);
+      await waitForInputValue(expectedPath, options.expectedPath);
+    }
+    if (options.predictionPath !== undefined) {
+      const predictionPath = this.page.getByRole("textbox", { name: /^Prediction path$/i }).first();
+      await fillMarked(predictionPath, options.predictionPath);
+      await waitForInputValue(predictionPath, options.predictionPath);
+    }
+    await waitForUiTransition(this.page);
+  }
+
   async validateInput(): Promise<void> {
     await clickMarked(this.page.getByRole("button", { name: /Validate Input/i }).first());
-    await expect(
-      this.page.getByText(/Input validation passed|Validation|Input validation failed/i).first(),
-    ).toBeVisible({ timeout: 90_000 });
+    await expect(this.page.getByText(/Input validation passed/i).first()).toBeVisible({ timeout: 90_000 });
+    await expect(this.page.getByText(/Input validation failed/i).first()).not.toBeVisible({ timeout: 5_000 });
   }
 }
 

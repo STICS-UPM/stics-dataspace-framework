@@ -41,6 +41,28 @@ function normalizeTopology(value) {
   return ["local", "vm-single", "vm-distributed"].includes(topology) ? topology : "local";
 }
 
+function normalizeAdapterName(value) {
+  const adapter = String(value || "").trim().toLowerCase();
+  return ["inesdata", "edc"].includes(adapter) ? adapter : "";
+}
+
+function resolveAdapterName() {
+  return normalizeAdapterName(
+    process.env.AI_MODEL_HUB_COMPONENT_ADAPTER ||
+      process.env.PIONERA_ADAPTER ||
+      process.env.UI_ADAPTER ||
+      process.env.PIONERA_VALIDATION_ADAPTER,
+  ) || "inesdata";
+}
+
+function adapterSearchOrder() {
+  const configuredAdapters = String(process.env.AI_MODEL_HUB_CREDENTIAL_ADAPTERS || "")
+    .split(",")
+    .map(normalizeAdapterName)
+    .filter(Boolean);
+  return Array.from(new Set([resolveAdapterName(), ...configuredAdapters, "edc", "inesdata"]));
+}
+
 function deploymentId(config) {
   return cleanSegment(
     process.env.PIONERA_DEPLOYMENT_ID ||
@@ -62,12 +84,6 @@ function positiveInt(value, fallback) {
 }
 
 function findConnectorCredentialsFile(dataspace, connectorId) {
-  const adapter = (
-    process.env.UI_ADAPTER ||
-    process.env.AI_MODEL_HUB_COMPONENT_ADAPTER ||
-    process.env.PIONERA_ADAPTER ||
-    "inesdata"
-  ).trim().toLowerCase() || "inesdata";
   const explicitEnvPrefix = connectorId.toUpperCase().replace(/-/g, "_");
   const explicitPath = (
     process.env[`AI_MODEL_HUB_${explicitEnvPrefix}_CREDENTIALS_FILE`] ||
@@ -78,63 +94,70 @@ function findConnectorCredentialsFile(dataspace, connectorId) {
     return explicitPath;
   }
 
-  const deployerConfig = parseKeyValueFile(path.join(projectRoot(), "deployers", adapter, "deployer.config"));
-  const topology = normalizeTopology(
-    process.env.UI_TOPOLOGY ||
-      process.env.PIONERA_TOPOLOGY ||
-      process.env.INESDATA_TOPOLOGY ||
-      deployerConfig.TOPOLOGY ||
-      deployerConfig.PIONERA_TOPOLOGY,
-  );
-  const deploymentsRoot = path.join(projectRoot(), "deployers", adapter, "deployments");
-  if (!fs.existsSync(deploymentsRoot)) {
-    throw new Error(`Deployments directory not found: ${deploymentsRoot}`);
-  }
-
   const candidates = [];
   const explicitRuntimeDir = (process.env.UI_RUNTIME_DIR || "").trim();
   if (explicitRuntimeDir) {
     candidates.push(path.join(explicitRuntimeDir, "connectors", connectorId, "credentials.json"));
     candidates.push(path.join(explicitRuntimeDir, `credentials-connector-${connectorId}.json`));
   }
-
-  const configuredEnvironment = (
-    process.env.UI_ENVIRONMENT ||
-    deployerConfig.ENVIRONMENT ||
-    "DEV"
-  ).trim();
-  const environments = Array.from(
-    new Set([
-      configuredEnvironment,
-      ...fs.readdirSync(deploymentsRoot).filter((entry) =>
-        fs.statSync(path.join(deploymentsRoot, entry)).isDirectory(),
-      ),
-    ]),
-  ).filter(Boolean);
-
-  for (const environmentDir of environments) {
-    const legacyPath = path.join(deploymentsRoot, environmentDir, dataspace, `credentials-connector-${connectorId}.json`);
-    const scopedParts = [
-      deploymentsRoot,
-      environmentDir,
-      topology,
-    ];
-    const currentDeploymentId = deploymentId(deployerConfig);
-    if (currentDeploymentId) {
-      scopedParts.push(currentDeploymentId);
-    }
-    scopedParts.push(dataspace, "connectors", connectorId, "credentials.json");
-    const scopedPath = path.join(...scopedParts);
-    if (topology === "local") {
-      candidates.push(legacyPath, scopedPath);
-    } else {
-      candidates.push(scopedPath, legacyPath);
-    }
-  }
-
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
       return candidate;
+    }
+  }
+
+  for (const adapter of adapterSearchOrder()) {
+    const deployerConfig = parseKeyValueFile(path.join(projectRoot(), "deployers", adapter, "deployer.config"));
+    const topology = normalizeTopology(
+      process.env.UI_TOPOLOGY ||
+        process.env.PIONERA_TOPOLOGY ||
+        process.env.INESDATA_TOPOLOGY ||
+        deployerConfig.TOPOLOGY ||
+        deployerConfig.PIONERA_TOPOLOGY,
+    );
+    const deploymentsRoot = path.join(projectRoot(), "deployers", adapter, "deployments");
+    if (!fs.existsSync(deploymentsRoot)) {
+      continue;
+    }
+
+    const configuredEnvironment = (
+      process.env.UI_ENVIRONMENT ||
+      deployerConfig.ENVIRONMENT ||
+      "DEV"
+    ).trim();
+    const environments = Array.from(
+      new Set([
+        configuredEnvironment,
+        ...fs.readdirSync(deploymentsRoot).filter((entry) =>
+          fs.statSync(path.join(deploymentsRoot, entry)).isDirectory(),
+        ),
+      ]),
+    ).filter(Boolean);
+
+    for (const environmentDir of environments) {
+      const legacyPath = path.join(deploymentsRoot, environmentDir, dataspace, `credentials-connector-${connectorId}.json`);
+      const scopedParts = [
+        deploymentsRoot,
+        environmentDir,
+        topology,
+      ];
+      const currentDeploymentId = deploymentId(deployerConfig);
+      if (currentDeploymentId) {
+        scopedParts.push(currentDeploymentId);
+      }
+      scopedParts.push(dataspace, "connectors", connectorId, "credentials.json");
+      const scopedPath = path.join(...scopedParts);
+      if (topology === "local") {
+        candidates.push(legacyPath, scopedPath);
+      } else {
+        candidates.push(scopedPath, legacyPath);
+      }
+    }
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
     }
   }
 

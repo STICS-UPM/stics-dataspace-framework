@@ -73,7 +73,7 @@ test("11 edc AI Model Browser: model cards and search filters are rendered", asy
         suffix,
         modelUrl,
         modelPath,
-        modelName: `EDC AI Model Browser sentiment model ${suffix}`,
+        modelName: `EDC AI Model Browser sentiment model ${modelAssetId}`,
       }),
     );
     await bootstrapProviderNegotiationArtifacts(
@@ -85,7 +85,7 @@ test("11 edc AI Model Browser: model cards and search filters are rendered", asy
         suffix: `${suffix}-alt`,
         modelUrl,
         modelPath,
-        modelName: `EDC AI Model Browser forecast model ${suffix}`,
+        modelName: `EDC AI Model Browser forecast model ${comparisonAssetId}`,
         task: "time-series-regression",
         subtask: "demand-forecasting",
         algorithm: "controlled-forecast",

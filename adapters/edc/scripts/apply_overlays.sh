@@ -235,30 +235,39 @@ apply_dashboard_overlay() {
 
 patch_dashboard_app_routes() {
   local routes_file="$1"
-  local route_marker="validation-environment-edc-ontologies-route"
+  local ontologies_route_marker="validation-environment-edc-ontologies-route"
+  local observer_route_marker="validation-environment-edc-model-observer-route"
 
   if [[ ! -f "$routes_file" ]]; then
     echo "Dashboard routes file not found: $routes_file" >&2
     return 1
   fi
 
-  if grep -qF "$route_marker" "$routes_file"; then
-    echo "Ontologies route already present in $(basename "$routes_file")"
-    return 0
-  fi
-
   if [[ "$APPLY" -eq 1 ]]; then
-    python3 - "$routes_file" "$route_marker" <<'PY'
+    python3 - "$routes_file" "$ontologies_route_marker" "$observer_route_marker" <<'PY'
 import pathlib
 import sys
 
 routes_path = pathlib.Path(sys.argv[1])
-marker = sys.argv[2]
+ontologies_marker = sys.argv[2]
+observer_marker = sys.argv[3]
 content = routes_path.read_text(encoding="utf-8")
-if marker in content or "path: 'ontologies'" in content:
-    sys.exit(0)
 
-route_block = """  {
+if observer_marker not in content and "path: 'ai-model-observer'" not in content:
+    observer_block = """  {
+    path: 'ai-model-observer',
+    loadComponent: () => import('./features/model-observer/model-observer.component').then(m => m.ModelObserverComponent),
+  },
+  // validation-environment-edc-model-observer-route
+"""
+    observer_anchor = "  {\n    path: 'assets',"
+    if observer_anchor not in content:
+        print("Could not find assets route anchor in app.routes.ts", file=sys.stderr)
+        sys.exit(1)
+    content = content.replace(observer_anchor, observer_block + observer_anchor, 1)
+
+if ontologies_marker not in content and "path: 'ontologies'" not in content:
+    ontologies_block = """  {
     path: 'ontologies',
     loadComponent: () =>
       import('./features/ontologies/ontology-viewer/ontology-viewer.component').then(m => m.OntologyViewerComponent),
@@ -266,15 +275,16 @@ route_block = """  {
   // validation-environment-edc-ontologies-route
 """
 
-needle = "  {\n    path: 'transfer-history',"
-if needle not in content:
-    print("Could not find transfer-history route anchor in app.routes.ts", file=sys.stderr)
-    sys.exit(1)
+    ontologies_anchor = "  {\n    path: 'transfer-history',"
+    if ontologies_anchor not in content:
+        print("Could not find transfer-history route anchor in app.routes.ts", file=sys.stderr)
+        sys.exit(1)
+    content = content.replace(ontologies_anchor, ontologies_block + ontologies_anchor, 1)
 
-routes_path.write_text(content.replace(needle, route_block + needle, 1), encoding="utf-8")
+routes_path.write_text(content, encoding="utf-8")
 PY
   else
-    echo "Would insert ontologies route into $(basename "$routes_file")"
+    echo "Would insert validation routes into $(basename "$routes_file")"
   fi
 }
 
@@ -296,9 +306,11 @@ app_config_path = pathlib.Path(sys.argv[1])
 default_ontology_url = sys.argv[2]
 config = json.loads(app_config_path.read_text(encoding="utf-8"))
 runtime = config.setdefault("runtime", {})
-runtime.setdefault("ontologyUrl", default_ontology_url)
+runtime.setdefault("ontologyUrl", "/edc-dashboard-api/components/ontology-hub")
+runtime.setdefault("ontologyPublicUrl", default_ontology_url)
 runtime.setdefault("ontologyAdminUser", "")
 runtime.setdefault("ontologyAdminPassword", "")
+runtime.setdefault("modelObserverUrl", "")
 runtime.setdefault("transferProcessBasePath", "transferprocesses")
 app_config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 PY
@@ -309,36 +321,43 @@ PY
 
 patch_dashboard_app_config_menu() {
   local app_config_file="$1"
-  local menu_item_file="$OVERLAY_DIR/dashboard/patches/ontologies-menu-item.json"
+  local ontologies_menu_item_file="$OVERLAY_DIR/dashboard/patches/ontologies-menu-item.json"
+  local observer_menu_item_file="$OVERLAY_DIR/dashboard/patches/model-observer-menu-item.json"
 
-  if [[ ! -f "$app_config_file" || ! -f "$menu_item_file" ]]; then
-    echo "Dashboard app-config or ontologies menu patch not found" >&2
+  if [[ ! -f "$app_config_file" || ! -f "$ontologies_menu_item_file" || ! -f "$observer_menu_item_file" ]]; then
+    echo "Dashboard app-config or validation menu patch not found" >&2
     return 1
   fi
 
   if [[ "$APPLY" -eq 1 ]]; then
-    python3 - "$app_config_file" "$menu_item_file" <<'PY'
+    python3 - "$app_config_file" "$ontologies_menu_item_file" "$observer_menu_item_file" <<'PY'
 import json
 import pathlib
 import sys
 
 app_config_path = pathlib.Path(sys.argv[1])
-menu_item_path = pathlib.Path(sys.argv[2])
+ontologies_menu_item_path = pathlib.Path(sys.argv[2])
+observer_menu_item_path = pathlib.Path(sys.argv[3])
 config = json.loads(app_config_path.read_text(encoding="utf-8"))
 menu_items = config.setdefault("menuItems", [])
-if any(item.get("routerPath") == "ontologies" for item in menu_items):
-    sys.exit(0)
-new_item = json.loads(menu_item_path.read_text(encoding="utf-8"))
-insert_at = len(menu_items)
-for idx, item in enumerate(menu_items):
-    if item.get("routerPath") == "contract-definitions":
-        insert_at = idx + 1
-        break
-menu_items.insert(insert_at, new_item)
+
+def insert_if_missing(router_path, item_path, anchor_router_path):
+    if any(item.get("routerPath") == router_path for item in menu_items):
+        return
+    new_item = json.loads(item_path.read_text(encoding="utf-8"))
+    insert_at = len(menu_items)
+    for idx, item in enumerate(menu_items):
+        if item.get("routerPath") == anchor_router_path:
+            insert_at = idx + 1
+            break
+    menu_items.insert(insert_at, new_item)
+
+insert_if_missing("ai-model-observer", observer_menu_item_path, "model-benchmarking")
+insert_if_missing("ontologies", ontologies_menu_item_path, "contract-definitions")
 app_config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 PY
   else
-    echo "Would insert Ontologies menu item into $(basename "$app_config_file")"
+    echo "Would insert validation menu items into $(basename "$app_config_file")"
   fi
 }
 

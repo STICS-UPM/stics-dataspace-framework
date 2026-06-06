@@ -3468,6 +3468,8 @@ def _colorize_console_icon(icon, status, *, stream=None):
         "passed": "\033[32m",
         "failed": "\033[31m",
         "skipped": "\033[33m",
+        "partial": "\033[33m",
+        "not-recorded": "\033[33m",
         "unknown": "\033[36m",
     }
     normalized = str(status or "unknown").lower()
@@ -3481,6 +3483,8 @@ def _console_status_label(status, *, stream=None):
         "passed": "✓",
         "failed": "✗",
         "skipped": "-",
+        "partial": "-",
+        "not-recorded": "-",
     }
     normalized = str(status or "unknown").lower()
     icon = status_labels.get(normalized, "?")
@@ -3802,6 +3806,8 @@ def _level6_normalized_status(status):
         return "failed"
     if raw in {"skipped", "skip", "pending", "disabled"}:
         return "skipped"
+    if raw in {"partial", "partially-passed", "passed-with-warnings", "warning"}:
+        return "partial"
     return raw or "unknown"
 
 
@@ -3881,10 +3887,31 @@ def _iter_level6_component_failed_tests(component_results):
             }
 
 
-def _iter_level6_playwright_failed_tests(playwright_result):
+def _level6_playwright_suite_name(playwright_result=None, validation_profile=None):
+    if validation_profile is not None:
+        return _playwright_interoperability_suite_name(validation_profile)
+    if isinstance(playwright_result, dict):
+        suite = str(
+            playwright_result.get("suite")
+            or playwright_result.get("test")
+            or playwright_result.get("adapter")
+            or ""
+        ).strip()
+        lowered = suite.lower()
+        if lowered == "edc":
+            return "EDC UI"
+        if lowered == "inesdata":
+            return "INESData integration"
+        if suite:
+            return suite
+    return "Playwright validation"
+
+
+def _iter_level6_playwright_failed_tests(playwright_result, validation_profile=None):
     if not isinstance(playwright_result, dict):
         return
     summary = playwright_result.get("summary") if isinstance(playwright_result.get("summary"), dict) else {}
+    suite_name = _level6_playwright_suite_name(playwright_result, validation_profile)
     for spec in summary.get("spec_results") or []:
         if not isinstance(spec, dict):
             continue
@@ -3892,7 +3919,7 @@ def _iter_level6_playwright_failed_tests(playwright_result):
             continue
         title = str(spec.get("title") or spec.get("file") or "Playwright test").strip()
         yield {
-            "suite": "INESData UI",
+            "suite": suite_name,
             "test": title,
             "reason": _level6_failure_reason(spec.get("error"), spec.get("reason")),
         }
@@ -3937,7 +3964,7 @@ def _playwright_interoperability_suite_name(validation_profile):
     if adapter_key == "inesdata":
         return "INESData integration"
     if adapter_key == "edc":
-        return "EDC Playwright"
+        return "EDC UI"
     if adapter_name:
         return f"{adapter_name} Playwright"
     return "Playwright validation"
@@ -3950,6 +3977,7 @@ def _collect_level6_validation_failures(
     playwright_failure=None,
     component_results=None,
     kafka_edc_results=None,
+    validation_profile=None,
 ):
     failures = []
     if validation_error is not None:
@@ -3960,19 +3988,195 @@ def _collect_level6_validation_failures(
                 "reason": str(validation_error),
             }
         )
-    failures.extend(list(_iter_level6_playwright_failed_tests(playwright_result)))
+    failures.extend(list(_iter_level6_playwright_failed_tests(playwright_result, validation_profile)))
     failures.extend(list(_iter_level6_component_failed_tests(component_results)))
     failures.extend(list(_iter_level6_kafka_failed_tests(kafka_edc_results)))
     failures = _dedupe_level6_failures(failures)
-    if playwright_failure and not any(item["suite"] == "INESData UI" for item in failures):
+    playwright_suite = _level6_playwright_suite_name(playwright_result, validation_profile)
+    if playwright_failure and not any(item["suite"] == playwright_suite for item in failures):
         failures.append(
             {
-                "suite": "Playwright validation",
+                "suite": playwright_suite,
                 "test": "Playwright execution",
                 "reason": f"Playwright validation failed with status '{playwright_failure}'",
             }
         )
     return failures
+
+
+def _level6_empty_counts():
+    return {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "other": 0}
+
+
+def _level6_increment_counts(counts, status):
+    counts["total"] += 1
+    normalized = _level6_normalized_status(status)
+    if normalized in {"passed", "failed", "skipped"}:
+        counts[normalized] += 1
+    elif normalized == "partial":
+        counts["skipped"] += 1
+    else:
+        counts["other"] += 1
+
+
+def _level6_counts_from_playwright(playwright_result):
+    counts = _level6_empty_counts()
+    if not isinstance(playwright_result, dict):
+        return counts
+    summary = playwright_result.get("summary") if isinstance(playwright_result.get("summary"), dict) else {}
+    specs = [spec for spec in summary.get("spec_results") or [] if isinstance(spec, dict)]
+    if specs:
+        for spec in specs:
+            _level6_increment_counts(counts, spec.get("status"))
+        return counts
+    status_counts = summary.get("status_counts") if isinstance(summary.get("status_counts"), dict) else {}
+    if status_counts:
+        counts["passed"] += int(status_counts.get("passed") or status_counts.get("expected") or 0)
+        counts["failed"] += int(
+            (status_counts.get("failed") or 0)
+            + (status_counts.get("unexpected") or 0)
+            + (status_counts.get("timedout") or 0)
+            + (status_counts.get("interrupted") or 0)
+        )
+        counts["skipped"] += int(status_counts.get("skipped") or 0)
+        total = int(summary.get("total_specs") or sum(int(value or 0) for value in status_counts.values()))
+        counts["other"] += max(total - counts["passed"] - counts["failed"] - counts["skipped"], 0)
+        counts["total"] += total
+        return counts
+    if playwright_result.get("status"):
+        _level6_increment_counts(counts, playwright_result.get("status"))
+    return counts
+
+
+def _level6_counts_from_components(component_results):
+    counts = _level6_empty_counts()
+    for component_result in component_results or []:
+        if not isinstance(component_result, dict):
+            continue
+        phases = component_result.get("phases")
+        if isinstance(phases, dict) and phases:
+            phase_order = list(component_result.get("phase_order") or phases.keys())
+            counted_phase = False
+            for phase in phase_order:
+                phase_result = phases.get(phase)
+                if not isinstance(phase_result, dict):
+                    continue
+                summary = phase_result.get("summary") if isinstance(phase_result.get("summary"), dict) else {}
+                if summary:
+                    counted_phase = True
+                    counts["total"] += int(summary.get("total") or 0)
+                    counts["passed"] += int(summary.get("passed") or 0)
+                    counts["failed"] += int(summary.get("failed") or 0)
+                    counts["skipped"] += int(summary.get("skipped") or 0)
+                else:
+                    counted_phase = True
+                    _level6_increment_counts(counts, phase_result.get("status"))
+            if counted_phase:
+                known = counts["passed"] + counts["failed"] + counts["skipped"]
+                counts["other"] = max(counts["total"] - known, counts["other"])
+                continue
+        summary = component_result.get("summary") if isinstance(component_result.get("summary"), dict) else {}
+        if summary:
+            counts["total"] += int(summary.get("total") or 0)
+            counts["passed"] += int(summary.get("passed") or 0)
+            counts["failed"] += int(summary.get("failed") or 0)
+            counts["skipped"] += int(summary.get("skipped") or 0)
+            known = counts["passed"] + counts["failed"] + counts["skipped"]
+            counts["other"] = max(counts["total"] - known, counts["other"])
+        else:
+            _level6_increment_counts(counts, component_result.get("status"))
+    return counts
+
+
+def _level6_counts_from_kafka(kafka_edc_results):
+    counts = _level6_empty_counts()
+    for result in kafka_edc_results or []:
+        if isinstance(result, dict):
+            _level6_increment_counts(counts, result.get("status"))
+    return counts
+
+
+def _level6_counts_from_newman(validation_error):
+    counts = _level6_empty_counts()
+    if validation_error is None:
+        _level6_increment_counts(counts, "passed")
+    else:
+        _level6_increment_counts(counts, "failed")
+    return counts
+
+
+def _level6_counts_status(counts):
+    if not isinstance(counts, dict) or not int(counts.get("total") or 0):
+        return "not-recorded"
+    if int(counts.get("failed") or 0) or int(counts.get("other") or 0):
+        return "failed"
+    if int(counts.get("skipped") or 0):
+        return "partial"
+    return "passed"
+
+
+def _level6_global_summary(
+    *,
+    validation_error=None,
+    playwright_result=None,
+    component_results=None,
+    kafka_edc_results=None,
+    validation_profile=None,
+):
+    layers = [
+        {
+            "name": "Newman connector interoperability",
+            "status": "failed" if validation_error is not None else "passed",
+            "counts": _level6_counts_from_newman(validation_error),
+        }
+    ]
+    if isinstance(playwright_result, dict):
+        playwright_counts = _level6_counts_from_playwright(playwright_result)
+        layers.append(
+            {
+                "name": _level6_playwright_suite_name(playwright_result, validation_profile),
+                "status": _level6_counts_status(playwright_counts),
+                "counts": playwright_counts,
+            }
+        )
+    if component_results:
+        component_counts = _level6_counts_from_components(component_results)
+        layers.append(
+            {
+                "name": "Component validation test cases",
+                "status": _level6_counts_status(component_counts),
+                "counts": component_counts,
+            }
+        )
+    if kafka_edc_results:
+        kafka_counts = _level6_counts_from_kafka(kafka_edc_results)
+        layers.append(
+            {
+                "name": "Kafka transfer validation",
+                "status": _level6_counts_status(kafka_counts),
+                "counts": kafka_counts,
+            }
+        )
+
+    total = _level6_empty_counts()
+    for layer in layers:
+        counts = layer.get("counts") or {}
+        for key in total:
+            total[key] += int(counts.get(key) or 0)
+    return {
+        "status": _level6_counts_status(total),
+        "counts": total,
+        "layers": layers,
+    }
+
+
+def _format_level6_counts(counts):
+    counts = counts if isinstance(counts, dict) else {}
+    return (
+        f"{int(counts.get('passed') or 0)}/{int(counts.get('total') or 0)} passed, "
+        f"{int(counts.get('failed') or 0)} failed, "
+        f"{int(counts.get('skipped') or 0)} skipped"
+    )
 
 
 def _print_level6_validation_summary(
@@ -3984,6 +4188,7 @@ def _print_level6_validation_summary(
     playwright_failure=None,
     component_results=None,
     kafka_edc_results=None,
+    validation_profile=None,
 ):
     failures = _collect_level6_validation_failures(
         validation_error=validation_error,
@@ -3991,11 +4196,29 @@ def _print_level6_validation_summary(
         playwright_failure=playwright_failure,
         component_results=component_results,
         kafka_edc_results=kafka_edc_results,
+        validation_profile=validation_profile,
+    )
+    global_summary = _level6_global_summary(
+        validation_error=validation_error,
+        playwright_result=playwright_result,
+        component_results=component_results,
+        kafka_edc_results=kafka_edc_results,
+        validation_profile=validation_profile,
     )
 
-    status = "failed" if failures else "passed"
+    status = "failed" if failures else _level6_counts_status(global_summary.get("counts"))
+    if status == "not-recorded":
+        status = "skipped"
     print(f"\n{_console_color('Level 6 validation summary', '36;1')}\n")
     print(f"  Status: {_console_status_label(status)} {status}")
+    print(f"  Global checks: {_format_level6_counts(global_summary.get('counts'))}")
+    print("  Validation layers:")
+    for layer in global_summary.get("layers") or []:
+        layer_status = str(layer.get("status") or "unknown")
+        print(
+            f"    {_console_status_label(layer_status)} {layer.get('name')}: "
+            f"{_format_level6_counts(layer.get('counts'))}"
+        )
     if experiment_dir:
         print(f"  Experiment: {os.path.basename(str(experiment_dir))}")
     if isinstance(framework_report, dict) and framework_report.get("path"):
@@ -4009,6 +4232,7 @@ def _print_level6_validation_summary(
     return {
         "status": status,
         "failures": failures,
+        "global_summary": global_summary,
     }
 
 
@@ -8651,6 +8875,7 @@ def run_validate(
                 playwright_failure=playwright_failure,
                 component_results=component_results,
                 kafka_edc_results=kafka_edc_results,
+                validation_profile=validation_profile,
             )
             _offer_open_level6_dashboard(framework_report)
             raise validation_error
@@ -8765,6 +8990,7 @@ def run_validate(
                             playwright_failure=playwright_failure,
                             component_results=component_results,
                             kafka_edc_results=kafka_edc_results,
+                            validation_profile=validation_profile,
                         )
                         _offer_open_level6_dashboard(framework_report)
                         raise RuntimeError(
@@ -8874,6 +9100,7 @@ def run_validate(
                             playwright_failure=playwright_failure,
                             component_results=component_results,
                             kafka_edc_results=kafka_edc_results,
+                            validation_profile=validation_profile,
                         )
                         _offer_open_level6_dashboard(framework_report)
                         raise RuntimeError("Component validation failed")
@@ -8896,6 +9123,7 @@ def run_validate(
                         playwright_failure=playwright_failure,
                         component_results=component_results,
                         kafka_edc_results=kafka_edc_results,
+                        validation_profile=validation_profile,
                     )
                     _offer_open_level6_dashboard(framework_report)
                     raise RuntimeError(
@@ -8920,6 +9148,7 @@ def run_validate(
             playwright_failure=playwright_failure,
             component_results=component_results,
             kafka_edc_results=kafka_edc_results,
+            validation_profile=validation_profile,
         )
         _offer_open_level6_dashboard(framework_report)
 
@@ -18209,6 +18438,7 @@ def _print_interactive_menu(adapter_name, adapter_registry=None, topology="local
     print()
     print("[Validation]")
     print("I - INESData UI Tests (Normal/Live/Debug)")
+    print("N - EDC UI Tests (Normal/Live/Debug)")
     print("O - Ontology Hub UI Tests (Normal/Live/Debug)")
     print("A - AI Model Hub UI Tests (Normal/Live/Debug)")
     print("V - Semantic Virtualization UI Tests (Normal/Live/Debug)")
@@ -18274,6 +18504,7 @@ def _print_interactive_help():
     print()
     print("[Validation]")
     print("I - Use to validate the INESData portal experience and component integrations through INESData.")
+    print("N - Use to validate the EDC dashboard experience and component integrations through EDC.")
     print("O - Use when Ontology Hub UI changed or after deploying ontology-related components.")
     print("    This runs Ontology Hub component suites, not the INESData integration validation.")
     print("A - Use when AI Model Hub UI changed or after deploying AI Model Hub components.")
@@ -18746,6 +18977,8 @@ def _print_action_result(result):
             return "Succeeded"
         if normalized in {"skipped", "not-applicable"}:
             return "Skipped"
+        if normalized in {"partial", "partially-passed", "passed-with-warnings"}:
+            return "Partial"
         if normalized in {"failed", "unavailable", "error"} or normalized.endswith("-failed"):
             return "Failed"
         return str(status or "Unknown").strip().title() or "Unknown"
@@ -19611,6 +19844,7 @@ def _run_legacy_menu_action(action_name, current_adapter="inesdata", topology="l
         "recover": local_menu_tools.run_connector_recovery_after_wsl_restart,
         "cleanup": local_menu_tools.run_workspace_cleanup_interactive,
         "inesdata_ui": ui_interactive_menu.run_inesdata_ui_tests_interactive,
+        "edc_ui": ui_interactive_menu.run_edc_ui_tests_interactive,
         "ontology_hub_ui": ui_interactive_menu.run_ontology_hub_ui_tests_interactive,
         "ai_model_hub_ui": ui_interactive_menu.run_ai_model_hub_ui_tests_interactive,
         "semantic_virtualization_ui": ui_interactive_menu.run_semantic_virtualization_ui_tests_interactive,
@@ -19630,6 +19864,8 @@ def _run_legacy_menu_action(action_name, current_adapter="inesdata", topology="l
 
     migrated_action = migrated_actions.get(action_name)
     if callable(migrated_action):
+        if action_name == "edc_ui":
+            current_adapter = "edc"
         normalized_topology = normalize_topology(topology or LOCAL_TOPOLOGY)
         runtime_env = {
             "PIONERA_TOPOLOGY": normalized_topology,
@@ -19639,6 +19875,7 @@ def _run_legacy_menu_action(action_name, current_adapter="inesdata", topology="l
         if current_adapter:
             runtime_env["PIONERA_ADAPTER"] = current_adapter
             runtime_env["UI_ADAPTER"] = current_adapter
+            runtime_env["AI_MODEL_HUB_COMPONENT_ADAPTER"] = current_adapter
         with _temporary_environment(runtime_env):
             return migrated_action()
 
@@ -19899,19 +20136,52 @@ def run_interactive_menu(
                     _run_legacy_menu_action("inesdata_ui", current_adapter=current_adapter, topology=topology)
                     continue
 
+                if choice == "N":
+                    current_adapter = "edc"
+                    _run_legacy_menu_action("edc_ui", current_adapter=current_adapter, topology=topology)
+                    continue
+
                 if choice == "O":
+                    selected_adapter = _interactive_require_adapter_selection(
+                        current_adapter,
+                        adapter_registry=registry,
+                    )
+                    if not selected_adapter:
+                        continue
+                    current_adapter = selected_adapter
                     _run_legacy_menu_action("ontology_hub_ui", current_adapter=current_adapter, topology=topology)
                     continue
 
                 if choice == "A":
+                    selected_adapter = _interactive_require_adapter_selection(
+                        current_adapter,
+                        adapter_registry=registry,
+                    )
+                    if not selected_adapter:
+                        continue
+                    current_adapter = selected_adapter
                     _run_legacy_menu_action("ai_model_hub_ui", current_adapter=current_adapter, topology=topology)
                     continue
 
                 if choice == "V":
+                    selected_adapter = _interactive_require_adapter_selection(
+                        current_adapter,
+                        adapter_registry=registry,
+                    )
+                    if not selected_adapter:
+                        continue
+                    current_adapter = selected_adapter
                     _run_legacy_menu_action("semantic_virtualization_ui", current_adapter=current_adapter, topology=topology)
                     continue
 
                 if choice in {"Y", "Z"}:
+                    selected_adapter = _interactive_require_adapter_selection(
+                        current_adapter,
+                        adapter_registry=registry,
+                    )
+                    if not selected_adapter:
+                        continue
+                    current_adapter = selected_adapter
                     _run_legacy_menu_action(
                         "validation_test_by_id",
                         current_adapter=current_adapter,

@@ -28,6 +28,37 @@ LEVEL6_UI_SMOKE_SPECS = orchestration_ui.LEVEL6_UI_SMOKE_SPECS
 LEVEL6_UI_DATASPACE_SPECS = orchestration_ui.LEVEL6_UI_DATASPACE_SPECS
 LEVEL6_UI_OPS_SPEC = orchestration_ui.LEVEL6_UI_OPS_SPEC
 LEVEL6_UI_OPS_CONFIG = orchestration_ui.LEVEL6_UI_OPS_CONFIG
+EDC_UI_CORE_SPECS = (
+    os.path.join("adapters", "edc", "specs", "01-login-readiness.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "02-navigation-smoke.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "03-provider-setup.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "03b-provider-policy-create.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "03c-provider-contract-definition-create.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "04-consumer-catalog.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "03-consumer-negotiation.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "04-consumer-transfer.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "05-consumer-transfer-storage.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "05-e2e-transfer-flow.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "06b-minio-bucket-visibility.spec.ts"),
+)
+EDC_UI_ONTOLOGY_HUB_SPECS = (
+    os.path.join("adapters", "edc", "specs", "08-ontology-hub-edc-readonly.spec.ts"),
+)
+EDC_UI_AI_MODEL_HUB_SPECS = (
+    os.path.join("adapters", "edc", "specs", "09-ai-model-hub-httpdata.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "11-ai-model-browser.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "12-ai-model-execution.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "13-ai-model-benchmarking.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "14-ai-model-daimo-vocabulary.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "15-ai-model-external-execution.spec.ts"),
+)
+EDC_UI_SEMANTIC_VIRTUALIZATION_SPECS = (
+    os.path.join("adapters", "edc", "specs", "07-semantic-virtualization-httpdata.spec.ts"),
+)
+EDC_UI_AI_MODEL_OBSERVER_SPECS = (
+    os.path.join("adapters", "edc", "specs", "10-ai-model-observer.spec.ts"),
+    os.path.join("adapters", "edc", "specs", "16-ai-model-observer-participant-summary.spec.ts"),
+)
 
 SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TEST_IDS = frozenset(
     {
@@ -613,8 +644,10 @@ def _ontology_hub_functional_runtime_env(adapter=None, adapter_name=None, topolo
     return {key: value for key, value in env.items() if str(value or "").strip()}
 
 
-def _ai_model_hub_functional_runtime_env(adapter=None):
-    adapter = adapter or _default_inesdata_adapter()
+def _ai_model_hub_functional_runtime_env(adapter=None, adapter_name=None):
+    normalized_adapter = str(adapter_name or os.environ.get("PIONERA_ADAPTER") or "inesdata").strip().lower()
+    adapter = adapter or _build_validation_adapter(adapter_name=normalized_adapter)
+    normalized_adapter = _adapter_name_from_instance(adapter, fallback=normalized_adapter)
     config_loader = getattr(adapter, "load_deployer_config", None)
     adapter_config = config_loader() if callable(config_loader) else {}
     if not isinstance(adapter_config, dict):
@@ -679,9 +712,9 @@ def _ai_model_hub_functional_runtime_env(adapter=None):
         return ""
 
     env = {
-        "PIONERA_ADAPTER": "inesdata",
-        "UI_ADAPTER": "inesdata",
-        "AI_MODEL_HUB_COMPONENT_ADAPTER": "inesdata",
+        "PIONERA_ADAPTER": normalized_adapter,
+        "UI_ADAPTER": normalized_adapter,
+        "AI_MODEL_HUB_COMPONENT_ADAPTER": normalized_adapter,
         "PIONERA_TOPOLOGY": topology,
         "INESDATA_TOPOLOGY": topology,
         "UI_TOPOLOGY": topology,
@@ -997,13 +1030,14 @@ def _run_ai_model_hub_ui_functional(mode, test_grep=None, adapter_name=None, top
 
     env = {
         **os.environ,
-        **_ai_model_hub_functional_runtime_env(adapter),
+        **_ai_model_hub_functional_runtime_env(adapter, adapter_name=normalized_adapter),
         "AI_MODEL_HUB_ENABLE_UI_VALIDATION": "1",
         "AI_MODEL_HUB_BASE_URL": base_url,
         "PLAYWRIGHT_OUTPUT_DIR": output_dir,
         "PLAYWRIGHT_HTML_REPORT_DIR": html_report_dir,
         "PLAYWRIGHT_BLOB_REPORT_DIR": blob_report_dir,
         "PLAYWRIGHT_JSON_REPORT_FILE": json_report_file,
+        "PIONERA_PLAYWRIGHT_SUITE_NAME": "AI Model Hub functional",
         "PLAYWRIGHT_INTERACTION_MARKERS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKERS", "1"),
         "PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "350"),
     }
@@ -1435,6 +1469,123 @@ def run_inesdata_ui_tests_interactive():
         return None
 
 
+def _print_edc_ui_result(label, result):
+    if not isinstance(result, dict):
+        return None
+
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    counts = summary.get("status_counts") if isinstance(summary.get("status_counts"), dict) else {}
+    total = int(summary.get("total_specs") or 0)
+    passed = int(counts.get("passed") or counts.get("expected") or 0)
+    failed = int(counts.get("failed") or counts.get("unexpected") or 0)
+    skipped = int(counts.get("skipped") or 0)
+
+    if total:
+        print(f"\nEDC UI result for {label}: {passed}/{total} passed, {failed} failed, {skipped} skipped")
+    else:
+        print(f"\nEDC UI result for {label}: no tests were recorded")
+
+    artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
+    html_report_dir = artifacts.get("html_report_dir")
+    report_index = os.path.join(str(html_report_dir or ""), "index.html") if html_report_dir else ""
+    if report_index and os.path.isfile(report_index):
+        print(f"Playwright HTML report: {report_index}")
+        print(f"Open with: npx playwright show-report {html_report_dir}\n")
+    elif report_index:
+        print(f"Playwright HTML report was not generated at {report_index}\n")
+    return result
+
+
+def _run_edc_ui_specs(mode, label, specs=None, test_grep=None, topology=None):
+    from deployers.edc.deployer import EdcDeployer
+    from validation.ui.ui_runner import run_playwright_validation
+
+    normalized_topology = _normalize_topology(
+        topology
+        or os.environ.get("UI_TOPOLOGY")
+        or os.environ.get("PIONERA_TOPOLOGY")
+        or "local"
+    )
+    adapter = _build_validation_adapter(adapter_name="edc", topology=normalized_topology)
+    deployer = EdcDeployer(adapter=adapter, topology=normalized_topology)
+    context = deployer.resolve_context(topology=normalized_topology)
+    profile = deployer.get_validation_profile(context)
+    experiment_dir = ExperimentStorage.create_experiment_directory()
+    ExperimentStorage.save_experiment_metadata(
+        experiment_dir,
+        context.connectors,
+        adapter=adapter.__class__.__name__,
+        adapter_name="edc",
+        topology=normalized_topology,
+        environment=context.environment,
+    )
+
+    extra_args = list(mode.get("args") or [])
+    _append_playwright_grep(extra_args, test_grep)
+    result = run_playwright_validation(
+        profile=profile,
+        context=context,
+        experiment_dir=experiment_dir,
+        specs=list(specs or []),
+        extra_args=extra_args,
+        extra_env=mode.get("env") or {},
+    )
+    return _print_edc_ui_result(label, result)
+
+
+def run_edc_ui_tests_interactive():
+    """Run EDC UI tests for core flows and component integrations."""
+    suites = {
+        "1": ("Core", EDC_UI_CORE_SPECS),
+        "2": ("Ontology Hub Integration with EDC", EDC_UI_ONTOLOGY_HUB_SPECS),
+        "3": ("AI Model Hub Integration with EDC", EDC_UI_AI_MODEL_HUB_SPECS),
+        "4": ("Semantic Virtualization Integration with EDC", EDC_UI_SEMANTIC_VIRTUALIZATION_SPECS),
+        "5": ("AI Model Observer / Clearing House", EDC_UI_AI_MODEL_OBSERVER_SPECS),
+        "6": (
+            "Full EDC UI suite",
+            (
+                *EDC_UI_CORE_SPECS,
+                *EDC_UI_SEMANTIC_VIRTUALIZATION_SPECS,
+                *EDC_UI_ONTOLOGY_HUB_SPECS,
+                *EDC_UI_AI_MODEL_HUB_SPECS,
+                *EDC_UI_AI_MODEL_OBSERVER_SPECS,
+            ),
+        ),
+    }
+
+    while True:
+        print("\n" + "=" * 50)
+        print("EDC UI TESTS")
+        print("=" * 50)
+        print("1 - Core")
+        print("2 - Ontology Hub Integration with EDC")
+        print("3 - AI Model Hub Integration with EDC")
+        print("4 - Semantic Virtualization Integration with EDC")
+        print("5 - AI Model Observer / Clearing House")
+        print("6 - Full EDC UI suite")
+        print("B - Back")
+
+        try:
+            choice = input("\nSelection: ").strip().upper()
+        except EOFError:
+            print("\nNo input. Returning to main menu.\n")
+            return None
+
+        if choice == "B":
+            return None
+        if choice not in suites:
+            print("\nInvalid selection. Please try again.\n")
+            continue
+
+        mode = _resolve_ui_mode()
+        if mode is None:
+            return None
+
+        label, specs = suites[choice]
+        _run_edc_ui_specs(mode, label, specs)
+        return None
+
+
 def _safe_test_id_path(test_id):
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(test_id or "").strip()).strip("-") or "test-by-id"
 
@@ -1465,6 +1616,21 @@ def _build_validation_adapter(adapter_name=None, topology=None):
 
         return EdcAdapter(topology=normalized_topology)
     return InesdataAdapter(topology=normalized_topology)
+
+
+def _adapter_name_from_instance(adapter, fallback="inesdata"):
+    config = getattr(adapter, "config", None)
+    adapter_name_getter = getattr(config, "adapter_name", None)
+    if callable(adapter_name_getter):
+        resolved = str(adapter_name_getter() or "").strip().lower()
+        if resolved:
+            return resolved
+    class_name = adapter.__class__.__name__.lower() if adapter is not None else ""
+    if "edc" in class_name:
+        return "edc"
+    if "inesdata" in class_name:
+        return "inesdata"
+    return str(fallback or "inesdata").strip().lower() or "inesdata"
 
 
 def _primary_dataspace_name(adapter):

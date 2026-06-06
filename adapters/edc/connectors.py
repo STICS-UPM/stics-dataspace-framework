@@ -15,6 +15,10 @@ from deployers.shared.lib.topology import (
     VM_SINGLE_TOPOLOGY,
     build_topology_profile,
 )
+from deployers.shared.lib.components import (
+    configured_component_host,
+    configured_component_public_url,
+)
 from adapters.inesdata.connectors import INESDataConnectorsAdapter
 from runtime_dependencies import ensure_python_requirements
 
@@ -27,7 +31,8 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
     MANAGED_LABEL_KEY = "validation-environment-adapter"
     DASHBOARD_PROXY_PREFIX = "/edc-dashboard-api"
     LEVEL4_LOCAL_IMAGE_TOPOLOGIES = {LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY}
-    # Parity with inesdata-connector-interface src/assets/config/app.config.json
+    # Backward-compatible fallback. Normal deployments resolve this from the
+    # active dataspace and topology configuration.
     DEFAULT_ONTOLOGY_HUB_URL = "http://ontology-hub-demo.dev.ds.dataspaceunit.upm"
 
     def __init__(self, run, run_silent, auto_mode_getter, infrastructure_adapter, config_adapter=None, config_cls=None, topology="local"):
@@ -229,7 +234,7 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
             ).strip(),
         }
 
-    def _run_level4_edc_image_script(self, script_path, args=None):
+    def _run_level4_edc_image_script(self, script_path, args=None, env_prefix=""):
         root_dir = self._framework_root_dir()
         command = " ".join(
             shlex.quote(part)
@@ -240,7 +245,65 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                 *(args or []),
             ]
         )
+        env_prefix = str(env_prefix or "").strip()
+        if env_prefix:
+            command = f"{env_prefix} {command}"
         return self.run(command, cwd=root_dir, check=False) is not None
+
+    def _edc_image_prepared_targets(self, attribute_name):
+        prepared = getattr(self, attribute_name, None)
+        if not isinstance(prepared, set):
+            prepared = set()
+            setattr(self, attribute_name, prepared)
+        return prepared
+
+    @staticmethod
+    def _edc_image_target_key(env_prefix):
+        return str(env_prefix or "").strip() or "local"
+
+    def _edc_remote_image_env_prefix_for_namespace(self, namespace, dataspace=None):
+        resolver = getattr(self, "_remote_image_import_env_prefix_for_namespace", None)
+        if not callable(resolver):
+            return ""
+        return str(resolver(namespace, dataspace=dataspace) or "").strip()
+
+    def _edc_level4_image_env_prefixes(self):
+        topology = self._normalized_topology()
+        if topology == VM_SINGLE_TOPOLOGY:
+            prefix = self._edc_remote_image_env_prefix_for_namespace("common")
+            return [prefix] if prefix else [""]
+        if topology != "vm-distributed":
+            return [""]
+
+        prefixes = []
+        missing_namespaces = []
+        try:
+            dataspaces = self.load_dataspace_connectors() or []
+        except Exception:
+            dataspaces = []
+
+        for dataspace in dataspaces:
+            for namespace in self._dataspace_connector_target_namespaces(
+                dataspace,
+                dataspaces=dataspaces,
+            ):
+                prefix = self._edc_remote_image_env_prefix_for_namespace(
+                    namespace,
+                    dataspace=dataspace,
+                )
+                if not prefix:
+                    missing_namespaces.append(namespace)
+                    continue
+                if prefix not in prefixes:
+                    prefixes.append(prefix)
+
+        if missing_namespaces:
+            raise RuntimeError(
+                "EDC Level 4 cannot prepare local images for vm-distributed because "
+                "remote k3s image import is not configured for namespaces: "
+                + ", ".join(sorted(set(missing_namespaces)))
+            )
+        return prefixes or [""]
 
     def _export_ontology_validator_patch_env_for_edc_build(self):
         try:
@@ -270,8 +333,16 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         if ontology_url:
             os.environ["PIONERA_ONTOLOGY_PATCH_ONTOLOGY_HUB_URL"] = ontology_url
 
-    def _maybe_prepare_level4_local_edc_connector_image(self, mode):
-        if self._is_truthy(os.environ.get("PIONERA_EDC_LOCAL_CONNECTOR_IMAGE_PREPARED")):
+    def _maybe_prepare_level4_local_edc_connector_image(self, mode, env_prefix=""):
+        target_key = self._edc_image_target_key(env_prefix)
+        prepared_targets = self._edc_image_prepared_targets("_edc_connector_image_prepared_targets")
+        if target_key in prepared_targets:
+            print("Level 4 local EDC connector image already prepared for this target.")
+            return True
+        if (
+            not env_prefix
+            and self._is_truthy(os.environ.get("PIONERA_EDC_LOCAL_CONNECTOR_IMAGE_PREPARED"))
+        ):
             print("Level 4 local EDC connector image already prepared for this execution.")
             return True
 
@@ -330,6 +401,7 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                 "--cluster-runtime",
                 cluster_type,
             ],
+            env_prefix=env_prefix,
         ):
             print("Error preparing local EDC connector image for Level 4.")
             return False
@@ -337,13 +409,23 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         os.environ["PIONERA_EDC_CONNECTOR_IMAGE_NAME"] = image["name"]
         os.environ["PIONERA_EDC_CONNECTOR_IMAGE_TAG"] = image["tag"]
         os.environ.setdefault("PIONERA_EDC_CONNECTOR_IMAGE_PULL_POLICY", "IfNotPresent")
-        os.environ["PIONERA_EDC_LOCAL_CONNECTOR_IMAGE_PREPARED"] = "true"
+        prepared_targets.add(target_key)
+        if not env_prefix:
+            os.environ["PIONERA_EDC_LOCAL_CONNECTOR_IMAGE_PREPARED"] = "true"
         return True
 
-    def _maybe_prepare_level4_local_edc_dashboard_images(self, mode):
+    def _maybe_prepare_level4_local_edc_dashboard_images(self, mode, env_prefix=""):
         if not self.config_adapter.edc_dashboard_enabled():
             return True
-        if self._is_truthy(os.environ.get("PIONERA_EDC_LOCAL_DASHBOARD_IMAGES_PREPARED")):
+        target_key = self._edc_image_target_key(env_prefix)
+        prepared_targets = self._edc_image_prepared_targets("_edc_dashboard_images_prepared_targets")
+        if target_key in prepared_targets:
+            print("Level 4 local EDC dashboard images already prepared for this target.")
+            return True
+        if (
+            not env_prefix
+            and self._is_truthy(os.environ.get("PIONERA_EDC_LOCAL_DASHBOARD_IMAGES_PREPARED"))
+        ):
             print("Level 4 local EDC dashboard images already prepared for this execution.")
             return True
 
@@ -391,13 +473,16 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                     "--cluster-runtime",
                     cluster_type,
                 ],
+                env_prefix=env_prefix,
             ):
                 print("Error preparing local EDC dashboard images for Level 4.")
                 return False
 
         os.environ.setdefault("PIONERA_EDC_DASHBOARD_IMAGE_PULL_POLICY", "IfNotPresent")
         os.environ.setdefault("PIONERA_EDC_DASHBOARD_PROXY_IMAGE_PULL_POLICY", "IfNotPresent")
-        os.environ["PIONERA_EDC_LOCAL_DASHBOARD_IMAGES_PREPARED"] = "true"
+        prepared_targets.add(target_key)
+        if not env_prefix:
+            os.environ["PIONERA_EDC_LOCAL_DASHBOARD_IMAGES_PREPARED"] = "true"
         return True
 
     def _maybe_prepare_level4_local_edc_images(self):
@@ -441,10 +526,18 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         if callable(ensure_docker_config) and not ensure_docker_config():
             print("Could not adjust WSL Docker configuration before preparing local EDC images.")
             return False
-        if not self._maybe_prepare_level4_local_edc_connector_image(connector_mode):
+        try:
+            env_prefixes = self._edc_level4_image_env_prefixes()
+        except RuntimeError as exc:
+            print(str(exc))
             return False
-        if not self._maybe_prepare_level4_local_edc_dashboard_images(mode):
-            return False
+        for env_prefix in env_prefixes:
+            if env_prefix:
+                print("Preparing EDC local images through remote k3s image import.")
+            if not self._maybe_prepare_level4_local_edc_connector_image(connector_mode, env_prefix=env_prefix):
+                return False
+            if not self._maybe_prepare_level4_local_edc_dashboard_images(mode, env_prefix=env_prefix):
+                return False
         return True
 
     def _should_sync_vault_token_to_deployer_config(self):
@@ -1038,7 +1131,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         return f"{self.DASHBOARD_PROXY_PREFIX}/connectors/{connector_name}/{service_name}"
 
     @staticmethod
-    def _dashboard_service_target(connector_name, service_name):
+    def _dashboard_service_target(connector_name, service_name, connector_namespace=None):
         port_map = {
             "management": 19193,
             "api": 19191,
@@ -1053,7 +1146,42 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         }
         port = port_map[service_name]
         path = path_map[service_name]
-        return f"http://{connector_name}:{port}{path}"
+        namespace = str(connector_namespace or "").strip()
+        host = f"{connector_name}.{namespace}.svc.cluster.local" if namespace else connector_name
+        return f"http://{host}:{port}{path}"
+
+    def _dashboard_connector_namespace_map(self, ds_name, connector_hostnames):
+        try:
+            dataspaces = self.load_dataspace_connectors() or []
+        except Exception:
+            return {}
+
+        current = None
+        for dataspace in dataspaces:
+            if str(dataspace.get("name") or "").strip() == str(ds_name or "").strip():
+                current = dataspace
+                break
+            connectors = set(dataspace.get("connectors") or [])
+            if any(connector in connectors for connector in connector_hostnames or []):
+                current = dataspace
+                break
+
+        if not current:
+            return {}
+
+        result = {}
+        for connector_name in connector_hostnames or []:
+            namespace = str(
+                self._connector_target_namespace(
+                    connector_name,
+                    dataspace=current,
+                    dataspaces=dataspaces,
+                )
+                or ""
+            ).strip()
+            if namespace:
+                result[connector_name] = namespace
+        return result
 
     @staticmethod
     def _dashboard_menu_items():
@@ -1078,6 +1206,11 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 "text": "Model Benchmarking",
                 "materialSymbol": "query_stats",
                 "routerPath": "model-benchmarking",
+            },
+            {
+                "text": "AI Model Observer",
+                "materialSymbol": "monitor_heart",
+                "routerPath": "ai-model-observer",
             },
             {
                 "text": "Catalog",
@@ -1126,23 +1259,76 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             "healthCheckIntervalSeconds": 30,
             "enableUserConfig": False,
             "menuItems": self._dashboard_menu_items(),
-            "runtime": self._dashboard_runtime_config_block(),
+            "runtime": self._dashboard_runtime_config_block(connector_name=connector_name),
         }
 
-    def _dashboard_runtime_config_block(self):
+    def _dashboard_runtime_config_block(self, connector_name=None):
         config = self.config_adapter.load_deployer_config()
-        ontology_url = self._resolve_ontology_hub_url(config)
+        dataspace_name = ""
+        getter = getattr(self.config_adapter, "primary_dataspace_name", None)
+        if callable(getter):
+            dataspace_name = str(getter() or "").strip()
+        if not dataspace_name:
+            dataspace_name = str(config.get("DS_1_NAME") or getattr(self.config, "DS_NAME", "") or "").strip()
+
+        ontology_public_url = self._resolve_ontology_hub_url(config, dataspace_name=dataspace_name)
+        ontology_url = (
+            self._dashboard_component_proxy_path("ontology-hub")
+            if self._dashboard_component_proxy_enabled(config)
+            else ontology_public_url
+        )
+        model_observer_url = ""
+        if connector_name:
+            model_observer_url = f"{self._dashboard_proxy_connector_path(connector_name, 'api')}/check"
         return {
             "ontologyUrl": ontology_url,
+            "ontologyPublicUrl": ontology_public_url,
             "ontologyAdminUser": str(config.get("ONTOLOGY_HUB_ADMIN_EMAIL") or "").strip(),
             "ontologyAdminPassword": str(config.get("ONTOLOGY_HUB_ADMIN_PASSWORD") or "").strip(),
+            "modelObserverUrl": model_observer_url,
             "transferProcessBasePath": "transferprocesses",
         }
 
-    @staticmethod
-    def _resolve_ontology_hub_url(config):
+    @classmethod
+    def _dashboard_component_proxy_path(cls, component_name):
+        normalized = str(component_name or "").strip().strip("/")
+        return f"{cls.DASHBOARD_PROXY_PREFIX}/components/{normalized}"
+
+    def _dashboard_component_proxy_enabled(self, config):
+        raw_value = str(config.get("EDC_DASHBOARD_COMPONENT_PROXY_ENABLED", "true") or "true").strip().lower()
+        return raw_value not in {"0", "false", "no", "off"}
+
+    def _dashboard_component_proxy_config_entries(self, config, ds_name):
+        if not self._dashboard_component_proxy_enabled(config):
+            return []
+        ontology_target = self._resolve_ontology_hub_internal_url(config, ds_name)
+        entries = []
+        if ontology_target:
+            entries.append({"name": "ontology-hub", "target": ontology_target})
+        return entries
+
+    def _resolve_ontology_hub_internal_url(self, config, ds_name):
         explicit = str(
-            config.get("ONTOLOGY_HUB_URL") or config.get("ONTOLOGY_HUB_BASE_URL") or ""
+            config.get("ONTOLOGY_HUB_INTERNAL_URL")
+            or config.get("ONTOLOGY_HUB_INTERNAL_BASE_URL")
+            or ""
+        ).strip()
+        if explicit:
+            return explicit.rstrip("/")
+
+        namespace = str(config.get("COMPONENTS_NAMESPACE") or "components").strip() or "components"
+        dataspace_name = str(ds_name or config.get("DS_1_NAME") or "").strip()
+        if dataspace_name:
+            return f"http://{dataspace_name}-ontology-hub.{namespace}:3333"
+        return ""
+
+    def _resolve_ontology_hub_url(self, config, dataspace_name=""):
+        explicit = str(
+            config.get("ONTOLOGY_HUB_PUBLIC_URL")
+            or config.get("ONTOLOGY_HUB_PUBLIC_BASE_URL")
+            or config.get("ONTOLOGY_HUB_URL")
+            or config.get("ONTOLOGY_HUB_BASE_URL")
+            or ""
         ).strip()
         if explicit:
             return explicit.rstrip("/")
@@ -1152,11 +1338,31 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             or config.get("ONTOLOGY_HUB_HOSTNAME")
             or ""
         ).strip()
-        if not raw_host:
-            return EDCConnectorsAdapter.DEFAULT_ONTOLOGY_HUB_URL
         if raw_host.startswith("http://") or raw_host.startswith("https://"):
             return raw_host.rstrip("/")
-        return f"http://{raw_host}".rstrip("/")
+        if raw_host:
+            return f"http://{raw_host}".rstrip("/")
+
+        if not dataspace_name:
+            dataspace_name = str(config.get("DS_1_NAME") or getattr(self.config, "DS_NAME", "") or "").strip()
+
+        configured_url = configured_component_public_url(
+            "ontology-hub",
+            config,
+            dataspace_name=dataspace_name,
+        )
+        if configured_url:
+            return configured_url.rstrip("/")
+
+        configured_host = configured_component_host(
+            "ontology-hub",
+            config,
+            dataspace_name=dataspace_name,
+        )
+        if configured_host:
+            return f"http://{configured_host}".rstrip("/")
+
+        return EDCConnectorsAdapter.DEFAULT_ONTOLOGY_HUB_URL
 
     def _dashboard_connector_config_payload(self, connector_name, connector_hostnames):
         ordered_connectors = [connector_name] + [
@@ -1177,18 +1383,37 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         return connector_entries
 
     def _dashboard_proxy_config_payload(self, ds_name, connector_hostnames):
+        config = self.config_adapter.load_deployer_config()
         auth_mode = self.config_adapter.edc_dashboard_proxy_auth_mode()
+        connector_namespaces = self._dashboard_connector_namespace_map(ds_name, connector_hostnames)
         connector_entries = []
         for connector_name in connector_hostnames or []:
             credentials = self.load_connector_credentials(connector_name)
             connector_user = credentials.get("connector_user", {}) if credentials else {}
+            connector_namespace = connector_namespaces.get(connector_name)
             connector_entries.append(
                 {
                     "connectorName": connector_name,
-                    "managementTarget": self._dashboard_service_target(connector_name, "management"),
-                    "defaultTarget": self._dashboard_service_target(connector_name, "api"),
-                    "controlTarget": self._dashboard_service_target(connector_name, "control"),
-                    "protocolTarget": self._dashboard_service_target(connector_name, "protocol"),
+                    "managementTarget": self._dashboard_service_target(
+                        connector_name,
+                        "management",
+                        connector_namespace=connector_namespace,
+                    ),
+                    "defaultTarget": self._dashboard_service_target(
+                        connector_name,
+                        "api",
+                        connector_namespace=connector_namespace,
+                    ),
+                    "controlTarget": self._dashboard_service_target(
+                        connector_name,
+                        "control",
+                        connector_namespace=connector_namespace,
+                    ),
+                    "protocolTarget": self._dashboard_service_target(
+                        connector_name,
+                        "protocol",
+                        connector_namespace=connector_namespace,
+                    ),
                     "username": connector_user.get("user", ""),
                 }
             )
@@ -1209,6 +1434,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             if connector_hostnames
             else False,
             "connectors": connector_entries,
+            "components": self._dashboard_component_proxy_config_entries(config=config, ds_name=ds_name),
         }
 
     def _dashboard_proxy_auth_payload(self, connector_hostnames):

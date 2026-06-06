@@ -108,6 +108,11 @@ test("13 edc AI Model Benchmarking: compatible models and dataset validation", a
     await benchmarkingPage.waitForExecutableAssets(modelAssetIds, 120_000);
     await benchmarkingPage.selectAssets(modelAssetIds);
     await benchmarkingPage.uploadDataset(datasetPath);
+    await benchmarkingPage.configureMapping({
+      inputPath: "input",
+      expectedPath: "expected_label",
+      predictionPath: "sentiment",
+    });
     await captureStep(page, "02-edc-ai-model-benchmarking-inputs");
 
     await benchmarkingPage.validateInput();

@@ -57,6 +57,17 @@ class FakeVmDistributedInteractiveAdapter(FakeInteractiveAdapter):
         }
 
 
+class FakeEdcInteractiveAdapter(FakeInteractiveAdapter):
+    def load_deployer_config(self):
+        return {
+            "TOPOLOGY": "local",
+            "DS_1_NAME": "pionera-edc",
+            "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+            "DS_1_CONNECTORS": "citycounciledc,companyedc",
+            "KC_INTERNAL_URL": "http://auth.dev.ed.dataspaceunit.upm",
+        }
+
+
 class UiInteractiveMenuTests(unittest.TestCase):
     def test_resolve_ui_mode_rejects_live_without_display_on_linux(self):
         output = io.StringIO()
@@ -457,6 +468,18 @@ class UiInteractiveMenuTests(unittest.TestCase):
             "https://org4.pionera.oeg.fi.upm.es/c/org2/protocol",
         )
 
+    def test_ai_model_hub_functional_runtime_env_uses_active_edc_adapter(self):
+        env = interactive_menu._ai_model_hub_functional_runtime_env(
+            FakeEdcInteractiveAdapter(),
+            adapter_name="edc",
+        )
+
+        self.assertEqual(env["PIONERA_ADAPTER"], "edc")
+        self.assertEqual(env["UI_ADAPTER"], "edc")
+        self.assertEqual(env["AI_MODEL_HUB_COMPONENT_ADAPTER"], "edc")
+        self.assertEqual(env["UI_DATASPACE"], "pionera-edc")
+        self.assertEqual(env["AI_MODEL_HUB_PROVIDER_CONNECTOR_ID"], "conn-citycounciledc-pionera-edc")
+
     def test_ai_model_hub_base_url_uses_vm_single_public_route(self):
         base_url = interactive_menu._resolve_ai_model_hub_base_url(FakeVmSingleInteractiveAdapter())
 
@@ -772,6 +795,33 @@ class UiInteractiveMenuTests(unittest.TestCase):
         self.assertEqual(payload["mode"], "Live")
         self.assertEqual(len(payload["ui_results"]), 4)
         self.assertEqual(payload["ui_results"][3]["test"], "ui-ops-minio-console")
+
+    def test_edc_ui_menu_runs_ai_model_hub_subset(self):
+        mode = {"label": "normal", "args": [], "env": {}}
+
+        with mock.patch("builtins.input", side_effect=["3"]), mock.patch.object(
+            interactive_menu,
+            "_resolve_ui_mode",
+            return_value=mode,
+        ), mock.patch.object(
+            interactive_menu,
+            "_run_edc_ui_specs",
+            return_value={"status": "passed"},
+        ) as runner:
+            result = interactive_menu.run_edc_ui_tests_interactive()
+
+        self.assertIsNone(result)
+        runner.assert_called_once()
+        self.assertEqual(runner.call_args.args[0], mode)
+        self.assertEqual(runner.call_args.args[1], "AI Model Hub Integration with EDC")
+        self.assertIn(
+            os.path.join("adapters", "edc", "specs", "09-ai-model-hub-httpdata.spec.ts"),
+            runner.call_args.args[2],
+        )
+        self.assertIn(
+            os.path.join("adapters", "edc", "specs", "15-ai-model-external-execution.spec.ts"),
+            runner.call_args.args[2],
+        )
 
 
 if __name__ == "__main__":

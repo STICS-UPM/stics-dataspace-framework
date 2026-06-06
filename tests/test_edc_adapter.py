@@ -331,8 +331,8 @@ class EdcConnectorTopologyTests(unittest.TestCase):
         ):
             self.assertTrue(adapter._maybe_prepare_level4_local_edc_images())
 
-        connector_mock.assert_called_once_with("required")
-        dashboard_mock.assert_called_once_with("auto")
+        connector_mock.assert_called_once_with("required", env_prefix="")
+        dashboard_mock.assert_called_once_with("auto", env_prefix="")
 
     def test_edc_level4_local_images_can_be_disabled_explicitly_in_vm_single(self):
         adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
@@ -385,7 +385,7 @@ class EdcConnectorTopologyTests(unittest.TestCase):
                     "edc_connector_source_dir": staticmethod(lambda: source_dir),
                 },
             )()
-            adapter._run_level4_edc_image_script = lambda script, args=None: (
+            adapter._run_level4_edc_image_script = lambda script, args=None, **_kwargs: (
                 calls.append((script, args)) or True
             )
 
@@ -400,6 +400,124 @@ class EdcConnectorTopologyTests(unittest.TestCase):
         self.assertEqual(calls[0][0], script_path)
         self.assertIn("--source-dir", calls[0][1])
         self.assertIn(source_dir, calls[0][1])
+
+    def test_edc_level4_vm_single_passes_remote_import_env_to_image_scripts(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter.topology = "vm-single"
+        adapter.config_adapter = type(
+            "ConfigAdapter",
+            (),
+            {
+                "topology": "vm-single",
+                "load_deployer_config": staticmethod(
+                    lambda: {
+                        "CLUSTER_TYPE": "k3s",
+                        "VM_EXTERNAL_IP": "192.168.122.52",
+                        "VM_SINGLE_SSH_HOST": "192.168.122.52",
+                        "VM_SINGLE_SSH_USER": "pionera",
+                        "VM_SINGLE_SSH_PORT": "22",
+                        "SSH_ACCESS_MODE": "bastion",
+                        "SSH_BASTION_HOST": "orion.example.test",
+                        "SSH_BASTION_USER": "pionera",
+                        "SSH_BASTION_PORT": "2222",
+                        "SSH_IDENTITY_FILE": "/home/operator/.ssh/vm-single",
+                        "VM_SINGLE_REMOTE_IMAGE_IMPORT": "auto",
+                        "VM_SINGLE_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
+                        "LEVEL4_EDC_LOCAL_IMAGES_MODE": "auto",
+                    }
+                ),
+            },
+        )()
+        adapter.infrastructure = mock.Mock()
+
+        with (
+            mock.patch.object(adapter, "_maybe_prepare_level4_local_edc_connector_image", return_value=True) as connector_mock,
+            mock.patch.object(adapter, "_maybe_prepare_level4_local_edc_dashboard_images", return_value=True) as dashboard_mock,
+        ):
+            self.assertTrue(adapter._maybe_prepare_level4_local_edc_images())
+
+        connector_call = connector_mock.call_args
+        dashboard_call = dashboard_mock.call_args
+        self.assertEqual(connector_call.args, ("required",))
+        self.assertEqual(dashboard_call.args, ("auto",))
+        self.assertIn("K3S_REMOTE_IMPORT_HOST=192.168.122.52", connector_call.kwargs["env_prefix"])
+        self.assertIn("K3S_REMOTE_IMPORT_USER=pionera", connector_call.kwargs["env_prefix"])
+        self.assertIn("K3S_REMOTE_IMPORT_BASTION_HOST=orion.example.test", connector_call.kwargs["env_prefix"])
+        self.assertIn("K3S_REMOTE_IMPORT_INTERACTIVE=auto", connector_call.kwargs["env_prefix"])
+        self.assertEqual(dashboard_call.kwargs["env_prefix"], connector_call.kwargs["env_prefix"])
+
+    def test_edc_level4_vm_distributed_passes_remote_import_env_for_each_connector_role(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter.topology = "vm-distributed"
+        adapter.config_adapter = type(
+            "ConfigAdapter",
+            (),
+            {
+                "topology": "vm-distributed",
+                "load_deployer_config": staticmethod(
+                    lambda: {
+                        "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                        "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
+                        "SSH_ACCESS_MODE": "bastion",
+                        "SSH_BASTION_HOST": "orion.example.test",
+                        "SSH_BASTION_USER": "jump",
+                        "SSH_BASTION_PORT": "2222",
+                        "VM_PROVIDER_SSH_HOST": "pionera20",
+                        "VM_PROVIDER_SSH_USER": "pionera",
+                        "VM_PROVIDER_SSH_PORT": "22",
+                        "VM_CONSUMER_SSH_HOST": "pionera3",
+                        "VM_CONSUMER_SSH_USER": "pionera",
+                        "VM_CONSUMER_SSH_PORT": "22",
+                        "LEVEL4_ROLE_ALIGNED_CONNECTOR_NAMESPACES": "true",
+                        "LEVEL4_EDC_LOCAL_IMAGES_MODE": "auto",
+                    }
+                ),
+            },
+        )()
+        adapter.infrastructure = mock.Mock()
+        adapter.load_dataspace_connectors = lambda: [
+            {
+                "name": "pionera-edc",
+                "namespace": "edc-control",
+                "connectors": ["conn-citycounciledc-pionera-edc", "conn-companyedc-pionera-edc"],
+                "namespace_profile": "role-aligned",
+                "namespace_roles": {
+                    "provider_namespace": "edc-provider",
+                    "consumer_namespace": "edc-consumer",
+                },
+                "planned_namespace_roles": {
+                    "provider_namespace": "edc-provider",
+                    "consumer_namespace": "edc-consumer",
+                },
+                "connector_details": [
+                    {
+                        "name": "conn-citycounciledc-pionera-edc",
+                        "planned_namespace": "edc-provider",
+                        "namespace_role": "provider",
+                    },
+                    {
+                        "name": "conn-companyedc-pionera-edc",
+                        "planned_namespace": "edc-consumer",
+                        "namespace_role": "consumer",
+                    },
+                ],
+            }
+        ]
+
+        with (
+            mock.patch.object(adapter, "_maybe_prepare_level4_local_edc_connector_image", return_value=True) as connector_mock,
+            mock.patch.object(adapter, "_maybe_prepare_level4_local_edc_dashboard_images", return_value=True) as dashboard_mock,
+        ):
+            self.assertTrue(adapter._maybe_prepare_level4_local_edc_images())
+
+        env_prefixes = [call.kwargs["env_prefix"] for call in connector_mock.call_args_list]
+        self.assertEqual(len(env_prefixes), 2)
+        self.assertTrue(any("K3S_REMOTE_IMPORT_HOST=pionera20" in prefix for prefix in env_prefixes))
+        self.assertTrue(any("K3S_REMOTE_IMPORT_HOST=pionera3" in prefix for prefix in env_prefixes))
+        self.assertEqual(
+            [call.kwargs["env_prefix"] for call in dashboard_mock.call_args_list],
+            env_prefixes,
+        )
 
     def test_edc_level4_local_images_fail_when_required_outside_supported_topology(self):
         adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
@@ -980,6 +1098,88 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         adapter.config_adapter = self.RoleAlignedEdcConnectorConfigAdapter(root)
         return adapter
 
+    def test_dashboard_runtime_config_infers_edc_ontology_hub_url_from_dataspace(self):
+        with tempfile.TemporaryDirectory() as root:
+            adapter = self._make_adapter(root)
+            adapter.config_adapter.load_deployer_config = lambda: {
+                "DS_1_NAME": "demoedc",
+                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+            }
+            adapter.config_adapter.primary_dataspace_name = lambda: "demoedc"
+
+            runtime = adapter._dashboard_runtime_config_block()
+
+        self.assertEqual(
+            runtime["ontologyUrl"],
+            "/edc-dashboard-api/components/ontology-hub",
+        )
+        self.assertEqual(
+            runtime["ontologyPublicUrl"],
+            "http://ontology-hub-demoedc.dev.ds.dataspaceunit.upm",
+        )
+
+    def test_dashboard_runtime_config_prefers_explicit_ontology_hub_public_url(self):
+        with tempfile.TemporaryDirectory() as root:
+            adapter = self._make_adapter(root)
+            adapter.config_adapter.load_deployer_config = lambda: {
+                "DS_1_NAME": "demoedc",
+                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+                "ONTOLOGY_HUB_PUBLIC_URL": "https://components.example.org/ontology-hub/",
+            }
+            adapter.config_adapter.primary_dataspace_name = lambda: "demoedc"
+
+            runtime = adapter._dashboard_runtime_config_block()
+
+        self.assertEqual(
+            runtime["ontologyUrl"],
+            "/edc-dashboard-api/components/ontology-hub",
+        )
+        self.assertEqual(
+            runtime["ontologyPublicUrl"],
+            "https://components.example.org/ontology-hub",
+        )
+
+    def test_dashboard_runtime_config_exposes_model_observer_proxy_path_per_connector(self):
+        with tempfile.TemporaryDirectory() as root:
+            adapter = self._make_adapter(root)
+            adapter.config_adapter.load_deployer_config = lambda: {
+                "DS_1_NAME": "demoedc",
+                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+            }
+            adapter.config_adapter.primary_dataspace_name = lambda: "demoedc"
+
+            runtime = adapter._dashboard_runtime_config_block(
+                connector_name="conn-citycounciledc-demoedc"
+            )
+
+        self.assertEqual(
+            runtime["modelObserverUrl"],
+            "/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/api/check",
+        )
+
+    def test_dashboard_component_proxy_config_targets_internal_ontology_hub_service(self):
+        with tempfile.TemporaryDirectory() as root:
+            adapter = self._make_adapter(root)
+            config = {
+                "DS_1_NAME": "demoedc",
+                "COMPONENTS_NAMESPACE": "semantic-components",
+            }
+
+            components = adapter._dashboard_component_proxy_config_entries(
+                config=config,
+                ds_name="demoedc",
+            )
+
+        self.assertEqual(
+            components,
+            [
+                {
+                    "name": "ontology-hub",
+                    "target": "http://demoedc-ontology-hub.semantic-components:3333",
+                }
+            ],
+        )
+
     def _make_runtime_prerequisites_adapter(
         self,
         root,
@@ -1338,6 +1538,23 @@ class EdcConnectorAdapterTests(unittest.TestCase):
             "http://conn-citycounciledc-demoedc:19193/management",
         )
         self.assertEqual(
+            payload["dashboard"]["runtime"]["appConfig"]["runtime"]["ontologyUrl"],
+            "/edc-dashboard-api/components/ontology-hub",
+        )
+        self.assertEqual(
+            payload["dashboard"]["runtime"]["appConfig"]["runtime"]["modelObserverUrl"],
+            "/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/api/check",
+        )
+        self.assertEqual(
+            payload["dashboard"]["proxy"]["config"]["components"],
+            [
+                {
+                    "name": "ontology-hub",
+                    "target": "http://demoedc-ontology-hub.components:3333",
+                }
+            ],
+        )
+        self.assertEqual(
             payload["dashboard"]["proxy"]["auth"]["connectors"][0]["password"],
             "connector-password",
         )
@@ -1566,6 +1783,69 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 "conn-citycounciledc-demoedc.dev.ds.dataspaceunit.upm",
                 "conn-companyedc-demoedc.dev.ds.dataspaceunit.upm",
             ],
+        )
+
+    def test_connector_values_payload_uses_fqdn_dashboard_proxy_targets_for_role_aligned_namespaces(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = self._make_role_aligned_adapter(tmpdir)
+            base_config = adapter.config_adapter.load_deployer_config()
+            adapter.config_adapter.load_deployer_config = lambda: {
+                **base_config,
+                "LEVEL4_ROLE_ALIGNED_CONNECTOR_NAMESPACES": "true",
+            }
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "demoedc",
+                    "namespace": "demoedc",
+                    "namespace_profile": "role-aligned",
+                    "connectors": [
+                        "conn-citycounciledc-demoedc",
+                        "conn-companyedc-demoedc",
+                    ],
+                    "connector_details": [
+                        {
+                            "name": "conn-citycounciledc-demoedc",
+                            "role": "provider",
+                            "runtime_namespace": "demoedc",
+                            "active_namespace": "demoedc",
+                            "planned_namespace": "demoedc-provider",
+                            "registration_service_namespace": "demoedc-core",
+                            "planned_registration_service_namespace": "demoedc-core",
+                        },
+                        {
+                            "name": "conn-companyedc-demoedc",
+                            "role": "consumer",
+                            "runtime_namespace": "demoedc",
+                            "active_namespace": "demoedc",
+                            "planned_namespace": "demoedc-consumer",
+                            "registration_service_namespace": "demoedc-core",
+                            "planned_registration_service_namespace": "demoedc-core",
+                        },
+                    ],
+                }
+            ]
+
+            payload = adapter._connector_values_payload(
+                "conn-citycounciledc-demoedc",
+                "demoedc",
+                [
+                    "conn-citycounciledc-demoedc",
+                    "conn-companyedc-demoedc",
+                ],
+                connector_namespace="demoedc-provider",
+            )
+
+        proxy_connectors = {
+            entry["connectorName"]: entry
+            for entry in payload["dashboard"]["proxy"]["config"]["connectors"]
+        }
+        self.assertEqual(
+            proxy_connectors["conn-citycounciledc-demoedc"]["protocolTarget"],
+            "http://conn-citycounciledc-demoedc.demoedc-provider.svc.cluster.local:19194/protocol",
+        )
+        self.assertEqual(
+            proxy_connectors["conn-companyedc-demoedc"]["defaultTarget"],
+            "http://conn-companyedc-demoedc.demoedc-consumer.svc.cluster.local:19191/api",
         )
 
     def test_render_values_file_writes_chart_values_into_edc_deployment_dir(self):

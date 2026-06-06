@@ -61,17 +61,20 @@ console.log(JSON.stringify({ trace: config.use.trace }));
     return json.loads(result.stdout)["trace"]
 
 
-def resolve_connector_credentials_with_node(env_overrides=None):
+def resolve_connector_credentials_with_node(env_overrides=None, dataspace="pionera", connector_id="conn-org2-pionera"):
     env = dict(os.environ)
     env.update(env_overrides or {})
     script = """
 const { findConnectorCredentialsFile, loadConnectorUserCredentials } = require('./validation/components/ai_model_hub/ui/auth');
-const connectorId = 'conn-org2-pionera';
+const dataspace = process.env.TEST_DATASPACE;
+const connectorId = process.env.TEST_CONNECTOR_ID;
 console.log(JSON.stringify({
-  path: findConnectorCredentialsFile('pionera', connectorId),
-  credentials: loadConnectorUserCredentials('pionera', connectorId)
+  path: findConnectorCredentialsFile(dataspace, connectorId),
+  credentials: loadConnectorUserCredentials(dataspace, connectorId)
 }));
 """
+    env["TEST_DATASPACE"] = dataspace
+    env["TEST_CONNECTOR_ID"] = connector_id
     result = subprocess.run(
         ["node", "-e", script],
         cwd=PROJECT_ROOT,
@@ -177,6 +180,20 @@ class AIModelHubUiRuntimeTests(unittest.TestCase):
         self.assertEqual(result["path"], str(credentials_file))
         self.assertEqual(result["credentials"]["user"], "scoped-user")
         self.assertEqual(result["credentials"]["passwd"], "scoped-password")
+
+    def test_auth_credentials_resolver_uses_edc_credentials_when_edc_runtime_is_active(self):
+        result = resolve_connector_credentials_with_node(
+            {
+                "PIONERA_ADAPTER": "edc",
+                "UI_ADAPTER": "inesdata",
+                "UI_TOPOLOGY": "local",
+            },
+            dataspace="pionera-edc",
+            connector_id="conn-citycounciledc-pionera-edc",
+        )
+
+        self.assertIn("deployers/edc/deployments/DEV/pionera-edc", result["path"])
+        self.assertEqual(result["credentials"]["user"], "user-conn-citycounciledc-pionera-edc")
 
 
 if __name__ == "__main__":

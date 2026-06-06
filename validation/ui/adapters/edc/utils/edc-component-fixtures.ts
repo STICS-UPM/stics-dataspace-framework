@@ -1,4 +1,4 @@
-import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
+import { modelServerBaseUrlFromUrl, modelServerUrlForPath } from "../../../shared/utils/model-server-url";
 
 export const DEFAULT_AI_MODEL_PATH = "/api/v1/nlp/ecommerce-sentiment";
 export const DEFAULT_AI_MODEL_PAYLOAD = {
@@ -130,6 +130,18 @@ export function aiModelMetadataAliases({
     "https://w3id.org/daimo/ns#library": library,
     "https://pionera.ai/edc/daimo#library": library,
     "https://pionera.ai/edc/daimo#library_name": library,
+    "daimo:license": "Apache-2.0",
+    "https://pionera.ai/edc/daimo#license": "Apache-2.0",
+    "daimo:datasets": ["validation-controlled"],
+    "https://pionera.ai/edc/daimo#datasets": ["validation-controlled"],
+    "daimo:language": ["en"],
+    "https://pionera.ai/edc/daimo#language": ["en"],
+    "daimo:base_model": "controlled-httpdata",
+    "https://pionera.ai/edc/daimo#base_model": "controlled-httpdata",
+    "daimo:model_version": "1.0.0",
+    "https://pionera.ai/edc/daimo#model_version": "1.0.0",
+    "daimo:input_schema_draft": "https://json-schema.org/draft/2020-12/schema",
+    "https://pionera.ai/edc/daimo#input_schema_draft": "https://json-schema.org/draft/2020-12/schema",
     "daimo:framework": framework,
     "https://w3id.org/daimo/ns#framework": framework,
     "https://pionera.ai/edc/daimo#framework": framework,
@@ -208,9 +220,10 @@ export function aiModelAssetOptions({
     },
     dataAddress: {
       type: "HttpData",
-      baseUrl: modelUrl,
+      baseUrl: modelServerBaseUrlFromUrl(modelUrl, modelPath),
       method: "POST",
       name: `edc-ai-model-${suffix}.json`,
+      proxyPath: "true",
     },
   };
 }

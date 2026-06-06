@@ -1,0 +1,68 @@
+<div class="space-y-4">
+  <section class="card bg-base-300 shadow-xl">
+    <div class="card-body gap-3">
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 class="card-title">AI Model Observer</h2>
+          <p class="text-sm opacity-80">
+            Connector observability evidence for AI model discovery, execution and benchmarking routes.
+          </p>
+        </div>
+        <button class="btn btn-sm btn-ghost" [disabled]="loading" (click)="loadObserverEvidence()">
+          @if (loading) {
+            <span class="loading loading-spinner loading-xs"></span>
+          }
+          Refresh
+        </button>
+      </div>
+
+      <div class="rounded-lg border border-base-content/10 bg-base-200/60 p-3 text-xs break-all">
+        <span class="font-semibold">Observer endpoint:</span>
+        <span class="ml-1">{{ observerBaseUrl || '-' }}</span>
+      </div>
+    </div>
+  </section>
+
+  @if (errorMessage) {
+    <div class="alert alert-error">
+      <span>{{ errorMessage }}</span>
+    </div>
+  }
+
+  <section class="grid gap-4 md:grid-cols-3">
+    <article class="card bg-base-300 shadow-xl">
+      <div class="card-body">
+        <h3 class="card-title text-base">Participant summary</h3>
+        <p class="text-sm opacity-80">{{ participantId }}</p>
+        <div class="text-3xl font-semibold">{{ healthyChecks }} / {{ totalChecks }}</div>
+        <p class="text-xs opacity-70">healthy evidence endpoints</p>
+      </div>
+    </article>
+
+    <article class="card bg-base-300 shadow-xl md:col-span-2">
+      <div class="card-body gap-3">
+        <h3 class="card-title text-base">Evidence checks</h3>
+        @if (loading) {
+          <div class="skeleton h-24 rounded-xl"></div>
+        } @else {
+          <div class="grid gap-2">
+            @for (check of checks; track check.label) {
+              <div class="rounded-lg border border-base-content/10 bg-base-200/60 p-3">
+                <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div class="font-semibold">{{ check.label }}</div>
+                    <div class="text-xs opacity-70 break-all">{{ check.url }}</div>
+                  </div>
+                  <span class="badge" [ngClass]="check.status === 'passed' ? 'badge-success' : 'badge-error'">
+                    {{ check.status }}
+                  </span>
+                </div>
+                <p class="mt-2 text-sm opacity-80">{{ check.message }}</p>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    </article>
+  </section>
+</div>

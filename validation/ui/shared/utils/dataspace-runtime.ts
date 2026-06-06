@@ -196,7 +196,7 @@ function ingressBaseUrl(host: string): string {
 }
 
 function withOptionalIngressPort(urlValue: string): string {
-  const port = (process.env.UI_INGRESS_PORT || "").trim();
+  const port = (process.env.UI_INGRESS_PORT || process.env.PLAYWRIGHT_INGRESS_PROXY_PORT || "").trim();
   if (!port) {
     return urlValue;
   }
@@ -301,7 +301,11 @@ function connectorCredentialsPath(
 }
 
 function publicAccessUrlsFromCredentials(credentials: any): Record<string, string> {
-  return stringMap(credentials?.public_access_urls);
+  const publicAccessUrls = stringMap(credentials?.public_access_urls);
+  if (Object.keys(publicAccessUrls).length > 0) {
+    return publicAccessUrls;
+  }
+  return stringMap(credentials?.access_urls);
 }
 
 function internalAccessUrlsFromCredentials(credentials: any): Record<string, string> {
@@ -353,11 +357,56 @@ function connectorProtocolAddressMode(deployerConfig: Record<string, string>, en
   }
 
   const topology = (process.env.UI_TOPOLOGY || "").trim().toLowerCase();
+  const adapter = normalizedAdapter();
+  if (adapter === "edc" && (topology === "local" || topology === "vm-single")) {
+    return "internal";
+  }
   if (topology === "vm-distributed") {
     return "public";
   }
 
   return "public";
+}
+
+function connectorNamespaceForRole(
+  adapter: string,
+  deployerConfig: Record<string, string>,
+  role: "provider" | "consumer" | undefined,
+  dataspace: string,
+): string | undefined {
+  if (adapter !== "edc" || !role) {
+    return undefined;
+  }
+
+  const configuredNamespace =
+    role === "provider"
+      ? deployerConfig.DS_1_PROVIDER_NAMESPACE
+      : deployerConfig.DS_1_CONSUMER_NAMESPACE;
+  const namespace = (configuredNamespace || dataspace || "").trim();
+  return namespace || undefined;
+}
+
+function connectorInternalProtocolBaseUrl(
+  adapter: string,
+  connectorName: string,
+  deployerConfig: Record<string, string>,
+  role: "provider" | "consumer" | undefined,
+  dataspace: string,
+): string | undefined {
+  const explicitRoleUrl = role
+    ? process.env[`UI_${role.toUpperCase()}_INTERNAL_PROTOCOL_URL`]?.trim()
+    : "";
+  if (explicitRoleUrl) {
+    return optionalUrl(explicitRoleUrl);
+  }
+
+  const namespace = connectorNamespaceForRole(adapter, deployerConfig, role, dataspace);
+  if (!namespace) {
+    return undefined;
+  }
+
+  const port = (process.env.UI_EDC_PROTOCOL_PORT || deployerConfig.EDC_PROTOCOL_PORT || "19194").trim() || "19194";
+  return `http://${connectorName}.${namespace}.svc.cluster.local:${port}/protocol`;
 }
 
 function keycloakBaseUrlFromPublicAccessUrl(
@@ -475,8 +524,8 @@ function resolveDataspaceDefaults(): DataspaceDefaults {
       infrastructureConfig.DS_DOMAIN_BASE ||
       "dev.ds.dataspaceunit.upm",
     keycloakUrl:
-      process.env.UI_KEYCLOAK_URL ||
       withOptionalIngressPort(
+        process.env.UI_KEYCLOAK_URL ||
         deployerConfig.KC_INTERNAL_URL ||
           infrastructureConfig.KC_INTERNAL_URL ||
           deployerConfig.KC_URL ||
@@ -493,6 +542,7 @@ function resolveConnectorRuntime(
   dataspace: string,
   environment: string,
   dsDomain: string,
+  role?: "provider" | "consumer",
 ): ConnectorPortalRuntime {
   const credentialsPath = connectorCredentialsPath(adapter, environment, dataspace, connectorName);
   const credentials = readJson(credentialsPath);
@@ -516,28 +566,51 @@ function resolveConnectorRuntime(
   const explicitPortalUrl = optionalPortalUrl(process.env[`UI_${envPrefix}_PORTAL_URL`]);
   const protocolMode = connectorProtocolAddressMode(deployerConfig, envPrefix);
   const protocolAccessUrls = protocolMode === "internal" ? internalAccessUrls : publicAccessUrls;
+  const internalProtocolBaseUrl = connectorInternalProtocolBaseUrl(
+    adapter,
+    connectorName,
+    deployerConfig,
+    role,
+    dataspace,
+  );
   const transferDestinationType =
     process.env[`UI_${envPrefix}_TRANSFER_DESTINATION_TYPE`] ||
     process.env.UI_TRANSFER_DESTINATION_TYPE ||
     (adapter === "edc" ? "AmazonS3" : "InesDataStore");
   const usesObjectStorageDestination =
     adapter === "edc" && transferDestinationType.toLowerCase() !== "httpdata";
+  const portalBaseUrl = withTrailingSlash(
+    withOptionalIngressPort(
+      withoutTrailingSlash(
+        explicitPortalUrl ||
+          connectorPublicPortalBaseUrl(adapter, publicAccessUrls) ||
+          withTrailingSlash(`${baseUrl}${defaultPortalPath(adapter)}`),
+      ),
+    ),
+  );
+  const managementBaseUrl = withOptionalIngressPort(
+    process.env[`UI_${envPrefix}_MANAGEMENT_URL`] ||
+      connectorPublicManagementBaseUrl(publicAccessUrls) ||
+      `${baseUrl}/management/v3`,
+  );
+  const protocolBaseUrl = withOptionalIngressPort(
+    process.env[`UI_${envPrefix}_PROTOCOL_URL`] ||
+      (protocolMode === "internal" ? internalProtocolBaseUrl : undefined) ||
+      connectorPublicProtocolBaseUrl(protocolAccessUrls) ||
+      `${baseUrl}/protocol`,
+  );
+  const transferEndpointOverride = withOptionalIngressPort(
+    process.env[`UI_${envPrefix}_TRANSFER_ENDPOINT`] ||
+      process.env.UI_TRANSFER_ENDPOINT ||
+      endpointOverride,
+  );
 
   return {
     adapter,
     connectorName,
-    portalBaseUrl:
-      explicitPortalUrl ||
-      connectorPublicPortalBaseUrl(adapter, publicAccessUrls) ||
-      withTrailingSlash(`${baseUrl}${defaultPortalPath(adapter)}`),
-    managementBaseUrl:
-      process.env[`UI_${envPrefix}_MANAGEMENT_URL`] ||
-      connectorPublicManagementBaseUrl(publicAccessUrls) ||
-      `${baseUrl}/management/v3`,
-    protocolBaseUrl:
-      process.env[`UI_${envPrefix}_PROTOCOL_URL`] ||
-      connectorPublicProtocolBaseUrl(protocolAccessUrls) ||
-      `${baseUrl}/protocol`,
+    portalBaseUrl,
+    managementBaseUrl,
+    protocolBaseUrl,
     transferStartPath: adapter === "edc" ? "transferprocesses" : "inesdatatransferprocesses",
     transferDestinationType,
     username,
@@ -550,9 +623,7 @@ function resolveConnectorRuntime(
           region:
             process.env[`UI_${envPrefix}_TRANSFER_REGION`] ||
             transferRegion,
-          endpointOverride:
-            process.env[`UI_${envPrefix}_TRANSFER_ENDPOINT`] ||
-            endpointOverride,
+          endpointOverride: transferEndpointOverride,
           accessKeyId:
             process.env[`UI_${envPrefix}_TRANSFER_ACCESS_KEY_ID`] ||
             process.env.UI_TRANSFER_ACCESS_KEY_ID ||
@@ -618,6 +689,7 @@ export function resolveDataspacePortalRuntime(): DataspacePortalRuntime {
       defaults.dataspace,
       defaults.environment,
       defaults.dsDomain,
+      "provider",
     ),
     consumer: resolveConnectorRuntime(
       defaults.adapter,
@@ -625,6 +697,7 @@ export function resolveDataspacePortalRuntime(): DataspacePortalRuntime {
       defaults.dataspace,
       defaults.environment,
       defaults.dsDomain,
+      "consumer",
     ),
   };
 }

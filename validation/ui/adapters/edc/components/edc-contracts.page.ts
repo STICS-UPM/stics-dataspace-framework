@@ -53,9 +53,12 @@ export class EdcContractsPage {
       timeout: 30_000,
     });
 
+    const usesObjectStorageDestination =
+      Boolean(consumerRuntime.transferDestination) &&
+      consumerRuntime.transferDestinationType.toLowerCase() !== "httpdata";
     const selectedTransferType = await this.selectPreferredTransferType(
       dialog,
-      consumerRuntime.adapter !== "edc" && Boolean(consumerRuntime.transferDestination),
+      usesObjectStorageDestination,
     );
     if (PUSH_TRANSFER_PATTERN.test(selectedTransferType)) {
       await this.fillPushDestination(dialog, consumerRuntime, objectName);

@@ -50,6 +50,10 @@ function joinUrl(baseUrl, routePath) {
   return `${String(baseUrl || "").replace(/\/$/, "")}/${String(routePath || "").replace(/^\//, "")}`;
 }
 
+function isEdcAdapter(runtime) {
+  return String(runtime?.adapterName || "").trim().toLowerCase() === "edc";
+}
+
 function ensureArrayRecords(records, label) {
   if (Array.isArray(records)) {
     return records;
@@ -316,10 +320,20 @@ function buildFlaresDatasetAssetDocument(fixture, runtime, overrides = {}) {
       "daimo:benchmark_dataset": benchmarkRows,
       "daimo:benchmark_dataset_mapping": benchmarkMapping,
     },
-    dataAddress: {
-      type: publication.dataAddressType || "InesDataStore",
-      folder: storeFolder,
-    },
+    dataAddress: isEdcAdapter(runtime)
+      ? {
+          type: publication.dataAddressType || "HttpData",
+          baseUrl:
+            overrides.baseUrl ||
+            publication.baseUrl ||
+            joinUrl(runtime.providerDefaultUrl, `/datasets/${assetId}`),
+          method: "GET",
+          name: "flares-provider-dataset",
+        }
+      : {
+          type: publication.dataAddressType || "InesDataStore",
+          folder: storeFolder,
+        },
   };
 }
 
@@ -692,6 +706,31 @@ async function uploadFlaresDatasetToProvider(request, runtime, fixture, assetDoc
   };
 }
 
+async function createFlaresDatasetAssetThroughManagementApi(request, runtime, assetDocument) {
+  const providerToken = await requestConnectorManagementToken(runtime, runtime.providerConnectorId);
+  const response = await request.post(`${runtime.providerManagementUrl}/v3/assets`, {
+    headers: {
+      Authorization: `Bearer ${providerToken}`,
+      "Content-Type": "application/json",
+    },
+    data: assetDocument,
+  });
+  await ensureOk(response, "Create FLARES dataset asset");
+
+  return {
+    publicationMode: "edc-httpdata-management-api",
+    dataAddressType: assetDocument.dataAddress && assetDocument.dataAddress.type,
+    baseUrl: assetDocument.dataAddress && assetDocument.dataAddress.baseUrl,
+  };
+}
+
+async function publishFlaresDatasetAsset(request, runtime, fixture, assetDocument) {
+  if (isEdcAdapter(runtime)) {
+    return createFlaresDatasetAssetThroughManagementApi(request, runtime, assetDocument);
+  }
+  return uploadFlaresDatasetToProvider(request, runtime, fixture, assetDocument);
+}
+
 async function ensureProviderPolicyAndContract(request, runtime, fixture, assetDocument, overrides = {}) {
   const providerToken = await requestConnectorManagementToken(runtime, runtime.providerConnectorId);
   const publication = fixture.metadata.assetPublication || {};
@@ -792,7 +831,7 @@ async function ensureFlaresDatasetPublished(request, runtime, overrides = {}) {
     }
 
     const benchmarkAssetDocument = buildFlaresDatasetAssetDocument(fixture, runtime, benchmarkOverrides);
-    const uploadResult = await uploadFlaresDatasetToProvider(request, runtime, fixture, benchmarkAssetDocument);
+    const publicationResult = await publishFlaresDatasetAsset(request, runtime, fixture, benchmarkAssetDocument);
     const contractResources = await ensureProviderPolicyAndContract(
       request,
       runtime,
@@ -809,13 +848,13 @@ async function ensureFlaresDatasetPublished(request, runtime, overrides = {}) {
       created: true,
       aliasedFrom: assetId,
       publicationMode: publication.publicationMode,
-      uploadResult,
+      publicationResult,
       ...contractResources,
     };
   }
 
   const assetDocument = buildFlaresDatasetAssetDocument(fixture, runtime, overrides);
-  const uploadResult = await uploadFlaresDatasetToProvider(request, runtime, fixture, assetDocument);
+  const publicationResult = await publishFlaresDatasetAsset(request, runtime, fixture, assetDocument);
   const contractResources = await ensureProviderPolicyAndContract(request, runtime, fixture, assetDocument, overrides);
 
   return {
@@ -825,7 +864,7 @@ async function ensureFlaresDatasetPublished(request, runtime, overrides = {}) {
     repaired: !!existingAsset,
     created: true,
     publicationMode: publication.publicationMode,
-    uploadResult,
+    publicationResult,
     ...contractResources,
   };
 }

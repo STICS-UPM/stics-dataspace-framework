@@ -34,7 +34,7 @@ class ConsoleTestNameReporter {
       return "INESData integration";
     }
     if (adapter === "edc") {
-      return "EDC Playwright";
+      return "EDC UI";
     }
     if (adapter) {
       return `${adapter} Playwright`;

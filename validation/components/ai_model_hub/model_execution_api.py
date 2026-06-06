@@ -55,6 +55,22 @@ def _join_management_url(base_url: str, path: str) -> str:
     return f"{base}{suffix}"
 
 
+def _join_default_api_url(base_url: str, path: str) -> str:
+    base = str(base_url or "").strip().rstrip("/")
+    suffix = str(path or "").strip()
+    if not base:
+        return ""
+    if not suffix:
+        return base
+    if not suffix.startswith("/"):
+        suffix = f"/{suffix}"
+    if base.endswith("/api") and suffix == "/api":
+        suffix = ""
+    elif base.endswith("/api") and suffix.startswith("/api/"):
+        suffix = suffix[len("/api"):]
+    return f"{base}{suffix.rstrip('/')}"
+
+
 class AIModelHubModelExecutionApiSuite:
     """Exercise the connector-side model execution API with a temporary HttpData asset."""
 
@@ -114,6 +130,10 @@ class AIModelHubModelExecutionApiSuite:
             ).strip().lower(),
             "inference_api_path": str(config.get("AI_MODEL_HUB_INFERENCE_API_PATH") or "/api/infer"),
         }
+        runtime["inference_api_path"] = (
+            _env_first("AI_MODEL_HUB_INFERENCE_API_PATH", "AI_MODEL_HUB_EDC_INFERENCE_API_PATH")
+            or runtime["inference_api_path"]
+        )
         if callable(self.keycloak_url_resolver):
             runtime["keycloak_url"] = str(self.keycloak_url_resolver() or "").strip()
         if not runtime["keycloak_url"]:
@@ -151,6 +171,37 @@ class AIModelHubModelExecutionApiSuite:
             if resolved:
                 return resolved
         return f"http://{connector}.{self.ds_domain_resolver()}{path}"
+
+    def _default_api_url(self, connector: str, path: str) -> str:
+        if _connector_matches(
+            connector,
+            "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID",
+            "AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER",
+            "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER",
+        ):
+            resolved = _join_default_api_url(_env_first("AI_MODEL_HUB_PROVIDER_DEFAULT_URL"), path)
+            if resolved:
+                return resolved
+            management_url = _env_first("AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL")
+            if management_url:
+                return _join_default_api_url(management_url.rstrip("/").removesuffix("/management") + "/api", path)
+        if _connector_matches(
+            connector,
+            "AI_MODEL_HUB_CONSUMER_CONNECTOR_ID",
+            "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER",
+        ):
+            resolved = _join_default_api_url(_env_first("AI_MODEL_HUB_CONSUMER_DEFAULT_URL"), path)
+            if resolved:
+                return resolved
+            management_url = _env_first("AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL")
+            if management_url:
+                return _join_default_api_url(management_url.rstrip("/").removesuffix("/management") + "/api", path)
+        return _join_default_api_url(f"http://{connector}.{self.ds_domain_resolver()}/api", path)
+
+    def _execution_url(self, provider: str, runtime: dict[str, Any]) -> str:
+        if runtime.get("adapter") == "edc":
+            return self._default_api_url(provider, str(runtime.get("inference_api_path") or "/api/infer"))
+        return self._management_url(provider, "/management/v3/modelexecutions/execute")
 
     def _request_with_retry(self, method: str, url: str, *, label: str, **kwargs):
         last_exc = None
@@ -299,8 +350,7 @@ class AIModelHubModelExecutionApiSuite:
         runtime: dict[str, Any],
     ) -> tuple[int, Any, str]:
         if runtime.get("adapter") == "edc":
-            path = f"/{str(runtime.get('inference_api_path') or '/api/infer').lstrip('/')}"
-            url = self._management_url(provider, path)
+            url = self._execution_url(provider, runtime)
             request_payload = {
                 "assetId": asset_id,
                 "method": "POST",
@@ -590,14 +640,7 @@ class AIModelHubModelExecutionApiSuite:
             step("suite_error", status="failed", error_type=type(exc).__name__, message=message)
             failed_request = {
                 "method": "POST",
-                "url": (
-                    self._management_url(
-                        provider,
-                        f"/{str(runtime.get('inference_api_path') or '/api/infer').lstrip('/')}",
-                    )
-                    if runtime.get("adapter") == "edc"
-                    else self._management_url(provider, "/management/v3/modelexecutions/execute")
-                ),
+                "url": self._execution_url(provider, runtime),
                 "asset_id": asset_id,
                 "payload": inference_payload,
             }

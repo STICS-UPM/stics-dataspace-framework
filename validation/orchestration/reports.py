@@ -692,11 +692,11 @@ def _dashboard_colorize_plain_line(line: str) -> str:
     if (
         _dashboard_is_component_suite_header(plain)
         or _dashboard_is_interoperability_suite_header(plain)
-        or plain == "Component validation summary"
+        or plain in {"Component validation summary", "Component validation layer summary"}
     ):
         return f"\033[33;1m{line}\033[0m"
 
-    if plain.startswith("Components:"):
+    if plain.startswith(("Components:", "Component groups:", "Component suites:", "Component test cases:")):
         if " failed" in plain and not re.search(r"\b0 failed\b", plain):
             return f"\033[31m{line}\033[0m"
         if " skipped" in plain and not re.search(r"\b0 skipped\b", plain):

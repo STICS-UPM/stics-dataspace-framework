@@ -49,6 +49,8 @@ class FakeSession:
             return FakeResponse(200, {"@id": json["@id"]})
         if url.endswith("/management/v3/modelexecutions/execute"):
             return FakeResponse(self.execution_status, self.execution_payload)
+        if url.endswith("/api/infer"):
+            return FakeResponse(self.execution_status, self.execution_payload)
         return FakeResponse(404, {"error": "not found"})
 
     def delete(self, url, timeout=30, headers=None):
@@ -271,6 +273,59 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
                 suite._management_url("conn-provider", "/management/v3/modelexecutions/execute"),
                 "https://org2.example.test/management/v3/modelexecutions/execute",
             )
+
+    def test_edc_execution_uses_default_api_inference_endpoint_not_management(self):
+        session = FakeSession()
+        suite = self._suite(session)
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_MODEL_HUB_COMPONENT_ADAPTER": "edc",
+                "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID": "conn-provider",
+                "AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER": "conn-provider",
+                "AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL": "https://org2.example.test/management",
+                "AI_MODEL_HUB_PROVIDER_DEFAULT_URL": "https://org2.example.test/api",
+            },
+            clear=False,
+        ):
+            result = suite.run(
+                provider="conn-provider",
+                model_url="http://model-server.demo.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
+                payload={"text": "great"},
+            )
+
+        self.assertEqual(result["status"], "passed")
+        execution_requests = [entry for entry in session.posts if entry["url"].endswith("/api/infer")]
+        self.assertEqual(len(execution_requests), 1)
+        self.assertEqual(execution_requests[0]["url"], "https://org2.example.test/api/infer")
+        self.assertFalse(any("/management/api/infer" in entry["url"] for entry in session.posts))
+
+    def test_edc_execution_derives_default_api_url_from_management_url_when_needed(self):
+        session = FakeSession()
+        suite = self._suite(session)
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_MODEL_HUB_COMPONENT_ADAPTER": "edc",
+                "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID": "conn-provider",
+                "AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER": "conn-provider",
+                "AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL": "https://org2.example.test/management",
+                "AI_MODEL_HUB_PROVIDER_DEFAULT_URL": "",
+            },
+            clear=False,
+        ):
+            result = suite.run(
+                provider="conn-provider",
+                model_url="http://model-server.demo.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
+                payload={"text": "great"},
+            )
+
+        self.assertEqual(result["status"], "passed")
+        execution_requests = [entry for entry in session.posts if entry["url"].endswith("/api/infer")]
+        self.assertEqual(len(execution_requests), 1)
+        self.assertEqual(execution_requests[0]["url"], "https://org2.example.test/api/infer")
 
 
 if __name__ == "__main__":

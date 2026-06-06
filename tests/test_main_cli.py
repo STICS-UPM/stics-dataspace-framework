@@ -2391,6 +2391,7 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("[Validation]", stdout.getvalue())
         self.assertIn("F - Dataspace Interoperability Tests", stdout.getvalue())
         self.assertIn("I - INESData UI Tests", stdout.getvalue())
+        self.assertIn("N - EDC UI Tests", stdout.getvalue())
         self.assertIn("O - Ontology Hub UI Tests", stdout.getvalue())
         self.assertIn("A - AI Model Hub UI Tests", stdout.getvalue())
         self.assertIn("V - Semantic Virtualization UI Tests", stdout.getvalue())
@@ -2426,6 +2427,7 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("[Validation]", stdout.getvalue())
         self.assertIn("Newman connector tests from Kafka transfer tests", stdout.getvalue())
         self.assertIn("I - Use to validate the INESData portal experience", stdout.getvalue())
+        self.assertIn("N - Use to validate the EDC dashboard experience", stdout.getvalue())
         self.assertIn("A - Use when AI Model Hub UI changed", stdout.getvalue())
         self.assertIn("V - Use when Semantic Virtualization UI/API browser reachability changed", stdout.getvalue())
         self.assertIn("shortcuts are available directly", stdout.getvalue())
@@ -3628,7 +3630,7 @@ class MainCliTests(unittest.TestCase):
         )
 
     def test_ui_validation_shortcuts_delegate_component_actions(self):
-        with mock.patch("builtins.input", side_effect=["I", "O", "A", "V", "Y", "Z", "Q"]), mock.patch.object(
+        with mock.patch("builtins.input", side_effect=["I", "N", "O", "A", "V", "Y", "Z", "Q"]), mock.patch.object(
             main,
             "_run_legacy_menu_action",
             return_value=None,
@@ -3647,6 +3649,7 @@ class MainCliTests(unittest.TestCase):
             [call.args[0] for call in legacy_action.call_args_list],
             [
                 "inesdata_ui",
+                "edc_ui",
                 "ontology_hub_ui",
                 "ai_model_hub_ui",
                 "semantic_virtualization_ui",
@@ -3656,7 +3659,7 @@ class MainCliTests(unittest.TestCase):
         )
 
     def test_menu_keeps_legacy_component_ui_validation_shortcuts(self):
-        with mock.patch("builtins.input", side_effect=["I", "O", "A", "V", "Q"]), mock.patch.object(
+        with mock.patch("builtins.input", side_effect=["I", "N", "O", "A", "V", "Q"]), mock.patch.object(
             main,
             "_run_legacy_menu_action",
             return_value=None,
@@ -3673,8 +3676,62 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["status"], "exited")
         self.assertEqual(
             [call.args[0] for call in legacy_action.call_args_list],
-            ["inesdata_ui", "ontology_hub_ui", "ai_model_hub_ui", "semantic_virtualization_ui"],
+            ["inesdata_ui", "edc_ui", "ontology_hub_ui", "ai_model_hub_ui", "semantic_virtualization_ui"],
         )
+
+    def test_ai_model_hub_ui_shortcut_requires_adapter_when_multiple_are_available(self):
+        registry = {
+            "edc": "fake_adapter_module:FakeAdapter",
+            "inesdata": "fake_adapter_module:FakeAdapter",
+        }
+        stdout = io.StringIO()
+        with mock.patch("builtins.input", side_effect=["A", "1", "Q"]), mock.patch.object(
+            main,
+            "_run_legacy_menu_action",
+            return_value=None,
+        ) as legacy_action, contextlib.redirect_stdout(stdout):
+            result = main.main(
+                ["menu"],
+                adapter_registry=registry,
+                deployer_registry=self.deployer_registry,
+                validation_engine_cls=FakeValidationEngine,
+                metrics_collector_cls=FakeMetricsCollector,
+                experiment_storage=FakeStorage,
+            )
+
+        self.assertEqual(result["status"], "exited")
+        self.assertEqual(result["adapter"], "edc")
+        self.assertIn("This action needs an adapter selection", stdout.getvalue())
+        legacy_action.assert_called_once_with("ai_model_hub_ui", current_adapter="edc", topology="local")
+
+    def test_adapter_aware_validation_shortcuts_reuse_selected_adapter(self):
+        registry = {
+            "edc": "fake_adapter_module:FakeAdapter",
+            "inesdata": "fake_adapter_module:FakeAdapter",
+        }
+        with mock.patch("builtins.input", side_effect=["O", "1", "V", "Y", "Q"]), mock.patch.object(
+            main,
+            "_run_legacy_menu_action",
+            return_value=None,
+        ) as legacy_action:
+            result = main.main(
+                ["menu"],
+                adapter_registry=registry,
+                deployer_registry=self.deployer_registry,
+                validation_engine_cls=FakeValidationEngine,
+                metrics_collector_cls=FakeMetricsCollector,
+                experiment_storage=FakeStorage,
+            )
+
+        self.assertEqual(result["status"], "exited")
+        self.assertEqual(result["adapter"], "edc")
+        self.assertEqual(
+            [call.args[0] for call in legacy_action.call_args_list],
+            ["ontology_hub_ui", "semantic_virtualization_ui", "validation_test_by_id"],
+        )
+        for call in legacy_action.call_args_list:
+            self.assertEqual(call.kwargs["current_adapter"], "edc")
+            self.assertEqual(call.kwargs["topology"], "local")
 
     def test_migrated_bootstrap_action_does_not_import_inesdata_py(self):
         with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch.object(
@@ -3756,6 +3813,30 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result, "inesdata-ui-ok")
         migrated_action.assert_called_once_with()
 
+    def test_migrated_edc_ui_action_does_not_import_inesdata_py(self):
+        observed_env = {}
+
+        def capture_env():
+            observed_env["PIONERA_TOPOLOGY"] = os.environ.get("PIONERA_TOPOLOGY")
+            observed_env["UI_TOPOLOGY"] = os.environ.get("UI_TOPOLOGY")
+            observed_env["PIONERA_ADAPTER"] = os.environ.get("PIONERA_ADAPTER")
+            observed_env["UI_ADAPTER"] = os.environ.get("UI_ADAPTER")
+            return "edc-ui-ok"
+
+        with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch.object(
+            main.ui_interactive_menu,
+            "run_edc_ui_tests_interactive",
+            side_effect=capture_env,
+        ) as migrated_action:
+            result = main._run_legacy_menu_action("edc_ui", current_adapter="inesdata", topology="vm-distributed")
+
+        self.assertEqual(result, "edc-ui-ok")
+        self.assertEqual(observed_env["PIONERA_TOPOLOGY"], "vm-distributed")
+        self.assertEqual(observed_env["UI_TOPOLOGY"], "vm-distributed")
+        self.assertEqual(observed_env["PIONERA_ADAPTER"], "edc")
+        self.assertEqual(observed_env["UI_ADAPTER"], "edc")
+        migrated_action.assert_called_once_with()
+
     def test_migrated_ontology_hub_ui_action_does_not_import_inesdata_py(self):
         with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch.object(
             main.ui_interactive_menu,
@@ -3786,6 +3867,7 @@ class MainCliTests(unittest.TestCase):
             observed_env["INESDATA_TOPOLOGY"] = os.environ.get("INESDATA_TOPOLOGY")
             observed_env["UI_TOPOLOGY"] = os.environ.get("UI_TOPOLOGY")
             observed_env["PIONERA_ADAPTER"] = os.environ.get("PIONERA_ADAPTER")
+            observed_env["AI_MODEL_HUB_COMPONENT_ADAPTER"] = os.environ.get("AI_MODEL_HUB_COMPONENT_ADAPTER")
             return "ai-model-ui-ok"
 
         with mock.patch.object(
@@ -3804,6 +3886,7 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(observed_env["INESDATA_TOPOLOGY"], "vm-single")
         self.assertEqual(observed_env["UI_TOPOLOGY"], "vm-single")
         self.assertEqual(observed_env["PIONERA_ADAPTER"], "inesdata")
+        self.assertEqual(observed_env["AI_MODEL_HUB_COMPONENT_ADAPTER"], "inesdata")
 
     def test_migrated_semantic_virtualization_ui_action_does_not_import_inesdata_py(self):
         with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch.object(
@@ -9396,6 +9479,64 @@ class MainCliTests(unittest.TestCase):
             )
 
         self.assertEqual(buffer.getvalue().count("OH-APP-11"), 1)
+
+    def test_level6_validation_summary_uses_edc_ui_label_from_profile(self):
+        class EDCValidationProfile:
+            adapter = "edc"
+
+        playwright_result = {
+            "status": "failed",
+            "summary": {
+                "spec_results": [
+                    {
+                        "status": "failed",
+                        "title": "04 edc transfer: consumer starts a transfer and sees it in history",
+                        "error": "transfer history not updated",
+                    }
+                ]
+            },
+        }
+
+        buffer = io.StringIO()
+        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}, clear=False), contextlib.redirect_stdout(buffer):
+            summary = main._print_level6_validation_summary(
+                experiment_dir="/tmp/experiment_2026-06-06_10-00-00",
+                playwright_result=playwright_result,
+                playwright_failure="failed",
+                validation_profile=EDCValidationProfile(),
+            )
+
+        printed = buffer.getvalue()
+        self.assertEqual(summary["status"], "failed")
+        self.assertIn("[EDC UI] 04 edc transfer", printed)
+        self.assertNotIn("[INESData UI]", printed)
+
+    def test_level6_validation_summary_marks_skipped_component_cases_as_partial(self):
+        component_results = [
+            {
+                "component": "ai-model-hub",
+                "status": "passed",
+                "phase_order": ["functional"],
+                "phases": {
+                    "functional": {
+                        "status": "passed",
+                        "summary": {"total": 2, "passed": 1, "failed": 0, "skipped": 1},
+                    }
+                },
+            }
+        ]
+
+        buffer = io.StringIO()
+        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}, clear=False), contextlib.redirect_stdout(buffer):
+            summary = main._print_level6_validation_summary(
+                experiment_dir="/tmp/experiment_2026-06-06_10-05-00",
+                component_results=component_results,
+            )
+
+        printed = buffer.getvalue()
+        self.assertEqual(summary["status"], "partial")
+        self.assertIn("Status: - partial", printed)
+        self.assertIn("Component validation test cases: 1/2 passed, 0 failed, 1 skipped", printed)
 
     def test_offer_open_level6_dashboard_opens_report_when_confirmed(self):
         with tempfile.TemporaryDirectory() as tmp:
