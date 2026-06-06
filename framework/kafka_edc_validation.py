@@ -51,6 +51,7 @@ class KafkaEdcValidationSuite:
     DEFAULT_TRANSFER_LATE_CONFIRMATION_SECONDS = 30
     DEFAULT_STABILIZATION_REQUEST_TIMEOUT_MS = 5000
     DEFAULT_CONTINUE_AFTER_REQUESTED_TRANSFER_TIMEOUT = True
+    DEFAULT_KUBERNETES_EXEC_USE_TOPIC_OFFSETS = False
 
     def __init__(
         self,
@@ -130,6 +131,13 @@ class KafkaEdcValidationSuite:
             "agreement_visibility_timeout_seconds": "KAFKA_EDC_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS",
             "message_sample_limit": "KAFKA_EDC_MESSAGE_SAMPLE_LIMIT",
             "late_transfer_confirmation_seconds": "KAFKA_EDC_LATE_TRANSFER_CONFIRMATION_SECONDS",
+            "late_probe_confirmation_seconds": "KAFKA_EDC_LATE_PROBE_CONFIRMATION_SECONDS",
+            "stabilization_group_wait_seconds": "KAFKA_EDC_STABILIZATION_GROUP_WAIT_SECONDS",
+            "stabilization_probe_timeout_seconds": "KAFKA_EDC_STABILIZATION_PROBE_TIMEOUT_SECONDS",
+            "kubernetes_exec_timeout_seconds": "KAFKA_EDC_KUBERNETES_EXEC_TIMEOUT_SECONDS",
+            "kubernetes_exec_use_topic_offsets": "KAFKA_EDC_KUBERNETES_EXEC_USE_TOPIC_OFFSETS",
+            "pair_attempts": "KAFKA_EDC_PAIR_ATTEMPTS",
+            "pair_retry_seconds": "KAFKA_EDC_PAIR_RETRY_SECONDS",
             "validation_backend": "KAFKA_EDC_VALIDATION_BACKEND",
             "continue_after_requested_transfer_timeout": "KAFKA_EDC_CONTINUE_AFTER_REQUESTED_TRANSFER_TIMEOUT",
         }
@@ -172,6 +180,12 @@ class KafkaEdcValidationSuite:
             "consumer_request_timeout_ms",
             "message_sample_limit",
             "late_transfer_confirmation_seconds",
+            "late_probe_confirmation_seconds",
+            "stabilization_group_wait_seconds",
+            "stabilization_probe_timeout_seconds",
+            "kubernetes_exec_timeout_seconds",
+            "pair_attempts",
+            "pair_retry_seconds",
         ):
             raw = runtime.get(integer_key)
             if raw in (None, ""):
@@ -181,6 +195,15 @@ class KafkaEdcValidationSuite:
             except (TypeError, ValueError):
                 pass
         return runtime
+
+    @staticmethod
+    def _runtime_int(runtime, key, default, minimum=0):
+        raw = (runtime or {}).get(key, default)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = int(default)
+        return max(value, minimum)
 
     @staticmethod
     def _normalize_bootstrap_servers(bootstrap_servers):
@@ -694,6 +717,37 @@ class KafkaEdcValidationSuite:
     def _truthy(value):
         return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
+    def _use_kubernetes_exec_topic_offsets(self, runtime):
+        raw = (runtime or {}).get("kubernetes_exec_use_topic_offsets")
+        if raw in (None, ""):
+            return self.DEFAULT_KUBERNETES_EXEC_USE_TOPIC_OFFSETS
+        return self._truthy(raw)
+
+    def _kubernetes_consumer_start_offset(self, runtime, topic_name):
+        if not self._use_kubernetes_exec_topic_offsets(runtime):
+            return None
+        return self._kubernetes_topic_end_offset(runtime, topic_name)
+
+    @staticmethod
+    def _command_to_text(command):
+        if isinstance(command, (list, tuple)):
+            return " ".join(str(item) for item in command)
+        return str(command or "").strip()
+
+    def _kubernetes_command_failure_message(self, result, label):
+        returncode = getattr(result, "returncode", "unknown")
+        stderr = (getattr(result, "stderr", "") or "").strip()
+        stdout = (getattr(result, "stdout", "") or "").strip()
+        command = getattr(result, "_pionera_command", None) or getattr(result, "args", None)
+        details = stderr or stdout
+        message = f"{label} failed with exit code {returncode}"
+        if details:
+            message = f"{message}: {details}"
+        command_text = self._command_to_text(command)
+        if command_text:
+            message = f"{message}. Command: {command_text}"
+        return message
+
     def _can_hard_restart_kafka_runtime(self, runtime=None):
         kafka_manager = self.kafka_manager
         if kafka_manager is None:
@@ -762,15 +816,21 @@ class KafkaEdcValidationSuite:
         runner = getattr(kafka_manager, "command_runner", None) if kafka_manager is not None else None
         if timeout_seconds is None:
             timeout_seconds = int((runtime or {}).get("kubernetes_exec_timeout_seconds", 30))
+        result = None
         if callable(runner):
             try:
-                return runner(command, input_text=input_text, timeout=timeout_seconds)
+                result = runner(command, input_text=input_text, timeout=timeout_seconds)
             except TypeError:
-                return runner(command, input_text=input_text)
+                result = runner(command, input_text=input_text)
             except subprocess.TimeoutExpired as exc:
-                return subprocess.CompletedProcess(command, 124, stdout=exc.stdout or "", stderr=exc.stderr or "Command timed out")
+                result = subprocess.CompletedProcess(command, 124, stdout=exc.stdout or "", stderr=exc.stderr or "Command timed out")
+            try:
+                setattr(result, "_pionera_command", command)
+            except Exception:
+                pass
+            return result
         try:
-            return subprocess.run(
+            result = subprocess.run(
                 command,
                 text=True,
                 input=input_text,
@@ -779,7 +839,12 @@ class KafkaEdcValidationSuite:
                 timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:
-            return subprocess.CompletedProcess(command, 124, stdout=exc.stdout or "", stderr=exc.stderr or "Command timed out")
+            result = subprocess.CompletedProcess(command, 124, stdout=exc.stdout or "", stderr=exc.stderr or "Command timed out")
+        try:
+            setattr(result, "_pionera_command", command)
+        except Exception:
+            pass
+        return result
 
     def _ensure_topic_with_kubernetes_exec(self, runtime, topic_name):
         list_result = self._run_kubernetes_kafka_command(
@@ -787,7 +852,7 @@ class KafkaEdcValidationSuite:
             ["kafka-topics", "--bootstrap-server", "localhost:9092", "--list"],
         )
         if getattr(list_result, "returncode", 1) != 0:
-            raise RuntimeError((getattr(list_result, "stderr", "") or "").strip() or "Kafka topic list failed")
+            raise RuntimeError(self._kubernetes_command_failure_message(list_result, "Kafka topic list"))
         existing_topics = set((getattr(list_result, "stdout", "") or "").splitlines())
         if topic_name not in existing_topics:
             create_result = self._run_kubernetes_kafka_command(
@@ -807,14 +872,14 @@ class KafkaEdcValidationSuite:
                 ],
             )
             if getattr(create_result, "returncode", 1) != 0:
-                raise RuntimeError((getattr(create_result, "stderr", "") or "").strip() or "Kafka topic create failed")
+                raise RuntimeError(self._kubernetes_command_failure_message(create_result, "Kafka topic create"))
 
         verify_result = self._run_kubernetes_kafka_command(
             runtime,
             ["kafka-topics", "--bootstrap-server", "localhost:9092", "--list"],
         )
         if getattr(verify_result, "returncode", 1) != 0:
-            raise RuntimeError((getattr(verify_result, "stderr", "") or "").strip() or "Kafka topic verify failed")
+            raise RuntimeError(self._kubernetes_command_failure_message(verify_result, "Kafka topic verify"))
         verified_topics = set((getattr(verify_result, "stdout", "") or "").splitlines())
         if topic_name not in verified_topics:
             raise RuntimeError(f"Kafka topic '{topic_name}' could not be created or verified")
@@ -836,7 +901,7 @@ class KafkaEdcValidationSuite:
             ],
         )
         if getattr(result, "returncode", 1) != 0:
-            raise RuntimeError((getattr(result, "stderr", "") or "").strip() or "Kafka offset lookup failed")
+            raise RuntimeError(self._kubernetes_command_failure_message(result, "Kafka offset lookup"))
         for line in (getattr(result, "stdout", "") or "").splitlines():
             parts = line.strip().split(":")
             if len(parts) >= 3 and parts[0] == topic_name and parts[1] == "0":
@@ -1771,7 +1836,15 @@ class KafkaEdcValidationSuite:
             started_at = time.time()
             group_result = None
             if correlation_id:
-                group_wait_seconds = min(timeout_seconds, self.DEFAULT_STABILIZATION_GROUP_WAIT_SECONDS)
+                group_wait_seconds = min(
+                    timeout_seconds,
+                    self._runtime_int(
+                        runtime,
+                        "stabilization_group_wait_seconds",
+                        self.DEFAULT_STABILIZATION_GROUP_WAIT_SECONDS,
+                        minimum=1,
+                    ),
+                )
                 group_result = self._wait_for_kubernetes_exec_consumer_group_ready(
                     runtime,
                     correlation_id,
@@ -1780,7 +1853,15 @@ class KafkaEdcValidationSuite:
                 )
             elapsed_seconds = max(0.0, time.time() - started_at)
             remaining_seconds = max(int(timeout_seconds - elapsed_seconds), 1)
-            probe_timeout_seconds = min(remaining_seconds, self.DEFAULT_STABILIZATION_PROBE_TIMEOUT_SECONDS)
+            probe_timeout_seconds = min(
+                remaining_seconds,
+                self._runtime_int(
+                    runtime,
+                    "stabilization_probe_timeout_seconds",
+                    self.DEFAULT_STABILIZATION_PROBE_TIMEOUT_SECONDS,
+                    minimum=1,
+                ),
+            )
             try:
                 probe_result = self._wait_for_end_to_end_probe_with_kubernetes_exec(
                     runtime,
@@ -1826,7 +1907,15 @@ class KafkaEdcValidationSuite:
         )
         admin_client = admin_client_class(**self._build_kafka_client_kwargs(stabilization_runtime))
         started_at = time.time()
-        group_wait_seconds = min(timeout_seconds, self.DEFAULT_STABILIZATION_GROUP_WAIT_SECONDS)
+        group_wait_seconds = min(
+            timeout_seconds,
+            self._runtime_int(
+                runtime,
+                "stabilization_group_wait_seconds",
+                self.DEFAULT_STABILIZATION_GROUP_WAIT_SECONDS,
+                minimum=1,
+            ),
+        )
         deadline = started_at + group_wait_seconds
         last_state = None
         last_member_count = 0
@@ -1889,7 +1978,15 @@ class KafkaEdcValidationSuite:
         if destination_topic:
             producer = None
             consumer = None
-            probe_timeout_seconds = min(timeout_seconds, self.DEFAULT_STABILIZATION_PROBE_TIMEOUT_SECONDS)
+            probe_timeout_seconds = min(
+                timeout_seconds,
+                self._runtime_int(
+                    runtime,
+                    "stabilization_probe_timeout_seconds",
+                    self.DEFAULT_STABILIZATION_PROBE_TIMEOUT_SECONDS,
+                    minimum=1,
+                ),
+            )
             try:
                 producer, consumer, probe_group_id = self._open_probe_clients(runtime, destination_topic)
                 probe_result = self._wait_for_end_to_end_probe(
@@ -2002,7 +2099,7 @@ class KafkaEdcValidationSuite:
             timeout_seconds=timeout_seconds + 5,
         )
         if getattr(result, "returncode", 1) != 0:
-            raise RuntimeError((getattr(result, "stderr", "") or "").strip() or "Kafka console producer failed")
+            raise RuntimeError(self._kubernetes_command_failure_message(result, "Kafka console producer"))
 
     def _consume_kubernetes_exec_messages(self, runtime, topic, timeout_ms=2000, max_messages=50, offset=None):
         timeout_seconds = int(runtime.get("kubernetes_exec_timeout_seconds", 30))
@@ -2030,6 +2127,8 @@ class KafkaEdcValidationSuite:
             kafka_args,
             timeout_seconds=timeout_seconds + 5,
         )
+        if getattr(result, "returncode", 0) not in (0, 124):
+            raise RuntimeError(self._kubernetes_command_failure_message(result, "Kafka console consumer"))
         output = getattr(result, "stdout", "") or ""
         messages = []
         for line in output.splitlines():
@@ -2050,7 +2149,7 @@ class KafkaEdcValidationSuite:
             ["kafka-consumer-groups", "--bootstrap-server", "localhost:9092", "--list"],
         )
         if getattr(result, "returncode", 1) != 0:
-            raise RuntimeError((getattr(result, "stderr", "") or "").strip() or "Kafka consumer group list failed")
+            raise RuntimeError(self._kubernetes_command_failure_message(result, "Kafka consumer group list"))
         groups = []
         for line in (getattr(result, "stdout", "") or "").splitlines():
             group_id = line.strip()
@@ -2075,7 +2174,7 @@ class KafkaEdcValidationSuite:
                 "group_id": group_id,
                 "member_count": 0,
                 "topics": [],
-                "error": (getattr(result, "stderr", "") or "").strip(),
+                "error": self._kubernetes_command_failure_message(result, "Kafka consumer group describe"),
             }
 
         topics = []
@@ -2204,7 +2303,7 @@ class KafkaEdcValidationSuite:
         # EDC may relay a previous probe after the next send; keep all in-flight probes valid.
         pending_probe_ids = set()
         poll_timeout_ms = max(500, min(2000, int(runtime.get("consumer_request_timeout_ms", 60000))))
-        destination_start_offset = self._kubernetes_topic_end_offset(runtime, destination_topic)
+        destination_start_offset = self._kubernetes_consumer_start_offset(runtime, destination_topic)
 
         while time.time() <= deadline:
             attempts += 1
@@ -2428,7 +2527,7 @@ class KafkaEdcValidationSuite:
                 destination_topic,
             )
 
-        destination_start_offset = self._kubernetes_topic_end_offset(runtime, destination_topic)
+        destination_start_offset = self._kubernetes_consumer_start_offset(runtime, destination_topic)
         start_ms = self.time_provider()
         for index in range(message_count):
             message_id = f"kafka-transfer-{index}-{self.uuid_factory()}"
@@ -2591,6 +2690,10 @@ class KafkaEdcValidationSuite:
             "No Kafka messages were consumed through the EDC transfer",
             "Kafka transfer consumed only",
             "Kafka topic",
+            "Kafka offset lookup",
+            "Kafka console producer",
+            "Kafka console consumer",
+            "Kafka consumer group",
         )
         return any(fragment in error_message for fragment in runtime_fragments)
 
@@ -2636,12 +2739,23 @@ class KafkaEdcValidationSuite:
             "Kafka transfer path did not relay a probe message in time",
             "No Kafka messages were consumed through the EDC transfer",
             "Kafka transfer consumed only",
+            "Kafka offset lookup",
+            "Kafka console producer",
+            "Kafka console consumer",
+            "Kafka consumer group",
         )
         if any(fragment in error_message for fragment in transient_fragments):
             return True
 
         for step in payload.get("steps", []):
-            if step.get("name") == "wait_for_transfer_runtime_stabilization" and step.get("strategy") == "timeout_without_ready_group":
+            if (
+                step.get("name") == "wait_for_transfer_runtime_stabilization"
+                and step.get("strategy") in {
+                    "timeout_without_ready_group",
+                    "kubernetes_exec_probe_timeout",
+                    "probe_timeout",
+                }
+            ):
                 return True
         return False
 
@@ -2851,9 +2965,12 @@ class KafkaEdcValidationSuite:
             stabilization_probe = stabilization.get("probe")
             if stabilization.get("strategy") != "disabled":
                 stabilization_step = {key: value for key, value in stabilization.items() if key != "probe"}
+                stabilization_status = "passed"
+                if str(stabilization.get("strategy") or "").endswith("_timeout"):
+                    stabilization_status = "warning"
                 record_step(
                     "wait_for_transfer_runtime_stabilization",
-                    "passed",
+                    stabilization_status,
                     **stabilization_step,
                 )
 
@@ -2913,7 +3030,18 @@ class KafkaEdcValidationSuite:
             result = None
             attempts = 0
             retry_reason = None
-            max_attempts = self.DEFAULT_PAIR_ATTEMPTS
+            max_attempts = self._runtime_int(
+                settle_runtime,
+                "pair_attempts",
+                self.DEFAULT_PAIR_ATTEMPTS,
+                minimum=1,
+            )
+            retry_seconds = self._runtime_int(
+                settle_runtime,
+                "pair_retry_seconds",
+                self.DEFAULT_PAIR_RETRY_SECONDS,
+                minimum=0,
+            )
 
             while attempts < max_attempts:
                 attempts += 1
@@ -2927,7 +3055,7 @@ class KafkaEdcValidationSuite:
                 retry_reason = self._pair_error_message(result)
                 self._wait_for_post_run_settlement(settle_runtime, result)
                 self._reset_framework_managed_kafka(settle_runtime, result)
-                time.sleep(self.DEFAULT_PAIR_RETRY_SECONDS)
+                time.sleep(retry_seconds)
 
             if result is None:
                 continue

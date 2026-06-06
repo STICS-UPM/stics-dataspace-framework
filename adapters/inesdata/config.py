@@ -636,6 +636,25 @@ class INESDataConfigAdapter:
             if value not in (None, ""):
                 runtime[key] = value
 
+        edc_optional_mapping = {
+            "message_count": "KAFKA_EDC_MESSAGE_COUNT",
+            "consumer_poll_timeout_seconds": "KAFKA_EDC_CONSUMER_POLL_TIMEOUT_SECONDS",
+            "startup_grace_seconds": "KAFKA_EDC_STARTUP_GRACE_SECONDS",
+            "pre_run_settle_seconds": "KAFKA_EDC_PRE_RUN_SETTLE_SECONDS",
+            "late_probe_confirmation_seconds": "KAFKA_EDC_LATE_PROBE_CONFIRMATION_SECONDS",
+            "late_transfer_confirmation_seconds": "KAFKA_EDC_LATE_TRANSFER_CONFIRMATION_SECONDS",
+            "stabilization_group_wait_seconds": "KAFKA_EDC_STABILIZATION_GROUP_WAIT_SECONDS",
+            "stabilization_probe_timeout_seconds": "KAFKA_EDC_STABILIZATION_PROBE_TIMEOUT_SECONDS",
+            "kubernetes_exec_timeout_seconds": "KAFKA_EDC_KUBERNETES_EXEC_TIMEOUT_SECONDS",
+            "kubernetes_exec_use_topic_offsets": "KAFKA_EDC_KUBERNETES_EXEC_USE_TOPIC_OFFSETS",
+            "pair_attempts": "KAFKA_EDC_PAIR_ATTEMPTS",
+            "pair_retry_seconds": "KAFKA_EDC_PAIR_RETRY_SECONDS",
+        }
+        for key, config_key in edc_optional_mapping.items():
+            value = config.get(config_key)
+            if value not in (None, ""):
+                runtime[key] = value
+
         container_env_file = self._resolve_optional_path(base_dir, config.get("KAFKA_CONTAINER_ENV_FILE"))
         if container_env_file:
             runtime["container_env_file"] = container_env_file

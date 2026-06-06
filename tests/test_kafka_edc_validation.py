@@ -689,13 +689,13 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
         )
         self.assertTrue(
             any(
-                "--offset" in command["command"] and "kafka-console-consumer" in command["command"]
+                "--from-beginning" in command["command"] and "kafka-console-consumer" in command["command"]
                 for command in kafka_manager.commands
             )
         )
         self.assertFalse(
             any(
-                "--from-beginning" in command["command"] and "kafka-console-consumer" in command["command"]
+                "--offset" in command["command"] and "kafka-console-consumer" in command["command"]
                 for command in kafka_manager.commands
             )
         )
@@ -1441,7 +1441,35 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
         self.assertEqual(find_probe_mock.call_count, 2)
         late_confirmation_call = find_probe_mock.call_args_list[-1]
         self.assertEqual(late_confirmation_call.kwargs["timeout_seconds"], 5)
-        self.assertEqual(late_confirmation_call.kwargs["offset"], 0)
+        self.assertIsNone(late_confirmation_call.kwargs["offset"])
+
+    def test_kubernetes_exec_probe_can_opt_in_to_offset_lookup(self):
+        suite = KafkaEdcValidationSuite(uuid_factory=lambda: "offset")
+        runtime = {
+            "consumer_request_timeout_ms": 500,
+            "poll_interval_seconds": 1,
+            "late_probe_confirmation_seconds": 0,
+            "kubernetes_exec_use_topic_offsets": "true",
+        }
+
+        with patch.object(suite, "_kubernetes_topic_end_offset", return_value=7) as offset_mock:
+            with patch.object(suite, "_produce_kubernetes_exec_message") as producer_mock:
+                with patch.object(
+                    suite,
+                    "_find_kubernetes_exec_probe_message",
+                    return_value="kafka-transfer-probe-offset",
+                ) as find_probe_mock:
+                    result = suite._wait_for_end_to_end_probe_with_kubernetes_exec(
+                        runtime,
+                        "source-topic",
+                        "destination-topic",
+                        timeout_seconds=1,
+                    )
+
+        self.assertEqual(result["status"], "ready")
+        offset_mock.assert_called_once_with(runtime, "destination-topic")
+        producer_mock.assert_called_once()
+        self.assertEqual(find_probe_mock.call_args.kwargs["offset"], 7)
 
     def test_kubernetes_exec_measure_accepts_late_transfer_confirmation(self):
         ids = iter(["id1", "id2"])
