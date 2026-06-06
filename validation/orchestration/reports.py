@@ -1540,6 +1540,24 @@ def _windows_executable(path: Path) -> str | None:
     return str(path) if path.exists() else None
 
 
+def wsl_file_url_for_path(path: str | os.PathLike[str]) -> str | None:
+    distro_name = (
+        os.environ.get("PIONERA_WSL_DISTRO_NAME")
+        or os.environ.get("WSL_DISTRO_NAME")
+        or ""
+    ).strip()
+    if not distro_name:
+        return None
+
+    absolute_path = os.path.abspath(os.fspath(path))
+    if not absolute_path.startswith("/"):
+        return None
+
+    encoded_distro = quote(distro_name, safe="")
+    encoded_path = "/".join(quote(part, safe="") for part in absolute_path.split("/") if part)
+    return f"file://wsl.localhost/{encoded_distro}/{encoded_path}"
+
+
 def _local_url_open_commands(url: str) -> list[dict[str, Any]]:
     commands = []
     wslview = shutil.which("wslview")

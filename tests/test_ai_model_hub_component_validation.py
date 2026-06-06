@@ -304,7 +304,7 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertIn("model_observer", result["phases"]["integration"]["suites"])
             self.assertTrue(os.path.exists(result["artifacts"]["artifact_manifest_json"]))
 
-    def test_run_ai_model_hub_component_validation_uses_api_only_mode_for_edc(self):
+    def test_run_ai_model_hub_component_validation_uses_api_only_mode_when_explicitly_enabled(self):
         def suite_result(suite, case_id, case_group="pt5", validation_type="functional"):
             return {
                 "component": "ai-model-hub",
@@ -364,7 +364,14 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                     "validation.components.ai_model_hub.component_runner._resolve_model_observer_base_url",
                     return_value="http://observer.example.local",
                 ),
-                mock.patch.dict(os.environ, {"PIONERA_ADAPTER": "edc"}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "PIONERA_ADAPTER": "edc",
+                        "PIONERA_COMPONENT_VALIDATION_MODE": "api-only",
+                    },
+                    clear=True,
+                ),
             ):
                 result = run_ai_model_hub_component_validation(
                     "http://ai-model-hub.example.local",

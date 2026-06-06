@@ -44,6 +44,35 @@ class Level6SuiteTaxonomyTests(unittest.TestCase):
             {"audit_suite": "INESData integration", "audit_group": "Operational Storage"},
         )
 
+    def test_classifies_edc_component_integration_specs(self):
+        self.assertEqual(
+            classify_playwright_spec("adapters/edc/specs/08-ontology-hub-edc-readonly.spec.ts"),
+            {"audit_suite": "EDC integration", "audit_group": "Ontology Hub"},
+        )
+        for spec in [
+            "adapters/edc/specs/09-ai-model-hub-httpdata.spec.ts",
+            "adapters/edc/specs/10-ai-model-observer.spec.ts",
+            "adapters/edc/specs/11-ai-model-browser.spec.ts",
+            "adapters/edc/specs/12-ai-model-execution.spec.ts",
+            "adapters/edc/specs/13-ai-model-benchmarking.spec.ts",
+            "adapters/edc/specs/14-ai-model-daimo-vocabulary.spec.ts",
+            "adapters/edc/specs/15-ai-model-external-execution.spec.ts",
+            "adapters/edc/specs/16-ai-model-observer-participant-summary.spec.ts",
+        ]:
+            with self.subTest(spec=spec):
+                self.assertEqual(
+                    classify_playwright_spec(spec),
+                    {"audit_suite": "EDC integration", "audit_group": "AI Model Hub"},
+                )
+        self.assertEqual(
+            classify_playwright_spec("adapters/edc/specs/07-semantic-virtualization-httpdata.spec.ts"),
+            {"audit_suite": "EDC integration", "audit_group": "Semantic Virtualization"},
+        )
+        self.assertEqual(
+            classify_playwright_spec("adapters/edc/specs/06b-minio-bucket-visibility.spec.ts"),
+            {"audit_suite": "EDC integration", "audit_group": "Operational Storage"},
+        )
+
     def test_classifies_component_owned_specs(self):
         self.assertEqual(
             classify_playwright_spec(

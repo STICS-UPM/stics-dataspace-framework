@@ -270,7 +270,10 @@ class SharedDataspaceDeploymentAdapter:
         command_getter = runtime.get("bootstrap_dataspace_command")
         resolved_dataspace = dataspace or self._dataspace_name()
         if callable(command_getter):
-            return command_getter(action, dataspace=resolved_dataspace)
+            return (
+                f"{self._bootstrap_environment_prefix(pg_host=pg_host, pg_port=pg_port)}"
+                f"{command_getter(action, dataspace=resolved_dataspace)}"
+            )
         return (
             f"{self._bootstrap_environment_prefix(pg_host=pg_host, pg_port=pg_port)}"
             f"{shlex.quote(self.config.python_exec())} bootstrap.py "

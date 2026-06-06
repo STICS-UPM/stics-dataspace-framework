@@ -23,7 +23,10 @@ def parse_bool(value, *, default: bool = False) -> bool:
 
 
 def default_level4_mode(topology: str) -> str:
-    return "auto" if str(topology or "").strip() == LOCAL_TOPOLOGY else "disabled"
+    normalized_topology = str(topology or "").strip()
+    if normalized_topology in {LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
+        return "auto"
+    return "disabled"
 
 
 def is_known_level4_mode(value) -> bool:

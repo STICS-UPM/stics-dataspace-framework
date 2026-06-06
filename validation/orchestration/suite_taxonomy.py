@@ -43,6 +43,30 @@ def classify_playwright_spec(spec_file: Any, *, source_path: Any = "") -> dict[s
     source = _canonical(source_path)
     blob = f"{source} {spec}"
 
+    if (
+        "/ui/edc/" in f"/{source}/"
+        or "validation/ui/adapters/edc/specs/" in blob
+        or spec.startswith("adapters/edc/specs/")
+    ):
+        if "08-ontology-hub-edc-readonly.spec" in blob:
+            return _taxonomy("EDC integration", "Ontology Hub")
+        if (
+            "09-ai-model-hub-httpdata.spec" in blob
+            or "10-ai-model-observer.spec" in blob
+            or "11-ai-model-browser.spec" in blob
+            or "12-ai-model-execution.spec" in blob
+            or "13-ai-model-benchmarking.spec" in blob
+            or "14-ai-model-daimo-vocabulary.spec" in blob
+            or "15-ai-model-external-execution.spec" in blob
+            or "16-ai-model-observer-participant-summary.spec" in blob
+        ):
+            return _taxonomy("EDC integration", "AI Model Hub")
+        if "07-semantic-virtualization-httpdata.spec" in blob:
+            return _taxonomy("EDC integration", "Semantic Virtualization")
+        if "06b-minio-bucket-visibility.spec" in blob:
+            return _taxonomy("EDC integration", "Operational Storage")
+        return _taxonomy("EDC integration", "Core")
+
     if "08-ontology-hub-inesdata-readonly.spec" in blob:
         return _taxonomy(INTEGRATION_SUITE, "Ontology Hub")
     if (
@@ -87,9 +111,6 @@ def classify_playwright_spec(spec_file: Any, *, source_path: Any = "") -> dict[s
 
     if "components/semantic-virtualization/" in blob:
         return _taxonomy("Semantic Virtualization", "Functional")
-
-    if "/ui/edc/" in f"/{source}/" or "adapters/edc/specs/" in blob:
-        return _taxonomy("EDC integration", "Core")
 
     return _taxonomy("Unclassified", "Review")
 

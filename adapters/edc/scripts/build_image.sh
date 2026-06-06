@@ -16,6 +16,9 @@ K3S_IMAGE_IMPORT_COMMAND="${K3S_IMAGE_IMPORT_COMMAND:-sudo k3s ctr -n k8s.io ima
 GRADLE_TASK=":final-connector:shadowJar"
 CONNECTOR_JAR="final-connector/build/libs/connector.jar"
 CONNECTOR_RUNTIME_DIR="final-connector"
+EDC_GRADLE_RETRIES="${PIONERA_EDC_GRADLE_RETRIES:-${EDC_GRADLE_RETRIES:-2}}"
+EDC_GRADLE_MAX_WORKERS="${PIONERA_EDC_GRADLE_MAX_WORKERS:-${EDC_GRADLE_MAX_WORKERS:-1}}"
+EDC_GRADLE_JVMARGS="${PIONERA_EDC_GRADLE_JVMARGS:-${EDC_GRADLE_JVMARGS:--Xmx768m -XX:MaxMetaspaceSize=384m -Dfile.encoding=UTF-8}}"
 
 APPLY=0
 FORCE_BUILD=0
@@ -60,6 +63,75 @@ run_cmd() {
   if [[ "$APPLY" -eq 1 ]]; then
     bash -lc "$cmd"
   fi
+}
+
+stop_gradle_wrapper_daemons() {
+  if [[ ! -f "$GRADLE_WRAPPER_JAR" ]]; then
+    return 0
+  fi
+  echo "Stopping EDC Gradle daemons for isolated build cache: $GRADLE_USER_HOME"
+  if [[ "$APPLY" -eq 1 ]]; then
+    cd "$SOURCE_DIR" && GRADLE_USER_HOME="$GRADLE_USER_HOME" java -classpath "$GRADLE_WRAPPER_JAR" org.gradle.wrapper.GradleWrapperMain --stop >/dev/null 2>&1 || true
+  fi
+}
+
+run_gradle_build_with_retry() {
+  local attempt
+  local max_attempts
+  local gradle_args
+
+  if ! [[ "$EDC_GRADLE_RETRIES" =~ ^[0-9]+$ ]]; then
+    EDC_GRADLE_RETRIES=2
+  fi
+  if [[ "$EDC_GRADLE_RETRIES" -lt 1 ]]; then
+    EDC_GRADLE_RETRIES=1
+  fi
+  if ! [[ "$EDC_GRADLE_MAX_WORKERS" =~ ^[0-9]+$ ]]; then
+    EDC_GRADLE_MAX_WORKERS=1
+  fi
+  if [[ "$EDC_GRADLE_MAX_WORKERS" -lt 1 ]]; then
+    EDC_GRADLE_MAX_WORKERS=1
+  fi
+
+  max_attempts="$EDC_GRADLE_RETRIES"
+  gradle_args=(
+    "--no-daemon"
+    "--max-workers=$EDC_GRADLE_MAX_WORKERS"
+    "-Dorg.gradle.workers.max=$EDC_GRADLE_MAX_WORKERS"
+    "-Dorg.gradle.jvmargs=$EDC_GRADLE_JVMARGS"
+    "$GRADLE_TASK"
+    "-x"
+    "test"
+  )
+  echo "Gradle retries:    $max_attempts"
+  echo "Gradle max workers: $EDC_GRADLE_MAX_WORKERS"
+  echo "Gradle JVM args:   $EDC_GRADLE_JVMARGS"
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    echo "Gradle build attempt $attempt/$max_attempts"
+    if [[ "$APPLY" -eq 1 ]]; then
+      if (
+        cd "$SOURCE_DIR"
+        GRADLE_USER_HOME="$GRADLE_USER_HOME" java -classpath "$GRADLE_WRAPPER_JAR" org.gradle.wrapper.GradleWrapperMain "${gradle_args[@]}"
+      ); then
+        return 0
+      fi
+    else
+      printf '+ cd "%s" && GRADLE_USER_HOME="%s" java -classpath "%s" org.gradle.wrapper.GradleWrapperMain' "$SOURCE_DIR" "$GRADLE_USER_HOME" "$GRADLE_WRAPPER_JAR"
+      printf ' %q' "${gradle_args[@]}"
+      printf '\n'
+      return 0
+    fi
+
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      echo "Gradle build attempt $attempt failed. Cleaning isolated daemon state before retry."
+      stop_gradle_wrapper_daemons
+      sleep 5
+    fi
+  done
+
+  echo "Gradle build failed after $max_attempts attempt(s)." >&2
+  return 1
 }
 
 remove_minikube_image_if_present() {
@@ -347,7 +419,7 @@ else
   fi
 
   run_cmd "mkdir -p \"$GRADLE_USER_HOME\""
-  run_cmd "cd \"$SOURCE_DIR\" && GRADLE_USER_HOME=\"$GRADLE_USER_HOME\" java -classpath \"$GRADLE_WRAPPER_JAR\" org.gradle.wrapper.GradleWrapperMain --no-daemon -Dorg.gradle.workers.max=1 \"$GRADLE_TASK\" -x test"
+  run_gradle_build_with_retry
 fi
 
 if [[ ! -f "$ABSOLUTE_CONNECTOR_JAR" ]]; then

@@ -6,16 +6,32 @@ import { Ontology } from '../models/ontology';
 
 const DEFAULT_ONTOLOGY_URL = 'http://ontology-hub-demo.dev.ds.dataspaceunit.upm';
 
+type OntologyRuntimeConfig = {
+  ontologyUrl?: string;
+  ontologyAdminUser?: string;
+  ontologyAdminPassword?: string;
+};
+
+type AppConfigWithRuntime = {
+  runtime?: OntologyRuntimeConfig;
+};
+
 @Injectable({
   providedIn: 'root',
 })
 export class OntologyService {
   private readonly http = inject(HttpClient);
   private readonly stateService = inject(DashboardStateService);
+  private runtime: OntologyRuntimeConfig = {};
+
+  constructor() {
+    this.stateService.appConfig$.subscribe(config => {
+      this.runtime = ((config as AppConfigWithRuntime | undefined)?.runtime || {});
+    });
+  }
 
   get ontologyBaseUrl(): string {
-    const runtime = this.stateService.getAppConfig()?.runtime;
-    const url = runtime?.ontologyUrl || DEFAULT_ONTOLOGY_URL;
+    const url = this.runtime.ontologyUrl || DEFAULT_ONTOLOGY_URL;
     return url.replace(/\/$/, '');
   }
 
@@ -30,9 +46,8 @@ export class OntologyService {
     formData.append('prefix', prefix);
     formData.append('vocabUrl', vocabUrl);
 
-    const runtime = this.stateService.getAppConfig()?.runtime;
-    const adminUser = `${runtime?.ontologyAdminUser || ''}`.trim();
-    const adminPassword = `${runtime?.ontologyAdminPassword || ''}`.trim();
+    const adminUser = `${this.runtime.ontologyAdminUser || ''}`.trim();
+    const adminPassword = `${this.runtime.ontologyAdminPassword || ''}`.trim();
     if (adminUser) {
       formData.append('user', adminUser);
     }

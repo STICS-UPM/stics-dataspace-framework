@@ -12,6 +12,8 @@ connector:
   jvmArgs: "{% if keys.environment == 'PRO' %}-Djavax.net.ssl.trustStore=/opt/connector/tls-cacerts/cacerts.jks -Djavax.net.ssl.trustStorePassword=dataspaceunit{% endif %}"
   configuration:
     configFilePath: /opt/connector/config/connector-configuration.properties
+  sql:
+    schemaAutocreate: {{ keys.edc_sql_schema_autocreate | default(true) }}
   ingress:
     hostname: {{ keys.connector_name }}.{% if keys.environment == 'PRO' %}ds.dataspaceunit-project.eu{% else %}{{ keys.ds_domain_base }}{% endif %}
     protocol: {{ 'https' if keys.environment == 'PRO' else 'http' }}

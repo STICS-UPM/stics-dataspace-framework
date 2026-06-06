@@ -29,6 +29,18 @@ LOCAL_EDC_SERVICE_EXTENSIONS_PATH = os.path.join(
     "services",
     "org.eclipse.edc.spi.system.ServiceExtension",
 )
+EDC_DASHBOARD_ASSET_SERVICE_OVERLAY_PATH = os.path.join(
+    PROJECT_ROOT,
+    "adapters",
+    "edc",
+    "overlays",
+    "dashboard",
+    "projects",
+    "dashboard-core",
+    "assets",
+    "src",
+    "asset.service.ts",
+)
 
 
 def _touch(path, *, contents="", executable=False, mtime=None):
@@ -59,6 +71,14 @@ class EdcBuildImageScriptTests(unittest.TestCase):
 
         self.assertIn("com.pionera.assetfilter.infer.InferenceExtension", entries)
         self.assertIn("com.pionera.assetfilter.proxy.CustomProxyDataPlaneExtension", entries)
+
+    def test_dashboard_asset_service_overlay_exposes_rdf_validation_api(self):
+        with open(EDC_DASHBOARD_ASSET_SERVICE_OVERLAY_PATH, "r", encoding="utf-8") as handle:
+            content = handle.read()
+
+        self.assertIn("testRdfAsset(", content)
+        self.assertIn("/validation/rdf_asset", content)
+        self.assertIn("DashboardStateService", content)
 
     def _create_fake_source_tree(self, root_dir):
         _touch(os.path.join(root_dir, "settings.gradle.kts"), contents="rootProject.name = \"connector\"\n")
@@ -163,6 +183,56 @@ class EdcBuildImageScriptTests(unittest.TestCase):
         self.assertIn("Connector jar is outdated and will be rebuilt", completed.stdout)
         self.assertIn("source changed: final-connector/build.gradle.kts", completed.stdout)
         self.assertIn("GradleWrapperMain", completed.stdout)
+
+    def test_build_image_uses_bounded_gradle_retry_defaults_for_rebuilds(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_fake_source_tree(tmpdir)
+            runtime_build_file = os.path.join(
+                tmpdir,
+                "final-connector",
+                "build.gradle.kts",
+            )
+            jar_path = os.path.join(
+                tmpdir,
+                "final-connector",
+                "build",
+                "libs",
+                "connector.jar",
+            )
+            base_time = time.time()
+            os.utime(jar_path, (base_time, base_time))
+            os.utime(runtime_build_file, (base_time + 10, base_time + 10))
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PIONERA_EDC_GRADLE_RETRIES": "3",
+                    "PIONERA_EDC_GRADLE_MAX_WORKERS": "1",
+                    "PIONERA_EDC_GRADLE_JVMARGS": "-Xmx768m -XX:MaxMetaspaceSize=384m -Dfile.encoding=UTF-8",
+                }
+            )
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    SCRIPT_PATH,
+                    "--source-dir",
+                    tmpdir,
+                    "--skip-minikube-load",
+                ],
+                text=True,
+                capture_output=True,
+                cwd=PROJECT_ROOT,
+                env=env,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("Gradle retries:    3", completed.stdout)
+        self.assertIn("Gradle max workers: 1", completed.stdout)
+        self.assertIn("Gradle JVM args:   -Xmx768m -XX:MaxMetaspaceSize=384m -Dfile.encoding=UTF-8", completed.stdout)
+        self.assertIn("--max-workers=1", completed.stdout)
+        self.assertIn("-Dorg.gradle.workers.max=1", completed.stdout)
+        self.assertIn("-Dorg.gradle.jvmargs=-Xmx768m\\ -XX:MaxMetaspaceSize=384m\\ -Dfile.encoding=UTF-8", completed.stdout)
 
     def test_build_image_dry_run_allows_missing_connector_jar(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -20,7 +20,7 @@ documentación estable de `docs/`.
 | Ejecutar validación | [Validación](./37_validation.md) |
 | Revisar resultados | [Visor de reportes](./40_report_viewer.md) |
 | Resolver errores | [Troubleshooting](./39_troubleshooting.md) |
-| Auditar el framework | [Entregable E5.2](./47_entregable_e52_validacion_componentes.md) y [Guía de navegación para auditoría](./44_audit_navigation_guide.md) |
+| Auditar el framework | [Entregable E5.2](./47_entregable_e52_validacion_componentes.md), [estado de integración UI de componentes](./48_estado_integracion_ui_componentes.md) y [Guía de navegación para auditoría](./44_audit_navigation_guide.md) |
 
 ## Estructura Pública del Repositorio Software
 
@@ -62,7 +62,8 @@ uso y auditoría.
 3. [Validación UI core](./10_ui_validation_core.md)
 4. [Ontology Hub](./11_ontology_hub_validation.md)
 5. [AI Model Hub](./15_ai_model_hub_validation_plan.md)
-6. [Visor de reportes](./40_report_viewer.md)
+6. [Estado de integración UI de componentes](./48_estado_integracion_ui_componentes.md)
+7. [Visor de reportes](./40_report_viewer.md)
 
 ### Despliegues con VM
 
@@ -88,7 +89,8 @@ uso y auditoría.
 5. [Validación](./37_validation.md)
 6. [Colecciones Newman y Postman](./31_postman_newman_collections.md)
 7. [Visor de reportes](./40_report_viewer.md)
-8. [Entregable E5.2](./47_entregable_e52_validacion_componentes.md)
+8. [Estado de integración UI de componentes](./48_estado_integracion_ui_componentes.md)
+9. [Entregable E5.2](./47_entregable_e52_validacion_componentes.md)
 
 ## Entrada Principal
 
@@ -125,6 +127,7 @@ Para EDC, la ruta oficial de cierre documentada es `vm-distributed`.
 | [45 Conectores externos](./45_external_connector_readiness.md) | Checklist para conectores y entornos externos |
 | [46 vm-distributed](./46_vm_distributed_runbook.md) | Procedimiento operativo de topología distribuida |
 | [47 E5.2 validación de componentes](./47_entregable_e52_validacion_componentes.md) | Entregable consolidado: reporte de validación, manual técnico, manual de usuario, pruebas, resultados y checklist UNE |
+| [48 Integración UI de componentes](./48_estado_integracion_ui_componentes.md) | Estado de cierre de las interfaces de componentes en INESData y EDC |
 
 ## Trazabilidad Histórica
 

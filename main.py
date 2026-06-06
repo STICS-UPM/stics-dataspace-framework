@@ -144,6 +144,7 @@ from validation.orchestration.reports import (
     launch_playwright_report,
     launch_static_report_server,
     open_local_url,
+    wsl_file_url_for_path,
 )
 from validation.orchestration.targets import (
     build_validation_target_plan,
@@ -5013,9 +5014,15 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
     }
     if runtime_dir:
         env["UI_RUNTIME_DIR"] = runtime_dir
-    if adapter_name == "edc":
-        env["PIONERA_COMPONENT_VALIDATION_MODE"] = "api"
-        env["LEVEL6_COMPONENT_VALIDATION_MODE"] = "api"
+    component_validation_mode = str(
+        config.get("PIONERA_COMPONENT_VALIDATION_MODE")
+        or config.get("LEVEL6_COMPONENT_VALIDATION_MODE")
+        or config.get("COMPONENT_VALIDATION_MODE")
+        or ""
+    ).strip()
+    if component_validation_mode:
+        env["PIONERA_COMPONENT_VALIDATION_MODE"] = component_validation_mode
+        env["LEVEL6_COMPONENT_VALIDATION_MODE"] = component_validation_mode
     env.update(_topology_runtime_environment_overrides(topology=topology, level=5, role="components"))
     if normalize_topology(topology) == "vm-single" and _level6_component_validation_needs_vm_single_mapping_editor(
         config,
@@ -16290,6 +16297,32 @@ def _vm_single_mapping_editor_exposure_mode(topology_config):
     return "ingress"
 
 
+def _vm_single_mapping_editor_public_url(topology_config):
+    return str(
+        _vm_distributed_config_value(
+            topology_config,
+            "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL",
+            "MAPPING_EDITOR_PUBLIC_URL",
+        )
+        or ""
+    ).strip()
+
+
+def _vm_single_mapping_editor_has_dedicated_public_url(topology_config):
+    url = _vm_single_mapping_editor_public_url(topology_config)
+    if not url:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+    if scheme not in {"http", "https"} or not host:
+        return False
+    return host not in {"localhost", "127.0.0.1", "::1"}
+
+
 def _vm_single_mapping_editor_should_use_tunnel(plan, topology_config):
     if os.environ.get("PIONERA_VM_SINGLE_REMOTE_LEVEL_ACTIVE") == "true":
         return False
@@ -16302,6 +16335,8 @@ def _vm_single_mapping_editor_should_use_tunnel(plan, topology_config):
         return False
     if mode == "always":
         return True
+    if _vm_single_mapping_editor_has_dedicated_public_url(topology_config):
+        return False
     exposure = _vm_single_mapping_editor_exposure_mode(topology_config)
     return exposure in {"direct", "host-port", "hostport", "vm-port"}
 
@@ -19404,12 +19439,28 @@ def _offer_open_level6_dashboard(framework_report):
     print("The local server is bound to 127.0.0.1 and stays alive while this framework process is running.")
     if not server.get("ready"):
         print("The dashboard server is still starting. If the browser does not open, use the URL above.")
-    if server.get("ready"):
+    _open_dashboard_url_with_wsl_file_fallback(url, dashboard_path, server_ready=bool(server.get("ready")))
+
+
+def _open_dashboard_url_with_wsl_file_fallback(url, dashboard_path, *, server_ready=True):
+    if server_ready:
         open_result = open_local_url(url)
         if open_result.get("opened"):
             print(f"Opened in the default browser through {open_result.get('method')}.")
-        else:
-            print(f"Could not open the browser automatically: {open_result.get('reason')}")
+            return
+        print(f"Could not open the browser automatically: {open_result.get('reason')}")
+
+    wsl_file_url = wsl_file_url_for_path(dashboard_path)
+    if not wsl_file_url:
+        return
+
+    print("WSL file URL fallback:")
+    print(wsl_file_url)
+    fallback_result = open_local_url(wsl_file_url)
+    if fallback_result.get("opened"):
+        print(f"Opened WSL file URL through {fallback_result.get('method')}.")
+    else:
+        print(f"Could not open the WSL file URL automatically: {fallback_result.get('reason')}")
 
 
 def _open_experiment_dashboard_interactive(experiment):
@@ -19428,12 +19479,7 @@ def _open_experiment_dashboard_interactive(experiment):
     print("The local server is bound to 127.0.0.1 and stays alive while this framework process is running.")
     if not server.get("ready"):
         print("The dashboard server is still starting. If the browser does not open, use the URL above.")
-    if server.get("ready"):
-        open_result = open_local_url(url)
-        if open_result.get("opened"):
-            print(f"Opened in the default browser through {open_result.get('method')}.")
-        else:
-            print(f"Could not open the browser automatically: {open_result.get('reason')}")
+    _open_dashboard_url_with_wsl_file_fallback(url, dashboard_path, server_ready=bool(server.get("ready")))
 
 
 def _open_playwright_report_interactive(experiment):

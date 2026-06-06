@@ -31,4 +31,4 @@ def component_api_only_enabled(env: Mapping[str, str] | None = None) -> bool:
             return str(raw_value).strip().lower().replace("-", "_") in {
                 value.replace("-", "_") for value in API_ONLY_VALUES
             }
-    return component_adapter_name(values) == "edc"
+    return False

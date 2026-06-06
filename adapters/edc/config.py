@@ -5,6 +5,7 @@ import sys
 
 from adapters.inesdata.config import INESDataConfigAdapter, InesdataConfig
 from deployers.infrastructure.lib.config_loader import (
+    apply_topology_runtime_defaults,
     load_deployer_config,
     resolve_deployer_config_layer_paths,
 )
@@ -41,6 +42,7 @@ class EdcConfig(InesdataConfig):
     EDC_DASHBOARD_PROXY_COOKIE_NAME = "edc_dashboard_session"
     EDC_DASHBOARD_ENABLED = False
     EDC_DASHBOARD_BASE_HREF = "/edc-dashboard/"
+    EDC_SQL_SCHEMA_AUTOCREATE = True
     EDC_MANAGED_LABEL = "edc"
 
     @classmethod
@@ -167,6 +169,7 @@ class EDCConfigAdapter(INESDataConfigAdapter):
             "COMPONENTS": "",
             "EDC_DASHBOARD_ENABLED": "true",
             "EDC_DASHBOARD_PROXY_AUTH_MODE": "oidc-bff",
+            "EDC_SQL_SCHEMA_AUTOCREATE": "true",
         }
 
     def _legacy_shared_deployer_config_path(self):
@@ -192,6 +195,7 @@ class EDCConfigAdapter(INESDataConfigAdapter):
             topology=self.topology,
         ):
             values.update(load_deployer_config(path))
+        apply_topology_runtime_defaults(values, self.topology)
         return self._apply_environment_overrides(values)
 
     def edc_dashboard_repo_url(self):
@@ -416,6 +420,13 @@ class EDCConfigAdapter(INESDataConfigAdapter):
         config = self.load_deployer_config()
         raw_value = str(
             config.get("EDC_DASHBOARD_ENABLED", self.config.EDC_DASHBOARD_ENABLED)
+        ).strip().lower()
+        return raw_value in ("1", "true", "yes", "on")
+
+    def edc_sql_schema_autocreate(self):
+        config = self.load_deployer_config()
+        raw_value = str(
+            config.get("EDC_SQL_SCHEMA_AUTOCREATE", self.config.EDC_SQL_SCHEMA_AUTOCREATE)
         ).strip().lower()
         return raw_value in ("1", "true", "yes", "on")
 

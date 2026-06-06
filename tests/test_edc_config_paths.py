@@ -115,6 +115,7 @@ class EdcConfigPathTests(unittest.TestCase):
         self.assertEqual(adapter.edc_dashboard_proxy_client_id(), "dataspace-users")
         self.assertEqual(adapter.edc_dashboard_proxy_scope(), "openid profile email")
         self.assertEqual(adapter.edc_dashboard_proxy_cookie_name(), "edc_dashboard_session")
+        self.assertTrue(adapter.edc_sql_schema_autocreate())
 
     def test_edc_connector_credentials_path_uses_edc_deployment_runtime_dir(self):
         previous = self._clear_pionera_overrides()
@@ -294,6 +295,43 @@ class EdcConfigPathTests(unittest.TestCase):
         self.assertEqual(config["VM_EXTERNAL_IP"], "192.0.2.10")
         self.assertEqual(config["DS_1_NAME"], "pionera-edc")
         self.assertEqual(config["EDC_DASHBOARD_ENABLED"], "false")
+
+    def test_edc_load_deployer_config_applies_topology_runtime_defaults(self):
+        previous = self._clear_pionera_overrides()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                os.makedirs(os.path.join(tmpdir, "deployers", "infrastructure", "topologies"), exist_ok=True)
+                os.makedirs(os.path.join(tmpdir, "deployers", "edc"), exist_ok=True)
+                with open(
+                    os.path.join(tmpdir, "deployers", "infrastructure", "topologies", "local.config"),
+                    "w",
+                    encoding="utf-8",
+                ) as handle:
+                    handle.write(
+                        "DOMAIN_BASE=dev.ed.dataspaceunit.upm\n"
+                        "DS_DOMAIN_BASE=dev.ds.dataspaceunit.upm\n"
+                        "KEYCLOAK_HOSTNAME=auth.dev.ed.dataspaceunit.upm\n"
+                        "MINIO_HOSTNAME=minio.dev.ed.dataspaceunit.upm\n"
+                    )
+                with open(
+                    os.path.join(tmpdir, "deployers", "edc", "deployer.config"),
+                    "w",
+                    encoding="utf-8",
+                ) as handle:
+                    handle.write("DS_1_NAME=pionera-edc\n")
+
+                class TempEdcConfig(EdcConfig):
+                    @classmethod
+                    def script_dir(cls):
+                        return tmpdir
+
+                config = EDCConfigAdapter(TempEdcConfig, topology="local").load_deployer_config()
+        finally:
+            self._restore_environment(previous)
+
+        self.assertEqual(config["DATABASE_HOSTNAME"], "common-srvs-postgresql.common-srvs.svc")
+        self.assertEqual(config["KEYCLOAK_HOSTNAME"], "auth.dev.ed.dataspaceunit.upm")
+        self.assertEqual(config["MINIO_HOSTNAME"], "minio.dev.ed.dataspaceunit.upm")
 
     def test_edc_infrastructure_config_overrides_legacy_shared_config(self):
         previous = self._clear_pionera_overrides()

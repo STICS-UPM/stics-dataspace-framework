@@ -916,6 +916,7 @@ Orden recomendado:
 - [Acceso externo a conectores](./docs/41_pionera_connector_external_access.md)
 - [Guía operativa de vm-distributed](./docs/46_vm_distributed_runbook.md)
 - [Entregable E5.2 de validación de componentes](./docs/47_entregable_e52_validacion_componentes.md)
+- [Estado de integración UI de componentes](./docs/48_estado_integracion_ui_componentes.md)
 
 ## Imágenes, Diagramas y Vídeos Explicativos
 

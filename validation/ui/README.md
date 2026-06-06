@@ -5,7 +5,8 @@ Esta carpeta contiene la capa UI de validación con Playwright.
 Actualmente existen dos modos:
 
 - `inesdata`: suite estable heredada del portal INESData
-- `edc`: suite inicial del portal EDC con autenticación `oidc-bff`
+- `edc`: suite del dashboard EDC con autenticación `oidc-bff`, flujos core y
+  validaciones de integración de componentes
 
 La suite `inesdata` sigue siendo la referencia principal y actualmente cubre:
 
@@ -30,7 +31,7 @@ La suite `inesdata` sigue siendo la referencia principal y actualmente cubre:
 - `../projects/inesdata/integration/test_cases.yaml`: catálogo canónico de los flujos de integración INESData `DS-UI-*`.
 - `reporting.py`: agregador que transforma el `results.json` de Playwright en un reporte enriquecido para `Level 6`.
 - `playwright.inesdata.config.ts`: configuración de ejecución y reporters.
-- `playwright.edc.config.ts`: configuración separada para la suite inicial del portal EDC.
+- `playwright.edc.config.ts`: configuración separada para la suite del dashboard EDC.
 - `playwright.ops.config.ts`: configuración separada para suites opcionales de operaciones.
 
 ## Preparación
@@ -69,7 +70,7 @@ cd validation/ui
 npm run test:inesdata
 ```
 
-Smoke suite inicial de `edc`:
+Suite de `edc`:
 
 ```bash
 cd validation/ui
@@ -85,8 +86,29 @@ La suite actual de `edc` cubre:
 - `01 login readiness`
 - `02 navigation smoke`
 - `03 consumer negotiation`
+- `03 provider setup`
+- `03b provider policy creation`
+- `03c provider contract definition creation`
+- `04 consumer catalog`
 - `04 consumer transfer`
 - `05 consumer transfer storage` con validación del objeto transferido en MinIO
+- `05 e2e transfer flow`
+- `06b MinIO bucket visibility`
+- `07 semantic virtualization HttpData`
+- `08 ontology hub read-only`
+- `09 AI Model Hub HttpData`
+- `10 AI Model Observer route availability`
+- `11 AI Model Browser`
+- `12 AI Model Execution`
+- `13 AI Model Benchmarking`
+- `14 AI Model Hub DAIMO metadata`
+- `15 AI Model External Execution`
+- `16 AI Model Observer participant summary`
+
+Las pruebas `10` y `16` de EDC son comprobaciones explícitas de paridad para
+`AI Model Observer`. Por defecto no se ejecutan porque el dashboard EDC actual
+no expone esa ruta. Si se habilita `UI_EDC_MODEL_OBSERVER_DEMO=1`, fallan con
+un mensaje directo hasta que exista una integración real del Observer en EDC.
 
 Smoke usado por `main.py menu` Level 6:
 
@@ -307,6 +329,13 @@ despliega ese fixture automáticamente cuando `AI Model Hub` está configurado.
 `Participant summary`. La prueba es read-only, usa IDs controlados, genera
 capturas/JSON y se marca como `skipped` si la UI del Observer aún no está
 integrada en el build local.
+
+En EDC, `UI_ONTOLOGY_HUB_EDC_DEMO=1` habilita la validación read-only de
+`Ontology Hub` desde el dashboard EDC. `UI_AI_MODEL_HUB_HTTPDATA_DEMO=1`
+habilita las validaciones equivalentes de `AI Model Hub` sobre `ML Assets`,
+`Model Execution`, `Model Benchmarking`, metadatos DAIMO y ejecución externa
+tras negociación. `UI_EDC_MODEL_OBSERVER_DEMO=1` exige explícitamente la
+paridad de `AI Model Observer` en EDC y falla mientras esa ruta no exista.
 
 `UI_SEMANTIC_VIRTUALIZATION_CATALOG_CLEANUP=1` activa una limpieza segura previa
 solo para artefactos de validación con prefijos `qa-ui-*` y `asset-e2e-*` en el

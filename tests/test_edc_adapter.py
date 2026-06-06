@@ -141,6 +141,10 @@ class EdcConnectorConfigAdapter:
         return False
 
     @staticmethod
+    def edc_sql_schema_autocreate():
+        return True
+
+    @staticmethod
     def edc_dashboard_base_href():
         return "/edc-dashboard/"
 
@@ -690,6 +694,26 @@ class EdcDeploymentTests(unittest.TestCase):
                 "credentials-dataspace-pionera-edc.json"
             )
         )
+
+    def test_edc_shared_level3_bootstrap_command_receives_postgres_forward_overrides(self):
+        deployment = EDCDeploymentAdapter(
+            run=lambda *_args, **_kwargs: None,
+            run_silent=lambda *_args, **_kwargs: "",
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=SharedInfrastructureStub(),
+        )
+
+        command = deployment._delegate._bootstrap_dataspace_command(
+            "create",
+            dataspace="pionera-edc",
+            pg_host="127.0.0.1",
+            pg_port="15432",
+        )
+
+        self.assertIn("PIONERA_TOPOLOGY=local", command)
+        self.assertIn("PIONERA_PG_HOST=127.0.0.1", command)
+        self.assertIn("PIONERA_PG_PORT=15432", command)
+        self.assertIn("deployers/inesdata/bootstrap.py", command)
         self.assertTrue(
             deployment._delegate.config.registration_service_dir().endswith(
                 "Validation-Environment/deployers/shared/dataspace/registration-service"
@@ -1275,6 +1299,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
 
         self.assertEqual(payload["connector"]["image"]["name"], "ghcr.io/proyectopionera/edc-connector")
         self.assertEqual(payload["connector"]["configuration"]["configFilePath"], "/opt/connector/config/connector-configuration.properties")
+        self.assertTrue(payload["connector"]["sql"]["schemaAutocreate"])
         self.assertEqual(payload["connector"]["ingress"]["hostname"], "conn-citycounciledc-demoedc.dev.ds.dataspaceunit.upm")
         self.assertEqual(
             payload["connector"]["minio"]["accesskey"],

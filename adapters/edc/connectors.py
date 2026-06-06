@@ -1338,6 +1338,9 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 "configuration": {
                     "configFilePath": "/opt/connector/config/connector-configuration.properties",
                 },
+                "sql": {
+                    "schemaAutocreate": self.config_adapter.edc_sql_schema_autocreate(),
+                },
                 "ingress": {
                     "hostname": f"{connector_name}.{ds_domain}",
                     "protocol": "https" if environment == "pro" else "http",

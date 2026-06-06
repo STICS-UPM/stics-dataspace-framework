@@ -74,6 +74,7 @@ INESDATA_CONNECTOR_INTERFACE_IMAGE_NAME=
 INESDATA_CONNECTOR_INTERFACE_IMAGE_TAG=
 EDC_CONNECTOR_IMAGE_NAME=
 EDC_CONNECTOR_IMAGE_TAG=
+EDC_SQL_SCHEMA_AUTOCREATE=true
 # Optional prebuilt Level 5 component images for this topology. Configure full
 # image references with explicit tags when component charts otherwise use
 # repository:local images.

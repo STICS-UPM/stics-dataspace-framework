@@ -1484,6 +1484,111 @@ class INESDataComponentsAdapter:
         for image_ref in image_refs:
             self._load_image_into_minikube(profile, image_ref)
 
+    @staticmethod
+    def _k3s_image_exists_command(image_ref: str) -> str:
+        refs = image_runtime.k3s_image_save_refs(image_ref)
+        refs_q = " ".join(shlex.quote(ref) for ref in refs if ref)
+        if not refs_q:
+            return "exit 1"
+        return (
+            "images=$(sudo -n k3s ctr -n k8s.io images ls -q 2>/dev/null "
+            "|| k3s ctr -n k8s.io images ls -q 2>/dev/null) || exit 1; "
+            f"for ref in {refs_q}; do "
+            "printf '%s\n' \"$images\" | grep -Fx -- \"$ref\" >/dev/null && exit 0; "
+            "done; exit 1"
+        )
+
+    def _k3s_runtime_has_image(self, image_ref: str, deployer_config: dict | None = None) -> bool:
+        if not image_ref:
+            return False
+        remote_target = self._remote_k3s_image_import_target(deployer_config)
+        exists_command = self._k3s_image_exists_command(image_ref)
+        if remote_target:
+            return self.run_silent(shell_join(remote_target.ssh_command_args(exists_command))) is not None
+        if not self._local_k3s_command_available():
+            return False
+        return self.run_silent(exists_command) is not None
+
+    def _deployment_has_ready_image(
+        self,
+        deployment_name: str,
+        namespace: str,
+        image_ref: str,
+    ) -> bool:
+        if not image_ref:
+            return False
+        deployment = str(deployment_name or "").strip()
+        namespace = str(namespace or "").strip()
+        if not deployment or not namespace:
+            return False
+        deployment_q = shlex.quote(deployment)
+        namespace_q = shlex.quote(namespace)
+        raw_deployment = self.run_silent(f"kubectl get deployment {deployment_q} -n {namespace_q} -o json")
+        if not raw_deployment:
+            return False
+        try:
+            deployment = json.loads(raw_deployment)
+        except (TypeError, ValueError):
+            return False
+
+        spec = deployment.get("spec") or {}
+        status = deployment.get("status") or {}
+        desired_replicas = int(spec.get("replicas") or 1)
+        ready_replicas = int(status.get("readyReplicas") or 0)
+        available_replicas = int(status.get("availableReplicas") or 0)
+        if ready_replicas < desired_replicas or available_replicas < desired_replicas:
+            return False
+
+        containers = (((spec.get("template") or {}).get("spec") or {}).get("containers") or [])
+        rendered_images = {str(container.get("image") or "").strip() for container in containers}
+        candidate_refs = set(image_runtime.k3s_image_save_refs(image_ref))
+        candidate_refs.add(str(image_ref or "").strip())
+        return bool(rendered_images.intersection(candidate_refs))
+
+    def _existing_component_deployment_has_ready_image(
+        self,
+        normalized_component: str,
+        image_ref: str,
+        deployer_config: dict | None = None,
+    ) -> bool:
+        release_name = self._resolve_component_release_name(normalized_component)
+        namespace = self._resolve_components_namespace(
+            ds_name=self._dataspace_name(),
+            namespace=None,
+            deployer_config=dict(deployer_config or {}),
+        )
+        return self._deployment_has_ready_image(release_name, namespace, image_ref)
+
+    def _k3s_local_image_already_available(
+        self,
+        normalized_component: str,
+        image_ref: str,
+        deployer_config: dict | None = None,
+    ) -> bool:
+        if self._k3s_runtime_has_image(image_ref, deployer_config):
+            print(f"Verified k3s runtime already has local image '{image_ref}'.")
+            return True
+        return False
+
+    def _prepare_existing_host_local_image_for_k3s(
+        self,
+        normalized_component: str,
+        image_ref: str,
+        cluster_type: str,
+        profile: str,
+        deployer_config: dict | None = None,
+    ) -> bool:
+        if self._k3s_local_image_already_available(normalized_component, image_ref, deployer_config):
+            return True
+        if not self._host_has_image(image_ref):
+            return False
+        print(
+            f"Local image auto-build disabled for '{normalized_component}', "
+            f"but host image '{image_ref}' exists. Importing it into k3s."
+        )
+        self._load_image_into_cluster_runtime(cluster_type, profile, image_ref, deployer_config)
+        return True
+
     def _build_ontology_hub_image_on_host(self, image_ref: str, deployer_config: dict):
         ontology_hub_dir = self._resolve_ontology_hub_source_dir(deployer_config)
         dockerfile_path = os.path.join(ontology_hub_dir, "Dockerfile")
@@ -1670,6 +1775,13 @@ class INESDataComponentsAdapter:
                     cluster_type == "k3s"
                     and self._normalized_topology() in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}
                     and not self._assume_level5_local_images_available(deployer_config)
+                    and not self._prepare_existing_host_local_image_for_k3s(
+                        normalized_component,
+                        image_ref,
+                        cluster_type,
+                        profile,
+                        deployer_config,
+                    )
                 ):
                     self._fail(
                         f"Local image auto-build disabled for '{normalized_component}'",
@@ -1703,6 +1815,13 @@ class INESDataComponentsAdapter:
                 and cluster_type == "k3s"
                 and self._normalized_topology() in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}
                 and not self._assume_level5_local_images_available(deployer_config)
+                and not self._prepare_existing_host_local_image_for_k3s(
+                    normalized_component,
+                    image_ref,
+                    cluster_type,
+                    profile,
+                    deployer_config,
+                )
             ):
                 self._fail(
                     f"Local image auto-build disabled for '{normalized_component}'",

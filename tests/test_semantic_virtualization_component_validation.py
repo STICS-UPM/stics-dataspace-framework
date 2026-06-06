@@ -260,7 +260,7 @@ class SemanticVirtualizationComponentValidationTests(unittest.TestCase):
         self.assertEqual(result["summary"]["total"], 13)
         self.assertEqual(result["pt5_summary"]["total"], 10)
 
-    def test_run_semantic_virtualization_validation_uses_api_only_mode_for_edc(self):
+    def test_run_semantic_virtualization_validation_uses_api_only_mode_when_explicitly_enabled(self):
         def fake_http_get(url, timeout=20, headers=None):
             if url == "http://semantic.example.local":
                 return 200, "text/html", "<html><body>Semantic Virtualization</body></html>"
@@ -306,7 +306,14 @@ class SemanticVirtualizationComponentValidationTests(unittest.TestCase):
                 mock.patch(
                     "validation.components.semantic_virtualization.runner.run_semantic_virtualization_ui_validation"
                 ) as ui,
-                mock.patch.dict(os.environ, {"PIONERA_ADAPTER": "edc"}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "PIONERA_ADAPTER": "edc",
+                        "PIONERA_COMPONENT_VALIDATION_MODE": "api-only",
+                    },
+                    clear=True,
+                ),
             ):
                 result = run_semantic_virtualization_validation(
                     "http://semantic.example.local",

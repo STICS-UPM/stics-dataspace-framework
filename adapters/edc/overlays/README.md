@@ -7,7 +7,7 @@ Versioned overlays applied at build time onto synced upstream sources (`asset-fi
 ```bash
 cd adapters/edc
 bash scripts/apply_overlays.sh --apply --target connector   # Java extensions + Gradle patches
-bash scripts/apply_overlays.sh --apply --target dashboard   # UI key prefix + runtime parity
+bash scripts/apply_overlays.sh --apply --target dashboard   # Ontology Hub UI route + runtime parity
 bash scripts/apply_overlays.sh --apply --target all
 ```
 
@@ -41,6 +41,7 @@ Packages: `org.eclipse.edc.validation.rdf.*` — no Inesdata names in the port.
 
 - **Same data space:** RDF validation expects provider/consumer MinIO in the same space (`AmazonS3-PUSH` flows).
 - **CORS:** Ontology Hub must allow the EDC dashboard origin for `/ontologies` and asset-create ontology pickers.
+- **Dashboard UI:** the dashboard overlay adds the `Ontologies` menu entry, route, runtime `ontologyUrl` support, and a read-only Ontology Hub browser.
 - **Ingress:** Provider dataplane must reach consumer `POST /public/validation/rdf-mirror` (configure `rdfValidationCallbackUrl` on transfer create — dashboard sets this automatically for push transfers).
 - **SQL:** Overlay adds `transfer-process-store-sql`, transaction datasource, and PostgreSQL driver to `final-connector` so validation snapshots persist when `edc.datasource.default.*` is configured (see `deployers/edc/connector/config/connector-configuration.properties.tpl`).
 

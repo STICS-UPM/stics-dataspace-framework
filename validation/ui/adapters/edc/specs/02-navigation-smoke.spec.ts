@@ -33,6 +33,14 @@ const providerSections: NavigationExpectation[] = [
       { description: "contract definition card", selector: "lib-contract-definition-card" },
     ],
   },
+  {
+    section: "Ontologies",
+    path: "/edc-dashboard/ontologies",
+    probes: [
+      { description: "ontology hub endpoint", text: /Ontology Hub endpoint/i },
+      { description: "open ontology hub action", selector: "a:has-text('Open Ontology Hub')" },
+    ],
+  },
 ];
 
 const consumerSections: NavigationExpectation[] = [

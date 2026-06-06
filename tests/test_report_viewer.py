@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -673,6 +674,15 @@ class ReportViewerTests(unittest.TestCase):
         command = fake_subprocess.calls[0]["command"]
         self.assertEqual(command[:4], [str(fake_cmd), "/c", "start", ""])
         self.assertEqual(command[-1], "http://127.0.0.1:9000/framework-report/index.html")
+
+    def test_wsl_file_url_for_path_uses_configured_distro_name(self):
+        with mock.patch.dict(os.environ, {"WSL_DISTRO_NAME": "Ubuntu"}, clear=False):
+            url = reports.wsl_file_url_for_path("/home/example/project with spaces/framework-report/index.html")
+
+        self.assertEqual(
+            url,
+            "file://wsl.localhost/Ubuntu/home/example/project%20with%20spaces/framework-report/index.html",
+        )
 
 
 if __name__ == "__main__":

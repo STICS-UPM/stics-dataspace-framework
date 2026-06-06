@@ -121,7 +121,7 @@ class OntologyHubComponentIntegrationValidationTests(unittest.TestCase):
         self.assertEqual(runtime["adminEmail"], "chart-admin@example.org")
         self.assertEqual(runtime["adminPassword"], "chart-secret-password")
 
-    def test_run_ontology_hub_component_validation_is_api_only(self):
+    def test_run_ontology_hub_component_validation_is_api_only_when_explicitly_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             api_cases = [
                 {
@@ -168,6 +168,10 @@ class OntologyHubComponentIntegrationValidationTests(unittest.TestCase):
             with mock.patch(
                 "validation.components.ontology_hub.integration.component_runner.run_ontology_hub_validation",
                 return_value=api_result,
+            ), mock.patch.dict(
+                os.environ,
+                {"PIONERA_COMPONENT_VALIDATION_MODE": "api-only"},
+                clear=False,
             ):
                 result = run_ontology_hub_component_validation(
                     "http://ontology-hub-demo.dev.ds.dataspaceunit.upm",

@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 
 
 class MetricsGraphGenerator:
@@ -8,6 +9,10 @@ class MetricsGraphGenerator:
     @staticmethod
     def _load_plot_backend():
         try:
+            if not os.environ.get("MPLCONFIGDIR"):
+                cache_dir = os.path.join(tempfile.gettempdir(), "pionera-matplotlib-cache")
+                os.makedirs(cache_dir, exist_ok=True)
+                os.environ["MPLCONFIGDIR"] = cache_dir
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt

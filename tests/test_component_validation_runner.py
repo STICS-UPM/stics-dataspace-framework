@@ -54,9 +54,9 @@ class ComponentValidationRunnerTests(unittest.TestCase):
         self.assertEqual(ai_model_registration.deployable_adapters, ("inesdata", "edc"))
         self.assertEqual(COMPONENT_REGISTRY["ai-model-hub"].validation_groups, ("ai-model-hub",))
 
-    def test_component_execution_mode_defaults_to_api_for_edc(self):
+    def test_component_execution_mode_defaults_to_mixed_for_edc(self):
         self.assertEqual(component_adapter_name({"PIONERA_ADAPTER": "edc"}), "edc")
-        self.assertTrue(component_api_only_enabled({"PIONERA_ADAPTER": "edc"}))
+        self.assertFalse(component_api_only_enabled({"PIONERA_ADAPTER": "edc"}))
         self.assertFalse(component_api_only_enabled({"PIONERA_ADAPTER": "inesdata"}))
 
     def test_component_execution_mode_honors_explicit_override(self):

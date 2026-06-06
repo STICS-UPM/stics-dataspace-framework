@@ -7006,12 +7006,36 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(env["PIONERA_ADAPTER"], "edc")
         self.assertEqual(env["UI_ADAPTER"], "edc")
         self.assertEqual(env["AI_MODEL_HUB_COMPONENT_ADAPTER"], "edc")
-        self.assertEqual(env["PIONERA_COMPONENT_VALIDATION_MODE"], "api")
-        self.assertEqual(env["LEVEL6_COMPONENT_VALIDATION_MODE"], "api")
+        self.assertNotIn("PIONERA_COMPONENT_VALIDATION_MODE", env)
+        self.assertNotIn("LEVEL6_COMPONENT_VALIDATION_MODE", env)
         self.assertEqual(env["UI_DATASPACE"], "pionera-edc")
         self.assertEqual(env["AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER"], "conn-citycounciledc-pionera-edc")
         self.assertEqual(env["AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER"], "conn-companyedc-pionera-edc")
         self.assertEqual(env["AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER"], "conn-citycounciledc-pionera-edc")
+
+    def test_level6_component_validation_environment_honors_explicit_api_only_mode(self):
+        context = DeploymentContext.from_mapping(
+            {
+                "deployer": "edc",
+                "topology": "local",
+                "environment": "DEV",
+                "dataspace_name": "pionera-edc",
+                "ds_domain_base": "dev.ds.dataspaceunit.upm",
+                "connectors": [
+                    "conn-citycounciledc-pionera-edc",
+                    "conn-companyedc-pionera-edc",
+                ],
+                "config": {
+                    "KC_URL": "http://keycloak.dev.ed.dataspaceunit.upm",
+                    "PIONERA_COMPONENT_VALIDATION_MODE": "api-only",
+                },
+            }
+        )
+
+        env = main._level6_component_validation_environment(context, "edc")
+
+        self.assertEqual(env["PIONERA_COMPONENT_VALIDATION_MODE"], "api-only")
+        self.assertEqual(env["LEVEL6_COMPONENT_VALIDATION_MODE"], "api-only")
 
     def test_level6_component_validation_environment_uses_vm_distributed_public_urls(self):
         context = DeploymentContext.from_mapping(
@@ -7127,6 +7151,20 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["status"], "started")
         self.assertEqual(result["mode"], "kubectl-port-forward")
         self.assertEqual(result["url"], "http://127.0.0.1:5678")
+
+    def test_vm_single_mapping_editor_public_url_disables_auto_tunnel(self):
+        should_tunnel = main._vm_single_mapping_editor_should_use_tunnel(
+            {"vms": [{"address": "192.168.122.52"}]},
+            {
+                "CLUSTER_TYPE": "k3s",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL": "https://streamlit-org4.example.test",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE": "host-port",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT": "5678",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_MODE": "auto",
+            },
+        )
+
+        self.assertFalse(should_tunnel)
 
     def test_vm_single_mapping_editor_port_forward_command_is_parametrized(self):
         command = main._vm_single_mapping_editor_port_forward_command(
@@ -9384,6 +9422,43 @@ class MainCliTests(unittest.TestCase):
         confirm_mock.assert_called_once_with("Open Level 6 dashboard report now?", default=False)
         server_mock.assert_called_once_with(tmp)
         open_mock.assert_called_once_with("http://127.0.0.1:34567/framework-report/index.html")
+
+    def test_offer_open_level6_dashboard_uses_wsl_file_url_fallback_when_browser_open_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dashboard_path = os.path.join(tmp, "framework-report", "index.html")
+            os.makedirs(os.path.dirname(dashboard_path), exist_ok=True)
+            with open(dashboard_path, "w", encoding="utf-8") as handle:
+                handle.write("<html></html>")
+
+            with mock.patch.object(sys.stdin, "isatty", return_value=True), mock.patch.object(
+                main,
+                "_interactive_confirm",
+                return_value=True,
+            ), mock.patch.object(
+                main,
+                "launch_static_report_server",
+                return_value={"url": "http://127.0.0.1:34567", "ready": True},
+            ), mock.patch.object(
+                main,
+                "wsl_file_url_for_path",
+                return_value="file://wsl.localhost/Ubuntu/tmp/framework-report/index.html",
+            ), mock.patch.object(
+                main,
+                "open_local_url",
+                side_effect=[
+                    {"opened": False, "reason": "Desktop opener failed."},
+                    {"opened": True, "method": "windows-cmd-start"},
+                ],
+            ) as open_mock:
+                main._offer_open_level6_dashboard({"path": dashboard_path})
+
+        self.assertEqual(
+            [call.args[0] for call in open_mock.call_args_list],
+            [
+                "http://127.0.0.1:34567/framework-report/index.html",
+                "file://wsl.localhost/Ubuntu/tmp/framework-report/index.html",
+            ],
+        )
 
     def test_offer_open_level6_dashboard_skips_non_interactive_runs(self):
         with tempfile.TemporaryDirectory() as tmp:

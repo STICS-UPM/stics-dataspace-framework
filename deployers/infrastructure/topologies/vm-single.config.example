@@ -44,10 +44,10 @@ VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX=/c
 COMPONENTS_PUBLIC_BASE_URL=
 COMPONENTS_PUBLIC_PATH_REWRITE=true
 VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER=level5
-# VM topologies use prebuilt/chart images by default. Set the local image modes
-# to auto or required only for development workflows that intentionally build
-# and import images from sources.
-LEVEL4_LOCAL_IMAGES_MODE=disabled
+# vm-single uses k3s and serves connector UIs through path prefixes such as
+# /c/org2. Level 4 builds and imports local connector images by default so the
+# runtime image matches the framework sources and supports those public paths.
+LEVEL4_LOCAL_IMAGES_MODE=auto
 LEVEL5_AUTO_BUILD_LOCAL_IMAGES=false
 LEVEL6_AUTO_BUILD_LOCAL_IMAGES=false
 LEVEL5_ASSUME_LOCAL_IMAGES_AVAILABLE=false
@@ -58,6 +58,7 @@ INESDATA_CONNECTOR_INTERFACE_IMAGE_NAME=
 INESDATA_CONNECTOR_INTERFACE_IMAGE_TAG=
 EDC_CONNECTOR_IMAGE_NAME=
 EDC_CONNECTOR_IMAGE_TAG=
+EDC_SQL_SCHEMA_AUTOCREATE=true
 # Optional prebuilt Level 5 component images for this topology. Configure full
 # image references with explicit tags when component charts otherwise use
 # repository:local images.
@@ -93,7 +94,10 @@ ONTOLOGY_HUB_SELF_HOST_NAMESPACE=components
 ONTOLOGY_HUB_SELF_HOST_SERVICE_PORT=3333
 AI_MODEL_HUB_PUBLIC_URL=
 SEMANTIC_VIRTUALIZATION_PUBLIC_URL=
+# Optional Streamlit mapping editor exposure. Use a dedicated public URL when
+# the reverse proxy must support WebSocket upgrade without path rewriting.
 SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL=
+SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL=
 SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE=
 SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT=
 SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_HOST=

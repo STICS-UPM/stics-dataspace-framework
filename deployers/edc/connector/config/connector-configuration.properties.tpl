@@ -50,6 +50,7 @@ edc.datasource.default.password={{ .Values.services.db.password }}
 edc.datasource.default.pool.maxIdleConnections=10
 edc.datasource.default.pool.maxTotalConnections=10
 edc.datasource.default.pool.minIdleConnections=5
+edc.sql.schema.autocreate={{ .Values.connector.sql.schemaAutocreate }}
 
 edc.aws.access.key={{ .Values.connector.minio.accesskey }}
 edc.aws.secret.access.key={{ .Values.connector.minio.secretkey }}

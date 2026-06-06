@@ -419,6 +419,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
 
         images_to_import = []
         image_labels = {}
+        image_deployments = {}
         for deployment_name, label in list(rollout_targets or []):
             deployment = str(deployment_name or "").strip()
             if not deployment:
@@ -433,6 +434,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 if image_ref not in images_to_import:
                     images_to_import.append(image_ref)
                     image_labels[image_ref] = str(label or "").strip()
+                    image_deployments[image_ref] = deployment
 
         if not images_to_import:
             return False
@@ -441,7 +443,24 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             "Ensuring vm-single local component image(s) are available in k3s before rollout: "
             f"{', '.join(images_to_import)}"
         )
+        missing_images = []
         for image_ref in images_to_import:
+            if self._k3s_runtime_has_image(image_ref, resolved_config):
+                print(f"Verified k3s runtime already has local image '{image_ref}'.")
+                continue
+            deployment = image_deployments.get(image_ref, "")
+            if self._deployment_has_ready_image(deployment, resolved_namespace, image_ref):
+                print(
+                    f"Verified deployment/{deployment} is already running "
+                    f"with local image '{image_ref}'."
+                )
+                continue
+            missing_images.append(image_ref)
+
+        if not missing_images:
+            return False
+
+        for image_ref in missing_images:
             self._ensure_k3s_local_image_import_supported(image_ref, resolved_config)
             if not self._host_has_image(image_ref):
                 self._build_component_local_image_for_rollout(
@@ -458,7 +477,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         self._load_images_into_cluster_runtime(
             "k3s",
             profile,
-            images_to_import,
+            missing_images,
             resolved_config,
         )
         return True
