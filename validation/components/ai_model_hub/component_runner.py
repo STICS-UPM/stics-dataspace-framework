@@ -2,7 +2,9 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
+from urllib import parse
 
+import requests
 import yaml
 
 from validation.components.artifact_contract import attach_component_artifact_manifest
@@ -29,6 +31,15 @@ MODEL_OBSERVER_BASE_URL_ENVS = (
     "AI_MODEL_OBSERVER_API_BASE_URL",
     "AI_MODEL_HUB_PUBLIC_PORTAL_BACKEND_URL",
     "INESDATA_PUBLIC_PORTAL_BACKEND_URL",
+)
+MODEL_OBSERVER_BEARER_TOKEN_ENVS = (
+    "AI_MODEL_HUB_OBSERVER_API_BEARER_TOKEN",
+    "AI_MODEL_OBSERVER_API_BEARER_TOKEN",
+)
+MODEL_OBSERVER_CONNECTOR_ENVS = (
+    "AI_MODEL_HUB_MODEL_OBSERVER_CONNECTOR",
+    "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER",
+    "AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER",
 )
 
 STATUS_PRIORITY = {
@@ -322,6 +333,143 @@ def _protocol_from_config(config: Dict[str, Any]) -> str:
     return "https" if environment == "PRO" else "http"
 
 
+def _url_origin(url: str) -> str:
+    parsed = parse.urlsplit(str(url or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _public_urls_from_credentials(credentials: Dict[str, Any] | None) -> Dict[str, str]:
+    if not isinstance(credentials, dict):
+        return {}
+    public_urls = credentials.get("public_access_urls")
+    if isinstance(public_urls, dict) and public_urls:
+        return {str(key): str(value) for key, value in public_urls.items()}
+    access_urls = credentials.get("access_urls")
+    if isinstance(access_urls, dict):
+        return {str(key): str(value) for key, value in access_urls.items()}
+    return {}
+
+
+def _preferred_model_observer_connector(adapter: Any) -> str:
+    for env_name in MODEL_OBSERVER_CONNECTOR_ENVS:
+        candidate = str(os.environ.get(env_name) or "").strip()
+        if candidate:
+            return candidate
+    connectors = list(adapter.get_cluster_connectors() or [])
+    return str(connectors[0] or "").strip() if connectors else ""
+
+
+def _derive_edc_model_observer_base_url(adapter: Any, config: Dict[str, Any], ds_domain: str) -> str:
+    connector = _preferred_model_observer_connector(adapter)
+    if not connector:
+        return ""
+
+    credentials = None
+    loader = getattr(adapter, "load_connector_credentials", None)
+    if callable(loader):
+        credentials = loader(connector)
+    public_urls = _public_urls_from_credentials(credentials)
+
+    connector_default_api = str(public_urls.get("connector_default_api") or "").strip().rstrip("/")
+    if connector_default_api:
+        return connector_default_api
+
+    connector_ingress = str(public_urls.get("connector_ingress") or "").strip().rstrip("/")
+    if connector_ingress:
+        return f"{connector_ingress}/api"
+
+    dashboard_login = str(public_urls.get("edc_dashboard_login") or "").strip().rstrip("/")
+    dashboard_origin = _url_origin(dashboard_login)
+    if dashboard_origin:
+        return f"{dashboard_origin}/edc-dashboard-api/connectors/{parse.quote(connector, safe='')}/api"
+
+    if ds_domain:
+        return f"{_protocol_from_config(config)}://{connector}.{ds_domain}/api"
+    return ""
+
+
+def _keycloak_realm_url_from_config(config: Dict[str, Any], public_urls: Dict[str, str], dataspace: str) -> str:
+    realm_url = str(public_urls.get("keycloak_realm") or "").strip().rstrip("/")
+    if realm_url:
+        return realm_url
+    keycloak_base = str(
+        config.get("KEYCLOAK_PUBLIC_URL")
+        or config.get("KEYCLOAK_FRONTEND_URL")
+        or config.get("KC_URL")
+        or ""
+    ).strip().rstrip("/")
+    if not keycloak_base:
+        return ""
+    if f"/realms/{dataspace}" in keycloak_base:
+        return keycloak_base
+    return f"{keycloak_base}/realms/{dataspace}"
+
+
+def _explicit_model_observer_auth_headers() -> Dict[str, str]:
+    for env_name in MODEL_OBSERVER_BEARER_TOKEN_ENVS:
+        token = str(os.environ.get(env_name) or "").strip()
+        if token:
+            return {"Authorization": f"Bearer {token}"}
+    return {}
+
+
+def _derive_edc_model_observer_auth_headers_from_adapter() -> Dict[str, str]:
+    explicit = _explicit_model_observer_auth_headers()
+    if explicit:
+        return explicit
+    if _component_adapter_name() != "edc":
+        return {}
+
+    try:
+        from validation.components.ai_model_hub.connector_governance_api import (
+            _build_adapter,
+            _dataspace_name_loader,
+        )
+
+        adapter = _build_adapter(_component_adapter_name(), _model_observer_topology())
+        config = dict(adapter.load_deployer_config() or {})
+        dataspace = str(
+            _dataspace_name_loader(adapter)()
+            or config.get("DS_1_NAME")
+            or config.get("DS_NAME")
+            or "demo"
+        ).strip()
+        connector = _preferred_model_observer_connector(adapter)
+        if not connector:
+            return {}
+        credentials = adapter.load_connector_credentials(connector) or {}
+        connector_user = credentials.get("connector_user") or {}
+        username = str(connector_user.get("user") or "").strip()
+        password = str(connector_user.get("passwd") or "").strip()
+        public_urls = _public_urls_from_credentials(credentials)
+        realm_url = _keycloak_realm_url_from_config(config, public_urls, dataspace)
+        if not username or not password or not realm_url:
+            return {}
+
+        response = requests.post(
+            f"{realm_url}/protocol/openid-connect/token",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={
+                "grant_type": "password",
+                "client_id": "dataspace-users",
+                "username": username,
+                "password": password,
+                "scope": "openid profile email",
+            },
+            timeout=20,
+        )
+        if response.status_code != 200:
+            return {}
+        token = response.json().get("access_token")
+        if not token:
+            return {}
+        return {"Authorization": f"Bearer {token}"}
+    except Exception:
+        return {}
+
+
 def _derive_model_observer_base_url_from_adapter() -> str:
     try:
         from validation.components.ai_model_hub.connector_governance_api import (
@@ -343,6 +491,7 @@ def _derive_model_observer_base_url_from_adapter() -> str:
             if normalized:
                 return normalized
 
+        adapter_name = _component_adapter_name()
         dataspace = str(
             _dataspace_name_loader(adapter)()
             or config.get("DS_1_NAME")
@@ -350,6 +499,8 @@ def _derive_model_observer_base_url_from_adapter() -> str:
             or "demo"
         ).strip()
         ds_domain = str(config.get("DS_DOMAIN_BASE") or adapter.config.ds_domain_base() or "").strip()
+        if adapter_name == "edc":
+            return _derive_edc_model_observer_base_url(adapter, config, ds_domain)
         if dataspace and ds_domain:
             return f"{_protocol_from_config(config)}://backend-{dataspace}.{ds_domain}"
     except Exception:
@@ -360,13 +511,14 @@ def _derive_model_observer_base_url_from_adapter() -> str:
 def _resolve_model_observer_base_url(fallback_base_url: str | None = None) -> str:
     from validation.components.ai_model_hub.model_observer_api import resolve_model_observer_api_base_url
 
+    adapter_name = _component_adapter_name()
     if _explicit_model_observer_base_url_configured():
-        return resolve_model_observer_api_base_url()
+        return resolve_model_observer_api_base_url(adapter_name=adapter_name)
 
     derived_base_url = _derive_model_observer_base_url_from_adapter()
     if derived_base_url:
-        return resolve_model_observer_api_base_url(derived_base_url)
-    return resolve_model_observer_api_base_url(fallback_base_url)
+        return resolve_model_observer_api_base_url(derived_base_url, adapter_name=adapter_name)
+    return resolve_model_observer_api_base_url(fallback_base_url, adapter_name=adapter_name)
 
 
 def run_ai_model_hub_connector_governance_validation(experiment_dir: str | None = None) -> Dict[str, Any]:
@@ -501,6 +653,8 @@ def run_ai_model_hub_model_observer_validation(
     return run_observer_suite(
         base_url=base_url,
         experiment_dir=experiment_dir,
+        adapter_name=_component_adapter_name(),
+        auth_headers=_derive_edc_model_observer_auth_headers_from_adapter(),
     )
 
 

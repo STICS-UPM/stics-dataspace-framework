@@ -1032,6 +1032,7 @@ def _run_ai_model_hub_ui_functional(mode, test_grep=None, adapter_name=None, top
         **os.environ,
         **_ai_model_hub_functional_runtime_env(adapter, adapter_name=normalized_adapter),
         "AI_MODEL_HUB_ENABLE_UI_VALIDATION": "1",
+        "AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO": os.environ.get("AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO", "1"),
         "AI_MODEL_HUB_BASE_URL": base_url,
         "PLAYWRIGHT_OUTPUT_DIR": output_dir,
         "PLAYWRIGHT_HTML_REPORT_DIR": html_report_dir,
@@ -1782,9 +1783,15 @@ def _run_ai_model_hub_mobility_benchmarking_api_case(_base_url, experiment_dir, 
 
 
 def _run_ai_model_hub_model_observer_api_case(base_url, experiment_dir, _test_id):
-    from validation.components.ai_model_hub.component_runner import run_ai_model_hub_model_observer_validation
+    from validation.components.ai_model_hub.component_runner import (
+        _resolve_model_observer_base_url,
+        run_ai_model_hub_model_observer_validation,
+    )
 
-    return run_ai_model_hub_model_observer_validation(base_url=base_url, experiment_dir=experiment_dir)
+    return run_ai_model_hub_model_observer_validation(
+        base_url=_resolve_model_observer_base_url(base_url),
+        experiment_dir=experiment_dir,
+    )
 
 
 def _run_semantic_virtualization_api_check_case(base_url, experiment_dir, test_id):

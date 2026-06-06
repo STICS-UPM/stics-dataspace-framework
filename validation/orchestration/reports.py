@@ -1558,6 +1558,49 @@ def wsl_file_url_for_path(path: str | os.PathLike[str]) -> str | None:
     return f"file://wsl.localhost/{encoded_distro}/{encoded_path}"
 
 
+def file_url_for_path(path: str | os.PathLike[str]) -> str | None:
+    absolute_path = os.path.abspath(os.fspath(path))
+    if absolute_path.startswith("/"):
+        encoded_path = "/".join(quote(part, safe="") for part in absolute_path.split("/") if part)
+        return f"file:///{encoded_path}"
+    return None
+
+
+def report_access_urls(
+    dashboard_path: str | os.PathLike[str],
+    *,
+    server_url: str | None = None,
+) -> list[dict[str, str]]:
+    urls: list[dict[str, str]] = []
+    if server_url:
+        urls.append(
+            {
+                "label": "Local server URL",
+                "url": f"{str(server_url).rstrip('/')}/framework-report/index.html",
+            }
+        )
+
+    wsl_url = wsl_file_url_for_path(dashboard_path)
+    if wsl_url:
+        urls.append(
+            {
+                "label": "WSL/Windows file URL",
+                "url": wsl_url,
+            }
+        )
+
+    local_file_url = file_url_for_path(dashboard_path)
+    if local_file_url:
+        urls.append(
+            {
+                "label": "Linux/VM file URL",
+                "url": local_file_url,
+            }
+        )
+
+    return urls
+
+
 def _local_url_open_commands(url: str) -> list[dict[str, Any]]:
     commands = []
     wslview = shutil.which("wslview")

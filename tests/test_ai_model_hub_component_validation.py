@@ -981,6 +981,169 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
         self.assertEqual(result, "http://observer.example.local")
         derive_backend.assert_not_called()
 
+    def test_resolve_model_observer_base_url_prefers_edc_connector_default_api(self):
+        class FakeConfig:
+            @staticmethod
+            def ds_domain_base():
+                return "dev.ds.dataspaceunit.upm"
+
+        class FakeAdapter:
+            config = FakeConfig()
+
+            @staticmethod
+            def load_deployer_config():
+                return {"DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm"}
+
+            @staticmethod
+            def get_cluster_connectors():
+                return ["conn-provider-edc", "conn-consumer-edc"]
+
+            @staticmethod
+            def load_connector_credentials(connector):
+                if connector != "conn-provider-edc":
+                    return None
+                return {
+                    "public_access_urls": {
+                        "edc_dashboard_login": "http://dashboard.example.local/edc-dashboard/",
+                        "connector_ingress": "http://conn-provider-edc.example.local",
+                        "connector_default_api": "http://conn-provider-edc.example.local/api",
+                    }
+                }
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"PIONERA_ADAPTER": "edc"},
+                clear=True,
+            ),
+            mock.patch(
+                "validation.components.ai_model_hub.connector_governance_api._build_adapter",
+                return_value=FakeAdapter(),
+            ),
+            mock.patch(
+                "validation.components.ai_model_hub.connector_governance_api._dataspace_name_loader",
+                return_value=lambda: "pionera-edc",
+            ),
+        ):
+            result = component_runner._resolve_model_observer_base_url("http://ai-model-hub.example.local")
+
+        self.assertEqual(
+            result,
+            "http://conn-provider-edc.example.local/api",
+        )
+
+    def test_resolve_model_observer_base_url_uses_edc_dashboard_proxy_when_ingress_is_missing(self):
+        class FakeConfig:
+            @staticmethod
+            def ds_domain_base():
+                return "dev.ds.dataspaceunit.upm"
+
+        class FakeAdapter:
+            config = FakeConfig()
+
+            @staticmethod
+            def load_deployer_config():
+                return {"DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm"}
+
+            @staticmethod
+            def get_cluster_connectors():
+                return ["conn-provider-edc"]
+
+            @staticmethod
+            def load_connector_credentials(connector):
+                if connector != "conn-provider-edc":
+                    return None
+                return {
+                    "public_access_urls": {
+                        "edc_dashboard_login": "http://dashboard.example.local/edc-dashboard/",
+                    }
+                }
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"PIONERA_ADAPTER": "edc"},
+                clear=True,
+            ),
+            mock.patch(
+                "validation.components.ai_model_hub.connector_governance_api._build_adapter",
+                return_value=FakeAdapter(),
+            ),
+            mock.patch(
+                "validation.components.ai_model_hub.connector_governance_api._dataspace_name_loader",
+                return_value=lambda: "pionera-edc",
+            ),
+        ):
+            result = component_runner._resolve_model_observer_base_url("http://ai-model-hub.example.local")
+
+        self.assertEqual(
+            result,
+            "http://dashboard.example.local/edc-dashboard-api/connectors/conn-provider-edc/api",
+        )
+
+    def test_edc_model_observer_auth_headers_are_derived_from_connector_credentials(self):
+        class FakeConfig:
+            @staticmethod
+            def ds_domain_base():
+                return "dev.ds.dataspaceunit.upm"
+
+        class FakeAdapter:
+            config = FakeConfig()
+
+            @staticmethod
+            def load_deployer_config():
+                return {"DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm"}
+
+            @staticmethod
+            def get_cluster_connectors():
+                return ["conn-provider-edc"]
+
+            @staticmethod
+            def load_connector_credentials(connector):
+                if connector != "conn-provider-edc":
+                    return None
+                return {
+                    "connector_user": {
+                        "user": "user-conn-provider-edc",
+                        "passwd": "demo-password",
+                    },
+                    "public_access_urls": {
+                        "keycloak_realm": "http://auth.example.local/realms/pionera-edc",
+                    },
+                }
+
+        token_response = mock.Mock()
+        token_response.status_code = 200
+        token_response.json.return_value = {"access_token": "observer-token"}
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"PIONERA_ADAPTER": "edc"},
+                clear=True,
+            ),
+            mock.patch(
+                "validation.components.ai_model_hub.connector_governance_api._build_adapter",
+                return_value=FakeAdapter(),
+            ),
+            mock.patch(
+                "validation.components.ai_model_hub.connector_governance_api._dataspace_name_loader",
+                return_value=lambda: "pionera-edc",
+            ),
+            mock.patch(
+                "validation.components.ai_model_hub.component_runner.requests.post",
+                return_value=token_response,
+            ) as post,
+        ):
+            headers = component_runner._derive_edc_model_observer_auth_headers_from_adapter()
+
+        self.assertEqual(headers, {"Authorization": "Bearer observer-token"})
+        post.assert_called_once()
+        self.assertEqual(
+            post.call_args.args[0],
+            "http://auth.example.local/realms/pionera-edc/protocol/openid-connect/token",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

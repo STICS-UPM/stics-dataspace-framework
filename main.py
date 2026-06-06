@@ -1,5 +1,6 @@
 import argparse
 import atexit
+import builtins
 import contextlib
 import getpass
 import ipaddress
@@ -145,6 +146,7 @@ from validation.orchestration.reports import (
     launch_playwright_report,
     launch_static_report_server,
     open_local_url,
+    report_access_urls,
     wsl_file_url_for_path,
 )
 from validation.orchestration.targets import (
@@ -189,6 +191,7 @@ SUPPORTED_COMMANDS = (
     "local-repair",
     "recreate-dataspace",
 )
+BATCH_COMMANDS = ("run", "init")
 SUPPORTED_TOPOLOGIES = DEPLOYER_SUPPORTED_TOPOLOGIES
 SUPPORTED_VALIDATION_MODES = ("auto", "stable", "fast")
 LEVEL_DESCRIPTIONS = {
@@ -10672,7 +10675,824 @@ def run_levels(
     }
 
 
+BATCH_PLAN_DEFAULT_PATH = os.path.join(".profiles", "runs", "full-validation.yaml")
+BATCH_SECRETS_DEFAULT_PATH = os.path.join(".secrets", "pionera.env")
+
+
+def _framework_root_dir():
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _framework_path(path):
+    raw_path = str(path or "").strip()
+    if not raw_path:
+        return ""
+    expanded = os.path.expanduser(raw_path)
+    if os.path.isabs(expanded):
+        return os.path.abspath(expanded)
+    return os.path.abspath(os.path.join(_framework_root_dir(), expanded))
+
+
+def _bool_value(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on", "s", "si", "sí"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _batch_csv_or_list(value, default=None):
+    if value is None:
+        return list(default or [])
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, (list, tuple, set)):
+        return [item for item in value if str(item or "").strip()]
+    return [value]
+
+
+def _batch_normalize_levels(value, default=None):
+    levels = _batch_csv_or_list(value, default=default or sorted(LEVEL_DESCRIPTIONS))
+    normalized = []
+    for level in levels:
+        try:
+            level_id = int(str(level).strip())
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid batch level: {level}") from exc
+        if level_id not in LEVEL_DESCRIPTIONS:
+            supported = ", ".join(str(item) for item in sorted(LEVEL_DESCRIPTIONS))
+            raise ValueError(f"Unsupported batch level '{level_id}'. Supported levels: {supported}")
+        normalized.append(level_id)
+    return normalized
+
+
+def _load_batch_key_value_file(path, *, required=False):
+    resolved_path = _framework_path(path)
+    if not resolved_path:
+        return {}, []
+    if not os.path.exists(resolved_path):
+        if required:
+            raise FileNotFoundError(f"Batch file not found: {path}")
+        return {}, [{"status": "missing", "path": resolved_path}]
+
+    values = {}
+    warnings_payload = []
+    try:
+        mode = os.stat(resolved_path).st_mode & 0o077
+        if mode:
+            warnings_payload.append(
+                {
+                    "status": "warning",
+                    "path": resolved_path,
+                    "reason": "file-permissions-are-not-owner-only",
+                    "suggestion": f"chmod 600 {shlex.quote(resolved_path)}",
+                }
+            )
+    except OSError:
+        pass
+
+    with open(resolved_path, encoding="utf-8") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):].strip()
+            if "=" not in line:
+                warnings_payload.append(
+                    {
+                        "status": "warning",
+                        "path": resolved_path,
+                        "line": line_number,
+                        "reason": "ignored-line-without-equals",
+                    }
+                )
+                continue
+            key, raw_value = line.split("=", 1)
+            key = key.strip()
+            if not key or not key.replace("_", "").isalnum() or key[0].isdigit():
+                warnings_payload.append(
+                    {
+                        "status": "warning",
+                        "path": resolved_path,
+                        "line": line_number,
+                        "reason": "ignored-invalid-variable-name",
+                    }
+                )
+                continue
+            value = raw_value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            values[key] = value
+    return values, warnings_payload
+
+
+def _load_batch_plan_file(plan_path):
+    resolved_path = _framework_path(plan_path or BATCH_PLAN_DEFAULT_PATH)
+    if not os.path.exists(resolved_path):
+        raise FileNotFoundError(f"Batch plan not found: {resolved_path}")
+    with open(resolved_path, encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    if not isinstance(payload, dict):
+        raise ValueError("Batch plan must be a YAML or JSON mapping.")
+    payload["_path"] = resolved_path
+    return payload
+
+
+def _batch_matrix_runs(payload, defaults):
+    matrix = payload.get("matrix") or {}
+    if not isinstance(matrix, dict):
+        raise ValueError("Batch matrix must be a mapping.")
+    topologies = _batch_csv_or_list(matrix.get("topologies"), default=defaults.get("topologies") or ["local"])
+    adapters = _batch_csv_or_list(matrix.get("adapters"), default=defaults.get("adapters") or [])
+    if not adapters:
+        raise ValueError("Batch matrix requires at least one adapter.")
+    runs = []
+    for topology in topologies:
+        for adapter in adapters:
+            runs.append(
+                {
+                    "name": f"{topology}-{adapter}",
+                    "topology": topology,
+                    "adapter": adapter,
+                    "levels": matrix.get("levels", defaults.get("levels")),
+                }
+            )
+    return runs
+
+
+def _batch_run_profile_path(run):
+    explicit_path = str(run.get("profile_path") or "").strip()
+    if explicit_path:
+        return _framework_path(explicit_path)
+    profile = str(run.get("profile") or "").strip()
+    if not profile:
+        return ""
+    if profile.endswith(".env") or os.path.sep in profile:
+        return _framework_path(profile)
+    return _framework_path(os.path.join(".profiles", f"{profile}.env"))
+
+
+def _normalize_batch_plan(payload, adapter_registry=None):
+    registry = adapter_registry or ADAPTER_REGISTRY
+    defaults = dict(payload.get("defaults") or {})
+    raw_runs = payload.get("runs")
+    if raw_runs is None and payload.get("matrix") is not None:
+        raw_runs = _batch_matrix_runs(payload, defaults)
+    if raw_runs is None:
+        raw_runs = [
+            {
+                "name": payload.get("name"),
+                "topology": payload.get("topology"),
+                "adapter": payload.get("adapter"),
+                "levels": payload.get("levels"),
+            }
+        ]
+    if not isinstance(raw_runs, list) or not raw_runs:
+        raise ValueError("Batch plan requires a non-empty 'runs' list or 'matrix'.")
+
+    normalized_runs = []
+    for index, item in enumerate(raw_runs, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Batch run #{index} must be a mapping.")
+        run = {**defaults, **item}
+        adapter = str(run.get("adapter") or "").strip()
+        if not adapter:
+            raise ValueError(f"Batch run #{index} does not define an adapter.")
+        if adapter not in registry:
+            raise ValueError(
+                f"Batch run #{index} uses unsupported adapter '{adapter}'. "
+                f"Available adapters: {', '.join(sorted(registry))}"
+            )
+        topology = normalize_topology(run.get("topology") or "local")
+        if topology not in SUPPORTED_TOPOLOGIES:
+            raise ValueError(
+                f"Batch run #{index} uses unsupported topology '{topology}'. "
+                f"Available topologies: {', '.join(SUPPORTED_TOPOLOGIES)}"
+            )
+        levels = _batch_normalize_levels(run.get("levels"), default=defaults.get("levels"))
+        validation_mode = str(run.get("validation_mode") or "").strip() or None
+        if validation_mode and validation_mode not in SUPPORTED_VALIDATION_MODES:
+            raise ValueError(
+                f"Batch run #{index} uses unsupported validation_mode '{validation_mode}'. "
+                f"Choose from {', '.join(SUPPORTED_VALIDATION_MODES)}."
+            )
+        run_env = dict(defaults.get("env") or {})
+        run_env.update(dict(item.get("env") or {}))
+        profile_path = _batch_run_profile_path(run)
+        normalized_runs.append(
+            {
+                "index": index,
+                "name": str(run.get("name") or f"{topology}-{adapter}-levels-{'-'.join(map(str, levels))}"),
+                "adapter": adapter,
+                "topology": topology,
+                "levels": levels,
+                "profile": str(run.get("profile") or defaults.get("profile") or "").strip(),
+                "profile_path": profile_path,
+                "apply_profile": _bool_value(run.get("apply_profile"), default=bool(profile_path)),
+                "validation_mode": validation_mode,
+                "kafka": run.get("kafka", defaults.get("kafka")),
+                "baseline": _bool_value(run.get("baseline"), default=False),
+                "continue_on_error": _bool_value(
+                    run.get("continue_on_error"),
+                    default=_bool_value(defaults.get("continue_on_error"), default=False),
+                ),
+                "auto_confirm": _bool_value(
+                    run.get("auto_confirm"),
+                    default=_bool_value(defaults.get("auto_confirm"), default=False),
+                ),
+                "confirm_default": _bool_value(
+                    run.get("confirm_default"),
+                    default=_bool_value(defaults.get("confirm_default"), default=False),
+                ),
+                "input_default": str(run.get("input_default", defaults.get("input_default", "")) or ""),
+                "open_report": _bool_value(
+                    run.get("open_report"),
+                    default=_bool_value(defaults.get("open_report"), default=False),
+                ),
+                "stop_on_failure": _bool_value(
+                    run.get("stop_on_failure"),
+                    default=_bool_value(defaults.get("stop_on_failure"), default=False),
+                ),
+                "allow_adapter_switch": _bool_value(
+                    run.get("allow_adapter_switch"),
+                    default=_bool_value(defaults.get("allow_adapter_switch"), default=False),
+                ),
+                "allow_vm_single_cluster_switch": _bool_value(
+                    run.get("allow_vm_single_cluster_switch"),
+                    default=_bool_value(defaults.get("allow_vm_single_cluster_switch"), default=False),
+                ),
+                "local_minikube_tunnel": run.get(
+                    "local_minikube_tunnel",
+                    run.get(
+                        "minikube_tunnel",
+                        defaults.get("local_minikube_tunnel", defaults.get("minikube_tunnel", "auto")),
+                    ),
+                ),
+                "env": run_env,
+                "evidence_root": str(run.get("evidence_root") or defaults.get("evidence_root") or "").strip(),
+            }
+        )
+
+    return {
+        "version": payload.get("version") or 1,
+        "path": payload.get("_path"),
+        "defaults": defaults,
+        "runs": normalized_runs,
+    }
+
+
+def _batch_runtime_environment(run, secrets):
+    env = dict(secrets or {})
+    env.update({key: str(value) for key, value in (run.get("env") or {}).items() if value is not None})
+    env["PIONERA_BATCH_MODE"] = "true"
+    env["PIONERA_LEVEL6_PROMPT_OPEN_REPORT"] = "true" if run.get("open_report") else "false"
+    env["PIONERA_LEVEL6_STOP_ON_PLAYWRIGHT_FAILURE"] = "true" if run.get("stop_on_failure") else "false"
+    env["PIONERA_BATCH_DEFAULT_INPUT"] = str(run.get("input_default") or "")
+    env["PIONERA_BATCH_CONFIRM_DEFAULT"] = "true" if run.get("confirm_default") else "false"
+    env["PIONERA_BATCH_AUTO_CONFIRM"] = "true" if run.get("auto_confirm") else "false"
+    if run.get("validation_mode"):
+        env["LEVEL6_VALIDATION_MODE"] = run["validation_mode"]
+    if run.get("kafka") is not None:
+        if _bool_value(run.get("kafka"), default=False):
+            env[KAFKA_LEVEL6_RUN_FLAG] = "true"
+            env[KAFKA_LEVEL6_SKIP_FLAG] = "false"
+        else:
+            env[KAFKA_LEVEL6_RUN_FLAG] = "false"
+            env[KAFKA_LEVEL6_SKIP_FLAG] = "true"
+    if run.get("allow_adapter_switch"):
+        env["PIONERA_LOCAL_ADAPTER_SWITCH_CONFIRM"] = _local_adapter_switch_confirmation_token(run.get("adapter"))
+    if run.get("allow_vm_single_cluster_switch"):
+        env["PIONERA_VM_SINGLE_CLUSTER_SWITCH_CONFIRM"] = _vm_single_cluster_switch_confirmation_token("k3s")
+    if _batch_local_minikube_tunnel_requested(run):
+        env["PIONERA_LOCAL_MINIKUBE_TUNNEL_MANAGED"] = "true"
+    return env
+
+
+def _local_minikube_profile_for_adapter(adapter):
+    env_profile = os.getenv("PIONERA_MINIKUBE_PROFILE") or os.getenv("MINIKUBE_PROFILE")
+    if env_profile:
+        return env_profile.strip() or "minikube"
+    config_adapter = getattr(adapter, "config_adapter", None)
+    config_loader = getattr(config_adapter, "load_deployer_config", None)
+    config = dict(config_loader() or {}) if callable(config_loader) else {}
+    return str(config.get("MINIKUBE_PROFILE") or "minikube").strip() or "minikube"
+
+
+def _is_minikube_tunnel_process_command(command):
+    raw_command = str(command or "").strip()
+    if not raw_command:
+        return False
+    try:
+        tokens = shlex.split(raw_command)
+    except ValueError:
+        tokens = raw_command.split()
+    if not tokens:
+        return False
+    basenames = [os.path.basename(token) for token in tokens]
+    if "pgrep" in basenames or "grep" in basenames:
+        return False
+    if "minikube" not in basenames:
+        return False
+    return "tunnel" in tokens
+
+
+def _minikube_tunnel_process_profile(command):
+    try:
+        tokens = shlex.split(str(command or ""))
+    except ValueError:
+        tokens = str(command or "").split()
+    for index, token in enumerate(tokens):
+        if token in {"-p", "--profile"} and index + 1 < len(tokens):
+            return tokens[index + 1]
+        if token.startswith("--profile="):
+            return token.split("=", 1)[1]
+    return "minikube"
+
+
+def _batch_local_minikube_tunnel_requested(run):
+    raw_value = run.get("local_minikube_tunnel")
+    if raw_value is None:
+        raw_value = run.get("minikube_tunnel")
+    normalized = str(raw_value if raw_value is not None else "auto").strip().lower()
+    if normalized in {"0", "false", "no", "off", "disabled"}:
+        return False
+    if normalize_topology(run.get("topology") or "local") != "local":
+        return False
+    return any(int(level) >= 3 for level in run.get("levels") or [])
+
+
+def _local_minikube_tunnel_processes(profile=None):
+    if not shutil.which("pgrep"):
+        return []
+    result = subprocess.run(
+        ["pgrep", "-af", "minikube.*tunnel"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    processes = []
+    expected_profile = str(profile or "").strip()
+    for line in (result.stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(maxsplit=1)
+        command = parts[1] if len(parts) > 1 else line
+        if not _is_minikube_tunnel_process_command(command):
+            continue
+        if expected_profile and _minikube_tunnel_process_profile(command) != expected_profile:
+            continue
+        try:
+            pid = int(parts[0])
+        except (TypeError, ValueError):
+            pid = None
+        processes.append({"pid": pid, "command": command})
+    return processes
+
+
+def _batch_minikube_tunnel_log_path(profile):
+    safe_profile = "".join(char if char.isalnum() or char in {"-", "_"} else "-" for char in str(profile or "minikube"))
+    log_dir = _framework_path(os.path.join(".local", "batch"))
+    os.makedirs(log_dir, exist_ok=True)
+    return os.path.join(log_dir, f"minikube-tunnel-{safe_profile}.log")
+
+
+def _start_batch_local_minikube_tunnel(profile):
+    if not shutil.which("minikube"):
+        return {"status": "failed", "reason": "minikube-not-found"}
+    existing = _local_minikube_tunnel_processes(profile)
+    if existing:
+        return {"status": "ready", "reason": "already-running", "profile": profile, "processes": existing}
+
+    log_path = _batch_minikube_tunnel_log_path(profile)
+    log_handle = open(log_path, "a", encoding="utf-8")
+    script = r"""
+set -e
+if command -v sudo >/dev/null 2>&1; then
+  if [ -n "${PIONERA_SUDO_PASSWORD:-}" ]; then
+    printf '%s\n' "$PIONERA_SUDO_PASSWORD" | sudo -S -p '' -v
+    (
+      while true; do
+        printf '%s\n' "$PIONERA_SUDO_PASSWORD" | sudo -S -p '' -v >/dev/null 2>&1 || exit 1
+        sleep 50
+      done
+    ) &
+    KEEPALIVE_PID=$!
+    trap 'kill "$KEEPALIVE_PID" 2>/dev/null || true' EXIT INT TERM
+  else
+    sudo -n -v >/dev/null 2>&1 || true
+  fi
+fi
+minikube -p "$MINIKUBE_PROFILE" tunnel
+""".strip()
+    env = os.environ.copy()
+    env["MINIKUBE_PROFILE"] = str(profile or "minikube")
+    try:
+        process = subprocess.Popen(
+            ["bash", "-lc", script],
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=log_handle,
+            text=True,
+            env=env,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        log_handle.close()
+        return {"status": "failed", "reason": "minikube-tunnel-start-failed", "error": str(exc)}
+
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        if process.poll() is not None:
+            break
+        processes = _local_minikube_tunnel_processes(profile)
+        if processes or not shutil.which("pgrep"):
+            return {
+                "status": "started",
+                "profile": profile,
+                "pid": getattr(process, "pid", None),
+                "log": log_path,
+                "process": process,
+                "log_handle": log_handle,
+                "processes": processes,
+            }
+        time.sleep(0.5)
+
+    returncode = process.poll()
+    if returncode is None:
+        return {
+            "status": "started",
+            "profile": profile,
+            "pid": getattr(process, "pid", None),
+            "log": log_path,
+            "process": process,
+            "log_handle": log_handle,
+        }
+    log_handle.close()
+    return {
+        "status": "failed",
+        "reason": "minikube-tunnel-exited",
+        "returncode": returncode,
+        "log": log_path,
+        "hint": "Provide PIONERA_SUDO_PASSWORD in the local secrets file or start minikube tunnel manually.",
+    }
+
+
+def _stop_batch_local_minikube_tunnel(tunnel):
+    if not isinstance(tunnel, dict) or tunnel.get("status") != "started":
+        return
+    process = tunnel.get("process")
+    if process is not None and getattr(process, "poll", lambda: None)() is None:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        except OSError:
+            process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except OSError:
+                process.kill()
+    log_handle = tunnel.get("log_handle")
+    if log_handle:
+        log_handle.close()
+
+
+def _run_batch_levels(
+    run,
+    adapter_registry=None,
+    deployer_registry=None,
+    validation_engine_cls=ValidationEngine,
+    metrics_collector_cls=MetricsCollector,
+    experiment_storage=ExperimentStorage,
+):
+    adapter = build_adapter(
+        run["adapter"],
+        adapter_registry=adapter_registry,
+        dry_run=False,
+        topology=run["topology"],
+    )
+    completed = []
+    tunnel = {"status": "skipped", "reason": "not-needed"}
+    tunnel_started = False
+    try:
+        for level_id in run["levels"]:
+            if (
+                not tunnel_started
+                and _batch_local_minikube_tunnel_requested(run)
+                and int(level_id) >= 3
+            ):
+                profile = _local_minikube_profile_for_adapter(adapter)
+                print(f"Ensuring local minikube tunnel for profile '{profile}' before Level {level_id}...")
+                tunnel = _start_batch_local_minikube_tunnel(profile)
+                tunnel_started = True
+                status = str(tunnel.get("status") or "").strip().lower()
+                if status not in {"ready", "started"}:
+                    reason = tunnel.get("reason") or tunnel.get("error") or "minikube tunnel unavailable"
+                    log_path = tunnel.get("log")
+                    detail = f" Log: {log_path}" if log_path else ""
+                    raise RuntimeError(f"Local minikube tunnel could not be prepared: {reason}.{detail}")
+                if status == "started":
+                    print(f"Local minikube tunnel started. Log: {tunnel.get('log')}")
+                else:
+                    print("Local minikube tunnel already running.")
+            completed.append(
+                run_level(
+                    adapter,
+                    int(level_id),
+                    deployer_name=run["adapter"],
+                    deployer_registry=deployer_registry,
+                    topology=run["topology"],
+                    validation_engine_cls=validation_engine_cls,
+                    metrics_collector_cls=metrics_collector_cls,
+                    experiment_storage=experiment_storage,
+                    baseline=run["baseline"],
+                )
+            )
+    finally:
+        _stop_batch_local_minikube_tunnel(tunnel)
+
+    status = (
+        "completed_with_validation_failures"
+        if any(
+            isinstance(item, dict)
+            and str(item.get("status") or "").strip().lower() == "completed_with_validation_failures"
+            for item in completed
+        )
+        else "completed"
+    )
+    return {
+        "status": status,
+        "adapter": run["adapter"],
+        "topology": run["topology"],
+        "levels": completed,
+        "minikube_tunnel": {
+            key: value
+            for key, value in dict(tunnel or {}).items()
+            if key not in {"process", "log_handle"}
+        },
+    }
+
+
+@contextlib.contextmanager
+def _batch_console_answer_context(enabled=True):
+    if not enabled:
+        yield
+        return
+
+    original_input = builtins.input
+    original_getpass = getpass.getpass
+
+    def batch_input(prompt=""):
+        prompt_text = str(prompt or "")
+        lowered = prompt_text.lower()
+        if "type recreate common services" in lowered:
+            value = os.environ.get("PIONERA_BATCH_EXACT_CONFIRMATION", "")
+        elif "(y/n)" in lowered or "(y/n" in lowered or "(y/n):" in lowered or "y/n" in lowered:
+            value = "y" if _env_flag("PIONERA_BATCH_CONFIRM_DEFAULT", False) else "n"
+        elif "type " in lowered and " to continue" in lowered:
+            value = os.environ.get("PIONERA_BATCH_EXACT_CONFIRMATION", "")
+        else:
+            value = os.environ.get("PIONERA_BATCH_DEFAULT_INPUT", "")
+        print(f"{prompt_text}[batch input]")
+        return value
+
+    def batch_getpass(prompt="Password: ", stream=None):
+        for key in ("PIONERA_SUDO_PASSWORD", "PIONERA_SSH_PASSWORD", "SUDO_PASSWORD", "SSH_PASSWORD"):
+            value = os.environ.get(key)
+            if value:
+                print(f"{prompt}[batch secret]")
+                return value
+        return ""
+
+    try:
+        builtins.input = batch_input
+        getpass.getpass = batch_getpass
+        yield
+    finally:
+        builtins.input = original_input
+        getpass.getpass = original_getpass
+
+
+def _copy_batch_evidence(run, result):
+    evidence_root = str(run.get("evidence_root") or "").strip()
+    if not evidence_root or not isinstance(result, dict):
+        return []
+    copied = []
+    base_root = _framework_path(evidence_root)
+    levels = result.get("levels") or []
+    for item in levels:
+        if not isinstance(item, dict) or int(item.get("level") or 0) != 6:
+            continue
+        level_result = item.get("result")
+        experiment_dir = level_result.get("experiment_dir") if isinstance(level_result, dict) else None
+        if not experiment_dir or not os.path.isdir(str(experiment_dir)):
+            continue
+        target_dir = os.path.join(
+            base_root,
+            run["topology"],
+            run["adapter"],
+            os.path.basename(os.path.abspath(str(experiment_dir))),
+        )
+        os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+        shutil.copytree(str(experiment_dir), target_dir, dirs_exist_ok=True)
+        copied.append(target_dir)
+    return copied
+
+
+def _create_batch_template_files(plan_path=None, secrets_path=None):
+    resolved_plan = _framework_path(plan_path or BATCH_PLAN_DEFAULT_PATH)
+    resolved_secrets = _framework_path(secrets_path or BATCH_SECRETS_DEFAULT_PATH)
+    os.makedirs(os.path.dirname(resolved_plan), exist_ok=True)
+    os.makedirs(os.path.dirname(resolved_secrets), exist_ok=True)
+    created = []
+    if not os.path.exists(resolved_plan):
+        with open(resolved_plan, "w", encoding="utf-8") as handle:
+            handle.write(
+                "# Validation batch plan. This file contains no secrets.\n"
+                "version: 1\n"
+                "defaults:\n"
+                "  levels: [1, 2, 3, 4, 5, 6]\n"
+                "  validation_mode: stable\n"
+                "  kafka: false\n"
+                "  open_report: false\n"
+                "  stop_on_failure: false\n"
+                "  continue_on_error: true\n"
+                "  auto_confirm: true\n"
+                "  confirm_default: true\n"
+                "  local_minikube_tunnel: auto\n"
+                "  allow_adapter_switch: true\n"
+                "  allow_vm_single_cluster_switch: true\n"
+                "  evidence_root: validation/evidences\n"
+                "# Each run can override defaults.levels, for example: levels: [4, 5, 6]\n"
+                "runs:\n"
+                "  - name: local-inesdata\n"
+                "    topology: local\n"
+                "    adapter: inesdata\n"
+                "    levels: [1, 2, 3, 4, 5, 6]\n"
+                "  - name: local-edc\n"
+                "    topology: local\n"
+                "    adapter: edc\n"
+                "    levels: [1, 2, 3, 4, 5, 6]\n"
+                "  - name: vm-single-inesdata\n"
+                "    topology: vm-single\n"
+                "    adapter: inesdata\n"
+                "    levels: [1, 2, 3, 4, 5, 6]\n"
+                "  - name: vm-single-edc\n"
+                "    topology: vm-single\n"
+                "    adapter: edc\n"
+                "    levels: [1, 2, 3, 4, 5, 6]\n"
+                "  - name: vm-distributed-inesdata\n"
+                "    topology: vm-distributed\n"
+                "    adapter: inesdata\n"
+                "    levels: [1, 2, 3, 4, 5, 6]\n"
+                "  - name: vm-distributed-edc\n"
+                "    topology: vm-distributed\n"
+                "    adapter: edc\n"
+                "    levels: [1, 2, 3, 4, 5, 6]\n"
+            )
+        created.append(resolved_plan)
+    if not os.path.exists(resolved_secrets):
+        with open(resolved_secrets, "w", encoding="utf-8") as handle:
+            handle.write(
+                "# Local secrets for batch execution. Do not commit this file.\n"
+                "# Fill only the values that your environment needs.\n"
+                "PIONERA_SUDO_PASSWORD=\n"
+                "PIONERA_SSH_PASSWORD=\n"
+            )
+        try:
+            os.chmod(resolved_secrets, 0o600)
+        except OSError:
+            pass
+        created.append(resolved_secrets)
+    return {
+        "status": "created" if created else "already-exists",
+        "plan": resolved_plan,
+        "secrets": resolved_secrets,
+        "created": created,
+    }
+
+
+def run_batch(
+    plan_path=None,
+    secrets_path=None,
+    levels_override=None,
+    adapter_registry=None,
+    deployer_registry=None,
+    validation_engine_cls=ValidationEngine,
+    metrics_collector_cls=MetricsCollector,
+    experiment_storage=ExperimentStorage,
+    dry_run=False,
+):
+    plan_payload = _load_batch_plan_file(plan_path or BATCH_PLAN_DEFAULT_PATH)
+    plan = _normalize_batch_plan(plan_payload, adapter_registry=adapter_registry)
+    if levels_override is not None:
+        override_levels = _batch_normalize_levels(levels_override)
+        for run in plan["runs"]:
+            run["levels"] = list(override_levels)
+    secrets = {}
+    secret_warnings = []
+    if secrets_path:
+        secrets, secret_warnings = _load_batch_key_value_file(secrets_path, required=True)
+    elif os.path.exists(_framework_path(BATCH_SECRETS_DEFAULT_PATH)):
+        secrets, secret_warnings = _load_batch_key_value_file(BATCH_SECRETS_DEFAULT_PATH, required=False)
+
+    print("\nBatch execution plan")
+    print(f"Plan: {_framework_relative_path(plan.get('path'))}")
+    print(f"Runs: {len(plan['runs'])}")
+    if secrets_path or secrets:
+        print(f"Secrets: loaded {len(secrets)} variable(s) from local secrets file")
+    for warning in secret_warnings:
+        if warning.get("status") == "warning":
+            print(f"Warning: secrets file issue: {warning.get('reason')} ({warning.get('path')})")
+
+    results = []
+    overall_status = "completed"
+    for run in plan["runs"]:
+        print()
+        print("=" * 48)
+        print(f"Batch run {run['index']}: {run['name']}")
+        print(f"Adapter: {run['adapter']}")
+        print(f"Topology: {run['topology']}")
+        print(f"Levels: {', '.join(str(level) for level in run['levels'])}")
+        run_payload = {
+            "name": run["name"],
+            "adapter": run["adapter"],
+            "topology": run["topology"],
+            "levels": run["levels"],
+            "status": "planned" if dry_run else "running",
+        }
+        try:
+            if run.get("apply_profile") and run.get("profile_path"):
+                if dry_run:
+                    run_payload["profile"] = {
+                        "status": "planned",
+                        "path": run["profile_path"],
+                    }
+                else:
+                    print(f"Applying profile: {_framework_relative_path(run['profile_path'])}")
+                    run_payload["profile"] = apply_environment_configuration_profile(
+                        run["profile_path"],
+                        topology=run["topology"],
+                        adapter_name=run["adapter"],
+                    )
+            if dry_run:
+                run_payload["status"] = "planned"
+            else:
+                runtime_env = _batch_runtime_environment(run, secrets)
+                with _temporary_environment(runtime_env), _batch_console_answer_context(enabled=True):
+                    level_result = _run_batch_levels(
+                        run,
+                        adapter_registry=adapter_registry,
+                        deployer_registry=deployer_registry,
+                        validation_engine_cls=validation_engine_cls,
+                        metrics_collector_cls=metrics_collector_cls,
+                        experiment_storage=experiment_storage,
+                    )
+                run_payload["result"] = level_result
+                run_payload["status"] = level_result.get("status", "completed")
+                evidence = _copy_batch_evidence(run, level_result)
+                if evidence:
+                    run_payload["evidence"] = evidence
+                if str(run_payload["status"]).endswith("validation_failures"):
+                    overall_status = "completed_with_validation_failures"
+        except Exception as exc:
+            run_payload["status"] = "failed"
+            run_payload["error"] = {"type": type(exc).__name__, "message": str(exc)}
+            overall_status = "failed"
+            results.append(run_payload)
+            if not run.get("continue_on_error"):
+                break
+            continue
+        results.append(run_payload)
+
+    return {
+        "status": overall_status,
+        "plan": plan.get("path"),
+        "runs": results,
+    }
+
+
+def _batch_confirm_decision(prompt, default=False):
+    if not _env_flag("PIONERA_BATCH_MODE", False):
+        return None
+    if not _env_flag("PIONERA_BATCH_AUTO_CONFIRM", False):
+        return default
+    return _env_flag("PIONERA_BATCH_CONFIRM_DEFAULT", default)
+
+
 def _interactive_read(prompt):
+    if _env_flag("PIONERA_BATCH_MODE", False):
+        return os.environ.get("PIONERA_BATCH_DEFAULT_INPUT", "")
     try:
         return input(prompt).strip()
     except EOFError:
@@ -10680,6 +11500,10 @@ def _interactive_read(prompt):
 
 
 def _interactive_confirm(prompt, default=False):
+    batch_decision = _batch_confirm_decision(prompt, default=default)
+    if batch_decision is not None:
+        print(f"{prompt} ({'Y/n' if default else 'y/N'}): {'y' if batch_decision else 'n'} [batch]")
+        return bool(batch_decision)
     default_label = "Y/n" if default else "y/N"
     answer = _interactive_read(f"{prompt} ({default_label}): ").strip().lower()
     if not answer:
@@ -20169,10 +20993,20 @@ def _generate_framework_dashboard(experiment_dir):
             },
         }
     print(f"Framework dashboard saved to {dashboard_path}")
+    _print_dashboard_access_urls(dashboard_path)
     return {
         "status": "generated",
         "path": str(dashboard_path),
     }
+
+
+def _print_dashboard_access_urls(dashboard_path, *, server_url=None):
+    urls = report_access_urls(dashboard_path, server_url=server_url)
+    if not urls:
+        return
+    print("Dashboard access URLs:")
+    for item in urls:
+        print(f"- {item['label']}: {item['url']}")
 
 
 def _generate_level6_une_0087_alignment(experiment_dir):
@@ -20263,7 +21097,7 @@ def _offer_open_level6_dashboard(framework_report):
     url = f"{server['url']}/framework-report/index.html"
     print()
     print("Level 6 dashboard available at:")
-    print(url)
+    _print_dashboard_access_urls(dashboard_path, server_url=server["url"])
     print(f"Dashboard file: {dashboard_path}")
     print("The local server is bound to 127.0.0.1 and stays alive while this framework process is running.")
     if not server.get("ready"):
@@ -20303,7 +21137,7 @@ def _open_experiment_dashboard_interactive(experiment):
     url = f"{server['url']}/framework-report/index.html"
     print()
     print("Experiment dashboard available at:")
-    print(url)
+    _print_dashboard_access_urls(dashboard_path, server_url=server["url"])
     print(f"Dashboard file: {dashboard_path}")
     print("The local server is bound to 127.0.0.1 and stays alive while this framework process is running.")
     if not server.get("ready"):
@@ -21068,6 +21902,9 @@ def create_parser(adapter_registry=None):
         epilog=(
             "Examples:\n"
             "  python main.py menu\n"
+            "  python main.py batch init\n"
+            "  python main.py batch --plan .profiles/runs/full-validation.yaml --secrets .secrets/pionera.env\n"
+            "  python main.py batch --plan .profiles/runs/local-inesdata.yaml --secrets .secrets/pionera.env --levels 6\n"
             "  python main.py inesdata deploy --topology local\n"
             "  PIONERA_VM_EXTERNAL_IP=192.0.2.10 python main.py edc hosts --topology vm-single\n"
             "  python main.py inesdata local-repair --topology local\n"
@@ -21091,7 +21928,7 @@ def create_parser(adapter_registry=None):
     parser.add_argument(
         "adapter",
         nargs="?",
-        help=f"Adapter name ({', '.join(sorted(registry))}) or 'list'/'menu'",
+        help=f"Adapter name ({', '.join(sorted(registry))}) or 'list'/'menu'/'batch'",
     )
     parser.add_argument(
         "command",
@@ -21152,6 +21989,21 @@ def create_parser(adapter_registry=None):
         action="store_true",
         help="Print raw JSON for commands that have a human-readable default output.",
     )
+    parser.add_argument(
+        "--plan",
+        default=None,
+        help="Batch execution plan path. Used by 'python main.py batch'.",
+    )
+    parser.add_argument(
+        "--secrets",
+        default=None,
+        help="Local batch secrets env file. Used by 'python main.py batch'.",
+    )
+    parser.add_argument(
+        "--levels",
+        default=None,
+        help="Comma-separated level override for batch runs, for example '6' or '4,5,6'.",
+    )
     return parser
 
 
@@ -21211,6 +22063,42 @@ def main(
         if args.command is not None:
             parser.error("'list' does not accept an additional command")
         return print_available_adapters(adapter_registry=registry)
+
+    if args.adapter == "batch":
+        command = args.command or "run"
+        if command not in BATCH_COMMANDS:
+            parser.error(f"'batch' supports only: {', '.join(BATCH_COMMANDS)}")
+        if args.extra:
+            parser.error(f"unrecognized arguments for batch: {' '.join(args.extra)}")
+        if command == "init":
+            result = _create_batch_template_files(
+                plan_path=args.plan,
+                secrets_path=args.secrets,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2, default=str))
+            else:
+                print("Batch files ready")
+                print(f"Plan: {_framework_relative_path(result['plan'])}")
+                print(f"Secrets: {_framework_relative_path(result['secrets'])}")
+            return result
+        try:
+            result = run_batch(
+                plan_path=args.plan,
+                secrets_path=args.secrets,
+                levels_override=args.levels,
+                adapter_registry=registry,
+                deployer_registry=deployer_registry,
+                validation_engine_cls=validation_engine_cls,
+                metrics_collector_cls=metrics_collector_cls,
+                experiment_storage=experiment_storage,
+                dry_run=args.dry_run,
+            )
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+        return result
 
     if args.adapter == "report":
         experiment_id = args.command

@@ -403,6 +403,52 @@ class ReportViewerTests(unittest.TestCase):
         self.assertEqual(groups["AI Model Hub"]["failed"], 1)
         self.assertEqual(groups["Semantic Virtualization"]["skipped"], 1)
 
+    def test_edc_playwright_results_are_grouped_for_audit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_10-50-00"
+            self._write_json(experiment / "metadata.json", {"adapter": "EDCAdapter"})
+            self._write_json(
+                experiment / "ui" / "edc" / "results.json",
+                {
+                    "suites": [
+                        {
+                            "specs": [
+                                {
+                                    "file": "validation/ui/adapters/edc/specs/01-login-readiness.spec.ts",
+                                    "tests": [{"status": "expected"}],
+                                },
+                                {
+                                    "file": "validation/ui/adapters/edc/specs/08-ontology-hub-edc-readonly.spec.ts",
+                                    "tests": [{"status": "expected"}],
+                                },
+                                {
+                                    "file": "validation/ui/adapters/edc/specs/09-ai-model-hub-httpdata.spec.ts",
+                                    "tests": [{"status": "unexpected"}],
+                                },
+                                {
+                                    "file": "validation/ui/adapters/edc/specs/07-semantic-virtualization-httpdata.spec.ts",
+                                    "tests": [{"status": "skipped"}],
+                                },
+                            ]
+                        }
+                    ]
+                },
+            )
+
+            inspected = reports.inspect_experiment(experiment)
+
+        suite = next(item for item in inspected["suites"] if item["kind"] == "playwright-json")
+        self.assertEqual(suite["audit_suite"], "EDC integration")
+        self.assertEqual(suite["audit_group"], "4 groups")
+        groups = {
+            group["audit_group"]: group
+            for group in suite["summary"]["groups"]
+        }
+        self.assertEqual(groups["Core"]["passed"], 1)
+        self.assertEqual(groups["Ontology Hub"]["passed"], 1)
+        self.assertEqual(groups["AI Model Hub"]["failed"], 1)
+        self.assertEqual(groups["Semantic Virtualization"]["skipped"], 1)
+
     def test_dashboard_includes_optional_une_0087_alignment(self):
         with tempfile.TemporaryDirectory() as tmp:
             experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_10-30-00"
@@ -687,6 +733,31 @@ class ReportViewerTests(unittest.TestCase):
         self.assertEqual(
             url,
             "file://wsl.localhost/Ubuntu/home/example/project%20with%20spaces/framework-report/index.html",
+        )
+
+    def test_report_access_urls_include_wsl_and_vm_file_urls(self):
+        with mock.patch.dict(os.environ, {"WSL_DISTRO_NAME": "Ubuntu"}, clear=False):
+            urls = reports.report_access_urls(
+                "/home/example/project with spaces/framework-report/index.html",
+                server_url="http://127.0.0.1:9341",
+            )
+
+        self.assertEqual(
+            urls,
+            [
+                {
+                    "label": "Local server URL",
+                    "url": "http://127.0.0.1:9341/framework-report/index.html",
+                },
+                {
+                    "label": "WSL/Windows file URL",
+                    "url": "file://wsl.localhost/Ubuntu/home/example/project%20with%20spaces/framework-report/index.html",
+                },
+                {
+                    "label": "Linux/VM file URL",
+                    "url": "file:///home/example/project%20with%20spaces/framework-report/index.html",
+                },
+            ],
         )
 
 

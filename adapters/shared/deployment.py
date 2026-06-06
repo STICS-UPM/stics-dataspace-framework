@@ -1366,6 +1366,15 @@ class SharedDataspaceDeploymentAdapter:
             self._print_unique_lines(rollout_output)
 
     def _show_minikube_tunnel_prompt(self):
+        if str(os.environ.get("PIONERA_LOCAL_MINIKUBE_TUNNEL_MANAGED") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            print("Local minikube tunnel is managed by the batch runner. Skipping manual tunnel prompt.\n")
+            return
+
         print("-------------------------------------------------")
         print("MINIKUBE TUNNEL REQUIRED")
         print()

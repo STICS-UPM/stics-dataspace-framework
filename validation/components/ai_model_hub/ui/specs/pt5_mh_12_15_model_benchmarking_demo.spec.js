@@ -68,6 +68,14 @@ function configuredInferEndpoints(runtime) {
   );
 }
 
+function commonModelSearchText(models) {
+  const assetIds = models.map((model) => String(model.assetId || ""));
+  if (assetIds.every((assetId) => assetId.startsWith("model-flares-reliability-baseline"))) {
+    return "model-flares-reliability-baseline";
+  }
+  return "FLARES Reliability Baseline";
+}
+
 async function installBenchmarkInferDemoRoute(page, runtime, rows) {
   const expectedByPayload = buildExpectedByPayload(rows);
   const inferEndpoints = configuredInferEndpoints(runtime);
@@ -161,9 +169,10 @@ async function prepareBenchmarkingDemo({
   await benchmarkingPage.goto();
   await benchmarkingPage.waitUntilReady();
 
-  for (const model of linguisticModels.models) {
-    await benchmarkingPage.selectModelByText(model.assetName);
-  }
+  await benchmarkingPage.selectCompatibleModelsBySearch(
+    commonModelSearchText(linguisticModels.models),
+    linguisticModels.models.map((model) => model.assetName),
+  );
 
   await benchmarkingPage.datasetSearchInput.fill(localBenchmarkDataset.assetId);
   await benchmarkingPage.selectDataspaceDatasetByText(localBenchmarkDataset.assetId);

@@ -415,7 +415,7 @@ test_cases:
     traceability:
       - MH-34
       - MH-35
-    notes: Automated controlled baseline for connector-side execution of HttpData model endpoints. INESData UI execution is covered by DS-UI-AMH-EXEC-01 using the AIModelHub-Use-Cases model-server and DS-UI-AMH-EXEC-02 using an external provider model after consumer agreement.
+    notes: Automated controlled baseline for connector-side execution of HttpData model endpoints. INESData UI execution is covered by DS-UI-AMH-EXEC-01 using the controlled model-server baseline and DS-UI-AMH-EXEC-02 using an external provider model after consumer agreement. The real AIModelHub-Use-Cases model-server is targeted for vm-distributed evidence when the real models are deployed.
     automation:
       status: automated
       mode: api
@@ -427,7 +427,7 @@ test_cases:
       latest_inesdata_ui_evidence: experiments/ai-model-hub-inesdata-ui-marked-20260506/components/ai-model-hub/inesdata-ui/results.json
       latest_dashboard: experiments/ai-model-hub-inesdata-ui-marked-20260506/framework-report/index.html
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
-      notes: The runner creates a temporary HttpData asset, calls /management/v3/modelexecutions/execute and deletes the asset after execution as the A5.2 controlled baseline. The local UI spec creates a run-scoped machineLearning HttpData asset pointing to adapters/inesdata/sources/AIModelHub-Use-Cases, checks input validation errors, and validates visible execution output/history from AI Model Execution. The external UI spec validates that the consumer sees and executes the model only after a contract agreement exists.
+      notes: The runner creates a temporary HttpData asset, calls /management/v3/modelexecutions/execute and deletes the asset after execution as the A5.2 controlled baseline. Local and repeatable validation use the controlled model-server fixture for deterministic execution evidence. The real AIModelHub-Use-Cases model-server is the vm-distributed target for real-model evidence once those models are deployed. The UI spec checks input validation errors and validates visible execution output/history from AI Model Execution. The external UI spec validates that the consumer sees and executes the model only after a contract agreement exists.
 
   - id: PT5-MH-11
     component: ai_model_hub
@@ -722,11 +722,10 @@ observer_cases:
       - Model Observer backend API is integrated and reachable
       - A controlled QA event batch can be written without storing sensitive payloads
     steps:
-      - POST a controlled event batch to /api/model-observer/events/bulk
-      - GET /api/model-observer/timeline/:assetId
-      - GET /api/model-observer/agreements/:agreementId
-      - GET /api/model-observer/benchmarks/:benchmarkRunId
-      - GET /api/model-observer/participants/:participantId/summary
+      - Resolve the Observer API according to the active adapter and topology
+      - INESData contract: POST a controlled event batch to /api/model-observer/events/bulk
+      - EDC contract: POST the same controlled events to /api/model-observer/events one by one
+      - Query the adapter-specific timeline, agreement, benchmark and participant summary endpoints
       - Verify that evidence contains metadata, hashes and counters instead of raw datasets or secrets
     expected_result: Controlled Observer evidence is stored and queryable by asset, agreement, benchmark and participant
     traceability:
@@ -742,7 +741,7 @@ observer_cases:
         AI_MODEL_HUB_ENABLE_MODEL_OBSERVER: "1"
       optional_override: AI_MODEL_HUB_OBSERVER_API_BASE_URL=http://backend-demo.dev.ds.dataspaceunit.upm
       suite_test: tests/test_ai_model_hub_model_observer_api.py
-      notes: Level 6 executes this suite by default. The runner resolves the Observer backend from deployer.config and accepts an explicit URL override for non-standard environments.
+      notes: Level 6 executes this suite by default. The runner resolves the Observer backend from deployer.config, connector credentials and the active adapter contract, and accepts an explicit URL override for non-standard environments.
 
   - id: MH-OBS-03
     component: ai_model_hub

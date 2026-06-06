@@ -12,9 +12,13 @@ class ModelBenchmarkingPage {
     this.datasetSearchInput = page.getByPlaceholder("Search datasets by name, id, task, tags...");
     this.refreshAssetsButton = page.getByRole("button", { name: /Refresh Assets/i });
     this.refreshDatasetsButton = page.getByRole("button", { name: /Refresh Datasets/i });
+    this.selectAllModelsButton = page.getByRole("button", { name: /^Select All$/i });
     this.loadSelectedDatasetButton = page.getByRole("button", { name: /Load Selected Dataset/i });
     this.validateInputButton = page.getByRole("button", { name: /Validate Input/i });
     this.runBenchmarkButton = page.getByRole("button", { name: /Run Benchmark/i });
+    this.selectedModelsMessage = page.locator("div.text-sm.opacity-80").filter({
+      hasText: /Select at least 2 models for comparison/i,
+    }).first();
     this.inputPathInput = page.getByPlaceholder("ex: input");
     this.expectedPathInput = page.getByPlaceholder("ex: expected_label");
     this.predictionPathInput = page.getByPlaceholder("ex: result.label");
@@ -80,6 +84,28 @@ class ModelBenchmarkingPage {
 
     const option = this.modelOptionByText(text);
     await checkMarked(option.locator("input[type='checkbox']"));
+  }
+
+  async selectCompatibleModelsBySearch(searchText, modelNames) {
+    await this.modelSearchInput.fill(searchText);
+
+    for (const modelName of modelNames) {
+      await expect(this.modelOptionByText(modelName)).toBeVisible({ timeout: 10000 });
+    }
+
+    await clickMarked(this.selectAllModelsButton);
+    await this.expectSelectedModelCount(modelNames.length);
+
+    for (const modelName of modelNames) {
+      await expect(this.modelOptionByText(modelName).locator("input[type='checkbox']")).toBeChecked();
+    }
+  }
+
+  async expectSelectedModelCount(expectedCount) {
+    await expect(this.selectedModelsMessage).toContainText(
+      new RegExp(`Selected:\\s*${expectedCount}\\b`),
+      { timeout: 10000 },
+    );
   }
 
   async selectDataspaceDatasetByText(text) {

@@ -74,6 +74,7 @@ newman/
 # =========================
 .local/
 .profiles/
+.secrets/
 deployer.config
 /deployer.config.example
 deployers/infrastructure/topologies/*.config
@@ -134,6 +135,7 @@ logs/
 context/
 runtime/
 validation/evidences/
+validation/evidences_/
 docs_/
 bugs/
 validation/components/ontology_hub/tools

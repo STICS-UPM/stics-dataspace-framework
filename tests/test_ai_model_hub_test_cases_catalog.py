@@ -56,7 +56,9 @@ class AIModelHubTestCasesCatalogTests(unittest.TestCase):
             "validation/components/ai_model_hub/model_execution_api.py",
         )
         self.assertIn("controlled baseline", cases["PT5-MH-10"]["notes"])
-        self.assertIn("model-server", cases["PT5-MH-10"]["automation"]["notes"])
+        self.assertIn("controlled model-server", cases["PT5-MH-10"]["automation"]["notes"])
+        self.assertIn("AIModelHub-Use-Cases", cases["PT5-MH-10"]["automation"]["notes"])
+        self.assertIn("vm-distributed", cases["PT5-MH-10"]["automation"]["notes"])
 
     def test_model_catalog_access_case_is_automated_with_request_surface(self):
         catalog = self._load_catalog()

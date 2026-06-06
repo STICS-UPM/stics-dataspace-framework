@@ -210,6 +210,27 @@ class InesdataLevelOutputTests(unittest.TestCase):
         infrastructure.port_forward_service = mock.Mock(return_value=True)
         infrastructure.stop_port_forward_service = mock.Mock(return_value=True)
 
+    def test_level3_skips_manual_minikube_prompt_when_batch_manages_tunnel(self):
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: False,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+
+        output = io.StringIO()
+        with mock.patch.dict(os.environ, {"PIONERA_LOCAL_MINIKUBE_TUNNEL_MANAGED": "true"}), mock.patch(
+            "builtins.input",
+            side_effect=AssertionError("batch-managed tunnel must not ask for manual input"),
+        ), contextlib.redirect_stdout(output):
+            deployment._show_minikube_tunnel_prompt()
+
+        rendered = output.getvalue()
+        self.assertIn("Local minikube tunnel is managed by the batch runner", rendered)
+        self.assertNotIn("MINIKUBE TUNNEL REQUIRED", rendered)
+
     def _write_common_values_for_sync(self):
         with open(self.config.values_path(), "w", encoding="utf-8") as handle:
             handle.write(

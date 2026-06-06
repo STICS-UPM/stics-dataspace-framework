@@ -99,9 +99,10 @@ test.describe("MH-LING-01 scaffold", () => {
     await benchmarkingPage.goto();
     await benchmarkingPage.waitUntilReady();
 
-    for (const model of linguisticModels.models) {
-      await benchmarkingPage.selectModelByText(model.assetName);
-    }
+    await benchmarkingPage.selectCompatibleModelsBySearch(
+      "model-flares-reliability-baseline",
+      linguisticModels.models.map((model) => model.assetName),
+    );
 
     await benchmarkingPage.datasetSearchInput.fill(localBenchmarkDataset.assetId);
     await benchmarkingPage.selectDataspaceDatasetByText(localBenchmarkDataset.assetId);
