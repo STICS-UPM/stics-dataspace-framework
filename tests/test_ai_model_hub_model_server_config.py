@@ -79,6 +79,9 @@ class AIModelHubModelServerConfigTests(unittest.TestCase):
         self.assertIn("imagePullPolicy: Never", manifest)
         self.assertIn("containerPort: 8090", manifest)
         self.assertIn("path: /models", manifest)
+        self.assertIn("app: model-server", manifest)
+        self.assertIn("matchLabels:\n      app: model-server", manifest)
+        self.assertIn("selector:\n    app: model-server", manifest)
 
 
 if __name__ == "__main__":

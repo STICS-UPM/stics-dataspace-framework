@@ -286,6 +286,7 @@ metadata:
   name: model-server
   namespace: {namespace}
   labels:
+    app: model-server
     app.kubernetes.io/name: model-server
     app.kubernetes.io/component: ai-model-hub-model-server
     app.kubernetes.io/managed-by: validation-environment
@@ -294,10 +295,11 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: model-server
+      app: model-server
   template:
     metadata:
       labels:
+        app: model-server
         app.kubernetes.io/name: model-server
         app.kubernetes.io/component: ai-model-hub-model-server
         app.kubernetes.io/mode: {mode}
@@ -332,12 +334,13 @@ metadata:
   name: model-server
   namespace: {namespace}
   labels:
+    app: model-server
     app.kubernetes.io/name: model-server
     app.kubernetes.io/component: ai-model-hub-model-server
     app.kubernetes.io/managed-by: validation-environment
 spec:
   selector:
-    app.kubernetes.io/name: model-server
+    app: model-server
   ports:
     - name: http
       port: 8080
