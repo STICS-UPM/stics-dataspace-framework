@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import tempfile
 import unittest
@@ -193,6 +195,26 @@ class BatchExecutionTests(unittest.TestCase):
         self.assertEqual(env["PIONERA_EDC_CONNECTOR_IMAGE_PULL_POLICY"], "Always")
         self.assertEqual(env["PIONERA_SKIP_EDC_LOCAL_CONNECTOR_IMAGE_BUILD"], "true")
 
+    def test_batch_runtime_env_sets_vm_distributed_edc_remote_image_defaults(self):
+        run = {
+            "topology": "vm-distributed",
+            "adapter": "edc",
+            "levels": [4, 5, 6],
+        }
+
+        env = main._batch_runtime_environment(run, secrets={})
+
+        self.assertEqual(env["PIONERA_EDC_LOCAL_IMAGES_MODE"], "auto")
+        self.assertEqual(env["PIONERA_EDC_CONNECTOR_IMAGE_PULL_POLICY"], "IfNotPresent")
+        self.assertEqual(env["PIONERA_EDC_DASHBOARD_IMAGE_PULL_POLICY"], "IfNotPresent")
+        self.assertEqual(env["PIONERA_EDC_DASHBOARD_PROXY_IMAGE_PULL_POLICY"], "IfNotPresent")
+        self.assertEqual(env["PIONERA_SKIP_EDC_LOCAL_CONNECTOR_IMAGE_BUILD"], "false")
+        self.assertEqual(env["PIONERA_SKIP_EDC_LOCAL_DASHBOARD_IMAGE_BUILD"], "false")
+        self.assertEqual(env["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT"], "true")
+        self.assertEqual(env["VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE"], "auto")
+        self.assertEqual(env["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE"], "true")
+        self.assertEqual(env["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP"], "2")
+
     def test_minikube_tunnel_process_filter_ignores_search_commands(self):
         command = "/bin/bash -c pgrep -af 'minikube.*tunnel' || true"
 
@@ -322,6 +344,39 @@ class BatchExecutionTests(unittest.TestCase):
         self.assertEqual(observed_runs, ["vm-single-edc"])
         self.assertEqual([run["name"] for run in result["runs"]], ["vm-single-edc"])
 
+    def test_batch_prints_run_error_without_json_output(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_path = os.path.join(tmpdir, "plan.yaml")
+            self._write_yaml(
+                plan_path,
+                {
+                    "runs": [
+                        {
+                            "name": "vm-single-edc",
+                            "topology": "vm-single",
+                            "adapter": "edc",
+                            "levels": [4, 5, 6],
+                        },
+                    ],
+                },
+            )
+
+            output = io.StringIO()
+            with mock.patch.object(
+                main,
+                "_run_batch_levels",
+                side_effect=RuntimeError("simulated early failure"),
+            ), contextlib.redirect_stdout(output):
+                result = main.run_batch(
+                    plan_path=plan_path,
+                    run_filter="vm-single-edc",
+                    adapter_registry={"edc": "fake:Adapter"},
+                )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("Batch run status: failed", output.getvalue())
+        self.assertIn("Batch run error: RuntimeError: simulated early failure", output.getvalue())
+
     def test_batch_run_filter_fails_when_no_run_matches(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             plan_path = os.path.join(tmpdir, "plan.yaml")
@@ -400,6 +455,7 @@ class BatchExecutionTests(unittest.TestCase):
             self.assertIn("name: vm-distributed-edc", content)
             self.assertIn("levels: [1, 2, 3, 4, 5, 6]", content)
             self.assertIn("PIONERA_EDC_LOCAL_IMAGES_MODE: auto", content)
+            self.assertIn('VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT: "true"', content)
             mode = os.stat(secrets_path).st_mode & 0o077
             self.assertEqual(mode, 0)
 

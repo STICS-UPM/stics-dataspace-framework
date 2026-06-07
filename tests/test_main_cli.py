@@ -1026,6 +1026,149 @@ class EdcDashboardReadinessTests(unittest.TestCase):
             },
         )
 
+    def test_edc_dashboard_public_base_url_prefers_generated_public_access_urls(self):
+        with tempfile.TemporaryDirectory() as runtime_dir:
+            credentials_path = os.path.join(
+                runtime_dir,
+                "credentials-connector-conn-citycounciledc-demoedc.json",
+            )
+            with open(credentials_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "public_access_urls": {
+                            "connector_ingress": "https://org4.example.test/c/citycounciledc",
+                            "connector_management_api_v3": (
+                                "https://org4.example.test/c/citycounciledc/management/v3"
+                            ),
+                            "edc_dashboard_login": (
+                                "https://org4.example.test/c/citycounciledc/edc-dashboard/"
+                            ),
+                        }
+                    },
+                    handle,
+                )
+            context = types.SimpleNamespace(
+                dataspace_name="demoedc",
+                ds_domain_base="dev.ds.dataspaceunit.upm",
+                runtime_dir=runtime_dir,
+                config={
+                    "TOPOLOGY": "vm-single",
+                    "VM_SINGLE_HTTP_URL": "https://org4.example.test",
+                },
+            )
+
+            self.assertEqual(
+                main._edc_dashboard_public_base_url("conn-citycounciledc-demoedc", context),
+                "https://org4.example.test/c/citycounciledc",
+            )
+
+    def test_edc_dashboard_public_base_url_honors_configured_base_href(self):
+        with tempfile.TemporaryDirectory() as runtime_dir:
+            credentials_path = os.path.join(
+                runtime_dir,
+                "credentials-connector-conn-citycounciledc-demoedc.json",
+            )
+            with open(credentials_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "public_access_urls": {
+                            "edc_dashboard_login": (
+                                "https://org4.example.test/c/citycounciledc/custom-dashboard/"
+                            ),
+                        }
+                    },
+                    handle,
+                )
+            context = types.SimpleNamespace(
+                dataspace_name="demoedc",
+                ds_domain_base="dev.ds.dataspaceunit.upm",
+                runtime_dir=runtime_dir,
+                config={
+                    "TOPOLOGY": "vm-single",
+                    "EDC_DASHBOARD_BASE_HREF": "/custom-dashboard/",
+                },
+            )
+
+            self.assertEqual(
+                main._edc_dashboard_public_base_url("conn-citycounciledc-demoedc", context),
+                "https://org4.example.test/c/citycounciledc",
+            )
+
+    def test_probe_edc_dashboard_readiness_uses_generated_public_access_urls(self):
+        with tempfile.TemporaryDirectory() as runtime_dir:
+            for connector, short_name in (
+                ("conn-citycounciledc-demoedc", "citycounciledc"),
+                ("conn-companyedc-demoedc", "companyedc"),
+            ):
+                credentials_path = os.path.join(
+                    runtime_dir,
+                    f"credentials-connector-{connector}.json",
+                )
+                with open(credentials_path, "w", encoding="utf-8") as handle:
+                    json.dump(
+                        {
+                            "public_access_urls": {
+                                "connector_ingress": f"https://org4.example.test/c/{short_name}",
+                                "connector_management_api_v3": (
+                                    f"https://org4.example.test/c/{short_name}/management/v3"
+                                ),
+                                "edc_dashboard_login": (
+                                    f"https://org4.example.test/c/{short_name}/edc-dashboard/"
+                                ),
+                            }
+                        },
+                        handle,
+                    )
+            context = types.SimpleNamespace(
+                dataspace_name="demoedc",
+                ds_domain_base="dev.ds.dataspaceunit.upm",
+                runtime_dir=runtime_dir,
+                connectors=["conn-citycounciledc-demoedc", "conn-companyedc-demoedc"],
+                namespace_roles=types.SimpleNamespace(
+                    registration_service_namespace="demoedc",
+                    provider_namespace="demoedc",
+                    consumer_namespace="demoedc",
+                ),
+                config={
+                    "TOPOLOGY": "vm-single",
+                    "KEYCLOAK_FRONTEND_URL": "https://org4.example.test/auth",
+                    "VM_SINGLE_HTTP_URL": "https://org4.example.test",
+                },
+            )
+            seen_urls = []
+
+            def fake_http_get(url, **kwargs):
+                seen_urls.append(url)
+                if url.endswith("/.well-known/openid-configuration"):
+                    return types.SimpleNamespace(status_code=200, headers={})
+                if url.endswith("/edc-dashboard"):
+                    return types.SimpleNamespace(status_code=200, headers={})
+                if url.endswith("/edc-dashboard-api/auth/me"):
+                    return types.SimpleNamespace(status_code=401, headers={})
+                if url.endswith("/management/v3/assets/request"):
+                    return types.SimpleNamespace(status_code=405, headers={})
+                raise AssertionError(f"Unexpected URL probed: {url}")
+
+            with mock.patch.object(
+                main,
+                "_kubectl_endpoint_ready",
+                return_value=(True, "1 endpoint address(es)"),
+            ), mock.patch.object(main.requests, "get", side_effect=fake_http_get):
+                readiness = main._probe_edc_dashboard_readiness(context)
+
+            self.assertEqual(readiness["status"], "passed")
+            self.assertIn(
+                "https://org4.example.test/c/citycounciledc/edc-dashboard",
+                seen_urls,
+            )
+            self.assertIn(
+                "https://org4.example.test/c/companyedc/management/v3/assets/request",
+                seen_urls,
+            )
+            self.assertFalse(
+                any("conn-citycounciledc-demoedc.dev.ds.dataspaceunit.upm" in url for url in seen_urls)
+            )
+
     def _role_aligned_context(self):
         return types.SimpleNamespace(
             dataspace_name="demoedc",
@@ -1152,6 +1295,42 @@ class EdcDashboardReadinessTests(unittest.TestCase):
         )
         self.assertFalse(failing_gate["ready"])
         self.assertEqual(failing_gate["detail"], "HTTP 503")
+
+    def test_probe_edc_dashboard_readiness_rejects_dashboard_redirect(self):
+        context = self._context()
+
+        def fake_http_get(url, **kwargs):
+            if url.endswith("/.well-known/openid-configuration"):
+                return types.SimpleNamespace(status_code=200, headers={})
+            if url.endswith("/edc-dashboard"):
+                return types.SimpleNamespace(
+                    status_code=301,
+                    headers={"Location": "http://dev.ed.dataspaceunit.upm/edc-dashboard/"},
+                )
+            if url.endswith("/edc-dashboard-api/auth/me"):
+                return types.SimpleNamespace(status_code=401, headers={})
+            if url.endswith("/management/v3/assets/request"):
+                return types.SimpleNamespace(status_code=405, headers={})
+            raise AssertionError(f"Unexpected URL probed: {url}")
+
+        with mock.patch.object(
+            main,
+            "_kubectl_endpoint_ready",
+            return_value=(True, "1 endpoint address(es)"),
+        ), mock.patch.object(main.requests, "get", side_effect=fake_http_get):
+            readiness = main._probe_edc_dashboard_readiness(context)
+
+        self.assertEqual(readiness["status"], "failed")
+        failing_gate = next(
+            gate
+            for gate in readiness["gates"]
+            if gate["gate"] == "dashboard-route:conn-citycounciledc-demoedc"
+        )
+        self.assertFalse(failing_gate["ready"])
+        self.assertEqual(
+            failing_gate["detail"],
+            "HTTP 301 -> http://dev.ed.dataspaceunit.upm/edc-dashboard/",
+        )
 
 
 class InesdataPortalReadinessTests(unittest.TestCase):
@@ -1760,6 +1939,50 @@ class InesdataPortalReadinessTests(unittest.TestCase):
         self.assertIn(
             "http://conn-citycounciledc-demoedc.dev.ds.dataspaceunit.upm",
             access["browser_urls"],
+        )
+
+    def test_run_available_access_urls_for_vm_single_edc_uses_public_path_routes(self):
+        adapter = FakeAdapter()
+        fake_context = types.SimpleNamespace(
+            config={
+                "TOPOLOGY": "vm-single",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "VM_SINGLE_HTTP_URL": "https://org4.example.test",
+                "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX": "/c",
+                "KEYCLOAK_FRONTEND_URL": "https://org4.example.test/auth",
+            },
+            dataspace_name="pionera-edc",
+            environment="DEV",
+            connectors=["conn-citycounciledc-pionera-edc"],
+            components=[],
+        )
+
+        with mock.patch.object(
+            main,
+            "_resolve_deployer_context",
+            return_value=("edc", fake_context),
+        ), mock.patch(
+            "deployers.edc.bootstrap.common_access_urls",
+            return_value={
+                "keycloak_realm": "https://org4.example.test/auth/realms/pionera-edc",
+            },
+        ), mock.patch(
+            "deployers.edc.bootstrap.build_connector_access_urls",
+            side_effect=AssertionError("internal EDC URLs should not be used for vm-single public routes"),
+        ), mock.patch.object(
+            main,
+            "_command_stdout",
+            return_value="",
+        ):
+            result = main.run_available_access_urls(adapter, deployer_name="edc", topology="vm-single")
+
+        self.assertEqual(
+            result["urls"]["connectors"]["conn-citycounciledc-pionera-edc"]["connector_management_api_v3"],
+            "https://org4.example.test/c/citycounciledc/management/v3",
+        )
+        self.assertEqual(
+            result["urls"]["connectors"]["conn-citycounciledc-pionera-edc"]["edc_dashboard_login"],
+            "https://org4.example.test/c/citycounciledc/edc-dashboard/",
         )
 
 
@@ -2760,6 +2983,42 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["topology"], "vm-single")
         run_level.assert_called_once()
         self.assertEqual(run_level.call_args.kwargs["topology"], "vm-single")
+
+    def test_menu_level_execution_loads_local_secrets_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            secrets_path = os.path.join(tmpdir, "pionera.env")
+            with open(secrets_path, "w", encoding="utf-8") as handle:
+                handle.write("PIONERA_SUDO_PASSWORD=demo-secret\n")
+
+            observed_env = {}
+
+            def fake_run_level(*_args, **_kwargs):
+                observed_env["sudo"] = os.environ.get("PIONERA_SUDO_PASSWORD")
+                return {"level": 1, "name": "Setup Cluster", "status": "completed", "result": {}}
+
+            stdout = io.StringIO()
+            with mock.patch.object(main, "BATCH_SECRETS_DEFAULT_PATH", secrets_path), mock.patch.dict(
+                os.environ,
+                {"PIONERA_AUTO_LOAD_SECRETS": "true"},
+                clear=False,
+            ), mock.patch("builtins.input", side_effect=["1", "Y", "Q"]), mock.patch.object(
+                main,
+                "run_level",
+                side_effect=fake_run_level,
+            ) as run_level, contextlib.redirect_stdout(stdout):
+                os.environ.pop("PIONERA_SUDO_PASSWORD", None)
+                result = main.main(
+                    ["menu"],
+                    adapter_registry=self.registry,
+                    deployer_registry=self.deployer_registry,
+                    validation_engine_cls=FakeValidationEngine,
+                    metrics_collector_cls=FakeMetricsCollector,
+                    experiment_storage=FakeStorage,
+                )
+
+        self.assertEqual(result["status"], "exited")
+        run_level.assert_called_once()
+        self.assertEqual(observed_env["sudo"], "demo-secret")
 
     def test_menu_level_confirmation_includes_active_topology(self):
         stdout = io.StringIO()
@@ -6649,6 +6908,104 @@ class MainCliTests(unittest.TestCase):
         image_prepare.assert_called_once_with(adapter)
         dashboard_prepare.assert_called_once()
 
+    def test_safe_edc_execution_defers_vm_distributed_remote_image_import_to_adapter(self):
+        adapter = FakeAdapter()
+        adapter.config_adapter.load_deployer_config = lambda: {
+            "KC_URL": "http://keycloak.local",
+            "DS_1_NAME": "fake-ds",
+            "EDC_DASHBOARD_ENABLED": "true",
+            "LEVEL4_EDC_LOCAL_IMAGES_MODE": "auto",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+        }
+
+        with mock.patch.object(
+            main,
+            "_prepare_edc_local_connector_image_override",
+        ) as image_prepare, mock.patch.object(
+            main,
+            "_prepare_edc_local_dashboard_images",
+        ) as dashboard_prepare, mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_USE_DEPLOYER_DEPLOY": "true",
+                "PIONERA_EXECUTE_DEPLOYER_DEPLOY": "true",
+            },
+            clear=True,
+        ):
+            main._ensure_safe_edc_deployer_execution(
+                adapter,
+                deployer_name="edc",
+                topology="vm-distributed",
+            )
+
+        image_prepare.assert_not_called()
+        dashboard_prepare.assert_not_called()
+
+    def test_safe_edc_execution_defaults_vm_distributed_images_to_auto_when_remote_import_is_enabled(self):
+        adapter = FakeAdapter()
+        adapter.config_adapter.load_deployer_config = lambda: {
+            "KC_URL": "http://keycloak.local",
+            "DS_1_NAME": "fake-ds",
+            "EDC_DASHBOARD_ENABLED": "true",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+        }
+
+        with mock.patch.object(
+            main,
+            "_prepare_edc_local_connector_image_override",
+        ) as image_prepare, mock.patch.object(
+            main,
+            "_prepare_edc_local_dashboard_images",
+        ) as dashboard_prepare, mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_USE_DEPLOYER_DEPLOY": "true",
+                "PIONERA_EXECUTE_DEPLOYER_DEPLOY": "true",
+            },
+            clear=True,
+        ):
+            main._ensure_safe_edc_deployer_execution(
+                adapter,
+                deployer_name="edc",
+                topology="vm-distributed",
+            )
+
+        image_prepare.assert_not_called()
+        dashboard_prepare.assert_not_called()
+
+    def test_safe_edc_execution_refuses_vm_distributed_without_remote_import_or_image_override(self):
+        adapter = FakeAdapter()
+        adapter.config_adapter.load_deployer_config = lambda: {
+            "KC_URL": "http://keycloak.local",
+            "DS_1_NAME": "fake-ds",
+            "EDC_DASHBOARD_ENABLED": "true",
+            "LEVEL4_EDC_LOCAL_IMAGES_MODE": "auto",
+        }
+
+        with mock.patch.object(
+            main,
+            "_prepare_edc_local_connector_image_override",
+        ) as image_prepare, mock.patch.object(
+            main,
+            "_prepare_edc_local_dashboard_images",
+        ) as dashboard_prepare, mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_USE_DEPLOYER_DEPLOY": "true",
+                "PIONERA_EXECUTE_DEPLOYER_DEPLOY": "true",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "requires explicit EDC connector image overrides"):
+                main._ensure_safe_edc_deployer_execution(
+                    adapter,
+                    deployer_name="edc",
+                    topology="vm-distributed",
+                )
+
+        image_prepare.assert_not_called()
+        dashboard_prepare.assert_not_called()
+
     def test_deploy_command_refuses_real_edc_execution_with_partial_image_override(self):
         adapter = FakeAdapter()
 
@@ -7295,6 +7652,9 @@ class MainCliTests(unittest.TestCase):
                     "VM_SINGLE_PUBLIC_URL": "https://org4.pionera.oeg.fi.upm.es",
                     "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX": "/c",
                     "KEYCLOAK_FRONTEND_URL": "https://org4.pionera.oeg.fi.upm.es/auth",
+                    "ONTOLOGY_HUB_SELF_HOST_SERVICE_NAME": "pionera-ontology-hub",
+                    "ONTOLOGY_HUB_SELF_HOST_NAMESPACE": "components",
+                    "ONTOLOGY_HUB_SELF_HOST_SERVICE_PORT": "3333",
                 },
             }
         )
@@ -7317,6 +7677,9 @@ class MainCliTests(unittest.TestCase):
             env["AI_MODEL_HUB_PROVIDER_PROTOCOL_URL"],
             "https://org4.pionera.oeg.fi.upm.es/c/org2/protocol",
         )
+        self.assertEqual(env["ONTOLOGY_HUB_SELF_HOST_SERVICE_NAME"], "pionera-ontology-hub")
+        self.assertEqual(env["ONTOLOGY_HUB_SELF_HOST_NAMESPACE"], "components")
+        self.assertEqual(env["ONTOLOGY_HUB_SELF_HOST_SERVICE_PORT"], "3333")
 
     def test_vm_single_mapping_editor_k3s_prefers_kubectl_port_forward(self):
         with mock.patch.object(main, "_vm_single_mapping_editor_is_k3s", return_value=True), mock.patch.object(

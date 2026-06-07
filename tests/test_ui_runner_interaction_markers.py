@@ -324,6 +324,58 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
             self.assertEqual(env["UI_MINIO_CONSOLE_URL"], "https://org4.pionera.oeg.fi.upm.es/s3-console")
             self.assertEqual(env["UI_CONNECTOR_PROTOCOL_ADDRESS_MODE"], "public")
 
+    def test_playwright_validation_exports_vm_single_edc_public_connector_urls(self):
+        context = self._context()
+        context.deployer = "edc"
+        context.topology = "vm-single"
+        context.dataspace_name = "pionera-edc"
+        context.connectors = [
+            "conn-citycounciledc-pionera-edc",
+            "conn-companyedc-pionera-edc",
+        ]
+        context.config.update(
+            {
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX": "/c",
+                "KEYCLOAK_FRONTEND_URL": "https://org4.pionera.oeg.fi.upm.es/auth",
+                "EDC_DASHBOARD_ENABLED": "true",
+                "EDC_DASHBOARD_BASE_HREF": "/edc-dashboard/",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            ui_runner.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0),
+        ) as subprocess_run:
+            ui_runner.run_playwright_validation(
+                profile=self._edc_profile(),
+                context=context,
+                experiment_dir=tmpdir,
+            )
+
+            env = subprocess_run.call_args.kwargs["env"]
+            city_prefix = "UI_CONN_CITYCOUNCILEDC_PIONERA_EDC"
+            company_prefix = "UI_CONN_COMPANYEDC_PIONERA_EDC"
+            self.assertEqual(
+                env[f"{city_prefix}_PORTAL_URL"],
+                "https://org4.pionera.oeg.fi.upm.es/c/citycounciledc/edc-dashboard/",
+            )
+            self.assertEqual(
+                env[f"{city_prefix}_MANAGEMENT_URL"],
+                "https://org4.pionera.oeg.fi.upm.es/c/citycounciledc/management/v3",
+            )
+            self.assertEqual(
+                env[f"{company_prefix}_PORTAL_URL"],
+                "https://org4.pionera.oeg.fi.upm.es/c/companyedc/edc-dashboard/",
+            )
+            self.assertEqual(
+                env[f"{company_prefix}_MANAGEMENT_URL"],
+                "https://org4.pionera.oeg.fi.upm.es/c/companyedc/management/v3",
+            )
+            self.assertNotIn(f"{city_prefix}_PROTOCOL_URL", env)
+            self.assertEqual(env["UI_CONNECTOR_PROTOCOL_ADDRESS_MODE"], "internal")
+
     def test_playwright_validation_exports_active_runtime_dir(self):
         context = self._context()
         context.topology = "vm-single"

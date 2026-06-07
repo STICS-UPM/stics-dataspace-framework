@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from validation.ui import interactive_menu
@@ -822,6 +823,54 @@ class UiInteractiveMenuTests(unittest.TestCase):
             os.path.join("adapters", "edc", "specs", "15-ai-model-external-execution.spec.ts"),
             runner.call_args.args[2],
         )
+
+    def test_edc_ui_specs_metadata_records_vm_single_k3s_runtime(self):
+        class FakeEdcDeployer:
+            def __init__(self, adapter=None, topology=None):
+                self.adapter = adapter
+                self.topology = topology
+
+            def resolve_context(self, topology=None):
+                return SimpleNamespace(
+                    connectors=["conn-companyedc-demo"],
+                    environment="DEV",
+                    config={"CLUSTER_TYPE": "k3s"},
+                    topology=topology or self.topology,
+                )
+
+            def get_validation_profile(self, context):
+                return SimpleNamespace(adapter="edc")
+
+        metadata_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
+            "deployers.edc.deployer.EdcDeployer",
+            FakeEdcDeployer,
+        ), mock.patch.object(
+            interactive_menu,
+            "_build_validation_adapter",
+            return_value=FakeVmSingleInteractiveAdapter(),
+        ), mock.patch.object(
+            interactive_menu.ExperimentStorage,
+            "create_experiment_directory",
+            return_value=tmpdir,
+        ), mock.patch.object(
+            interactive_menu.ExperimentStorage,
+            "save_experiment_metadata",
+            side_effect=lambda *args, **kwargs: metadata_calls.append((args, kwargs)),
+        ), mock.patch(
+            "validation.ui.ui_runner.run_playwright_validation",
+            return_value={"summary": {"status_counts": {"passed": 1}, "total_specs": 1}},
+        ):
+            interactive_menu._run_edc_ui_specs(
+                {"label": "normal", "args": [], "env": {}},
+                "Core",
+                specs=["adapters/edc/specs/01-login-readiness.spec.ts"],
+                topology="vm-single",
+            )
+
+        self.assertEqual(metadata_calls[0][1]["topology"], "vm-single")
+        self.assertEqual(metadata_calls[0][1]["cluster_runtime"], "k3s")
 
 
 if __name__ == "__main__":

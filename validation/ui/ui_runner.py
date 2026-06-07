@@ -89,6 +89,87 @@ def _first_non_empty(*values: Any) -> str:
     return ""
 
 
+def _connector_env_prefix(connector_name: str) -> str:
+    return str(connector_name or "").strip().upper().replace("-", "_")
+
+
+def _string_config(config: dict[str, Any], topology: str) -> dict[str, str]:
+    values = {
+        str(key): str(value)
+        for key, value in (config or {}).items()
+        if value is not None
+    }
+    values["TOPOLOGY"] = topology
+    return values
+
+
+def _edc_connector_public_access_urls(
+    config: dict[str, Any],
+    *,
+    topology: str,
+    connector: str,
+    dataspace: str,
+    environment: str,
+) -> dict[str, str]:
+    if topology not in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
+        return {}
+    try:
+        from deployers.edc.bootstrap import build_connector_public_access_urls
+    except (ImportError, OSError):
+        return {}
+
+    urls = build_connector_public_access_urls(
+        _string_config(config, topology),
+        connector,
+        dataspace,
+        environment,
+    )
+    return {str(key): str(value).strip() for key, value in urls.items() if str(value or "").strip()}
+
+
+def _export_edc_public_connector_runtime_urls(
+    env: dict[str, str],
+    *,
+    config: dict[str, Any],
+    topology: str,
+    connectors: list[str],
+    dataspace: str,
+    environment: str,
+    protocol_address_mode: str,
+) -> None:
+    if topology not in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
+        return
+
+    use_public_protocol = str(protocol_address_mode or "").strip().lower() == "public"
+    for connector in connectors:
+        env_prefix = _connector_env_prefix(connector)
+        if not env_prefix:
+            continue
+        urls = _edc_connector_public_access_urls(
+            config,
+            topology=topology,
+            connector=connector,
+            dataspace=dataspace,
+            environment=environment,
+        )
+        portal_url = _first_non_empty(urls.get("edc_dashboard_login"), urls.get("connector_ingress"))
+        management_url = _first_non_empty(
+            urls.get("connector_management_api_v3"),
+            _join_url_path(urls.get("connector_ingress"), "/management/v3"),
+        )
+        protocol_url = _first_non_empty(
+            urls.get("connector_protocol_api"),
+            _join_url_path(urls.get("connector_ingress"), "/protocol"),
+        )
+
+        if portal_url:
+            env.setdefault(f"UI_{env_prefix}_PORTAL_URL", portal_url)
+        if management_url:
+            env.setdefault(f"UI_{env_prefix}_MANAGEMENT_URL", management_url)
+        if use_public_protocol and protocol_url:
+            env.setdefault(f"UI_{env_prefix}_PROTOCOL_URL", protocol_url)
+
+
 def _configured_playwright_ingress_proxy_port(config: dict[str, Any]) -> str:
     return _first_non_empty(
         os.environ.get("PLAYWRIGHT_INGRESS_PROXY_PORT"),
@@ -410,6 +491,16 @@ def _build_playwright_environment(
         env.setdefault("UI_PORTAL_CONNECTOR", connectors[0])
     if len(connectors) > 1:
         env["UI_CONSUMER_CONNECTOR"] = connectors[1]
+    if adapter_name == "edc":
+        _export_edc_public_connector_runtime_urls(
+            env,
+            config=config,
+            topology=topology,
+            connectors=connectors,
+            dataspace=context.dataspace_name,
+            environment=context.environment,
+            protocol_address_mode=protocol_address_mode,
+        )
 
     local_store_label = str(config.get("INESDATA_LOCAL_STORE_LABEL") or "").strip()
     if local_store_label:

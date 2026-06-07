@@ -15,6 +15,7 @@ from adapters.inesdata.adapter import InesdataAdapter
 from adapters.inesdata.config import InesdataConfig
 from deployers.inesdata.access_urls import connector_public_base_url, resolved_public_urls_for_config
 from deployers.shared.lib.components import configured_component_public_url
+from deployers.shared.lib.cluster_runtime import build_cluster_runtime
 from deployers.shared.lib.topology import VM_SINGLE_TOPOLOGY, normalize_topology
 from framework.experiment_storage import ExperimentStorage
 from validation.components.ontology_hub.functional.runtime_preparation import (
@@ -641,6 +642,20 @@ def _ontology_hub_functional_runtime_env(adapter=None, adapter_name=None, topolo
             deployer_config.get("COMPONENTS_NAMESPACE") or "components"
         ).strip(),
     }
+    for key in (
+        "ONTOLOGY_HUB_RELEASE_NAME",
+        "ONTOLOGY_HUB_COMPONENT_DATASPACE_NAME",
+        "ONTOLOGY_HUB_SELF_HOST_SERVICE_NAME",
+        "ONTOLOGY_HUB_SELF_HOST_NAMESPACE",
+        "ONTOLOGY_HUB_SELF_HOST_SERVICE_PORT",
+        "ONTOLOGY_HUB_SELF_HOST_PORT",
+        "ONTOLOGY_HUB_SERVICE_NAME",
+        "ONTOLOGY_HUB_SERVICE_NAMESPACE",
+        "ONTOLOGY_HUB_SERVICE_PORT",
+    ):
+        value = str(deployer_config.get(key) or "").strip()
+        if value:
+            env[key] = value
     return {key: value for key, value in env.items() if str(value or "").strip()}
 
 
@@ -1511,6 +1526,10 @@ def _run_edc_ui_specs(mode, label, specs=None, test_grep=None, topology=None):
     deployer = EdcDeployer(adapter=adapter, topology=normalized_topology)
     context = deployer.resolve_context(topology=normalized_topology)
     profile = deployer.get_validation_profile(context)
+    cluster_runtime = build_cluster_runtime(context.config, topology=normalized_topology).get(
+        "cluster_type",
+        "unknown",
+    )
     experiment_dir = ExperimentStorage.create_experiment_directory()
     ExperimentStorage.save_experiment_metadata(
         experiment_dir,
@@ -1518,6 +1537,7 @@ def _run_edc_ui_specs(mode, label, specs=None, test_grep=None, topology=None):
         adapter=adapter.__class__.__name__,
         adapter_name="edc",
         topology=normalized_topology,
+        cluster_runtime=cluster_runtime,
         environment=context.environment,
     )
 

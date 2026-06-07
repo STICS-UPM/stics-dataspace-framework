@@ -1890,9 +1890,77 @@ def _probe_service_ready_across_namespaces(service_name, namespaces):
     return False, "; ".join(details), unique_namespaces[0]
 
 
+def _public_connector_base_from_url(url, path_suffix=None):
+    normalized = normalize_public_endpoint_url(url)
+    if not normalized:
+        return None
+
+    suffix = str(path_suffix or "").strip().strip("/")
+    if not suffix:
+        return normalized
+
+    parsed = urllib.parse.urlparse(normalized)
+    path = (parsed.path or "").rstrip("/")
+    suffix_path = f"/{suffix}"
+    if not path.endswith(suffix_path):
+        return None
+
+    base_path = path[: -len(suffix_path)].rstrip("/")
+    return urllib.parse.urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            base_path,
+            "",
+            "",
+            "",
+        )
+    ).rstrip("/")
+
+
+def _edc_dashboard_base_href_from_config(config):
+    base_href = str((config or {}).get("EDC_DASHBOARD_BASE_HREF") or "/edc-dashboard/").strip()
+    if not base_href:
+        base_href = "/edc-dashboard/"
+    if not base_href.startswith("/"):
+        base_href = f"/{base_href}"
+    if not base_href.endswith("/"):
+        base_href = f"{base_href}/"
+    return base_href
+
+
 def _edc_dashboard_public_base_url(connector_name, deployer_context):
-    ds_domain = str(getattr(deployer_context, "ds_domain_base", "") or "").strip()
     connector = str(connector_name or "").strip()
+    if not connector:
+        return None
+
+    config = dict(getattr(deployer_context, "config", {}) or {})
+    dashboard_base_href = _edc_dashboard_base_href_from_config(config).strip("/")
+    payload, _error = _load_inesdata_connector_credentials_payload(
+        deployer_context,
+        connector,
+    )
+    public_urls = payload.get("public_access_urls") if isinstance(payload, dict) else {}
+    if isinstance(public_urls, dict):
+        for key, suffix in (
+            ("edc_dashboard_login", dashboard_base_href),
+            ("edc_dashboard_oidc_login", "edc-dashboard-api/auth/login"),
+            ("connector_ingress", ""),
+            ("connector_management_api_v3", "management/v3"),
+            ("connector_management_api", "management"),
+            ("connector_protocol_api", "protocol"),
+            ("connector_default_api", "api"),
+            ("connector_control_api", "control"),
+        ):
+            base_url = _public_connector_base_from_url(public_urls.get(key), suffix)
+            if base_url:
+                return base_url
+
+    configured_base = _configured_public_connector_base_url(connector, deployer_context)
+    if configured_base:
+        return configured_base
+
+    ds_domain = str(getattr(deployer_context, "ds_domain_base", "") or "").strip()
     if not connector or not ds_domain:
         return None
     return normalize_public_endpoint_url(f"http://{connector}.{ds_domain}")
@@ -2092,6 +2160,19 @@ def _configured_public_connector_base_url(connector_name, deployer_context):
 
     if _config_topology_value(config) == VM_SINGLE_TOPOLOGY:
         try:
+            from deployers.edc.bootstrap import connector_public_base_url as edc_connector_public_base_url
+
+            edc_vm_single_url = edc_connector_public_base_url(
+                {**config, "TOPOLOGY": VM_SINGLE_TOPOLOGY},
+                connector,
+                dataspace,
+            )
+        except Exception:
+            edc_vm_single_url = ""
+        if edc_vm_single_url:
+            return normalize_public_endpoint_url(edc_vm_single_url)
+
+        try:
             from deployers.inesdata.access_urls import connector_public_base_url
 
             vm_single_url = connector_public_base_url(
@@ -2251,6 +2332,8 @@ def _inesdata_keycloak_password_grant_gate(
 
 def _edc_dashboard_http_gates(deployer_context, connectors, timeout_seconds):
     dataspace = str(getattr(deployer_context, "dataspace_name", "") or "").strip()
+    config = dict(getattr(deployer_context, "config", {}) or {})
+    dashboard_base_href = _edc_dashboard_base_href_from_config(config)
     gates = []
 
     keycloak_base_url = _public_keycloak_base_url(deployer_context)
@@ -2293,8 +2376,8 @@ def _edc_dashboard_http_gates(deployer_context, connectors, timeout_seconds):
         gates.append(
             _http_readiness_gate(
                 f"dashboard-route:{connector}",
-                f"{base_url}/edc-dashboard/",
-                expected_statuses={200, 301, 302, 303, 307, 308},
+                f"{base_url}{dashboard_base_href}",
+                expected_statuses={200},
                 timeout_seconds=timeout_seconds,
             )
         )
@@ -5315,6 +5398,15 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
         "COMPONENTS_PUBLIC_BASE_URL",
         "MODEL_SERVER_PUBLIC_URL",
         "MODEL_SERVER_PUBLIC_PATH",
+        "ONTOLOGY_HUB_RELEASE_NAME",
+        "ONTOLOGY_HUB_COMPONENT_DATASPACE_NAME",
+        "ONTOLOGY_HUB_SELF_HOST_SERVICE_NAME",
+        "ONTOLOGY_HUB_SELF_HOST_NAMESPACE",
+        "ONTOLOGY_HUB_SELF_HOST_SERVICE_PORT",
+        "ONTOLOGY_HUB_SELF_HOST_PORT",
+        "ONTOLOGY_HUB_SERVICE_NAME",
+        "ONTOLOGY_HUB_SERVICE_NAMESPACE",
+        "ONTOLOGY_HUB_SERVICE_PORT",
     ):
         value = str(config.get(key) or "").strip()
         if value:
@@ -6713,7 +6805,13 @@ def _normalize_local_images_mode(value, default="auto"):
 
 
 def _edc_local_images_mode(config, topology):
-    default_mode = "auto" if normalize_topology(topology or LOCAL_TOPOLOGY) == LOCAL_TOPOLOGY else "disabled"
+    normalized_topology = normalize_topology(topology or LOCAL_TOPOLOGY)
+    default_mode = "auto" if normalized_topology == LOCAL_TOPOLOGY else "disabled"
+    if (
+        normalized_topology == VM_DISTRIBUTED_TOPOLOGY
+        and _edc_vm_distributed_remote_image_import_enabled(config)
+    ):
+        default_mode = "auto"
     for candidate in (
         os.getenv("PIONERA_EDC_LOCAL_IMAGES_MODE"),
         os.getenv("EDC_LOCAL_IMAGES_MODE"),
@@ -6734,6 +6832,24 @@ def _edc_topology_supports_local_image_preparation(topology, config=None):
     return normalized_topology in {LOCAL_TOPOLOGY, "vm-single"}
 
 
+def _edc_vm_distributed_remote_image_import_enabled(config=None):
+    values = dict(config or {})
+    for key in ("VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT", "PIONERA_VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT"):
+        if os.getenv(key) is not None:
+            return _bool_value(os.getenv(key), default=False)
+    return _bool_value(values.get("VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT"), default=False)
+
+
+def _edc_adapter_handles_level4_image_preparation(topology, config=None):
+    normalized_topology = normalize_topology(topology or LOCAL_TOPOLOGY)
+    if normalized_topology != VM_DISTRIBUTED_TOPOLOGY:
+        return False
+    mode = _edc_local_images_mode(config or {}, normalized_topology)
+    if mode == "disabled":
+        return False
+    return _edc_vm_distributed_remote_image_import_enabled(config)
+
+
 def _ensure_safe_edc_deployer_execution(adapter, deployer_name=None, topology="local"):
     normalized_deployer = str(deployer_name or _infer_deployer_name_from_adapter(adapter)).strip().lower()
     if normalized_deployer != "edc":
@@ -6742,7 +6858,11 @@ def _ensure_safe_edc_deployer_execution(adapter, deployer_name=None, topology="l
     config_adapter = getattr(adapter, "config_adapter", None)
     config_loader = getattr(config_adapter, "load_deployer_config", None)
     config = dict(config_loader() or {}) if callable(config_loader) else {}
-    normalized_topology = str(topology or "local").strip().lower()
+    normalized_topology = normalize_topology(topology or "local")
+    adapter_managed_image_preparation = _edc_adapter_handles_level4_image_preparation(
+        normalized_topology,
+        config,
+    )
 
     dataspace_name = ""
     primary_dataspace_name = getattr(config_adapter, "primary_dataspace_name", None)
@@ -6795,6 +6915,14 @@ def _ensure_safe_edc_deployer_execution(adapter, deployer_name=None, topology="l
             prepared = _prepare_edc_local_connector_image_override(adapter)
             explicit_image_name = prepared["image_name"]
             explicit_image_tag = prepared["image_tag"]
+        elif (
+            adapter_managed_image_preparation
+            and not explicit_image_name
+            and not explicit_image_tag
+        ):
+            image_defaults = _edc_local_connector_image_defaults()
+            explicit_image_name = image_defaults["name"]
+            explicit_image_tag = image_defaults["tag"]
         else:
             raise RuntimeError(
                 "Real deployer execution for EDC requires explicit EDC connector image overrides. "
@@ -6894,6 +7022,8 @@ def _metadata_cluster_runtime_for_topology(topology="local"):
     except Exception:
         if normalized_topology == LOCAL_TOPOLOGY:
             return "minikube"
+        if normalized_topology in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
+            return "k3s"
         return "unknown"
 
 
@@ -8466,6 +8596,7 @@ def run_available_access_urls(adapter, deployer_name=None, deployer_registry=Non
         from deployers.edc.bootstrap import (
             access_protocol as edc_access_protocol,
             build_connector_access_urls as build_edc_connector_access_urls,
+            build_connector_public_access_urls as build_edc_connector_public_access_urls,
             common_access_urls as build_edc_common_access_urls,
             dataspace_domain_base as edc_dataspace_domain_base,
         )
@@ -8489,12 +8620,21 @@ def run_available_access_urls(adapter, deployer_name=None, deployer_registry=Non
 
         connector_urls = {}
         for connector in connectors:
-            access_urls = build_edc_connector_access_urls(
-                config,
-                connector,
-                dataspace_name,
-                environment,
-            )
+            access_urls = {}
+            if resolved_topology in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
+                access_urls = build_edc_connector_public_access_urls(
+                    config,
+                    connector,
+                    dataspace_name,
+                    environment,
+                )
+            if not access_urls:
+                access_urls = build_edc_connector_access_urls(
+                    config,
+                    connector,
+                    dataspace_name,
+                    environment,
+                )
             selected = {}
             for key in (
                 "connector_ingress",
@@ -10677,6 +10817,8 @@ def run_levels(
 
 BATCH_PLAN_DEFAULT_PATH = os.path.join(".profiles", "runs", "full-validation.yaml")
 BATCH_SECRETS_DEFAULT_PATH = os.path.join(".secrets", "pionera.env")
+LOCAL_SECRETS_PATH_ENV = "PIONERA_SECRETS_FILE"
+LOCAL_SECRETS_AUTO_LOAD_ENV = "PIONERA_AUTO_LOAD_SECRETS"
 
 
 def _framework_root_dir():
@@ -10790,6 +10932,23 @@ def _load_batch_key_value_file(path, *, required=False):
                 value = value[1:-1]
             values[key] = value
     return values, warnings_payload
+
+
+def _load_local_secrets_for_interactive_session(path=None):
+    """Load local, git-ignored secrets for menu-driven executions.
+
+    The menu remains interactive: this only makes password-like values available
+    to subprocesses and deployer helpers through environment variables.
+    Confirmation prompts are still answered by the operator.
+    """
+    if not _bool_value(os.environ.get(LOCAL_SECRETS_AUTO_LOAD_ENV), default=True):
+        return {}, []
+
+    secrets_path = path or os.environ.get(LOCAL_SECRETS_PATH_ENV) or BATCH_SECRETS_DEFAULT_PATH
+    resolved_path = _framework_path(secrets_path)
+    if not resolved_path or not os.path.exists(resolved_path):
+        return {}, []
+    return _load_batch_key_value_file(resolved_path, required=False)
 
 
 def _load_batch_plan_file(plan_path):
@@ -10973,12 +11132,21 @@ def _batch_runtime_environment(run, secrets):
         env["PIONERA_LOCAL_MINIKUBE_TUNNEL_MANAGED"] = "true"
     if _batch_run_uses_vm_single_edc(run):
         _apply_vm_single_edc_batch_defaults(env)
+    if _batch_run_uses_vm_distributed_edc(run):
+        _apply_vm_distributed_edc_batch_defaults(env)
     return env
 
 
 def _batch_run_uses_vm_single_edc(run):
     return (
         normalize_topology((run or {}).get("topology") or "local") == VM_SINGLE_TOPOLOGY
+        and str((run or {}).get("adapter") or "").strip().lower() == "edc"
+    )
+
+
+def _batch_run_uses_vm_distributed_edc(run):
+    return (
+        normalize_topology((run or {}).get("topology") or "local") == VM_DISTRIBUTED_TOPOLOGY
         and str((run or {}).get("adapter") or "").strip().lower() == "edc"
     )
 
@@ -10990,6 +11158,19 @@ def _apply_vm_single_edc_batch_defaults(env):
     env.setdefault("PIONERA_EDC_DASHBOARD_PROXY_IMAGE_PULL_POLICY", "IfNotPresent")
     env.setdefault("PIONERA_SKIP_EDC_LOCAL_CONNECTOR_IMAGE_BUILD", "false")
     env.setdefault("PIONERA_SKIP_EDC_LOCAL_DASHBOARD_IMAGE_BUILD", "false")
+
+
+def _apply_vm_distributed_edc_batch_defaults(env):
+    env.setdefault("PIONERA_EDC_LOCAL_IMAGES_MODE", "auto")
+    env.setdefault("PIONERA_EDC_CONNECTOR_IMAGE_PULL_POLICY", "IfNotPresent")
+    env.setdefault("PIONERA_EDC_DASHBOARD_IMAGE_PULL_POLICY", "IfNotPresent")
+    env.setdefault("PIONERA_EDC_DASHBOARD_PROXY_IMAGE_PULL_POLICY", "IfNotPresent")
+    env.setdefault("PIONERA_SKIP_EDC_LOCAL_CONNECTOR_IMAGE_BUILD", "false")
+    env.setdefault("PIONERA_SKIP_EDC_LOCAL_DASHBOARD_IMAGE_BUILD", "false")
+    env.setdefault("VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT", "true")
+    env.setdefault("VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE", "auto")
+    env.setdefault("VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE", "true")
+    env.setdefault("VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP", "2")
 
 
 def _local_minikube_profile_for_adapter(adapter):
@@ -11382,14 +11563,24 @@ def _create_batch_template_files(plan_path=None, secrets_path=None):
                 "    topology: vm-distributed\n"
                 "    adapter: edc\n"
                 "    levels: [1, 2, 3, 4, 5, 6]\n"
+                "    env:\n"
+                "      PIONERA_EDC_LOCAL_IMAGES_MODE: auto\n"
+                "      PIONERA_EDC_CONNECTOR_IMAGE_PULL_POLICY: IfNotPresent\n"
+                "      PIONERA_EDC_DASHBOARD_IMAGE_PULL_POLICY: IfNotPresent\n"
+                "      PIONERA_EDC_DASHBOARD_PROXY_IMAGE_PULL_POLICY: IfNotPresent\n"
+                "      VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT: \"true\"\n"
+                "      VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE: auto\n"
+                "      VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE: \"true\"\n"
+                "      VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP: \"2\"\n"
             )
         created.append(resolved_plan)
     if not os.path.exists(resolved_secrets):
         with open(resolved_secrets, "w", encoding="utf-8") as handle:
             handle.write(
-                "# Local secrets for batch execution. Do not commit this file.\n"
+                "# Local secrets for batch and interactive menu execution. Do not commit this file.\n"
                 "# Fill only the values that your environment needs.\n"
                 "PIONERA_SUDO_PASSWORD=\n"
+                "K3S_REMOTE_IMPORT_SUDO_PASSWORD=\n"
                 "PIONERA_SSH_PASSWORD=\n"
             )
         try:
@@ -11496,18 +11687,25 @@ def run_batch(
                 evidence = _copy_batch_evidence(run, level_result)
                 if evidence:
                     run_payload["evidence"] = evidence
+                    for evidence_path in evidence:
+                        print(f"Evidence copied: {_framework_relative_path(evidence_path)}")
                 if str(run_payload["status"]).endswith("validation_failures"):
                     overall_status = "completed_with_validation_failures"
+                print(f"Batch run status: {run_payload['status']}")
         except Exception as exc:
             run_payload["status"] = "failed"
             run_payload["error"] = {"type": type(exc).__name__, "message": str(exc)}
             overall_status = "failed"
+            print(f"Batch run status: failed")
+            print(f"Batch run error: {type(exc).__name__}: {exc}")
             results.append(run_payload)
             if not run.get("continue_on_error"):
                 break
+            print("Continuing because this run allows continue_on_error.")
             continue
         results.append(run_payload)
 
+    print(f"\nBatch execution status: {overall_status}")
     return {
         "status": overall_status,
         "plan": plan.get("path"),
@@ -21367,6 +21565,16 @@ def run_interactive_menu(
         key: (key in os.environ, os.environ.get(key))
         for key in _INTERACTIVE_RUNTIME_ENV_KEYS
     }
+    interactive_secrets, interactive_secret_warnings = _load_local_secrets_for_interactive_session()
+    original_secret_env = {
+        key: (key in os.environ, os.environ.get(key))
+        for key in interactive_secrets
+    }
+    for warning in interactive_secret_warnings:
+        if warning.get("status") == "warning":
+            print(f"Warning: local secrets file issue: {warning.get('reason')} ({warning.get('path')})")
+    for key, value in interactive_secrets.items():
+        os.environ[key] = str(value)
 
     def restore_cluster_type_env():
         if original_cluster_type_env_present:
@@ -21374,6 +21582,11 @@ def run_interactive_menu(
         else:
             os.environ.pop("PIONERA_CLUSTER_TYPE", None)
         for key, (was_present, old_value) in original_runtime_env.items():
+            if was_present:
+                os.environ[key] = old_value
+            else:
+                os.environ.pop(key, None)
+        for key, (was_present, old_value) in original_secret_env.items():
             if was_present:
                 os.environ[key] = old_value
             else:
