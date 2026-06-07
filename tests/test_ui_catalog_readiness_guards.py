@@ -11,6 +11,11 @@ def _read_ui_file(*parts):
         return handle.read()
 
 
+def _read_validation_file(*parts):
+    with open(os.path.join(VALIDATION_ROOT, *parts), "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
 class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
     def test_provider_bootstrap_exposes_non_blocking_catalog_probe(self):
         source = _read_ui_file("shared", "utils", "provider-bootstrap.ts")
@@ -72,6 +77,68 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         self.assertIn("const protocolBaseUrl = withOptionalIngressPort(", source)
         self.assertIn("const transferEndpointOverride = withOptionalIngressPort(", source)
 
+    def test_dataspace_runtime_prefers_connector_minio_api_for_transfer_destination(self):
+        source = _read_ui_file("shared", "utils", "dataspace-runtime.ts")
+
+        self.assertIn("const credentialMinioApi = optionalUrl(", source)
+        self.assertIn("publicAccessUrls.minio_api", source)
+        self.assertIn("internalAccessUrls.minio_api", source)
+        self.assertIn("function configuredTransferEndpoint(", source)
+        self.assertIn("return credentialMinioApi || `${minioProtocol}://${minioHost}`", source)
+
+    def test_dataspace_runtime_uses_internal_minio_service_for_vm_single_edc_transfer(self):
+        source = _read_ui_file("shared", "utils", "dataspace-runtime.ts")
+
+        self.assertIn("function vmSingleEdcTransferEndpoint(", source)
+        self.assertIn("commonServicesNamespace(deployerConfig)", source)
+        self.assertIn('"common-srvs-minio"', source)
+        self.assertIn('"9000"', source)
+        self.assertIn('adapter === "edc" && activeTopologyFromConfig(deployerConfig) === "vm-single"', source)
+        self.assertIn("return vmSingleEdcTransferEndpoint(deployerConfig)", source)
+
+    def test_edc_api_transfer_payload_matches_dashboard_s3_destination_fields(self):
+        source = _read_ui_file("shared", "utils", "provider-bootstrap.ts")
+
+        self.assertIn("objectName: transferObjectName", source)
+        self.assertIn("accessKeyId: destination.accessKeyId", source)
+        self.assertIn("secretAccessKey: destination.secretAccessKey", source)
+
+    def test_edc_dashboard_transfer_history_handles_async_pagination_state(self):
+        transfer_view = _read_validation_file(
+            "adapters",
+            "edc",
+            "sources",
+            "dashboard",
+            "DataDashboard",
+            "projects",
+            "dashboard-core",
+            "transfer",
+            "src",
+            "transfer-history-view",
+            "transfer-history-view.component.ts",
+        )
+        pagination = _read_validation_file(
+            "adapters",
+            "edc",
+            "sources",
+            "dashboard",
+            "DataDashboard",
+            "projects",
+            "dashboard-core",
+            "src",
+            "lib",
+            "common",
+            "pagination",
+            "pagination.component.ts",
+        )
+
+        self.assertIn("new BehaviorSubject<TransferProcess[]>([])", transfer_view)
+        self.assertIn("setCurrentPageTransferProcesses", transfer_view)
+        self.assertIn("shareReplay({ bufferSize: 1, refCount: true })", transfer_view)
+        self.assertIn("this.pageTransferProcessesSubject.next(pageItems ?? [])", transfer_view)
+        self.assertIn("const items = this.items ?? []", pagination)
+        self.assertNotIn("this.items!.slice", pagination)
+
     def test_minio_runtime_prefers_topology_scoped_connector_credentials(self):
         source = _read_ui_file("shared", "utils", "minio-console-runtime.ts")
 
@@ -110,6 +177,18 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         self.assertIn('delete payload["edc:counterPartyAddress"]', source)
         self.assertIn("EDC_COUNTER_PARTY_ADDRESS_IRI", source)
         self.assertIn("dataspace-protocol-http", source)
+
+    def test_edc_dashboard_navigation_preserves_public_path_prefixes(self):
+        source = _read_ui_file("adapters", "edc", "components", "edc-dashboard.page.ts")
+
+        self.assertIn("function dashboardAbsolutePathUrl", source)
+        self.assertIn('const marker = "/edc-dashboard"', source)
+        self.assertIn("const publicPrefix = base.pathname.slice(0, markerIndex)", source)
+        self.assertIn("base.pathname = `${publicPrefix}${path}`", source)
+        self.assertIn("function navigationItemTextPattern", source)
+        self.assertIn("filter({ hasText: sectionPattern })", source)
+        self.assertIn("[a-z0-9_]+", source)
+        self.assertNotIn('new RegExp(`(?:^|\\\\s)${escapeRegExp(sectionName)}', source)
 
     def test_edc_ml_assets_uses_configurable_page_size_before_polling_cards(self):
         source = _read_ui_file("adapters", "edc", "components", "edc-ml-components.page.ts")

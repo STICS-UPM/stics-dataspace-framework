@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import requests
 import yaml
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -201,6 +202,13 @@ class EdcConnectorConfigAdapter:
     def edc_connector_certs_dir(self, ds_name=None):
         return os.path.join(self.edc_dataspace_runtime_dir(ds_name=ds_name), "certs")
 
+    def edc_connector_credentials_path(self, connector_name, ds_name=None, for_write=False):
+        del for_write
+        return os.path.join(
+            self.edc_dataspace_runtime_dir(ds_name=ds_name),
+            f"credentials-connector-{connector_name}.json",
+        )
+
     def edc_dashboard_runtime_dir(self, connector_name, ds_name=None):
         return os.path.join(self.edc_dataspace_runtime_dir(ds_name=ds_name), "dashboard", connector_name)
 
@@ -219,6 +227,10 @@ class EdcConnectorConfigAdapter:
     def edc_connector_policy_file(self, connector_name, ds_name=None):
         dataspace = ds_name or "default"
         return os.path.join(self.edc_dataspace_runtime_dir(ds_name=dataspace), f"policy-{dataspace}-{connector_name}.json")
+
+    def connector_minio_policy_path(self, connector_name, ds_name=None, for_write=False):
+        del for_write
+        return self.edc_connector_policy_file(connector_name, ds_name=ds_name)
 
     @staticmethod
     def edc_reference_repo_url():
@@ -400,6 +412,73 @@ class EdcConnectorTopologyTests(unittest.TestCase):
         self.assertEqual(calls[0][0], script_path)
         self.assertIn("--source-dir", calls[0][1])
         self.assertIn(source_dir, calls[0][1])
+
+    def test_edc_vm_distributed_imports_local_connector_image_for_each_remote_target(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script_path = os.path.join(tmpdir, "adapters", "edc", "scripts", "build_image.sh")
+            os.makedirs(os.path.dirname(script_path), exist_ok=True)
+            with open(script_path, "w", encoding="utf-8") as handle:
+                handle.write("#!/usr/bin/env bash\n")
+
+            source_dir = os.path.join(tmpdir, "adapters", "edc", "sources", "connector")
+            calls = []
+            adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+            adapter.config = type("Config", (), {"script_dir": staticmethod(lambda: tmpdir)})()
+            adapter.config_adapter = type(
+                "ConfigAdapter",
+                (),
+                {
+                    "load_deployer_config": staticmethod(lambda: {}),
+                    "edc_connector_source_dir": staticmethod(lambda: source_dir),
+                    "edc_reference_repo_url": staticmethod(lambda: "https://example.test/edc.git"),
+                    "edc_reference_repo_subdir": staticmethod(lambda: "asset-filter-template"),
+                },
+            )()
+            adapter._cluster_runtime = lambda: {"cluster_type": "k3s"}
+            adapter._export_ontology_validator_patch_env_for_edc_build = lambda: None
+            adapter._run_level4_edc_image_script = lambda script, args=None, env_prefix="": (
+                calls.append((script, args, env_prefix)) or True
+            )
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                self.assertTrue(
+                    adapter._maybe_prepare_level4_local_edc_connector_image(
+                        "auto",
+                        env_prefix="K3S_REMOTE_IMPORT_HOST=pionera20",
+                    )
+                )
+                self.assertTrue(
+                    adapter._maybe_prepare_level4_local_edc_connector_image(
+                        "auto",
+                        env_prefix="K3S_REMOTE_IMPORT_HOST=pionera3",
+                    )
+                )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][2], "K3S_REMOTE_IMPORT_HOST=pionera20")
+        self.assertEqual(calls[1][2], "K3S_REMOTE_IMPORT_HOST=pionera3")
+
+    def test_edc_vm_distributed_keeps_external_connector_image_override_without_import(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter.config_adapter = type("ConfigAdapter", (), {"load_deployer_config": staticmethod(lambda: {})})()
+        adapter._run_level4_edc_image_script = mock.Mock(side_effect=AssertionError("should not build"))
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_EDC_CONNECTOR_IMAGE_NAME": "registry.example/edc-connector",
+                "PIONERA_EDC_CONNECTOR_IMAGE_TAG": "stable",
+            },
+            clear=True,
+        ):
+            self.assertTrue(
+                adapter._maybe_prepare_level4_local_edc_connector_image(
+                    "auto",
+                    env_prefix="K3S_REMOTE_IMPORT_HOST=pionera20",
+                )
+            )
+
+        adapter._run_level4_edc_image_script.assert_not_called()
 
     def test_edc_level4_vm_single_passes_remote_import_env_to_image_scripts(self):
         adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
@@ -1088,6 +1167,29 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         }
         return adapter
 
+    def test_wait_for_management_api_ready_prefers_internal_port_forward(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter._start_connector_management_api_fallback = lambda connector: (
+            "http://127.0.0.1:45555/management/v3/assets/request",
+            {"namespace": "demoedc", "pod_name": "conn-citycounciledc-demoedc-0"},
+        )
+        adapter._close_temporary_port_forward = mock.Mock()
+        adapter.get_management_api_headers = lambda connector: {"Authorization": "Bearer token"}
+        adapter.invalidate_management_api_token = mock.Mock()
+        adapter.connector_base_url = mock.Mock(side_effect=AssertionError("public URL should not be used"))
+        response = mock.Mock(status_code=200)
+
+        with mock.patch("adapters.edc.connectors.requests.post", return_value=response) as post_mock:
+            ready = adapter.wait_for_management_api_ready("conn-citycounciledc-demoedc", timeout=1)
+
+        self.assertTrue(ready)
+        post_mock.assert_called_once()
+        self.assertEqual(
+            post_mock.call_args.args[0],
+            "http://127.0.0.1:45555/management/v3/assets/request",
+        )
+        adapter._close_temporary_port_forward.assert_called_once()
+
     def _make_oidc_adapter(self, root):
         adapter = self._make_adapter(root)
         adapter.config_adapter = self.OidcEdcConnectorConfigAdapter(root)
@@ -1178,6 +1280,52 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                     "target": "http://demoedc-ontology-hub.semantic-components:3333",
                 }
             ],
+        )
+
+    def test_dashboard_component_proxy_uses_shared_component_release_for_edc_dataspace(self):
+        with tempfile.TemporaryDirectory() as root:
+            adapter = self._make_adapter(root)
+            config = {
+                "DS_1_NAME": "demo-edc",
+                "COMPONENTS_NAMESPACE": "components",
+                "COMPONENTS_RELEASE_SCOPE": "auto",
+                "COMPONENTS_SHARED_RELEASE_COMPONENTS": "ontology-hub,ai-model-hub,semantic-virtualization",
+            }
+
+            components = adapter._dashboard_component_proxy_config_entries(
+                config=config,
+                ds_name="demo-edc",
+            )
+
+        self.assertEqual(
+            components,
+            [
+                {
+                    "name": "ontology-hub",
+                    "target": "http://demo-ontology-hub.components:3333",
+                }
+            ],
+        )
+
+    def test_dashboard_component_proxy_prefers_explicit_component_release_dataspace(self):
+        with tempfile.TemporaryDirectory() as root:
+            adapter = self._make_adapter(root)
+            config = {
+                "DS_1_NAME": "demo-edc",
+                "COMPONENTS_NAMESPACE": "components",
+                "COMPONENTS_RELEASE_DATASPACE_NAME": "shared-demo",
+            }
+
+            target = adapter._resolve_ontology_hub_internal_url(config, "demo-edc")
+            clusterlocal_target = adapter._resolve_ontology_hub_internal_clusterlocal_url(
+                config,
+                "demo-edc",
+            )
+
+        self.assertEqual(target, "http://shared-demo-ontology-hub.components:3333")
+        self.assertEqual(
+            clusterlocal_target,
+            "http://shared-demo-ontology-hub.components.svc.cluster.local:3333",
         )
 
     def _make_runtime_prerequisites_adapter(
@@ -1392,6 +1540,54 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         self.assertIn("Vault token validation failed", output.getvalue())
         self.assertIn("stale", output.getvalue())
 
+    def test_vault_management_preflight_uses_port_forward_for_cluster_dns(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = self._make_adapter(tmpdir)
+            adapter.config_adapter.load_deployer_config = lambda: {
+                "VT_URL": "http://common-srvs-vault.common-srvs.svc:8200",
+                "VT_TOKEN": "management-token",
+            }
+            adapter.infrastructure = mock.Mock()
+            adapter.infrastructure.port_forward_service.return_value = True
+            adapter.infrastructure.stop_port_forward_service.return_value = True
+            adapter._reserve_local_port = lambda: 49222
+
+            def response(status_code=200, payload=None):
+                item = mock.Mock(status_code=status_code)
+                item.json.return_value = payload or {}
+                return item
+
+            def fake_get(url, **_kwargs):
+                if "common-srvs-vault.common-srvs.svc" in url:
+                    raise requests.ConnectionError("Failed to resolve common-srvs-vault.common-srvs.svc")
+                return response()
+
+            def fake_post(url, **_kwargs):
+                self.assertIn("127.0.0.1:49222", url)
+                return response(payload={"capabilities": ["root"]})
+
+            output = io.StringIO()
+            with mock.patch("adapters.edc.connectors.requests.get", side_effect=fake_get), mock.patch(
+                "adapters.edc.connectors.requests.post",
+                side_effect=fake_post,
+            ), contextlib.redirect_stdout(output):
+                result = adapter._verify_vault_management_token()
+
+        self.assertTrue(result)
+        adapter.infrastructure.port_forward_service.assert_called_once_with(
+            "common-srvs",
+            "common-srvs-vault",
+            49222,
+            8200,
+            quiet=True,
+        )
+        adapter.infrastructure.stop_port_forward_service.assert_called_once_with(
+            "common-srvs",
+            "common-srvs-vault",
+            quiet=True,
+        )
+        self.assertIn("temporary local port-forward", output.getvalue())
+
     def test_prepare_runtime_prerequisites_uses_native_edc_bootstrap_without_legacy_venv(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_dir = os.path.join(tmpdir, "deployers", "edc")
@@ -1484,6 +1680,181 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         self.assertEqual(adapter._last_runtime_prerequisite_code, "keycloak_realm_missing")
         self.assertIn("Run Level 3 for the EDC adapter", output.getvalue())
 
+    def test_vm_single_keycloak_base_url_is_inferred_from_public_vm_url(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter.topology = "vm-single"
+        adapter.config_adapter = type(
+            "ConfigAdapter",
+            (),
+            {
+                "topology": "vm-single",
+                "load_deployer_config": staticmethod(
+                    lambda: {
+                        "VM_SINGLE_HTTP_URL": "https://org4.example.test",
+                        "DOMAIN_BASE": "example.test",
+                        "DS_DOMAIN_BASE": "example.test",
+                    }
+                ),
+            },
+        )()
+
+        self.assertEqual(adapter._keycloak_base_url(), "https://org4.example.test/auth")
+        self.assertEqual(
+            adapter._keycloak_token_url_for_dataspace("demoedc"),
+            "https://org4.example.test/auth/realms/demoedc/protocol/openid-connect/token",
+        )
+
+    def test_vm_single_connector_credentials_expose_public_path_urls(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter.topology = "vm-single"
+        adapter.config = type(
+            "Config",
+            (),
+            {
+                "dataspace_name": staticmethod(lambda: "pionera-edc"),
+            },
+        )
+        adapter.config_adapter = type(
+            "ConfigAdapter",
+            (),
+            {
+                "topology": "vm-single",
+                "load_deployer_config": staticmethod(
+                    lambda: {
+                        "VM_SINGLE_HTTP_URL": "https://org4.example.test",
+                        "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX": "/c",
+                        "DOMAIN_BASE": "example.test",
+                        "DS_DOMAIN_BASE": "example.test",
+                    }
+                ),
+                "edc_dashboard_base_href": staticmethod(lambda: "/edc-dashboard/"),
+                "edc_dashboard_proxy_auth_mode": staticmethod(lambda: "service-account"),
+            },
+        )()
+        credentials = {
+            "access_urls": {
+                "connector_management_api_v3": (
+                    "http://conn-citycounciledc-pionera-edc.example.test/management/v3"
+                )
+            }
+        }
+
+        enriched = adapter._with_connector_public_access_urls(
+            "conn-citycounciledc-pionera-edc",
+            credentials,
+        )
+        adapter.load_connector_credentials = lambda connector: enriched
+
+        self.assertEqual(
+            enriched["public_access_urls"]["connector_management_api_v3"],
+            "https://org4.example.test/c/citycounciledc/management/v3",
+        )
+        self.assertEqual(
+            enriched["public_access_urls"]["edc_dashboard_login"],
+            "https://org4.example.test/c/citycounciledc/edc-dashboard/",
+        )
+        self.assertEqual(
+            adapter.build_connector_url("conn-citycounciledc-pionera-edc"),
+            "https://org4.example.test/c/citycounciledc/management/v3",
+        )
+
+    def test_vm_single_edc_public_path_ingresses_route_management_and_dashboard(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter.topology = "vm-single"
+        adapter.config = type(
+            "Config",
+            (),
+            {
+                "dataspace_name": staticmethod(lambda: "pionera-edc"),
+            },
+        )
+        adapter.config_adapter = type(
+            "ConfigAdapter",
+            (),
+            {
+                "topology": "vm-single",
+                "load_deployer_config": staticmethod(
+                    lambda: {
+                        "VM_SINGLE_HTTP_URL": "https://org4.example.test",
+                        "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX": "/c",
+                        "DOMAIN_BASE": "example.test",
+                        "DS_DOMAIN_BASE": "example.test",
+                    }
+                ),
+            },
+        )()
+        values = {
+            "connector": {
+                "name": "conn-citycounciledc-pionera-edc",
+                "dataspace": "pionera-edc",
+                "ingress": {"proxyBodySize": "900m"},
+            },
+            "dashboard": {
+                "enabled": True,
+                "proxy": {"enabled": True, "port": 8080},
+            },
+        }
+
+        manifests = adapter._vm_single_connector_public_path_ingress_manifests(values, "provider")
+
+        self.assertEqual(len(manifests), 2)
+        routed = manifests[0]
+        self.assertEqual(routed["spec"]["rules"][0]["host"], "org4.example.test")
+        paths = routed["spec"]["rules"][0]["http"]["paths"]
+        management_path = next(path for path in paths if "(management.*)" in path["path"])
+        self.assertEqual(
+            management_path["backend"]["service"],
+            {
+                "name": "conn-citycounciledc-pionera-edc",
+                "port": {"number": 19193},
+            },
+        )
+        dashboard_proxy_path = next(path for path in paths if "(edc-dashboard-api.*)" in path["path"])
+        self.assertEqual(
+            dashboard_proxy_path["backend"]["service"],
+            {
+                "name": "conn-citycounciledc-pionera-edc-dashboard-proxy",
+                "port": {"number": 8080},
+            },
+        )
+        root = manifests[1]
+        self.assertEqual(
+            root["metadata"]["annotations"]["nginx.ingress.kubernetes.io/rewrite-target"],
+            "/edc-dashboard/",
+        )
+        self.assertEqual(
+            root["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"],
+            "conn-citycounciledc-pionera-edc-dashboard",
+        )
+
+    def test_keycloak_realm_preflight_can_use_bootstrap_url_override(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter.topology = "vm-single"
+        adapter._last_runtime_prerequisite_error = None
+        adapter._last_runtime_prerequisite_code = None
+        adapter.config_adapter = type(
+            "ConfigAdapter",
+            (),
+            {
+                "topology": "vm-single",
+                "load_deployer_config": staticmethod(lambda: {}),
+            },
+        )()
+
+        response = mock.Mock(status_code=200, text="{}")
+        with mock.patch("adapters.edc.connectors.requests.get", return_value=response) as get_mock:
+            result = adapter._ensure_keycloak_realm_available(
+                "demoedc",
+                keycloak_url="http://127.0.0.1:18080",
+            )
+
+        self.assertTrue(result)
+        get_mock.assert_called_once()
+        self.assertEqual(
+            get_mock.call_args.args[0],
+            "http://127.0.0.1:18080/realms/demoedc",
+        )
+
     def test_connector_values_payload_maps_edc_runtime_and_shared_services(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             adapter = self._make_adapter(tmpdir)
@@ -1518,8 +1889,19 @@ class EdcConnectorAdapterTests(unittest.TestCase):
             "demoedc/conn-citycounciledc-demoedc/public-key",
         )
         self.assertEqual(payload["services"]["keycloak"]["hostname"], "keycloak.dev.ed.dataspaceunit.upm")
+        self.assertEqual(payload["services"]["keycloak"]["url"], "http://keycloak.dev.ed.dataspaceunit.upm")
         self.assertEqual(payload["services"]["minio"]["bucket"], "demoedc-conn-citycounciledc-demoedc")
+        self.assertEqual(payload["services"]["minio"]["url"], "http://minio.dev.ed.dataspaceunit.upm")
         self.assertEqual(payload["services"]["vault"]["path"], "demoedc/conn-citycounciledc-demoedc/")
+        self.assertEqual(
+            payload["connector"]["ontologyHub"],
+            {
+                "externalBase": "http://ontology-hub-demoedc.dev.ds.dataspaceunit.upm",
+                "internalBase": "http://demoedc-ontology-hub.components:3333",
+                "internalFallback": "http://ontology-hub:3333",
+                "internalClusterLocalFallback": "http://demoedc-ontology-hub.components.svc.cluster.local:3333",
+            },
+        )
         self.assertFalse(payload["dashboard"]["enabled"])
         self.assertEqual(payload["dashboard"]["baseHref"], "/edc-dashboard/")
         self.assertEqual(payload["dashboard"]["runtime"]["appConfig"]["appTitle"], "EDC Dashboard - conn-citycounciledc-demoedc")
@@ -1567,6 +1949,97 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 "conn-companyedc-demoedc.dev.ds.dataspaceunit.upm",
             ],
         )
+
+    def test_connector_values_payload_uses_shared_component_release_for_pionera_edc(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = self._make_adapter(tmpdir)
+            base_config = adapter.config_adapter.load_deployer_config()
+            adapter.config_adapter.load_deployer_config = lambda: {
+                **base_config,
+                "DS_1_NAME": "pionera-edc",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "COMPONENTS_NAMESPACE": "components",
+                "COMPONENTS_RELEASE_SCOPE": "auto",
+                "COMPONENTS_SHARED_RELEASE_COMPONENTS": "ontology-hub,ai-model-hub,semantic-virtualization",
+            }
+
+            payload = adapter._connector_values_payload(
+                "conn-companyedc-pionera-edc",
+                "pionera-edc",
+                [
+                    "conn-citycounciledc-pionera-edc",
+                    "conn-companyedc-pionera-edc",
+                ],
+            )
+
+        self.assertEqual(
+            payload["connector"]["ontologyHub"]["internalBase"],
+            "http://pionera-ontology-hub.components:3333",
+        )
+        self.assertEqual(
+            payload["connector"]["ontologyHub"]["internalClusterLocalFallback"],
+            "http://pionera-ontology-hub.components.svc.cluster.local:3333",
+        )
+        self.assertEqual(
+            payload["dashboard"]["proxy"]["config"]["components"],
+            [
+                {
+                    "name": "ontology-hub",
+                    "target": "http://pionera-ontology-hub.components:3333",
+                }
+            ],
+        )
+        self.assertEqual(
+            payload["dashboard"]["runtime"]["appConfig"]["runtime"]["ontologyPublicUrl"],
+            "http://ontology-hub-pionera.pionera.oeg.fi.upm.es",
+        )
+
+    def test_connector_values_payload_infers_vm_single_internal_common_service_endpoints(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = self._make_adapter(tmpdir)
+            adapter.topology = "vm-single"
+            adapter.config_adapter.topology = "vm-single"
+            adapter.config_adapter.load_deployer_config = lambda: {
+                "ENVIRONMENT": "DEV",
+                "TOPOLOGY": "vm-single",
+                "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                "COMMON_SERVICES_NAMESPACE": "common-srvs",
+                "DATABASE_HOSTNAME": "common-srvs-postgresql.common-srvs.svc",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "KEYCLOAK_FRONTEND_URL": "https://org4.pionera.oeg.fi.upm.es/auth",
+                "MINIO_ENDPOINT": "http://127.0.0.1:9000",
+            }
+
+            payload = adapter._connector_values_payload(
+                "conn-citycounciledc-demoedc",
+                "demoedc",
+                [
+                    "conn-citycounciledc-demoedc",
+                    "conn-companyedc-demoedc",
+                ],
+            )
+
+        self.assertEqual(payload["services"]["db"]["hostname"], "common-srvs-postgresql.common-srvs.svc")
+        self.assertEqual(payload["services"]["keycloak"]["hostname"], "common-srvs-keycloak.common-srvs.svc:80")
+        self.assertEqual(payload["services"]["keycloak"]["protocol"], "http")
+        self.assertEqual(payload["services"]["keycloak"]["url"], "http://common-srvs-keycloak.common-srvs.svc:80")
+        self.assertEqual(payload["services"]["minio"]["hostname"], "common-srvs-minio.common-srvs.svc:9000")
+        self.assertEqual(payload["services"]["minio"]["protocol"], "http")
+        self.assertEqual(payload["services"]["minio"]["url"], "http://common-srvs-minio.common-srvs.svc:9000")
+
+    def test_common_services_namespace_keeps_inherited_no_argument_call_compatible(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = self._make_adapter(tmpdir)
+            adapter.config_adapter.load_deployer_config = lambda: {
+                "COMMON_SERVICES_NAMESPACE": "shared-services",
+            }
+
+            self.assertEqual(adapter._common_services_namespace(), "shared-services")
+            self.assertEqual(
+                adapter._common_services_namespace({"COMMON_SERVICES_NAMESPACE": "explicit-services"}),
+                "explicit-services",
+            )
 
     def test_reconcile_connector_vault_secrets_refreshes_token_and_s3_aliases(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1719,9 +2192,60 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         self.assertEqual(proxy_config["callbackPath"], "/edc-dashboard-api/auth/callback")
         self.assertEqual(proxy_config["loginPath"], "/edc-dashboard-api/auth/login")
         self.assertEqual(proxy_config["logoutPath"], "/edc-dashboard-api/auth/logout")
+        self.assertEqual(proxy_config["externalBaseUrl"], "")
         self.assertEqual(proxy_config["cookieName"], "edc_dashboard_session")
         self.assertFalse(proxy_config["cookieSecure"])
         self.assertEqual(payload["dashboard"]["proxy"]["auth"]["connectors"], [])
+
+    def test_vm_single_oidc_bff_proxy_uses_selected_connector_public_external_base_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = self._make_oidc_adapter(tmpdir)
+            adapter.topology = "vm-single"
+            adapter.config_adapter.topology = "vm-single"
+            base_config = adapter.config_adapter.load_deployer_config()
+            adapter.config_adapter.load_deployer_config = lambda: {
+                **base_config,
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.example.test",
+                "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX": "/c",
+            }
+
+            payload = adapter._connector_values_payload(
+                "conn-citycounciledc-demoedc",
+                "demoedc",
+                [
+                    "conn-companyedc-demoedc",
+                    "conn-citycounciledc-demoedc",
+                ],
+            )
+
+        proxy_config = payload["dashboard"]["proxy"]["config"]
+        runtime = payload["dashboard"]["runtime"]
+        self.assertEqual(
+            proxy_config["externalBaseUrl"],
+            "https://org4.example.test/c/citycounciledc",
+        )
+        self.assertEqual(proxy_config["callbackPath"], "/edc-dashboard-api/auth/callback")
+        self.assertEqual(proxy_config["loginPath"], "/edc-dashboard-api/auth/login")
+        self.assertEqual(proxy_config["logoutPath"], "/edc-dashboard-api/auth/logout")
+        self.assertTrue(proxy_config["cookieSecure"])
+        self.assertEqual(runtime["baseHref"], "/c/citycounciledc/edc-dashboard/")
+        self.assertEqual(
+            runtime["appConfig"]["runtime"]["ontologyUrl"],
+            "/c/citycounciledc/edc-dashboard-api/components/ontology-hub",
+        )
+        self.assertEqual(
+            runtime["appConfig"]["runtime"]["modelObserverUrl"],
+            "/c/citycounciledc/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/api/check",
+        )
+        self.assertEqual(
+            runtime["connectorConfig"][0]["managementUrl"],
+            "/c/citycounciledc/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/management",
+        )
+        self.assertEqual(
+            runtime["connectorConfig"][1]["managementUrl"],
+            "/c/citycounciledc/edc-dashboard-api/connectors/conn-companyedc-demoedc/management",
+        )
 
     def test_connector_values_payload_uses_registration_service_fqdn_when_namespace_differs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2065,6 +2589,205 @@ class EdcConnectorAdapterTests(unittest.TestCase):
             os.path.join(runtime_dir, "policy-demoedc-conn-citycounciledc-demoedc.json"),
         )
 
+    def test_stage_bootstrap_artifacts_uses_topology_scoped_connector_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = self._make_adapter(tmpdir)
+            adapter.topology = "vm-single"
+            repo_dir = os.path.join(tmpdir, "bootstrap")
+            source_dir = os.path.join(repo_dir, "deployments", "DEV", "demoedc")
+            source_certs_dir = os.path.join(source_dir, "certs")
+            os.makedirs(source_certs_dir, exist_ok=True)
+
+            connector_name = "conn-citycounciledc-demoedc"
+            runtime_dir = os.path.join(
+                tmpdir,
+                "deployers",
+                "edc",
+                "deployments",
+                "DEV",
+                "vm-single",
+                "demoedc",
+            )
+            credentials_target = os.path.join(
+                runtime_dir,
+                "connectors",
+                connector_name,
+                "credentials.json",
+            )
+            policy_target = os.path.join(
+                runtime_dir,
+                "connectors",
+                connector_name,
+                "policy.json",
+            )
+            certs_dir = os.path.join(runtime_dir, "certs")
+            adapter.config_adapter.edc_dataspace_runtime_dir = lambda ds_name=None: runtime_dir
+            adapter.config_adapter.edc_connector_certs_dir = lambda ds_name=None: certs_dir
+            adapter.config_adapter.edc_connector_credentials_path = (
+                lambda name, ds_name=None, for_write=False: credentials_target
+            )
+            adapter.config_adapter.connector_minio_policy_path = (
+                lambda name, ds_name=None, for_write=False: policy_target
+            )
+
+            with open(
+                os.path.join(source_dir, f"credentials-connector-{connector_name}.json"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                json.dump(
+                    {
+                        "connector_user": {"user": "demo-user", "passwd": "demo-password"},
+                        "minio": {"access_key": "demo-access", "secret_key": "demo-secret"},
+                        "certificates": {
+                            "path": "deployments/DEV/demoedc/certs",
+                            "passwd": "certificate-password",
+                        },
+                    },
+                    handle,
+                )
+            with open(
+                os.path.join(source_dir, f"policy-demoedc-{connector_name}.json"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                json.dump({"Version": "2012-10-17"}, handle)
+            for suffix in ("public.crt", "private.key"):
+                with open(
+                    os.path.join(source_certs_dir, f"{connector_name}-{suffix}"),
+                    "w",
+                    encoding="utf-8",
+                ) as handle:
+                    handle.write(f"dummy-{suffix}")
+
+            staged = adapter._stage_bootstrap_artifacts(connector_name, "demoedc", repo_dir)
+
+            self.assertEqual(staged["credentials"], credentials_target)
+            self.assertEqual(staged["policy"], policy_target)
+            self.assertTrue(os.path.exists(credentials_target))
+            self.assertTrue(os.path.exists(policy_target))
+            with open(credentials_target, "r", encoding="utf-8") as handle:
+                credentials = json.load(handle)
+            self.assertEqual(
+                credentials["certificates"]["path"],
+                adapter._runtime_relative_path(certs_dir),
+            )
+
+    def test_stage_bootstrap_artifacts_does_not_overwrite_existing_topology_scoped_credentials(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = self._make_adapter(tmpdir)
+            adapter.topology = "vm-single"
+            repo_dir = os.path.join(tmpdir, "bootstrap")
+            source_dir = os.path.join(repo_dir, "deployments", "DEV", "demoedc")
+            os.makedirs(source_dir, exist_ok=True)
+
+            connector_name = "conn-citycounciledc-demoedc"
+            runtime_dir = os.path.join(tmpdir, "deployers", "edc", "deployments", "DEV", "vm-single", "demoedc")
+            credentials_target = os.path.join(runtime_dir, "connectors", connector_name, "credentials.json")
+            policy_target = os.path.join(runtime_dir, "connectors", connector_name, "policy.json")
+            certs_dir = os.path.join(runtime_dir, "certs")
+            os.makedirs(os.path.dirname(credentials_target), exist_ok=True)
+            os.makedirs(certs_dir, exist_ok=True)
+            adapter.config_adapter.edc_dataspace_runtime_dir = lambda ds_name=None: runtime_dir
+            adapter.config_adapter.edc_connector_certs_dir = lambda ds_name=None: certs_dir
+            adapter.config_adapter.edc_connector_credentials_path = (
+                lambda name, ds_name=None, for_write=False: credentials_target
+            )
+            adapter.config_adapter.connector_minio_policy_path = (
+                lambda name, ds_name=None, for_write=False: policy_target
+            )
+
+            with open(os.path.join(source_dir, f"credentials-connector-{connector_name}.json"), "w", encoding="utf-8") as handle:
+                json.dump({"database": {"passwd": "legacy-password"}}, handle)
+            with open(credentials_target, "w", encoding="utf-8") as handle:
+                json.dump({"database": {"passwd": "fresh-password"}}, handle)
+
+            adapter._stage_bootstrap_artifacts(connector_name, "demoedc", repo_dir)
+
+            with open(credentials_target, "r", encoding="utf-8") as handle:
+                credentials = json.load(handle)
+            self.assertEqual(credentials["database"]["passwd"], "fresh-password")
+
+    def test_load_connector_credentials_migrates_legacy_edc_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = self._make_adapter(tmpdir)
+            del adapter.load_connector_credentials
+            adapter.topology = "vm-single"
+            repo_dir = os.path.join(tmpdir, "deployers", "edc")
+            source_dir = os.path.join(repo_dir, "deployments", "DEV", "demoedc")
+            source_certs_dir = os.path.join(source_dir, "certs")
+            os.makedirs(source_certs_dir, exist_ok=True)
+
+            connector_name = "conn-companyedc-demoedc"
+            runtime_dir = os.path.join(
+                tmpdir,
+                "deployers",
+                "edc",
+                "deployments",
+                "DEV",
+                "vm-single",
+                "demoedc",
+            )
+            credentials_target = os.path.join(
+                runtime_dir,
+                "connectors",
+                connector_name,
+                "credentials.json",
+            )
+            policy_target = os.path.join(
+                runtime_dir,
+                "connectors",
+                connector_name,
+                "policy.json",
+            )
+            certs_dir = os.path.join(runtime_dir, "certs")
+            adapter.config_adapter.edc_deployment_dir = lambda: repo_dir
+            adapter.config_adapter.edc_dataspace_runtime_dir = lambda ds_name=None: runtime_dir
+            adapter.config_adapter.edc_connector_certs_dir = lambda ds_name=None: certs_dir
+            adapter.config_adapter.edc_connector_credentials_path = (
+                lambda name, ds_name=None, for_write=False: credentials_target
+            )
+            adapter.config_adapter.connector_minio_policy_path = (
+                lambda name, ds_name=None, for_write=False: policy_target
+            )
+            adapter._dataspace_name = lambda: "demoedc"
+
+            with open(
+                os.path.join(source_dir, f"credentials-connector-{connector_name}.json"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                json.dump(
+                    {
+                        "connector_user": {"user": "demo-user", "passwd": "demo-password"},
+                        "minio": {"access_key": "demo-access", "secret_key": "demo-secret"},
+                        "certificates": {
+                            "path": "deployments/DEV/demoedc/certs",
+                            "passwd": "certificate-password",
+                        },
+                    },
+                    handle,
+                )
+            with open(
+                os.path.join(source_dir, f"policy-demoedc-{connector_name}.json"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                json.dump({"Version": "2012-10-17"}, handle)
+            with open(
+                os.path.join(source_certs_dir, f"{connector_name}-public.crt"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write("dummy-public.crt")
+
+            credentials = adapter.load_connector_credentials(connector_name)
+
+            self.assertEqual(credentials["connector_user"]["user"], "demo-user")
+            self.assertEqual(credentials["minio"]["access_key"], "demo-access")
+            self.assertTrue(os.path.exists(credentials_target))
+            self.assertTrue(os.path.exists(policy_target))
+
     def test_deploy_connectors_refuses_to_replace_non_edc_resources(self):
         adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
         adapter._prepare_runtime_prerequisites = lambda: ("/tmp/repo", "/tmp/python")
@@ -2075,7 +2798,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 "connectors": ["conn-citycouncil-demo"],
             }
         ]
-        adapter._ensure_keycloak_realm_available = lambda ds_name: True
+        adapter._ensure_keycloak_realm_available = lambda ds_name, keycloak_url=None: True
         adapter._discover_existing_connectors = lambda ds_name, namespace, include_runtime_artifacts=True: set()
         adapter._conflicting_runtime_resources = lambda connector, namespace: [
             "deployment/conn-citycouncil-demo"
@@ -2108,7 +2831,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
             }
         ]
 
-        def missing_realm(ds_name):
+        def missing_realm(ds_name, keycloak_url=None):
             adapter._last_runtime_prerequisite_error = (
                 f"EDC Level 4 cannot continue because Keycloak realm '{ds_name}' does not exist. "
                 "Run Level 3 for the EDC adapter before deploying connectors."
@@ -2195,7 +2918,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                     "connectors": ["conn-citycounciledc-demoedc"],
                 }
             ]
-            adapter._ensure_keycloak_realm_available = lambda ds_name: True
+            adapter._ensure_keycloak_realm_available = lambda ds_name, keycloak_url=None: True
             adapter._discover_existing_connectors = lambda ds_name, namespace, include_runtime_artifacts=True: set()
             adapter._conflicting_runtime_resources = lambda connector, namespace: []
             adapter._prepare_connector_prerequisites = lambda connector, ds_name, namespace, repo_dir, python_exec: (
@@ -2224,7 +2947,6 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 "build-dashboard-image",
                 "build-dashboard-proxy-image",
                 "prepare-prerequisites",
-                "wait-rollout:conn-citycounciledc-demoedc",
                 "kubectl rollout restart deployment/conn-citycounciledc-demoedc -n demoedc",
                 "wait-rollout:conn-citycounciledc-demoedc",
                 "kubectl rollout restart deployment/conn-citycounciledc-demoedc-dashboard -n demoedc",
@@ -2265,7 +2987,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 ],
             }
         ]
-        adapter._ensure_keycloak_realm_available = lambda ds_name: True
+        adapter._ensure_keycloak_realm_available = lambda ds_name, keycloak_url=None: True
         adapter._discover_existing_connectors = lambda ds_name, namespace, include_runtime_artifacts=True: set()
         adapter._conflicting_runtime_resources = lambda connector, namespace: []
         adapter._maybe_prepare_level4_local_edc_images = lambda: True
@@ -2299,7 +3021,6 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 ("prepare", "conn-citycounciledc-demoedc", "demoedc-provider"),
                 ("values", "conn-citycounciledc-demoedc", "demoedc-provider"),
                 ("rollout", "conn-citycounciledc-demoedc", "demoedc-provider"),
-                ("restart", "conn-citycounciledc-demoedc", "demoedc-provider"),
             ],
         )
         adapter.infrastructure.deploy_helm_release.assert_called_once_with(
@@ -2339,7 +3060,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 ],
             }
         ]
-        adapter._ensure_keycloak_realm_available = lambda ds_name: True
+        adapter._ensure_keycloak_realm_available = lambda ds_name, keycloak_url=None: True
         adapter._conflicting_runtime_resources = lambda connector, namespace: []
         adapter._level4_role_aligned_connector_namespaces_requested = lambda: True
         adapter._maybe_prepare_level4_local_edc_images = lambda: True
@@ -2390,7 +3111,6 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 ("prepare", "conn-citycounciledc-demoedc", "demoedc-provider"),
                 ("values", "conn-citycounciledc-demoedc", "demoedc-provider"),
                 ("rollout", "conn-citycounciledc-demoedc", "demoedc-provider"),
-                ("restart", "conn-citycounciledc-demoedc", "demoedc-provider"),
             ],
         )
 
@@ -2639,7 +3359,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         adapter.load_connector_credentials = lambda connector: {"database": {"name": "db", "user": "user", "passwd": "pw"}}
         adapter._edc_runtime_present = lambda connector, namespace: False
         adapter.wait_for_keycloak_admin_ready = lambda: True
-        adapter._ensure_keycloak_realm_available = lambda ds_name: True
+        adapter._ensure_keycloak_realm_available = lambda ds_name, keycloak_url=None: True
         adapter.config_adapter = EdcConnectorConfigAdapter("/tmp")
         adapter._remove_edc_values_file = lambda connector, ds_name=None: None
         cleanup_calls = []
@@ -2672,6 +3392,47 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         self.assertEqual(
             cleanup_calls,
             [("conn-citycounciledc-demoedc", "demoedc", "demoedc")],
+        )
+
+    def test_prepare_connector_prerequisites_recreates_when_database_credentials_are_stale(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter.load_connector_credentials = lambda connector: {"database": {"name": "db", "user": "user", "passwd": "pw"}}
+        adapter._edc_runtime_present = lambda connector, namespace: True
+        adapter._connector_database_credentials_query_valid = lambda connector, pg_host=None, pg_port=None: False
+        adapter.wait_for_keycloak_admin_ready = lambda: True
+        adapter._ensure_keycloak_realm_available = lambda ds_name, keycloak_url=None: True
+        adapter.config_adapter = EdcConnectorConfigAdapter("/tmp")
+        adapter._remove_edc_values_file = lambda connector, ds_name=None: None
+        cleanup_calls = []
+        adapter._cleanup_connector_state = lambda connector, repo_dir, ds_name, python_exec, namespace=None: cleanup_calls.append(
+            (connector, ds_name, namespace)
+        )
+        adapter.run = lambda cmd, cwd=None, check=False: object()
+        adapter.invalidate_management_api_token = lambda connector: None
+        adapter.config = type(
+            "Config",
+            (),
+            {
+                "connector_credentials_path": staticmethod(lambda connector: "/tmp/missing-creds.json"),
+                "NS_COMMON": "common-srvs",
+            },
+        )
+        adapter.setup_minio_bucket = lambda namespace, ds_name, connector, credentials_path: True
+        adapter.ensure_minio_policy_attached = lambda connector, ds_name=None: True
+        adapter._reconcile_connector_vault_secrets = lambda connector, ds_name, credentials=None: True
+
+        result = adapter._prepare_connector_prerequisites(
+            "conn-citycounciledc-demoedc",
+            "demoedc",
+            "demoedc-provider",
+            "/tmp/repo",
+            "/tmp/python",
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(
+            cleanup_calls,
+            [("conn-citycounciledc-demoedc", "demoedc", "demoedc-provider")],
         )
 
 

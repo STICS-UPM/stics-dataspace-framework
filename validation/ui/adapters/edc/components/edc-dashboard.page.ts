@@ -38,9 +38,39 @@ function dashboardUrl(baseUrl: string, path: string): string {
     return path;
   }
   if (path.startsWith("/")) {
-    return new URL(path, baseUrl).toString();
+    return dashboardAbsolutePathUrl(baseUrl, path);
   }
   return `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+function dashboardAbsolutePathUrl(baseUrl: string, path: string): string {
+  try {
+    const base = new URL(baseUrl);
+    const marker = "/edc-dashboard";
+    const markerIndex = base.pathname.indexOf(marker);
+    if (markerIndex >= 0 && path.startsWith(marker)) {
+      const publicPrefix = base.pathname.slice(0, markerIndex).replace(/\/$/, "");
+      base.pathname = `${publicPrefix}${path}`.replace(/\/{2,}/g, "/");
+      base.search = "";
+      base.hash = "";
+      return base.toString();
+    }
+  } catch {
+    // Fall back to browser URL resolution below.
+  }
+  return new URL(path, baseUrl).toString();
+}
+
+export function edcDashboardApiPath(currentUrl: string, apiPath: string): string {
+  const suffix = apiPath.startsWith("/") ? apiPath : `/${apiPath}`;
+  try {
+    const pathname = new URL(currentUrl).pathname;
+    const match = pathname.match(/^(.*)\/edc-dashboard(?:\/|$)/i);
+    const publicPrefix = (match?.[1] || "").replace(/\/$/, "");
+    return `${publicPrefix}/edc-dashboard-api${suffix}`.replace(/\/{2,}/g, "/");
+  } catch {
+    return `/edc-dashboard-api${suffix}`;
+  }
 }
 
 async function pageShowsTransientGateway(page: Page): Promise<boolean> {
@@ -120,9 +150,15 @@ export class EdcDashboardPage {
   }
 
   async waitForAuthenticatedSession(): Promise<DashboardAuthState> {
-    await this.page.waitForFunction(async () => {
+    const baseHref = await this.page
+      .locator("base")
+      .first()
+      .getAttribute("href", { timeout: 1_000 })
+      .catch(() => null);
+    const authMePath = edcDashboardApiPath(baseHref || this.page.url(), "/auth/me");
+    await this.page.waitForFunction(async (path) => {
       try {
-        const response = await fetch("/edc-dashboard-api/auth/me", {
+        const response = await fetch(path as string, {
           method: "GET",
           credentials: "include",
           cache: "no-store",
@@ -130,23 +166,37 @@ export class EdcDashboardPage {
         if (!response.ok) {
           return false;
         }
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.toLowerCase().includes("application/json")) {
+          return false;
+        }
         const state = await response.json();
         return state?.authMode === "oidc-bff" && state?.authenticated === true;
       } catch {
         return false;
       }
-    }, undefined, {
+    }, authMePath, {
       timeout: 60_000,
     });
 
-    return await this.page.evaluate(async () => {
-      const response = await fetch("/edc-dashboard-api/auth/me", {
+    return await this.page.evaluate(async (path) => {
+      const response = await fetch(path as string, {
         method: "GET",
         credentials: "include",
         cache: "no-store",
       });
+      if (!response.ok) {
+        throw new Error(`EDC dashboard auth state request failed with HTTP ${response.status}`);
+      }
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.toLowerCase().includes("application/json")) {
+        const body = await response.text();
+        throw new Error(
+          `EDC dashboard auth state returned '${contentType || "unknown"}' instead of JSON: ${body.slice(0, 120)}`,
+        );
+      }
       return (await response.json()) as DashboardAuthState;
-    });
+    }, authMePath);
   }
 
   async expectNoServerErrorBanner(context: string): Promise<void> {
@@ -157,9 +207,10 @@ export class EdcDashboardPage {
   }
 
   async navigateToSection(sectionName: string, expectedPath: string): Promise<void> {
+    const sectionPattern = navigationItemTextPattern(sectionName);
     let navButton = this.page
       .locator("a, button")
-      .filter({ hasText: new RegExp(`^\\s*${escapeRegExp(sectionName)}\\s*$`, "i") })
+      .filter({ hasText: sectionPattern })
       .first();
 
     if ((await navButton.count().catch(() => 0)) === 0) {
@@ -175,7 +226,7 @@ export class EdcDashboardPage {
 
       navButton = this.page
         .locator("a, button")
-        .filter({ hasText: new RegExp(`^\\s*${escapeRegExp(sectionName)}\\s*$`, "i") })
+        .filter({ hasText: sectionPattern })
         .first();
     }
 
@@ -230,4 +281,8 @@ export class EdcDashboardPage {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function navigationItemTextPattern(sectionName: string): RegExp {
+  return new RegExp(`^\\s*(?:[a-z0-9_]+\\s+)?${escapeRegExp(sectionName)}\\s*$`);
 }

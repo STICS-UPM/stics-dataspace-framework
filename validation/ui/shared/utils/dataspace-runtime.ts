@@ -227,6 +227,65 @@ function normalizeTopology(value: string | undefined): string {
   return ["local", "vm-single", "vm-distributed"].includes(topology) ? topology : "local";
 }
 
+function activeTopologyFromConfig(deployerConfig: Record<string, string>): string {
+  return normalizeTopology(
+    process.env.UI_TOPOLOGY ||
+      process.env.PIONERA_TOPOLOGY ||
+      process.env.INESDATA_TOPOLOGY ||
+      deployerConfig.TOPOLOGY ||
+      deployerConfig.PIONERA_TOPOLOGY,
+  );
+}
+
+function commonServicesNamespace(deployerConfig: Record<string, string>): string {
+  return (
+    process.env.UI_COMMON_SERVICES_NAMESPACE ||
+    deployerConfig.COMMON_SERVICES_NAMESPACE ||
+    deployerConfig.NS_COMMON ||
+    "common-srvs"
+  ).trim() || "common-srvs";
+}
+
+function vmSingleEdcTransferEndpoint(deployerConfig: Record<string, string>): string {
+  const namespace = commonServicesNamespace(deployerConfig);
+  const serviceName = (
+    process.env.UI_MINIO_SERVICE_NAME ||
+    deployerConfig.MINIO_SERVICE_NAME ||
+    "common-srvs-minio"
+  ).trim() || "common-srvs-minio";
+  const servicePort = (
+    process.env.UI_MINIO_SERVICE_PORT ||
+    deployerConfig.MINIO_SERVICE_PORT ||
+    "9000"
+  ).trim() || "9000";
+  return `http://${serviceName}.${namespace}.svc:${servicePort}`;
+}
+
+function configuredTransferEndpoint(
+  adapter: string,
+  deployerConfig: Record<string, string>,
+  credentialMinioApi: string | undefined,
+  minioHost: string,
+  minioProtocol: string,
+): string {
+  const explicitEndpoint = optionalUrl(
+    process.env.UI_DEFAULT_TRANSFER_ENDPOINT ||
+      deployerConfig.PIONERA_LEVEL6_TRANSFER_ENDPOINT ||
+      deployerConfig.PIONERA_LEVEL6_MINIO_ENDPOINT ||
+      deployerConfig.EDC_TRANSFER_ENDPOINT ||
+      deployerConfig.EDC_MINIO_ENDPOINT,
+  );
+  if (explicitEndpoint) {
+    return explicitEndpoint;
+  }
+
+  if (adapter === "edc" && activeTopologyFromConfig(deployerConfig) === "vm-single") {
+    return vmSingleEdcTransferEndpoint(deployerConfig);
+  }
+
+  return credentialMinioApi || `${minioProtocol}://${minioHost}`;
+}
+
 function deploymentId(config: Record<string, string>): string {
   return cleanSegment(
     process.env.PIONERA_DEPLOYMENT_ID ||
@@ -553,6 +612,7 @@ function resolveConnectorRuntime(
   const host = `${connectorName}.${dsDomain}`;
   const baseUrl = ingressBaseUrl(host);
   const deployerConfig = parseKeyValueFile(deployerConfigPath(adapter));
+  const credentialMinioApi = optionalUrl(publicAccessUrls.minio_api || internalAccessUrls.minio_api);
   const minioHost = process.env.UI_MINIO_HOST || deployerConfig.MINIO_HOSTNAME || `minio.${deployerConfig.DOMAIN_BASE || "dev.ed.dataspaceunit.upm"}`;
   const minioProtocol = process.env.UI_MINIO_PROTOCOL || "http";
   const transferRegion =
@@ -561,7 +621,13 @@ function resolveConnectorRuntime(
     deployerConfig.EDC_AWS_REGION ||
     deployerConfig.AWS_REGION ||
     "eu-central-1";
-  const endpointOverride = `${minioProtocol}://${minioHost}`;
+  const endpointOverride = configuredTransferEndpoint(
+    adapter,
+    deployerConfig,
+    credentialMinioApi,
+    minioHost,
+    minioProtocol,
+  );
   const envPrefix = connectorEnvPrefix(connectorName);
   const explicitPortalUrl = optionalPortalUrl(process.env[`UI_${envPrefix}_PORTAL_URL`]);
   const protocolMode = connectorProtocolAddressMode(deployerConfig, envPrefix);

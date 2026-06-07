@@ -16,6 +16,51 @@ spec.loader.exec_module(edc_native_deployer)
 
 
 class EdcNativeDeployerTests(unittest.TestCase):
+    def test_keycloak_admin_prefers_management_url_override(self):
+        response = mock.Mock(status_code=200)
+        response.json.return_value = {"access_token": "admin-token"}
+
+        with mock.patch.object(edc_native_deployer.requests, "post", return_value=response) as post_mock:
+            admin = edc_native_deployer.KeycloakAdmin(
+                {
+                    "KC_URL": "http://localhost:8080",
+                    "KC_MANAGEMENT_URL": "https://org4.example.test/auth",
+                    "KC_USER": "admin",
+                    "KC_PASSWORD": "secret",
+                },
+                realm="demoedc",
+            )
+
+        self.assertEqual(admin.base_url, "https://org4.example.test/auth")
+        self.assertEqual(
+            post_mock.call_args.args[0],
+            "https://org4.example.test/auth/realms/master/protocol/openid-connect/token",
+        )
+
+    def test_keycloak_admin_infers_vm_single_public_auth_url(self):
+        response = mock.Mock(status_code=200)
+        response.json.return_value = {"access_token": "admin-token"}
+
+        with mock.patch.object(edc_native_deployer.requests, "post", return_value=response) as post_mock:
+            admin = edc_native_deployer.KeycloakAdmin(
+                {
+                    "TOPOLOGY": "vm-single",
+                    "KC_URL": "http://localhost:8080",
+                    "VM_SINGLE_HTTP_URL": "https://org4.example.test",
+                    "DOMAIN_BASE": "example.test",
+                    "DS_DOMAIN_BASE": "example.test",
+                    "KC_USER": "admin",
+                    "KC_PASSWORD": "secret",
+                },
+                realm="demoedc",
+            )
+
+        self.assertEqual(admin.base_url, "https://org4.example.test/auth")
+        self.assertEqual(
+            post_mock.call_args.args[0],
+            "https://org4.example.test/auth/realms/master/protocol/openid-connect/token",
+        )
+
     def test_keycloak_certificate_upload_declares_pem_keystore_format(self):
         admin = edc_native_deployer.KeycloakAdmin.__new__(edc_native_deployer.KeycloakAdmin)
         admin.base_url = "http://keycloak.local"

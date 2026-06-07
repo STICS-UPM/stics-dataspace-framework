@@ -45,6 +45,7 @@ class ProxySettings:
         self.token_url = config_payload.get("tokenUrl", "")
         self.authorization_url = config_payload.get("authorizationUrl", "")
         self.logout_url = config_payload.get("logoutUrl", "")
+        self.external_base_url = self._normalize_external_base_url(config_payload.get("externalBaseUrl", ""))
         self.callback_path = config_payload.get("callbackPath", "/edc-dashboard-api/auth/callback")
         self.login_path = config_payload.get("loginPath", "/edc-dashboard-api/auth/login")
         self.logout_path = config_payload.get("logoutPath", "/edc-dashboard-api/auth/logout")
@@ -79,6 +80,24 @@ class ProxySettings:
         self.sessions_lock = Lock()
         self.flash_messages = {}
         self.flash_messages_lock = Lock()
+
+    @staticmethod
+    def _normalize_external_base_url(value):
+        candidate = str(value or "").strip().rstrip("/")
+        if not candidate:
+            return ""
+        parsed = urllib.parse.urlsplit(candidate)
+        if not parsed.scheme or not parsed.netloc:
+            return ""
+        return urllib.parse.urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                (parsed.path or "").rstrip("/"),
+                "",
+                "",
+            )
+        ).rstrip("/")
 
     def connector_names(self):
         return sorted(self.connectors.keys())
@@ -357,11 +376,41 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
         return candidate
 
     def _external_base_url(self):
+        if SETTINGS.external_base_url:
+            return SETTINGS.external_base_url
         forwarded_proto = self.headers.get("X-Forwarded-Proto")
         forwarded_host = self.headers.get("X-Forwarded-Host")
         host = forwarded_host or self.headers.get("Host") or "localhost"
         scheme = forwarded_proto or ("https" if SETTINGS.cookie_secure else "http")
         return f"{scheme}://{host}"
+
+    def _external_origin(self):
+        parsed = urllib.parse.urlsplit(self._external_base_url())
+        return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+    @staticmethod
+    def _external_path_prefix():
+        if not SETTINGS.external_base_url:
+            return ""
+        return urllib.parse.urlsplit(SETTINGS.external_base_url).path.rstrip("/")
+
+    def _public_path(self, path):
+        normalized_path = str(path or "").strip()
+        if not normalized_path:
+            normalized_path = "/"
+        if not normalized_path.startswith("/"):
+            normalized_path = f"/{normalized_path}"
+        prefix = self._external_path_prefix()
+        return f"{prefix}{normalized_path}" if prefix and not normalized_path.startswith(f"{prefix}/") else normalized_path
+
+    def _internal_request_path(self, path):
+        normalized_path = str(path or "").strip() or "/"
+        prefix = self._external_path_prefix()
+        if prefix and normalized_path == prefix:
+            return "/"
+        if prefix and normalized_path.startswith(f"{prefix}/"):
+            return normalized_path[len(prefix):] or "/"
+        return normalized_path
 
     def _callback_url(self):
         return f"{self._external_base_url()}{SETTINGS.callback_path}"
@@ -440,8 +489,8 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
                     "authMode": SETTINGS.auth_mode,
                     "authenticated": bool(session),
                     "connectors": SETTINGS.connector_names(),
-                    "loginPath": SETTINGS.login_path,
-                    "logoutPath": SETTINGS.logout_path,
+                    "loginPath": self._public_path(SETTINGS.login_path),
+                    "logoutPath": self._public_path(SETTINGS.logout_path),
                     "flashNotice": flash_notice,
                     "user": {
                         "username": claims.get("preferred_username"),
@@ -580,7 +629,7 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
                     {
                         "message": "Authentication required",
                         "authMode": SETTINGS.auth_mode,
-                        "loginPath": SETTINGS.login_path,
+                        "loginPath": self._public_path(SETTINGS.login_path),
                         "authEvent": "session-expired",
                     },
                 )
@@ -639,7 +688,7 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
                     {
                         "message": "Authentication required",
                         "authMode": SETTINGS.auth_mode,
-                        "loginPath": SETTINGS.login_path,
+                        "loginPath": self._public_path(SETTINGS.login_path),
                         "authEvent": "session-expired",
                     },
                 )
@@ -703,7 +752,7 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
             return
         return_to = self._normalize_return_to(
             urllib.parse.parse_qs(parsed.query).get("returnTo", [None])[0],
-            SETTINGS.post_login_redirect_path,
+            self._public_path(SETTINGS.post_login_redirect_path),
         )
         state, verifier, challenge = SETTINGS.create_auth_request(return_to)
         redirect_uri = self._callback_url()
@@ -791,14 +840,14 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
             "Your dashboard session has been closed.",
             level="info",
         )
-        post_logout_redirect_uri = f"{self._external_base_url()}{SETTINGS.post_logout_redirect_path}"
+        post_logout_redirect_uri = f"{self._external_origin()}{self._public_path(SETTINGS.post_logout_redirect_path)}"
         if SETTINGS.logout_url:
             query_params = {"post_logout_redirect_uri": post_logout_redirect_uri}
             if id_token:
                 query_params["id_token_hint"] = id_token
             location = f"{SETTINGS.logout_url}?{urllib.parse.urlencode(query_params)}"
         else:
-            location = SETTINGS.post_logout_redirect_path
+            location = self._public_path(SETTINGS.post_logout_redirect_path)
 
         self._send_redirect(
             location,
@@ -810,30 +859,31 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
 
     def _handle_request(self):
         parsed = urllib.parse.urlsplit(self.path)
-        if parsed.path == "/edc-dashboard-api/auth/me":
+        request_path = self._internal_request_path(parsed.path)
+        if request_path == "/edc-dashboard-api/auth/me":
             self._handle_auth_info()
             return
-        if parsed.path == SETTINGS.login_path:
+        if request_path == SETTINGS.login_path:
             if SETTINGS.auth_mode != "oidc-bff":
                 self._send_json(501, {"message": "Login is only available in oidc-bff mode"})
             else:
                 self._handle_oidc_login(parsed)
             return
-        if parsed.path == SETTINGS.callback_path:
+        if request_path == SETTINGS.callback_path:
             if SETTINGS.auth_mode != "oidc-bff":
                 self._send_json(501, {"message": "OIDC callback is only available in oidc-bff mode"})
             else:
                 self._handle_oidc_callback(parsed)
             return
-        if parsed.path == SETTINGS.logout_path:
+        if request_path == SETTINGS.logout_path:
             if SETTINGS.auth_mode != "oidc-bff":
                 self._send_json(501, {"message": "Logout is only available in oidc-bff mode"})
             else:
                 self._handle_oidc_logout()
             return
 
-        if parsed.path.startswith(PROXY_COMPONENT_PREFIX):
-            relative = parsed.path[len(PROXY_COMPONENT_PREFIX):]
+        if request_path.startswith(PROXY_COMPONENT_PREFIX):
+            relative = request_path[len(PROXY_COMPONENT_PREFIX):]
             parts = [part for part in relative.split("/") if part]
             if len(parts) < 1:
                 self._send_json(404, {"message": "Component segment missing"})
@@ -847,11 +897,11 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
                 self._send_json(404, {"message": str(exc)})
             return
 
-        if not parsed.path.startswith(PROXY_CONNECTOR_PREFIX):
+        if not request_path.startswith(PROXY_CONNECTOR_PREFIX):
             self._send_json(404, {"message": "Unsupported dashboard proxy path"})
             return
 
-        relative = parsed.path[len(PROXY_CONNECTOR_PREFIX):]
+        relative = request_path[len(PROXY_CONNECTOR_PREFIX):]
         parts = [part for part in relative.split("/") if part]
         if len(parts) < 2:
             self._send_json(404, {"message": "Connector or service segment missing"})

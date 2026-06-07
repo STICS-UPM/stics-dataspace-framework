@@ -60,12 +60,18 @@ else
 fi
 
 if [[ -n "$SOURCE_REF" ]]; then
-  if ! git -C "$TARGET_DIR" diff --quiet || ! git -C "$TARGET_DIR" diff --cached --quiet; then
-    echo "Dashboard source tree has local changes. Refusing to checkout $SOURCE_REF." >&2
-    echo "Clean or move adapters/edc/sources/dashboard before synchronizing." >&2
-    exit 1
+  current_head="$(git -C "$TARGET_DIR" rev-parse HEAD 2>/dev/null || true)"
+  requested_head="$(git -C "$TARGET_DIR" rev-parse --verify "$SOURCE_REF^{commit}" 2>/dev/null || true)"
+  if [[ -n "$current_head" && -n "$requested_head" && "$current_head" == "$requested_head" ]]; then
+    echo "Dashboard sources already at requested ref $SOURCE_REF; keeping local changes."
+  else
+    if ! git -C "$TARGET_DIR" diff --quiet || ! git -C "$TARGET_DIR" diff --cached --quiet; then
+      echo "Dashboard source tree has local changes. Refusing to checkout $SOURCE_REF." >&2
+      echo "Clean or move adapters/edc/sources/dashboard before synchronizing." >&2
+      exit 1
+    fi
+    git -C "$TARGET_DIR" checkout --detach "$SOURCE_REF"
   fi
-  git -C "$TARGET_DIR" checkout --detach "$SOURCE_REF"
 else
   current_branch="$(git -C "$TARGET_DIR" rev-parse --abbrev-ref HEAD)"
   git -C "$TARGET_DIR" pull --ff-only origin "$current_branch"

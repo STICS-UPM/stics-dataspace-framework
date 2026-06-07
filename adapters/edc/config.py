@@ -353,9 +353,31 @@ class EDCConfigAdapter(INESDataConfigAdapter):
 
     def edc_connector_policy_file(self, connector_name, ds_name=None):
         dataspace = ds_name or self.primary_dataspace_name()
-        return os.path.join(
-            self.edc_dataspace_runtime_dir(ds_name=dataspace),
-            f"policy-{dataspace}-{connector_name}.json",
+        return str(
+            runtime_artifacts.connector_minio_policy_path(
+                self.config.ADAPTER_NAME,
+                self.deployment_environment_name(),
+                dataspace,
+                connector_name,
+                topology=self.topology,
+                config=self.load_deployer_config(),
+                root=self.config.script_dir(),
+            )
+        )
+
+    def connector_minio_policy_path(self, connector_name, ds_name=None, for_write=False):
+        dataspace = ds_name or self.primary_dataspace_name()
+        return str(
+            runtime_artifacts.connector_minio_policy_path(
+                self.config.ADAPTER_NAME,
+                self.deployment_environment_name(),
+                dataspace,
+                connector_name,
+                topology=self.topology,
+                config=self.load_deployer_config(),
+                root=self.config.script_dir(),
+                prefer_existing=not for_write,
+            )
         )
 
     def edc_connector_image_name(self):

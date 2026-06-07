@@ -223,6 +223,14 @@ function counterPartyFromDashboardPath(
   return undefined;
 }
 
+function dashboardConnectorProxySegments(pathname: string): string[] {
+  const match = pathname.match(/\/edc-dashboard-api\/connectors\/(.+)$/i);
+  if (!match) {
+    return [];
+  }
+  return match[1].split("/").filter(Boolean);
+}
+
 function defaultQuerySpec(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as Record<string, unknown>;
@@ -374,8 +382,7 @@ export async function installEdcDashboardRouteBridge(
 
   const routeHandler = async (route: Route) => {
     const requestUrl = new URL(route.request().url());
-    const relativePath = requestUrl.pathname.replace(/^\/edc-dashboard-api\/connectors\//, "");
-    const segments = relativePath.split("/").filter(Boolean);
+    const segments = dashboardConnectorProxySegments(requestUrl.pathname);
     const [connectorName, serviceName, ...restSegments] = segments;
 
     if (!connectorName || !serviceName) {

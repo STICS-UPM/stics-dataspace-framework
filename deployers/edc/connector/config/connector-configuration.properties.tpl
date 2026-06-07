@@ -54,14 +54,16 @@ edc.sql.schema.autocreate={{ .Values.connector.sql.schemaAutocreate }}
 
 edc.aws.access.key={{ .Values.connector.minio.accesskey }}
 edc.aws.secret.access.key={{ .Values.connector.minio.secretkey }}
-edc.aws.endpoint.override={{ .Values.services.minio.protocol }}://{{ .Values.services.minio.hostname }}
+{{- $minioUrl := (default (printf "%s://%s" .Values.services.minio.protocol .Values.services.minio.hostname) .Values.services.minio.url) | trimSuffix "/" }}
+edc.aws.endpoint.override={{ $minioUrl }}
 edc.aws.region=eu-central-1
 edc.aws.bucket.name={{ .Values.services.minio.bucket }}
 
-edc.oauth.token.url={{ .Values.services.keycloak.protocol }}://{{ .Values.services.keycloak.hostname }}/realms/{{ .Values.connector.dataspace }}/protocol/openid-connect/token
-edc.oauth.provider.audience={{ .Values.services.keycloak.protocol }}://{{ .Values.services.keycloak.hostname }}/realms/{{ .Values.connector.dataspace }}
-edc.oauth.endpoint.audience={{ .Values.services.keycloak.protocol }}://{{ .Values.services.keycloak.hostname }}/realms/{{ .Values.connector.dataspace }}
-edc.oauth.provider.jwks.url={{ .Values.services.keycloak.protocol }}://{{ .Values.services.keycloak.hostname }}/realms/{{ .Values.connector.dataspace }}/protocol/openid-connect/certs
+{{- $keycloakUrl := (default (printf "%s://%s" .Values.services.keycloak.protocol .Values.services.keycloak.hostname) .Values.services.keycloak.url) | trimSuffix "/" }}
+edc.oauth.token.url={{ $keycloakUrl }}/realms/{{ .Values.connector.dataspace }}/protocol/openid-connect/token
+edc.oauth.provider.audience={{ $keycloakUrl }}/realms/{{ .Values.connector.dataspace }}
+edc.oauth.endpoint.audience={{ $keycloakUrl }}/realms/{{ .Values.connector.dataspace }}
+edc.oauth.provider.jwks.url={{ $keycloakUrl }}/realms/{{ .Values.connector.dataspace }}/protocol/openid-connect/certs
 edc.oauth.certificate.alias={{ .Values.connector.oauth2.publickey }}
 edc.oauth.private.key.alias={{ .Values.connector.oauth2.privatekey }}
 edc.oauth.client.id={{ .Values.connector.oauth2.client }}

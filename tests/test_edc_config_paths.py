@@ -131,6 +131,25 @@ class EdcConfigPathTests(unittest.TestCase):
             )
         )
 
+    def test_vm_single_connector_policy_path_uses_topology_scoped_layout(self):
+        previous = self._clear_pionera_overrides()
+        try:
+            adapter = EDCConfigAdapter(EdcConfig, topology="vm-single")
+            path = adapter.connector_minio_policy_path(
+                "conn-companyedc-pionera-edc",
+                ds_name="pionera-edc",
+                for_write=True,
+            )
+        finally:
+            self._restore_environment(previous)
+
+        self.assertTrue(
+            path.endswith(
+                "Validation-Environment/deployers/edc/deployments/DEV/vm-single/"
+                "pionera-edc/connectors/conn-companyedc-pionera-edc/policy.json"
+            )
+        )
+
     def test_edc_connector_certificates_dir_uses_edc_runtime_dir(self):
         previous = self._clear_pionera_overrides()
         try:

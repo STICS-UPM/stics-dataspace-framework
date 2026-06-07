@@ -3,22 +3,29 @@
 import base64
 import json
 import os
+import re
 import shutil
 import shlex
 import sys
+import time
+from urllib.parse import urlparse
 
 import requests
 import yaml
 
 from deployers.shared.lib.topology import (
     LOCAL_TOPOLOGY,
+    VM_DISTRIBUTED_TOPOLOGY,
     VM_SINGLE_TOPOLOGY,
     build_topology_profile,
 )
 from deployers.shared.lib.components import (
     configured_component_host,
     configured_component_public_url,
+    normalize_component_key,
+    resolve_component_release_name,
 )
+from deployers.shared.lib.vm_distributed_public_access import resolve_vm_distributed_public_urls
 from adapters.inesdata.connectors import INESDataConnectorsAdapter
 from runtime_dependencies import ensure_python_requirements
 
@@ -55,6 +62,10 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         return None, None
 
     def build_connector_url(self, connector_name):
+        public_base_url = self._connector_public_base_url(connector_name)
+        if public_base_url:
+            return f"{public_base_url.rstrip('/')}/management/v3"
+
         ds_domain = self.config_adapter.ds_domain_base()
         if not ds_domain:
             raise ValueError("DS_DOMAIN_BASE not defined in deployer.config")
@@ -69,6 +80,56 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
 
     def wait_for_connector_ready(self, connector_name, timeout=300):
         return self.wait_for_management_api_ready(connector_name, timeout=timeout)
+
+    def wait_for_management_api_ready(self, connector_name, timeout=180, poll_interval=3):
+        print(f"Waiting for EDC management API to be ready: {connector_name}")
+        payload = {
+            "@context": {
+                "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+            },
+            "offset": 0,
+            "limit": 1,
+        }
+        local_url, local_fallback = self._start_connector_management_api_fallback(connector_name)
+        if local_url:
+            url = local_url
+            print(f"Using temporary local EDC management API port-forward for {connector_name}.")
+        else:
+            url = f"{self.connector_base_url(connector_name).rstrip('/')}/management/v3/assets/request"
+
+        start = time.time()
+        last_issue = None
+        try:
+            while time.time() - start <= timeout:
+                headers = self.get_management_api_headers(connector_name)
+                if not headers:
+                    last_issue = "could not obtain management API token"
+                    time.sleep(poll_interval)
+                    continue
+
+                try:
+                    response = requests.post(url, headers=headers, json=payload, timeout=5)
+                    if response.status_code == 200:
+                        print(f"EDC management API ready: {connector_name}")
+                        return True
+                    if response.status_code == 401:
+                        last_issue = "HTTP 401"
+                        self.invalidate_management_api_token(connector_name)
+                        time.sleep(poll_interval)
+                        continue
+                    last_issue = f"HTTP {response.status_code}"
+                except requests.RequestException as exc:
+                    last_issue = str(exc)
+
+                time.sleep(poll_interval)
+        finally:
+            self._close_temporary_port_forward(local_fallback)
+
+        if last_issue:
+            print(f"EDC management API not ready for {connector_name}: {last_issue}")
+        else:
+            print(f"EDC management API not ready for {connector_name}")
+        return False
 
     def wait_for_all_connectors(self, connectors):
         print("\nWaiting for all EDC connectors to expose their management API...\n")
@@ -189,6 +250,24 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
             or ""
         ).strip()
         return bool(image_name and image_tag)
+
+    def _edc_connector_image_override_matches_local_defaults(self):
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception:
+            deployer_config = {}
+        image_name = str(
+            os.environ.get("PIONERA_EDC_CONNECTOR_IMAGE_NAME")
+            or deployer_config.get("EDC_CONNECTOR_IMAGE_NAME")
+            or ""
+        ).strip()
+        image_tag = str(
+            os.environ.get("PIONERA_EDC_CONNECTOR_IMAGE_TAG")
+            or deployer_config.get("EDC_CONNECTOR_IMAGE_TAG")
+            or ""
+        ).strip()
+        defaults = self._edc_local_connector_image_defaults()
+        return image_name == defaults["name"] and image_tag == defaults["tag"]
 
     def _edc_local_connector_image_defaults(self):
         return {
@@ -358,8 +437,9 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
             return False
 
         if self._edc_connector_image_override_configured() and mode != "required":
-            print("Skipping Level 4 local EDC connector image preparation; explicit image override is configured.")
-            return True
+            if not env_prefix or not self._edc_connector_image_override_matches_local_defaults():
+                print("Skipping Level 4 local EDC connector image preparation; explicit image override is configured.")
+                return True
 
         image = self._edc_local_connector_image_defaults()
         if not image["name"] or not image["tag"]:
@@ -550,6 +630,117 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                 return True
         return False
 
+    @staticmethod
+    def _edc_vault_management_token_paths():
+        return [
+            "sys/policies/acl/edc-preflight",
+            "auth/token/create",
+        ]
+
+    @staticmethod
+    def _edc_vault_network_failure_message(stage, exc):
+        if stage == "capabilities":
+            return f"Vault token capabilities check failed: Vault is not reachable ({exc})"
+        return f"Vault token validation failed: Vault is not reachable ({exc})"
+
+    def _verify_edc_vault_management_token_over_http(self, vault_url, vault_token):
+        headers = {"X-Vault-Token": vault_token}
+        try:
+            response = requests.get(
+                f"{vault_url}/v1/auth/token/lookup-self",
+                headers=headers,
+                timeout=5,
+                verify=False,
+            )
+        except requests.RequestException as exc:
+            return False, {"stage": "lookup", "exception": exc}
+
+        if response.status_code != 200:
+            print(
+                "Vault token validation failed: lookup-self returned "
+                f"HTTP {response.status_code}. The shared Vault keys artifact may be stale "
+                "for the running Vault."
+            )
+            return False, None
+
+        paths = self._edc_vault_management_token_paths()
+        try:
+            response = requests.post(
+                f"{vault_url}/v1/sys/capabilities-self",
+                headers=headers,
+                json={"paths": paths},
+                timeout=5,
+                verify=False,
+            )
+        except requests.RequestException as exc:
+            return False, {"stage": "capabilities", "exception": exc}
+
+        if response.status_code != 200:
+            print(
+                "Vault token capabilities check failed: Vault returned "
+                f"HTTP {response.status_code}. EDC connector bootstrap requires policy "
+                "and token creation permissions."
+            )
+            return False, None
+
+        try:
+            capabilities_payload = response.json()
+        except ValueError:
+            return True, None
+
+        for path in paths:
+            capabilities = capabilities_payload.get(path)
+            if capabilities is None:
+                capabilities = capabilities_payload.get("capabilities")
+            if capabilities is not None and not self._vault_capabilities_allow_management(capabilities):
+                print(
+                    "Vault token capabilities check failed: token does not have management "
+                    f"permissions for '{path}'. Recreate Level 2 common services or restore "
+                    "the current Vault root token before deploying EDC connectors."
+                )
+                return False, None
+
+        return True, None
+
+    def _verify_edc_vault_management_token_via_port_forward(self, vault_url, vault_token):
+        service_ref = self._vault_cluster_service_reference(vault_url)
+        if not service_ref:
+            return False
+
+        with self._temporary_kubeconfig_role("common"):
+            port_forward = self._open_temporary_port_forward(
+                service_ref["namespace"],
+                service_ref["service"],
+                remote_port=service_ref["port"],
+            )
+        if not port_forward:
+            print(
+                "Vault token validation fallback failed: could not open a temporary "
+                f"port-forward to {service_ref['service']} in namespace {service_ref['namespace']}."
+            )
+            return False
+
+        local_url = f"{service_ref['scheme']}://127.0.0.1:{port_forward['local_port']}"
+        print(
+            "Vault is exposed through Kubernetes DNS; retrying token validation through "
+            "a temporary local port-forward."
+        )
+        try:
+            validated, network_failure = self._verify_edc_vault_management_token_over_http(
+                local_url,
+                vault_token,
+            )
+            if network_failure:
+                print(
+                    self._edc_vault_network_failure_message(
+                        network_failure["stage"],
+                        network_failure["exception"],
+                    )
+                )
+            return validated
+        finally:
+            self._close_temporary_port_forward(port_forward)
+
     def _verify_vault_management_token(self):
         config_loader = getattr(self.config_adapter, "load_deployer_config", None)
         if not callable(config_loader):
@@ -564,47 +755,29 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
             print("Vault token validation failed: VT_URL/VT_TOKEN are not defined in deployer.config")
             return False
 
-        headers = {"X-Vault-Token": vault_token}
-        try:
-            response = requests.get(
-                f"{vault_url}/v1/auth/token/lookup-self",
-                headers=headers,
-                timeout=5,
-                verify=False,
-            )
-        except requests.RequestException as exc:
-            print(f"Vault token validation failed: Vault is not reachable ({exc})")
-            return False
+        validated, network_failure = self._verify_edc_vault_management_token_over_http(
+            vault_url,
+            vault_token,
+        )
+        if validated:
+            return True
 
-        if response.status_code != 200:
+        if network_failure:
+            if (
+                self._should_attempt_local_fallback(network_failure["exception"])
+                and self._vault_cluster_service_reference(vault_url)
+                and self._verify_edc_vault_management_token_via_port_forward(vault_url, vault_token)
+            ):
+                return True
             print(
-                "Vault token validation failed: lookup-self returned "
-                f"HTTP {response.status_code}. The shared Vault keys artifact may be stale "
-                "for the running Vault."
+                self._edc_vault_network_failure_message(
+                    network_failure["stage"],
+                    network_failure["exception"],
+                )
             )
             return False
 
-        try:
-            response = requests.post(
-                f"{vault_url}/v1/sys/capabilities-self",
-                headers=headers,
-                json={"paths": ["sys/policies/acl/edc-preflight", "auth/token/create"]},
-                timeout=5,
-                verify=False,
-            )
-        except requests.RequestException as exc:
-            print(f"Vault token capabilities check failed: Vault is not reachable ({exc})")
-            return False
-
-        if response.status_code != 200:
-            print(
-                "Vault token capabilities check failed: Vault returned "
-                f"HTTP {response.status_code}. EDC connector bootstrap requires policy "
-                "and token creation permissions."
-            )
-            return False
-
-        return True
+        return False
 
     def _vault_management_runtime(self):
         config_loader = getattr(self.config_adapter, "load_deployer_config", None)
@@ -704,84 +877,95 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         with open(credentials_path, "w", encoding="utf-8") as handle:
             json.dump(credentials, handle, indent=2)
 
-    def _reconcile_connector_vault_secrets(self, connector_name, ds_name, credentials=None):
+    def _reconcile_connector_vault_secrets(self, connector_name, ds_name, credentials=None, vault_url=None):
         credentials_path = self._connector_credentials_file_path(connector_name, ds_name, for_write=True)
         credentials = credentials or self.load_connector_credentials(connector_name)
         if not credentials:
             print(f"Cannot reconcile Vault secrets for {connector_name}: credentials file is missing.")
             return False
 
-        vault_url, management_token = self._vault_management_runtime()
+        configured_vault_url, management_token = self._vault_management_runtime()
+        vault_url = str(vault_url or configured_vault_url or "").strip().rstrip("/")
         if not vault_url or not management_token:
             print("Cannot reconcile EDC Vault secrets: VT_URL/VT_TOKEN are not defined in deployer.config")
             return False
 
-        required_secret_paths = (
-            f"{ds_name}/{connector_name}/aws-access-key",
-            f"{ds_name}/{connector_name}/aws-secret-key",
-        )
-        current_connector_token = str((credentials.get("vault") or {}).get("token") or "").strip()
-        needs_reconcile = not self._vault_token_is_valid(vault_url, current_connector_token)
-        if not needs_reconcile:
-            needs_reconcile = not all(
-                self._vault_secret_exists(vault_url, management_token, secret_path)
-                for secret_path in required_secret_paths
+        vault_bootstrap_access = None
+        if vault_url == configured_vault_url and self._vault_cluster_service_reference(vault_url):
+            vault_bootstrap_access = self._start_vault_bootstrap_access()
+            if vault_bootstrap_access is None:
+                return False
+            vault_url = vault_bootstrap_access.get("vault_url") or vault_url
+
+        try:
+            required_secret_paths = (
+                f"{ds_name}/{connector_name}/aws-access-key",
+                f"{ds_name}/{connector_name}/aws-secret-key",
             )
-        if not needs_reconcile:
-            return True
+            current_connector_token = str((credentials.get("vault") or {}).get("token") or "").strip()
+            needs_reconcile = not self._vault_token_is_valid(vault_url, current_connector_token)
+            if not needs_reconcile:
+                needs_reconcile = not all(
+                    self._vault_secret_exists(vault_url, management_token, secret_path)
+                    for secret_path in required_secret_paths
+                )
+            if not needs_reconcile:
+                return True
 
-        secrets_payload = self._connector_vault_secret_payload(connector_name, ds_name, credentials)
-        if not secrets_payload:
-            return False
+            secrets_payload = self._connector_vault_secret_payload(connector_name, ds_name, credentials)
+            if not secrets_payload:
+                return False
 
-        print(f"Reconciling Vault secrets for EDC connector {connector_name}...")
-        headers = self._vault_headers(management_token)
-        policy_name = f"{connector_name}-secrets-policy"
-        policy = f"""
+            print(f"Reconciling Vault secrets for EDC connector {connector_name}...")
+            headers = self._vault_headers(management_token)
+            policy_name = f"{connector_name}-secrets-policy"
+            policy = f"""
 path "secret/data/{ds_name}/{connector_name}/*" {{
     capabilities = ["create", "read", "update", "list", "delete"]
 }}
 """
-        try:
-            response = requests.put(
-                f"{vault_url}/v1/sys/policies/acl/{policy_name}",
-                headers=headers,
-                json={"policy": policy},
-                timeout=30,
-                verify=False,
-            )
-            response.raise_for_status()
-            response = requests.post(
-                f"{vault_url}/v1/auth/token/create",
-                headers=headers,
-                json={"period": "768h", "policies": [policy_name], "renewable": True},
-                timeout=30,
-                verify=False,
-            )
-            response.raise_for_status()
-            connector_token = response.json()["auth"]["client_token"]
-            for secret_path, content in secrets_payload.items():
-                response = requests.post(
-                    f"{vault_url}/v1/secret/data/{secret_path}",
+            try:
+                response = requests.put(
+                    f"{vault_url}/v1/sys/policies/acl/{policy_name}",
                     headers=headers,
-                    json={"data": {"content": content}},
+                    json={"policy": policy},
                     timeout=30,
                     verify=False,
                 )
                 response.raise_for_status()
-        except (KeyError, requests.RequestException) as exc:
-            print(f"Could not reconcile Vault secrets for {connector_name}: {exc}")
-            return False
+                response = requests.post(
+                    f"{vault_url}/v1/auth/token/create",
+                    headers=headers,
+                    json={"period": "768h", "policies": [policy_name], "renewable": True},
+                    timeout=30,
+                    verify=False,
+                )
+                response.raise_for_status()
+                connector_token = response.json()["auth"]["client_token"]
+                for secret_path, content in secrets_payload.items():
+                    response = requests.post(
+                        f"{vault_url}/v1/secret/data/{secret_path}",
+                        headers=headers,
+                        json={"data": {"content": content}},
+                        timeout=30,
+                        verify=False,
+                    )
+                    response.raise_for_status()
+            except (KeyError, requests.RequestException) as exc:
+                print(f"Could not reconcile Vault secrets for {connector_name}: {exc}")
+                return False
 
-        credentials.setdefault("vault", {})
-        credentials["vault"].update(
-            {
-                "token": connector_token,
-                "path": f"secret/data/{ds_name}/{connector_name}/",
-            }
-        )
-        self._write_connector_credentials_file(credentials_path, credentials)
-        return True
+            credentials.setdefault("vault", {})
+            credentials["vault"].update(
+                {
+                    "token": connector_token,
+                    "path": f"secret/data/{ds_name}/{connector_name}/",
+                }
+            )
+            self._write_connector_credentials_file(credentials_path, credentials)
+            return True
+        finally:
+            self._stop_vault_bootstrap_access(vault_bootstrap_access)
 
     def _edc_dataspace_transfer_policy_name(self, connector_name, ds_name):
         return f"policy-{ds_name}-{connector_name}-dataspace-transfer"
@@ -897,19 +1081,23 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             ds_name,
         )
 
-    def _copy_if_exists(self, source_path, target_path):
+    def _copy_if_exists(self, source_path, target_path, *, overwrite=True):
         if not os.path.exists(source_path):
             return None
         if os.path.abspath(source_path) == os.path.abspath(target_path):
+            return target_path
+        if os.path.exists(target_path) and not overwrite:
             return target_path
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         shutil.copy2(source_path, target_path)
         return target_path
 
-    def _copy_tree_if_exists(self, source_dir, target_dir):
+    def _copy_tree_if_exists(self, source_dir, target_dir, *, overwrite=True):
         if not os.path.isdir(source_dir):
             return None
         if os.path.abspath(source_dir) == os.path.abspath(target_dir):
+            return target_dir
+        if os.path.isdir(target_dir) and os.listdir(target_dir) and not overwrite:
             return target_dir
         os.makedirs(os.path.dirname(target_dir), exist_ok=True)
         shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
@@ -949,7 +1137,8 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         credentials_name = f"credentials-connector-{connector_name}.json"
         staged_credentials = self._copy_if_exists(
             os.path.join(source_dir, credentials_name),
-            os.path.join(runtime_dir, credentials_name),
+            self._connector_credentials_file_path(connector_name, ds_name=ds_name, for_write=True),
+            overwrite=False,
         )
         if staged_credentials:
             staged["credentials"] = staged_credentials
@@ -958,6 +1147,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         staged_dataspace_credentials = self._copy_if_exists(
             os.path.join(source_dir, dataspace_credentials_name),
             os.path.join(runtime_dir, dataspace_credentials_name),
+            overwrite=False,
         )
         if staged_dataspace_credentials:
             staged["dataspace_credentials"] = staged_dataspace_credentials
@@ -965,7 +1155,8 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         policy_name = f"policy-{ds_name}-{connector_name}.json"
         staged_policy = self._copy_if_exists(
             os.path.join(source_dir, policy_name),
-            os.path.join(runtime_dir, policy_name),
+            self._connector_minio_policy_path(connector_name, ds_name=ds_name, for_write=True),
+            overwrite=False,
         )
         if staged_policy:
             staged["policy"] = staged_policy
@@ -975,6 +1166,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         staged_certs_dir = self._copy_tree_if_exists(
             source_certs_dir,
             runtime_certs_dir,
+            overwrite=False,
         )
         if staged_certs_dir:
             staged["certs"] = staged_certs_dir
@@ -986,6 +1178,288 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             )
 
         return staged
+
+    def _stage_legacy_bootstrap_artifacts_if_needed(self, connector_name, ds_name=None):
+        ds_name = ds_name or self._dataspace_name()
+        credentials_path = self._connector_credentials_file_path(
+            connector_name,
+            ds_name=ds_name,
+            for_write=False,
+        )
+        if credentials_path and os.path.exists(credentials_path):
+            return credentials_path
+
+        repo_dir_getter = getattr(self.config_adapter, "edc_deployment_dir", None)
+        if callable(repo_dir_getter):
+            repo_dir = repo_dir_getter()
+        else:
+            repo_dir_getter = getattr(self.config, "repo_dir", None)
+            repo_dir = repo_dir_getter() if callable(repo_dir_getter) else ""
+        if not repo_dir:
+            return None
+
+        legacy_source = os.path.join(
+            self._bootstrap_source_dir(repo_dir, ds_name),
+            f"credentials-connector-{connector_name}.json",
+        )
+        if not os.path.exists(legacy_source):
+            return None
+
+        staged = self._stage_bootstrap_artifacts(connector_name, ds_name, repo_dir)
+        staged_credentials = staged.get("credentials") if isinstance(staged, dict) else None
+        if staged_credentials:
+            print(
+                "Migrated EDC connector runtime artifacts to the topology-scoped layout: "
+                f"{connector_name}"
+            )
+        return staged_credentials
+
+    def load_connector_credentials(self, connector_name):
+        creds_file = self._connector_credentials_file_path(connector_name, for_write=False)
+        if not os.path.exists(creds_file):
+            staged_credentials = self._stage_legacy_bootstrap_artifacts_if_needed(connector_name)
+            if staged_credentials:
+                creds_file = staged_credentials
+            else:
+                return None
+
+        try:
+            with open(creds_file, encoding="utf-8") as handle:
+                credentials = json.load(handle)
+        except (json.JSONDecodeError, IOError):
+            return None
+        return self._with_connector_public_access_urls(connector_name, credentials)
+
+    def _with_connector_public_access_urls(self, connector_name, credentials):
+        if not isinstance(credentials, dict):
+            return credentials
+
+        topology = self._normalized_topology()
+        if topology not in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
+            return credentials
+
+        public_urls = credentials.get("public_access_urls")
+        if not isinstance(public_urls, dict):
+            public_urls = {}
+        else:
+            public_urls = dict(public_urls)
+
+        public_base_url = self._edc_connector_public_base_url_without_credentials(
+            connector_name,
+            credentials=credentials,
+        )
+        if public_base_url:
+            dashboard_base_href = self.config_adapter.edc_dashboard_base_href()
+            inferred_urls = {
+                "connector_ingress": public_base_url,
+                "connector_management_api": f"{public_base_url}/management",
+                "connector_management_api_v3": f"{public_base_url}/management/v3",
+                "connector_protocol_api": f"{public_base_url}/protocol",
+                "connector_default_api": f"{public_base_url}/api",
+                "connector_control_api": f"{public_base_url}/control",
+                "edc_dashboard_login": f"{public_base_url}{dashboard_base_href}",
+            }
+            if self.config_adapter.edc_dashboard_proxy_auth_mode() == "oidc-bff":
+                inferred_urls["edc_dashboard_oidc_login"] = (
+                    f"{public_base_url}{self.DASHBOARD_PROXY_PREFIX}/auth/login"
+                )
+            for key, value in inferred_urls.items():
+                public_urls.setdefault(key, value)
+
+        dataspace = self._dataspace_name()
+        keycloak_base = self._keycloak_base_url()
+        if keycloak_base and dataspace:
+            public_urls.setdefault("keycloak_realm", f"{keycloak_base}/realms/{dataspace}")
+            public_urls.setdefault("keycloak_account", f"{keycloak_base}/realms/{dataspace}/account")
+            public_urls.setdefault(
+                "keycloak_admin_console",
+                f"{keycloak_base}/admin/{dataspace}/console/",
+            )
+
+        common_base_url = self._vm_public_common_base_url()
+        if common_base_url:
+            public_urls.setdefault("minio_api", common_base_url)
+            public_urls.setdefault("minio_console", f"{common_base_url}/s3-console/")
+
+        if public_urls:
+            credentials = dict(credentials)
+            credentials["public_access_urls"] = public_urls
+        return credentials
+
+    def _edc_connector_public_base_url_without_credentials(self, connector_name, credentials=None, dataspace=None):
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        topology = self._normalized_topology()
+        ds_name = str(dataspace or self._dataspace_name() or "").strip()
+        if topology == VM_SINGLE_TOPOLOGY:
+            return self._normalize_public_url(
+                self._vm_single_connector_public_base_url_from_config(
+                    connector_name,
+                    deployer_config,
+                    dataspace=ds_name,
+                )
+            )
+
+        if topology == VM_DISTRIBUTED_TOPOLOGY:
+            public_urls = (credentials or {}).get("public_access_urls") or {}
+            if isinstance(public_urls, dict) and public_urls.get("connector_ingress"):
+                return self._normalize_public_url(public_urls["connector_ingress"])
+            layout = self._connector_layout_metadata(connector_name)
+            role = (
+                layout.get("namespace_role")
+                or layout.get("validation_role")
+                or layout.get("role")
+                or self._connector_kubeconfig_role(connector_name)
+            )
+            return self._normalize_public_url(
+                self._connector_public_url_for_role(role, deployer_config)
+            )
+
+        return ""
+
+    def _vm_public_common_base_url(self):
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        topology = self._normalized_topology()
+        public_urls = {}
+        if topology in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY}:
+            public_urls = resolve_vm_distributed_public_urls(
+                {
+                    **dict(deployer_config or {}),
+                    "TOPOLOGY": topology,
+                }
+            )
+        return self._normalize_public_url(
+            deployer_config.get("VM_SINGLE_PUBLIC_URL")
+            or deployer_config.get("VM_SINGLE_HTTP_URL")
+            or public_urls.get("VM_COMMON_PUBLIC_URL")
+            or deployer_config.get("VM_COMMON_PUBLIC_URL")
+            or deployer_config.get("VM_COMMON_HTTP_URL")
+            or ""
+        )
+
+    def _vm_single_connector_public_path_ingress_manifests(self, values, namespace):
+        if self._normalized_topology() != VM_SINGLE_TOPOLOGY:
+            return []
+
+        connector = (values or {}).get("connector") or {}
+        connector_name = str(connector.get("name") or "").strip()
+        ds_name = str(connector.get("dataspace") or self._dataspace_name()).strip() or self._dataspace_name()
+        if not connector_name:
+            return []
+
+        namespace = str(namespace or self._connector_runtime_namespace(connector_name) or "").strip()
+        if not namespace:
+            return []
+
+        ingress = connector.get("ingress") or {}
+        public_url = (
+            str(ingress.get("publicHostname") or "").strip()
+            or self._edc_connector_public_base_url_without_credentials(connector_name)
+        )
+        host, path_prefix = self._public_hostname_and_path(public_url)
+        if not host or not path_prefix:
+            return []
+
+        escaped_prefix = re.escape(path_prefix)
+        proxy_body_size = str(ingress.get("proxyBodySize") or "800m")
+        common_annotations = {
+            "nginx.ingress.kubernetes.io/proxy-body-size": proxy_body_size,
+            "nginx.org/client-max-body-size": proxy_body_size,
+            "nginx.ingress.kubernetes.io/use-regex": "true",
+        }
+
+        def backend(service_name, port):
+            return {
+                "service": {
+                    "name": service_name,
+                    "port": {"number": port},
+                }
+            }
+
+        route_specs = [
+            ("api", connector_name, 19191),
+            ("control", connector_name, 19192),
+            ("management", connector_name, 19193),
+            ("protocol", connector_name, 19194),
+            ("version", connector_name, 19195),
+            ("shared", connector_name, 19196),
+            ("public", connector_name, 19291),
+        ]
+        dashboard = (values or {}).get("dashboard") or {}
+        if dashboard.get("enabled"):
+            dashboard_proxy = dashboard.get("proxy") or {}
+            if dashboard_proxy.get("enabled"):
+                route_specs.append(
+                    (
+                        "edc-dashboard-api",
+                        f"{connector_name}-dashboard-proxy",
+                        int(dashboard_proxy.get("port") or 8080),
+                    )
+                )
+            route_specs.append(("edc-dashboard", f"{connector_name}-dashboard", 80))
+
+        routed_ingress = {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": {
+                "name": f"{connector_name}-public-path-ingress",
+                "namespace": namespace,
+                "annotations": {
+                    **common_annotations,
+                    "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                },
+            },
+            "spec": {
+                "rules": [
+                    {
+                        "host": host,
+                        "http": {
+                            "paths": [
+                                {
+                                    "pathType": "ImplementationSpecific",
+                                    "path": f"{escaped_prefix}(/|$)({segment}.*)",
+                                    "backend": backend(service_name, port),
+                                }
+                                for segment, service_name, port in route_specs
+                            ]
+                        },
+                    }
+                ]
+            },
+        }
+
+        manifests = [routed_ingress]
+        if dashboard.get("enabled"):
+            manifests.append(
+                {
+                    "apiVersion": "networking.k8s.io/v1",
+                    "kind": "Ingress",
+                    "metadata": {
+                        "name": f"{connector_name}-public-root-ingress",
+                        "namespace": namespace,
+                        "annotations": {
+                            **common_annotations,
+                            "nginx.ingress.kubernetes.io/rewrite-target": "/edc-dashboard/",
+                        },
+                    },
+                    "spec": {
+                        "rules": [
+                            {
+                                "host": host,
+                                "http": {
+                                    "paths": [
+                                        {
+                                            "pathType": "ImplementationSpecific",
+                                            "path": f"{escaped_prefix}/?$",
+                                            "backend": backend(f"{connector_name}-dashboard", 80),
+                                        }
+                                    ]
+                                },
+                            }
+                        ]
+                    },
+                }
+            )
+        return manifests
 
     def _edc_runtime_present(self, connector_name, namespace):
         metadata = self._resource_metadata("deployment", connector_name, namespace)
@@ -1002,6 +1476,120 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         environment = str(deployer_config.get("ENVIRONMENT", "DEV")).strip().upper()
         scheme = "https" if environment == "PRO" else "http"
         return f"{scheme}://{connector_name}.{ds_domain}"
+
+    def _common_services_namespace(self, deployer_config=None):
+        if deployer_config is None:
+            try:
+                deployer_config = self.config_adapter.load_deployer_config() or {}
+            except Exception:
+                deployer_config = {}
+        return str(
+            (deployer_config or {}).get("COMMON_SERVICES_NAMESPACE")
+            or getattr(self.config, "NS_COMMON", "common-srvs")
+            or "common-srvs"
+        ).strip() or "common-srvs"
+
+    def _common_service_hostname(self, deployer_config, service_name, default_port=None):
+        common_namespace = self._common_services_namespace(deployer_config)
+        hostname = f"common-srvs-{service_name}.{common_namespace}.svc"
+        if default_port is not None:
+            return f"{hostname}:{int(default_port)}"
+        return hostname
+
+    @staticmethod
+    def _is_loopback_hostname(hostname):
+        normalized = str(hostname or "").strip().lower()
+        return normalized in {"localhost", "127.0.0.1", "::1"} or normalized.startswith("127.")
+
+    @staticmethod
+    def _service_url_parts(raw_value, default_protocol="http"):
+        value = str(raw_value or "").strip()
+        if not value:
+            return "", "", ""
+        parsed = urlparse(value if "://" in value else f"{default_protocol}://{value}")
+        hostname = str(parsed.netloc or parsed.path or "").strip().rstrip("/")
+        if not hostname:
+            return "", "", ""
+        protocol = str(parsed.scheme or default_protocol or "http").strip().rstrip(":/") or "http"
+        path = str(parsed.path or "").strip().rstrip("/")
+        url = f"{protocol}://{hostname}{path}"
+        return hostname, protocol, url.rstrip("/")
+
+    def _configured_service_endpoint(
+        self,
+        deployer_config,
+        *,
+        url_keys,
+        hostname_keys,
+        default_service_name,
+        default_port,
+        default_protocol="http",
+    ):
+        for key in url_keys:
+            hostname, protocol, url = self._service_url_parts(
+                (deployer_config or {}).get(key),
+                default_protocol=default_protocol,
+            )
+            if hostname and not self._is_loopback_hostname(urlparse(url).hostname):
+                return {"hostname": hostname, "protocol": protocol, "url": url}
+
+        for key in hostname_keys:
+            hostname, protocol, url = self._service_url_parts(
+                (deployer_config or {}).get(key),
+                default_protocol=default_protocol,
+            )
+            if hostname and not self._is_loopback_hostname(urlparse(url).hostname):
+                return {"hostname": hostname, "protocol": protocol, "url": url}
+
+        hostname = self._common_service_hostname(
+            deployer_config,
+            default_service_name,
+            default_port=default_port,
+        )
+        return {
+            "hostname": hostname,
+            "protocol": "http",
+            "url": f"http://{hostname}",
+        }
+
+    def _connector_runtime_common_service_endpoints(self, deployer_config, environment):
+        default_protocol = "https" if str(environment or "").strip().lower() == "pro" else "http"
+        return {
+            "database_hostname": str(
+                (deployer_config or {}).get("DATABASE_HOSTNAME")
+                or self._common_service_hostname(deployer_config, "postgresql")
+            ).strip(),
+            "keycloak": self._configured_service_endpoint(
+                deployer_config,
+                url_keys=(
+                    "EDC_KEYCLOAK_BASE_URL",
+                    "KEYCLOAK_INTERNAL_URL",
+                    "KC_INTERNAL_URL",
+                ),
+                hostname_keys=(
+                    "EDC_KEYCLOAK_HOSTNAME",
+                    "KEYCLOAK_HOSTNAME",
+                ),
+                default_service_name="keycloak",
+                default_port=80,
+                default_protocol=default_protocol,
+            ),
+            "minio": self._configured_service_endpoint(
+                deployer_config,
+                url_keys=(
+                    "EDC_MINIO_ENDPOINT",
+                    "MINIO_INTERNAL_URL",
+                    "MINIO_ENDPOINT",
+                ),
+                hostname_keys=(
+                    "EDC_MINIO_HOSTNAME",
+                    "MINIO_HOSTNAME",
+                ),
+                default_service_name="minio",
+                default_port=9000,
+                default_protocol=default_protocol,
+            ),
+        }
 
     def _protocol_url(self, connector_name):
         base_url = self._connector_base_url(connector_name)
@@ -1051,10 +1639,30 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         os.makedirs(runtime_dir, exist_ok=True)
         return runtime_dir
 
-    def _keycloak_base_url(self):
+    def _keycloak_base_url(self, override_url=None):
+        if override_url:
+            keycloak_url = str(override_url).strip()
+            if keycloak_url and not keycloak_url.startswith("http"):
+                keycloak_url = f"http://{keycloak_url}"
+            return keycloak_url.rstrip("/")
+
         deployer_config = self.config_adapter.load_deployer_config()
+        topology = self._normalized_topology()
+        public_urls = {}
+        if topology in {VM_SINGLE_TOPOLOGY, "vm-distributed"}:
+            public_urls = resolve_vm_distributed_public_urls(
+                {
+                    **dict(deployer_config or {}),
+                    "TOPOLOGY": topology,
+                }
+            )
         keycloak_url = (
-            deployer_config.get("KC_INTERNAL_URL")
+            deployer_config.get("KC_MANAGEMENT_URL")
+            or deployer_config.get("KEYCLOAK_FRONTEND_URL")
+            or deployer_config.get("KEYCLOAK_PUBLIC_URL")
+            or public_urls.get("KEYCLOAK_FRONTEND_URL")
+            or public_urls.get("KEYCLOAK_PUBLIC_URL")
+            or deployer_config.get("KC_INTERNAL_URL")
             or deployer_config.get("KC_URL")
             or deployer_config.get("KEYCLOAK_HOSTNAME")
         )
@@ -1064,8 +1672,8 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             keycloak_url = f"http://{keycloak_url}"
         return keycloak_url.rstrip("/")
 
-    def _keycloak_realm_status(self, ds_name):
-        keycloak_url = self._keycloak_base_url()
+    def _keycloak_realm_status(self, ds_name, keycloak_url=None):
+        keycloak_url = self._keycloak_base_url(keycloak_url)
         if not keycloak_url:
             return "unknown", "KC_INTERNAL_URL/KC_URL is not configured"
 
@@ -1084,8 +1692,8 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             return "missing", "Keycloak returned HTTP 404 for the dataspace realm"
         return "unknown", f"Keycloak returned HTTP {response.status_code}: {response.text}"
 
-    def _ensure_keycloak_realm_available(self, ds_name):
-        status, detail = self._keycloak_realm_status(ds_name)
+    def _ensure_keycloak_realm_available(self, ds_name, keycloak_url=None):
+        status, detail = self._keycloak_realm_status(ds_name, keycloak_url=keycloak_url)
         if status == "ready":
             return True
 
@@ -1126,6 +1734,45 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         if not keycloak_url:
             return None
         return f"{keycloak_url}/realms/{ds_name}/protocol/openid-connect/logout"
+
+    @staticmethod
+    def _join_public_paths(prefix, path):
+        normalized_prefix = str(prefix or "").strip().rstrip("/")
+        normalized_path = str(path or "").strip()
+        if not normalized_path:
+            normalized_path = "/"
+        if not normalized_path.startswith("/"):
+            normalized_path = f"/{normalized_path}"
+        return f"{normalized_prefix}{normalized_path}" if normalized_prefix else normalized_path
+
+    def _dashboard_public_path_prefix(self, connector_name, ds_name=None):
+        public_base_url = self._edc_connector_public_base_url_without_credentials(
+            connector_name,
+            dataspace=ds_name,
+        )
+        if not public_base_url:
+            return ""
+        parsed = urlparse(public_base_url)
+        return str(parsed.path or "").rstrip("/")
+
+    def _dashboard_public_base_href(self, connector_name, ds_name=None):
+        public_base_href = self._join_public_paths(
+            self._dashboard_public_path_prefix(connector_name, ds_name=ds_name),
+            self.config_adapter.edc_dashboard_base_href(),
+        )
+        return f"{public_base_href.rstrip('/')}/"
+
+    def _dashboard_browser_proxy_connector_path(self, dashboard_connector_name, target_connector_name, service_name, ds_name=None):
+        return self._join_public_paths(
+            self._dashboard_public_path_prefix(dashboard_connector_name, ds_name=ds_name),
+            self._dashboard_proxy_connector_path(target_connector_name, service_name),
+        )
+
+    def _dashboard_browser_component_proxy_path(self, dashboard_connector_name, component_name, ds_name=None):
+        return self._join_public_paths(
+            self._dashboard_public_path_prefix(dashboard_connector_name, ds_name=ds_name),
+            self._dashboard_component_proxy_path(component_name),
+        )
 
     def _dashboard_proxy_connector_path(self, connector_name, service_name):
         return f"{self.DASHBOARD_PROXY_PREFIX}/connectors/{connector_name}/{service_name}"
@@ -1253,33 +1900,46 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             },
         ]
 
-    def _dashboard_app_config_payload(self, connector_name):
+    def _dashboard_app_config_payload(self, connector_name, ds_name=None):
         return {
             "appTitle": f"EDC Dashboard - {connector_name}",
             "healthCheckIntervalSeconds": 30,
             "enableUserConfig": False,
             "menuItems": self._dashboard_menu_items(),
-            "runtime": self._dashboard_runtime_config_block(connector_name=connector_name),
+            "runtime": self._dashboard_runtime_config_block(
+                connector_name=connector_name,
+                ds_name=ds_name,
+            ),
         }
 
-    def _dashboard_runtime_config_block(self, connector_name=None):
+    def _dashboard_runtime_config_block(self, connector_name=None, ds_name=None):
         config = self.config_adapter.load_deployer_config()
         dataspace_name = ""
         getter = getattr(self.config_adapter, "primary_dataspace_name", None)
         if callable(getter):
             dataspace_name = str(getter() or "").strip()
+        if ds_name:
+            dataspace_name = str(ds_name or "").strip()
         if not dataspace_name:
             dataspace_name = str(config.get("DS_1_NAME") or getattr(self.config, "DS_NAME", "") or "").strip()
 
         ontology_public_url = self._resolve_ontology_hub_url(config, dataspace_name=dataspace_name)
         ontology_url = (
-            self._dashboard_component_proxy_path("ontology-hub")
+            self._dashboard_browser_component_proxy_path(
+                connector_name,
+                "ontology-hub",
+                ds_name=dataspace_name,
+            )
+            if connector_name and self._dashboard_component_proxy_enabled(config)
+            else self._dashboard_component_proxy_path("ontology-hub")
             if self._dashboard_component_proxy_enabled(config)
             else ontology_public_url
         )
         model_observer_url = ""
         if connector_name:
-            model_observer_url = f"{self._dashboard_proxy_connector_path(connector_name, 'api')}/check"
+            model_observer_url = (
+                f"{self._dashboard_browser_proxy_connector_path(connector_name, connector_name, 'api', ds_name=dataspace_name)}/check"
+            )
         return {
             "ontologyUrl": ontology_url,
             "ontologyPublicUrl": ontology_public_url,
@@ -1307,6 +1967,90 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             entries.append({"name": "ontology-hub", "target": ontology_target})
         return entries
 
+    @staticmethod
+    def _component_base_dataspace_name(ds_name):
+        resolved = str(ds_name or "").strip()
+        for suffix in ("-edc", "_edc"):
+            if resolved.lower().endswith(suffix):
+                return resolved[: -len(suffix)] or resolved
+        return resolved
+
+    def _component_uses_shared_release_scope(self, component_name, config):
+        normalized = normalize_component_key(component_name)
+        if not normalized:
+            return False
+
+        raw_value = str(
+            (config or {}).get("COMPONENTS_SHARED_RELEASE_COMPONENTS")
+            or "ontology-hub,ai-model-hub,semantic-virtualization"
+        ).strip()
+        lowered = raw_value.lower()
+        if lowered in {"*", "all"}:
+            return True
+        if lowered in {"", "none", "false", "no", "0"}:
+            return False
+
+        configured = {
+            normalize_component_key(token)
+            for token in raw_value.split(",")
+            if str(token or "").strip()
+        }
+        return normalized in configured
+
+    def _component_release_dataspace_name(self, component_name, config, ds_name=""):
+        resolved_ds_name = str(ds_name or (config or {}).get("DS_1_NAME") or "").strip()
+        explicit = str(
+            (config or {}).get("COMPONENTS_RELEASE_DATASPACE_NAME")
+            or (config or {}).get("COMPONENTS_HELM_RELEASE_DATASPACE_NAME")
+            or ""
+        ).strip()
+        if explicit:
+            return explicit
+
+        scope = str((config or {}).get("COMPONENTS_RELEASE_SCOPE") or "auto").strip().lower()
+        if scope in {"dataspace", "adapter", "per-adapter", "adapter-dataspace"}:
+            return resolved_ds_name
+        if scope in {"shared", "base", "common", "common-dataspace"}:
+            return self._component_base_dataspace_name(resolved_ds_name)
+        if self._component_uses_shared_release_scope(component_name, config):
+            return self._component_base_dataspace_name(resolved_ds_name)
+        return resolved_ds_name
+
+    def _component_internal_service_url(self, component_name, config, ds_name, default_port):
+        normalized = normalize_component_key(component_name)
+        if not normalized:
+            return ""
+
+        namespace = str((config or {}).get("COMPONENTS_NAMESPACE") or "components").strip() or "components"
+        component_ds_name = self._component_release_dataspace_name(
+            normalized,
+            config,
+            ds_name=ds_name,
+        )
+        release_name = resolve_component_release_name(
+            normalized,
+            dataspace_name=component_ds_name,
+        )
+        if not release_name:
+            return ""
+        return f"http://{release_name}.{namespace}:{int(default_port)}"
+
+    def _component_internal_clusterlocal_url(self, component_name, config, ds_name, default_port):
+        service_url = self._component_internal_service_url(
+            component_name,
+            config,
+            ds_name,
+            default_port,
+        )
+        if not service_url:
+            return ""
+        parsed = urlparse(service_url)
+        host = str(parsed.netloc or "").split(":", 1)[0]
+        if not host or ".svc." in host:
+            return service_url
+        port = f":{parsed.port}" if parsed.port else ""
+        return f"{parsed.scheme or 'http'}://{host}.svc.cluster.local{port}"
+
     def _resolve_ontology_hub_internal_url(self, config, ds_name):
         explicit = str(
             config.get("ONTOLOGY_HUB_INTERNAL_URL")
@@ -1316,11 +2060,28 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         if explicit:
             return explicit.rstrip("/")
 
-        namespace = str(config.get("COMPONENTS_NAMESPACE") or "components").strip() or "components"
-        dataspace_name = str(ds_name or config.get("DS_1_NAME") or "").strip()
-        if dataspace_name:
-            return f"http://{dataspace_name}-ontology-hub.{namespace}:3333"
-        return ""
+        return self._component_internal_service_url(
+            "ontology-hub",
+            config,
+            str(ds_name or config.get("DS_1_NAME") or "").strip(),
+            3333,
+        )
+
+    def _resolve_ontology_hub_internal_clusterlocal_url(self, config, ds_name):
+        explicit = str(
+            config.get("ONTOLOGY_HUB_INTERNAL_CLUSTERLOCAL_URL")
+            or config.get("ONTOLOGY_HUB_INTERNAL_CLUSTERLOCAL_BASE_URL")
+            or ""
+        ).strip()
+        if explicit:
+            return explicit.rstrip("/")
+
+        return self._component_internal_clusterlocal_url(
+            "ontology-hub",
+            config,
+            str(ds_name or config.get("DS_1_NAME") or "").strip(),
+            3333,
+        )
 
     def _resolve_ontology_hub_url(self, config, dataspace_name=""):
         explicit = str(
@@ -1345,11 +2106,16 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
 
         if not dataspace_name:
             dataspace_name = str(config.get("DS_1_NAME") or getattr(self.config, "DS_NAME", "") or "").strip()
+        component_dataspace_name = self._component_release_dataspace_name(
+            "ontology-hub",
+            config,
+            ds_name=dataspace_name,
+        )
 
         configured_url = configured_component_public_url(
             "ontology-hub",
             config,
-            dataspace_name=dataspace_name,
+            dataspace_name=component_dataspace_name,
         )
         if configured_url:
             return configured_url.rstrip("/")
@@ -1357,14 +2123,14 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         configured_host = configured_component_host(
             "ontology-hub",
             config,
-            dataspace_name=dataspace_name,
+            dataspace_name=component_dataspace_name,
         )
         if configured_host:
             return f"http://{configured_host}".rstrip("/")
 
         return EDCConnectorsAdapter.DEFAULT_ONTOLOGY_HUB_URL
 
-    def _dashboard_connector_config_payload(self, connector_name, connector_hostnames):
+    def _dashboard_connector_config_payload(self, connector_name, connector_hostnames, ds_name=None):
         ordered_connectors = [connector_name] + [
             hostname for hostname in (connector_hostnames or []) if hostname != connector_name
         ]
@@ -1373,19 +2139,43 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             connector_entries.append(
                 {
                     "connectorName": hostname,
-                    "managementUrl": self._dashboard_proxy_connector_path(hostname, "management"),
-                    "defaultUrl": self._dashboard_proxy_connector_path(hostname, "api"),
-                    "protocolUrl": self._dashboard_proxy_connector_path(hostname, "protocol"),
-                    "controlUrl": self._dashboard_proxy_connector_path(hostname, "control"),
+                    "managementUrl": self._dashboard_browser_proxy_connector_path(
+                        connector_name,
+                        hostname,
+                        "management",
+                        ds_name=ds_name,
+                    ),
+                    "defaultUrl": self._dashboard_browser_proxy_connector_path(
+                        connector_name,
+                        hostname,
+                        "api",
+                        ds_name=ds_name,
+                    ),
+                    "protocolUrl": self._dashboard_browser_proxy_connector_path(
+                        connector_name,
+                        hostname,
+                        "protocol",
+                        ds_name=ds_name,
+                    ),
+                    "controlUrl": self._dashboard_browser_proxy_connector_path(
+                        connector_name,
+                        hostname,
+                        "control",
+                        ds_name=ds_name,
+                    ),
                     "federatedCatalogEnabled": False,
                 }
             )
         return connector_entries
 
-    def _dashboard_proxy_config_payload(self, ds_name, connector_hostnames):
+    def _dashboard_proxy_config_payload(self, ds_name, connector_hostnames, connector_name=None):
         config = self.config_adapter.load_deployer_config()
         auth_mode = self.config_adapter.edc_dashboard_proxy_auth_mode()
         connector_namespaces = self._dashboard_connector_namespace_map(ds_name, connector_hostnames)
+        external_base_url = self._edc_connector_public_base_url_without_credentials(
+            connector_name or (connector_hostnames or [""])[0],
+            dataspace=ds_name,
+        )
         connector_entries = []
         for connector_name in connector_hostnames or []:
             credentials = self.load_connector_credentials(connector_name)
@@ -1424,13 +2214,14 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             "tokenUrl": self._keycloak_token_url_for_dataspace(ds_name),
             "authorizationUrl": self._keycloak_authorization_url_for_dataspace(ds_name),
             "logoutUrl": self._keycloak_logout_url_for_dataspace(ds_name),
+            "externalBaseUrl": external_base_url,
             "callbackPath": f"{self.DASHBOARD_PROXY_PREFIX}/auth/callback",
             "loginPath": f"{self.DASHBOARD_PROXY_PREFIX}/auth/login",
             "logoutPath": f"{self.DASHBOARD_PROXY_PREFIX}/auth/logout",
             "postLoginRedirectPath": self.config_adapter.edc_dashboard_base_href(),
             "postLogoutRedirectPath": self.config_adapter.edc_dashboard_base_href(),
             "cookieName": self.config_adapter.edc_dashboard_proxy_cookie_name(),
-            "cookieSecure": self._connector_base_url(connector_hostnames[0]).startswith("https://")
+            "cookieSecure": (external_base_url or self._connector_base_url(connector_hostnames[0])).startswith("https://")
             if connector_hostnames
             else False,
             "connectors": connector_entries,
@@ -1452,14 +2243,15 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             )
         return {"connectors": connector_entries}
 
-    def _dashboard_runtime_payload(self, connector_name, connector_hostnames):
+    def _dashboard_runtime_payload(self, connector_name, connector_hostnames, ds_name=None):
         return {
-            "appConfig": self._dashboard_app_config_payload(connector_name),
+            "appConfig": self._dashboard_app_config_payload(connector_name, ds_name=ds_name),
             "connectorConfig": self._dashboard_connector_config_payload(
                 connector_name,
                 connector_hostnames,
+                ds_name=ds_name,
             ),
-            "baseHref": self.config_adapter.edc_dashboard_base_href(),
+            "baseHref": self._dashboard_public_base_href(connector_name, ds_name=ds_name),
         }
 
     @staticmethod
@@ -1498,17 +2290,18 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         except Exception:
             config = {}
         if self._dashboard_component_proxy_enabled(config):
-            expected_ontology_url = self._dashboard_component_proxy_path("ontology-hub")
-            if str(runtime.get("ontologyUrl") or "").strip() != expected_ontology_url:
+            ontology_url = str(runtime.get("ontologyUrl") or "").strip()
+            expected_suffix = self._dashboard_component_proxy_path("ontology-hub")
+            if not ontology_url.endswith(expected_suffix):
                 issues.append(
                     "runtime.ontologyUrl must use the dashboard component proxy "
-                    f"'{expected_ontology_url}'"
+                    f"'{expected_suffix}'"
                 )
 
         if connector_name:
             observer_url = str(runtime.get("modelObserverUrl") or "").strip()
             expected_prefix = self._dashboard_proxy_connector_path(connector_name, "api")
-            if not observer_url.startswith(expected_prefix):
+            if expected_prefix not in observer_url:
                 issues.append(
                     "runtime.modelObserverUrl must point to the selected connector proxy "
                     f"'{expected_prefix}'"
@@ -1564,16 +2357,36 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         if not ds_domain:
             raise RuntimeError("DS_DOMAIN_BASE not defined in deployer.config")
 
-        keycloak_hostname = deployer_config.get("KEYCLOAK_HOSTNAME")
-        minio_hostname = deployer_config.get("MINIO_HOSTNAME")
-        database_hostname = deployer_config.get("DATABASE_HOSTNAME")
-        if not keycloak_hostname or not minio_hostname or not database_hostname:
-            raise RuntimeError(
-                "DATABASE_HOSTNAME, KEYCLOAK_HOSTNAME and MINIO_HOSTNAME must be defined in deployer.config"
-            )
+        common_service_endpoints = self._connector_runtime_common_service_endpoints(
+            deployer_config,
+            environment,
+        )
+        keycloak_endpoint = common_service_endpoints["keycloak"]
+        minio_endpoint = common_service_endpoints["minio"]
+        database_hostname = common_service_endpoints["database_hostname"]
+        ontology_hub_external_url = self._resolve_ontology_hub_url(
+            deployer_config,
+            dataspace_name=ds_name,
+        )
+        ontology_hub_internal_url = self._resolve_ontology_hub_internal_url(
+            deployer_config,
+            ds_name,
+        )
+        ontology_hub_clusterlocal_url = self._resolve_ontology_hub_internal_clusterlocal_url(
+            deployer_config,
+            ds_name,
+        )
 
-        dashboard_runtime = self._dashboard_runtime_payload(connector_name, connector_hostnames)
-        dashboard_proxy_config = self._dashboard_proxy_config_payload(ds_name, connector_hostnames)
+        dashboard_runtime = self._dashboard_runtime_payload(
+            connector_name,
+            connector_hostnames,
+            ds_name=ds_name,
+        )
+        dashboard_proxy_config = self._dashboard_proxy_config_payload(
+            ds_name,
+            connector_hostnames,
+            connector_name=connector_name,
+        )
         dashboard_proxy_auth = self._dashboard_proxy_auth_payload(connector_hostnames)
         if environment == "pro":
             registration_service_hostname = f"registration-service-{ds_name}.ds.dataspaceunit-project.eu"
@@ -1639,6 +2452,12 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                     "createSecret": False,
                     "existingSecret": "",
                 },
+                "ontologyHub": {
+                    "externalBase": ontology_hub_external_url,
+                    "internalBase": ontology_hub_internal_url,
+                    "internalFallback": "http://ontology-hub:3333",
+                    "internalClusterLocalFallback": ontology_hub_clusterlocal_url,
+                },
             },
             "dashboard": {
                 "enabled": self.config_adapter.edc_dashboard_enabled(),
@@ -1670,14 +2489,16 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                     "password": credentials["database"]["passwd"],
                 },
                 "keycloak": {
-                    "hostname": keycloak_hostname,
-                    "external": keycloak_hostname,
-                    "protocol": "https" if environment == "pro" else "http",
+                    "hostname": keycloak_endpoint["hostname"],
+                    "external": keycloak_endpoint["hostname"],
+                    "protocol": keycloak_endpoint["protocol"],
+                    "url": keycloak_endpoint["url"],
                 },
                 "minio": {
-                    "hostname": minio_hostname,
+                    "hostname": minio_endpoint["hostname"],
                     "bucket": f"{ds_name}-{connector_name}",
-                    "protocol": "https" if environment == "pro" else "http",
+                    "protocol": minio_endpoint["protocol"],
+                    "url": minio_endpoint["url"],
                 },
                 "registrationService": {
                     "hostname": registration_service_hostname,
@@ -1939,72 +2760,142 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         return repo_dir, python_exec
 
     def _prepare_connector_prerequisites(self, connector_name, ds_name, namespace, repo_dir, python_exec):
-        self._stage_bootstrap_artifacts(connector_name, ds_name, repo_dir)
-        credentials = self.load_connector_credentials(connector_name)
-        runtime_present = self._edc_runtime_present(connector_name, namespace)
+        bootstrap_access = self._start_level4_connector_bootstrap_access()
+        if bootstrap_access is None:
+            return False
+        vault_url = bootstrap_access.get("vault_url")
+        keycloak_url = bootstrap_access.get("keycloak_url")
+        pg_host = bootstrap_access.get("pg_host")
+        pg_port = bootstrap_access.get("pg_port")
 
-        if not credentials:
+        try:
+            self._stage_bootstrap_artifacts(connector_name, ds_name, repo_dir)
             credentials = self.load_connector_credentials(connector_name)
+            runtime_present = self._edc_runtime_present(connector_name, namespace)
 
-        if credentials and runtime_present:
-            if not self._reconcile_connector_vault_secrets(connector_name, ds_name, credentials=credentials):
+            if not credentials:
+                credentials = self.load_connector_credentials(connector_name)
+
+            if credentials and runtime_present:
+                database_credentials_valid = True
+                database_validator = getattr(self, "_connector_database_credentials_query_valid", None)
+                if callable(database_validator):
+                    database_credentials_valid = bool(
+                        database_validator(
+                            connector_name,
+                            pg_host=pg_host,
+                            pg_port=pg_port,
+                        )
+                    )
+                if not database_credentials_valid:
+                    print(
+                        "EDC connector database credentials are stale or invalid; "
+                        f"recreating connector state: {connector_name}"
+                    )
+                else:
+                    reconcile_kwargs = {"credentials": credentials}
+                    if vault_url:
+                        reconcile_kwargs["vault_url"] = vault_url
+                    if not self._reconcile_connector_vault_secrets(
+                        connector_name,
+                        ds_name,
+                        **reconcile_kwargs,
+                    ):
+                        return False
+                    self.ensure_minio_policy_attached(connector_name, ds_name=ds_name)
+                    return True
+
+            if getattr(self, "infrastructure", None) is not None:
+                if not self._ensure_registration_service_schema_ready_for_level4(
+                    ds_name,
+                    pg_host=pg_host,
+                    pg_port=pg_port,
+                ):
+                    return False
+
+            if keycloak_url:
+                keycloak_ready = self.wait_for_keycloak_admin_ready(keycloak_url=keycloak_url)
+            else:
+                keycloak_ready = self.wait_for_keycloak_admin_ready()
+            if not keycloak_ready:
+                print("Keycloak admin API not ready for connector provisioning")
+                return False
+            if not self._ensure_keycloak_realm_available(ds_name, keycloak_url=keycloak_url):
+                return False
+
+            self._remove_edc_values_file(connector_name, ds_name=ds_name)
+            cleanup_kwargs = {"namespace": namespace}
+            if vault_url:
+                cleanup_kwargs["vault_url"] = vault_url
+            if keycloak_url:
+                cleanup_kwargs["keycloak_url"] = keycloak_url
+            if pg_host:
+                cleanup_kwargs["pg_host"] = pg_host
+            if pg_port:
+                cleanup_kwargs["pg_port"] = pg_port
+            self._cleanup_connector_state(
+                connector_name,
+                repo_dir,
+                ds_name,
+                python_exec,
+                **cleanup_kwargs,
+            )
+
+            print(f"Bootstrapping connector prerequisites for {connector_name}...")
+            create_cmd = self._bootstrap_connector_create_command(
+                python_exec,
+                connector_name,
+                ds_name,
+                vault_url=vault_url,
+                keycloak_url=keycloak_url,
+                pg_host=pg_host,
+                pg_port=pg_port,
+            )
+            create_result = None
+            max_attempts = 2
+            for attempt in range(1, max_attempts + 1):
+                create_result = self.run(create_cmd, cwd=repo_dir, check=False)
+                if create_result is not None:
+                    break
+                if attempt < max_attempts:
+                    print(
+                        f"Connector bootstrap failed on attempt {attempt}. "
+                        "Cleaning partial state and retrying..."
+                    )
+                    self._remove_edc_values_file(connector_name, ds_name=ds_name)
+                    self._cleanup_connector_state(
+                        connector_name,
+                        repo_dir,
+                        ds_name,
+                        python_exec,
+                        **cleanup_kwargs,
+                    )
+                    if keycloak_url:
+                        keycloak_ready = self.wait_for_keycloak_admin_ready(keycloak_url=keycloak_url)
+                    else:
+                        keycloak_ready = self.wait_for_keycloak_admin_ready()
+                    if not keycloak_ready:
+                        print("Keycloak admin API not ready for connector provisioning retry")
+                        return False
+
+            if create_result is None:
+                print(f"Failed to bootstrap connector prerequisites for {connector_name}")
+                return False
+
+            self._stage_bootstrap_artifacts(connector_name, ds_name, repo_dir)
+            self.invalidate_management_api_token(connector_name)
+            credentials_path = self._connector_credentials_file_path(connector_name, ds_name)
+            if os.path.exists(credentials_path):
+                self.setup_minio_bucket(self.config.NS_COMMON, ds_name, connector_name, credentials_path)
+            reconcile_kwargs = {}
+            if vault_url:
+                reconcile_kwargs["vault_url"] = vault_url
+            if not self._reconcile_connector_vault_secrets(connector_name, ds_name, **reconcile_kwargs):
                 return False
             self.ensure_minio_policy_attached(connector_name, ds_name=ds_name)
             return True
-
-        if not self.wait_for_keycloak_admin_ready():
-            print("Keycloak admin API not ready for connector provisioning")
-            return False
-        if not self._ensure_keycloak_realm_available(ds_name):
-            return False
-
-        self._remove_edc_values_file(connector_name, ds_name=ds_name)
-        self._cleanup_connector_state(
-            connector_name,
-            repo_dir,
-            ds_name,
-            python_exec,
-            namespace=namespace,
-        )
-
-        print(f"Bootstrapping connector prerequisites for {connector_name}...")
-        create_cmd = self._bootstrap_connector_create_command(python_exec, connector_name, ds_name)
-        create_result = None
-        max_attempts = 2
-        for attempt in range(1, max_attempts + 1):
-            create_result = self.run(create_cmd, cwd=repo_dir, check=False)
-            if create_result is not None:
-                break
-            if attempt < max_attempts:
-                print(
-                    f"Connector bootstrap failed on attempt {attempt}. "
-                    "Cleaning partial state and retrying..."
-                )
-                self._remove_edc_values_file(connector_name, ds_name=ds_name)
-                self._cleanup_connector_state(
-                    connector_name,
-                    repo_dir,
-                    ds_name,
-                    python_exec,
-                    namespace=namespace,
-                )
-                if not self.wait_for_keycloak_admin_ready():
-                    print("Keycloak admin API not ready for connector provisioning retry")
-                    return False
-
-        if create_result is None:
-            print(f"Failed to bootstrap connector prerequisites for {connector_name}")
-            return False
-
-        self._stage_bootstrap_artifacts(connector_name, ds_name, repo_dir)
-        self.invalidate_management_api_token(connector_name)
-        credentials_path = self._connector_credentials_file_path(connector_name, ds_name)
-        if os.path.exists(credentials_path):
-            self.setup_minio_bucket(self.config.NS_COMMON, ds_name, connector_name, credentials_path)
-        if not self._reconcile_connector_vault_secrets(connector_name, ds_name):
-            return False
-        self.ensure_minio_policy_attached(connector_name, ds_name=ds_name)
-        return True
+        finally:
+            self._stop_level4_connector_bootstrap_access(bootstrap_access)
 
     def _discover_existing_connectors(self, ds_name, namespace, include_runtime_artifacts=True):
         existing = set()
@@ -2066,16 +2957,27 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             return bool(wait_for_namespace_pods(namespace, timeout=timeout))
         return False
 
-    def _restart_local_edc_deployments_if_needed(self, connector_name, namespace, rollout_timeout=300):
-        if str(getattr(self, "topology", "local") or "local").strip().lower() != "local":
+    def _edc_local_image_prepared(self, attribute_name, env_name):
+        prepared_targets = getattr(self, attribute_name, None)
+        if isinstance(prepared_targets, set) and prepared_targets:
             return True
+        return self._is_truthy(os.environ.get(env_name))
 
+    def _edc_local_deployment_restart_targets(self, connector_name):
+        if self._normalized_topology() not in self.LEVEL4_LOCAL_IMAGE_TOPOLOGIES:
+            return []
         restart_targets = []
-        if self._is_truthy(os.environ.get("PIONERA_EDC_LOCAL_CONNECTOR_IMAGE_PREPARED")):
+        if self._edc_local_image_prepared(
+            "_edc_connector_image_prepared_targets",
+            "PIONERA_EDC_LOCAL_CONNECTOR_IMAGE_PREPARED",
+        ):
             restart_targets.append(("connector runtime", connector_name))
 
         if (
-            self._is_truthy(os.environ.get("PIONERA_EDC_LOCAL_DASHBOARD_IMAGES_PREPARED"))
+            self._edc_local_image_prepared(
+                "_edc_dashboard_images_prepared_targets",
+                "PIONERA_EDC_LOCAL_DASHBOARD_IMAGES_PREPARED",
+            )
             and self.config_adapter.edc_dashboard_enabled()
         ):
             restart_targets.extend(
@@ -2084,6 +2986,20 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                     ("dashboard proxy", f"{connector_name}-dashboard-proxy"),
                 ]
             )
+        return restart_targets
+
+    def _restart_local_edc_deployments_if_needed(
+        self,
+        connector_name,
+        namespace,
+        rollout_timeout=300,
+        restart_targets=None,
+    ):
+        restart_targets = (
+            list(restart_targets)
+            if restart_targets is not None
+            else self._edc_local_deployment_restart_targets(connector_name)
+        )
 
         for target_label, deployment_name in restart_targets:
             print(
@@ -2229,18 +3145,25 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                     return []
 
                 rollout_timeout = max(int(getattr(self.config, "TIMEOUT_POD_WAIT", 120)), 180)
-                if not self._wait_for_edc_deployment_rollout(
-                    connector,
-                    target_namespace,
-                    timeout=rollout_timeout,
-                ):
-                    print(f"Timeout waiting for EDC connector deployment rollout: {connector}")
-                    return []
-                if not self._restart_local_edc_deployments_if_needed(
-                    connector,
-                    target_namespace,
-                    rollout_timeout=rollout_timeout,
-                ):
+                restart_targets = self._edc_local_deployment_restart_targets(connector)
+                if restart_targets:
+                    if not self._restart_local_edc_deployments_if_needed(
+                        connector,
+                        target_namespace,
+                        rollout_timeout=rollout_timeout,
+                        restart_targets=restart_targets,
+                    ):
+                        return []
+                else:
+                    if not self._wait_for_edc_deployment_rollout(
+                        connector,
+                        target_namespace,
+                        timeout=rollout_timeout,
+                    ):
+                        print(f"Timeout waiting for EDC connector deployment rollout: {connector}")
+                        return []
+
+                if not self._sync_vm_single_connector_public_path_ingresses(values_file, target_namespace):
                     return []
 
                 all_connectors.append(connector)

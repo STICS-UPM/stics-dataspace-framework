@@ -1279,9 +1279,12 @@ export async function bootstrapConsumerTransfer(
       type: transferDestinationType,
       bucketName: destination.bucketName,
       region: destination.region,
+      objectName: transferObjectName,
       keyName: transferObjectName,
       name: transferObjectName,
       endpointOverride: destination.endpointOverride,
+      accessKeyId: destination.accessKeyId,
+      secretAccessKey: destination.secretAccessKey,
     };
   };
   const transferPayload = isEdcAdapter

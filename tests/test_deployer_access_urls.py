@@ -306,6 +306,33 @@ class DeployerAccessUrlsTests(unittest.TestCase):
         )
         self.assertEqual(urls["minio_bucket"], "demoedc-conn-companyedc-demoedc")
 
+    def test_edc_connector_public_access_urls_use_vm_single_root_path_routes(self):
+        urls = edc_bootstrap.build_connector_public_access_urls(
+            {
+                "TOPOLOGY": "vm-single",
+                "VM_SINGLE_HTTP_URL": "https://org4.pionera.oeg.fi.upm.es",
+                "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX": "/c",
+                "KEYCLOAK_FRONTEND_URL": "https://org4.pionera.oeg.fi.upm.es/auth",
+            },
+            "conn-citycounciledc-pionera-edc",
+            "pionera-edc",
+            "DEV",
+        )
+
+        self.assertEqual(
+            urls["connector_management_api_v3"],
+            "https://org4.pionera.oeg.fi.upm.es/c/citycounciledc/management/v3",
+        )
+        self.assertEqual(
+            urls["edc_dashboard_login"],
+            "https://org4.pionera.oeg.fi.upm.es/c/citycounciledc/edc-dashboard/",
+        )
+        self.assertEqual(
+            urls["keycloak_realm"],
+            "https://org4.pionera.oeg.fi.upm.es/auth/realms/pionera-edc",
+        )
+        self.assertEqual(urls["minio_console"], "https://org4.pionera.oeg.fi.upm.es/s3-console/")
+
 
 if __name__ == "__main__":
     unittest.main()

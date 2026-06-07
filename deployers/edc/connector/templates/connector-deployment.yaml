@@ -79,6 +79,24 @@ spec:
               value: {{ .Values.connector.configuration.configFilePath | quote }}
             - name: JAVA_TOOL_OPTIONS
               value: {{ .Values.connector.jvmArgs | quote }}
+            {{- with .Values.connector.ontologyHub }}
+            {{- with .externalBase }}
+            - name: ONTOLOGY_HUB_EXTERNAL_BASE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .internalBase }}
+            - name: ONTOLOGY_HUB_INTERNAL_BASE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .internalFallback }}
+            - name: ONTOLOGY_HUB_INTERNAL_FALLBACK
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .internalClusterLocalFallback }}
+            - name: ONTOLOGY_HUB_INTERNAL_CLUSTERLOCAL_FALLBACK
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
           ports:
             - containerPort: 19191
               protocol: TCP

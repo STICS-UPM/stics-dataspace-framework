@@ -33,6 +33,11 @@ connector:
   keys:
     createSecret: false
     existingSecret: ""
+  ontologyHub:
+    externalBase: ""
+    internalBase: ""
+    internalFallback: http://ontology-hub:3333
+    internalClusterLocalFallback: ""
 
 dashboard:
   enabled: {{ keys.edc_dashboard_enabled | default(false) }}

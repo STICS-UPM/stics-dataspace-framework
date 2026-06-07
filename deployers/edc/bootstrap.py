@@ -35,6 +35,9 @@ from deployers.infrastructure.lib.config_loader import (  # noqa: E402
     resolve_deployer_config_layer_paths,
 )
 from deployers.infrastructure.lib.topology import normalize_topology  # noqa: E402
+from deployers.shared.lib.vm_distributed_public_access import (  # noqa: E402
+    resolve_vm_distributed_public_urls,
+)
 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -181,6 +184,118 @@ def build_connector_access_urls(config: dict[str, str], connector: str, dataspac
     return urls
 
 
+def active_public_topology(config: dict[str, str]) -> str:
+    return normalize_topology(
+        (config or {}).get("TOPOLOGY")
+        or os.getenv("PIONERA_TOPOLOGY")
+        or ""
+    )
+
+
+def normalize_public_url(value: str | None) -> str:
+    url = str(value or "").strip().rstrip("/")
+    if not url:
+        return ""
+    if not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
+    return url
+
+
+def vm_public_common_base_url(config: dict[str, str]) -> str:
+    topology = active_public_topology(config)
+    public_urls = {}
+    if topology in {"vm-single", "vm-distributed"}:
+        public_urls = resolve_vm_distributed_public_urls(
+            {
+                **dict(config or {}),
+                "TOPOLOGY": topology,
+            }
+        )
+    return normalize_public_url(
+        (config or {}).get("VM_SINGLE_PUBLIC_URL")
+        or (config or {}).get("VM_SINGLE_HTTP_URL")
+        or public_urls.get("VM_COMMON_PUBLIC_URL")
+        or (config or {}).get("VM_COMMON_PUBLIC_URL")
+        or (config or {}).get("VM_COMMON_HTTP_URL")
+        or ""
+    )
+
+
+def connector_short_name_for_public_path(connector: str, dataspace: str) -> str:
+    short_name = str(connector or "").strip()
+    if short_name.startswith("conn-"):
+        short_name = short_name[len("conn-"):]
+    suffix = f"-{dataspace}"
+    if dataspace and short_name.endswith(suffix):
+        short_name = short_name[: -len(suffix)]
+    return short_name
+
+
+def vm_single_connector_public_path_prefix(config: dict[str, str]) -> str:
+    prefix = str((config or {}).get("VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX") or "/c").strip()
+    if not prefix:
+        prefix = "/c"
+    if not prefix.startswith("/"):
+        prefix = f"/{prefix}"
+    return prefix.rstrip("/")
+
+
+def connector_public_base_url(config: dict[str, str], connector: str, dataspace: str) -> str:
+    topology = active_public_topology(config)
+    if topology != "vm-single":
+        return ""
+    common_base = vm_public_common_base_url(config)
+    short_name = connector_short_name_for_public_path(connector, dataspace)
+    if not common_base or not short_name:
+        return ""
+    return f"{common_base}{vm_single_connector_public_path_prefix(config)}/{short_name}"
+
+
+def build_connector_public_access_urls(
+    config: dict[str, str],
+    connector: str,
+    dataspace: str,
+    environment: str,
+) -> dict[str, str]:
+    del environment
+    urls: dict[str, str] = {}
+    connector_base = connector_public_base_url(config, connector, dataspace)
+    if connector_base:
+        urls.update(
+            {
+                "connector_ingress": connector_base,
+                "connector_management_api": f"{connector_base}/management",
+                "connector_management_api_v3": f"{connector_base}/management/v3",
+                "connector_protocol_api": f"{connector_base}/protocol",
+                "connector_default_api": f"{connector_base}/api",
+                "connector_control_api": f"{connector_base}/control",
+                "minio_bucket": f"{dataspace}-{connector}",
+            }
+        )
+        if as_bool(config.get("EDC_DASHBOARD_ENABLED", "true")):
+            dashboard_base_href = normalize_base_href(config.get("EDC_DASHBOARD_BASE_HREF", "/edc-dashboard/"))
+            urls["edc_dashboard_login"] = f"{connector_base}{dashboard_base_href}"
+            if str(config.get("EDC_DASHBOARD_PROXY_AUTH_MODE", "")).strip().lower() == "oidc-bff":
+                urls["edc_dashboard_oidc_login"] = f"{connector_base}/edc-dashboard-api/auth/login"
+
+    keycloak_base = keycloak_management_url_from_config(config)
+    if keycloak_base:
+        urls.update(
+            {
+                "keycloak_realm": f"{keycloak_base}/realms/{dataspace}",
+                "keycloak_account": f"{keycloak_base}/realms/{dataspace}/account",
+                "keycloak_admin_console": f"{keycloak_base}/admin/{dataspace}/console/",
+            }
+        )
+
+    common_base = vm_public_common_base_url(config)
+    if common_base:
+        urls.setdefault("minio_api", common_base)
+        urls.setdefault("minio_console", f"{common_base}/s3-console/")
+
+    return urls
+
+
 def common_access_urls(config: dict[str, str], dataspace: str, environment: str) -> dict[str, str]:
     protocol = access_protocol(environment)
     resolved_hostnames = resolved_common_service_hostnames(config)
@@ -199,6 +314,52 @@ def common_access_urls(config: dict[str, str], dataspace: str, environment: str)
 
 def access_protocol(environment: str) -> str:
     return "https" if str(environment or "").strip().upper() == "PRO" else "http"
+
+
+def normalize_keycloak_base_url(value: str | None, realm_name: str | None = None) -> str:
+    base_url = str(value or "").strip().rstrip("/")
+    if not base_url:
+        return ""
+
+    realm = str(realm_name or "").strip().strip("/")
+    if realm:
+        for suffix in (
+            f"/realms/{realm}/.well-known/openid-configuration",
+            f"/realms/{realm}",
+        ):
+            if base_url.endswith(suffix):
+                base_url = base_url[: -len(suffix)].rstrip("/")
+                break
+
+    return base_url
+
+
+def keycloak_management_url_from_config(config: dict[str, str], fallback: str | None = None) -> str:
+    topology = normalize_topology(
+        (config or {}).get("TOPOLOGY")
+        or os.getenv("PIONERA_TOPOLOGY")
+        or ""
+    )
+    public_urls = {}
+    if topology in {"vm-single", "vm-distributed"}:
+        public_urls = resolve_vm_distributed_public_urls(
+            {
+                **dict(config or {}),
+                "TOPOLOGY": topology,
+            }
+        )
+
+    resolved = (
+        (config or {}).get("KC_MANAGEMENT_URL")
+        or (config or {}).get("KEYCLOAK_FRONTEND_URL")
+        or (config or {}).get("KEYCLOAK_PUBLIC_URL")
+        or public_urls.get("KEYCLOAK_FRONTEND_URL")
+        or public_urls.get("KEYCLOAK_PUBLIC_URL")
+        or (config or {}).get("KC_URL")
+        or fallback
+        or ""
+    )
+    return normalize_keycloak_base_url(resolved)
 
 
 def dataspace_domain_base(config: dict[str, str], environment: str) -> str:
@@ -359,7 +520,7 @@ def generate_certificates(connector: str, password: str, target_dir: Path) -> No
 
 class KeycloakAdmin:
     def __init__(self, config: dict[str, str], realm: str):
-        self.base_url = config.get("KC_URL", "http://localhost:8080").rstrip("/")
+        self.base_url = keycloak_management_url_from_config(config, fallback="http://localhost:8080")
         self.realm = realm
         token_response = requests.post(
             f"{self.base_url}/realms/master/protocol/openid-connect/token",
@@ -704,6 +865,16 @@ def create_connector(args: argparse.Namespace) -> int:
         "access_urls",
         build_connector_access_urls(config, connector, dataspace, environment),
     )
+    public_access_urls = build_connector_public_access_urls(config, connector, dataspace, environment)
+    if public_access_urls:
+        update_credentials(
+            environment,
+            dataspace,
+            "connector",
+            connector,
+            "public_access_urls",
+            public_access_urls,
+        )
 
     print(f"EDC connector prerequisites created for {connector}")
     return 0

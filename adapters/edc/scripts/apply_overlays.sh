@@ -230,9 +230,80 @@ apply_dashboard_overlay() {
   fi
 
   run_cmd "rsync -a \"$dashboard_overlay/\" \"$DASHBOARD_APP/\""
+  patch_dashboard_app_base_href "$DASHBOARD_APP/src/app/app.config.ts"
   patch_dashboard_app_config_menu "$DASHBOARD_APP/public/config/app-config.json"
   patch_dashboard_app_config_runtime "$DASHBOARD_APP/public/config/app-config.json"
   patch_dashboard_app_routes "$DASHBOARD_APP/src/app/app.routes.ts"
+}
+
+patch_dashboard_app_base_href() {
+  local app_config_ts="$1"
+  local marker="validation-environment-edc-runtime-base-href"
+
+  if [[ ! -f "$app_config_ts" ]]; then
+    echo "Dashboard app.config.ts not found: $app_config_ts" >&2
+    return 1
+  fi
+
+  if [[ "$APPLY" -eq 1 ]]; then
+    python3 - "$app_config_ts" "$marker" <<'PY'
+import pathlib
+import sys
+
+target_path = pathlib.Path(sys.argv[1])
+marker = sys.argv[2]
+content = target_path.read_text(encoding="utf-8")
+if marker in content or "baseHrefFromCurrentLocation" in content:
+    sys.exit(0)
+
+content = content.replace(
+    "  private baseHref = '/';",
+    f"  // {marker}\n  private baseHref = this.baseHrefFromCurrentLocation();",
+    1,
+)
+content = content.replace(
+    """      this.baseHref = (
+        await firstValueFrom(this.http.get('config/APP_BASE_HREF.txt', { responseType: 'text' }))
+      ).replace(/\\n/g, '');
+    } catch {
+      console.debug('No base href config found. Default is \"/\"');
+    }
+""",
+    """      const configuredBaseHref = (
+        await firstValueFrom(this.http.get('config/APP_BASE_HREF.txt', { responseType: 'text' }))
+      ).replace(/\\n/g, '').trim();
+      if (configuredBaseHref) {
+        this.baseHref = configuredBaseHref;
+      }
+    } catch {
+      console.debug(`No base href config found. Default is \"${this.baseHref}\"`);
+    }
+""",
+    1,
+)
+method = """
+  private baseHrefFromCurrentLocation(): string {
+    const pathname = globalThis.location?.pathname ?? '/';
+    const marker = '/edc-dashboard/';
+    const markerIndex = pathname.indexOf(marker);
+    if (markerIndex >= 0) {
+      return pathname.slice(0, markerIndex + marker.length);
+    }
+    if (pathname.endsWith('/edc-dashboard')) {
+      return `${pathname}/`;
+    }
+    return '/';
+  }
+"""
+anchor = "\n}\n\nexport const appConfig"
+if anchor not in content:
+    raise SystemExit(f"Could not locate BaseHrefService closing block in {target_path}")
+content = content.replace(anchor, method + anchor, 1)
+target_path.write_text(content, encoding="utf-8")
+PY
+  else
+    echo "Would patch runtime APP_BASE_HREF fallback in $(basename "$app_config_ts")"
+  fi
 }
 
 patch_dashboard_app_routes() {

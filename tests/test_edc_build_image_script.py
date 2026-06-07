@@ -84,6 +84,8 @@ class EdcBuildImageScriptTests(unittest.TestCase):
 
         self.assertIn("--ref|--revision|--commit", script)
         self.assertIn('git -C "$TARGET_DIR" rev-parse --is-inside-work-tree', script)
+        self.assertIn("Dashboard sources already at requested ref", script)
+        self.assertIn("keeping local changes", script)
         self.assertIn('git -C "$TARGET_DIR" checkout --detach "$SOURCE_REF"', script)
         self.assertIn("Dashboard source tree has local changes", script)
         self.assertIn("Dashboard source target exists but is not a Git working tree", script)
