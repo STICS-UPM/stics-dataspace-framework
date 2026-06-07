@@ -152,6 +152,47 @@ class BatchExecutionTests(unittest.TestCase):
 
         self.assertEqual(env["PIONERA_LOCAL_MINIKUBE_TUNNEL_MANAGED"], "true")
 
+    def test_batch_runtime_env_sets_vm_single_edc_k3s_image_defaults(self):
+        run = {
+            "topology": "vm-single",
+            "adapter": "edc",
+            "levels": [4, 5, 6],
+            "allow_vm_single_cluster_switch": True,
+            "local_minikube_tunnel": "auto",
+        }
+
+        env = main._batch_runtime_environment(run, secrets={})
+
+        self.assertEqual(env["PIONERA_EDC_LOCAL_IMAGES_MODE"], "auto")
+        self.assertEqual(env["PIONERA_EDC_CONNECTOR_IMAGE_PULL_POLICY"], "IfNotPresent")
+        self.assertEqual(env["PIONERA_EDC_DASHBOARD_IMAGE_PULL_POLICY"], "IfNotPresent")
+        self.assertEqual(env["PIONERA_EDC_DASHBOARD_PROXY_IMAGE_PULL_POLICY"], "IfNotPresent")
+        self.assertEqual(env["PIONERA_SKIP_EDC_LOCAL_CONNECTOR_IMAGE_BUILD"], "false")
+        self.assertEqual(env["PIONERA_SKIP_EDC_LOCAL_DASHBOARD_IMAGE_BUILD"], "false")
+        self.assertEqual(
+            env["PIONERA_VM_SINGLE_CLUSTER_SWITCH_CONFIRM"],
+            main._vm_single_cluster_switch_confirmation_token("k3s"),
+        )
+        self.assertNotIn("PIONERA_LOCAL_MINIKUBE_TUNNEL_MANAGED", env)
+
+    def test_batch_runtime_env_preserves_vm_single_edc_image_overrides(self):
+        run = {
+            "topology": "vm-single",
+            "adapter": "edc",
+            "levels": [4],
+            "env": {
+                "PIONERA_EDC_LOCAL_IMAGES_MODE": "disabled",
+                "PIONERA_EDC_CONNECTOR_IMAGE_PULL_POLICY": "Always",
+                "PIONERA_SKIP_EDC_LOCAL_CONNECTOR_IMAGE_BUILD": "true",
+            },
+        }
+
+        env = main._batch_runtime_environment(run, secrets={})
+
+        self.assertEqual(env["PIONERA_EDC_LOCAL_IMAGES_MODE"], "disabled")
+        self.assertEqual(env["PIONERA_EDC_CONNECTOR_IMAGE_PULL_POLICY"], "Always")
+        self.assertEqual(env["PIONERA_SKIP_EDC_LOCAL_CONNECTOR_IMAGE_BUILD"], "true")
+
     def test_minikube_tunnel_process_filter_ignores_search_commands(self):
         command = "/bin/bash -c pgrep -af 'minikube.*tunnel' || true"
 
@@ -241,6 +282,70 @@ class BatchExecutionTests(unittest.TestCase):
 
         self.assertEqual(observed["levels"], [4, 5, 6])
 
+    def test_batch_run_filter_executes_only_matching_run(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_path = os.path.join(tmpdir, "plan.yaml")
+            self._write_yaml(
+                plan_path,
+                {
+                    "runs": [
+                        {
+                            "name": "local-edc",
+                            "topology": "local",
+                            "adapter": "edc",
+                            "levels": [4],
+                        },
+                        {
+                            "name": "vm-single-edc",
+                            "topology": "vm-single",
+                            "adapter": "edc",
+                            "levels": [4],
+                        },
+                    ],
+                },
+            )
+
+            observed_runs = []
+
+            def fake_run_batch_levels(run, **kwargs):
+                observed_runs.append(run["name"])
+                return {"status": "completed", "adapter": run["adapter"], "topology": run["topology"], "levels": []}
+
+            with mock.patch.object(main, "_run_batch_levels", side_effect=fake_run_batch_levels):
+                result = main.run_batch(
+                    plan_path=plan_path,
+                    run_filter="vm-single-edc",
+                    adapter_registry={"edc": "fake:Adapter"},
+                )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(observed_runs, ["vm-single-edc"])
+        self.assertEqual([run["name"] for run in result["runs"]], ["vm-single-edc"])
+
+    def test_batch_run_filter_fails_when_no_run_matches(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_path = os.path.join(tmpdir, "plan.yaml")
+            self._write_yaml(
+                plan_path,
+                {
+                    "runs": [
+                        {
+                            "name": "local-edc",
+                            "topology": "local",
+                            "adapter": "edc",
+                            "levels": [4],
+                        }
+                    ],
+                },
+            )
+
+            with self.assertRaisesRegex(ValueError, "did not match any run"):
+                main.run_batch(
+                    plan_path=plan_path,
+                    run_filter="vm-single-edc",
+                    adapter_registry={"edc": "fake:Adapter"},
+                )
+
     def test_batch_dry_run_does_not_execute_levels(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             plan_path = os.path.join(tmpdir, "plan.yaml")
@@ -294,6 +399,7 @@ class BatchExecutionTests(unittest.TestCase):
             self.assertIn("# Each run can override defaults.levels", content)
             self.assertIn("name: vm-distributed-edc", content)
             self.assertIn("levels: [1, 2, 3, 4, 5, 6]", content)
+            self.assertIn("PIONERA_EDC_LOCAL_IMAGES_MODE: auto", content)
             mode = os.stat(secrets_path).st_mode & 0o077
             self.assertEqual(mode, 0)
 

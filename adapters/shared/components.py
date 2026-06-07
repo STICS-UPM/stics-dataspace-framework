@@ -14,6 +14,7 @@ import requests
 
 from adapters.inesdata.components import INESDataComponentsAdapter
 from deployers.shared.lib.components import (
+    configured_component_host,
     configured_component_public_path,
     configured_component_public_url,
     infer_component_hostname,
@@ -55,22 +56,28 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             namespace=namespace,
             deployer_config=resolved_config,
         )
+        component_ds_name = self._component_release_dataspace_name(
+            resolved_ds_name,
+            resolved_config,
+            normalized_component=normalized,
+        )
 
         chart_dir = self._resolve_component_chart_dir(normalized)
         values_file = self._resolve_component_values_file(
             chart_dir,
-            ds_name=resolved_ds_name,
+            ds_name=component_ds_name,
             namespace=resolved_namespace,
         )
         public_url = configured_component_public_url(
             normalized,
             resolved_config,
-            dataspace_name=resolved_ds_name,
+            dataspace_name=component_ds_name,
         )
         metadata_payload = {
             "component": component,
             "normalized_component": normalized,
             "dataspace_name": resolved_ds_name,
+            "component_dataspace_name": component_ds_name,
             "namespace": resolved_namespace,
             "chart_dir": chart_dir,
             "values_file": values_file,
@@ -78,16 +85,235 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 normalized,
                 values_file,
                 resolved_config,
-                dataspace_name=resolved_ds_name,
+                dataspace_name=component_ds_name,
             ),
             "release_name": resolve_component_release_name(
                 normalized,
-                dataspace_name=resolved_ds_name,
+                dataspace_name=component_ds_name,
             ),
         }
         if public_url:
             metadata_payload["public_url"] = public_url
         return metadata_payload
+
+    def _component_release_dataspace_name(self, ds_name=None, deployer_config=None, normalized_component=None):
+        resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        resolved_ds_name = str(
+            ds_name
+            or resolved_config.get("DS_1_NAME")
+            or self._dataspace_name()
+            or ""
+        ).strip()
+        explicit = str(
+            resolved_config.get("COMPONENTS_RELEASE_DATASPACE_NAME")
+            or resolved_config.get("COMPONENTS_HELM_RELEASE_DATASPACE_NAME")
+            or ""
+        ).strip()
+        if explicit:
+            return explicit
+
+        scope = str(resolved_config.get("COMPONENTS_RELEASE_SCOPE") or "auto").strip().lower()
+        if scope in {"dataspace", "adapter", "per-adapter", "adapter-dataspace"}:
+            return resolved_ds_name
+        if scope in {"shared", "base", "common", "common-dataspace"}:
+            return self._component_base_dataspace_name(resolved_ds_name)
+
+        if (
+            self.active_adapter == "edc"
+            and self._component_uses_shared_release_scope(normalized_component, resolved_config)
+        ):
+            return self._component_base_dataspace_name(resolved_ds_name)
+        return resolved_ds_name
+
+    def _component_uses_shared_release_scope(self, normalized_component, deployer_config=None):
+        normalized = self._normalize_component_key(normalized_component)
+        if not normalized:
+            return False
+
+        raw_value = str(
+            (deployer_config or {}).get("COMPONENTS_SHARED_RELEASE_COMPONENTS")
+            or "ontology-hub,ai-model-hub,semantic-virtualization"
+        ).strip()
+        lowered = raw_value.lower()
+        if lowered in {"*", "all"}:
+            return True
+        if lowered in {"", "none", "false", "no", "0"}:
+            return False
+
+        configured = {
+            self._normalize_component_key(token)
+            for token in raw_value.split(",")
+            if str(token or "").strip()
+        }
+        return normalized in configured
+
+    @staticmethod
+    def _component_base_dataspace_name(ds_name):
+        resolved = str(ds_name or "").strip()
+        for suffix in ("-edc", "_edc"):
+            if resolved.lower().endswith(suffix):
+                return resolved[: -len(suffix)] or resolved
+        return resolved
+
+    def _resolve_component_release_name(self, normalized_component: str) -> str:
+        deployer_config = dict(self.config_adapter.load_deployer_config() or {})
+        registration_release_getter = getattr(self.config, "helm_release_rs", None)
+        return resolve_component_release_name(
+            normalized_component,
+            dataspace_name=self._component_release_dataspace_name(
+                deployer_config=deployer_config,
+                normalized_component=normalized_component,
+            ),
+            registration_service_release_name=(
+                registration_release_getter() if callable(registration_release_getter) else ""
+            ),
+        )
+
+    def _component_release_cleanup_names(self, normalized_component, primary_release_name):
+        deployer_config = dict(self.config_adapter.load_deployer_config() or {})
+        ds_name = str(deployer_config.get("DS_1_NAME") or self._dataspace_name() or "").strip()
+        names = [str(primary_release_name or "").strip()]
+        release_dataspaces = [
+            self._component_release_dataspace_name(
+                ds_name,
+                deployer_config,
+                normalized_component=normalized_component,
+            ),
+        ]
+        if self._component_uses_shared_release_scope(normalized_component, deployer_config):
+            release_dataspaces.extend([ds_name, self._component_base_dataspace_name(ds_name)])
+        registration_release_getter = getattr(self.config, "helm_release_rs", None)
+        registration_release_name = registration_release_getter() if callable(registration_release_getter) else ""
+        for release_ds_name in release_dataspaces:
+            release_name = resolve_component_release_name(
+                normalized_component,
+                dataspace_name=release_ds_name,
+                registration_service_release_name=registration_release_name,
+            )
+            if release_name and release_name not in names:
+                names.append(release_name)
+        return [name for name in names if name]
+
+    def _component_config_dataspace_name(self, normalized_component, deployer_config=None):
+        resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        ds_name = str(resolved_config.get("DS_1_NAME") or self._dataspace_name() or "").strip()
+        return self._component_release_dataspace_name(
+            ds_name,
+            resolved_config,
+            normalized_component=normalized_component,
+        )
+
+    def _configured_component_host(self, normalized_component: str, deployer_config: dict) -> str:
+        normalized = self._normalize_component_key(normalized_component)
+        return configured_component_host(
+            normalized,
+            deployer_config,
+            dataspace_name=self._component_config_dataspace_name(normalized, deployer_config),
+        )
+
+    def _configured_component_public_url(self, normalized_component: str, deployer_config: dict) -> str:
+        normalized = self._normalize_component_key(normalized_component)
+        return configured_component_public_url(
+            normalized,
+            deployer_config,
+            dataspace_name=self._component_config_dataspace_name(normalized, deployer_config),
+        )
+
+    def _existing_component_release_values(self, normalized_component, deployer_config=None):
+        normalized = self._normalize_component_key(normalized_component)
+        resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        release_ds_name = self._component_release_dataspace_name(
+            deployer_config=resolved_config,
+            normalized_component=normalized,
+        )
+        release_name = resolve_component_release_name(
+            normalized,
+            dataspace_name=release_ds_name,
+        )
+        namespace = self._resolve_components_namespace(
+            ds_name=release_ds_name,
+            deployer_config=resolved_config,
+        )
+        if not release_name or not namespace:
+            return {}
+
+        release_q = shlex.quote(release_name)
+        namespace_q = shlex.quote(namespace)
+        raw_values = self.run_silent(f"helm get values {release_q} -n {namespace_q} -o json")
+        if not raw_values:
+            return {}
+        try:
+            payload = json.loads(raw_values)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _ai_model_hub_connector_config_key(entry):
+        if not isinstance(entry, dict):
+            return None
+        url_key = tuple(
+            str(entry.get(key) or "").strip()
+            for key in ("managementUrl", "defaultUrl", "protocolUrl")
+        )
+        if any(url_key):
+            return url_key
+        connector_name = str(entry.get("connectorName") or "").strip()
+        return ("connectorName", connector_name) if connector_name else None
+
+    def _merge_ai_model_hub_connector_config(self, existing_values, payload):
+        existing_config = ((existing_values or {}).get("config") or {}).get("edcConnectorConfig") or []
+        next_config = ((payload or {}).get("config") or {}).get("edcConnectorConfig") or []
+        if not isinstance(existing_config, list):
+            existing_config = []
+        if not isinstance(next_config, list):
+            next_config = []
+        if not existing_config:
+            return payload
+
+        merged = []
+        positions = {}
+        for entry in existing_config + next_config:
+            if not isinstance(entry, dict):
+                continue
+            key = self._ai_model_hub_connector_config_key(entry)
+            if key is None:
+                merged.append(dict(entry))
+                continue
+            if key in positions:
+                merged[positions[key]] = dict(entry)
+                continue
+            positions[key] = len(merged)
+            merged.append(dict(entry))
+
+        if merged:
+            payload.setdefault("config", {})["edcConnectorConfig"] = merged
+        return payload
+
+    def _merge_existing_shared_component_values(self, existing_values, payload):
+        existing = existing_values if isinstance(existing_values, dict) else {}
+        current = payload if isinstance(payload, dict) else {}
+        if not existing:
+            return current
+        merged = dict(existing)
+        for key, value in current.items():
+            existing_value = merged.get(key)
+            if isinstance(existing_value, dict) and isinstance(value, dict):
+                merged[key] = self._merge_existing_shared_component_values(existing_value, value)
+            else:
+                merged[key] = value
+        return merged
+
+    def _component_values_override_payload(self, normalized_component: str, deployer_config: dict) -> dict:
+        normalized = self._normalize_component_key(normalized_component)
+        payload = super()._component_values_override_payload(normalized, deployer_config)
+        existing_values = {}
+        if self._component_uses_shared_release_scope(normalized, deployer_config):
+            existing_values = self._existing_component_release_values(normalized, deployer_config)
+            payload = self._merge_existing_shared_component_values(existing_values, payload)
+        if normalized == "ai-model-hub":
+            payload = self._merge_ai_model_hub_connector_config(existing_values, payload)
+        return payload
 
     def _infer_component_hostname_for_dataspace(
         self,

@@ -416,40 +416,49 @@ class INESDataComponentsAdapter:
             if normalized in self._LEVEL6_EXCLUDED_KEYS:
                 continue
 
-            release_name = self._resolve_component_release_name(normalized)
-            rel_q = shlex.quote(release_name)
-
-            status = self.run_silent(f"helm status {rel_q} -n {ns_q}")
-            if status is None:
-                continue
-
-            print(f"- Removing {normalized} (release {release_name})")
-
-            pvc_pvs = []
-            pv_list = self.run_silent(
-                f"kubectl get pvc -n {ns_q} -l app.kubernetes.io/instance={rel_q} "
-                f"-o jsonpath='{{range .items[*]}}{{.spec.volumeName}}{{\"\\n\"}}{{end}}'"
-            )
-            if pv_list:
-                pvc_pvs = [line.strip() for line in pv_list.splitlines() if line.strip()]
-
-            self.run(f"helm uninstall {rel_q} -n {ns_q}", check=False)
-            self.run(
-                f"kubectl delete pvc -n {ns_q} -l app.kubernetes.io/instance={rel_q} --ignore-not-found",
-                check=False,
-            )
-            self.run(
-                f"kubectl wait --for=delete pod -n {ns_q} -l app.kubernetes.io/instance={rel_q} --timeout=5m",
-                check=False,
-            )
-
-            for pv_name in pvc_pvs:
-                pv_q = shlex.quote(pv_name)
-                reclaim = self.run_silent(
-                    f"kubectl get pv {pv_q} -o jsonpath='{{.spec.persistentVolumeReclaimPolicy}}'"
+            primary_release_name = self._resolve_component_release_name(normalized)
+            cleanup_names = [primary_release_name]
+            cleanup_name_resolver = getattr(self, "_component_release_cleanup_names", None)
+            if callable(cleanup_name_resolver):
+                cleanup_names = list(
+                    cleanup_name_resolver(normalized, primary_release_name)
+                    or [primary_release_name]
                 )
-                if reclaim and reclaim.strip().upper() == "RETAIN":
-                    self.run(f"kubectl delete pv {pv_q}", check=False)
+
+            for release_name in dict.fromkeys(name for name in cleanup_names if name):
+                rel_q = shlex.quote(release_name)
+
+                status = self.run_silent(f"helm status {rel_q} -n {ns_q}")
+                if status is None:
+                    continue
+
+                print(f"- Removing {normalized} (release {release_name})")
+
+                pvc_pvs = []
+                pv_list = self.run_silent(
+                    f"kubectl get pvc -n {ns_q} -l app.kubernetes.io/instance={rel_q} "
+                    f"-o jsonpath='{{range .items[*]}}{{.spec.volumeName}}{{\"\\n\"}}{{end}}'"
+                )
+                if pv_list:
+                    pvc_pvs = [line.strip() for line in pv_list.splitlines() if line.strip()]
+
+                self.run(f"helm uninstall {rel_q} -n {ns_q}", check=False)
+                self.run(
+                    f"kubectl delete pvc -n {ns_q} -l app.kubernetes.io/instance={rel_q} --ignore-not-found",
+                    check=False,
+                )
+                self.run(
+                    f"kubectl wait --for=delete pod -n {ns_q} -l app.kubernetes.io/instance={rel_q} --timeout=5m",
+                    check=False,
+                )
+
+                for pv_name in pvc_pvs:
+                    pv_q = shlex.quote(pv_name)
+                    reclaim = self.run_silent(
+                        f"kubectl get pv {pv_q} -o jsonpath='{{.spec.persistentVolumeReclaimPolicy}}'"
+                    )
+                    if reclaim and reclaim.strip().upper() == "RETAIN":
+                        self.run(f"kubectl delete pv {pv_q}", check=False)
 
     def _cleanup_legacy_component_releases(
         self,

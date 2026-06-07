@@ -11,6 +11,9 @@ DS_1_CONNECTOR_NAMESPACES=
 DS_1_VALIDATION_PAIRS=
 LEVEL4_CONNECTOR_RECONCILIATION_MODE=full
 COMPONENTS=ontology-hub,ai-model-hub,semantic-virtualization
+COMPONENTS_RELEASE_SCOPE=auto
+COMPONENTS_RELEASE_DATASPACE_NAME=
+COMPONENTS_SHARED_RELEASE_COMPONENTS=ontology-hub,ai-model-hub,semantic-virtualization
 # Optional prebuilt Level 5 component images. In topology local, blank values
 # keep the development build/import workflow. In VM topologies, configure full
 # references with explicit tags or enable LEVEL5_AUTO_BUILD_LOCAL_IMAGES only

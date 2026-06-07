@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import sys
@@ -73,14 +74,250 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             config_cls=FakeConfig,
         )
 
-    def _make_shared_adapter(self, infrastructure=None):
+    def _make_shared_adapter(self, infrastructure=None, active_adapter="inesdata"):
         return SharedComponentsAdapter(
             run=mock.Mock(return_value="ok"),
             run_silent=mock.Mock(return_value=""),
             auto_mode_getter=lambda: True,
             infrastructure_adapter=infrastructure or FakeInfrastructure(),
             config_cls=FakeConfig,
-            active_adapter="inesdata",
+            active_adapter=active_adapter,
+        )
+
+    def test_edc_component_release_name_defaults_to_shared_base_dataspace(self):
+        adapter = self._make_shared_adapter(active_adapter="edc")
+        adapter.config_adapter.load_deployer_config = mock.Mock(return_value={"DS_1_NAME": "pionera-edc"})
+
+        release_name = adapter._resolve_component_release_name("ontology-hub")
+
+        self.assertEqual(release_name, "pionera-ontology-hub")
+
+    def test_edc_non_shared_component_release_name_stays_adapter_scoped_by_default(self):
+        adapter = self._make_shared_adapter(active_adapter="edc")
+        adapter.config_adapter.load_deployer_config = mock.Mock(
+            return_value={
+                "DS_1_NAME": "pionera-edc",
+                "COMPONENTS_SHARED_RELEASE_COMPONENTS": "ontology-hub",
+            }
+        )
+
+        release_name = adapter._resolve_component_release_name("ai-model-hub")
+
+        self.assertEqual(release_name, "pionera-edc-ai-model-hub")
+
+    def test_edc_shared_component_list_includes_ai_model_hub_by_default(self):
+        adapter = self._make_shared_adapter(active_adapter="edc")
+        adapter.config_adapter.load_deployer_config = mock.Mock(return_value={"DS_1_NAME": "pionera-edc"})
+
+        release_name = adapter._resolve_component_release_name("ai-model-hub")
+
+        self.assertEqual(release_name, "pionera-ai-model-hub")
+
+    def test_edc_component_release_name_can_use_dataspace_scope(self):
+        adapter = self._make_shared_adapter(active_adapter="edc")
+        adapter.config_adapter.load_deployer_config = mock.Mock(
+            return_value={"DS_1_NAME": "pionera-edc", "COMPONENTS_RELEASE_SCOPE": "dataspace"}
+        )
+
+        release_name = adapter._resolve_component_release_name("ontology-hub")
+
+        self.assertEqual(release_name, "pionera-edc-ontology-hub")
+
+    def test_component_release_name_prefers_explicit_release_dataspace(self):
+        adapter = self._make_shared_adapter(active_adapter="edc")
+        adapter.config_adapter.load_deployer_config = mock.Mock(
+            return_value={
+                "DS_1_NAME": "pionera-edc",
+                "COMPONENTS_RELEASE_DATASPACE_NAME": "custom-components",
+            }
+        )
+
+        release_name = adapter._resolve_component_release_name("ontology-hub")
+
+        self.assertEqual(release_name, "custom-components-ontology-hub")
+
+    def test_component_cleanup_removes_shared_and_adapter_scoped_releases(self):
+        run = mock.Mock(return_value="ok")
+
+        def run_silent(command):
+            if command.startswith("helm status "):
+                return "deployed"
+            return ""
+
+        adapter = SharedComponentsAdapter(
+            run=run,
+            run_silent=mock.Mock(side_effect=run_silent),
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=FakeInfrastructure(),
+            config_cls=FakeConfig,
+            active_adapter="edc",
+        )
+        adapter.config_adapter.load_deployer_config = mock.Mock(return_value={"DS_1_NAME": "pionera-edc"})
+
+        adapter._cleanup_components(["ontology-hub"], "components")
+
+        commands = [call.args[0] for call in run.call_args_list]
+        uninstall_commands = [command for command in commands if command.startswith("helm uninstall ")]
+        self.assertIn("helm uninstall pionera-ontology-hub -n components", uninstall_commands)
+        self.assertIn("helm uninstall pionera-edc-ontology-hub -n components", uninstall_commands)
+
+    def test_component_cleanup_does_not_remove_base_release_for_non_shared_component(self):
+        run = mock.Mock(return_value="ok")
+
+        def run_silent(command):
+            if command.startswith("helm status "):
+                return "deployed"
+            return ""
+
+        adapter = SharedComponentsAdapter(
+            run=run,
+            run_silent=mock.Mock(side_effect=run_silent),
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=FakeInfrastructure(),
+            config_cls=FakeConfig,
+            active_adapter="edc",
+        )
+        adapter.config_adapter.load_deployer_config = mock.Mock(
+            return_value={
+                "DS_1_NAME": "pionera-edc",
+                "COMPONENTS_SHARED_RELEASE_COMPONENTS": "ontology-hub",
+            }
+        )
+
+        adapter._cleanup_components(["ai-model-hub"], "components")
+
+        commands = [call.args[0] for call in run.call_args_list]
+        uninstall_commands = [command for command in commands if command.startswith("helm uninstall ")]
+        self.assertIn("helm uninstall pionera-edc-ai-model-hub -n components", uninstall_commands)
+        self.assertNotIn("helm uninstall pionera-ai-model-hub -n components", uninstall_commands)
+
+    def test_shared_ai_model_hub_override_merges_existing_connector_config(self):
+        def run_silent(command):
+            if command.startswith("helm get values pionera-ai-model-hub"):
+                return json.dumps(
+                    {
+                        "config": {
+                            "edcConnectorConfig": [
+                                {
+                                    "connectorName": "INESData Consumer",
+                                    "managementUrl": "https://org3.example.test/management",
+                                    "defaultUrl": "https://org3.example.test/api",
+                                    "protocolUrl": "https://org3.example.test/protocol",
+                                    "federatedCatalogEnabled": False,
+                                }
+                            ]
+                        }
+                    }
+                )
+            return ""
+
+        adapter = SharedComponentsAdapter(
+            run=mock.Mock(return_value="ok"),
+            run_silent=mock.Mock(side_effect=run_silent),
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=FakeInfrastructure(),
+            config_cls=FakeConfig,
+            active_adapter="edc",
+        )
+        adapter.config_adapter.load_deployer_config = mock.Mock(
+            return_value={
+                "DS_1_NAME": "pionera-edc",
+                "DS_DOMAIN_BASE": "example.test",
+                "DS_1_CONNECTORS": "citycounciledc,companyedc",
+            }
+        )
+
+        payload = adapter._component_values_override_payload(
+            "ai-model-hub",
+            {
+                "DS_1_NAME": "pionera-edc",
+                "DS_DOMAIN_BASE": "example.test",
+                "DS_1_CONNECTORS": "citycounciledc,companyedc",
+            },
+        )
+
+        connector_config = payload["config"]["edcConnectorConfig"]
+        self.assertEqual(len(connector_config), 3)
+        self.assertEqual(connector_config[0]["connectorName"], "INESData Consumer")
+        self.assertEqual(connector_config[1]["connectorName"], "Consumer")
+        self.assertEqual(connector_config[2]["connectorName"], "Provider")
+
+    def test_edc_shared_runtime_metadata_uses_common_component_dataspace_name(self):
+        adapter = self._make_shared_adapter(active_adapter="edc")
+        adapter.config_adapter.load_deployer_config = mock.Mock(
+            return_value={
+                "DS_1_NAME": "pionera-edc",
+                "DS_DOMAIN_BASE": "pionera.example.test",
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            values_path = os.path.join(tmpdir, "values-pionera.yaml")
+            with open(values_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump({"ingress": {"enabled": True}}, handle)
+            adapter._resolve_component_chart_dir = mock.Mock(return_value=tmpdir)
+            adapter._resolve_component_values_file = mock.Mock(return_value=values_path)
+
+            metadata = adapter.resolve_component_runtime_metadata(
+                "semantic-virtualization",
+                ds_name="pionera-edc",
+                namespace="components",
+                deployer_config={
+                    "DS_1_NAME": "pionera-edc",
+                    "DS_DOMAIN_BASE": "pionera.example.test",
+                },
+            )
+
+            self.assertEqual(metadata["dataspace_name"], "pionera-edc")
+            self.assertEqual(metadata["component_dataspace_name"], "pionera")
+            self.assertEqual(metadata["release_name"], "pionera-semantic-virtualization")
+            self.assertEqual(metadata["host"], "semantic-virtualization-pionera.pionera.example.test")
+            adapter._resolve_component_values_file.assert_called_once_with(
+                tmpdir,
+                ds_name="pionera",
+                namespace="components",
+            )
+
+    def test_shared_semantic_virtualization_preserves_existing_mapping_editor_values(self):
+        def run_silent(command):
+            if command.startswith("helm get values pionera-semantic-virtualization"):
+                return json.dumps(
+                    {
+                        "mappingEditor": {
+                            "enabled": True,
+                            "hostPort": {"enabled": True, "port": 5678},
+                        }
+                    }
+                )
+            return ""
+
+        adapter = SharedComponentsAdapter(
+            run=mock.Mock(return_value="ok"),
+            run_silent=mock.Mock(side_effect=run_silent),
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=FakeInfrastructure(),
+            config_cls=FakeConfig,
+            active_adapter="edc",
+        )
+        adapter.config_adapter.load_deployer_config = mock.Mock(
+            return_value={
+                "DS_1_NAME": "pionera-edc",
+                "DS_DOMAIN_BASE": "pionera.example.test",
+            }
+        )
+
+        payload = adapter._component_values_override_payload(
+            "semantic-virtualization",
+            {
+                "DS_1_NAME": "pionera-edc",
+                "DS_DOMAIN_BASE": "pionera.example.test",
+            },
+        )
+
+        self.assertTrue(payload["mappingEditor"]["enabled"])
+        self.assertEqual(payload["mappingEditor"]["hostPort"], {"enabled": True, "port": 5678})
+        self.assertEqual(
+            payload["ingress"]["host"],
+            "semantic-virtualization-pionera.pionera.example.test",
         )
 
     def test_ontology_hub_hostname_prefers_deployer_config_inference(self):

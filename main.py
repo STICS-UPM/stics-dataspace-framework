@@ -10971,7 +10971,25 @@ def _batch_runtime_environment(run, secrets):
         env["PIONERA_VM_SINGLE_CLUSTER_SWITCH_CONFIRM"] = _vm_single_cluster_switch_confirmation_token("k3s")
     if _batch_local_minikube_tunnel_requested(run):
         env["PIONERA_LOCAL_MINIKUBE_TUNNEL_MANAGED"] = "true"
+    if _batch_run_uses_vm_single_edc(run):
+        _apply_vm_single_edc_batch_defaults(env)
     return env
+
+
+def _batch_run_uses_vm_single_edc(run):
+    return (
+        normalize_topology((run or {}).get("topology") or "local") == VM_SINGLE_TOPOLOGY
+        and str((run or {}).get("adapter") or "").strip().lower() == "edc"
+    )
+
+
+def _apply_vm_single_edc_batch_defaults(env):
+    env.setdefault("PIONERA_EDC_LOCAL_IMAGES_MODE", "auto")
+    env.setdefault("PIONERA_EDC_CONNECTOR_IMAGE_PULL_POLICY", "IfNotPresent")
+    env.setdefault("PIONERA_EDC_DASHBOARD_IMAGE_PULL_POLICY", "IfNotPresent")
+    env.setdefault("PIONERA_EDC_DASHBOARD_PROXY_IMAGE_PULL_POLICY", "IfNotPresent")
+    env.setdefault("PIONERA_SKIP_EDC_LOCAL_CONNECTOR_IMAGE_BUILD", "false")
+    env.setdefault("PIONERA_SKIP_EDC_LOCAL_DASHBOARD_IMAGE_BUILD", "false")
 
 
 def _local_minikube_profile_for_adapter(adapter):
@@ -11351,6 +11369,11 @@ def _create_batch_template_files(plan_path=None, secrets_path=None):
                 "    topology: vm-single\n"
                 "    adapter: edc\n"
                 "    levels: [1, 2, 3, 4, 5, 6]\n"
+                "    env:\n"
+                "      PIONERA_EDC_LOCAL_IMAGES_MODE: auto\n"
+                "      PIONERA_EDC_CONNECTOR_IMAGE_PULL_POLICY: IfNotPresent\n"
+                "      PIONERA_EDC_DASHBOARD_IMAGE_PULL_POLICY: IfNotPresent\n"
+                "      PIONERA_EDC_DASHBOARD_PROXY_IMAGE_PULL_POLICY: IfNotPresent\n"
                 "  - name: vm-distributed-inesdata\n"
                 "    topology: vm-distributed\n"
                 "    adapter: inesdata\n"
@@ -11386,6 +11409,7 @@ def run_batch(
     plan_path=None,
     secrets_path=None,
     levels_override=None,
+    run_filter=None,
     adapter_registry=None,
     deployer_registry=None,
     validation_engine_cls=ValidationEngine,
@@ -11399,6 +11423,15 @@ def run_batch(
         override_levels = _batch_normalize_levels(levels_override)
         for run in plan["runs"]:
             run["levels"] = list(override_levels)
+    if run_filter is not None:
+        requested_runs = {str(item).strip() for item in _batch_csv_or_list(run_filter) if str(item).strip()}
+        if requested_runs:
+            plan["runs"] = [run for run in plan["runs"] if run["name"] in requested_runs]
+            if not plan["runs"]:
+                raise ValueError(
+                    "Batch run filter did not match any run. Requested: "
+                    + ", ".join(sorted(requested_runs))
+                )
     secrets = {}
     secret_warnings = []
     if secrets_path:
@@ -21905,6 +21938,7 @@ def create_parser(adapter_registry=None):
             "  python main.py batch init\n"
             "  python main.py batch --plan .profiles/runs/full-validation.yaml --secrets .secrets/pionera.env\n"
             "  python main.py batch --plan .profiles/runs/local-inesdata.yaml --secrets .secrets/pionera.env --levels 6\n"
+            "  python main.py batch --plan .profiles/runs/full-validation.yaml --run vm-single-edc --levels 4,5,6\n"
             "  python main.py inesdata deploy --topology local\n"
             "  PIONERA_VM_EXTERNAL_IP=192.0.2.10 python main.py edc hosts --topology vm-single\n"
             "  python main.py inesdata local-repair --topology local\n"
@@ -22004,6 +22038,11 @@ def create_parser(adapter_registry=None):
         default=None,
         help="Comma-separated level override for batch runs, for example '6' or '4,5,6'.",
     )
+    parser.add_argument(
+        "--run",
+        default=None,
+        help="Comma-separated batch run name filter, for example 'vm-single-edc'.",
+    )
     return parser
 
 
@@ -22087,6 +22126,7 @@ def main(
                 plan_path=args.plan,
                 secrets_path=args.secrets,
                 levels_override=args.levels,
+                run_filter=args.run,
                 adapter_registry=registry,
                 deployer_registry=deployer_registry,
                 validation_engine_cls=validation_engine_cls,
