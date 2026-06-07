@@ -50,7 +50,7 @@ class RemoteK3sImagesTests(unittest.TestCase):
         self.assertEqual(target.bastion_destination, "jump@orion.example.test:2222")
         self.assertIn("-J jump@orion.example.test:2222", shell_join(target.ssh_import_args("/tmp/image.tar")))
 
-    def test_role_specific_direct_access_overrides_global_bastion_for_provider(self):
+    def test_common_services_role_specific_direct_access_overrides_global_bastion_for_provider(self):
         with mock.patch(
             "deployers.shared.lib.remote_k3s_images._resolve_host_addresses",
             return_value=set(),
@@ -58,6 +58,7 @@ class RemoteK3sImagesTests(unittest.TestCase):
             target = remote_k3s_image_import_target(
                 {
                     "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                    "VM_DISTRIBUTED_EXECUTION_HOST": "common-services",
                     "SSH_ACCESS_MODE": "bastion",
                     "SSH_BASTION_HOST": "orion.example.test",
                     "SSH_BASTION_PORT": "2222",
@@ -74,6 +75,60 @@ class RemoteK3sImagesTests(unittest.TestCase):
         self.assertIsNotNone(target)
         self.assertEqual(target.host, "192.168.122.134")
         self.assertEqual(target.destination, "pionera@192.168.122.134")
+        self.assertEqual(target.bastion_destination, "")
+        self.assertNotIn("orion.example.test", shell_join(target.ssh_import_args("/tmp/image.tar")))
+
+    def test_external_role_specific_direct_private_target_falls_back_to_global_bastion(self):
+        with mock.patch(
+            "deployers.shared.lib.remote_k3s_images._resolve_host_addresses",
+            return_value=set(),
+        ):
+            target = remote_k3s_image_import_target(
+                {
+                    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                    "VM_DISTRIBUTED_EXECUTION_HOST": "external",
+                    "SSH_ACCESS_MODE": "bastion",
+                    "SSH_BASTION_HOST": "orion.example.test",
+                    "SSH_BASTION_PORT": "2222",
+                    "SSH_BASTION_USER": "jump",
+                    "VM_PROVIDER_SSH_ACCESS_MODE": "direct",
+                    "VM_PROVIDER_SSH_HOST": "pionera20",
+                    "VM_PROVIDER_IP": "192.168.122.134",
+                    "VM_PROVIDER_SSH_USER": "pionera",
+                    "VM_PROVIDER_SSH_PORT": "22",
+                },
+                role="provider",
+            )
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.host, "192.168.122.134")
+        self.assertEqual(target.destination, "pionera@192.168.122.134")
+        self.assertEqual(target.bastion_destination, "jump@orion.example.test:2222")
+        self.assertIn("-J jump@orion.example.test:2222", shell_join(target.ssh_import_args("/tmp/image.tar")))
+
+    def test_external_role_specific_direct_public_target_stays_direct(self):
+        with mock.patch(
+            "deployers.shared.lib.remote_k3s_images._resolve_host_addresses",
+            return_value={"203.0.113.20"},
+        ):
+            target = remote_k3s_image_import_target(
+                {
+                    "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                    "VM_DISTRIBUTED_EXECUTION_HOST": "external",
+                    "SSH_ACCESS_MODE": "bastion",
+                    "SSH_BASTION_HOST": "orion.example.test",
+                    "SSH_BASTION_PORT": "2222",
+                    "SSH_BASTION_USER": "jump",
+                    "VM_PROVIDER_SSH_ACCESS_MODE": "direct",
+                    "VM_PROVIDER_SSH_HOST": "provider.example.test",
+                    "VM_PROVIDER_SSH_USER": "pionera",
+                    "VM_PROVIDER_SSH_PORT": "22",
+                },
+                role="provider",
+            )
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.host, "provider.example.test")
         self.assertEqual(target.bastion_destination, "")
         self.assertNotIn("orion.example.test", shell_join(target.ssh_import_args("/tmp/image.tar")))
 

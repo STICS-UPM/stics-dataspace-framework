@@ -303,7 +303,11 @@ def remote_k3s_image_import_target(config: dict | None, role: str = "common") ->
     ):
         access_mode = "direct"
     if access_mode == "direct":
-        host = _direct_access_host(host, fallback_ip)
+        if _direct_access_should_use_global_bastion(values, host, fallback_ip, role_access_mode):
+            host = str(fallback_ip or host or "").strip()
+            access_mode = "bastion"
+        else:
+            host = _direct_access_host(host, fallback_ip)
     bastion_host = ""
     bastion_user = ""
     bastion_port = ""
@@ -383,6 +387,25 @@ def _direct_access_host(host: str, fallback_ip: str = "") -> str:
     if _resolve_host_addresses(normalized_host):
         return normalized_host
     return normalized_fallback
+
+
+def _direct_access_should_use_global_bastion(values: dict, host: str, fallback_ip: str, role_access_mode: str) -> bool:
+    if not str(role_access_mode or "").strip():
+        return False
+    if _normalized_vm_distributed_execution_host(values) == "common-services":
+        return False
+    if str(values.get("SSH_ACCESS_MODE") or "").strip().lower() != "bastion":
+        return False
+    if not _first_config_value(values, "SSH_BASTION_HOST"):
+        return False
+
+    normalized_host = str(host or "").strip()
+    normalized_fallback = str(fallback_ip or "").strip()
+    if _is_private_ip_address(normalized_host):
+        return True
+    if normalized_host and not _looks_like_ip_address(normalized_host) and not _resolve_host_addresses(normalized_host):
+        return True
+    return _is_private_ip_address(normalized_fallback)
 
 
 def _normalized_vm_distributed_execution_host(values: dict) -> str:
@@ -473,6 +496,13 @@ def _looks_like_ip_address(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _is_private_ip_address(value: str) -> bool:
+    try:
+        return ipaddress.ip_address(str(value or "").strip()).is_private
+    except ValueError:
+        return False
 
 
 def _role_specific_config_value(values: dict, role: str, suffix: str) -> str:
