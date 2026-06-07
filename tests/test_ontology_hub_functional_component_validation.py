@@ -121,6 +121,30 @@ class OntologyHubFunctionalComponentValidationTests(unittest.TestCase):
         self.assertIn("deployment/demo-ontology-hub-mongodb -n components", commands[0])
         self.assertTrue(all(" -n components" in command for command in commands))
 
+    def test_reset_runtime_prefers_resolved_release_name_from_runtime(self):
+        commands = []
+
+        def fake_run(command, check=False):
+            commands.append(command)
+            return object()
+
+        with mock.patch(
+            "validation.components.ontology_hub.functional.runtime_preparation._run",
+            side_effect=fake_run,
+        ):
+            result = runtime_preparation.reset_ontology_hub_for_functional(
+                {
+                    "dataspace": "pionera-edc",
+                    "componentsNamespace": "components",
+                    "releaseName": "pionera-ontology-hub",
+                }
+            )
+
+        self.assertTrue(result)
+        self.assertTrue(commands)
+        self.assertIn("deployment/pionera-ontology-hub-mongodb -n components", commands[0])
+        self.assertTrue(all("deployment/pionera-edc-ontology-hub" not in command for command in commands))
+
     def test_functional_run_id_uses_normalized_experiment_name(self):
         paths = _build_artifact_paths(
             "experiments/Experiment 2026-05-07 17:40:25",

@@ -338,6 +338,75 @@ class INESDataLocalBuildLoadDeployScriptTests(unittest.TestCase):
         self.assertIn("sudo\\ k3s\\ ctr\\ -n\\ k8s.io\\ images\\ import", result.stdout)
         self.assertIn("fallback when sudo -n is not available", result.stdout)
 
+    def test_k3s_remote_import_auto_can_use_batch_sudo_secret_without_printing_it(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            script_path = root / SCRIPT_REL_PATH
+            script_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(PROJECT_ROOT / SCRIPT_REL_PATH, script_path)
+
+            platform_dir = root / "deployers" / "inesdata"
+            platform_dir.mkdir(parents=True, exist_ok=True)
+
+            manifest = root / "manifest.tsv"
+            manifest.write_text(
+                "\t".join(["component", "repo_dir", "image", "tag", "full_image", "build_cmd"])
+                + "\n"
+                + "\t".join(
+                    [
+                        "connector",
+                        ".",
+                        "local/inesdata-connector",
+                        "local",
+                        "local/inesdata-connector:local",
+                        "build",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            env = dict(os.environ)
+            env.update(
+                {
+                    "K3S_REMOTE_IMPORT_HOST": "pionera20",
+                    "K3S_REMOTE_IMPORT_USER": "pionera",
+                    "K3S_REMOTE_IMPORT_PORT": "22",
+                    "K3S_REMOTE_IMPORT_INTERACTIVE": "auto",
+                    "K3S_REMOTE_IMPORT_SUDO_PASSWORD": "do-not-print-this",
+                    "K3S_IMAGE_IMPORT_COMMAND": "sudo -n k3s ctr -n k8s.io images import",
+                }
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(script_path),
+                    "--skip-build",
+                    "--manifest",
+                    str(manifest),
+                    "--platform-dir",
+                    str(platform_dir),
+                    "--namespace",
+                    "provider",
+                    "--component",
+                    "connector",
+                    "--cluster-runtime",
+                    "k3s",
+                    "--skip-deploy",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=False,
+                env=env,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("sudo\\ -S\\ -p", result.stdout)
+        self.assertIn("k3s\\ ctr\\ -n\\ k8s.io\\ images\\ import", result.stdout)
+        self.assertIn("fallback using batch sudo secret when sudo -n is not available", result.stdout)
+        self.assertNotIn("do-not-print-this", result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

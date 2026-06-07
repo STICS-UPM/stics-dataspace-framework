@@ -1416,6 +1416,23 @@ class INESDataComponentsAdapter:
     def _load_image_into_k3s(self, image_ref: str, deployer_config: dict | None = None):
         self._load_images_into_k3s([image_ref], deployer_config)
 
+    @staticmethod
+    def _remote_k3s_sudo_password_env_name():
+        for key in (
+            "K3S_REMOTE_IMPORT_SUDO_PASSWORD",
+            "PIONERA_REMOTE_SUDO_PASSWORD",
+            "PIONERA_SUDO_PASSWORD",
+        ):
+            if os.environ.get(key):
+                return key
+        return ""
+
+    @staticmethod
+    def _pipe_env_secret_command(env_name: str, command: str) -> str:
+        if not env_name:
+            return command
+        return f"printf '%s\\n' \"${{{env_name}}}\" | {command}"
+
     def _load_images_into_k3s(self, image_refs, deployer_config: dict | None = None):
         image_refs = self._dedupe_image_refs(image_refs)
         if not image_refs:
@@ -1457,6 +1474,22 @@ class INESDataComponentsAdapter:
                 if remote_target.allows_interactive_fallback():
                     probe_command = shell_join(remote_target.ssh_sudo_probe_args())
                     if self.run(probe_command, check=False) is None:
+                        password_env = self._remote_k3s_sudo_password_env_name()
+                        if password_env:
+                            print(
+                                "Remote k3s image import needs sudo password; "
+                                "using configured batch sudo secret."
+                            )
+                            ssh_command = self._pipe_env_secret_command(
+                                password_env,
+                                shell_join(remote_target.ssh_import_args(remote_archive_path, sudo_stdin=True)),
+                            )
+                            if self.run(ssh_command, check=False) is None:
+                                self._fail(
+                                    "Failed to import image(s) into remote k3s containerd",
+                                    root_cause=refs_label,
+                                )
+                            return
                         print(
                             "Remote k3s image import needs sudo password; "
                             "retrying with an interactive prompt."

@@ -2060,6 +2060,104 @@ class InesdataComponentOverridesTests(unittest.TestCase):
 
         adapter.run.assert_not_called()
 
+    def test_model_server_auto_build_disabled_builds_when_k3s_never_pull_image_is_missing(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "vm-single"
+        deployer_config = {
+            "CLUSTER_TYPE": "k3s",
+            "AI_MODEL_HUB_MODEL_SERVER_IMAGE": "model-server:latest",
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "false",
+        }
+
+        with tempfile.TemporaryDirectory() as source_dir:
+            with (
+                mock.patch.object(adapter, "_ai_model_hub_model_server_source_dir", return_value=source_dir),
+                mock.patch.object(
+                    adapter,
+                    "_prepare_ai_model_hub_model_server_build_context",
+                    return_value=(source_dir, False),
+                ),
+                mock.patch.object(adapter, "_k3s_runtime_has_image", return_value=False),
+                mock.patch.object(adapter, "_host_has_image", return_value=False),
+                mock.patch.object(adapter, "_ensure_k3s_local_image_import_supported") as ensure_import_mock,
+                mock.patch.object(adapter, "_docker_cmd", return_value="docker"),
+                mock.patch.object(adapter, "_load_image_into_cluster_runtime") as load_mock,
+            ):
+                result = adapter._prepare_ai_model_hub_model_server_image(
+                    "model-server:latest",
+                    deployer_config,
+                )
+
+        self.assertTrue(result)
+        ensure_import_mock.assert_called_once_with("model-server:latest", deployer_config)
+        adapter.run.assert_called_once_with(
+            "docker build -t model-server:latest .",
+            check=False,
+            cwd=source_dir,
+        )
+        load_mock.assert_called_once_with(
+            "k3s",
+            "minikube",
+            "model-server:latest",
+            deployer_config,
+        )
+
+    def test_model_server_auto_build_disabled_imports_host_image_when_k3s_never_pull_image_is_missing(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "vm-single"
+        deployer_config = {
+            "CLUSTER_TYPE": "k3s",
+            "AI_MODEL_HUB_MODEL_SERVER_IMAGE": "model-server:latest",
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "false",
+        }
+
+        with (
+            mock.patch.object(adapter, "_k3s_runtime_has_image", return_value=False),
+            mock.patch.object(adapter, "_host_has_image", return_value=True),
+            mock.patch.object(adapter, "_ensure_k3s_local_image_import_supported") as ensure_import_mock,
+            mock.patch.object(adapter, "_load_image_into_cluster_runtime") as load_mock,
+        ):
+            result = adapter._prepare_ai_model_hub_model_server_image(
+                "model-server:latest",
+                deployer_config,
+            )
+
+        self.assertTrue(result)
+        ensure_import_mock.assert_called_once_with("model-server:latest", deployer_config)
+        adapter.run.assert_not_called()
+        load_mock.assert_called_once_with(
+            "k3s",
+            "minikube",
+            "model-server:latest",
+            deployer_config,
+        )
+
+    def test_model_server_auto_build_disabled_skips_when_k3s_never_pull_image_exists(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "vm-single"
+        deployer_config = {
+            "CLUSTER_TYPE": "k3s",
+            "AI_MODEL_HUB_MODEL_SERVER_IMAGE": "model-server:latest",
+            "LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "false",
+        }
+
+        with (
+            mock.patch.object(adapter, "_k3s_runtime_has_image", return_value=True),
+            mock.patch.object(adapter, "_host_has_image") as host_has_image_mock,
+            mock.patch.object(adapter, "_ensure_k3s_local_image_import_supported") as ensure_import_mock,
+            mock.patch.object(adapter, "_load_image_into_cluster_runtime") as load_mock,
+        ):
+            result = adapter._prepare_ai_model_hub_model_server_image(
+                "model-server:latest",
+                deployer_config,
+            )
+
+        self.assertFalse(result)
+        host_has_image_mock.assert_not_called()
+        ensure_import_mock.assert_not_called()
+        adapter.run.assert_not_called()
+        load_mock.assert_not_called()
+
     def test_ai_model_hub_model_server_external_mode_skips_deployment(self):
         adapter = self._make_shared_adapter()
         adapter.config_adapter.topology = "vm-distributed"
@@ -2382,6 +2480,33 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertIn("sudo -n k3s ctr -n k8s.io images ls -q", commands[3])
         self.assertIn("ssh -tt", commands[4])
         self.assertIn("sudo k3s ctr -n k8s.io images import", commands[4])
+
+    def test_load_image_into_k3s_auto_uses_batch_sudo_secret_before_interactive_prompt(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-single"
+        adapter.run = mock.Mock(side_effect=["tagged", "saved", "copied", None, "imported"])
+        deployer_config = {
+            "CLUSTER_TYPE": "k3s",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT": "auto",
+            "VM_SINGLE_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
+            "VM_SINGLE_SSH_HOST": "vm-single.example.test",
+            "VM_SINGLE_SSH_USER": "pionera",
+            "VM_SINGLE_SSH_PORT": "22",
+        }
+
+        with (
+            mock.patch.object(adapter, "_docker_cmd", return_value="docker"),
+            mock.patch.object(adapter, "_local_k3s_command_available", return_value=False),
+            mock.patch.dict(os.environ, {"K3S_REMOTE_IMPORT_SUDO_PASSWORD": "demo-secret"}),
+        ):
+            adapter._load_image_into_k3s("ontology-hub:local", deployer_config)
+
+        commands = [call.args[0] for call in adapter.run.call_args_list]
+        self.assertIn("sudo -n k3s ctr -n k8s.io images ls -q", commands[3])
+        self.assertIn("printf '%s\\n' \"${K3S_REMOTE_IMPORT_SUDO_PASSWORD}\" | ssh", commands[4])
+        self.assertIn("sudo -S -p", commands[4])
+        self.assertIn("k3s ctr -n k8s.io images import", commands[4])
+        self.assertNotIn("ssh -tt", commands[4])
 
     def test_load_images_into_k3s_batches_semantic_virtualization_images_for_remote_import(self):
         adapter = self._make_adapter()

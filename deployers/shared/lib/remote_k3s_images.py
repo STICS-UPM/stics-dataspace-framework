@@ -26,6 +26,26 @@ def parse_bool(value, *, default=False) -> bool:
     return bool(default)
 
 
+def image_reference_candidates(image_ref: str) -> list[str]:
+    raw_ref = str(image_ref or "").strip()
+    if not raw_ref:
+        return []
+
+    candidates = [raw_ref]
+    ref_name = raw_ref.split("@", 1)[0]
+    first_segment = ref_name.split("/", 1)[0]
+    if "/" not in ref_name:
+        normalized = f"docker.io/library/{raw_ref}"
+    elif "." in first_segment or ":" in first_segment or first_segment == "localhost":
+        normalized = raw_ref
+    else:
+        normalized = f"docker.io/{raw_ref}"
+
+    if normalized not in candidates:
+        candidates.append(normalized)
+    return candidates
+
+
 @dataclass(frozen=True)
 class RemoteK3sImageImportTarget:
     role: str
@@ -98,17 +118,38 @@ class RemoteK3sImageImportTarget:
     def interactive_import_command(self) -> str:
         return _interactive_sudo_import_command(self.import_command)
 
+    def stdin_password_import_command(self) -> str:
+        return _stdin_password_sudo_import_command(self.import_command)
+
     def allows_interactive_fallback(self) -> bool:
         return self.interactive_mode == INTERACTIVE_AUTO
 
-    def ssh_import_args(self, remote_archive_path: str, *, interactive: bool = False) -> list[str]:
+    def ssh_import_args(
+        self,
+        remote_archive_path: str,
+        *,
+        interactive: bool = False,
+        sudo_stdin: bool = False,
+    ) -> list[str]:
         remote_archive_q = shlex.quote(remote_archive_path)
-        import_command = self.interactive_import_command() if interactive else self.import_command
+        if sudo_stdin:
+            import_command = self.stdin_password_import_command()
+        else:
+            import_command = self.interactive_import_command() if interactive else self.import_command
         cleanup_command = f"{import_command} {remote_archive_q}; status=$?; rm -f {remote_archive_q}; exit $status"
         return self.ssh_command_args(cleanup_command, force_tty=interactive)
 
     def ssh_sudo_probe_args(self) -> list[str]:
         return self.ssh_command_args("sudo -n k3s ctr -n k8s.io images ls -q >/dev/null")
+
+    def ssh_image_check_args(self, image_ref: str, *, sudo_stdin: bool = False) -> list[str]:
+        candidates = image_reference_candidates(image_ref)
+        if not candidates:
+            return self.ssh_command_args("true")
+        grep_args = " ".join(f"-e {shlex.quote(candidate)}" for candidate in candidates)
+        check_pipeline = f"k3s ctr -n k8s.io images ls -q | grep -Fx {grep_args} >/dev/null"
+        sudo_prefix = "sudo -S -p ''" if sudo_stdin else "sudo -n"
+        return self.ssh_command_args(f"{sudo_prefix} sh -c {shlex.quote(check_pipeline)}")
 
     def ssh_command_args(self, command: str, *, force_tty: bool = False) -> list[str]:
         args = ["ssh"]
@@ -194,6 +235,31 @@ def _interactive_sudo_import_command(command: str) -> str:
         return shell_join(parts)
     parts = cleaned
     return shell_join(parts)
+
+
+def _stdin_password_sudo_import_command(command: str) -> str:
+    raw = str(command or "").strip()
+    if not raw:
+        return raw
+    try:
+        parts = shlex.split(raw)
+    except ValueError:
+        parts = raw.split()
+    if parts[:1] != ["sudo"]:
+        return raw
+
+    cleaned = ["sudo"]
+    if "-S" not in parts[1:]:
+        cleaned.append("-S")
+    if "-p" not in parts[1:]:
+        cleaned.extend(["-p", ""])
+    removed_noninteractive_flag = False
+    for part in parts[1:]:
+        if not removed_noninteractive_flag and part == "-n":
+            removed_noninteractive_flag = True
+            continue
+        cleaned.append(part)
+    return shell_join(cleaned)
 
 
 def remote_k3s_image_import_target(config: dict | None, role: str = "common") -> RemoteK3sImageImportTarget | None:

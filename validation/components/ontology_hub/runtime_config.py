@@ -172,6 +172,56 @@ def _normalize_repository_uri(value: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment)).rstrip("/")
 
 
+def _first_configured_value(
+    environ: Mapping[str, str],
+    deployer_config: Mapping[str, str],
+    *keys: str,
+) -> str:
+    for key in keys:
+        value = str(environ.get(key) or "").strip()
+        if value:
+            return value
+        value = str(deployer_config.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _resolve_release_name(
+    environ: Mapping[str, str],
+    deployer_config: Mapping[str, str],
+    dataspace: str,
+) -> str:
+    explicit_release = _first_configured_value(
+        environ,
+        deployer_config,
+        "ONTOLOGY_HUB_RELEASE_NAME",
+    )
+    if explicit_release:
+        return explicit_release
+
+    explicit_service = _first_configured_value(
+        environ,
+        deployer_config,
+        "ONTOLOGY_HUB_SELF_HOST_SERVICE_NAME",
+        "ONTOLOGY_HUB_SERVICE_NAME",
+    )
+    if explicit_service:
+        return explicit_service
+
+    component_dataspace = _first_configured_value(
+        environ,
+        deployer_config,
+        "ONTOLOGY_HUB_COMPONENT_DATASPACE_NAME",
+        "PIONERA_COMPONENT_DATASPACE_NAME",
+        "COMPONENT_DATASPACE_NAME",
+    )
+    if component_dataspace:
+        return f"{component_dataspace}-ontology-hub"
+
+    return f"{dataspace}-ontology-hub"
+
+
 def resolve_ontology_hub_runtime(
     *,
     base_url: str | None = None,
@@ -228,7 +278,27 @@ def resolve_ontology_hub_runtime(
             or deployer_config.get("COMPONENTS_NAMESPACE")
             or "components"
         ).strip(),
-        "releaseName": (current_env.get("ONTOLOGY_HUB_RELEASE_NAME") or f"{dataspace}-ontology-hub").strip(),
+        "releaseName": _resolve_release_name(current_env, deployer_config, dataspace),
+        "selfHostServiceName": _first_configured_value(
+            current_env,
+            deployer_config,
+            "ONTOLOGY_HUB_SELF_HOST_SERVICE_NAME",
+            "ONTOLOGY_HUB_SERVICE_NAME",
+        ),
+        "selfHostServiceNamespace": _first_configured_value(
+            current_env,
+            deployer_config,
+            "ONTOLOGY_HUB_SELF_HOST_NAMESPACE",
+            "ONTOLOGY_HUB_SERVICE_NAMESPACE",
+            "COMPONENTS_NAMESPACE",
+        ),
+        "selfHostServicePort": _first_configured_value(
+            current_env,
+            deployer_config,
+            "ONTOLOGY_HUB_SELF_HOST_SERVICE_PORT",
+            "ONTOLOGY_HUB_SELF_HOST_PORT",
+            "ONTOLOGY_HUB_SERVICE_PORT",
+        ),
         "internalBaseUrl": (
             current_env.get("ONTOLOGY_HUB_INTERNAL_BASE_URL")
             or f"http://127.0.0.1:{_chart_validation_value(chart_values, 'service', 'port') or '3333'}"

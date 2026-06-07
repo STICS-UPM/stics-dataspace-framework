@@ -2,12 +2,33 @@ import unittest
 from unittest import mock
 
 from deployers.shared.lib.remote_k3s_images import (
+    image_reference_candidates,
     remote_k3s_image_import_target,
     shell_join,
 )
 
 
 class RemoteK3sImagesTests(unittest.TestCase):
+    def test_image_reference_candidates_include_kubernetes_docker_io_normalization(self):
+        self.assertEqual(
+            image_reference_candidates("validation-environment/edc-connector:local"),
+            [
+                "validation-environment/edc-connector:local",
+                "docker.io/validation-environment/edc-connector:local",
+            ],
+        )
+        self.assertEqual(
+            image_reference_candidates("busybox:latest"),
+            [
+                "busybox:latest",
+                "docker.io/library/busybox:latest",
+            ],
+        )
+        self.assertEqual(
+            image_reference_candidates("localhost/validation-environment/edc-connector:local"),
+            ["localhost/validation-environment/edc-connector:local"],
+        )
+
     def test_target_uses_role_specific_host_and_bastion(self):
         target = remote_k3s_image_import_target(
             {
@@ -278,6 +299,27 @@ class RemoteK3sImagesTests(unittest.TestCase):
         self.assertIn("sudo k3s ctr -n k8s.io images import", fallback)
         self.assertIn("sudo -n k3s ctr -n k8s.io images ls -q", shell_join(target.ssh_sudo_probe_args()))
 
+    def test_auto_interactive_import_can_render_stdin_sudo_password_command(self):
+        target = remote_k3s_image_import_target(
+            {
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND": "sudo -n k3s ctr -n k8s.io images import",
+                "VM_COMPONENTS_SSH_HOST": "pionera40",
+                "VM_COMPONENTS_SSH_USER": "pionera",
+            },
+            role="components",
+        )
+
+        self.assertIsNotNone(target)
+        import_command = target.stdin_password_import_command()
+        command = shell_join(target.ssh_import_args("/tmp/image.tar", sudo_stdin=True))
+
+        self.assertNotIn("ssh -tt", command)
+        self.assertEqual(import_command, "sudo -S -p '' k3s ctr -n k8s.io images import")
+        self.assertIn("-n k8s.io", import_command)
+        self.assertNotIn("sudo -n k3s", import_command)
+
     def test_target_renders_remote_probe_command_with_same_ssh_path(self):
         target = remote_k3s_image_import_target(
             {
@@ -298,6 +340,45 @@ class RemoteK3sImagesTests(unittest.TestCase):
         self.assertIn("-J jump@orion.example.test:2222", command)
         self.assertIn("pionera@pionera40", command)
         self.assertIn("sudo -n true", command)
+
+    def test_target_renders_remote_image_check_with_normalized_image_references(self):
+        target = remote_k3s_image_import_target(
+            {
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                "VM_COMPONENTS_SSH_HOST": "pionera40",
+                "VM_COMPONENTS_SSH_USER": "pionera",
+            },
+            role="components",
+        )
+
+        self.assertIsNotNone(target)
+        command = shell_join(target.ssh_image_check_args("validation-environment/edc-connector:local"))
+
+        self.assertIn("k3s ctr -n k8s.io images ls -q", command)
+        self.assertIn("validation-environment/edc-connector:local", command)
+        self.assertIn("docker.io/validation-environment/edc-connector:local", command)
+        self.assertIn("grep -Fx", command)
+
+    def test_target_renders_remote_image_check_with_sudo_stdin(self):
+        target = remote_k3s_image_import_target(
+            {
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                "VM_COMPONENTS_SSH_HOST": "pionera40",
+                "VM_COMPONENTS_SSH_USER": "pionera",
+            },
+            role="components",
+        )
+
+        self.assertIsNotNone(target)
+        command = shell_join(
+            target.ssh_image_check_args(
+                "validation-environment/edc-dashboard:latest",
+                sudo_stdin=True,
+            )
+        )
+
+        self.assertIn("sudo -S", command)
+        self.assertIn("k3s ctr -n k8s.io images ls -q", command)
 
 
 if __name__ == "__main__":

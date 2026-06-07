@@ -17,12 +17,15 @@ function sleep(ms: number): Promise<void> {
 }
 
 export class KeycloakLoginPage {
+  private lastOpenedUrl?: string;
+
   constructor(
     private readonly page: Page,
     private readonly config: KeycloakLoginConfig,
   ) {}
 
   async open(baseUrl: string): Promise<void> {
+    this.lastOpenedUrl = baseUrl;
     let lastError: unknown;
     for (let attempt = 1; attempt <= TRANSIENT_GATEWAY_MAX_ATTEMPTS; attempt += 1) {
       try {
@@ -166,10 +169,55 @@ export class KeycloakLoginPage {
   }
 
   private async redirectThroughDashboardProxyLogin(currentUrl: string): Promise<void> {
-    const currentLocation = new URL(currentUrl);
-    const loginUrl = new URL("/edc-dashboard-api/auth/login", currentLocation.origin);
-    const returnTo = `${currentLocation.pathname}${currentLocation.search}${currentLocation.hash}` || "/edc-dashboard/";
+    const { origin, prefix, returnTo } = this.dashboardProxyLoginTarget(currentUrl);
+    const loginUrl = new URL(`${prefix}/edc-dashboard-api/auth/login`, origin);
     loginUrl.searchParams.set("returnTo", returnTo);
     await this.page.goto(loginUrl.toString(), { waitUntil: "networkidle" });
+  }
+
+  private dashboardProxyLoginTarget(currentUrl: string): { origin: string; prefix: string; returnTo: string } {
+    const currentLocation = this.parseUrl(currentUrl);
+    const openedLocation = this.parseUrl(this.lastOpenedUrl);
+    const candidates = [openedLocation, currentLocation].filter((candidate): candidate is URL => candidate !== null);
+
+    let selectedLocation = currentLocation ?? openedLocation;
+    let selectedPrefix = "";
+    for (const candidate of candidates) {
+      const prefix = this.dashboardPrefix(candidate.pathname);
+      if (prefix.length >= selectedPrefix.length) {
+        selectedPrefix = prefix;
+        selectedLocation = candidate;
+      }
+    }
+
+    if (!selectedLocation) {
+      throw new Error(`Cannot derive EDC dashboard login URL from '${currentUrl}'`);
+    }
+
+    const returnToPath = `${selectedPrefix}/edc-dashboard/`;
+    return {
+      origin: selectedLocation.origin,
+      prefix: selectedPrefix,
+      returnTo: `${returnToPath}${selectedLocation.search}${selectedLocation.hash}`,
+    };
+  }
+
+  private parseUrl(value?: string): URL | null {
+    if (!value) {
+      return null;
+    }
+    try {
+      return new URL(value);
+    } catch {
+      return null;
+    }
+  }
+
+  private dashboardPrefix(pathname: string): string {
+    const match = pathname.match(/^(.*)\/edc-dashboard(?:\/|$)/i);
+    if (!match) {
+      return "";
+    }
+    return match[1].replace(/\/+$/, "");
   }
 }

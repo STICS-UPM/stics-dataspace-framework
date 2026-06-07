@@ -30,6 +30,7 @@ K3S_REMOTE_IMPORT_BASTION_PORT="${K3S_REMOTE_IMPORT_BASTION_PORT:-2222}"
 K3S_REMOTE_IMPORT_IDENTITY_FILE="${K3S_REMOTE_IMPORT_IDENTITY_FILE:-}"
 K3S_REMOTE_IMPORT_DIR="${K3S_REMOTE_IMPORT_DIR:-/tmp}"
 K3S_REMOTE_IMPORT_ALLOCATE_TTY="${K3S_REMOTE_IMPORT_ALLOCATE_TTY:-false}"
+K3S_REMOTE_IMPORT_SUDO_PASSWORD="${K3S_REMOTE_IMPORT_SUDO_PASSWORD:-${PIONERA_REMOTE_SUDO_PASSWORD:-${PIONERA_SUDO_PASSWORD:-}}}"
 K3S_REMOTE_PRUNE_IMPORTED_IMAGES="${K3S_REMOTE_PRUNE_IMPORTED_IMAGES:-false}"
 K3S_REMOTE_PRUNE_KEEP="${K3S_REMOTE_PRUNE_KEEP:-2}"
 LOCAL_REGISTRY_HOST="${LOCAL_REGISTRY_HOST:-local}"
@@ -559,6 +560,21 @@ sudo_command_without_noninteractive_flag() {
   esac
 }
 
+sudo_command_with_stdin_password() {
+  local raw="$1"
+  case "$raw" in
+    "sudo -n "*)
+      printf "sudo -S -p '' %s" "${raw#sudo -n }"
+      ;;
+    "sudo "*)
+      printf "sudo -S -p '' %s" "${raw#sudo }"
+      ;;
+    *)
+      printf '%s' "$raw"
+      ;;
+  esac
+}
+
 k3s_remote_import_target() {
   if [[ -n "${K3S_REMOTE_IMPORT_USER:-}" ]]; then
     printf '%s@%s' "$K3S_REMOTE_IMPORT_USER" "$K3S_REMOTE_IMPORT_HOST"
@@ -645,10 +661,12 @@ remote_import_image_into_k3s() {
   local ssh_args
   local ssh_probe_args
   local ssh_interactive_args
+  local ssh_password_args
   local bastion_proxy_command
   local interactive_mode
   local import_command
   local interactive_import_command
+  local password_import_command
 
   remote_archive="${K3S_REMOTE_IMPORT_DIR%/}/$(basename "$archive_file")"
   target="$(k3s_remote_import_target)"
@@ -738,6 +756,26 @@ remote_import_image_into_k3s() {
       ssh_interactive_args+=(-J "$bastion")
     fi
     ssh_interactive_args+=("$target" "$remote_cmd")
+
+    password_import_command="$(sudo_command_with_stdin_password "$K3S_IMAGE_IMPORT_COMMAND")"
+    remote_cmd="$password_import_command $remote_archive_q; status=\$?; rm -f $remote_archive_q; if [ \$status -ne 0 ]; then exit \$status; fi"
+    if k3s_remote_prune_enabled && [[ -n "$full_image" && -n "${prune_cmd:-}" ]]; then
+      remote_cmd="$remote_cmd; $prune_cmd"
+    fi
+
+    ssh_password_args=(ssh)
+    if [[ -n "${K3S_REMOTE_IMPORT_IDENTITY_FILE:-}" ]]; then
+      ssh_password_args+=(-o BatchMode=yes -o IdentitiesOnly=yes -i "$K3S_REMOTE_IMPORT_IDENTITY_FILE")
+    fi
+    if [[ -n "${K3S_REMOTE_IMPORT_PORT:-}" ]]; then
+      ssh_password_args+=(-p "$K3S_REMOTE_IMPORT_PORT")
+    fi
+    if [[ -n "$bastion_proxy_command" ]]; then
+      ssh_password_args+=(-o "ProxyCommand=$bastion_proxy_command")
+    elif [[ -n "$bastion" ]]; then
+      ssh_password_args+=(-J "$bastion")
+    fi
+    ssh_password_args+=("$target" "$remote_cmd")
   fi
 
   if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -745,6 +783,9 @@ remote_import_image_into_k3s() {
     if [[ "$interactive_mode" == "auto" ]]; then
       run_cmd "$(shell_join "${ssh_probe_args[@]}")"
       run_cmd "$(shell_join "${ssh_args[@]}")"
+      if [[ -n "${K3S_REMOTE_IMPORT_SUDO_PASSWORD:-}" ]]; then
+        run_cmd "$(shell_join "${ssh_password_args[@]}") # fallback using batch sudo secret when sudo -n is not available"
+      fi
       run_cmd "$(shell_join "${ssh_interactive_args[@]}") # fallback when sudo -n is not available"
       return
     fi
@@ -756,6 +797,9 @@ remote_import_image_into_k3s() {
   if [[ "$interactive_mode" == "auto" ]]; then
     if "${ssh_probe_args[@]}"; then
       "${ssh_args[@]}"
+    elif [[ -n "${K3S_REMOTE_IMPORT_SUDO_PASSWORD:-}" ]]; then
+      echo "Remote k3s image import needs sudo password; using configured batch sudo secret."
+      printf '%s\n' "$K3S_REMOTE_IMPORT_SUDO_PASSWORD" | "${ssh_password_args[@]}"
     else
       echo "Remote k3s image import needs sudo password; retrying with an interactive prompt."
       "${ssh_interactive_args[@]}"

@@ -43,6 +43,13 @@ class ExperimentStorage:
         return path
 
     @staticmethod
+    def _default_cluster_runtime(topology=None, cluster="minikube"):
+        normalized_topology = str(topology or "").strip().lower().replace("_", "-")
+        if normalized_topology in {"vm-single", "vm-distributed"}:
+            return "k3s"
+        return cluster or "minikube"
+
+    @staticmethod
     def save_experiment_metadata(
         experiment_dir,
         connectors,
@@ -58,7 +65,7 @@ class ExperimentStorage:
         """Save normalized experiment metadata to metadata.json."""
         connectors = list(connectors or [])
         experiment_id = os.path.basename(os.path.normpath(experiment_dir))
-        runtime = cluster_runtime or cluster
+        runtime = cluster_runtime or ExperimentStorage._default_cluster_runtime(topology, cluster)
         metadata = {
             "experiment_id": experiment_id,
             "timestamp": datetime.now().isoformat(),

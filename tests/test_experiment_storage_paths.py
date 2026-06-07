@@ -49,6 +49,22 @@ class ExperimentStoragePathTests(unittest.TestCase):
         self.assertEqual(metadata["cluster_runtime"], "minikube")
         self.assertEqual(metadata["cluster"], "minikube")
 
+    def test_save_experiment_metadata_defaults_vm_single_to_k3s_runtime(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ExperimentStorage.save_experiment_metadata(
+                tmpdir,
+                ["conn-a"],
+                adapter_name="edc",
+                topology="vm-single",
+            )
+            metadata_path = os.path.join(tmpdir, "metadata.json")
+            with open(metadata_path, "r", encoding="utf-8") as handle:
+                metadata = json.load(handle)
+
+        self.assertEqual(metadata["topology"], "vm-single")
+        self.assertEqual(metadata["cluster_runtime"], "k3s")
+        self.assertEqual(metadata["cluster"], "k3s")
+
 
 if __name__ == "__main__":
     unittest.main()

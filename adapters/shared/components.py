@@ -1622,13 +1622,6 @@ def combined_models() -> Dict[str, Any]:
         source_dir = self._ai_model_hub_model_server_source_dir(deployer_config)
         mode = self._ai_model_hub_model_server_mode(deployer_config)
 
-        if not self._level5_auto_build_local_images(deployer_config):
-            print(
-                "AI Model Hub model-server auto-build is disabled. "
-                f"Assuming image '{image_ref}' is already available in the cluster runtime."
-            )
-            return False
-
         runtime = self._cluster_runtime(deployer_config)
         cluster_type = str(runtime.get("cluster_type") or "minikube").strip().lower() or "minikube"
         profile = (
@@ -1636,13 +1629,43 @@ def combined_models() -> Dict[str, Any]:
             or getattr(self.config, "MINIKUBE_PROFILE", "minikube")
             or "minikube"
         ).strip() or "minikube"
+        pull_policy = self._ai_model_hub_model_server_image_pull_policy(image_ref, deployer_config)
+        k3s_import_prerequisites_checked = False
+
+        if not self._level5_auto_build_local_images(deployer_config):
+            if cluster_type == "k3s" and pull_policy == "Never":
+                if self._k3s_runtime_has_image(image_ref, deployer_config):
+                    print(
+                        "AI Model Hub model-server auto-build is disabled. "
+                        f"Verified k3s runtime already has image '{image_ref}'."
+                    )
+                    return False
+                self._ensure_k3s_local_image_import_supported(image_ref, deployer_config)
+                k3s_import_prerequisites_checked = True
+                if self._host_has_image(image_ref):
+                    print(
+                        "AI Model Hub model-server auto-build is disabled, but the image is "
+                        f"missing in k3s. Importing host image '{image_ref}' into k3s."
+                    )
+                    self._load_image_into_cluster_runtime(cluster_type, profile, image_ref, deployer_config)
+                    return True
+                print(
+                    "AI Model Hub model-server image is missing in k3s and uses imagePullPolicy Never. "
+                    "Building it from the configured source."
+                )
+            else:
+                print(
+                    "AI Model Hub model-server auto-build is disabled. "
+                    f"Assuming image '{image_ref}' is already available in the cluster runtime."
+                )
+                return False
 
         if cluster_type == "minikube" and not self._minikube_is_available(profile):
             self._fail(
                 "Minikube profile is not available for AI Model Hub model-server deployment",
                 root_cause=profile,
             )
-        if cluster_type == "k3s":
+        if cluster_type == "k3s" and not k3s_import_prerequisites_checked:
             self._ensure_k3s_local_image_import_supported(image_ref, deployer_config)
 
         image_q = shlex.quote(image_ref)

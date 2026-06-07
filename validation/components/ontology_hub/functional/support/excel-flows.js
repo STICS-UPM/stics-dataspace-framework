@@ -1340,7 +1340,8 @@ async function editVersion(page, runtime, prefix, currentVersionName, updatedVer
       finalUrl: page.url(),
     };
   } catch (error) {
-    if (runtime && prefix && (await pageShowsTransientAvailabilityFailure(page))) {
+    const transientFailure = await pageShowsTransientAvailabilityFailure(page);
+    if (runtime && prefix) {
       const recovery = await waitForRecoveredVersionRow(
         page,
         runtime,
@@ -1350,7 +1351,8 @@ async function editVersion(page, runtime, prefix, currentVersionName, updatedVer
       );
       if (recovery.recovered) {
         return {
-          recoveredFromTransientFailure: true,
+          recoveredAfterDelayedVersionIndexing: !transientFailure,
+          recoveredFromTransientFailure: transientFailure,
           ...recovery,
         };
       }

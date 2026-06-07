@@ -86,6 +86,19 @@ def _run_capture(cmd):
 
 
 def _ontology_hub_release_name(runtime=None):
+    release_name = str((runtime or {}).get("releaseName") or "").strip()
+    if release_name:
+        return release_name
+    release_name = str(os.environ.get("ONTOLOGY_HUB_RELEASE_NAME") or "").strip()
+    if release_name:
+        return release_name
+    service_name = str(
+        os.environ.get("ONTOLOGY_HUB_SELF_HOST_SERVICE_NAME")
+        or os.environ.get("ONTOLOGY_HUB_SERVICE_NAME")
+        or ""
+    ).strip()
+    if service_name:
+        return service_name
     dataspace = str((runtime or {}).get("dataspace") or "").strip()
     if not dataspace:
         dataspace = InesdataConfig.dataspace_name()

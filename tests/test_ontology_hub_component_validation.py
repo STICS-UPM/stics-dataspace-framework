@@ -13,6 +13,7 @@ from validation.components.ontology_hub.integration.runner import (
     evaluate_term_search_response,
     run_ontology_hub_validation,
 )
+from validation.components.ontology_hub.runtime_config import resolve_ontology_hub_runtime
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
@@ -49,6 +50,23 @@ class OntologyHubComponentValidationTests(unittest.TestCase):
         self.assertEqual(case["automation"]["runner_case"], "pt5_oh_14_patterns_access")
         self.assertIn("composite_evidence", case["automation"])
         self.assertIn("Functional ZIP generation", case["automation"]["notes"])
+
+    def test_runtime_uses_configured_self_host_service_for_shared_vm_single_component(self):
+        runtime = resolve_ontology_hub_runtime(
+            environ={
+                "UI_DATASPACE": "pionera-edc",
+                "UI_TOPOLOGY": "vm-single",
+                "ONTOLOGY_HUB_BASE_URL": "https://org4.pionera.oeg.fi.upm.es/ontology-hub",
+                "ONTOLOGY_HUB_COMPONENTS_NAMESPACE": "components",
+                "ONTOLOGY_HUB_SELF_HOST_SERVICE_NAME": "pionera-ontology-hub",
+                "ONTOLOGY_HUB_SELF_HOST_SERVICE_PORT": "3333",
+            }
+        )
+
+        self.assertEqual(runtime["dataspace"], "pionera-edc")
+        self.assertEqual(runtime["releaseName"], "pionera-ontology-hub")
+        self.assertEqual(runtime["selfHostServiceName"], "pionera-ontology-hub")
+        self.assertEqual(runtime["componentsNamespace"], "components")
 
     def test_evaluate_term_search_response_passes_on_valid_json_payload(self):
         payload = {
