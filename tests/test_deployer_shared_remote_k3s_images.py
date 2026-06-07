@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest import mock
 
@@ -315,6 +316,39 @@ class RemoteK3sImagesTests(unittest.TestCase):
         self.assertEqual(env["K3S_REMOTE_PRUNE_IMPORTED_IMAGES"], "true")
         self.assertEqual(env["K3S_REMOTE_PRUNE_KEEP"], "3")
 
+    def test_target_renders_known_hosts_strategy_environment(self):
+        target = remote_k3s_image_import_target(
+            {
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                "VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY": "accept-new",
+                "VM_PROVIDER_SSH_HOST": "pionera20",
+            },
+            role="provider",
+        )
+
+        self.assertIsNotNone(target)
+        env = target.shell_env()
+        self.assertEqual(env["K3S_REMOTE_IMPORT_KNOWN_HOSTS_STRATEGY"], "accept-new")
+
+    def test_identity_file_is_expanded_in_environment_and_commands(self):
+        target = remote_k3s_image_import_target(
+            {
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                "SSH_ACCESS_MODE": "bastion",
+                "SSH_BASTION_HOST": "orion.example.test",
+                "SSH_IDENTITY_FILE": "~/.ssh/id_ed25519_vm",
+                "VM_PROVIDER_SSH_HOST": "pionera20",
+                "VM_PROVIDER_SSH_USER": "pionera",
+            },
+            role="provider",
+        )
+
+        self.assertIsNotNone(target)
+        expanded = os.path.expanduser("~/.ssh/id_ed25519_vm")
+        self.assertEqual(target.shell_env()["K3S_REMOTE_IMPORT_IDENTITY_FILE"], expanded)
+        self.assertIn(f"-i {expanded}", shell_join(target.scp_upload_args("/tmp/image.tar", "/tmp/image.tar")))
+        self.assertIn(f"-i {expanded}", shell_join(target.ssh_import_args("/tmp/image.tar")))
+
     def test_identity_file_uses_proxy_command_for_bastion(self):
         target = remote_k3s_image_import_target(
             {
@@ -324,6 +358,7 @@ class RemoteK3sImagesTests(unittest.TestCase):
                 "SSH_BASTION_PORT": "2222",
                 "SSH_BASTION_USER": "jump",
                 "SSH_IDENTITY_FILE": "/home/user/.ssh/id_ed25519_vm",
+                "VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY": "accept-new",
                 "VM_COMPONENTS_SSH_HOST": "pionera40",
                 "VM_COMPONENTS_SSH_USER": "pionera",
             },
@@ -337,8 +372,10 @@ class RemoteK3sImagesTests(unittest.TestCase):
         self.assertIn("-i /home/user/.ssh/id_ed25519_vm", scp_command)
         self.assertIn("ProxyCommand=ssh", scp_command)
         self.assertIn("-W %h:%p", scp_command)
+        self.assertIn("StrictHostKeyChecking=accept-new", scp_command)
         self.assertIn("-i /home/user/.ssh/id_ed25519_vm", ssh_command)
         self.assertIn("ProxyCommand=ssh", ssh_command)
+        self.assertIn("StrictHostKeyChecking=accept-new", ssh_command)
 
     def test_import_command_cleans_archive_but_preserves_failure_status(self):
         target = remote_k3s_image_import_target(

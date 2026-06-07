@@ -63,6 +63,7 @@ class RemoteK3sImageImportTarget:
     interactive_mode: str = INTERACTIVE_NEVER
     prune_imported_images: bool = False
     prune_keep: str = DEFAULT_REMOTE_IMAGE_PRUNE_KEEP
+    known_hosts_strategy: str = ""
 
     def is_configured(self) -> bool:
         return bool(self.host)
@@ -84,14 +85,16 @@ class RemoteK3sImageImportTarget:
     def bastion_proxy_command(self) -> str:
         if not self.bastion_host or not self.identity_file:
             return ""
+        identity_file = self.resolved_identity_file()
         args = [
             "ssh",
             "-o",
             "BatchMode=yes",
             "-o",
             "IdentitiesOnly=yes",
+            *self.known_hosts_ssh_options(),
             "-i",
-            self.identity_file,
+            identity_file,
         ]
         if self.bastion_port:
             args.extend(["-p", str(self.bastion_port)])
@@ -104,8 +107,9 @@ class RemoteK3sImageImportTarget:
 
     def scp_upload_args(self, local_archive_path: str, remote_archive_path: str) -> list[str]:
         args = ["scp"]
+        args.extend(self.known_hosts_ssh_options())
         if self.identity_file:
-            args.extend(["-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-i", self.identity_file])
+            args.extend(["-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-i", self.resolved_identity_file()])
         if self.port:
             args.extend(["-P", str(self.port)])
         if self.bastion_proxy_command:
@@ -155,8 +159,9 @@ class RemoteK3sImageImportTarget:
         args = ["ssh"]
         if force_tty or self.allocate_tty:
             args.append("-tt")
+        args.extend(self.known_hosts_ssh_options())
         if self.identity_file:
-            args.extend(["-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-i", self.identity_file])
+            args.extend(["-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-i", self.resolved_identity_file()])
         if self.port:
             args.extend(["-p", str(self.port)])
         if self.bastion_proxy_command:
@@ -167,6 +172,9 @@ class RemoteK3sImageImportTarget:
         args.extend([self.destination, remote_command])
         return args
 
+    def resolved_identity_file(self) -> str:
+        return os.path.expanduser(str(self.identity_file or "").strip())
+
     def shell_env(self) -> dict[str, str]:
         return {
             "K3S_REMOTE_IMPORT_HOST": self.host,
@@ -175,14 +183,23 @@ class RemoteK3sImageImportTarget:
             "K3S_REMOTE_IMPORT_BASTION_HOST": self.bastion_host,
             "K3S_REMOTE_IMPORT_BASTION_USER": self.bastion_user,
             "K3S_REMOTE_IMPORT_BASTION_PORT": self.bastion_port,
-            "K3S_REMOTE_IMPORT_IDENTITY_FILE": self.identity_file,
+            "K3S_REMOTE_IMPORT_IDENTITY_FILE": self.resolved_identity_file(),
             "K3S_REMOTE_IMPORT_DIR": self.remote_dir,
             "K3S_IMAGE_IMPORT_COMMAND": self.import_command,
             "K3S_REMOTE_IMPORT_ALLOCATE_TTY": "true" if self.allocate_tty else "false",
             "K3S_REMOTE_IMPORT_INTERACTIVE": self.interactive_mode,
+            "K3S_REMOTE_IMPORT_KNOWN_HOSTS_STRATEGY": self.known_hosts_strategy,
             "K3S_REMOTE_PRUNE_IMPORTED_IMAGES": "true" if self.prune_imported_images else "false",
             "K3S_REMOTE_PRUNE_KEEP": self.prune_keep,
         }
+
+    def known_hosts_ssh_options(self) -> list[str]:
+        strategy = str(self.known_hosts_strategy or "").strip().lower().replace("_", "-")
+        if strategy in {"accept-new", "acceptnew", "auto"}:
+            return ["-o", "StrictHostKeyChecking=accept-new"]
+        if strategy in {"off", "no", "false", "insecure"}:
+            return ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"]
+        return []
 
     def render_shell_env_prefix(self) -> str:
         return " ".join(
@@ -369,6 +386,12 @@ def remote_k3s_image_import_target(config: dict | None, role: str = "common") ->
                 "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP_COUNT",
             )
             or DEFAULT_REMOTE_IMAGE_PRUNE_KEEP
+        ),
+        known_hosts_strategy=_first_config_value(
+            values,
+            f"VM_{role_key}_SSH_KNOWN_HOSTS_STRATEGY",
+            "VM_DISTRIBUTED_SSH_KNOWN_HOSTS_STRATEGY",
+            "SSH_KNOWN_HOSTS_STRATEGY",
         ),
     )
 

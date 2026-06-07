@@ -65,6 +65,7 @@ def _target_from_environment() -> RemoteK3sImageImportTarget | None:
         interactive=interactive_mode in {INTERACTIVE_ALWAYS, INTERACTIVE_AUTO},
         interactive_mode=interactive_mode,
         prune_imported_images=False,
+        known_hosts_strategy=_env("K3S_REMOTE_IMPORT_KNOWN_HOSTS_STRATEGY"),
     )
 
 
