@@ -293,9 +293,11 @@ def remote_k3s_image_import_target(config: dict | None, role: str = "common") ->
     if not host:
         return None
 
-    access_mode = str(values.get("SSH_ACCESS_MODE") or "").strip().lower()
+    role_access_mode = _role_specific_config_value(values, normalized_role, "SSH_ACCESS_MODE")
+    access_mode = str(role_access_mode or values.get("SSH_ACCESS_MODE") or "").strip().lower()
     if (
-        _normalized_vm_distributed_execution_host(values) == "common-services"
+        not role_access_mode
+        and _normalized_vm_distributed_execution_host(values) == "common-services"
         and _vm_distributed_common_vm_direct_ssh_enabled(values)
         and access_mode in {"", "bastion"}
     ):
@@ -306,9 +308,21 @@ def remote_k3s_image_import_target(config: dict | None, role: str = "common") ->
     bastion_user = ""
     bastion_port = ""
     if access_mode == "bastion" or (not access_mode and str(values.get("SSH_BASTION_HOST") or "").strip()):
-        bastion_host = _first_config_value(values, "SSH_BASTION_HOST")
-        bastion_user = _first_config_value(values, "SSH_BASTION_USER")
-        bastion_port = _first_config_value(values, "SSH_BASTION_PORT") or "2222"
+        bastion_host = _role_specific_config_value(
+            values,
+            normalized_role,
+            "SSH_BASTION_HOST",
+        ) or _first_config_value(values, "SSH_BASTION_HOST")
+        bastion_user = _role_specific_config_value(
+            values,
+            normalized_role,
+            "SSH_BASTION_USER",
+        ) or _first_config_value(values, "SSH_BASTION_USER")
+        bastion_port = (
+            _role_specific_config_value(values, normalized_role, "SSH_BASTION_PORT")
+            or _first_config_value(values, "SSH_BASTION_PORT")
+            or "2222"
+        )
 
     interactive_mode = parse_interactive_mode(values.get("VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE"))
     import_command = (
@@ -459,6 +473,19 @@ def _looks_like_ip_address(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _role_specific_config_value(values: dict, role: str, suffix: str) -> str:
+    normalized_role = str(role or "").strip().upper().replace("-", "_")
+    suffix = str(suffix or "").strip().upper()
+    if not normalized_role or not suffix:
+        return ""
+    keys = []
+    if normalized_role == "COMPONENTS":
+        keys.extend([f"VM_COMPONENTS_{suffix}", f"VM_COMMON_{suffix}"])
+    else:
+        keys.append(f"VM_{normalized_role}_{suffix}")
+    return _first_config_value(values, *keys)
 
 
 def _first_config_value(values: dict, *keys: str) -> str:
