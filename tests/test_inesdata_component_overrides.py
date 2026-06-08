@@ -2276,6 +2276,9 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 handle.write("fastapi\nuvicorn\n")
             with open(os.path.join(source_dir, "src", "server.py"), "w", encoding="utf-8") as handle:
                 handle.write("from fastapi import FastAPI\napp = FastAPI()\n")
+            os.makedirs(os.path.join(source_dir, "models", "mobility"), exist_ok=True)
+            with open(os.path.join(source_dir, "models", "mobility", "demo_model.pkl"), "w", encoding="utf-8") as handle:
+                handle.write("model")
 
             build_context, generated = adapter._prepare_ai_model_hub_model_server_build_context(
                 source_dir,
@@ -2291,9 +2294,13 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                     dockerfile = handle.read()
                 self.assertIn("FROM python:3.11-slim", dockerfile)
                 self.assertIn("COPY use_cases /app/use_cases", dockerfile)
+                self.assertIn("cp -a /app/use_cases/models /app/models", dockerfile)
                 self.assertIn("COPY combined_model_server /app/combined_model_server", dockerfile)
                 self.assertIn('"--port", "8090"', dockerfile)
                 self.assertTrue(os.path.isfile(os.path.join(build_context, "use_cases", "src", "server.py")))
+                self.assertTrue(
+                    os.path.isfile(os.path.join(build_context, "use_cases", "models", "mobility", "demo_model.pkl"))
+                )
                 self.assertTrue(os.path.isfile(os.path.join(build_context, "combined_model_server", "server.py")))
             finally:
                 shutil.rmtree(build_context, ignore_errors=True)

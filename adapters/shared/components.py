@@ -1503,6 +1503,7 @@ def combined_models() -> Dict[str, Any]:
             "COPY use_cases/requirements.txt /tmp/use-case-requirements.txt",
             "RUN python -m pip install --upgrade pip && python -m pip install -r /tmp/use-case-requirements.txt",
             "COPY use_cases /app/use_cases",
+            "RUN if [ -d /app/use_cases/models ]; then cp -a /app/use_cases/models /app/models; fi",
             "ENV PYTHONPATH=/app/use_cases:/app",
             "ENV USE_CASE_SERVER_DIR=/app/use_cases",
         ]
