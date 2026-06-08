@@ -19631,6 +19631,42 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
     keycloak_token_url = ""
     if keycloak_base:
         keycloak_token_url = f"{keycloak_base}/realms/{dataspace}/protocol/openid-connect/token"
+    role_by_connector = {}
+    for raw_item in str(values.get("DS_1_CONNECTOR_NAMESPACES") or "").split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        separator = ":" if ":" in item else "=" if "=" in item else ""
+        if not separator:
+            continue
+        raw_connector, raw_role = item.split(separator, 1)
+        connector_key = raw_connector.strip()
+        role = raw_role.strip()
+        if connector_key and role:
+            role_by_connector[connector_key] = role
+    connector_k8s_namespaces = {}
+    connector_kubeconfigs = {}
+    kubeconfig_by_role = {
+        "provider": values.get("K3S_KUBECONFIG_PROVIDER"),
+        "consumer": values.get("K3S_KUBECONFIG_CONSUMER"),
+        "dataspace": values.get("K3S_KUBECONFIG"),
+        "common": values.get("K3S_KUBECONFIG_COMMON") or values.get("K3S_KUBECONFIG"),
+        "components": values.get("K3S_KUBECONFIG_COMPONENTS") or values.get("K3S_KUBECONFIG_COMMON"),
+    }
+    for connector in connectors:
+        short_name = connector
+        if short_name.startswith("conn-"):
+            short_name = short_name[5:]
+        suffix = f"-{dataspace}"
+        if short_name.endswith(suffix):
+            short_name = short_name[: -len(suffix)]
+        role = role_by_connector.get(connector) or role_by_connector.get(short_name) or ""
+        if not role:
+            continue
+        connector_k8s_namespaces[connector] = role
+        kubeconfig = str(kubeconfig_by_role.get(role) or "").strip()
+        if kubeconfig:
+            connector_kubeconfigs[connector] = os.path.abspath(os.path.expanduser(kubeconfig))
     model_server_url = str(
         values.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
         or values.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL")
@@ -19643,6 +19679,8 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
         "connectors": connectors,
         "credentials_dir": credentials_dir,
         "keycloak_token_url": keycloak_token_url,
+        "connector_k8s_namespaces": connector_k8s_namespaces,
+        "connector_kubeconfigs": connector_kubeconfigs,
         "model_server_url": model_server_url,
     }
 
@@ -19665,6 +19703,20 @@ def _ai_model_hub_use_case_demo_seed_command(profile_values=None, adapter_name="
     ]
     if runtime.get("keycloak_token_url"):
         args.extend(["--keycloak-token-url", runtime["keycloak_token_url"]])
+    if runtime.get("connector_k8s_namespaces"):
+        args.extend(
+            [
+                "--connector-k8s-namespaces",
+                ",".join(f"{key}={value}" for key, value in sorted(runtime["connector_k8s_namespaces"].items())),
+            ]
+        )
+    if runtime.get("connector_kubeconfigs"):
+        args.extend(
+            [
+                "--connector-kubeconfigs",
+                ",".join(f"{key}={value}" for key, value in sorted(runtime["connector_kubeconfigs"].items())),
+            ]
+        )
     if step == "models":
         args.extend(
             [

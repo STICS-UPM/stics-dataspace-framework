@@ -9,6 +9,8 @@ COUNT="${COUNT:-8}"
 CONNECTORS_CSV="${CONNECTORS_CSV:-conn-citycouncil-demo,conn-company-demo}"
 CREDENTIALS_DIR="${CREDENTIALS_DIR:-$ROOT_DIR/inesdata-testing/deployments/DEV/demo}"
 KEYCLOAK_TOKEN_URL="${KEYCLOAK_TOKEN_URL:-}"
+CONNECTOR_K8S_NAMESPACES="${CONNECTOR_K8S_NAMESPACES:-}"
+CONNECTOR_KUBECONFIGS="${CONNECTOR_KUBECONFIGS:-}"
 DEPLOYER_CONFIG_FILE="${DEPLOYER_CONFIG_FILE:-$ROOT_DIR/deployers/inesdata/deployer.config}"
 VOCABULARY_ID="${VOCABULARY_ID:-JS_Pionera_Daimo}"
 VOCABULARY_NAME="${VOCABULARY_NAME:-JS Metadata Daimo}"
@@ -44,6 +46,10 @@ Options:
   --connectors <csv>          Connectors list (default: conn-citycouncil-demo,conn-company-demo)
   --credentials-dir <path>    Folder containing credentials-connector-<name>.json
   --keycloak-token-url <url>  Token endpoint. If omitted, read from deployers/inesdata/deployer.config
+  --connector-k8s-namespaces <map>
+                              CSV map connector=namespace for port-forward targets
+  --connector-kubeconfigs <map>
+                              CSV map connector=kubeconfig for vm-distributed port-forwards
   --vocabulary-id <id>        Vocabulary ID used in assetData (default: JS_Pionera_Daimo)
   --vocabulary-name <name>    Vocabulary display name (default: JS Metadata Daimo)
   --vocabulary-category <cat> Vocabulary category (default: machineLearning)
@@ -92,6 +98,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keycloak-token-url)
       KEYCLOAK_TOKEN_URL="${2:-}"
+      shift 2
+      ;;
+    --connector-k8s-namespaces)
+      CONNECTOR_K8S_NAMESPACES="${2:-}"
+      shift 2
+      ;;
+    --connector-kubeconfigs)
+      CONNECTOR_KUBECONFIGS="${2:-}"
       shift 2
       ;;
     --vocabulary-id)
@@ -287,6 +301,50 @@ get_json_value() {
   sed -n "/\"$block\"[[:space:]]*:[[:space:]]*{/,/}/p" "$file" \
     | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" \
     | head -n1
+}
+
+connector_short_name() {
+  local connector="$1"
+  connector="${connector#conn-}"
+  connector="${connector%-$NAMESPACE}"
+  printf '%s' "$connector"
+}
+
+lookup_connector_map() {
+  local map_csv="$1"
+  local connector="$2"
+  local fallback="$3"
+  local connector_short
+  connector_short="$(connector_short_name "$connector")"
+
+  local old_ifs="$IFS"
+  local entry key value
+  IFS=','
+  for entry in $map_csv; do
+    IFS="$old_ifs"
+    entry="$(printf '%s' "$entry" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [[ -z "$entry" ]] && continue
+    if [[ "$entry" == *"="* ]]; then
+      key="${entry%%=*}"
+      value="${entry#*=}"
+    elif [[ "$entry" == *":"* ]]; then
+      key="${entry%%:*}"
+      value="${entry#*:}"
+    else
+      IFS=','
+      continue
+    fi
+    key="$(printf '%s' "$key" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    value="$(printf '%s' "$value" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    if [[ "$key" == "$connector" || "$key" == "$connector_short" ]]; then
+      printf '%s' "$value"
+      IFS="$old_ifs"
+      return 0
+    fi
+    IFS=','
+  done
+  IFS="$old_ifs"
+  printf '%s' "$fallback"
 }
 
 extract_token_field() {
@@ -1522,6 +1580,7 @@ seed_connector() {
   local creds_file="$CREDENTIALS_DIR/credentials-connector-$connector.json"
   local fallback_creds_file="$ROOT_DIR/deployers/inesdata/deployments/DEV/$NAMESPACE/credentials-connector-$connector.json"
   local mgmt_url="http://127.0.0.1:19193/management"
+  local k8s_namespace kubeconfig
   local pf_pid=""
 
   if [[ ! -f "$creds_file" ]]; then
@@ -1564,7 +1623,13 @@ seed_connector() {
     fi
   }
 
-  kubectl -n "$NAMESPACE" port-forward "svc/$connector" 19193:19193 >"$WORK_DIR/port_forward_$connector.log" 2>&1 &
+  k8s_namespace="$(lookup_connector_map "$CONNECTOR_K8S_NAMESPACES" "$connector" "$NAMESPACE")"
+  kubeconfig="$(lookup_connector_map "$CONNECTOR_KUBECONFIGS" "$connector" "")"
+  if [[ -n "$kubeconfig" ]]; then
+    KUBECONFIG="$kubeconfig" kubectl -n "$k8s_namespace" port-forward "svc/$connector" 19193:19193 >"$WORK_DIR/port_forward_$connector.log" 2>&1 &
+  else
+    kubectl -n "$k8s_namespace" port-forward "svc/$connector" 19193:19193 >"$WORK_DIR/port_forward_$connector.log" 2>&1 &
+  fi
   pf_pid=$!
   sleep 2
 

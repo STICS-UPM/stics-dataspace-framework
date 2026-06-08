@@ -157,6 +157,9 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
             "ENVIRONMENT_NAME": "pionera",
             "PROFILE_TOPOLOGY": "vm-distributed",
             "KEYCLOAK_PUBLIC_URL": "https://org1.example.test/auth",
+            "DS_1_CONNECTOR_NAMESPACES": "org2:provider,org3:consumer",
+            "K3S_KUBECONFIG_PROVIDER": "~/provider.yaml",
+            "K3S_KUBECONFIG_CONSUMER": "~/consumer.yaml",
             "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL": "http://model-server.components.svc.cluster.local:8080",
         }
 
@@ -182,6 +185,11 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
             "https://org1.example.test/auth/realms/pionera/protocol/openid-connect/token",
             datasets_cmd,
         )
+        self.assertIn("--connector-k8s-namespaces", datasets_cmd)
+        self.assertIn("conn-org2-pionera=provider,conn-org3-pionera=consumer", datasets_cmd)
+        self.assertIn("--connector-kubeconfigs", datasets_cmd)
+        self.assertTrue(any("conn-org2-pionera=" in arg and "provider.yaml" in arg for arg in datasets_cmd))
+        self.assertTrue(any("conn-org3-pionera=" in arg and "consumer.yaml" in arg for arg in datasets_cmd))
 
     def test_use_case_demo_flow_runs_profile_level5_and_seed_steps(self):
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as tmpdir:
