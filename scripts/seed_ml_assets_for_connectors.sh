@@ -11,6 +11,7 @@ CREDENTIALS_DIR="${CREDENTIALS_DIR:-$ROOT_DIR/inesdata-testing/deployments/DEV/d
 KEYCLOAK_TOKEN_URL="${KEYCLOAK_TOKEN_URL:-}"
 CONNECTOR_K8S_NAMESPACES="${CONNECTOR_K8S_NAMESPACES:-}"
 CONNECTOR_KUBECONFIGS="${CONNECTOR_KUBECONFIGS:-}"
+CONNECTOR_PROTOCOL_URLS="${CONNECTOR_PROTOCOL_URLS:-}"
 DEPLOYER_CONFIG_FILE="${DEPLOYER_CONFIG_FILE:-$ROOT_DIR/deployers/inesdata/deployer.config}"
 VOCABULARY_ID="${VOCABULARY_ID:-JS_Pionera_Daimo}"
 VOCABULARY_NAME="${VOCABULARY_NAME:-JS Metadata Daimo}"
@@ -50,6 +51,8 @@ Options:
                               CSV map connector=namespace for port-forward targets
   --connector-kubeconfigs <map>
                               CSV map connector=kubeconfig for vm-distributed port-forwards
+  --connector-protocol-urls <map>
+                              CSV map connector=protocol-url for cross-connector negotiations
   --vocabulary-id <id>        Vocabulary ID used in assetData (default: JS_Pionera_Daimo)
   --vocabulary-name <name>    Vocabulary display name (default: JS Metadata Daimo)
   --vocabulary-category <cat> Vocabulary category (default: machineLearning)
@@ -106,6 +109,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --connector-kubeconfigs)
       CONNECTOR_KUBECONFIGS="${2:-}"
+      shift 2
+      ;;
+    --connector-protocol-urls)
+      CONNECTOR_PROTOCOL_URLS="${2:-}"
       shift 2
       ;;
     --vocabulary-id)
@@ -575,7 +582,12 @@ connector_tag() {
   case "$1" in
     *citycouncil*) echo "city" ;;
     *company*)     echo "company" ;;
-    *)             echo "${1//-/_}" | cut -c1-8 ;;
+    *)
+      connector_short_name "$1" \
+        | tr -c '[:alnum:]' '_' \
+        | sed 's/^_*//; s/_*$//; s/__*/_/g' \
+        | cut -c1-32
+      ;;
   esac
 }
 
@@ -1769,6 +1781,75 @@ seed_connector() {
 # CROSS-CONNECTOR NEGOTIATIONS (5 total, after all connectors are seeded)
 # =============================================================================
 
+connector_protocol_address() {
+  local connector="$1"
+  local mapped
+  mapped="$(lookup_connector_map "$CONNECTOR_PROTOCOL_URLS" "$connector" "")"
+  if [[ -n "$mapped" ]]; then
+    printf '%s\n' "${mapped%/}"
+    return 0
+  fi
+
+  local short
+  short="$(connector_short_name "$connector")"
+  if [[ "$short" == org* && "$KEYCLOAK_TOKEN_URL" == https://* ]]; then
+    python3 - "$KEYCLOAK_TOKEN_URL" "$short" <<'PY'
+from urllib.parse import urlparse
+import sys
+
+parsed = urlparse(sys.argv[1])
+short = sys.argv[2]
+host = parsed.hostname or ""
+parts = host.split(".")
+if len(parts) > 1:
+    parts[0] = short
+    print(f"{parsed.scheme}://{'.'.join(parts)}/protocol")
+else:
+    print("")
+PY
+    return 0
+  fi
+
+  printf 'http://%s:19194/protocol\n' "$connector"
+}
+
+write_negotiation_model_slugs() {
+  local output_file="$1"
+  : > "$output_file"
+
+  if [[ "$MODEL_SET" == "mock" || "$MODEL_SET" == "combined" ]]; then
+    local max_assets="${#MODEL_SLUGS[@]}"
+    if [[ "$MODEL_SET" == "combined" ]]; then
+      max_assets="$COMBINED_HTTP_COUNT"
+    fi
+    local idx
+    for idx in "${!MODEL_SLUGS[@]}"; do
+      [[ "$idx" -ge "$max_assets" ]] && break
+      printf '%s\n' "${MODEL_SLUGS[$idx]}" >> "$output_file"
+    done
+  fi
+
+  if [[ "$MODEL_SET" == "use-cases" || "$MODEL_SET" == "combined" ]]; then
+    if [[ "$SKIP_USE_CASE_MODELS" != "1" ]]; then
+      local specs_file="$WORK_DIR/negotiation_use_case_model_specs.tsv"
+      if ! discover_use_case_model_specs "$specs_file"; then
+        return 1
+      fi
+      while IFS=$'\t' read -r slug _rest; do
+        [[ -n "$slug" ]] && printf '%s\n' "$slug" >> "$output_file"
+      done < "$specs_file"
+
+      local flares_slug
+      for flares_slug in "${FLARES_METRIC_MODEL_SLUGS[@]}"; do
+        printf '%s\n' "$flares_slug" >> "$output_file"
+      done
+    fi
+  fi
+
+  awk 'NF && !seen[$0]++' "$output_file" > "${output_file}.tmp"
+  mv "${output_file}.tmp" "$output_file"
+}
+
 negotiate_one() {
   local consumer="$1" provider="$2" asset_id="$3" label="$4"
   local creds_file="$CREDENTIALS_DIR/credentials-connector-$consumer.json"
@@ -1798,8 +1879,16 @@ negotiate_one() {
     return 1
   fi
 
-  # Port-forward consumer
-  kubectl -n "$NAMESPACE" port-forward "svc/$consumer" 19193:19193 >"$WORK_DIR/pf_neg_$consumer.log" 2>&1 &
+  # Port-forward consumer. In vm-distributed each connector may live in a
+  # different namespace/cluster, so reuse the same maps used during seeding.
+  local consumer_namespace consumer_kubeconfig
+  consumer_namespace="$(lookup_connector_map "$CONNECTOR_K8S_NAMESPACES" "$consumer" "$NAMESPACE")"
+  consumer_kubeconfig="$(lookup_connector_map "$CONNECTOR_KUBECONFIGS" "$consumer" "")"
+  local kubectl_cmd=(kubectl)
+  if [[ -n "$consumer_kubeconfig" ]]; then
+    kubectl_cmd+=(--kubeconfig "$consumer_kubeconfig")
+  fi
+  "${kubectl_cmd[@]}" -n "$consumer_namespace" port-forward "svc/$consumer" 19193:19193 >"$WORK_DIR/pf_neg_$consumer.log" 2>&1 &
   pf_pid=$!
   sleep 2
 
@@ -1811,7 +1900,8 @@ negotiate_one() {
   }
 
   # Step 1: Request catalog from provider
-  local protocol_addr="http://${provider}:19194/protocol"
+  local protocol_addr
+  protocol_addr="$(connector_protocol_address "$provider")"
   local catalog_file="$WORK_DIR/neg_catalog_${asset_id}.json"
   local catalog_out="$WORK_DIR/neg_catalog_${asset_id}.out"
 
@@ -1954,48 +2044,76 @@ NEG_EOF
 }
 
 negotiate_cross_connectors() {
-  local total_negotiations=$(( ${#MODEL_SLUGS[@]} * 2 ))
+  local negotiation_slugs_file="$WORK_DIR/negotiation_model_slugs.tsv"
+  if ! write_negotiation_model_slugs "$negotiation_slugs_file"; then
+    return 1
+  fi
+
+  local total_slugs
+  total_slugs="$(wc -l < "$negotiation_slugs_file" | xargs)"
+  local total_negotiations=$(( total_slugs * 2 ))
 
   echo ""
   echo "=========================================="
   echo " Cross-Connector Negotiations (${total_negotiations} total)"
   echo "=========================================="
 
-  local city_connector="" company_connector=""
+  if [[ "$total_slugs" -lt 1 ]]; then
+    echo "Cannot run cross-connector negotiations: no model assets were selected" >&2
+    return 1
+  fi
+
+  local provider_connector="" consumer_connector="" city_connector="" company_connector=""
   IFS=',' read -r -a _conns <<< "$CONNECTORS_CSV"
   for c in "${_conns[@]}"; do
     c="$(echo "$c" | xargs)"
+    [[ -z "$c" ]] && continue
+    if [[ -z "$provider_connector" ]]; then
+      provider_connector="$c"
+    elif [[ -z "$consumer_connector" ]]; then
+      consumer_connector="$c"
+    fi
     case "$c" in
       *citycouncil*) city_connector="$c" ;;
       *company*)     company_connector="$c" ;;
     esac
   done
 
-  if [[ -z "$city_connector" || -z "$company_connector" ]]; then
-    echo "Cannot run cross-connector negotiations: need both citycouncil and company connectors" >&2
+  if [[ -n "$city_connector" && -n "$company_connector" ]]; then
+    provider_connector="$city_connector"
+    consumer_connector="$company_connector"
+  fi
+
+  if [[ -z "$provider_connector" || -z "$consumer_connector" ]]; then
+    echo "Cannot run cross-connector negotiations: need at least two connectors" >&2
     return 1
   fi
 
   local neg_ok=0 neg_fail=0
+  local provider_tag consumer_tag slug
 
   # Negotiate every provider HttpData model so consumer UIs only surface contract-ready assets.
-  for slug in "${MODEL_SLUGS[@]}"; do
-    local asset_id="city-${slug}"
-    if negotiate_one "$company_connector" "$city_connector" "$asset_id" "company->city"; then
+  provider_tag="$(connector_tag "$provider_connector")"
+  consumer_tag="$(connector_tag "$consumer_connector")"
+  while IFS= read -r slug; do
+    [[ -z "$slug" ]] && continue
+    local asset_id="${provider_tag}-${slug}"
+    if negotiate_one "$consumer_connector" "$provider_connector" "$asset_id" "${consumer_tag}->${provider_tag}"; then
       neg_ok=$((neg_ok + 1))
     else
       neg_fail=$((neg_fail + 1))
     fi
-  done
+  done < "$negotiation_slugs_file"
 
-  for slug in "${MODEL_SLUGS[@]}"; do
-    local asset_id="company-${slug}"
-    if negotiate_one "$city_connector" "$company_connector" "$asset_id" "city->company"; then
+  while IFS= read -r slug; do
+    [[ -z "$slug" ]] && continue
+    local asset_id="${consumer_tag}-${slug}"
+    if negotiate_one "$provider_connector" "$consumer_connector" "$asset_id" "${provider_tag}->${consumer_tag}"; then
       neg_ok=$((neg_ok + 1))
     else
       neg_fail=$((neg_fail + 1))
     fi
-  done
+  done < "$negotiation_slugs_file"
 
   echo ""
   echo "Negotiations complete: $neg_ok succeeded, $neg_fail failed"

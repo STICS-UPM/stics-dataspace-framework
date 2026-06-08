@@ -190,6 +190,13 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
         self.assertIn("--connector-kubeconfigs", datasets_cmd)
         self.assertTrue(any("conn-org2-pionera=" in arg and "provider.yaml" in arg for arg in datasets_cmd))
         self.assertTrue(any("conn-org3-pionera=" in arg and "consumer.yaml" in arg for arg in datasets_cmd))
+        self.assertIn("--connector-protocol-urls", datasets_cmd)
+        self.assertTrue(
+            any("conn-org2-pionera=https://org2.example.test/protocol" in arg for arg in datasets_cmd)
+        )
+        self.assertTrue(
+            any("conn-org3-pionera=https://org3.example.test/protocol" in arg for arg in datasets_cmd)
+        )
 
     def test_use_case_demo_flow_runs_profile_level5_and_seed_steps(self):
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as tmpdir:

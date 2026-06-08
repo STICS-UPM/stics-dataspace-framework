@@ -19646,6 +19646,7 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
             role_by_connector[connector_key] = role
     connector_k8s_namespaces = {}
     connector_kubeconfigs = {}
+    connector_protocol_urls = {}
     kubeconfig_by_role = {
         "provider": values.get("K3S_KUBECONFIG_PROVIDER"),
         "consumer": values.get("K3S_KUBECONFIG_CONSUMER"),
@@ -19667,6 +19668,12 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
         kubeconfig = str(kubeconfig_by_role.get(role) or "").strip()
         if kubeconfig:
             connector_kubeconfigs[connector] = os.path.abspath(os.path.expanduser(kubeconfig))
+        parsed_keycloak = urllib.parse.urlparse(keycloak_base)
+        if parsed_keycloak.scheme == "https" and parsed_keycloak.hostname and short_name.startswith("org"):
+            host_parts = parsed_keycloak.hostname.split(".")
+            if len(host_parts) > 1:
+                host_parts[0] = short_name
+                connector_protocol_urls[connector] = f"{parsed_keycloak.scheme}://{'.'.join(host_parts)}/protocol"
     model_server_url = str(
         values.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
         or values.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL")
@@ -19681,6 +19688,7 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
         "keycloak_token_url": keycloak_token_url,
         "connector_k8s_namespaces": connector_k8s_namespaces,
         "connector_kubeconfigs": connector_kubeconfigs,
+        "connector_protocol_urls": connector_protocol_urls,
         "model_server_url": model_server_url,
     }
 
@@ -19715,6 +19723,13 @@ def _ai_model_hub_use_case_demo_seed_command(profile_values=None, adapter_name="
             [
                 "--connector-kubeconfigs",
                 ",".join(f"{key}={value}" for key, value in sorted(runtime["connector_kubeconfigs"].items())),
+            ]
+        )
+    if runtime.get("connector_protocol_urls"):
+        args.extend(
+            [
+                "--connector-protocol-urls",
+                ",".join(f"{key}={value}" for key, value in sorted(runtime["connector_protocol_urls"].items())),
             ]
         )
     if step == "models":
