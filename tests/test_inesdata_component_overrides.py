@@ -2247,6 +2247,11 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertIn("namespace: components-real", rendered_manifest)
         self.assertIn("image: local/real-model-server:latest", rendered_manifest)
         self.assertIn("path: /models", rendered_manifest)
+        commands = [call.args[0] for call in adapter.run.call_args_list]
+        self.assertIn(
+            "kubectl rollout restart deployment/model-server -n components-real",
+            commands,
+        )
 
     def test_ai_model_hub_use_case_model_server_generates_build_context(self):
         adapter = self._make_shared_adapter()

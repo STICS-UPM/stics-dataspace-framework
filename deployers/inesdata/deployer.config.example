@@ -14,10 +14,9 @@ COMPONENTS=ontology-hub,ai-model-hub,semantic-virtualization
 COMPONENTS_RELEASE_SCOPE=auto
 COMPONENTS_RELEASE_DATASPACE_NAME=
 COMPONENTS_SHARED_RELEASE_COMPONENTS=ontology-hub,ai-model-hub,semantic-virtualization
-# Optional prebuilt Level 5 component images. In topology local, blank values
-# keep the development build/import workflow. In VM topologies, configure full
-# references with explicit tags or enable LEVEL5_AUTO_BUILD_LOCAL_IMAGES only
-# for development imports from sources.
+# Optional prebuilt Level 5 component images. Blank values keep the
+# build/import workflow. Set LEVEL5_AUTO_BUILD_LOCAL_IMAGES=false only when
+# these image references are already available in the target cluster runtime.
 COMPONENTS_IMAGE_PULL_POLICY=
 ONTOLOGY_HUB_IMAGE_REF=
 AI_MODEL_HUB_IMAGE_REF=

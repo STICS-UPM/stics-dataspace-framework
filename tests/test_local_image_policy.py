@@ -5,9 +5,9 @@ from deployers.shared.lib.topology import LOCAL_TOPOLOGY, VM_DISTRIBUTED_TOPOLOG
 
 
 class LocalImagePolicyTests(unittest.TestCase):
-    def test_level4_default_mode_is_auto_only_for_local(self):
+    def test_level4_default_mode_is_auto_for_local_and_vm_single(self):
         self.assertEqual(local_images.default_level4_mode(LOCAL_TOPOLOGY), "auto")
-        self.assertEqual(local_images.default_level4_mode(VM_SINGLE_TOPOLOGY), "disabled")
+        self.assertEqual(local_images.default_level4_mode(VM_SINGLE_TOPOLOGY), "auto")
         self.assertEqual(local_images.default_level4_mode(VM_DISTRIBUTED_TOPOLOGY), "disabled")
 
     def test_level4_mode_normalization_keeps_existing_aliases(self):
@@ -56,12 +56,19 @@ class LocalImagePolicyTests(unittest.TestCase):
         self.assertFalse(policy["prepare_local_images"])
         self.assertIn("mode 'required' is only supported", policy["error"])
 
-    def test_level5_auto_build_defaults_to_false_for_vm_topologies(self):
+    def test_level5_auto_build_defaults_to_true_for_all_topologies(self):
         self.assertTrue(local_images.level5_auto_build_enabled({}, topology=LOCAL_TOPOLOGY, environ={}))
-        self.assertFalse(local_images.level5_auto_build_enabled({}, topology=VM_SINGLE_TOPOLOGY, environ={}))
-        self.assertFalse(local_images.level5_auto_build_enabled({}, topology=VM_DISTRIBUTED_TOPOLOGY, environ={}))
+        self.assertTrue(local_images.level5_auto_build_enabled({}, topology=VM_SINGLE_TOPOLOGY, environ={}))
+        self.assertTrue(local_images.level5_auto_build_enabled({}, topology=VM_DISTRIBUTED_TOPOLOGY, environ={}))
 
     def test_level5_auto_build_can_be_overridden_by_config_or_environment(self):
+        self.assertFalse(
+            local_images.level5_auto_build_enabled(
+                {"LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "false"},
+                topology=VM_DISTRIBUTED_TOPOLOGY,
+                environ={},
+            )
+        )
         self.assertTrue(
             local_images.level5_auto_build_enabled(
                 {"LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true"},

@@ -1352,6 +1352,7 @@ class SharedDataspaceDeploymentAdapter:
     def restart_registration_service(self):
         deployment_name = f"{self._dataspace_name()}-registration-service"
         namespace = self._registration_service_namespace()
+        rollout_timeout = self._dataspace_rollout_timeout_seconds()
 
         print("\nRestarting registration-service deployment to pick up the recreated database credentials...")
         if self.run(
@@ -1361,7 +1362,7 @@ class SharedDataspaceDeploymentAdapter:
             self._fail("Could not restart registration-service deployment")
 
         rollout_output = self.run(
-            f"kubectl rollout status deployment/{deployment_name} -n {namespace} --timeout=180s",
+            f"kubectl rollout status deployment/{deployment_name} -n {namespace} --timeout={rollout_timeout}s",
             capture=True,
             check=False,
         )
@@ -1372,6 +1373,7 @@ class SharedDataspaceDeploymentAdapter:
     def restart_public_portal(self):
         namespace = self._public_portal_namespace()
         dataspace_name = self._dataspace_name()
+        rollout_timeout = self._dataspace_rollout_timeout_seconds()
         deployments = (
             (f"{dataspace_name}-public-portal-backend", "public portal backend"),
             (f"{dataspace_name}-public-portal-frontend", "public portal frontend"),
@@ -1386,13 +1388,27 @@ class SharedDataspaceDeploymentAdapter:
                 self._fail(f"Could not restart {label} deployment")
 
             rollout_output = self.run(
-                f"kubectl rollout status deployment/{deployment_name} -n {namespace} --timeout=180s",
+                f"kubectl rollout status deployment/{deployment_name} -n {namespace} --timeout={rollout_timeout}s",
                 capture=True,
                 check=False,
             )
             if rollout_output is None:
                 self._fail(f"{label} deployment did not finish rolling out")
             self._print_unique_lines(rollout_output)
+
+    @staticmethod
+    def _dataspace_rollout_timeout_seconds():
+        for key in ("DATASPACE_ROLLOUT_TIMEOUT_SECONDS", "PIONERA_DATASPACE_ROLLOUT_TIMEOUT_SECONDS"):
+            raw_value = str(os.environ.get(key) or "").strip()
+            if not raw_value:
+                continue
+            try:
+                value = int(raw_value)
+            except ValueError:
+                continue
+            if value > 0:
+                return value
+        return 600
 
     def _show_minikube_tunnel_prompt(self):
         if str(os.environ.get("PIONERA_LOCAL_MINIKUBE_TUNNEL_MANAGED") or "").strip().lower() in {

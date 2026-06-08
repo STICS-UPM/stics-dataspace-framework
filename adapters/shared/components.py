@@ -515,8 +515,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 edc_connector_config = self._edc_ai_model_hub_connector_config(deployer_config)
                 if edc_connector_config:
                     payload.setdefault("config", {})["edcConnectorConfig"] = edc_connector_config
-            else:
-                payload = self._merge_ai_model_hub_connector_config(existing_values, payload)
+            payload = self._merge_ai_model_hub_connector_config(existing_values, payload)
         return payload
 
     def _infer_component_hostname_for_dataspace(
@@ -1881,6 +1880,7 @@ def combined_models() -> Dict[str, Any]:
         )
         try:
             print(f"\nBuilding local image on host: {image_ref}")
+            self._remove_host_image_if_present(image_ref)
             if generated_context:
                 print(f"Generated AI Model Hub model-server build context for mode '{mode}'.")
             if self.run(f"{docker_q} build -t {image_q} .", check=False, cwd=build_context) is None:
@@ -1967,6 +1967,13 @@ def combined_models() -> Dict[str, Any]:
             )
             if self.run(f"kubectl apply -f {temp_q}", check=False) is None:
                 self._fail("Failed to apply AI Model Hub model-server manifest", root_cause=temp_path)
+            if built_local_image:
+                namespace_q = shlex.quote(resolved_namespace)
+                if self.run(
+                    f"kubectl rollout restart deployment/model-server -n {namespace_q}",
+                    check=False,
+                ) is None:
+                    self._fail("Failed to restart AI Model Hub model-server after image rebuild")
         finally:
             if temp_path and os.path.exists(temp_path):
                 os.unlink(temp_path)

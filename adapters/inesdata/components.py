@@ -771,6 +771,14 @@ class INESDataComponentsAdapter:
             f"\"docker image rm -f {image_q} >/dev/null 2>&1 || true\""
         )
 
+    def _remove_host_image_if_present(self, image_ref: str):
+        image_value = str(image_ref or "").strip()
+        if not image_value:
+            return
+        image_q = shlex.quote(image_value)
+        docker_q = shlex.quote(self._docker_cmd())
+        self.run_silent(f"{docker_q} image rm -f {image_q} >/dev/null 2>&1 || true")
+
     def _cluster_runtime(self, deployer_config: dict | None = None) -> dict:
         runtime_getter = getattr(self.config_adapter, "cluster_runtime", None)
         if callable(runtime_getter):
@@ -1667,6 +1675,7 @@ class INESDataComponentsAdapter:
             )
 
         print(f"\nBuilding local image on host: {image_ref}")
+        self._remove_host_image_if_present(image_ref)
         cmd = image_runtime.docker_build_command(
             self._docker_cmd(),
             image_ref,
@@ -1689,6 +1698,7 @@ class INESDataComponentsAdapter:
             )
 
         print(f"\nBuilding local image on host: {image_ref}")
+        self._remove_host_image_if_present(image_ref)
         cmd = image_runtime.docker_build_command(self._docker_cmd(), image_ref)
         if self.run(cmd, check=False, cwd=dashboard_dir) is None:
             self._fail("Failed to build AI Model Hub image on host", root_cause=image_ref)
@@ -1737,6 +1747,7 @@ class INESDataComponentsAdapter:
         build_context = self._prepare_semantic_virtualization_api_build_context(morph_kgv_dir)
         try:
             print(f"\nBuilding local image on host: {image_ref}")
+            self._remove_host_image_if_present(image_ref)
             cmd = image_runtime.docker_build_command(
                 self._docker_cmd(),
                 image_ref,
@@ -1760,6 +1771,7 @@ class INESDataComponentsAdapter:
             )
 
         print(f"\nBuilding local image on host: {image_ref}")
+        self._remove_host_image_if_present(image_ref)
         cmd = image_runtime.docker_build_command(
             self._docker_cmd(),
             image_ref,

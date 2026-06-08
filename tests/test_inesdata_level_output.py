@@ -2266,9 +2266,9 @@ minio:
             [call.args[0] for call in run.call_args_list],
             [
                 "kubectl rollout restart deployment/demo-public-portal-backend -n demo-core-ns",
-                "kubectl rollout status deployment/demo-public-portal-backend -n demo-core-ns --timeout=180s",
+                "kubectl rollout status deployment/demo-public-portal-backend -n demo-core-ns --timeout=600s",
                 "kubectl rollout restart deployment/demo-public-portal-frontend -n demo-core-ns",
-                "kubectl rollout status deployment/demo-public-portal-frontend -n demo-core-ns --timeout=180s",
+                "kubectl rollout status deployment/demo-public-portal-frontend -n demo-core-ns --timeout=600s",
             ],
         )
         self.assertEqual(
@@ -2280,6 +2280,19 @@ minio:
                 {"capture": True, "check": False},
             ],
         )
+
+    def test_dataspace_rollout_timeout_can_be_overridden_from_environment(self):
+        deployment = INESDataDeploymentAdapter(
+            run=mock.Mock(return_value="ok"),
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+
+        with mock.patch.dict(os.environ, {"DATASPACE_ROLLOUT_TIMEOUT_SECONDS": "900"}):
+            self.assertEqual(deployment._dataspace_rollout_timeout_seconds(), 900)
 
     def test_deploy_dataspace_uses_level3_local_image_overrides_when_prepared(self):
         config = LevelOutputPublicPortalConfig(self.tmpdir.name)

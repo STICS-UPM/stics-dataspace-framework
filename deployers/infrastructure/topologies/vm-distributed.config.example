@@ -60,12 +60,11 @@ COMPONENTS_PUBLIC_PATH_REWRITE=true
 # Level 5 owns component ingresses by default to keep routes tied to Helm releases.
 # Use infrastructure only for legacy deployments that still require pre-created routes.
 VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER=level5
-# VM topologies use prebuilt/chart images by default. Set the local image modes
-# to auto or required only for development workflows that intentionally build
-# and import images from sources.
+# VM topologies rebuild and import Level 5 local images by default so reused
+# tags cannot silently keep stale images in k3s.
 LEVEL4_LOCAL_IMAGES_MODE=disabled
-LEVEL5_AUTO_BUILD_LOCAL_IMAGES=false
-LEVEL6_AUTO_BUILD_LOCAL_IMAGES=false
+LEVEL5_AUTO_BUILD_LOCAL_IMAGES=true
+LEVEL6_AUTO_BUILD_LOCAL_IMAGES=true
 LEVEL5_ASSUME_LOCAL_IMAGES_AVAILABLE=false
 LEVEL6_ASSUME_LOCAL_IMAGES_AVAILABLE=false
 INESDATA_CONNECTOR_IMAGE_NAME=

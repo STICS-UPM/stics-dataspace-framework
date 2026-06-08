@@ -110,7 +110,7 @@ def resolve_level4_policy(
 
 
 def default_level5_auto_build(topology: str) -> bool:
-    return str(topology or "").strip() not in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}
+    return True
 
 
 def first_config_or_env(config: dict | None, environ: dict | None, *keys: str):
