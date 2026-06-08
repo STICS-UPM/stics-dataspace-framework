@@ -1,4 +1,8 @@
 {{- $layout := .Values.connector.layout | default dict }}
+{{- $tlsCacerts := .Values.connector.tlsCacerts | default dict }}
+{{- $tlsCacertsEnabled := or (eq .Values.connector.environment "pro") ((index $tlsCacerts "enabled") | default false) }}
+{{- $tlsCacertsSecretName := ((index $tlsCacerts "secretName") | default "common-tls-cacerts") }}
+{{- $tlsCacertsMountPath := ((index $tlsCacerts "mountPath") | default "/opt/connector/tls-cacerts") }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -109,9 +113,9 @@ spec:
             - name: config
               mountPath: "/opt/connector/config"
               readOnly: true
-{{- if eq .Values.connector.environment "pro" }}
+{{- if $tlsCacertsEnabled }}
             - name: tls-cacerts
-              mountPath: /opt/connector/tls-cacerts
+              mountPath: {{ $tlsCacertsMountPath }}
 {{- end }}
       initContainers:
         - name: init-db
@@ -135,9 +139,9 @@ spec:
         - name: init-db
           configMap:
             name: {{ .Values.connector.name }}-initdb
-{{- if eq .Values.connector.environment "pro" }}
+{{- if $tlsCacertsEnabled }}
         - name: tls-cacerts
           secret:
-            secretName: common-tls-cacerts
+            secretName: {{ $tlsCacertsSecretName }}
 {{- end }}
       restartPolicy: Always

@@ -1309,6 +1309,9 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         self.assertEqual(ingress["publicHostname"], "org2.pionera.oeg.fi.upm.es")
         self.assertEqual(ingress["callbackProtocol"], "https")
         self.assertEqual(ingress["callbackHostname"], "org2.pionera.oeg.fi.upm.es")
+        self.assertTrue(rendered["connector"]["tlsCacerts"]["enabled"])
+        self.assertEqual(rendered["connector"]["tlsCacerts"]["secretName"], "common-tls-cacerts")
+        self.assertIn("javax.net.ssl.trustStore=/opt/connector/tls-cacerts/cacerts.jks", rendered["connector"]["jvmArgs"])
         self.assertEqual(rendered["services"]["keycloak"]["protocol"], "http")
         self.assertEqual(rendered["services"]["keycloak"]["publicProtocol"], "https")
         self.assertEqual(rendered["services"]["keycloak"]["external"], "org1.pionera.oeg.fi.upm.es/auth")
@@ -1398,6 +1401,8 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         ingress = rendered["connector"]["ingress"]
         self.assertEqual(ingress["callbackProtocol"], "https")
         self.assertEqual(ingress["callbackHostname"], "org2.pionera.oeg.fi.upm.es")
+        self.assertTrue(rendered["connector"]["tlsCacerts"]["enabled"])
+        self.assertIn("javax.net.ssl.trustStore=/opt/connector/tls-cacerts/cacerts.jks", rendered["connector"]["jvmArgs"])
 
     def test_update_connector_public_ingress_config_uses_vm_single_public_path_and_internal_services(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1461,6 +1466,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             ingress["dataplanePublicBaseUrl"],
             "https://org4.pionera.oeg.fi.upm.es/c/org2/public",
         )
+        self.assertNotIn("tlsCacerts", rendered["connector"])
         self.assertNotIn("additionalHosts", ingress)
         self.assertEqual(connector_interface["publicBasePath"], "/c/org2/inesdata-connector-interface")
         self.assertEqual(

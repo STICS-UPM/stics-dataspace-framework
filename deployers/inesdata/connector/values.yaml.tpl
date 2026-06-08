@@ -9,6 +9,10 @@ connector:
     tag: 20260309-86a226e
   replicas: 1
   jvmArgs: "{% if keys.environment == 'PRO'%}-Djavax.net.ssl.trustStore=/opt/connector/tls-cacerts/cacerts.jks -Djavax.net.ssl.trustStorePassword=dataspaceunit{% endif %}"
+  tlsCacerts:
+    enabled: {{ keys.connector_tls_cacerts_enabled | default(false, true) | tojson }}
+    secretName: {{ (keys.connector_tls_cacerts_secret_name | default('common-tls-cacerts', true)) | tojson }}
+    mountPath: {{ (keys.connector_tls_cacerts_mount_path | default('/opt/connector/tls-cacerts', true)) | tojson }}
   modelExecution:
     edrAttempts: {{ keys.connector_model_execution_edr_attempts | default(90, true) }}
     edrDelayMs: {{ keys.connector_model_execution_edr_delay_ms | default(1000, true) }}

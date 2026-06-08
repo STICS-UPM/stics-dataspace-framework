@@ -2735,6 +2735,22 @@ class INESDataConnectorsAdapter:
             )
         return ""
 
+    @staticmethod
+    def _enable_connector_tls_cacerts(values):
+        connector = values.setdefault("connector", {})
+        tls_cacerts = connector.setdefault("tlsCacerts", {})
+        tls_cacerts["enabled"] = True
+        tls_cacerts.setdefault("secretName", "common-tls-cacerts")
+        tls_cacerts.setdefault("mountPath", "/opt/connector/tls-cacerts")
+
+        truststore_args = (
+            "-Djavax.net.ssl.trustStore=/opt/connector/tls-cacerts/cacerts.jks "
+            "-Djavax.net.ssl.trustStorePassword=dataspaceunit"
+        )
+        current_args = str(connector.get("jvmArgs") or "").strip()
+        if "javax.net.ssl.trustStore=" not in current_args:
+            connector["jvmArgs"] = f"{current_args} {truststore_args}".strip()
+
     def update_connector_public_ingress_config(self, values_file, connector_name):
         if self._normalized_topology() not in {VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY}:
             return
@@ -2785,6 +2801,9 @@ class INESDataConnectorsAdapter:
             keycloak["publicProtocol"] = public_protocol
         if keycloak_public_external:
             keycloak["external"] = keycloak_public_external
+
+        if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY and public_protocol == "https":
+            self._enable_connector_tls_cacerts(values)
 
         minio = services.setdefault("minio", {})
         if not str(minio.get("hostname") or "").strip():
