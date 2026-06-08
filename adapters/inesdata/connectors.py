@@ -2629,6 +2629,27 @@ class INESDataConnectorsAdapter:
         return parsed.scheme, public_external
 
     @staticmethod
+    def _minio_public_url_parts(deployer_config):
+        public_urls = resolve_vm_distributed_public_urls(deployer_config)
+        parsed = urlparse(
+            str(
+                (deployer_config or {}).get("MINIO_API_PUBLIC_URL")
+                or (deployer_config or {}).get("MINIO_PUBLIC_URL")
+                or public_urls.get("MINIO_API_PUBLIC_URL")
+                or public_urls.get("MINIO_PUBLIC_URL")
+                or public_urls.get("VM_COMMON_PUBLIC_URL")
+                or ""
+            ).strip()
+        )
+        if not parsed.scheme or not parsed.netloc:
+            return "", ""
+        public_external = parsed.netloc.strip()
+        public_path = parsed.path.strip().rstrip("/")
+        if public_path:
+            public_external = f"{public_external}{public_path}"
+        return parsed.scheme, public_external
+
+    @staticmethod
     def _internal_service_hostname_from_url(value):
         raw_value = str(value or "").strip()
         if not raw_value:
@@ -2801,6 +2822,9 @@ class INESDataConnectorsAdapter:
             keycloak["publicProtocol"] = public_protocol
         if keycloak_public_external:
             keycloak["external"] = keycloak_public_external
+            if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+                keycloak["hostname"] = keycloak_public_external
+                keycloak["protocol"] = keycloak_public_protocol or keycloak.get("publicProtocol") or public_protocol or "https"
 
         if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY and public_protocol == "https":
             self._enable_connector_tls_cacerts(values)
@@ -2809,6 +2833,11 @@ class INESDataConnectorsAdapter:
         if not str(minio.get("hostname") or "").strip():
             minio["hostname"] = self._minio_internal_service_hostname(deployer_config)
         minio.setdefault("protocol", "http")
+        if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+            minio_public_protocol, minio_public_external = self._minio_public_url_parts(deployer_config)
+            if minio_public_protocol and minio_public_external:
+                minio["hostname"] = minio_public_external
+                minio["protocol"] = minio_public_protocol
 
         primary_hostname = str(ingress.get("hostname") or "").strip()
         if primary_hostname == public_hostname:
