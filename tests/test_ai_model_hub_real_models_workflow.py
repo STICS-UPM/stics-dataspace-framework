@@ -169,6 +169,95 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
         self.assertIn("--use-case-model-server-base-url", models_cmd)
         self.assertIn("conn-org2-pionera,conn-org3-pionera", models_cmd)
 
+    def test_use_case_demo_flow_runs_profile_level5_and_seed_steps(self):
+        with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as tmpdir:
+            self._write_use_case_demo_source(source_dir)
+            profile_path = os.path.join(tmpdir, "pionera.env")
+            self._write_file(
+                profile_path,
+                "\n".join(
+                    [
+                        "PROFILE_TOPOLOGY=vm-distributed",
+                        "PROFILE_ADAPTER=inesdata",
+                        "DS_1_NAME=pionera",
+                        "DS_1_CONNECTORS=conn-org2-pionera,conn-org3-pionera",
+                        f"AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR={source_dir}",
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY=https://example.test/use-cases.git",
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF=abc1234",
+                        "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL=http://model-server.example.test",
+                        "",
+                    ]
+                ),
+            )
+
+            completed = mock.Mock(returncode=0)
+            with mock.patch.object(
+                main,
+                "apply_environment_configuration_profile",
+                return_value={"status": "applied"},
+            ), mock.patch.object(main.subprocess, "run", return_value=completed) as subprocess_run:
+                result = main._run_ai_model_hub_use_case_demo_flow(
+                    profile_path,
+                    {
+                        "DS_1_NAME": "pionera",
+                        "DS_1_CONNECTORS": "conn-org2-pionera,conn-org3-pionera",
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": source_dir,
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": "https://example.test/use-cases.git",
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF": "abc1234",
+                        "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL": "http://model-server.example.test",
+                    },
+                    adapter_name="inesdata",
+                    run_level5=True,
+                )
+
+        self.assertEqual(result["status"], "passed")
+        step_names = [step["name"] for step in result["steps"]]
+        self.assertEqual(step_names, ["prepare-profile", "level5-components", "step9-datasets", "step10-models"])
+        commands = [call.args[0] for call in subprocess_run.call_args_list]
+        self.assertEqual(commands[0][1:], ["main.py", "inesdata", "level", "5", "--topology", "vm-distributed"])
+        self.assertIn("--seed-scope", commands[1])
+        self.assertIn("datasets", commands[1])
+        self.assertIn("--model-set", commands[2])
+        self.assertIn("use-cases", commands[2])
+
+    def test_use_case_demo_flow_stops_when_level5_fails(self):
+        with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as tmpdir:
+            self._write_use_case_demo_source(source_dir)
+            profile_path = os.path.join(tmpdir, "pionera.env")
+            self._write_file(
+                profile_path,
+                "\n".join(
+                    [
+                        "PROFILE_TOPOLOGY=vm-distributed",
+                        "PROFILE_ADAPTER=inesdata",
+                        f"AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR={source_dir}",
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF=abc1234",
+                        "",
+                    ]
+                ),
+            )
+
+            failed = mock.Mock(returncode=7)
+            with mock.patch.object(
+                main,
+                "apply_environment_configuration_profile",
+                return_value={"status": "applied"},
+            ), mock.patch.object(main.subprocess, "run", return_value=failed) as subprocess_run:
+                result = main._run_ai_model_hub_use_case_demo_flow(
+                    profile_path,
+                    {
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": source_dir,
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF": "abc1234",
+                    },
+                    adapter_name="inesdata",
+                    run_level5=True,
+                )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["reason"], "level5-failed")
+        self.assertEqual([step["name"] for step in result["steps"]], ["prepare-profile", "level5-components"])
+        self.assertEqual(subprocess_run.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

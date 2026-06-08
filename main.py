@@ -19649,12 +19649,29 @@ def _ai_model_hub_use_case_demo_seed_command(profile_values=None, adapter_name="
     return args
 
 
-def _run_ai_model_hub_use_case_demo_seed_step(profile_values=None, adapter_name="inesdata", step="datasets"):
-    args = _ai_model_hub_use_case_demo_seed_command(profile_values, adapter_name=adapter_name, step=step)
+def _ai_model_hub_use_case_demo_level5_command(adapter_name="inesdata"):
+    return [
+        sys.executable or "python3",
+        "main.py",
+        str(adapter_name or "inesdata").strip().lower() or "inesdata",
+        "level",
+        "5",
+        "--topology",
+        "vm-distributed",
+    ]
+
+
+def _ai_model_hub_use_case_demo_artifact_dir():
+    return os.path.join(os.path.dirname(__file__), ".local", "artifacts", "ai-model-hub", "use-case-demo")
+
+
+def _run_ai_model_hub_use_case_demo_logged_command(args, log_prefix, env_updates=None):
     started_at = time.strftime("%Y%m%d-%H%M%S")
-    artifact_dir = os.path.join(os.path.dirname(__file__), ".local", "artifacts", "ai-model-hub", "use-case-demo")
+    artifact_dir = _ai_model_hub_use_case_demo_artifact_dir()
     os.makedirs(artifact_dir, exist_ok=True)
-    log_path = os.path.join(artifact_dir, f"seed-{step}-{started_at}.log")
+    log_path = os.path.join(artifact_dir, f"{log_prefix}-{started_at}.log")
+    env = os.environ.copy()
+    env.update({key: value for key, value in dict(env_updates or {}).items() if str(value).strip()})
     with open(log_path, "ab") as log_handle:
         completed = subprocess.run(
             args,
@@ -19662,14 +19679,84 @@ def _run_ai_model_hub_use_case_demo_seed_step(profile_values=None, adapter_name=
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             check=False,
+            env=env,
         )
     return {
         "status": "passed" if completed.returncode == 0 else "failed",
-        "step": step,
         "returncode": completed.returncode,
         "command": " ".join(shlex.quote(part) for part in args),
         "log_path": log_path,
     }
+
+
+def _run_ai_model_hub_use_case_demo_level5(adapter_name="inesdata"):
+    return _run_ai_model_hub_use_case_demo_logged_command(
+        _ai_model_hub_use_case_demo_level5_command(adapter_name=adapter_name),
+        "level5-components",
+        env_updates={"PIONERA_ENVIRONMENT_PROFILE": _environment_profile_name()},
+    )
+
+
+def _run_ai_model_hub_use_case_demo_seed_step(profile_values=None, adapter_name="inesdata", step="datasets"):
+    args = _ai_model_hub_use_case_demo_seed_command(profile_values, adapter_name=adapter_name, step=step)
+    result = _run_ai_model_hub_use_case_demo_logged_command(args, f"seed-{step}")
+    result["step"] = step
+    return result
+
+
+def _run_ai_model_hub_use_case_demo_flow(profile_path, profile_values=None, adapter_name="inesdata", run_level5=True):
+    steps = []
+    profile_result = _promote_ai_model_hub_use_case_demo_profile(
+        profile_path,
+        profile_values,
+        adapter_name=adapter_name,
+    )
+    steps.append({"name": "prepare-profile", **profile_result})
+    if profile_result.get("status") != "promoted":
+        return {"status": "failed", "reason": "profile-promotion-failed", "steps": steps}
+
+    refreshed_values, parse_errors = _load_vm_distributed_profile(profile_path)
+    if parse_errors:
+        steps.append({"name": "reload-profile", "status": "failed", "errors": parse_errors})
+        return {"status": "failed", "reason": "invalid-profile-after-promotion", "steps": steps}
+
+    if run_level5:
+        level5_result = _run_ai_model_hub_use_case_demo_level5(adapter_name=adapter_name)
+        steps.append({"name": "level5-components", **level5_result})
+        if level5_result.get("status") != "passed":
+            return {"status": "failed", "reason": "level5-failed", "steps": steps}
+
+    datasets_result = _run_ai_model_hub_use_case_demo_seed_step(
+        refreshed_values,
+        adapter_name=adapter_name,
+        step="datasets",
+    )
+    steps.append({"name": "step9-datasets", **datasets_result})
+    if datasets_result.get("status") != "passed":
+        return {"status": "failed", "reason": "step9-datasets-failed", "steps": steps}
+
+    models_result = _run_ai_model_hub_use_case_demo_seed_step(
+        refreshed_values,
+        adapter_name=adapter_name,
+        step="models",
+    )
+    steps.append({"name": "step10-models", **models_result})
+    if models_result.get("status") != "passed":
+        return {"status": "failed", "reason": "step10-models-failed", "steps": steps}
+
+    return {"status": "passed", "steps": steps}
+
+
+def _print_ai_model_hub_use_case_demo_flow_result(result):
+    payload = dict(result or {})
+    print()
+    print(f"Flow result: {payload.get('status') or 'unknown'}")
+    if payload.get("reason"):
+        print(f"Reason: {payload.get('reason')}")
+    for step in list(payload.get("steps") or []):
+        print()
+        print(f"[{step.get('name') or 'step'}]")
+        _print_ai_model_hub_use_case_demo_action_result(step)
 
 
 def _print_ai_model_hub_use_case_demo_action_result(result):
@@ -19716,6 +19803,7 @@ def _run_ai_model_hub_use_case_demo_assistant(current_adapter=None, adapter_regi
         print("2 - Show Level 5 and demo seed commands")
         print("3 - Run Step 9: seed benchmark datasets")
         print("4 - Run Step 10: seed FLARES/Mobility model assets")
+        print("5 - Run use-case demo flow (profile + Level 5 + Steps 9/10)")
         print("B/Q - Back")
         choice = _interactive_read("\nSelection: ").strip().upper()
         if not choice or choice in {"B", "Q"}:
@@ -19789,6 +19877,23 @@ def _run_ai_model_hub_use_case_demo_assistant(current_adapter=None, adapter_regi
                 step="models",
             )
             _print_ai_model_hub_use_case_demo_action_result(result)
+            continue
+
+        if choice == "5":
+            print()
+            print("This applies the combined model-server profile, runs Level 5, then seeds Step 9 datasets and Step 10 model assets.")
+            if not _interactive_confirm("Run the AI Model Hub use-case demo flow now?", default=False):
+                print("Use-case demo flow cancelled.")
+                continue
+            result = _run_ai_model_hub_use_case_demo_flow(
+                profile_path,
+                profile_values,
+                adapter_name=selected_adapter,
+                run_level5=True,
+            )
+            _print_ai_model_hub_use_case_demo_flow_result(result)
+            profile_values, _parse_errors = _load_vm_distributed_profile(profile_path)
+            topology_config.update({key: value for key, value in profile_values.items() if str(value).strip()})
             continue
 
         print("Invalid AI Model Hub use-case demo selection.")
