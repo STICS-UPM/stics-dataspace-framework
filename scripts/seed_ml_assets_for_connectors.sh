@@ -1587,10 +1587,28 @@ CEOF
 # MAIN PER-CONNECTOR FUNCTION — port-forward, vocabulary, assets, policy
 # =============================================================================
 
+connector_credentials_file() {
+  local connector="$1"
+  local canonical="$CREDENTIALS_DIR/connectors/$connector/credentials.json"
+  local legacy="$CREDENTIALS_DIR/credentials-connector-$connector.json"
+
+  if [[ -f "$canonical" ]]; then
+    printf '%s\n' "$canonical"
+    return 0
+  fi
+  if [[ -f "$legacy" ]]; then
+    printf '%s\n' "$legacy"
+    return 0
+  fi
+
+  printf '%s\n' "$legacy"
+}
+
 seed_connector() {
   local connector="$1"
-  local creds_file="$CREDENTIALS_DIR/credentials-connector-$connector.json"
-  local fallback_creds_file="$ROOT_DIR/deployers/inesdata/deployments/DEV/$NAMESPACE/credentials-connector-$connector.json"
+  local creds_file
+  creds_file="$(connector_credentials_file "$connector")"
+  local fallback_creds_file="$CREDENTIALS_DIR/credentials-connector-$connector.json"
   local mgmt_url="http://127.0.0.1:19193/management"
   local k8s_namespace kubeconfig
   local pf_pid=""
@@ -1852,8 +1870,9 @@ write_negotiation_model_slugs() {
 
 negotiate_one() {
   local consumer="$1" provider="$2" asset_id="$3" label="$4"
-  local creds_file="$CREDENTIALS_DIR/credentials-connector-$consumer.json"
-  local fallback_creds_file="$ROOT_DIR/inesdata-deployment/deployments/DEV/$NAMESPACE/credentials-connector-$consumer.json"
+  local creds_file
+  creds_file="$(connector_credentials_file "$consumer")"
+  local fallback_creds_file="$CREDENTIALS_DIR/credentials-connector-$consumer.json"
   local mgmt_url="http://127.0.0.1:19193/management"
   local pf_pid=""
 
