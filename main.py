@@ -19673,7 +19673,14 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
             host_parts = parsed_keycloak.hostname.split(".")
             if len(host_parts) > 1:
                 host_parts[0] = short_name
-                connector_protocol_urls[connector] = f"{parsed_keycloak.scheme}://{'.'.join(host_parts)}/protocol"
+                connector_dsp_protocol = str(
+                    values.get("VM_DISTRIBUTED_CONNECTOR_DSP_PROTOCOL")
+                    or values.get("INESDATA_CONNECTOR_DSP_PROTOCOL")
+                    or "http"
+                ).strip().lower()
+                if connector_dsp_protocol not in {"http", "https"}:
+                    connector_dsp_protocol = "http"
+                connector_protocol_urls[connector] = f"{connector_dsp_protocol}://{'.'.join(host_parts)}/protocol"
     model_server_url = str(
         values.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
         or values.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL")

@@ -1308,7 +1308,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         ingress = rendered["connector"]["ingress"]
         self.assertEqual(ingress["publicProtocol"], "https")
         self.assertEqual(ingress["publicHostname"], "org2.pionera.oeg.fi.upm.es")
-        self.assertEqual(ingress["callbackProtocol"], "https")
+        self.assertEqual(ingress["callbackProtocol"], "http")
         self.assertEqual(ingress["callbackHostname"], "org2.pionera.oeg.fi.upm.es")
         self.assertTrue(rendered["connector"]["tlsCacerts"]["enabled"])
         self.assertEqual(rendered["connector"]["tlsCacerts"]["secretName"], "common-tls-cacerts")
@@ -1403,7 +1403,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         self.assertEqual(keycloak["publicProtocol"], "https")
         self.assertEqual(keycloak["external"], "org1.pionera.oeg.fi.upm.es/auth")
         ingress = rendered["connector"]["ingress"]
-        self.assertEqual(ingress["callbackProtocol"], "https")
+        self.assertEqual(ingress["callbackProtocol"], "http")
         self.assertEqual(ingress["callbackHostname"], "org2.pionera.oeg.fi.upm.es")
         self.assertTrue(rendered["connector"]["tlsCacerts"]["enabled"])
         self.assertIn("javax.net.ssl.trustStore=/opt/connector/tls-cacerts/cacerts.jks", rendered["connector"]["jvmArgs"])
