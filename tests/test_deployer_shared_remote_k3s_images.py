@@ -7,6 +7,7 @@ from deployers.shared.lib.remote_k3s_images import (
     remote_k3s_image_import_target,
     shell_join,
 )
+from deployers.shared.lib import remote_k3s_image_import_cli
 
 
 class RemoteK3sImagesTests(unittest.TestCase):
@@ -464,6 +465,66 @@ class RemoteK3sImagesTests(unittest.TestCase):
         self.assertEqual(import_command, "sudo -S -p '' k3s ctr -n k8s.io images import")
         self.assertIn("-n k8s.io", import_command)
         self.assertNotIn("sudo -n k3s", import_command)
+
+    def test_auto_import_fails_fast_without_interactive_tty(self):
+        target = remote_k3s_image_import_target(
+            {
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND": "sudo -n k3s ctr -n k8s.io images import",
+                "VM_COMPONENTS_SSH_HOST": "pionera40",
+                "VM_COMPONENTS_SSH_USER": "pionera",
+            },
+            role="components",
+        )
+        calls = []
+
+        def fake_run(args, **_kwargs):
+            calls.append(args)
+            return 1 if len(calls) == 2 else 0
+
+        with mock.patch.object(remote_k3s_image_import_cli, "_run", side_effect=fake_run), mock.patch.object(
+            remote_k3s_image_import_cli,
+            "_interactive_fallback_allowed",
+            return_value=False,
+        ):
+            status = remote_k3s_image_import_cli._import_archive_once(target, "/tmp/local-image.tar")
+
+        self.assertEqual(status, 0)
+        self.assertEqual(len(calls), 3)
+        self.assertIn("sudo -n k3s ctr -n k8s.io images ls -q", shell_join(calls[1]))
+        self.assertIn("sudo -n k3s ctr -n k8s.io images import", shell_join(calls[2]))
+        self.assertNotIn("ssh -tt", shell_join(calls[2]))
+
+    def test_auto_import_uses_interactive_fallback_only_when_tty_is_available(self):
+        target = remote_k3s_image_import_target(
+            {
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
+                "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_COMMAND": "sudo -n k3s ctr -n k8s.io images import",
+                "VM_COMPONENTS_SSH_HOST": "pionera40",
+                "VM_COMPONENTS_SSH_USER": "pionera",
+            },
+            role="components",
+        )
+        calls = []
+
+        def fake_run(args, **_kwargs):
+            calls.append(args)
+            return 1 if len(calls) == 2 else 0
+
+        with mock.patch.object(remote_k3s_image_import_cli, "_run", side_effect=fake_run), mock.patch.object(
+            remote_k3s_image_import_cli,
+            "_interactive_fallback_allowed",
+            return_value=True,
+        ):
+            status = remote_k3s_image_import_cli._import_archive_once(target, "/tmp/local-image.tar")
+
+        self.assertEqual(status, 0)
+        self.assertEqual(len(calls), 3)
+        self.assertIn("ssh -tt", shell_join(calls[2]))
+        self.assertIn("sudo k3s ctr -n k8s.io images import", shell_join(calls[2]))
+        self.assertNotIn("sudo -n k3s ctr -n k8s.io images import", shell_join(calls[2]))
 
     def test_target_renders_remote_probe_command_with_same_ssh_path(self):
         target = remote_k3s_image_import_target(

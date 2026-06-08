@@ -12,16 +12,28 @@ import os
 import subprocess
 import sys
 
-from remote_k3s_images import (
-    DEFAULT_REMOTE_IMAGE_IMPORT_COMMAND,
-    DEFAULT_REMOTE_IMAGE_IMPORT_DIR,
-    INTERACTIVE_ALWAYS,
-    INTERACTIVE_AUTO,
-    INTERACTIVE_NEVER,
-    RemoteK3sImageImportTarget,
-    parse_bool,
-    parse_interactive_mode,
-)
+try:
+    from .remote_k3s_images import (
+        DEFAULT_REMOTE_IMAGE_IMPORT_COMMAND,
+        DEFAULT_REMOTE_IMAGE_IMPORT_DIR,
+        INTERACTIVE_ALWAYS,
+        INTERACTIVE_AUTO,
+        INTERACTIVE_NEVER,
+        RemoteK3sImageImportTarget,
+        parse_bool,
+        parse_interactive_mode,
+    )
+except ImportError:
+    from remote_k3s_images import (
+        DEFAULT_REMOTE_IMAGE_IMPORT_COMMAND,
+        DEFAULT_REMOTE_IMAGE_IMPORT_DIR,
+        INTERACTIVE_ALWAYS,
+        INTERACTIVE_AUTO,
+        INTERACTIVE_NEVER,
+        RemoteK3sImageImportTarget,
+        parse_bool,
+        parse_interactive_mode,
+    )
 
 
 def _env(name: str, default: str = "") -> str:
@@ -73,6 +85,10 @@ def _run(args: list[str], *, input_text: str | None = None) -> int:
     return subprocess.run(args, input=input_text, text=input_text is not None, check=False).returncode
 
 
+def _interactive_fallback_allowed() -> bool:
+    return bool(sys.stdin.isatty() and sys.stdout.isatty())
+
+
 def _remote_image_present(target: RemoteK3sImageImportTarget, image_ref: str) -> bool:
     if not str(image_ref or "").strip():
         return True
@@ -114,6 +130,16 @@ def _import_archive_once(target: RemoteK3sImageImportTarget, archive: str) -> in
 
         probe_status = _run(target.ssh_sudo_probe_args())
         if probe_status == 0:
+            return _run(target.ssh_import_args(remote_archive))
+
+        if not _interactive_fallback_allowed():
+            print(
+                "Remote k3s image import needs sudo password, but this run is non-interactive. "
+                "Set K3S_REMOTE_IMPORT_SUDO_PASSWORD, PIONERA_REMOTE_SUDO_PASSWORD or PIONERA_SUDO_PASSWORD, "
+                "or configure passwordless sudo for the remote k3s image import command.",
+                file=sys.stderr,
+                flush=True,
+            )
             return _run(target.ssh_import_args(remote_archive))
 
         print(
