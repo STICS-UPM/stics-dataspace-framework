@@ -2479,7 +2479,7 @@ class INESDataInfrastructureAdapter:
         alias_paths = self._public_root_alias_paths(
             config,
             "MINIO_CONSOLE_PUBLIC_ROOT_ALIASES",
-            "/api,/static,/ws,/browser,/login,/oauth,/screens,/favicon.ico,/manifest.json",
+            "/api,/static,/styles,/images,/ws,/browser,/login,/oauth,/screens,/Loader.svg,/favicon.ico,/manifest.json",
         )
         if not alias_paths:
             return None

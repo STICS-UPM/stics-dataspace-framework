@@ -36,6 +36,7 @@ from deployers.infrastructure.lib.config_loader import (  # noqa: E402
 )
 from deployers.infrastructure.lib.topology import normalize_topology  # noqa: E402
 from deployers.shared.lib.vm_distributed_public_access import (  # noqa: E402
+    is_vm_public_placeholder_url,
     resolve_vm_distributed_public_urls,
 )
 
@@ -231,6 +232,27 @@ def connector_short_name_for_public_path(connector: str, dataspace: str) -> str:
     return short_name
 
 
+def split_config_list(raw_value: str | None) -> list[str]:
+    return [
+        item.strip()
+        for item in str(raw_value or "").split(",")
+        if item.strip()
+    ]
+
+
+def connector_matches_configured_name(connector: str, dataspace: str, configured_name: str) -> bool:
+    configured = str(configured_name or "").strip()
+    if not configured:
+        return False
+    aliases = {
+        str(connector or "").strip(),
+        connector_short_name_for_public_path(connector, dataspace),
+    }
+    if not configured.startswith("conn-") and dataspace:
+        aliases.add(f"conn-{configured}-{dataspace}")
+    return configured in aliases
+
+
 def vm_single_connector_public_path_prefix(config: dict[str, str]) -> str:
     prefix = str((config or {}).get("VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX") or "/c").strip()
     if not prefix:
@@ -240,15 +262,50 @@ def vm_single_connector_public_path_prefix(config: dict[str, str]) -> str:
     return prefix.rstrip("/")
 
 
+def vm_distributed_connector_public_path_prefix(config: dict[str, str]) -> str:
+    for key in (
+        "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX",
+        "VM_DISTRIBUTED_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+        "EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+    ):
+        prefix = str((config or {}).get(key) or "").strip()
+        if not prefix:
+            continue
+        if prefix in {"/", ".", "root"}:
+            return ""
+        if not prefix.startswith("/"):
+            prefix = f"/{prefix}"
+        return prefix.rstrip("/")
+    return "/edc"
+
+
 def connector_public_base_url(config: dict[str, str], connector: str, dataspace: str) -> str:
     topology = active_public_topology(config)
-    if topology != "vm-single":
-        return ""
-    common_base = vm_public_common_base_url(config)
-    short_name = connector_short_name_for_public_path(connector, dataspace)
-    if not common_base or not short_name:
-        return ""
-    return f"{common_base}{vm_single_connector_public_path_prefix(config)}/{short_name}"
+    public_urls = resolve_vm_distributed_public_urls(
+        {
+            **dict(config or {}),
+            "TOPOLOGY": topology,
+        }
+    )
+
+    if topology == "vm-single":
+        common_base = vm_public_common_base_url(config)
+        short_name = connector_short_name_for_public_path(connector, dataspace)
+        if common_base and short_name:
+            return f"{common_base}{vm_single_connector_public_path_prefix(config)}/{short_name}"
+
+    role_options = (
+        ("VM_PROVIDER_CONNECTORS", "VM_PROVIDER_PUBLIC_URL", "VM_PROVIDER_HTTP_URL"),
+        ("VM_CONSUMER_CONNECTORS", "VM_CONSUMER_PUBLIC_URL", "VM_CONSUMER_HTTP_URL"),
+    )
+    for connectors_key, public_url_key, fallback_url_key in role_options:
+        for configured_connector in split_config_list(config.get(connectors_key)):
+            if connector_matches_configured_name(connector, dataspace, configured_connector):
+                for key in (public_url_key, fallback_url_key):
+                    value = normalize_public_url(config.get(key) or public_urls.get(key))
+                    if value and not is_vm_public_placeholder_url(value):
+                        return value
+    return ""
 
 
 def build_connector_public_access_urls(
@@ -261,14 +318,19 @@ def build_connector_public_access_urls(
     urls: dict[str, str] = {}
     connector_base = connector_public_base_url(config, connector, dataspace)
     if connector_base:
+        connector_api_base = connector_base
+        if active_public_topology(config) == "vm-distributed":
+            public_path_prefix = vm_distributed_connector_public_path_prefix(config)
+            if public_path_prefix:
+                connector_api_base = f"{connector_base}{public_path_prefix}"
         urls.update(
             {
                 "connector_ingress": connector_base,
-                "connector_management_api": f"{connector_base}/management",
-                "connector_management_api_v3": f"{connector_base}/management/v3",
-                "connector_protocol_api": f"{connector_base}/protocol",
-                "connector_default_api": f"{connector_base}/api",
-                "connector_control_api": f"{connector_base}/control",
+                "connector_management_api": f"{connector_api_base}/management",
+                "connector_management_api_v3": f"{connector_api_base}/management/v3",
+                "connector_protocol_api": f"{connector_api_base}/protocol",
+                "connector_default_api": f"{connector_api_base}/api",
+                "connector_control_api": f"{connector_api_base}/control",
                 "minio_bucket": f"{dataspace}-{connector}",
             }
         )

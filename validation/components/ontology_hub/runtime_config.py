@@ -219,7 +219,54 @@ def _resolve_release_name(
     if component_dataspace:
         return f"{component_dataspace}-ontology-hub"
 
+    component_dataspace = _shared_component_dataspace_name(environ, deployer_config, dataspace)
+    if component_dataspace:
+        return f"{component_dataspace}-ontology-hub"
+
     return f"{dataspace}-ontology-hub"
+
+
+def _base_dataspace_name(dataspace: str) -> str:
+    resolved = str(dataspace or "").strip()
+    for suffix in ("-edc", "_edc"):
+        if resolved.lower().endswith(suffix):
+            return resolved[: -len(suffix)] or resolved
+    return resolved
+
+
+def _shared_component_dataspace_name(
+    environ: Mapping[str, str],
+    deployer_config: Mapping[str, str],
+    dataspace: str,
+) -> str:
+    adapter = _first_configured_value(environ, deployer_config, "PIONERA_ADAPTER", "UI_ADAPTER").lower()
+    if adapter != "edc":
+        return ""
+
+    scope = _first_configured_value(environ, deployer_config, "COMPONENTS_RELEASE_SCOPE").lower() or "auto"
+    if scope in {"dataspace", "adapter", "per-adapter", "adapter-dataspace"}:
+        return ""
+    if scope in {"shared", "base", "common", "common-dataspace"}:
+        return _base_dataspace_name(dataspace)
+
+    raw_components = (
+        _first_configured_value(environ, deployer_config, "COMPONENTS_SHARED_RELEASE_COMPONENTS")
+        or "ontology-hub,ai-model-hub,semantic-virtualization"
+    ).strip()
+    lowered = raw_components.lower()
+    if lowered in {"", "none", "false", "no", "0"}:
+        return ""
+    if lowered in {"*", "all"}:
+        return _base_dataspace_name(dataspace)
+
+    configured = {
+        token.strip().lower().replace("_", "-")
+        for token in raw_components.split(",")
+        if token.strip()
+    }
+    if "ontology-hub" in configured:
+        return _base_dataspace_name(dataspace)
+    return ""
 
 
 def resolve_ontology_hub_runtime(

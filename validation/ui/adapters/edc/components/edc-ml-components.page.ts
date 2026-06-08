@@ -1,4 +1,4 @@
-import { expect, Page } from "@playwright/test";
+import { expect, Page, Route } from "@playwright/test";
 
 import { checkMarked, clickMarked, fillMarked, selectOptionMarked } from "../../../shared/utils/live-marker";
 import {
@@ -60,6 +60,85 @@ export class EdcMlAssetsPage {
     throw new Error(`EDC ML Assets did not render asset ${assetId} within ${timeoutMs}ms`);
   }
 
+  async requestCatalogManually(
+    counterPartyAddress: string,
+    counterPartyId?: string,
+    catalogResponseBody?: unknown,
+  ): Promise<void> {
+    const managementRoutePattern = "**/management/v3/catalog/request*";
+    const routeHandler = async (route: Route) => {
+      if (catalogResponseBody !== undefined) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(catalogResponseBody),
+        });
+        return;
+      }
+
+      const originalRequest = route.request();
+      const payload = JSON.parse(originalRequest.postData() || "{}");
+      payload["@context"] = payload["@context"] || {
+        "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+      };
+      payload["@type"] = payload["@type"] || "CatalogRequest";
+      payload.counterPartyAddress = counterPartyAddress;
+      payload.protocol = payload.protocol || "dataspace-protocol-http";
+      payload.querySpec = payload.querySpec || {
+        offset: 0,
+        limit: 100,
+        filterExpression: [],
+      };
+      if (counterPartyId) {
+        payload.counterPartyId = counterPartyId;
+      }
+
+      await route.continue({
+        postData: JSON.stringify(payload),
+        headers: {
+          ...originalRequest.headers(),
+          "content-type": "application/json",
+        },
+      });
+    };
+
+    await this.page.route(managementRoutePattern, routeHandler);
+    const responsePromise = this.page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        (
+          response.url().includes("/management/v3/catalog/request") ||
+          response.url().includes("/api/filter/catalog")
+        ),
+      { timeout: 45_000 },
+    );
+
+    try {
+      await clickMarked(
+        this.page.locator("lib-catalog-request .btn, .btn").filter({ hasText: /request manually/i }).first(),
+      );
+      const dialog = this.openDialog();
+      await expect(dialog.getByRole("button", { name: /request catalog/i })).toBeVisible({
+        timeout: 30_000,
+      });
+      const counterPartyIdInput = dialog.locator('input[name="counterPartyId"]').first();
+      if (counterPartyId && (await counterPartyIdInput.count().catch(() => 0)) > 0) {
+        await fillMarked(counterPartyIdInput, counterPartyId);
+      }
+      await fillMarked(dialog.locator('input[name="counterPartyAddress"]'), counterPartyAddress);
+      await clickMarked(dialog.getByRole("button", { name: /request catalog/i }));
+
+      const response = await responsePromise;
+      expect(
+        response.ok(),
+        `ML Assets catalog request returned HTTP ${response.status()} for counterPartyAddress ${counterPartyAddress}`,
+      ).toBeTruthy();
+      await waitForUiTransition(this.page);
+    } finally {
+      await this.page.unroute(managementRoutePattern, routeHandler);
+    }
+  }
+
   async expectAssetHidden(assetId: string): Promise<void> {
     await expect(this.assetCard(assetId)).not.toBeVisible({ timeout: 5_000 });
   }
@@ -79,6 +158,10 @@ export class EdcMlAssetsPage {
 
   private searchInput() {
     return this.page.locator("input[placeholder*='Search model assets']").first();
+  }
+
+  private openDialog() {
+    return this.page.locator("dialog[open]#dashboard-dialog").first();
   }
 
   private assetCard(assetId: string) {

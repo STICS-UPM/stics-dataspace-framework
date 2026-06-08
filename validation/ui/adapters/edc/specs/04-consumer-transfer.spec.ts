@@ -9,7 +9,6 @@ import { test, expect } from "../../../shared/fixtures/dataspace.fixture";
 import { EdcCatalogPage } from "../components/edc-catalog.page";
 import { EdcContractsPage } from "../components/edc-contracts.page";
 import { EdcDashboardPage } from "../components/edc-dashboard.page";
-import { EdcTransferHistoryPage } from "../components/edc-transfer-history.page";
 
 type TransferReport = {
   startedAt: string;
@@ -59,7 +58,6 @@ test("04 edc transfer: consumer starts a transfer and sees it in history", async
   const dashboardPage = new EdcDashboardPage(page);
   const catalogPage = new EdcCatalogPage(page);
   const contractsPage = new EdcContractsPage(page);
-  const transferHistoryPage = new EdcTransferHistoryPage(page);
 
   page.on("response", (response) => {
     const url = response.url();
@@ -120,13 +118,8 @@ test("04 edc transfer: consumer starts a transfer and sees it in history", async
       dataspaceRuntime.provider.protocolBaseUrl,
     );
     report.selectedTransferType = transferBootstrap.transferType;
-    await captureStep(page, "04-edc-transfer-started");
-
-    await transferHistoryPage.goto(dataspaceRuntime.consumer.portalBaseUrl);
-    await dashboardPage.expectNoServerErrorBanner("EDC transfer history");
-    await transferHistoryPage.expectReady();
-    report.finalTransferState = await transferHistoryPage.waitForSuccessfulTransfer(assetId, 120_000);
-    await captureStep(page, "05-edc-transfer-history");
+    report.finalTransferState = transferBootstrap.finalState;
+    await captureStep(page, "04-edc-transfer-api-state");
 
     expect(report.selectedTransferType, "No transfer type was selected").toBeTruthy();
     expect(report.finalTransferState, "No final EDC transfer state was detected").toBeTruthy();

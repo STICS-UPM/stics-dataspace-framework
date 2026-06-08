@@ -14,9 +14,15 @@ connector:
     configFilePath: /opt/connector/config/connector-configuration.properties
   sql:
     schemaAutocreate: {{ keys.edc_sql_schema_autocreate | default(true) }}
+  inference:
+    edrAttempts: {{ keys.edc_inference_edr_attempts | default(40) }}
+    edrDelayMs: {{ keys.edc_inference_edr_delay_ms | default(1000) }}
   ingress:
     hostname: {{ keys.connector_name }}.{% if keys.environment == 'PRO' %}ds.dataspaceunit-project.eu{% else %}{{ keys.ds_domain_base }}{% endif %}
     protocol: {{ 'https' if keys.environment == 'PRO' else 'http' }}
+  public:
+    protocolUrl: {{ (keys.connector_public_protocol_url | default('', true)) | tojson }}
+    publicUrl: {{ (keys.connector_public_public_url | default('', true)) | tojson }}
   minio:
     accesskey: {{ keys.dataspace_name }}/{{ keys.connector_name }}/aws-access-key
     secretkey: {{ keys.dataspace_name }}/{{ keys.connector_name }}/aws-secret-key
@@ -81,6 +87,7 @@ dashboard:
 services:
   db:
     hostname: {{ keys.database_hostname }}
+    port: {{ keys.database_port | default(5432) }}
     name: {{ keys.database.name }}
     user: {{ keys.database.user }}
     password: {{ keys.database.passwd }}

@@ -79,6 +79,12 @@ spec:
               value: {{ .Values.connector.configuration.configFilePath | quote }}
             - name: JAVA_TOOL_OPTIONS
               value: {{ .Values.connector.jvmArgs | quote }}
+            {{- with .Values.connector.inference }}
+            - name: EDC_INFERENCE_EDR_ATTEMPTS
+              value: {{ .edrAttempts | default 40 | quote }}
+            - name: EDC_INFERENCE_EDR_DELAY_MS
+              value: {{ .edrDelayMs | default 1000 | quote }}
+            {{- end }}
             {{- with .Values.connector.ontologyHub }}
             {{- with .externalBase }}
             - name: ONTOLOGY_HUB_EXTERNAL_BASE

@@ -127,18 +127,121 @@ class ValidationEngine:
         return keycloak_url.rstrip("/")
 
     @staticmethod
-    def _connector_public_base_url(credentials):
+    def _normalize_url(value):
+        url = str(value or "").strip()
+        if not url:
+            return ""
+        if not url.startswith(("http://", "https://")):
+            url = f"http://{url}"
+        return url.rstrip("/")
+
+    @classmethod
+    def _connector_public_base_url(cls, credentials):
         if not isinstance(credentials, dict):
             return ""
         public_urls = credentials.get("public_access_urls") or {}
         if not isinstance(public_urls, dict):
             return ""
-        connector_url = str(public_urls.get("connector_ingress") or "").strip()
-        if not connector_url:
+
+        for key, suffixes in (
+            ("connector_management_api_v3", ("/management/v3",)),
+            ("connector_management_api", ("/management",)),
+        ):
+            url = cls._normalize_url(public_urls.get(key))
+            lowered = url.lower()
+            for suffix in suffixes:
+                if lowered.endswith(suffix):
+                    return url[: -len(suffix)].rstrip("/")
+
+        return cls._normalize_url(public_urls.get("connector_ingress"))
+
+    @classmethod
+    def _connector_public_protocol_url(cls, credentials):
+        if not isinstance(credentials, dict):
             return ""
-        if not connector_url.startswith(("http://", "https://")):
-            connector_url = f"http://{connector_url}"
-        return connector_url.rstrip("/")
+        public_urls = credentials.get("public_access_urls") or {}
+        if not isinstance(public_urls, dict):
+            return ""
+        return cls._normalize_url(public_urls.get("connector_protocol_api"))
+
+    @staticmethod
+    def _normalized_topology(config):
+        return (
+            os.environ.get("PIONERA_TOPOLOGY")
+            or os.environ.get("TOPOLOGY")
+            or config.get("PIONERA_TOPOLOGY")
+            or config.get("TOPOLOGY")
+            or ""
+        ).strip().lower().replace("_", "-")
+
+    @classmethod
+    def _edc_vm_distributed_public_path_prefix(cls, config):
+        for key in (
+            "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "VM_DISTRIBUTED_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+        ):
+            value = str(config.get(key) or "").strip()
+            if not value:
+                continue
+            if value in {"/", ".", "root"}:
+                return ""
+            return f"/{value.strip('/')}"
+        return "/edc"
+
+    @classmethod
+    def _edc_vm_distributed_role_public_base_url(cls, config, role):
+        if cls._normalized_topology(config) != "vm-distributed":
+            return ""
+        role_key = str(role or "").strip().lower()
+        if role_key == "provider":
+            base_url = (
+                config.get("VM_PROVIDER_PUBLIC_URL")
+                or config.get("VM_PROVIDER_HTTP_URL")
+                or config.get("PROVIDER_PUBLIC_URL")
+                or ""
+            )
+        elif role_key == "consumer":
+            base_url = (
+                config.get("VM_CONSUMER_PUBLIC_URL")
+                or config.get("VM_CONSUMER_HTTP_URL")
+                or config.get("CONSUMER_PUBLIC_URL")
+                or ""
+            )
+        else:
+            return ""
+
+        normalized_base = cls._normalize_url(base_url)
+        if not normalized_base:
+            return ""
+        prefix = cls._edc_vm_distributed_public_path_prefix(config)
+        if prefix and normalized_base.lower().endswith(prefix.lower()):
+            return normalized_base
+        return f"{normalized_base}{prefix}"
+
+    @classmethod
+    def _edc_vm_distributed_public_base_url(cls, config, role, current_base_url=""):
+        if cls._normalized_topology(config) != "vm-distributed":
+            return current_base_url
+        normalized_base = cls._normalize_url(current_base_url)
+        if not normalized_base:
+            return cls._edc_vm_distributed_role_public_base_url(config, role)
+        prefix = cls._edc_vm_distributed_public_path_prefix(config)
+        if prefix and not normalized_base.lower().endswith(prefix.lower()):
+            return f"{normalized_base}{prefix}"
+        return normalized_base
+
+    @classmethod
+    def _edc_public_protocol_address(cls, config, role, credentials, public_base_url):
+        public_protocol = cls._connector_public_protocol_url(credentials)
+        if public_protocol:
+            return public_protocol
+        if cls._normalized_topology(config) != "vm-distributed":
+            return ""
+        public_base = cls._edc_vm_distributed_public_base_url(config, role, public_base_url)
+        if not public_base:
+            return ""
+        return f"{public_base.rstrip('/')}/protocol"
 
     def build_newman_env(self, provider, consumer):
         """Build Newman environment variables for dataspace validation."""
@@ -221,6 +324,33 @@ class ValidationEngine:
         }
         provider_base_url = self._connector_public_base_url(provider_creds)
         consumer_base_url = self._connector_public_base_url(consumer_creds)
+        if adapter_name == "edc":
+            provider_base_url = self._edc_vm_distributed_public_base_url(
+                config,
+                "provider",
+                provider_base_url,
+            )
+            consumer_base_url = self._edc_vm_distributed_public_base_url(
+                config,
+                "consumer",
+                consumer_base_url,
+            )
+            provider_protocol_url = self._edc_public_protocol_address(
+                config,
+                "provider",
+                provider_creds,
+                provider_base_url,
+            )
+            consumer_protocol_url = self._edc_public_protocol_address(
+                config,
+                "consumer",
+                consumer_creds,
+                consumer_base_url,
+            )
+            if provider_protocol_url:
+                env["providerProtocolAddress"] = provider_protocol_url
+            if consumer_protocol_url:
+                env["consumerProtocolAddress"] = consumer_protocol_url
         if provider_base_url:
             env["providerBaseUrl"] = provider_base_url
         if consumer_base_url:
@@ -334,6 +464,13 @@ class ValidationEngine:
         print("\n========================================")
         print("DATASPACE INTEROPERABILITY TESTS")
         print("========================================\n")
+
+        if len(list(connectors or [])) < 2:
+            resolved = ", ".join(connectors or []) or "none"
+            raise ValueError(
+                "Newman dataspace interoperability validation requires at least two connectors. "
+                f"Resolved connectors: {resolved}"
+            )
 
         pairs = list(permutations(connectors, 2))
         exported_reports = []

@@ -113,6 +113,10 @@ test("09 edc AI Model Hub HttpData: visible model discovery and negotiation", as
     await mlAssetsPage.goto(dataspaceRuntime.consumer.portalBaseUrl);
     await dashboardPage.expectNoServerErrorBanner("EDC AI Model Hub browser");
     await mlAssetsPage.expectReady();
+    await mlAssetsPage.requestCatalogManually(
+      dataspaceRuntime.provider.protocolBaseUrl,
+      dataspaceRuntime.provider.connectorName,
+    );
     await mlAssetsPage.waitForAssetVisible(assetId, 120_000);
     await captureStep(page, "02-edc-ai-model-hub-browser");
 

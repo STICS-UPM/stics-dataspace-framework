@@ -31,6 +31,19 @@ function versionForCase(label, issued) {
   };
 }
 
+function withUniqueUriFragment(baseUri, fragment) {
+  const normalizedBase = String(baseUri || "").trim().replace(/#.*$/, "");
+  const normalizedFragment = String(fragment || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._:-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!normalizedBase || !normalizedFragment) {
+    return normalizedBase;
+  }
+  return `${normalizedBase}#${normalizedFragment}`;
+}
+
 const POST_VERSION_CRASH_RECOVERY_TIMEOUT_MS = 360000;
 const POST_VERSION_CRASH_TEST_TIMEOUT_MS = POST_VERSION_CRASH_RECOVERY_TIMEOUT_MS + 60000;
 
@@ -125,12 +138,18 @@ test("OH-APP-11: add a new ontology version", async ({
   attachJson,
 }, testInfo) => {
   test.setTimeout(300000);
-  const versionRuntime = buildVocabularyRuntime(ontologyHubRuntime, "OH-APP-11", testInfo, {
-    creationUri: ontologyHubRuntime.versionCreationUri || "https://saref.etsi.org/saref4city/v1.1.2/",
+  const versionCreationUri =
+    ontologyHubRuntime.versionCreationUri || "https://saref.etsi.org/saref4city/v1.1.2/";
+  const versionRuntimeBase = buildVocabularyRuntime(ontologyHubRuntime, "OH-APP-11", testInfo, {
+    creationUri: versionCreationUri,
     creationNamespace: ontologyHubRuntime.versionCreationNamespace || "https://saref.etsi.org/saref4city/",
     creationTag: "Services",
     creationReview: "Admin",
   });
+  const versionRuntime = {
+    ...versionRuntimeBase,
+    creationUri: withUniqueUriFragment(versionCreationUri, versionRuntimeBase.creationPrefix),
+  };
   const created = {
     ...(await createVocabularyByUri(page, versionRuntime)),
     catalogLabel: versionRuntime.creationTitle,

@@ -14,6 +14,9 @@ const FLARES_DATASET_DIR = path.resolve(
 );
 const FLARES_TRIAL_FILE = "5w1h_subtask_2_trial.json";
 const FLARES_TEST_FILE = "5w1h_subtarea_2_test.json";
+const EDC_NAMESPACE = "https://w3id.org/edc/v0.0.1/ns/";
+const DAIMO_NAMESPACE = "https://w3id.org/daimo/0.0.1/ns#";
+const LEGACY_DAIMO_NAMESPACE = "https://pionera.ai/edc/daimo#";
 
 function readJson(filePath) {
   const raw = fs.readFileSync(filePath, "utf8");
@@ -52,6 +55,14 @@ function joinUrl(baseUrl, routePath) {
 
 function isEdcAdapter(runtime) {
   return String(runtime?.adapterName || "").trim().toLowerCase() === "edc";
+}
+
+function edcStorageMetadata(dataAddressType = "HttpData") {
+  return {
+    storageType: dataAddressType,
+    "edc:dataAddressType": dataAddressType,
+    [`${EDC_NAMESPACE}dataAddressType`]: dataAddressType,
+  };
 }
 
 function ensureArrayRecords(records, label) {
@@ -274,6 +285,8 @@ async function findProviderAssetById(request, runtime, assetId) {
 
 function buildFlaresDatasetAssetDocument(fixture, runtime, overrides = {}) {
   const publication = fixture.metadata.assetPublication || {};
+  const edcAdapter = isEdcAdapter(runtime);
+  const edcDataAddressType = publication.dataAddressType || "HttpData";
   const assetId = overrides.assetId || publication.assetId;
   const displayName = overrides.assetName || fixture.metadata.datasetName;
   const description = overrides.description || publication.description;
@@ -294,10 +307,11 @@ function buildFlaresDatasetAssetDocument(fixture, runtime, overrides = {}) {
 
   return {
     "@context": {
-      "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+      "@vocab": EDC_NAMESPACE,
+      edc: EDC_NAMESPACE,
       dct: "http://purl.org/dc/terms/",
       dcat: "http://www.w3.org/ns/dcat#",
-      daimo: "https://pionera.ai/edc/daimo#",
+      daimo: edcAdapter ? DAIMO_NAMESPACE : LEGACY_DAIMO_NAMESPACE,
     },
     "@id": assetId,
     "@type": "Asset",
@@ -306,29 +320,43 @@ function buildFlaresDatasetAssetDocument(fixture, runtime, overrides = {}) {
       version: fixture.metadata.version,
       shortDescription: description,
       assetType: "dataset",
+      assetData: {},
+      "asset:prop:type": "dataset",
       contenttype: publication.uploadMediaType || runtime.modelContentType || "application/json",
       "dct:description": description,
       "dct:language": fixture.metadata.language,
       "dct:license": fixture.metadata.source && fixture.metadata.source.license,
       "dcat:keyword": keywords,
+      ...(edcAdapter ? edcStorageMetadata(edcDataAddressType) : {}),
       "daimo:tags": keywords,
+      [`${LEGACY_DAIMO_NAMESPACE}tags`]: keywords,
       "daimo:domain": fixture.metadata.domain,
+      [`${DAIMO_NAMESPACE}domain`]: fixture.metadata.domain,
+      [`${LEGACY_DAIMO_NAMESPACE}domain`]: fixture.metadata.domain,
       "daimo:task": fixture.metadata.task,
+      [`${DAIMO_NAMESPACE}task`]: fixture.metadata.task,
+      [`${LEGACY_DAIMO_NAMESPACE}task`]: fixture.metadata.task,
       "daimo:subtask": ["5w1h-reliability-classification"],
+      [`${DAIMO_NAMESPACE}subtask`]: ["5w1h-reliability-classification"],
+      [`${LEGACY_DAIMO_NAMESPACE}subtask`]: ["5w1h-reliability-classification"],
       "daimo:language": [fixture.metadata.language],
+      [`${LEGACY_DAIMO_NAMESPACE}language`]: [fixture.metadata.language],
       "daimo:source_name": fixture.metadata.source && fixture.metadata.source.name,
       "daimo:benchmark_dataset": benchmarkRows,
+      [`${LEGACY_DAIMO_NAMESPACE}benchmark_dataset`]: benchmarkRows,
       "daimo:benchmark_dataset_mapping": benchmarkMapping,
+      [`${LEGACY_DAIMO_NAMESPACE}benchmark_dataset_mapping`]: benchmarkMapping,
     },
-    dataAddress: isEdcAdapter(runtime)
+    dataAddress: edcAdapter
       ? {
-          type: publication.dataAddressType || "HttpData",
+          type: edcDataAddressType,
           baseUrl:
             overrides.baseUrl ||
             publication.baseUrl ||
             joinUrl(runtime.providerDefaultUrl, `/datasets/${assetId}`),
           method: "GET",
           name: "flares-provider-dataset",
+          proxyPath: "true",
         }
       : {
           type: publication.dataAddressType || "InesDataStore",

@@ -376,6 +376,53 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
             self.assertNotIn(f"{city_prefix}_PROTOCOL_URL", env)
             self.assertEqual(env["UI_CONNECTOR_PROTOCOL_ADDRESS_MODE"], "internal")
 
+    def test_playwright_validation_exports_vm_distributed_edc_role_public_connector_urls(self):
+        context = self._context()
+        context.deployer = "edc"
+        context.topology = "vm-distributed"
+        context.dataspace_name = "pionera-edc"
+        context.connectors = [
+            "conn-citycounciledc-pionera-edc",
+            "conn-companyedc-pionera-edc",
+        ]
+        context.config.update(
+            {
+                "VM_COMMON_PUBLIC_URL": "https://org1.pionera.oeg.fi.upm.es",
+                "VM_PROVIDER_PUBLIC_URL": "https://org2.pionera.oeg.fi.upm.es",
+                "VM_CONSUMER_PUBLIC_URL": "https://org3.pionera.oeg.fi.upm.es",
+                "VM_PROVIDER_CONNECTORS": "citycounciledc",
+                "VM_CONSUMER_CONNECTORS": "companyedc",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                "EDC_DASHBOARD_ENABLED": "true",
+                "EDC_DASHBOARD_BASE_HREF": "/edc-dashboard/",
+                "EDC_DASHBOARD_PROXY_AUTH_MODE": "oidc-bff",
+                "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX": "/edc",
+                "CONNECTOR_PROTOCOL_ADDRESS_MODE": "internal",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            ui_runner.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0),
+        ) as subprocess_run:
+            ui_runner.run_playwright_validation(
+                profile=self._edc_profile(),
+                context=context,
+                experiment_dir=tmpdir,
+            )
+
+            env = subprocess_run.call_args.kwargs["env"]
+            city_prefix = "UI_CONN_CITYCOUNCILEDC_PIONERA_EDC"
+            company_prefix = "UI_CONN_COMPANYEDC_PIONERA_EDC"
+            self.assertEqual(env[f"{city_prefix}_PORTAL_URL"], "https://org2.pionera.oeg.fi.upm.es/edc-dashboard/")
+            self.assertEqual(env[f"{city_prefix}_MANAGEMENT_URL"], "https://org2.pionera.oeg.fi.upm.es/edc/management/v3")
+            self.assertEqual(env[f"{city_prefix}_PROTOCOL_URL"], "https://org2.pionera.oeg.fi.upm.es/edc/protocol")
+            self.assertEqual(env[f"{company_prefix}_PORTAL_URL"], "https://org3.pionera.oeg.fi.upm.es/edc-dashboard/")
+            self.assertEqual(env[f"{company_prefix}_MANAGEMENT_URL"], "https://org3.pionera.oeg.fi.upm.es/edc/management/v3")
+            self.assertEqual(env[f"{company_prefix}_PROTOCOL_URL"], "https://org3.pionera.oeg.fi.upm.es/edc/protocol")
+            self.assertEqual(env["UI_CONNECTOR_PROTOCOL_ADDRESS_MODE"], "public")
+
     def test_playwright_validation_exports_active_runtime_dir(self):
         context = self._context()
         context.topology = "vm-single"
@@ -424,10 +471,10 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
             self.assertEqual(env["UI_TOPOLOGY"], "vm-distributed")
             self.assertEqual(env["UI_COMPONENTS_NAMESPACE"], "components")
             self.assertEqual(env["UI_CONNECTOR_PROTOCOL_ADDRESS_MODE"], "internal")
-            self.assertEqual(env["AI_MODEL_HUB_MODEL_SERVER_BASE_URL"], "http://org1.example.test/model-server")
+            self.assertEqual(env["AI_MODEL_HUB_MODEL_SERVER_BASE_URL"], "https://org1.example.test/model-server")
             self.assertEqual(
                 env["AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL"],
-                "http://org1.example.test/model-server",
+                "https://org1.example.test/model-server",
             )
 
     def test_playwright_validation_respects_explicit_connector_model_server_route(self):

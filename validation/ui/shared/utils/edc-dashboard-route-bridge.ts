@@ -1,5 +1,5 @@
 import { request as playwrightRequest } from "@playwright/test";
-import type { APIRequestContext, Page, Route } from "@playwright/test";
+import type { APIRequestContext, APIResponse, Page, Route } from "@playwright/test";
 
 import type {
   ConnectorPortalRuntime,
@@ -369,6 +369,19 @@ async function passThroughRoute(route: Route): Promise<void> {
   await route.continue();
 }
 
+function isDisposedRouteBridgeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Request context disposed|Target page, context or browser has been closed|Browser has been closed/i.test(message);
+}
+
+async function abortLateRoute(route: Route): Promise<void> {
+  try {
+    await route.abort("failed");
+  } catch {
+    // The route can already be detached while Playwright is closing the page/context.
+  }
+}
+
 export async function installEdcDashboardRouteBridge(
   page: Page,
   runtime: DataspacePortalRuntime,
@@ -379,8 +392,14 @@ export async function installEdcDashboardRouteBridge(
 
   const bridgeRequest = await playwrightRequest.newContext();
   const tokenCache: TokenCache = new Map();
+  let disposed = false;
 
   const routeHandler = async (route: Route) => {
+    if (disposed || page.isClosed()) {
+      await abortLateRoute(route);
+      return;
+    }
+
     const requestUrl = new URL(route.request().url());
     const segments = dashboardConnectorProxySegments(requestUrl.pathname);
     const [connectorName, serviceName, ...restSegments] = segments;
@@ -424,20 +443,38 @@ export async function installEdcDashboardRouteBridge(
       return;
     }
 
-    const bearerToken = serviceName === "management"
-      ? await issueConnectorToken(bridgeRequest, runtime, connector, tokenCache)
-      : undefined;
+    let bearerToken: string | undefined;
+    try {
+      bearerToken = serviceName === "management"
+        ? await issueConnectorToken(bridgeRequest, runtime, connector, tokenCache)
+        : undefined;
+    } catch (error) {
+      if (disposed || page.isClosed() || isDisposedRouteBridgeError(error)) {
+        await abortLateRoute(route);
+        return;
+      }
+      throw error;
+    }
 
     const targetUrlWithQuery = requestUrl.search
       ? `${targetUrl}${requestUrl.search}`
       : targetUrl;
 
     const upstreamTarget = ingressProxyTarget(targetUrlWithQuery);
-    const upstreamResponse = await bridgeRequest.fetch(upstreamTarget.url, {
-      method: route.request().method(),
-      headers: filteredHeaders(route, bearerToken, upstreamTarget.hostHeader),
-      data: normalizedCatalogRequestData(route, runtime, connectorName, serviceName, remainingPath),
-    });
+    let upstreamResponse: APIResponse;
+    try {
+      upstreamResponse = await bridgeRequest.fetch(upstreamTarget.url, {
+        method: route.request().method(),
+        headers: filteredHeaders(route, bearerToken, upstreamTarget.hostHeader),
+        data: normalizedCatalogRequestData(route, runtime, connectorName, serviceName, remainingPath),
+      });
+    } catch (error) {
+      if (disposed || page.isClosed() || isDisposedRouteBridgeError(error)) {
+        await abortLateRoute(route);
+        return;
+      }
+      throw error;
+    }
 
     await fulfillRoute(route, {
       status: upstreamResponse.status(),
@@ -449,6 +486,7 @@ export async function installEdcDashboardRouteBridge(
   await page.route("**/edc-dashboard-api/connectors/**", routeHandler);
 
   return async () => {
+    disposed = true;
     await page.unroute("**/edc-dashboard-api/connectors/**", routeHandler);
     await bridgeRequest.dispose();
   };

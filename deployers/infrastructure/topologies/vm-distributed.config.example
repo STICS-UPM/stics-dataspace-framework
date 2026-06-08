@@ -54,7 +54,7 @@ MINIO_API_PUBLIC_URL=
 MINIO_CONSOLE_PUBLIC_URL=
 MINIO_PUBLIC_URL=
 MINIO_CONSOLE_PUBLIC_ROOT_ALIASES_ENABLED=true
-MINIO_CONSOLE_PUBLIC_ROOT_ALIASES=/api,/static,/ws,/browser,/login,/oauth,/screens,/favicon.ico,/manifest.json
+MINIO_CONSOLE_PUBLIC_ROOT_ALIASES=/api,/static,/styles,/images,/ws,/browser,/login,/oauth,/screens,/Loader.svg,/favicon.ico,/manifest.json
 COMPONENTS_PUBLIC_BASE_URL=
 COMPONENTS_PUBLIC_PATH_REWRITE=true
 # Level 5 owns component ingresses by default to keep routes tied to Helm releases.
@@ -142,6 +142,13 @@ VM_PROVIDER_INGRESS_HTTP_PORT=80
 VM_CONSUMER_INGRESS_HTTP_PORT=
 VM_PROVIDER_INGRESS_NODEPORT=
 VM_CONSUMER_INGRESS_NODEPORT=
+# PostgreSQL access from remote connector clusters.
+# direct uses VM_COMMON_IP:5432, which matches INESData and the current PIONERA deployment.
+# nodeport uses VM_COMMON_IP:VM_DISTRIBUTED_POSTGRES_NODEPORT as a fallback.
+VM_DISTRIBUTED_POSTGRES_ACCESS_MODE=direct
+VM_DISTRIBUTED_POSTGRES_DIRECT_PORT=5432
+# Keep the NodePort value in the Kubernetes NodePort range 30000-32767.
+VM_DISTRIBUTED_POSTGRES_NODEPORT=30432
 # Internal Kubernetes service used by deployed workloads. Leave blank to infer it.
 DATABASE_HOSTNAME=
 VAULT_URL=
@@ -237,6 +244,9 @@ VM_CONSUMER_REMOTE_WORKDIR=
 VM_COMMON_PUBLIC_URL=
 VM_PROVIDER_PUBLIC_URL=
 VM_CONSUMER_PUBLIC_URL=
+# Keep EDC technical APIs under a dedicated public path so another adapter can
+# coexist on the same provider/consumer public domains.
+EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX=/edc
 CONNECTOR_PROTOCOL_ADDRESS_MODE=internal
 VM_COMMON_HTTP_URL=
 VM_PROVIDER_HTTP_URL=

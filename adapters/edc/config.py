@@ -44,6 +44,8 @@ class EdcConfig(InesdataConfig):
     EDC_DASHBOARD_ENABLED = False
     EDC_DASHBOARD_BASE_HREF = "/edc-dashboard/"
     EDC_SQL_SCHEMA_AUTOCREATE = True
+    EDC_INFERENCE_EDR_ATTEMPTS = 40
+    EDC_INFERENCE_EDR_DELAY_MS = 1000
     EDC_MANAGED_LABEL = "edc"
 
     @classmethod
@@ -171,6 +173,8 @@ class EDCConfigAdapter(INESDataConfigAdapter):
             "EDC_DASHBOARD_ENABLED": "true",
             "EDC_DASHBOARD_PROXY_AUTH_MODE": "oidc-bff",
             "EDC_SQL_SCHEMA_AUTOCREATE": "true",
+            "EDC_INFERENCE_EDR_ATTEMPTS": str(self.config.EDC_INFERENCE_EDR_ATTEMPTS),
+            "EDC_INFERENCE_EDR_DELAY_MS": str(self.config.EDC_INFERENCE_EDR_DELAY_MS),
         }
 
     def _legacy_shared_deployer_config_path(self):
@@ -456,6 +460,28 @@ class EDCConfigAdapter(INESDataConfigAdapter):
             config.get("EDC_SQL_SCHEMA_AUTOCREATE", self.config.EDC_SQL_SCHEMA_AUTOCREATE)
         ).strip().lower()
         return raw_value in ("1", "true", "yes", "on")
+
+    @staticmethod
+    def _positive_int(raw_value, default):
+        try:
+            parsed = int(str(raw_value).strip())
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed > 0 else default
+
+    def edc_inference_edr_attempts(self):
+        config = self.load_deployer_config()
+        return self._positive_int(
+            config.get("EDC_INFERENCE_EDR_ATTEMPTS", self.config.EDC_INFERENCE_EDR_ATTEMPTS),
+            self.config.EDC_INFERENCE_EDR_ATTEMPTS,
+        )
+
+    def edc_inference_edr_delay_ms(self):
+        config = self.load_deployer_config()
+        return self._positive_int(
+            config.get("EDC_INFERENCE_EDR_DELAY_MS", self.config.EDC_INFERENCE_EDR_DELAY_MS),
+            self.config.EDC_INFERENCE_EDR_DELAY_MS,
+        )
 
     def edc_dashboard_base_href(self):
         config = self.load_deployer_config()

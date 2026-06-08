@@ -1524,6 +1524,21 @@ def _mapping_value(mapping, *keys, default=None):
     return default
 
 
+def _edc_dashboard_local_proxy_path_matches(value, expected_proxy_path, allow_remainder=False):
+    raw_value = str(value or "").strip()
+    if not raw_value.startswith("/"):
+        return False
+    normalized = "/" + raw_value.lstrip("/")
+    expected = "/" + str(expected_proxy_path or "").strip().lstrip("/")
+    if allow_remainder:
+        marker_index = normalized.find(expected)
+        if marker_index < 0:
+            return False
+        remainder = normalized[marker_index + len(expected):]
+        return remainder == "" or remainder.startswith("/")
+    return normalized.endswith(expected)
+
+
 def _edc_dashboard_runtime_validation(deployer_context):
     runtime_dir = str(getattr(deployer_context, "runtime_dir", "") or "").strip()
     connectors = list(getattr(deployer_context, "connectors", []) or [])
@@ -1566,15 +1581,20 @@ def _edc_dashboard_runtime_validation(deployer_context):
 
         runtime = app_config.get("runtime") or {}
         ontology_url = str(runtime.get("ontologyUrl") or "").strip()
-        if ontology_url != "/edc-dashboard-api/components/ontology-hub":
+        expected_ontology_path = "/edc-dashboard-api/components/ontology-hub"
+        if not _edc_dashboard_local_proxy_path_matches(ontology_url, expected_ontology_path):
             result["issues"].append(
-                f"{connector}: ontologyUrl must be /edc-dashboard-api/components/ontology-hub"
+                f"{connector}: ontologyUrl must end with {expected_ontology_path}"
             )
         model_observer_url = str(runtime.get("modelObserverUrl") or "").strip()
         expected_observer_prefix = f"/edc-dashboard-api/connectors/{connector}/api"
-        if not model_observer_url.startswith(expected_observer_prefix):
+        if not _edc_dashboard_local_proxy_path_matches(
+            model_observer_url,
+            expected_observer_prefix,
+            allow_remainder=True,
+        ):
             result["issues"].append(
-                f"{connector}: modelObserverUrl must start with {expected_observer_prefix}"
+                f"{connector}: modelObserverUrl must route through {expected_observer_prefix}"
             )
 
     result["valid"] = bool(result["present"] and not result["issues"])
@@ -2379,6 +2399,7 @@ def _edc_dashboard_http_gates(deployer_context, connectors, timeout_seconds):
                 f"{base_url}{dashboard_base_href}",
                 expected_statuses={200},
                 timeout_seconds=timeout_seconds,
+                preserve_trailing_slash=True,
             )
         )
         gates.append(
@@ -2399,6 +2420,63 @@ def _edc_dashboard_http_gates(deployer_context, connectors, timeout_seconds):
         )
 
     return gates
+
+
+def _edc_dashboard_connector_kubeconfig_role(deployer_context, connector, connector_index):
+    config = dict(getattr(deployer_context, "config", {}) or {})
+    topology = normalize_topology(
+        config.get("TOPOLOGY")
+        or getattr(deployer_context, "topology", "")
+        or "local"
+    )
+    if topology != "vm-distributed":
+        return None
+
+    for detail in getattr(deployer_context, "connector_details", []) or []:
+        if not isinstance(detail, dict):
+            continue
+        if str(detail.get("name") or "").strip() != connector:
+            continue
+        for key in ("namespace_role", "role", "namespaceRole"):
+            role = str(detail.get(key) or "").strip().lower()
+            if role in {"provider", "consumer"}:
+                return role
+
+    return "provider" if connector_index == 0 else "consumer" if connector_index == 1 else "common"
+
+
+@contextlib.contextmanager
+def _edc_dashboard_connector_kubeconfig_context(deployer_context, connector, connector_index):
+    role = _edc_dashboard_connector_kubeconfig_role(
+        deployer_context,
+        connector,
+        connector_index,
+    )
+    if not role:
+        yield None
+        return
+
+    overrides = _topology_runtime_environment_overrides(
+        "vm-distributed",
+        role=role,
+    )
+    if not overrides:
+        yield role
+        return
+
+    previous = {key: os.environ.get(key) for key in overrides}
+    try:
+        for key, value in overrides.items():
+            if value is None:
+                continue
+            os.environ[key] = str(value)
+        yield role
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _probe_edc_dashboard_readiness(deployer_context):
@@ -2429,18 +2507,26 @@ def _probe_edc_dashboard_readiness(deployer_context):
             "gates": [{"gate": "connectors", "ready": False, "detail": "no connectors resolved"}],
         }
 
-    for connector in connectors:
+    for connector_index, connector in enumerate(connectors):
         connector_namespace = connector_namespaces.get(connector) or namespace
         for suffix in ("dashboard", "dashboard-proxy"):
             service_name = f"{connector}-{suffix}"
-            ready, detail = _kubectl_endpoint_ready(connector_namespace, service_name)
-            gates.append({
+            with _edc_dashboard_connector_kubeconfig_context(
+                deployer_context,
+                connector,
+                connector_index,
+            ) as kubeconfig_role:
+                ready, detail = _kubectl_endpoint_ready(connector_namespace, service_name)
+            gate = {
                 "gate": f"{suffix}:{connector}",
                 "namespace": connector_namespace,
                 "service": service_name,
                 "ready": ready,
                 "detail": detail,
-            })
+            }
+            if kubeconfig_role:
+                gate["kubeconfig_role"] = kubeconfig_role
+            gates.append(gate)
 
     gates.extend(_edc_dashboard_http_gates(deployer_context, connectors, http_timeout))
 
@@ -5311,6 +5397,62 @@ def _normalized_component_tokens(values):
     )
 
 
+def _base_dataspace_name_for_shared_components(dataspace_name):
+    resolved = str(dataspace_name or "").strip()
+    for suffix in ("-edc", "_edc"):
+        if resolved.lower().endswith(suffix):
+            return resolved[: -len(suffix)] or resolved
+    return resolved
+
+
+def _level6_component_release_dataspace_override(adapter_name, config, dataspace_name, components=None):
+    adapter = str(adapter_name or "").strip().lower()
+    if adapter != "edc":
+        return ""
+
+    config = dict(config or {})
+    explicit = str(
+        config.get("COMPONENTS_RELEASE_DATASPACE_NAME")
+        or config.get("COMPONENTS_HELM_RELEASE_DATASPACE_NAME")
+        or config.get("PIONERA_COMPONENT_DATASPACE_NAME")
+        or config.get("COMPONENT_DATASPACE_NAME")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit
+
+    scope = str(config.get("COMPONENTS_RELEASE_SCOPE") or "auto").strip().lower()
+    if scope in {"dataspace", "adapter", "per-adapter", "adapter-dataspace"}:
+        return ""
+    if scope in {"shared", "base", "common", "common-dataspace"}:
+        return _base_dataspace_name_for_shared_components(dataspace_name)
+
+    configured_components = _normalized_component_tokens(components)
+    if not configured_components:
+        configured_components = _normalized_component_tokens(config.get("COMPONENTS"))
+    if not configured_components:
+        configured_components = [
+            "ontology-hub",
+            "ai-model-hub",
+            "semantic-virtualization",
+        ]
+
+    shared_components_raw = str(
+        config.get("COMPONENTS_SHARED_RELEASE_COMPONENTS")
+        or "ontology-hub,ai-model-hub,semantic-virtualization"
+    ).strip()
+    lowered = shared_components_raw.lower()
+    if lowered in {"", "none", "false", "no", "0"}:
+        return ""
+    if lowered in {"*", "all"}:
+        return _base_dataspace_name_for_shared_components(dataspace_name)
+
+    shared_components = _normalized_component_tokens(shared_components_raw)
+    if any(component in shared_components for component in configured_components):
+        return _base_dataspace_name_for_shared_components(dataspace_name)
+    return ""
+
+
 def _level6_component_validation_needs_vm_single_mapping_editor(config, components=None):
     configured_components = _normalized_component_tokens(components)
     if not configured_components:
@@ -5411,6 +5553,20 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
         value = str(config.get(key) or "").strip()
         if value:
             env[key] = value
+    component_release_dataspace = _level6_component_release_dataspace_override(
+        adapter_name,
+        config,
+        dataspace,
+        components=components,
+    )
+    if component_release_dataspace:
+        for key in (
+            "PIONERA_COMPONENT_DATASPACE_NAME",
+            "COMPONENT_DATASPACE_NAME",
+            "ONTOLOGY_HUB_COMPONENT_DATASPACE_NAME",
+        ):
+            if not str(config.get(key) or os.environ.get(key) or "").strip():
+                env[key] = component_release_dataspace
     env.update(_topology_runtime_environment_overrides(topology=topology, level=5, role="components"))
     if normalize_topology(topology) == "vm-single" and _level6_component_validation_needs_vm_single_mapping_editor(
         config,
@@ -5744,6 +5900,215 @@ def _load_effective_infrastructure_deployer_config(topology=None):
         topology=topology,
         apply_environment=True,
     )
+
+
+def _configuration_trace_layer_paths(paths, topology=None):
+    layers = []
+    for path in list(paths or []):
+        if not path:
+            continue
+        layers.append(
+            {
+                "kind": "base config",
+                "path": path,
+                "relative_path": _framework_relative_path(path),
+                "exists": os.path.isfile(path),
+            }
+        )
+        overlay_path = topology_overlay_config_path(path, topology)
+        if overlay_path:
+            layers.append(
+                {
+                    "kind": f"{normalize_topology(topology)} topology overlay",
+                    "path": overlay_path,
+                    "relative_path": _framework_relative_path(overlay_path),
+                    "exists": os.path.isfile(overlay_path),
+                }
+            )
+    return layers
+
+
+def _pionera_environment_override_sources(environ=None):
+    values = {}
+    source_environ = os.environ if environ is None else environ
+    for env_key, env_value in dict(source_environ).items():
+        if not str(env_key).startswith("PIONERA_"):
+            continue
+        override_key = str(env_key)[len("PIONERA_"):].strip()
+        if not override_key or env_value in (None, ""):
+            continue
+        values[override_key] = str(env_key)
+    return values
+
+
+def _trace_layered_deployer_config(paths, *, topology=None, protected_keys=None, environ=None):
+    protected = set(protected_keys or [])
+    layered_without_env = {}
+    sources = {}
+    layers = _configuration_trace_layer_paths(paths, topology=topology)
+    for layer_meta in layers:
+        layer_config = load_raw_deployer_config(layer_meta.get("path"))
+        source = f"{layer_meta.get('kind')}: {layer_meta.get('relative_path')}"
+        for key, value in layer_config.items():
+            if key in protected and key in layered_without_env:
+                continue
+            layered_without_env[key] = value
+            sources[key] = source
+
+    if environ is None:
+        effective = load_layered_deployer_config(
+            list(paths or []),
+            topology=topology,
+            apply_environment=True,
+            protected_keys=protected,
+        )
+        env_sources = _pionera_environment_override_sources()
+    else:
+        with _temporary_config_environment(environ):
+            effective = load_layered_deployer_config(
+                list(paths or []),
+                topology=topology,
+                apply_environment=True,
+                protected_keys=protected,
+            )
+        env_sources = _pionera_environment_override_sources(environ)
+
+    entries = []
+    for key in sorted(effective):
+        value = effective.get(key)
+        source = sources.get(key)
+        if key in env_sources:
+            source = f"environment override: {env_sources[key]}"
+        elif source is None:
+            source = "runtime default"
+        elif str(value) != str(layered_without_env.get(key)):
+            source = f"runtime default over {source}"
+        entries.append(
+            {
+                "key": key,
+                "value": "" if value is None else str(value),
+                "source": source,
+            }
+        )
+
+    return {
+        "topology": normalize_topology(topology) if topology else "",
+        "layers": layers,
+        "entries": entries,
+    }
+
+
+@contextlib.contextmanager
+def _temporary_config_environment(environ):
+    old_environ = dict(os.environ)
+    os.environ.clear()
+    os.environ.update({str(key): str(value) for key, value in dict(environ or {}).items()})
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(old_environ)
+
+
+def _effective_config_display_value(key, value, *, max_length=160):
+    if _vm_distributed_profile_sensitive_key(key):
+        return "(sensitive value hidden)"
+    text = str(value or "").replace("\n", "\\n")
+    if not text:
+        return "(empty)"
+    if len(text) <= max_length:
+        return text
+    return f"{text[: max_length - 3]}..."
+
+
+def _build_effective_configuration_view(topology="vm-distributed", adapter_name=None):
+    selected_topology = normalize_topology(topology)
+    selected_adapter = str(adapter_name or "").strip().lower()
+    infrastructure_path = _infrastructure_deployer_config_path()
+    sections = [
+        {
+            "name": "Infrastructure",
+            "description": "Shared infrastructure configuration read by all adapters.",
+            "trace": _trace_layered_deployer_config(
+                [infrastructure_path],
+                topology=selected_topology,
+            ),
+        }
+    ]
+    if selected_adapter:
+        adapter_path = _adapter_deployer_config_path(selected_adapter)
+        sections.append(
+            {
+                "name": f"Adapter: {selected_adapter}",
+                "description": (
+                    "Adapter runtime configuration after infrastructure-managed keys "
+                    "and topology overlays are resolved."
+                ),
+                "trace": _trace_layered_deployer_config(
+                    [infrastructure_path, adapter_path],
+                    topology=selected_topology,
+                    protected_keys=INFRASTRUCTURE_MANAGED_KEYS,
+                ),
+            }
+        )
+    return {
+        "topology": selected_topology,
+        "adapter": selected_adapter,
+        "profile": {
+            "name": _environment_profile_name(),
+            "path": _environment_profile_path(),
+            "exists": os.path.isfile(_environment_profile_path()),
+        },
+        "sections": sections,
+    }
+
+
+def _print_effective_configuration_view(view):
+    payload = dict(view or {})
+    print()
+    print("=" * 50)
+    print("EFFECTIVE CONFIGURATION")
+    print("=" * 50)
+    print(f"Topology: {payload.get('topology') or '(not selected)'}")
+    print(f"Adapter: {payload.get('adapter') or '(not selected)'}")
+    profile = dict(payload.get("profile") or {})
+    if profile:
+        marker = "exists" if profile.get("exists") else "not found"
+        print(
+            "Selected local profile: "
+            f"{profile.get('name')} ({_framework_relative_path(profile.get('path'))}, {marker})"
+        )
+    print()
+    print("Profiles are operator input files. Effective deployment values are read from")
+    print(".config layers and PIONERA_* environment overrides shown below.")
+
+    for section in list(payload.get("sections") or []):
+        trace = dict(section.get("trace") or {})
+        print()
+        print("-" * 50)
+        print(section.get("name") or "Configuration")
+        description = str(section.get("description") or "").strip()
+        if description:
+            print(description)
+        print()
+        print("Layers, low to high priority:")
+        for layer in list(trace.get("layers") or []):
+            marker = "found" if layer.get("exists") else "missing"
+            print(f"- {layer.get('kind')}: {layer.get('relative_path')} [{marker}]")
+        rows = [
+            [
+                entry.get("key"),
+                _effective_config_display_value(entry.get("key"), entry.get("value")),
+                entry.get("source"),
+            ]
+            for entry in list(trace.get("entries") or [])
+        ]
+        if rows:
+            print()
+            print(tabulate(rows, headers=["Key", "Effective value", "Source"], tablefmt="github"))
+        else:
+            print()
+            print("No configuration values resolved for this section.")
 
 
 def _normalized_topology_address(value):
@@ -6691,6 +7056,7 @@ def _prepare_edc_local_connector_image_override(adapter):
         minikube_profile,
         "--cluster-runtime",
         cluster_runtime,
+        "--force-build",
     ]
 
     print(
@@ -17795,6 +18161,15 @@ def _vm_single_mapping_editor_has_dedicated_public_url(topology_config):
     return host not in {"localhost", "127.0.0.1", "::1"}
 
 
+def _vm_single_mapping_editor_dedicated_public_url_ready(topology_config):
+    if not _vm_single_mapping_editor_has_dedicated_public_url(topology_config):
+        return False
+    return _vm_single_mapping_editor_http_ready(
+        _vm_single_mapping_editor_public_url(topology_config),
+        timeout_seconds=2,
+    )
+
+
 def _vm_single_mapping_editor_should_use_tunnel(plan, topology_config):
     if os.environ.get("PIONERA_VM_SINGLE_REMOTE_LEVEL_ACTIVE") == "true":
         return False
@@ -17808,7 +18183,10 @@ def _vm_single_mapping_editor_should_use_tunnel(plan, topology_config):
     if mode == "always":
         return True
     if _vm_single_mapping_editor_has_dedicated_public_url(topology_config):
-        return False
+        if _vm_single_mapping_editor_dedicated_public_url_ready(topology_config):
+            return False
+        if _vm_single_mapping_editor_is_k3s(topology_config):
+            return True
     exposure = _vm_single_mapping_editor_exposure_mode(topology_config)
     return exposure in {"direct", "host-port", "hostport", "vm-port"}
 
@@ -19084,6 +19462,7 @@ def _print_vm_distributed_assistant_menu(current_adapter=None):
     print("8 - Prepare local k3s kubeconfigs")
     print("9 - Show runtime artifact paths")
     print("10 - AI Model Hub real model-server preparation")
+    print("C - Show effective configuration values and sources")
     print("B/Q - Back")
     print("=" * 50)
 
@@ -19273,6 +19652,21 @@ def _run_vm_distributed_assistant(
                 current_adapter = result.get("adapter") or current_adapter
                 if result.get("status") not in {"completed", "cancelled"}:
                     _print_ai_model_hub_real_models_action_result(result)
+            continue
+
+        if choice == "C":
+            selected_adapter = _interactive_require_adapter_selection(
+                current_adapter,
+                adapter_registry=registry,
+            )
+            if not selected_adapter:
+                continue
+            current_adapter = selected_adapter
+            view = _build_effective_configuration_view(
+                topology="vm-distributed",
+                adapter_name=current_adapter,
+            )
+            _print_effective_configuration_view(view)
             continue
 
         print("Invalid vm-distributed assistant selection.")
@@ -20124,7 +20518,7 @@ def _print_interactive_help():
     print("    It switches between local, vm-single and vm-distributed without editing configuration files.")
     print("K - Use when vm-single is active and you want to confirm or persist the k3s runtime for this menu session.")
     print("W - Use before selecting vm-distributed to open the configuration wizard, or with vm-distributed active to open the assistant.")
-    print("    The assistant can write ignored .config files, show the VM plan, preview hosts/deployment, run non-destructive checks, show artifact paths, and guide SSH setup.")
+    print("    The assistant can write ignored .config files, show effective values and sources, show the VM plan, preview hosts/deployment, run non-destructive checks, show artifact paths, and guide SSH setup.")
     print("P - Use before deploying to inspect the plan without changing the environment.")
     print("    If Levels 3-6 need an adapter and none has been chosen yet, the menu asks for one automatically.")
     print("H - Use to inspect or apply local hosts entries needed by the selected adapter.")

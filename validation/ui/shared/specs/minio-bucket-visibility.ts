@@ -24,6 +24,7 @@ async function validateBucketVisibility(args: {
     bucketName: target.bucketName,
     bucketBrowserUrl: target.bucketBrowserUrl,
     expectedObject: target.expectedObject ?? null,
+    validationScope: target.expectedObject ? "bucket-and-object" : "bucket-only",
   };
 
   try {
@@ -46,7 +47,7 @@ async function validateBucketVisibility(args: {
 }
 
 export function registerMinioBucketVisibilityTests() {
-  test("MinIO browser: provider bucket visible by direct URL", async ({
+  test("MinIO browser: provider bucket reachable by direct URL", async ({
     page,
     minioConsoleRuntime,
     captureStep,
@@ -62,7 +63,7 @@ export function registerMinioBucketVisibilityTests() {
     });
   });
 
-  test("MinIO browser: consumer bucket visible by direct URL", async ({
+  test("MinIO browser: consumer bucket reachable by direct URL", async ({
     page,
     minioConsoleRuntime,
     captureStep,

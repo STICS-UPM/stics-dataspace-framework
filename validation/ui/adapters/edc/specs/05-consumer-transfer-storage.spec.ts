@@ -8,11 +8,11 @@ import {
   fetchConsumerCatalogResponse,
 } from "../../../shared/utils/provider-bootstrap";
 import { resolveMinioConsoleRuntime } from "../../../shared/utils/minio-console-runtime";
+import { waitForMinioObjectStat } from "../../../shared/utils/minio-object-api";
 import { test, expect } from "../../../shared/fixtures/dataspace.fixture";
 import { EdcCatalogPage } from "../components/edc-catalog.page";
 import { EdcContractsPage } from "../components/edc-contracts.page";
 import { EdcDashboardPage } from "../components/edc-dashboard.page";
-import { EdcTransferHistoryPage } from "../components/edc-transfer-history.page";
 
 type TransferStorageReport = {
   startedAt: string;
@@ -25,6 +25,15 @@ type TransferStorageReport = {
   storageValidation?: string;
   consumerBucketName?: string;
   consumerBucketBrowserUrl?: string;
+  consumerBucketApiUrl?: string;
+  consumerObjectStat?: {
+    objectName: string;
+    bucketName: string;
+    status: number;
+    size?: number;
+    etag?: string;
+    lastModified?: string;
+  };
   providerBootstrap?: {
     assetId: string;
     policyId: string;
@@ -65,7 +74,6 @@ test("05 edc transfer storage: validates object storage only for push transfers"
   const dashboardPage = new EdcDashboardPage(page);
   const catalogPage = new EdcCatalogPage(page);
   const contractsPage = new EdcContractsPage(page);
-  const transferHistoryPage = new EdcTransferHistoryPage(page);
   const minioLoginPage = new MinioConsoleLoginPage(page);
   const bucketBrowserPage = new MinioBucketBrowserPage(page);
 
@@ -131,13 +139,7 @@ test("05 edc transfer storage: validates object storage only for push transfers"
     );
     report.selectedTransferType = transferBootstrap.transferType;
     report.finalTransferState = transferBootstrap.finalState;
-    await captureStep(page, "04-edc-transfer-storage-started");
-
-    await transferHistoryPage.goto(dataspaceRuntime.consumer.portalBaseUrl);
-    await dashboardPage.expectNoServerErrorBanner("EDC transfer history");
-    await transferHistoryPage.expectReady();
-    report.finalTransferState = await transferHistoryPage.waitForSuccessfulTransfer(assetId, 120_000);
-    await captureStep(page, "05-edc-transfer-storage-history");
+    await captureStep(page, "04-edc-transfer-storage-api-state");
 
     const validatesObjectStorage =
       /push/i.test(report.selectedTransferType || "") &&
@@ -151,17 +153,19 @@ test("05 edc transfer storage: validates object storage only for push transfers"
       expect(consumerTarget, "Consumer MinIO target is not configured").toBeTruthy();
       report.consumerBucketName = consumerTarget!.bucketName;
       report.consumerBucketBrowserUrl = consumerTarget!.bucketBrowserUrl;
+      report.consumerBucketApiUrl = consumerTarget!.bucketApiUrl;
+
+      report.consumerObjectStat = await waitForMinioObjectStat(consumerTarget!, objectName, 90_000);
+      report.storageValidation = "consumer-minio-object-observed-through-s3-api";
 
       await minioLoginPage.open(consumerTarget!.bucketBrowserUrl);
       await minioLoginPage.loginIfNeeded(consumerTarget!.credentials);
       await bucketBrowserPage.expectReady(consumerTarget!.bucketName);
       await bucketBrowserPage.assertNoBucketPermissionError();
-      await bucketBrowserPage.waitForObjectVisible(objectName, 90_000);
-      report.storageValidation = "consumer-minio-object-visible";
-      await captureStep(page, "06-edc-transfer-storage-minio");
+      await captureStep(page, "05-edc-transfer-storage-minio");
     } else {
       report.storageValidation = "not-applicable-for-httpdata-pull";
-      await captureStep(page, "06-edc-transfer-storage-not-applicable");
+      await captureStep(page, "05-edc-transfer-storage-not-applicable");
     }
 
     expect(report.selectedTransferType, "No transfer type was selected").toBeTruthy();

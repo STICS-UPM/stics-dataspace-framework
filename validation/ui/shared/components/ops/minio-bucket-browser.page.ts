@@ -1,5 +1,6 @@
 import { expect, Page } from "@playwright/test";
 
+import { clickMarked, fillMarked } from "../../utils/live-marker";
 import { waitForEventualConsistencyPoll } from "../../utils/waiting";
 
 export class MinioBucketBrowserPage {
@@ -47,6 +48,8 @@ export class MinioBucketBrowserPage {
       if (this.lastBucketName) {
         await this.openBucketFromListIfNeeded(this.lastBucketName);
       }
+      await this.refreshObjectListIfPossible();
+      await this.filterObjectsIfPossible(objectName);
 
       if ((await this.page.getByText(objectName, { exact: false }).first().count().catch(() => 0)) > 0) {
         await this.expectObjectVisible(objectName, 15_000);
@@ -103,6 +106,28 @@ export class MinioBucketBrowserPage {
       )
       .toBeTruthy()
       .catch(() => undefined);
+  }
+
+  private async refreshObjectListIfPossible(): Promise<void> {
+    const refreshButton = this.page.getByRole("button", { name: /refresh/i }).first();
+    if (!(await refreshButton.isVisible().catch(() => false)) || (await refreshButton.isDisabled().catch(() => true))) {
+      return;
+    }
+    await clickMarked(refreshButton).catch(() => undefined);
+    await waitForEventualConsistencyPoll(this.page);
+  }
+
+  private async filterObjectsIfPossible(objectName: string): Promise<void> {
+    const filterInput = this.page
+      .locator(
+        "input[placeholder*='filter objects' i], input[placeholder*='Start typing' i], input[type='search']",
+      )
+      .first();
+    if (!(await filterInput.isVisible().catch(() => false))) {
+      return;
+    }
+    await fillMarked(filterInput, objectName).catch(() => undefined);
+    await waitForEventualConsistencyPoll(this.page);
   }
 
   private async isBucketRoute(bucketName: string): Promise<boolean> {

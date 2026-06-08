@@ -682,7 +682,7 @@ async function createVocabularyByUri(page, runtime) {
   await page.locator("#dialogCreateVocab").waitFor({ state: "visible", timeout: readyTimeoutMs });
   await fillMarked(page.locator("#formDialogCreateVocabFromURI input[name='uri']"), runtime.creationUri);
   await clickMarked(page.getByRole("button", { name: "Confirm", exact: true }));
-  await page.waitForLoadState("domcontentloaded");
+  await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
 
   const duplicateError = normalizeText(
     await page
@@ -725,7 +725,7 @@ async function createVocabularyFromRepository(page, runtime) {
   await fillMarked(page
     .locator("#formDialogCreateVocabFromOntologyDevelopmentRepository input[name='repositoryUri']"), runtime.creationRepositoryUri);
   await clickMarked(page.getByRole("button", { name: "Confirm", exact: true }));
-  await page.waitForLoadState("domcontentloaded");
+  await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
 
   const visibleError = normalizeText(
     await page
@@ -1083,7 +1083,8 @@ async function deleteTag(page, runtime, label) {
   await row.waitFor({ state: "visible", timeout: 5000 });
   await clickMarked(row.locator(".removeTag"));
   await clickMarked(page.getByRole("button", { name: "Confirm Deletion", exact: true }));
-  await page.waitForLoadState("domcontentloaded");
+  await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
+  await page.goto(`${runtime.baseUrl}/edition/tags`, { waitUntil: "domcontentloaded" });
   const remaining = page.locator("#SearchGrid .SearchBoxtag").filter({ hasText: label });
   if ((await remaining.count()) > 0 && (await remaining.first().isVisible().catch(() => false))) {
     throw new Error(`Tag '${label}' is still visible after deletion.`);

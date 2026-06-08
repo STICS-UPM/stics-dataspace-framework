@@ -726,6 +726,17 @@ def _ai_model_hub_functional_runtime_env(adapter=None, adapter_name=None):
             return f"http://{connector}.{ds_domain}"
         return ""
 
+    def connector_api_base(connector):
+        if not connector:
+            return ""
+        if normalized_adapter == "edc":
+            public_api_builder = getattr(getattr(adapter, "connectors", None), "_edc_connector_public_api_base_url", None)
+            if callable(public_api_builder):
+                public_api_base = str(public_api_builder(connector) or "").strip().rstrip("/")
+                if public_api_base:
+                    return public_api_base
+        return connector_base(connector)
+
     env = {
         "PIONERA_ADAPTER": normalized_adapter,
         "UI_ADAPTER": normalized_adapter,
@@ -739,7 +750,7 @@ def _ai_model_hub_functional_runtime_env(adapter=None, adapter_name=None):
     if keycloak_url:
         env["AI_MODEL_HUB_KEYCLOAK_URL"] = keycloak_url
     if provider:
-        base = connector_base(provider)
+        base = connector_api_base(provider)
         env.update(
             {
                 "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID": provider,
@@ -749,7 +760,7 @@ def _ai_model_hub_functional_runtime_env(adapter=None, adapter_name=None):
             }
         )
     if consumer:
-        base = connector_base(consumer)
+        base = connector_api_base(consumer)
         env.update(
             {
                 "AI_MODEL_HUB_CONSUMER_CONNECTOR_ID": consumer,

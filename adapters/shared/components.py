@@ -23,6 +23,7 @@ from deployers.shared.lib.components import (
 )
 from deployers.shared.lib import ai_model_hub_model_server as model_server
 from deployers.shared.lib import image_runtime
+from deployers.shared.lib.topology import VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY, normalize_topology
 
 
 class SharedComponentsAdapter(INESDataComponentsAdapter):
@@ -304,6 +305,204 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 merged[key] = value
         return merged
 
+    @staticmethod
+    def _split_config_list(raw_value):
+        return [
+            str(token or "").strip()
+            for token in str(raw_value or "").split(",")
+            if str(token or "").strip()
+        ]
+
+    @staticmethod
+    def _normalize_public_url(value):
+        resolved = str(value or "").strip().rstrip("/")
+        if not resolved:
+            return ""
+        if resolved.startswith(("http://", "https://")):
+            return resolved
+        return f"http://{resolved}"
+
+    @staticmethod
+    def _join_url_path(base_url, *segments):
+        base = str(base_url or "").strip().rstrip("/")
+        if not base:
+            return ""
+        cleaned_segments = [
+            str(segment or "").strip().strip("/")
+            for segment in segments
+            if str(segment or "").strip().strip("/")
+        ]
+        if not cleaned_segments:
+            return base
+        return f"{base}/{'/'.join(cleaned_segments)}"
+
+    @staticmethod
+    def _edc_vm_distributed_public_path_prefix(deployer_config):
+        for key in (
+            "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "VM_DISTRIBUTED_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+        ):
+            raw_value = str((deployer_config or {}).get(key) or "").strip()
+            if not raw_value:
+                continue
+            if raw_value in {"/", ".", "root"}:
+                return ""
+            return f"/{raw_value.strip('/')}"
+        return "/edc"
+
+    @staticmethod
+    def _edc_vm_single_connector_public_path_prefix(deployer_config):
+        for key in (
+            "EDC_VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "VM_SINGLE_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
+        ):
+            raw_value = str((deployer_config or {}).get(key) or "").strip()
+            if raw_value:
+                prefix = raw_value
+                break
+        else:
+            prefix = "/c"
+        if prefix in {"/", ".", "root"}:
+            return ""
+        if not prefix.startswith("/"):
+            prefix = f"/{prefix}"
+        return prefix.rstrip("/")
+
+    @staticmethod
+    def _edc_connector_short_name(connector_id, dataspace):
+        short_name = str(connector_id or "").strip()
+        if short_name.startswith("conn-"):
+            short_name = short_name[len("conn-"):]
+        suffix = f"-{dataspace}"
+        if dataspace and short_name.endswith(suffix):
+            short_name = short_name[: -len(suffix)]
+        return short_name
+
+    def _edc_dataspace_name(self, deployer_config):
+        return str(
+            (deployer_config or {}).get("DS_1_NAME")
+            or self._dataspace_name()
+            or ""
+        ).strip()
+
+    def _edc_connector_ids(self, deployer_config, dataspace):
+        connector_ids = []
+        for token in self._split_config_list((deployer_config or {}).get("DS_1_CONNECTORS")):
+            if token.startswith("conn-"):
+                connector_ids.append(token)
+            elif dataspace:
+                connector_ids.append(f"conn-{token}-{dataspace}")
+        return connector_ids
+
+    def _edc_connector_matches_configured_name(self, connector_id, dataspace, configured_name):
+        configured = str(configured_name or "").strip()
+        if not configured:
+            return False
+        aliases = {
+            str(connector_id or "").strip(),
+            self._edc_connector_short_name(connector_id, dataspace),
+        }
+        if dataspace and not configured.startswith("conn-"):
+            aliases.add(f"conn-{configured}-{dataspace}")
+        return configured in aliases
+
+    def _edc_connector_role(self, connector_id, dataspace, deployer_config, index):
+        role_options = (
+            ("provider", "VM_PROVIDER_CONNECTORS"),
+            ("consumer", "VM_CONSUMER_CONNECTORS"),
+        )
+        for role, connectors_key in role_options:
+            for configured_connector in self._split_config_list((deployer_config or {}).get(connectors_key)):
+                if self._edc_connector_matches_configured_name(connector_id, dataspace, configured_connector):
+                    return role
+        if index == 0:
+            return "provider"
+        if index == 1:
+            return "consumer"
+        return ""
+
+    def _edc_connector_public_base_url(self, connector_id, deployer_config, *, dataspace, role=""):
+        topology = normalize_topology(
+            (deployer_config or {}).get("TOPOLOGY")
+            or (deployer_config or {}).get("PIONERA_TOPOLOGY")
+            or self._normalized_topology()
+        )
+        if topology == VM_SINGLE_TOPOLOGY:
+            common_base = self._normalize_public_url(
+                (deployer_config or {}).get("VM_SINGLE_PUBLIC_URL")
+                or (deployer_config or {}).get("VM_SINGLE_HTTP_URL")
+                or (deployer_config or {}).get("VM_COMMON_PUBLIC_URL")
+                or (deployer_config or {}).get("VM_COMMON_HTTP_URL")
+            )
+            short_name = self._edc_connector_short_name(connector_id, dataspace)
+            path_prefix = self._edc_vm_single_connector_public_path_prefix(deployer_config)
+            if common_base and short_name:
+                return self._join_url_path(common_base, path_prefix, short_name)
+            return ""
+
+        if topology == VM_DISTRIBUTED_TOPOLOGY:
+            role_key = {
+                "provider": ("VM_PROVIDER_PUBLIC_URL", "VM_PROVIDER_HTTP_URL"),
+                "consumer": ("VM_CONSUMER_PUBLIC_URL", "VM_CONSUMER_HTTP_URL"),
+            }.get(str(role or "").strip().lower(), ())
+            for key in role_key:
+                public_url = self._normalize_public_url((deployer_config or {}).get(key))
+                if public_url:
+                    return public_url
+            return ""
+
+        return ""
+
+    def _edc_connector_public_api_base_url(self, connector_id, deployer_config, *, dataspace, role=""):
+        base_url = self._edc_connector_public_base_url(
+            connector_id,
+            deployer_config,
+            dataspace=dataspace,
+            role=role,
+        )
+        if not base_url:
+            return ""
+        topology = normalize_topology(
+            (deployer_config or {}).get("TOPOLOGY")
+            or (deployer_config or {}).get("PIONERA_TOPOLOGY")
+            or self._normalized_topology()
+        )
+        if topology == VM_DISTRIBUTED_TOPOLOGY:
+            return self._join_url_path(base_url, self._edc_vm_distributed_public_path_prefix(deployer_config))
+        return base_url
+
+    def _edc_ai_model_hub_connector_config(self, deployer_config):
+        dataspace = self._edc_dataspace_name(deployer_config)
+        connector_ids = self._edc_connector_ids(deployer_config, dataspace)
+        if not connector_ids:
+            return []
+
+        entries = []
+        for index, connector_id in enumerate(connector_ids[:2]):
+            role = self._edc_connector_role(connector_id, dataspace, deployer_config, index)
+            public_api_base = self._edc_connector_public_api_base_url(
+                connector_id,
+                deployer_config,
+                dataspace=dataspace,
+                role=role,
+            )
+            if not public_api_base:
+                continue
+            label = "Provider" if role == "provider" else "Consumer" if role == "consumer" else connector_id
+            entries.append(
+                {
+                    "connectorName": label,
+                    "managementUrl": f"{public_api_base}/management",
+                    "defaultUrl": f"{public_api_base}/api",
+                    "protocolUrl": f"{public_api_base}/protocol",
+                    "controlUrl": f"{public_api_base}/control",
+                    "federatedCatalogEnabled": False,
+                }
+            )
+        return entries
+
     def _component_values_override_payload(self, normalized_component: str, deployer_config: dict) -> dict:
         normalized = self._normalize_component_key(normalized_component)
         payload = super()._component_values_override_payload(normalized, deployer_config)
@@ -312,7 +511,12 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             existing_values = self._existing_component_release_values(normalized, deployer_config)
             payload = self._merge_existing_shared_component_values(existing_values, payload)
         if normalized == "ai-model-hub":
-            payload = self._merge_ai_model_hub_connector_config(existing_values, payload)
+            if self.active_adapter == "edc":
+                edc_connector_config = self._edc_ai_model_hub_connector_config(deployer_config)
+                if edc_connector_config:
+                    payload.setdefault("config", {})["edcConnectorConfig"] = edc_connector_config
+            else:
+                payload = self._merge_ai_model_hub_connector_config(existing_values, payload)
         return payload
 
     def _infer_component_hostname_for_dataspace(

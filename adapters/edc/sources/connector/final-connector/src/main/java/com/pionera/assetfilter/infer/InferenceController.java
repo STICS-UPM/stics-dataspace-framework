@@ -317,8 +317,8 @@ public class InferenceController {
 
     private EdrInfo waitForEdr(String transferProcessId) throws Exception {
         var edrUrl = managementBaseUrl + "/v3/edrs/" + transferProcessId + "/dataaddress";
-        int attempts = 10;
-        long delayMs = 500;
+        int attempts = positiveIntEnv("EDC_INFERENCE_EDR_ATTEMPTS", 40);
+        long delayMs = positiveLongEnv("EDC_INFERENCE_EDR_DELAY_MS", 1000L);
 
         for (int i = 0; i < attempts; i++) {
             var request = HttpRequest.newBuilder()
@@ -349,6 +349,32 @@ public class InferenceController {
 
         monitor.warning("EDR lookup timed out for transfer process: " + transferProcessId);
         return null;
+    }
+
+    private int positiveIntEnv(String key, int defaultValue) {
+        var raw = System.getenv(key);
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            var value = Integer.parseInt(raw.trim());
+            return value > 0 ? value : defaultValue;
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
+    }
+
+    private long positiveLongEnv(String key, long defaultValue) {
+        var raw = System.getenv(key);
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            var value = Long.parseLong(raw.trim());
+            return value > 0 ? value : defaultValue;
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
     }
 
     private String startTransfer(String contractId, String connectorId, String counterPartyAddress, String protocol, String transferType) throws Exception {

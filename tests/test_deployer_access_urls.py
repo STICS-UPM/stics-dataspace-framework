@@ -333,6 +333,51 @@ class DeployerAccessUrlsTests(unittest.TestCase):
         )
         self.assertEqual(urls["minio_console"], "https://org4.pionera.oeg.fi.upm.es/s3-console/")
 
+    def test_edc_connector_public_access_urls_use_vm_distributed_role_domains(self):
+        config = {
+            "TOPOLOGY": "vm-distributed",
+            "VM_COMMON_PUBLIC_URL": "https://org1.pionera.oeg.fi.upm.es",
+            "VM_PROVIDER_PUBLIC_URL": "https://org2.pionera.oeg.fi.upm.es",
+            "VM_CONSUMER_PUBLIC_URL": "https://org3.pionera.oeg.fi.upm.es",
+            "VM_PROVIDER_CONNECTORS": "citycounciledc",
+            "VM_CONSUMER_CONNECTORS": "companyedc",
+            "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+            "EDC_DASHBOARD_ENABLED": "true",
+            "EDC_DASHBOARD_PROXY_AUTH_MODE": "oidc-bff",
+            "EDC_DASHBOARD_BASE_HREF": "/edc-dashboard/",
+            "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX": "/edc",
+        }
+
+        provider_urls = edc_bootstrap.build_connector_public_access_urls(
+            config,
+            "conn-citycounciledc-pionera-edc",
+            "pionera-edc",
+            "DEV",
+        )
+        consumer_urls = edc_bootstrap.build_connector_public_access_urls(
+            config,
+            "conn-companyedc-pionera-edc",
+            "pionera-edc",
+            "DEV",
+        )
+
+        self.assertEqual(provider_urls["connector_ingress"], "https://org2.pionera.oeg.fi.upm.es")
+        self.assertEqual(provider_urls["edc_dashboard_login"], "https://org2.pionera.oeg.fi.upm.es/edc-dashboard/")
+        self.assertEqual(
+            provider_urls["edc_dashboard_oidc_login"],
+            "https://org2.pionera.oeg.fi.upm.es/edc-dashboard-api/auth/login",
+        )
+        self.assertEqual(
+            provider_urls["connector_management_api_v3"],
+            "https://org2.pionera.oeg.fi.upm.es/edc/management/v3",
+        )
+        self.assertEqual(consumer_urls["connector_ingress"], "https://org3.pionera.oeg.fi.upm.es")
+        self.assertEqual(consumer_urls["edc_dashboard_login"], "https://org3.pionera.oeg.fi.upm.es/edc-dashboard/")
+        self.assertEqual(
+            consumer_urls["connector_management_api_v3"],
+            "https://org3.pionera.oeg.fi.upm.es/edc/management/v3",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

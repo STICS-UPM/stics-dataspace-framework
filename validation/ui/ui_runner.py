@@ -376,13 +376,23 @@ def _model_server_connector_base_url(config: dict[str, Any], topology: str | Non
         or config.get("MODEL_SERVER_PUBLIC_PATH")
         or "/model-server"
     ).strip()
+    explicit_public = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL")
+        or config.get("MODEL_SERVER_PUBLIC_URL")
+        or ""
+    ).strip()
+    if explicit_public:
+        return explicit_public.rstrip("/")
+
     for base_candidate in (
-        config.get("VM_COMMON_HTTP_URL"),
         config.get("VM_COMMON_PUBLIC_URL"),
         config.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_BASE_URL"),
         config.get("COMPONENTS_PUBLIC_BASE_URL"),
+        config.get("VM_COMMON_HTTP_URL"),
     ):
-        base_url = _force_url_scheme(base_candidate, "http")
+        base_url = str(base_candidate or "").strip().rstrip("/")
+        if base_url and "://" not in base_url:
+            base_url = _force_url_scheme(base_url, "https")
         if base_url:
             return _join_url_path(base_url, path_value)
     return ""
@@ -467,6 +477,8 @@ def _build_playwright_environment(
     adapter_name = str(adapter or "").strip().lower()
     if explicit_ui_protocol_address_mode:
         protocol_address_mode = explicit_ui_protocol_address_mode
+    elif adapter_name == "edc" and topology == VM_DISTRIBUTED_TOPOLOGY:
+        protocol_address_mode = "public"
     elif configured_protocol_address_mode:
         protocol_address_mode = configured_protocol_address_mode
     elif adapter_name == "edc" and topology in {LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY}:

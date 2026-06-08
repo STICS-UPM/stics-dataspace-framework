@@ -10,9 +10,11 @@ export type MinioBucketTarget = {
   role: "provider" | "consumer";
   connectorName: string;
   bucketName: string;
+  bucketApiUrl: string;
   bucketBrowserUrl: string;
   credentials: MinioUserCredentials;
   expectedObject?: string;
+  region?: string;
 };
 
 export type MinioConsoleRuntime = {
@@ -192,22 +194,88 @@ function publicMinioConsoleUrlFromCredentials(
   return value.trim();
 }
 
+function publicMinioApiUrlFromCredentials(
+  adapter: string,
+  connectorName: string,
+  dataspace: string,
+  environment: string,
+): string | undefined {
+  const credentials = readJsonIfExists(
+    connectorCredentialsPath(adapter, connectorName, dataspace, environment),
+  );
+  const publicValue = credentials?.public_access_urls?.minio_api;
+  if (typeof publicValue === "string" && publicValue.trim().length > 0) {
+    return publicValue.trim();
+  }
+  const internalValue = credentials?.access_urls?.minio_api;
+  if (typeof internalValue === "string" && internalValue.trim().length > 0) {
+    return internalValue.trim();
+  }
+  return undefined;
+}
+
+function minioApiBaseUrl(opts: {
+  adapter: string;
+  connectorName: string;
+  dataspace: string;
+  environment: string;
+  deployerConfig: Record<string, string>;
+  consoleBaseUrl: string;
+}): string {
+  const explicit =
+    process.env.UI_MINIO_API_URL ||
+    process.env.PIONERA_LEVEL6_MINIO_ENDPOINT ||
+    process.env.EDC_LEVEL6_MINIO_ENDPOINT ||
+    opts.deployerConfig.PIONERA_LEVEL6_MINIO_ENDPOINT ||
+    opts.deployerConfig.LEVEL6_MINIO_ENDPOINT ||
+    opts.deployerConfig.EDC_LEVEL6_MINIO_ENDPOINT ||
+    opts.deployerConfig.MINIO_API_PUBLIC_URL ||
+    opts.deployerConfig.MINIO_PUBLIC_URL ||
+    publicMinioApiUrlFromCredentials(
+      opts.adapter,
+      opts.connectorName,
+      opts.dataspace,
+      opts.environment,
+    );
+
+  if (explicit && explicit.trim().length > 0) {
+    const normalized = explicit.trim();
+    return normalized.includes("://") ? withNoTrailingSlash(normalized) : `http://${normalized}`;
+  }
+
+  return withNoTrailingSlash(opts.consoleBaseUrl).replace(/\/s3-console\/?$/i, "");
+}
+
+function minioRegion(config: Record<string, string>): string {
+  return (
+    process.env.UI_MINIO_REGION ||
+    process.env.UI_TRANSFER_REGION ||
+    config.PIONERA_LEVEL6_TRANSFER_REGION ||
+    config.EDC_AWS_REGION ||
+    config.AWS_REGION ||
+    "us-east-1"
+  ).trim() || "us-east-1";
+}
+
 function buildBucketTarget(opts: {
   adapter: string;
   role: "provider" | "consumer";
   connectorName: string;
   dataspace: string;
   environment: string;
+  deployerConfig: Record<string, string>;
   consoleBaseUrl: string;
   bucketOverride?: string;
   expectedObject?: string;
 }): MinioBucketTarget {
   const bucketName = opts.bucketOverride || `${opts.dataspace}-${opts.connectorName}`;
+  const apiBaseUrl = minioApiBaseUrl(opts);
 
   return {
     role: opts.role,
     connectorName: opts.connectorName,
     bucketName,
+    bucketApiUrl: `${withNoTrailingSlash(apiBaseUrl)}/${bucketName}`,
     bucketBrowserUrl: `${withNoTrailingSlash(opts.consoleBaseUrl)}/browser/${bucketName}`,
     credentials: resolveConnectorMinioCredentials(
       opts.adapter,
@@ -216,6 +284,7 @@ function buildBucketTarget(opts: {
       opts.environment,
     ),
     expectedObject: opts.expectedObject,
+    region: minioRegion(opts.deployerConfig),
   };
 }
 
@@ -223,9 +292,12 @@ export function resolveMinioConsoleRuntime(overrides?: {
   providerExpectedObject?: string;
   consumerExpectedObject?: string;
 }): MinioConsoleRuntime {
-  const deployerConfigPath = path.join(projectRoot(), "deployers", "inesdata", "deployer.config");
-  const deployerConfig = parseKeyValueFile(deployerConfigPath);
   const adapter = normalizedAdapter();
+  const adapterConfigPath = path.join(projectRoot(), "deployers", adapter, "deployer.config");
+  const deployerConfigPath = fs.existsSync(adapterConfigPath)
+    ? adapterConfigPath
+    : path.join(projectRoot(), "deployers", "inesdata", "deployer.config");
+  const deployerConfig = parseKeyValueFile(deployerConfigPath);
 
   const dataspace = process.env.UI_DATASPACE || deployerConfig.DS_1_NAME || "demo";
   const environment = process.env.UI_ENVIRONMENT || deployerConfig.ENVIRONMENT || "DEV";
@@ -250,6 +322,7 @@ export function resolveMinioConsoleRuntime(overrides?: {
         connectorName: providerConnector,
         dataspace,
         environment,
+        deployerConfig,
         consoleBaseUrl,
         bucketOverride: process.env.UI_MINIO_PROVIDER_BUCKET,
         expectedObject: overrides?.providerExpectedObject || process.env.UI_MINIO_PROVIDER_EXPECT_OBJECT,
@@ -260,6 +333,7 @@ export function resolveMinioConsoleRuntime(overrides?: {
         connectorName: consumerConnector,
         dataspace,
         environment,
+        deployerConfig,
         consoleBaseUrl,
         bucketOverride: process.env.UI_MINIO_CONSUMER_BUCKET,
         expectedObject: overrides?.consumerExpectedObject || process.env.UI_MINIO_CONSUMER_EXPECT_OBJECT,

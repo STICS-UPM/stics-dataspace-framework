@@ -238,6 +238,7 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
 
         for sync_step in (
             self._sync_common_service_external_ips_vm_distributed,
+            self._sync_common_postgresql_nodeport_vm_distributed,
             self._ensure_ingress_nginx_forwarded_headers_vm_distributed,
             self._sync_nginx_stream_proxy_vm_distributed,
             self._sync_nginx_http_proxy_vm_distributed,
@@ -247,6 +248,25 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
             except Exception as exc:
                 print(f"Warning: vm-distributed routing sync step skipped: {exc}")
         return {"status": "synced"}
+
+    def sync_vm_distributed_common_postgresql_access(self):
+        """Reconcile only the common PostgreSQL endpoint used by remote connector clusters."""
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception as exc:
+            print(f"Warning: vm-distributed PostgreSQL access sync skipped: could not load configuration: {exc}")
+            return {"status": "skipped", "reason": "missing-config"}
+
+        if not self._has_vm_distributed_routing_config(deployer_config):
+            print("vm-distributed PostgreSQL access sync skipped: VM_COMMON_IP and DS_DOMAIN_BASE are required.")
+            return {"status": "skipped", "reason": "incomplete-config"}
+
+        try:
+            synchronized = self._sync_common_postgresql_nodeport_vm_distributed(deployer_config)
+        except Exception as exc:
+            print(f"Warning: vm-distributed PostgreSQL access sync skipped: {exc}")
+            return {"status": "failed", "reason": str(exc)}
+        return {"status": "synced" if synchronized else "failed"}
 
     def sync_vm_distributed_public_access(self, topology=VM_DISTRIBUTED_TOPOLOGY):
         """Reconcile the public entrypoints expected by VM-based topologies."""
@@ -728,6 +748,141 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
                 detail = (proc.stderr or proc.stdout or "").strip()
                 print(f"Warning: could not expose {service} through {common_ip}: {detail}")
         print(f"vm-distributed common service externalIPs synchronized: {common_ip}")
+
+    @staticmethod
+    def _normalize_nodeport(value, default="30432"):
+        candidate = str(value or "").strip()
+        if not candidate:
+            candidate = str(default or "").strip()
+        try:
+            port = int(candidate)
+        except (TypeError, ValueError):
+            return ""
+        if port < 30000 or port > 32767:
+            return ""
+        return str(port)
+
+    def _sync_common_postgresql_nodeport_vm_distributed(self, deployer_config):
+        """Expose common PostgreSQL through an explicit NodePort for remote connector clusters."""
+        access_mode = str(
+            (deployer_config or {}).get("VM_DISTRIBUTED_POSTGRES_ACCESS_MODE")
+            or (deployer_config or {}).get("VM_DISTRIBUTED_COMMON_POSTGRES_ACCESS_MODE")
+            or "direct"
+        ).strip().lower()
+        if access_mode not in {"nodeport", "node-port", "node_port"}:
+            print(
+                "vm-distributed PostgreSQL NodePort sync skipped: "
+                "VM_DISTRIBUTED_POSTGRES_ACCESS_MODE is direct."
+            )
+            return True
+
+        nodeport = self._normalize_nodeport(
+            (deployer_config or {}).get("VM_DISTRIBUTED_POSTGRES_NODEPORT")
+            or (deployer_config or {}).get("VM_DISTRIBUTED_COMMON_POSTGRES_NODEPORT")
+            or "30432"
+        )
+        if not nodeport:
+            print(
+                "Warning: vm-distributed PostgreSQL NodePort sync skipped: "
+                "VM_DISTRIBUTED_POSTGRES_NODEPORT must be in the Kubernetes NodePort range 30000-32767."
+            )
+            return False
+
+        common_namespace = str(
+            (deployer_config or {}).get("NS_COMMON")
+            or (deployer_config or {}).get("COMMON_SERVICES_NAMESPACE")
+            or getattr(self.config, "NS_COMMON", "common-srvs")
+        ).strip() or "common-srvs"
+        source_service = str(
+            (deployer_config or {}).get("VM_DISTRIBUTED_POSTGRES_SOURCE_SERVICE_NAME")
+            or "common-srvs-postgresql"
+        ).strip() or "common-srvs-postgresql"
+        external_service = str(
+            (deployer_config or {}).get("VM_DISTRIBUTED_POSTGRES_EXTERNAL_SERVICE_NAME")
+            or "common-srvs-postgresql-external"
+        ).strip() or "common-srvs-postgresql-external"
+
+        source_proc = subprocess.run(
+            [
+                "kubectl",
+                "get",
+                "svc",
+                source_service,
+                "-n",
+                common_namespace,
+                "-o",
+                "json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if source_proc.returncode != 0:
+            detail = (source_proc.stderr or source_proc.stdout or "").strip()
+            print(f"Warning: vm-distributed PostgreSQL NodePort sync skipped: {detail}")
+            return False
+
+        try:
+            source_payload = json.loads(source_proc.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            print(f"Warning: vm-distributed PostgreSQL NodePort sync skipped: invalid service JSON: {exc}")
+            return False
+
+        selector = source_payload.get("spec", {}).get("selector") or {}
+        if not selector:
+            print(
+                "Warning: vm-distributed PostgreSQL NodePort sync skipped: "
+                f"{source_service} has no selector."
+            )
+            return False
+        source_ports = source_payload.get("spec", {}).get("ports") or []
+        target_port = "tcp-postgresql"
+        if source_ports:
+            target_port = source_ports[0].get("targetPort") or source_ports[0].get("port") or target_port
+
+        manifest = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {
+                "name": external_service,
+                "namespace": common_namespace,
+                "labels": {
+                    "app.kubernetes.io/managed-by": "validation-environment",
+                    "validation-environment/topology": VM_DISTRIBUTED_TOPOLOGY,
+                    "validation-environment/common-service": "postgresql",
+                },
+            },
+            "spec": {
+                "type": "NodePort",
+                "selector": selector,
+                "ports": [
+                    {
+                        "name": "tcp-postgresql",
+                        "protocol": "TCP",
+                        "port": 5432,
+                        "targetPort": target_port,
+                        "nodePort": int(nodeport),
+                    }
+                ],
+            },
+        }
+        apply_proc = subprocess.run(
+            ["kubectl", "apply", "-f", "-"],
+            input=json.dumps(manifest),
+            capture_output=True,
+            text=True,
+        )
+        if apply_proc.returncode != 0:
+            detail = (apply_proc.stderr or apply_proc.stdout or "").strip()
+            print(f"Warning: vm-distributed PostgreSQL NodePort sync failed: {detail}")
+            return False
+
+        common_ip = str((deployer_config or {}).get("VM_COMMON_IP") or "").strip()
+        endpoint = f"{common_ip}:{nodeport}" if common_ip else f"NodePort {nodeport}"
+        print(
+            "vm-distributed PostgreSQL NodePort synchronized: "
+            f"{external_service} ({endpoint})"
+        )
+        return True
 
     def _vm_distributed_dataspace_name(self, deployer_config):
         for getter_name in ("primary_dataspace_name", "dataspace_name"):

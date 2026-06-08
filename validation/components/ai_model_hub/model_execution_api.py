@@ -19,6 +19,8 @@ SUITE_NAME = "model-execution-api"
 TEST_CASE_ID = "PT5-MH-10"
 FUNCTIONAL_CASE_ID = "MH-LING-01"
 EDC_NAMESPACE = "https://w3id.org/edc/v0.0.1/ns/"
+DAIMO_NAMESPACE = "https://w3id.org/daimo/0.0.1/ns#"
+LEGACY_DAIMO_NAMESPACE = "https://pionera.ai/edc/daimo#"
 DEFAULT_MODEL_PATH = "/api/v1/nlp/ecommerce-sentiment"
 DEFAULT_PAYLOAD = {"text": "This product is excellent and very useful"}
 DEFAULT_EXPECTED_MODEL = "E-commerce Sentiment Analyzer"
@@ -85,7 +87,9 @@ class AIModelHubModelExecutionApiSuite:
         ds_domain_resolver: Callable[[], str],
         ds_name_loader: Callable[[], str] | None = None,
         management_url_resolver: Callable[[str, str], str] | None = None,
+        default_api_url_resolver: Callable[[str, str], str] | None = None,
         keycloak_url_resolver: Callable[[], str] | None = None,
+        adapter_name: str | None = None,
         session: requests.Session | None = None,
         uuid_factory: Callable[[], str] | None = None,
     ):
@@ -94,7 +98,9 @@ class AIModelHubModelExecutionApiSuite:
         self.ds_domain_resolver = ds_domain_resolver
         self.ds_name_loader = ds_name_loader or (lambda: "demo")
         self.management_url_resolver = management_url_resolver
+        self.default_api_url_resolver = default_api_url_resolver
         self.keycloak_url_resolver = keycloak_url_resolver
+        self.adapter_name = str(adapter_name or "").strip().lower()
         self.session = session or requests.Session()
         self.uuid_factory = uuid_factory or (lambda: str(uuid.uuid4()))
 
@@ -122,7 +128,8 @@ class AIModelHubModelExecutionApiSuite:
             "ds_domain": str(self.ds_domain_resolver() or "").strip(),
             "keycloak_url": "",
             "adapter": str(
-                os.environ.get("AI_MODEL_HUB_COMPONENT_ADAPTER")
+                self.adapter_name
+                or os.environ.get("AI_MODEL_HUB_COMPONENT_ADAPTER")
                 or os.environ.get("PIONERA_ADAPTER")
                 or config.get("PIONERA_ADAPTER")
                 or config.get("ADAPTER_NAME")
@@ -137,9 +144,20 @@ class AIModelHubModelExecutionApiSuite:
         if callable(self.keycloak_url_resolver):
             runtime["keycloak_url"] = str(self.keycloak_url_resolver() or "").strip()
         if not runtime["keycloak_url"]:
-            runtime["keycloak_url"] = _env_first("AI_MODEL_HUB_KEYCLOAK_URL")
+            runtime["keycloak_url"] = _env_first(
+                "AI_MODEL_HUB_KEYCLOAK_URL",
+                "KEYCLOAK_FRONTEND_URL",
+                "KEYCLOAK_PUBLIC_URL",
+                "UI_KEYCLOAK_URL",
+            )
         if not runtime["keycloak_url"]:
-            runtime["keycloak_url"] = str(config.get("KC_INTERNAL_URL") or config.get("KC_URL") or "").strip()
+            runtime["keycloak_url"] = str(
+                config.get("KEYCLOAK_FRONTEND_URL")
+                or config.get("KEYCLOAK_PUBLIC_URL")
+                or config.get("KC_INTERNAL_URL")
+                or config.get("KC_URL")
+                or ""
+            ).strip()
         if runtime["keycloak_url"] and not runtime["keycloak_url"].startswith("http"):
             runtime["keycloak_url"] = f"http://{runtime['keycloak_url']}"
         if not runtime["ds_domain"]:
@@ -196,6 +214,10 @@ class AIModelHubModelExecutionApiSuite:
             management_url = _env_first("AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL")
             if management_url:
                 return _join_default_api_url(management_url.rstrip("/").removesuffix("/management") + "/api", path)
+        if callable(self.default_api_url_resolver):
+            resolved = str(self.default_api_url_resolver(connector, path) or "").strip()
+            if resolved:
+                return resolved
         return _join_default_api_url(f"http://{connector}.{self.ds_domain_resolver()}/api", path)
 
     def _execution_url(self, provider: str, runtime: dict[str, Any]) -> str:
@@ -283,11 +305,14 @@ class AIModelHubModelExecutionApiSuite:
 
     def _create_asset(self, provider: str, provider_jwt: str, model_url: str, suffix: str):
         asset_id = f"a52-model-exec-{suffix}"
+        keywords = ["validation", "ai-model-hub", "model-execution", "A5.2"]
         payload = {
             "@context": {
                 "@vocab": EDC_NAMESPACE,
+                "edc": EDC_NAMESPACE,
                 "dct": "http://purl.org/dc/terms/",
                 "dcat": "http://www.w3.org/ns/dcat#",
+                "daimo": DAIMO_NAMESPACE,
             },
             "@id": asset_id,
             "@type": "Asset",
@@ -296,16 +321,41 @@ class AIModelHubModelExecutionApiSuite:
                 "version": "1.0.0",
                 "shortDescription": "Temporary model endpoint for the A5.2 controlled execution baseline",
                 "assetType": "machineLearning",
+                "assetData": {},
+                "asset:prop:type": "machineLearning",
+                "storageType": "HttpData",
+                "edc:dataAddressType": "HttpData",
+                f"{EDC_NAMESPACE}dataAddressType": "HttpData",
                 "dct:description": "HttpData endpoint consumed through the connector-side model execution API",
-                "dcat:keyword": ["validation", "ai-model-hub", "model-execution", "A5.2"],
+                "dcat:keyword": keywords,
                 "daimo:asset_kind": "model",
+                f"{DAIMO_NAMESPACE}asset_kind": "model",
+                f"{LEGACY_DAIMO_NAMESPACE}asset_kind": "model",
                 "daimo:task": "text-classification",
+                f"{DAIMO_NAMESPACE}task": "text-classification",
+                f"{LEGACY_DAIMO_NAMESPACE}task": "text-classification",
                 "daimo:subtask": "sentiment-analysis",
+                f"{DAIMO_NAMESPACE}subtask": "sentiment-analysis",
+                f"{LEGACY_DAIMO_NAMESPACE}subtask": "sentiment-analysis",
                 "daimo:algorithm": "deterministic-rule-engine",
+                f"{DAIMO_NAMESPACE}algorithm": "deterministic-rule-engine",
+                f"{LEGACY_DAIMO_NAMESPACE}algorithm": "deterministic-rule-engine",
                 "daimo:library": "flask",
+                "daimo:library_name": "flask",
+                f"{DAIMO_NAMESPACE}library": "flask",
+                f"{LEGACY_DAIMO_NAMESPACE}library": "flask",
+                f"{LEGACY_DAIMO_NAMESPACE}library_name": "flask",
                 "daimo:framework": "model-server",
+                f"{DAIMO_NAMESPACE}framework": "model-server",
+                f"{LEGACY_DAIMO_NAMESPACE}framework": "model-server",
                 "daimo:software": "pionera-validation-framework",
+                f"{DAIMO_NAMESPACE}software": "pionera-validation-framework",
+                f"{LEGACY_DAIMO_NAMESPACE}software": "pionera-validation-framework",
                 "daimo:inference_path": DEFAULT_MODEL_PATH,
+                f"{DAIMO_NAMESPACE}inference_path": DEFAULT_MODEL_PATH,
+                f"{LEGACY_DAIMO_NAMESPACE}inference_path": DEFAULT_MODEL_PATH,
+                "daimo:tags": keywords,
+                f"{LEGACY_DAIMO_NAMESPACE}tags": keywords,
                 "task": "text-classification",
                 "subtask": "sentiment-analysis",
                 "algorithm": "deterministic-rule-engine",
@@ -329,6 +379,7 @@ class AIModelHubModelExecutionApiSuite:
                 "baseUrl": model_url,
                 "method": "POST",
                 "name": f"ai-model-hub-model-execution-{suffix}",
+                "proxyPath": "true",
             },
         }
         status_code, body = self._post_json(
@@ -795,6 +846,52 @@ def _build_adapter(adapter_name: str, topology: str):
     return InesdataAdapter(topology=topology)
 
 
+def _adapter_management_url_resolver(adapter):
+    builder = getattr(getattr(adapter, "connectors", None), "build_connector_url", None)
+    if not callable(builder):
+        return None
+
+    def resolver(connector: str, path: str) -> str:
+        base = str(builder(connector) or "").strip().rstrip("/")
+        suffix = str(path or "").strip()
+        if not base:
+            return ""
+        if not suffix:
+            return base
+        if not suffix.startswith("/"):
+            suffix = f"/{suffix}"
+        if base.endswith("/management/v3") and suffix.startswith("/management/v3/"):
+            suffix = suffix[len("/management/v3") :]
+        elif base.endswith("/management") and suffix.startswith("/management/"):
+            suffix = suffix[len("/management") :]
+        return f"{base}{suffix}"
+
+    return resolver
+
+
+def _adapter_default_api_url_resolver(adapter):
+    connectors = getattr(adapter, "connectors", None)
+    public_api_builder = getattr(connectors, "_edc_connector_public_api_base_url", None)
+    management_builder = getattr(connectors, "build_connector_url", None)
+
+    def resolver(connector: str, path: str) -> str:
+        base = ""
+        if callable(public_api_builder):
+            base = str(public_api_builder(connector) or "").strip().rstrip("/")
+        if not base and callable(management_builder):
+            management_base = str(management_builder(connector) or "").strip().rstrip("/")
+            for suffix in ("/management/v3", "/management"):
+                if management_base.endswith(suffix):
+                    management_base = management_base[: -len(suffix)]
+                    break
+            base = management_base
+        if not base:
+            return ""
+        return _join_default_api_url(f"{base}/api", path)
+
+    return resolver
+
+
 def build_ai_model_hub_model_execution_suite(adapter_name: str = "inesdata", topology: str = "local"):
     adapter = _build_adapter(adapter_name, topology)
     return AIModelHubModelExecutionApiSuite(
@@ -802,6 +899,9 @@ def build_ai_model_hub_model_execution_suite(adapter_name: str = "inesdata", top
         load_deployer_config=adapter.load_deployer_config,
         ds_domain_resolver=adapter.config.ds_domain_base,
         ds_name_loader=_dataspace_name_loader(adapter),
+        management_url_resolver=_adapter_management_url_resolver(adapter),
+        default_api_url_resolver=_adapter_default_api_url_resolver(adapter),
+        adapter_name=str(adapter_name or "inesdata").strip().lower(),
     ), adapter
 
 
@@ -1149,7 +1249,12 @@ def _parse_json_object(value: str, label: str) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run PT5-MH-10 AI Model Hub controlled execution baseline.")
-    parser.add_argument("--topology", default="local", choices=["local", "vm-single"])
+    parser.add_argument(
+        "--adapter",
+        default=str(os.environ.get("PIONERA_ADAPTER") or os.environ.get("AI_MODEL_HUB_COMPONENT_ADAPTER") or "inesdata"),
+        choices=["inesdata", "edc"],
+    )
+    parser.add_argument("--topology", default="local", choices=["local", "vm-single", "vm-distributed"])
     parser.add_argument("--provider", default="")
     parser.add_argument("--model-url", default="")
     parser.add_argument("--model-path", default=DEFAULT_MODEL_PATH)
@@ -1175,7 +1280,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         payload = _parse_json_object(args.payload_json, "--payload-json")
 
-    suite, adapter = build_inesdata_ai_model_hub_model_execution_suite(topology=args.topology)
+    suite, adapter = build_ai_model_hub_model_execution_suite(args.adapter, topology=args.topology)
     connectors = list(adapter.get_cluster_connectors() or []) if not args.provider else []
     provider = args.provider or (connectors[0] if connectors else "")
     if not provider:

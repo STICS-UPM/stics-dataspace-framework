@@ -1,6 +1,9 @@
 const { requestConnectorManagementToken } = require("./auth");
 
 const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
+const EDC_NAMESPACE = "https://w3id.org/edc/v0.0.1/ns/";
+const DAIMO_NAMESPACE = "https://w3id.org/daimo/0.0.1/ns#";
+const LEGACY_DAIMO_NAMESPACE = "https://pionera.ai/edc/daimo#";
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -27,6 +30,49 @@ async function ensureOk(response, action) {
   throw new Error(`${action} failed with HTTP ${response.status()}: ${body.slice(0, 500)}`);
 }
 
+function edcAssetContext() {
+  return {
+    "@vocab": EDC_NAMESPACE,
+    edc: EDC_NAMESPACE,
+    dct: "http://purl.org/dc/terms/",
+    dcat: "http://www.w3.org/ns/dcat#",
+    daimo: DAIMO_NAMESPACE,
+  };
+}
+
+function edcStorageMetadata(dataAddressType = "HttpData") {
+  return {
+    storageType: dataAddressType,
+    "edc:dataAddressType": dataAddressType,
+    [`${EDC_NAMESPACE}dataAddressType`]: dataAddressType,
+  };
+}
+
+function aiModelMetadataAliases({ task, library, inferencePath, keywords }) {
+  return {
+    "daimo:asset_kind": "model",
+    [`${DAIMO_NAMESPACE}asset_kind`]: "model",
+    [`${LEGACY_DAIMO_NAMESPACE}asset_kind`]: "model",
+    "daimo:task": task,
+    [`${DAIMO_NAMESPACE}task`]: task,
+    [`${LEGACY_DAIMO_NAMESPACE}task`]: task,
+    "daimo:pipeline_tag": task,
+    [`${LEGACY_DAIMO_NAMESPACE}pipeline_tag`]: task,
+    "daimo:library": library,
+    "daimo:library_name": library,
+    [`${DAIMO_NAMESPACE}library`]: library,
+    [`${LEGACY_DAIMO_NAMESPACE}library`]: library,
+    [`${LEGACY_DAIMO_NAMESPACE}library_name`]: library,
+    "daimo:tags": keywords,
+    [`${LEGACY_DAIMO_NAMESPACE}tags`]: keywords,
+    ...(inferencePath ? {
+      "daimo:inference_path": inferencePath,
+      [`${DAIMO_NAMESPACE}inference_path`]: inferencePath,
+      [`${LEGACY_DAIMO_NAMESPACE}inference_path`]: inferencePath,
+    } : {}),
+  };
+}
+
 async function createPublishedProviderModelAsset(request, runtime, payload) {
   const providerToken = await requestConnectorManagementToken(runtime, runtime.providerConnectorId);
   const {
@@ -47,12 +93,7 @@ async function createPublishedProviderModelAsset(request, runtime, payload) {
       "Content-Type": "application/json",
     },
     data: {
-      "@context": {
-        "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
-        dct: "http://purl.org/dc/terms/",
-        dcat: "http://www.w3.org/ns/dcat#",
-        daimo: "https://pionera.ai/edc/daimo#",
-      },
+      "@context": edcAssetContext(),
       "@id": assetId,
       "@type": "Asset",
       properties: {
@@ -60,17 +101,25 @@ async function createPublishedProviderModelAsset(request, runtime, payload) {
         version,
         shortDescription: description,
         assetType: "machineLearning",
+        assetData: {},
+        "asset:prop:type": "machineLearning",
         contenttype: runtime.modelContentType,
         "dct:description": description,
         "dcat:keyword": ["pt5-mh-03", "playwright", "publication"],
-        "daimo:pipeline_tag": task,
-        "daimo:library_name": library,
-        "daimo:tags": ["pt5-mh-03", "playwright", "publication"],
+        ...edcStorageMetadata("HttpData"),
+        ...aiModelMetadataAliases({
+          task,
+          library,
+          inferencePath: payload.inferencePath || payload.modelPath,
+          keywords: ["pt5-mh-03", "playwright", "publication"],
+        }),
       },
       dataAddress: {
         type: "HttpData",
         baseUrl,
+        method: "POST",
         name: "published-model",
+        proxyPath: "true",
       },
     },
   }));
@@ -158,12 +207,7 @@ async function createLocalConsumerModelAsset(request, runtime, payload) {
       "Content-Type": "application/json",
     },
     data: {
-      "@context": {
-        "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
-        dct: "http://purl.org/dc/terms/",
-        dcat: "http://www.w3.org/ns/dcat#",
-        daimo: "https://pionera.ai/edc/daimo#",
-      },
+      "@context": edcAssetContext(),
       "@id": assetId,
       "@type": "Asset",
       properties: {
@@ -171,18 +215,26 @@ async function createLocalConsumerModelAsset(request, runtime, payload) {
         version,
         shortDescription: description,
         assetType: "machineLearning",
+        assetData: {},
+        "asset:prop:type": "machineLearning",
         contenttype: runtime.modelContentType,
         "dct:description": description,
         "dcat:keyword": keywords,
-        "daimo:pipeline_tag": task,
-        "daimo:library_name": library,
-        "daimo:tags": keywords,
+        ...edcStorageMetadata("HttpData"),
+        ...aiModelMetadataAliases({
+          task,
+          library,
+          inferencePath: payload.inferencePath || payload.modelPath,
+          keywords,
+        }),
         ...extraProperties,
       },
       dataAddress: {
         type: "HttpData",
         baseUrl,
+        method: "POST",
         name: "consumer-local-model",
+        proxyPath: "true",
         ...dataAddress,
       },
     },

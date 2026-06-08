@@ -68,6 +68,20 @@ class OntologyHubComponentValidationTests(unittest.TestCase):
         self.assertEqual(runtime["selfHostServiceName"], "pionera-ontology-hub")
         self.assertEqual(runtime["componentsNamespace"], "components")
 
+    def test_runtime_uses_shared_base_release_for_edc_components_by_default(self):
+        runtime = resolve_ontology_hub_runtime(
+            environ={
+                "PIONERA_ADAPTER": "edc",
+                "UI_DATASPACE": "pionera-edc",
+                "ONTOLOGY_HUB_BASE_URL": "https://org1.pionera.oeg.fi.upm.es/ontology-hub",
+                "ONTOLOGY_HUB_COMPONENTS_NAMESPACE": "components",
+            }
+        )
+
+        self.assertEqual(runtime["dataspace"], "pionera-edc")
+        self.assertEqual(runtime["releaseName"], "pionera-ontology-hub")
+        self.assertEqual(runtime["componentsNamespace"], "components")
+
     def test_evaluate_term_search_response_passes_on_valid_json_payload(self):
         payload = {
             "results": [],

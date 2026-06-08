@@ -133,6 +133,85 @@ class FakePublicAccessAdapter(FakeAdapter):
         self.infrastructure = FakePublicAccessInfrastructure()
 
 
+class EffectiveConfigurationViewTests(unittest.TestCase):
+    def test_trace_layered_config_reports_overlay_and_environment_sources(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = os.path.join(temp_dir, "deployer.config")
+            topology_dir = os.path.join(temp_dir, "topologies")
+            overlay_path = os.path.join(topology_dir, "vm-distributed.config")
+            os.makedirs(topology_dir, exist_ok=True)
+            with open(base_path, "w", encoding="utf-8") as handle:
+                handle.write("FOO=base\nBAR=base\n")
+            with open(overlay_path, "w", encoding="utf-8") as handle:
+                handle.write("FOO=overlay\n")
+
+            trace = main._trace_layered_deployer_config(
+                [base_path],
+                topology="vm-distributed",
+                environ={"PIONERA_BAR": "env"},
+            )
+
+        entries = {entry["key"]: entry for entry in trace["entries"]}
+        self.assertEqual(entries["FOO"]["value"], "overlay")
+        self.assertIn("topology overlay", entries["FOO"]["source"])
+        self.assertEqual(entries["BAR"]["value"], "env")
+        self.assertEqual(entries["BAR"]["source"], "environment override: PIONERA_BAR")
+
+    def test_trace_layered_config_respects_protected_infrastructure_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            infra_path = os.path.join(temp_dir, "infrastructure", "deployer.config")
+            adapter_path = os.path.join(temp_dir, "edc", "deployer.config")
+            os.makedirs(os.path.dirname(infra_path), exist_ok=True)
+            os.makedirs(os.path.dirname(adapter_path), exist_ok=True)
+            with open(infra_path, "w", encoding="utf-8") as handle:
+                handle.write("SHARED_KEY=infra\n")
+            with open(adapter_path, "w", encoding="utf-8") as handle:
+                handle.write("SHARED_KEY=adapter\nADAPTER_ONLY=true\n")
+
+            trace = main._trace_layered_deployer_config(
+                [infra_path, adapter_path],
+                topology="vm-distributed",
+                protected_keys={"SHARED_KEY"},
+                environ={},
+            )
+
+        entries = {entry["key"]: entry for entry in trace["entries"]}
+        self.assertEqual(entries["SHARED_KEY"]["value"], "infra")
+        self.assertIn("infrastructure", entries["SHARED_KEY"]["source"])
+        self.assertEqual(entries["ADAPTER_ONLY"]["value"], "true")
+        self.assertIn("edc", entries["ADAPTER_ONLY"]["source"])
+
+    def test_effective_configuration_print_masks_sensitive_values(self):
+        view = {
+            "topology": "vm-distributed",
+            "adapter": "edc",
+            "profile": {},
+            "sections": [
+                {
+                    "name": "Test",
+                    "trace": {
+                        "layers": [],
+                        "entries": [
+                            {
+                                "key": "ACCESS_TOKEN",
+                                "value": "real-token-value",
+                                "source": "environment override: PIONERA_ACCESS_TOKEN",
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            main._print_effective_configuration_view(view)
+
+        output = stdout.getvalue()
+        self.assertNotIn("real-token-value", output)
+        self.assertIn("(sensitive value hidden)", output)
+
+
 class RuntimeArtifactPathSummaryTests(unittest.TestCase):
     def test_vm_distributed_inesdata_summary_separates_shared_and_adapter_artifacts(self):
         context = DeploymentContext(
@@ -1141,7 +1220,7 @@ class EdcDashboardReadinessTests(unittest.TestCase):
                 seen_urls.append(url)
                 if url.endswith("/.well-known/openid-configuration"):
                     return types.SimpleNamespace(status_code=200, headers={})
-                if url.endswith("/edc-dashboard"):
+                if url.endswith("/edc-dashboard/"):
                     return types.SimpleNamespace(status_code=200, headers={})
                 if url.endswith("/edc-dashboard-api/auth/me"):
                     return types.SimpleNamespace(status_code=401, headers={})
@@ -1158,7 +1237,7 @@ class EdcDashboardReadinessTests(unittest.TestCase):
 
             self.assertEqual(readiness["status"], "passed")
             self.assertIn(
-                "https://org4.example.test/c/citycounciledc/edc-dashboard",
+                "https://org4.example.test/c/citycounciledc/edc-dashboard/",
                 seen_urls,
             )
             self.assertIn(
@@ -1197,7 +1276,7 @@ class EdcDashboardReadinessTests(unittest.TestCase):
         def fake_http_get(url, **kwargs):
             if url.endswith("/.well-known/openid-configuration"):
                 return types.SimpleNamespace(status_code=200, headers={})
-            if url.endswith("/edc-dashboard"):
+            if url.endswith("/edc-dashboard/"):
                 return types.SimpleNamespace(status_code=200, headers={})
             if url.endswith("/edc-dashboard-api/auth/me"):
                 return types.SimpleNamespace(status_code=401, headers={})
@@ -1227,7 +1306,7 @@ class EdcDashboardReadinessTests(unittest.TestCase):
         def fake_http_get(url, **kwargs):
             if url.endswith("/.well-known/openid-configuration"):
                 return types.SimpleNamespace(status_code=200, headers={})
-            if url.endswith("/edc-dashboard"):
+            if url.endswith("/edc-dashboard/"):
                 return types.SimpleNamespace(status_code=200, headers={})
             if url.endswith("/edc-dashboard-api/auth/me"):
                 return types.SimpleNamespace(status_code=401, headers={})
@@ -1266,13 +1345,98 @@ class EdcDashboardReadinessTests(unittest.TestCase):
             ],
         )
 
+    def test_probe_edc_dashboard_readiness_uses_connector_role_kubeconfigs_in_vm_distributed(self):
+        context = self._role_aligned_context()
+        context.config = {
+            **dict(context.config or {}),
+            "TOPOLOGY": "vm-distributed",
+            "KEYCLOAK_FRONTEND_URL": "https://org1.example.test/auth",
+        }
+        context.connector_details = [
+            {
+                "name": "conn-citycounciledc-demoedc",
+                "namespace_role": "provider",
+            },
+            {
+                "name": "conn-companyedc-demoedc",
+                "namespace_role": "consumer",
+            },
+        ]
+
+        def fake_http_get(url, **kwargs):
+            if url.endswith("/.well-known/openid-configuration"):
+                return types.SimpleNamespace(status_code=200, headers={})
+            if url.endswith("/edc-dashboard/"):
+                return types.SimpleNamespace(status_code=200, headers={})
+            if url.endswith("/edc-dashboard-api/auth/me"):
+                return types.SimpleNamespace(status_code=401, headers={})
+            if url.endswith("/management/v3/assets/request"):
+                return types.SimpleNamespace(status_code=405, headers={})
+            raise AssertionError(f"Unexpected URL probed: {url}")
+
+        endpoint_calls = []
+
+        def fake_endpoint_ready(namespace, service_name):
+            endpoint_calls.append(
+                (
+                    namespace,
+                    service_name,
+                    os.environ.get("KUBECONFIG"),
+                    os.environ.get("PIONERA_KUBECONFIG_ROLE"),
+                )
+            )
+            return True, "1 endpoint address(es)"
+
+        def fake_runtime_env(topology, level=None, role=None):
+            del level
+            self.assertEqual(topology, "vm-distributed")
+            return {
+                "KUBECONFIG": f"/tmp/{role}.yaml",
+                "PIONERA_KUBECONFIG_ROLE": role,
+            }
+
+        with mock.patch.object(
+            main,
+            "_kubectl_endpoint_ready",
+            side_effect=fake_endpoint_ready,
+        ), mock.patch.object(main.requests, "get", side_effect=fake_http_get), mock.patch.object(
+            main,
+            "_topology_runtime_environment_overrides",
+            side_effect=fake_runtime_env,
+        ):
+            readiness = main._probe_edc_dashboard_readiness(context)
+
+        self.assertEqual(readiness["status"], "passed")
+        self.assertEqual(
+            endpoint_calls,
+            [
+                ("demoedc-provider", "conn-citycounciledc-demoedc-dashboard", "/tmp/provider.yaml", "provider"),
+                ("demoedc-provider", "conn-citycounciledc-demoedc-dashboard-proxy", "/tmp/provider.yaml", "provider"),
+                ("demoedc-consumer", "conn-companyedc-demoedc-dashboard", "/tmp/consumer.yaml", "consumer"),
+                ("demoedc-consumer", "conn-companyedc-demoedc-dashboard-proxy", "/tmp/consumer.yaml", "consumer"),
+            ],
+        )
+        roles = {
+            gate.get("gate"): gate.get("kubeconfig_role")
+            for gate in readiness["gates"]
+            if gate.get("gate", "").startswith(("dashboard:", "dashboard-proxy:"))
+        }
+        self.assertEqual(
+            roles["dashboard:conn-citycounciledc-demoedc"],
+            "provider",
+        )
+        self.assertEqual(
+            roles["dashboard:conn-companyedc-demoedc"],
+            "consumer",
+        )
+
     def test_probe_edc_dashboard_readiness_rejects_http_503_even_with_ready_endpoints(self):
         context = self._context()
 
         def fake_http_get(url, **kwargs):
             if url.endswith("/.well-known/openid-configuration"):
                 return types.SimpleNamespace(status_code=200, headers={})
-            if url.endswith("/edc-dashboard"):
+            if url.endswith("/edc-dashboard/"):
                 return types.SimpleNamespace(status_code=503, headers={})
             if url.endswith("/edc-dashboard-api/auth/me"):
                 return types.SimpleNamespace(status_code=401, headers={})
@@ -1302,7 +1466,7 @@ class EdcDashboardReadinessTests(unittest.TestCase):
         def fake_http_get(url, **kwargs):
             if url.endswith("/.well-known/openid-configuration"):
                 return types.SimpleNamespace(status_code=200, headers={})
-            if url.endswith("/edc-dashboard"):
+            if url.endswith("/edc-dashboard/"):
                 return types.SimpleNamespace(
                     status_code=301,
                     headers={"Location": "http://dev.ed.dataspaceunit.upm/edc-dashboard/"},
@@ -7559,6 +7723,9 @@ class MainCliTests(unittest.TestCase):
         self.assertNotIn("PIONERA_COMPONENT_VALIDATION_MODE", env)
         self.assertNotIn("LEVEL6_COMPONENT_VALIDATION_MODE", env)
         self.assertEqual(env["UI_DATASPACE"], "pionera-edc")
+        self.assertEqual(env["PIONERA_COMPONENT_DATASPACE_NAME"], "pionera")
+        self.assertEqual(env["COMPONENT_DATASPACE_NAME"], "pionera")
+        self.assertEqual(env["ONTOLOGY_HUB_COMPONENT_DATASPACE_NAME"], "pionera")
         self.assertEqual(env["AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER"], "conn-citycounciledc-pionera-edc")
         self.assertEqual(env["AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER"], "conn-companyedc-pionera-edc")
         self.assertEqual(env["AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER"], "conn-citycounciledc-pionera-edc")
@@ -7708,19 +7875,43 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["mode"], "kubectl-port-forward")
         self.assertEqual(result["url"], "http://127.0.0.1:5678")
 
-    def test_vm_single_mapping_editor_public_url_disables_auto_tunnel(self):
-        should_tunnel = main._vm_single_mapping_editor_should_use_tunnel(
-            {"vms": [{"address": "192.168.122.52"}]},
-            {
-                "CLUSTER_TYPE": "k3s",
-                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL": "https://streamlit-org4.example.test",
-                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE": "host-port",
-                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT": "5678",
-                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_MODE": "auto",
-            },
-        )
+    def test_vm_single_mapping_editor_reachable_public_url_disables_auto_tunnel(self):
+        with mock.patch.object(
+            main,
+            "_vm_single_mapping_editor_http_ready",
+            return_value=True,
+        ):
+            should_tunnel = main._vm_single_mapping_editor_should_use_tunnel(
+                {"vms": [{"address": "192.168.122.52"}]},
+                {
+                    "CLUSTER_TYPE": "k3s",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL": "https://streamlit-org4.example.test",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE": "host-port",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT": "5678",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_MODE": "auto",
+                },
+            )
 
         self.assertFalse(should_tunnel)
+
+    def test_vm_single_mapping_editor_unreachable_public_url_falls_back_to_k3s_tunnel(self):
+        with mock.patch.object(
+            main,
+            "_vm_single_mapping_editor_http_ready",
+            return_value=False,
+        ):
+            should_tunnel = main._vm_single_mapping_editor_should_use_tunnel(
+                {"vms": [{"address": "192.168.122.52"}]},
+                {
+                    "CLUSTER_TYPE": "k3s",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL": "https://streamlit-org4.example.test",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE": "host-port",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT": "5678",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_MODE": "auto",
+                },
+            )
+
+        self.assertTrue(should_tunnel)
 
     def test_vm_single_mapping_editor_port_forward_command_is_parametrized(self):
         command = main._vm_single_mapping_editor_port_forward_command(
@@ -8927,6 +9118,24 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(validation["issues"], [])
         self.assertEqual(validation["checked_connectors"], ["conn-a"])
 
+    def test_edc_dashboard_runtime_validation_accepts_vm_single_prefixed_common_component_proxy(self):
+        with tempfile.TemporaryDirectory() as runtime_root:
+            runtime_dir = os.path.join(runtime_root, "fake-ds")
+            os.makedirs(runtime_dir, exist_ok=True)
+            self._write_edc_dashboard_runtime(
+                runtime_dir,
+                "conn-a",
+                ontology_url="/c/citycounciledc/edc-dashboard-api/components/ontology-hub",
+                model_observer_url="/c/citycounciledc/edc-dashboard-api/connectors/conn-a/api/check",
+            )
+            context = types.SimpleNamespace(runtime_dir=runtime_dir, connectors=["conn-a"])
+
+            validation = main._edc_dashboard_runtime_validation(context)
+
+        self.assertTrue(validation["present"])
+        self.assertTrue(validation["valid"])
+        self.assertEqual(validation["issues"], [])
+
     def test_edc_dashboard_runtime_validation_rejects_incompatible_local_runtime(self):
         with tempfile.TemporaryDirectory() as runtime_root:
             runtime_dir = os.path.join(runtime_root, "fake-ds")
@@ -8945,8 +9154,8 @@ class MainCliTests(unittest.TestCase):
         self.assertTrue(validation["present"])
         self.assertFalse(validation["valid"])
         self.assertTrue(any("Model Observer menu item is missing" in issue for issue in validation["issues"]))
-        self.assertTrue(any("ontologyUrl must be" in issue for issue in validation["issues"]))
-        self.assertTrue(any("modelObserverUrl must start" in issue for issue in validation["issues"]))
+        self.assertTrue(any("ontologyUrl must end with" in issue for issue in validation["issues"]))
+        self.assertTrue(any("modelObserverUrl must route through" in issue for issue in validation["issues"]))
 
     def test_validate_command_allows_edc_playwright_when_dashboard_runtime_artifacts_exist(self):
         with tempfile.TemporaryDirectory() as runtime_root:

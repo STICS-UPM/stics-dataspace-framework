@@ -7,6 +7,7 @@ import re
 import shutil
 import shlex
 import sys
+import tempfile
 import time
 from urllib.parse import urlparse
 
@@ -62,6 +63,10 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         return None, None
 
     def build_connector_url(self, connector_name):
+        public_api_base_url = self._edc_connector_public_api_base_url(connector_name)
+        if public_api_base_url:
+            return f"{public_api_base_url.rstrip('/')}/management/v3"
+
         public_base_url = self._connector_public_base_url(connector_name)
         if public_base_url:
             return f"{public_base_url.rstrip('/')}/management/v3"
@@ -72,10 +77,14 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         return f"http://{connector_name}.{ds_domain}/management/v3"
 
     def build_protocol_address(self, connector_name, path="/protocol"):
+        normalized_path = f"/{str(path or '/protocol').lstrip('/')}"
+        public_api_base_url = self._edc_connector_public_api_base_url(connector_name)
+        if public_api_base_url:
+            return f"{public_api_base_url.rstrip('/')}{normalized_path}"
+
         base_url = self._connector_base_url(connector_name)
         if not base_url:
             raise ValueError("DS_DOMAIN_BASE not defined in deployer.config")
-        normalized_path = f"/{str(path or '/protocol').lstrip('/')}"
         return f"{base_url.rstrip('/')}{normalized_path}"
 
     def wait_for_connector_ready(self, connector_name, timeout=300):
@@ -480,6 +489,7 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                 minikube_profile,
                 "--cluster-runtime",
                 cluster_type,
+                "--force-build",
             ],
             env_prefix=env_prefix,
         ):
@@ -633,8 +643,9 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
     @staticmethod
     def _edc_vault_management_token_paths():
         return [
-            "sys/policies/acl/edc-preflight",
+            "sys/policies/acl/*",
             "auth/token/create",
+            "secret/data/*",
         ]
 
     @staticmethod
@@ -877,15 +888,23 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         with open(credentials_path, "w", encoding="utf-8") as handle:
             json.dump(credentials, handle, indent=2)
 
-    def _reconcile_connector_vault_secrets(self, connector_name, ds_name, credentials=None, vault_url=None):
+    def _reconcile_connector_vault_secrets(
+        self,
+        connector_name,
+        ds_name,
+        credentials=None,
+        vault_url=None,
+        vault_token=None,
+    ):
         credentials_path = self._connector_credentials_file_path(connector_name, ds_name, for_write=True)
         credentials = credentials or self.load_connector_credentials(connector_name)
         if not credentials:
             print(f"Cannot reconcile Vault secrets for {connector_name}: credentials file is missing.")
             return False
 
-        configured_vault_url, management_token = self._vault_management_runtime()
+        configured_vault_url, configured_management_token = self._vault_management_runtime()
         vault_url = str(vault_url or configured_vault_url or "").strip().rstrip("/")
+        management_token = str(vault_token or configured_management_token or "").strip()
         if not vault_url or not management_token:
             print("Cannot reconcile EDC Vault secrets: VT_URL/VT_TOKEN are not defined in deployer.config")
             return False
@@ -914,6 +933,13 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
 
             secrets_payload = self._connector_vault_secret_payload(connector_name, ds_name, credentials)
             if not secrets_payload:
+                return False
+
+            if not self._verify_edc_vault_management_token_over_http(vault_url, management_token)[0]:
+                print(
+                    "Cannot reconcile EDC Vault secrets: the Vault token available for "
+                    f"{connector_name} does not have management permissions."
+                )
                 return False
 
             print(f"Reconciling Vault secrets for EDC connector {connector_name}...")
@@ -1249,14 +1275,18 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             credentials=credentials,
         )
         if public_base_url:
+            public_api_base_url = self._edc_connector_public_api_base_url(
+                connector_name,
+                credentials=credentials,
+            ) or public_base_url
             dashboard_base_href = self.config_adapter.edc_dashboard_base_href()
             inferred_urls = {
                 "connector_ingress": public_base_url,
-                "connector_management_api": f"{public_base_url}/management",
-                "connector_management_api_v3": f"{public_base_url}/management/v3",
-                "connector_protocol_api": f"{public_base_url}/protocol",
-                "connector_default_api": f"{public_base_url}/api",
-                "connector_control_api": f"{public_base_url}/control",
+                "connector_management_api": f"{public_api_base_url}/management",
+                "connector_management_api_v3": f"{public_api_base_url}/management/v3",
+                "connector_protocol_api": f"{public_api_base_url}/protocol",
+                "connector_default_api": f"{public_api_base_url}/api",
+                "connector_control_api": f"{public_api_base_url}/control",
                 "edc_dashboard_login": f"{public_base_url}{dashboard_base_href}",
             }
             if self.config_adapter.edc_dashboard_proxy_auth_mode() == "oidc-bff":
@@ -1264,7 +1294,12 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                     f"{public_base_url}{self.DASHBOARD_PROXY_PREFIX}/auth/login"
                 )
             for key, value in inferred_urls.items():
-                public_urls.setdefault(key, value)
+                if topology == VM_DISTRIBUTED_TOPOLOGY and key.startswith(
+                    ("connector_", "edc_dashboard_")
+                ):
+                    public_urls[key] = value
+                else:
+                    public_urls.setdefault(key, value)
 
         dataspace = self._dataspace_name()
         keycloak_base = self._keycloak_base_url()
@@ -1300,9 +1335,6 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             )
 
         if topology == VM_DISTRIBUTED_TOPOLOGY:
-            public_urls = (credentials or {}).get("public_access_urls") or {}
-            if isinstance(public_urls, dict) and public_urls.get("connector_ingress"):
-                return self._normalize_public_url(public_urls["connector_ingress"])
             layout = self._connector_layout_metadata(connector_name)
             role = (
                 layout.get("namespace_role")
@@ -1310,11 +1342,40 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 or layout.get("role")
                 or self._connector_kubeconfig_role(connector_name)
             )
-            return self._normalize_public_url(
+            public_base_url = self._normalize_public_url(
                 self._connector_public_url_for_role(role, deployer_config)
             )
+            return public_base_url
 
         return ""
+
+    def _edc_connector_public_api_base_url(self, connector_name, credentials=None):
+        public_base_url = self._edc_connector_public_base_url_without_credentials(
+            connector_name,
+            credentials=credentials,
+        )
+        if not public_base_url or self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return public_base_url
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        public_path_prefix = self._vm_distributed_edc_public_path_prefix(deployer_config)
+        if public_path_prefix:
+            return f"{public_base_url.rstrip('/')}{public_path_prefix}"
+        return public_base_url
+
+    @staticmethod
+    def _vm_distributed_edc_public_path_prefix(deployer_config):
+        for key in (
+            "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "VM_DISTRIBUTED_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+        ):
+            raw_value = str((deployer_config or {}).get(key) or "").strip()
+            if not raw_value:
+                continue
+            if raw_value in {"/", ".", "root"}:
+                return ""
+            return f"/{raw_value.strip('/')}"
+        return "/edc"
 
     def _vm_public_common_base_url(self):
         deployer_config = self.config_adapter.load_deployer_config() or {}
@@ -1461,6 +1522,219 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             )
         return manifests
 
+    def _vm_distributed_connector_public_host_ingress_manifests(self, values, namespace):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return []
+
+        connector = (values or {}).get("connector") or {}
+        connector_name = str(connector.get("name") or "").strip()
+        if not connector_name:
+            return []
+
+        namespace = str(namespace or self._connector_runtime_namespace(connector_name) or "").strip()
+        if not namespace:
+            return []
+
+        public_url = self._edc_connector_public_base_url_without_credentials(connector_name)
+        host, _root_path_prefix = self._public_hostname_and_path(public_url)
+        if not host:
+            return []
+
+        public_api_url = self._edc_connector_public_api_base_url(connector_name) or public_url
+        api_host, api_path_prefix = self._public_hostname_and_path(public_api_url)
+        if api_host and api_host != host:
+            host = api_host
+
+        ingress = connector.get("ingress") or {}
+        proxy_body_size = str(ingress.get("proxyBodySize") or "800m")
+        common_annotations = {
+            "nginx.ingress.kubernetes.io/proxy-body-size": proxy_body_size,
+            "nginx.org/client-max-body-size": proxy_body_size,
+        }
+
+        def backend(service_name, port):
+            return {
+                "service": {
+                    "name": service_name,
+                    "port": {"number": port},
+                }
+            }
+
+        api_route_specs = [
+            ("api", connector_name, 19191),
+            ("control", connector_name, 19192),
+            ("management", connector_name, 19193),
+            ("protocol", connector_name, 19194),
+            ("version", connector_name, 19195),
+            ("shared", connector_name, 19196),
+            ("public", connector_name, 19291),
+        ]
+        dashboard = (values or {}).get("dashboard") or {}
+        manifests = []
+        if dashboard.get("enabled"):
+            dashboard_paths = []
+            dashboard_proxy = dashboard.get("proxy") or {}
+            if dashboard_proxy.get("enabled"):
+                dashboard_paths.append(
+                    {
+                        "pathType": "Prefix",
+                        "path": self.DASHBOARD_PROXY_PREFIX,
+                        "backend": backend(
+                            f"{connector_name}-dashboard-proxy",
+                            int(dashboard_proxy.get("port") or 8080),
+                        ),
+                    }
+                )
+            dashboard_base_href = str(self.config_adapter.edc_dashboard_base_href() or "").strip()
+            dashboard_path = f"/{dashboard_base_href.strip('/')}" if dashboard_base_href else "/edc-dashboard"
+            dashboard_paths.append(
+                {
+                    "pathType": "Prefix",
+                    "path": dashboard_path,
+                    "backend": backend(f"{connector_name}-dashboard", 80),
+                }
+            )
+            manifests.append(
+                {
+                    "apiVersion": "networking.k8s.io/v1",
+                    "kind": "Ingress",
+                    "metadata": {
+                        "name": f"{connector_name}-public-dashboard-ingress",
+                        "namespace": namespace,
+                        "labels": {
+                            self.MANAGED_LABEL_KEY: self._managed_label_value(),
+                        },
+                        "annotations": common_annotations,
+                    },
+                    "spec": {
+                        "rules": [
+                            {
+                                "host": host,
+                                "http": {
+                                    "paths": dashboard_paths,
+                                },
+                            }
+                        ]
+                    },
+                }
+            )
+
+        api_path_prefix = str(api_path_prefix or "").rstrip("/")
+        if api_path_prefix:
+            escaped_prefix = re.escape(api_path_prefix)
+            api_annotations = {
+                **common_annotations,
+                "nginx.ingress.kubernetes.io/use-regex": "true",
+                "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+            }
+            api_paths = [
+                {
+                    "pathType": "ImplementationSpecific",
+                    "path": f"{escaped_prefix}(/|$)({segment}.*)",
+                    "backend": backend(service_name, port),
+                }
+                for segment, service_name, port in api_route_specs
+            ]
+        else:
+            api_annotations = common_annotations
+            api_paths = [
+                {
+                    "pathType": "Prefix",
+                    "path": f"/{segment}",
+                    "backend": backend(service_name, port),
+                }
+                for segment, service_name, port in api_route_specs
+            ]
+
+        manifests.append(
+            {
+                "apiVersion": "networking.k8s.io/v1",
+                "kind": "Ingress",
+                "metadata": {
+                    "name": f"{connector_name}-public-api-ingress",
+                    "namespace": namespace,
+                    "labels": {
+                        self.MANAGED_LABEL_KEY: self._managed_label_value(),
+                    },
+                    "annotations": api_annotations,
+                },
+                "spec": {
+                    "rules": [
+                        {
+                            "host": host,
+                            "http": {
+                                "paths": api_paths,
+                            },
+                        }
+                    ]
+                },
+            }
+        )
+        return manifests
+
+    def _sync_vm_distributed_connector_public_host_ingresses(self, values_file, namespace):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return True
+
+        try:
+            with open(values_file, "r", encoding="utf-8") as handle:
+                values = yaml.safe_load(handle) or {}
+        except Exception as exc:
+            print(f"Warning: vm-distributed public connector ingress sync skipped: {exc}")
+            return True
+
+        manifests = self._vm_distributed_connector_public_host_ingress_manifests(values, namespace)
+        if not manifests:
+            return True
+
+        connector_name = str(((values.get("connector") or {}).get("name") or "")).strip()
+        if connector_name:
+            legacy_names = [
+                f"{connector_name}-public-host-ingress",
+                f"{connector_name}-public-root-ingress",
+            ]
+            for legacy_name in legacy_names:
+                self.run(
+                    "kubectl delete ingress "
+                    f"{shlex.quote(legacy_name)} -n {shlex.quote(str(namespace))} "
+                    "--ignore-not-found",
+                    check=False,
+                )
+
+        tmp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                delete=False,
+                prefix="vm-distributed-edc-public-ingress-",
+                suffix=".yaml",
+            ) as handle:
+                yaml.safe_dump_all(manifests, handle, sort_keys=False)
+                tmp_path = handle.name
+
+            print("Synchronizing vm-distributed EDC connector public host ingresses...")
+            result = self.run(f"kubectl apply -f {shlex.quote(tmp_path)}", check=False)
+            if result is None:
+                return False
+            returncode = getattr(result, "returncode", 0)
+            if returncode:
+                print(
+                    "Error synchronizing vm-distributed EDC connector public host ingresses: "
+                    f"kubectl apply exited with {returncode}"
+                )
+                return False
+            return True
+        except Exception as exc:
+            print(f"Error synchronizing vm-distributed EDC connector public host ingresses: {exc}")
+            return False
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
     def _edc_runtime_present(self, connector_name, namespace):
         metadata = self._resource_metadata("deployment", connector_name, namespace)
         if metadata is None:
@@ -1554,11 +1828,13 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
 
     def _connector_runtime_common_service_endpoints(self, deployer_config, environment):
         default_protocol = "https" if str(environment or "").strip().lower() == "pro" else "http"
+        database_port = self._connector_runtime_database_port(deployer_config)
         return {
             "database_hostname": str(
                 (deployer_config or {}).get("DATABASE_HOSTNAME")
                 or self._common_service_hostname(deployer_config, "postgresql")
             ).strip(),
+            "database_port": database_port,
             "keycloak": self._configured_service_endpoint(
                 deployer_config,
                 url_keys=(
@@ -1590,6 +1866,294 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 default_protocol=default_protocol,
             ),
         }
+
+    @staticmethod
+    def _normalize_tcp_port(value, default="5432"):
+        candidate = str(value or "").strip()
+        if not candidate:
+            candidate = str(default or "").strip()
+        try:
+            port = int(candidate)
+        except (TypeError, ValueError):
+            return str(default or "5432")
+        if port < 1 or port > 65535:
+            return str(default or "5432")
+        return str(port)
+
+    def _connector_runtime_database_port(self, deployer_config):
+        explicit_port = str((deployer_config or {}).get("DATABASE_PORT") or "").strip()
+        if explicit_port:
+            return self._normalize_tcp_port(explicit_port)
+
+        if (
+            self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY
+            and self._vm_distributed_uses_separate_connector_kubeconfigs()
+        ):
+            access_mode = str(
+                (deployer_config or {}).get("VM_DISTRIBUTED_POSTGRES_ACCESS_MODE")
+                or (deployer_config or {}).get("VM_DISTRIBUTED_COMMON_POSTGRES_ACCESS_MODE")
+                or "direct"
+            ).strip().lower()
+            if access_mode in {"nodeport", "node-port", "node_port"}:
+                nodeport = str(
+                    (deployer_config or {}).get("VM_DISTRIBUTED_POSTGRES_NODEPORT")
+                    or (deployer_config or {}).get("VM_DISTRIBUTED_COMMON_POSTGRES_NODEPORT")
+                    or ""
+                ).strip()
+                if nodeport:
+                    return self._normalize_tcp_port(nodeport)
+            direct_port = str(
+                (deployer_config or {}).get("VM_DISTRIBUTED_POSTGRES_DIRECT_PORT")
+                or (deployer_config or {}).get("VM_DISTRIBUTED_COMMON_POSTGRES_DIRECT_PORT")
+                or "5432"
+            ).strip()
+            return self._normalize_tcp_port(direct_port)
+
+        return "5432"
+
+    def _first_non_cluster_public_url(self, values, default_protocol="http"):
+        for value in values or []:
+            hostname, _protocol, url = self._service_url_parts(
+                value,
+                default_protocol=default_protocol,
+            )
+            if not hostname or not url:
+                continue
+            parsed_hostname = urlparse(url).hostname
+            if (
+                parsed_hostname
+                and not self._is_loopback_hostname(parsed_hostname)
+                and not self._is_cluster_service_reference(url)
+            ):
+                return url
+        return ""
+
+    @staticmethod
+    def _service_endpoint_needs_cross_cluster_rewrite(endpoint):
+        if not isinstance(endpoint, dict):
+            return False
+        for key in ("url", "hostname", "external"):
+            value = str(endpoint.get(key) or "").strip()
+            if not value:
+                continue
+            parsed_hostname = urlparse(value if "://" in value else f"http://{value}").hostname
+            if EDCConnectorsAdapter._is_cluster_service_reference(value):
+                return True
+            if parsed_hostname and EDCConnectorsAdapter._is_loopback_hostname(parsed_hostname):
+                return True
+        return False
+
+    @classmethod
+    def _is_internal_service_hostname_reference(cls, value):
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            return False
+        if cls._is_cluster_service_reference(raw_value):
+            return True
+        parsed_hostname = urlparse(
+            raw_value if "://" in raw_value else f"http://{raw_value}"
+        ).hostname
+        if not parsed_hostname or cls._is_loopback_hostname(parsed_hostname):
+            return False
+        return "." not in parsed_hostname
+
+    @staticmethod
+    def _is_internal_namespace_service_reference(value, namespace):
+        raw_value = str(value or "").strip()
+        normalized_namespace = str(namespace or "").strip().lower()
+        if not raw_value or not normalized_namespace:
+            return False
+        parsed_hostname = urlparse(
+            raw_value if "://" in raw_value else f"http://{raw_value}"
+        ).hostname
+        if not parsed_hostname:
+            return False
+        normalized_hostname = parsed_hostname.strip().lower()
+        return (
+            normalized_hostname.endswith(f".{normalized_namespace}")
+            or f".{normalized_namespace}." in normalized_hostname
+        )
+
+    def _set_service_endpoint_url(self, endpoint, url, default_protocol="http"):
+        hostname, protocol, normalized_url = self._service_url_parts(
+            url,
+            default_protocol=default_protocol,
+        )
+        if not hostname or not normalized_url:
+            return False
+        endpoint["hostname"] = hostname
+        endpoint["protocol"] = protocol
+        endpoint["url"] = normalized_url
+        if "external" in endpoint:
+            endpoint["external"] = hostname
+        return True
+
+    def _vm_distributed_public_runtime_urls(self, deployer_config):
+        public_config = {
+            **dict(deployer_config or {}),
+            "TOPOLOGY": VM_DISTRIBUTED_TOPOLOGY,
+        }
+        return resolve_vm_distributed_public_urls(public_config)
+
+    def _vm_distributed_keycloak_runtime_url(self, deployer_config):
+        public_urls = self._vm_distributed_public_runtime_urls(deployer_config)
+        return self._first_non_cluster_public_url(
+            [
+                (deployer_config or {}).get("EDC_KEYCLOAK_BASE_URL"),
+                (deployer_config or {}).get("KEYCLOAK_FRONTEND_URL"),
+                (deployer_config or {}).get("KEYCLOAK_PUBLIC_URL"),
+                (deployer_config or {}).get("KC_MANAGEMENT_URL"),
+                public_urls.get("KEYCLOAK_FRONTEND_URL"),
+                public_urls.get("KEYCLOAK_PUBLIC_URL"),
+            ],
+            default_protocol="https",
+        )
+
+    def _vm_distributed_minio_runtime_url(self, deployer_config):
+        public_urls = self._vm_distributed_public_runtime_urls(deployer_config)
+        return self._first_non_cluster_public_url(
+            [
+                (deployer_config or {}).get("EDC_MINIO_ENDPOINT"),
+                (deployer_config or {}).get("MINIO_API_PUBLIC_URL"),
+                (deployer_config or {}).get("MINIO_PUBLIC_URL"),
+                public_urls.get("MINIO_API_PUBLIC_URL"),
+                public_urls.get("VM_COMMON_PUBLIC_URL"),
+                (deployer_config or {}).get("VM_COMMON_PUBLIC_URL"),
+            ],
+            default_protocol="https",
+        )
+
+    def _vm_distributed_component_runtime_url(self, component_name, deployer_config, ds_name):
+        public_config = {
+            **dict(deployer_config or {}),
+            **self._vm_distributed_public_runtime_urls(deployer_config),
+            "TOPOLOGY": VM_DISTRIBUTED_TOPOLOGY,
+        }
+        component_dataspace_name = self._component_release_dataspace_name(
+            component_name,
+            public_config,
+            ds_name=ds_name,
+        )
+        return configured_component_public_url(
+            component_name,
+            public_config,
+            dataspace_name=component_dataspace_name,
+        ).rstrip("/")
+
+    def _rewrite_edc_multicluster_component_endpoints(self, values, deployer_config, resolved_ds_name):
+        components_namespace = str(
+            (deployer_config or {}).get("COMPONENTS_NAMESPACE") or "components"
+        ).strip() or "components"
+        connector = values.setdefault("connector", {})
+        ontology_hub = connector.setdefault("ontologyHub", {})
+        ontology_public_url = self._vm_distributed_component_runtime_url(
+            "ontology-hub",
+            deployer_config,
+            resolved_ds_name,
+        ) or self._resolve_ontology_hub_url(deployer_config, dataspace_name=resolved_ds_name)
+        if ontology_public_url:
+            ontology_hub["externalBase"] = ontology_public_url
+            for key in ("internalBase", "internalClusterLocalFallback"):
+                current = ontology_hub.get(key)
+                if (
+                    not current
+                    or self._is_cluster_service_reference(current)
+                    or self._is_internal_namespace_service_reference(current, components_namespace)
+                ):
+                    ontology_hub[key] = ontology_public_url
+
+        dashboard = values.setdefault("dashboard", {})
+        proxy = dashboard.setdefault("proxy", {})
+        proxy_config = proxy.setdefault("config", {})
+        for entry in proxy_config.setdefault("components", []):
+            if not isinstance(entry, dict):
+                continue
+            component_name = normalize_component_key(entry.get("name"))
+            if not component_name:
+                continue
+            target = str(entry.get("target") or "").strip()
+            if (
+                target
+                and not self._is_cluster_service_reference(target)
+                and not self._is_internal_namespace_service_reference(target, components_namespace)
+            ):
+                continue
+            public_target = self._vm_distributed_component_runtime_url(
+                component_name,
+                deployer_config,
+                resolved_ds_name,
+            )
+            if public_target:
+                entry["target"] = public_target
+
+    def update_connector_multicluster_common_service_endpoints(self, values_file, connector_name, ds_name=None):
+        super().update_connector_multicluster_common_service_endpoints(
+            values_file,
+            connector_name,
+            ds_name=ds_name,
+        )
+        if not self._vm_distributed_uses_separate_connector_kubeconfigs():
+            return
+
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        common_host = self._vm_distributed_common_runtime_host(deployer_config)
+        resolved_ds_name = str(ds_name or self._dataspace_name()).strip() or self._dataspace_name()
+
+        with open(values_file, encoding="utf-8") as handle:
+            values = yaml.safe_load(handle) or {}
+
+        services = values.setdefault("services", {})
+        db = services.setdefault("db", {})
+        if common_host and (
+            not str(db.get("hostname") or "").strip()
+            or self._is_cluster_service_reference(db.get("hostname"))
+        ):
+            db["hostname"] = common_host
+        database_port = self._connector_runtime_database_port(deployer_config)
+        if database_port:
+            db["port"] = database_port
+
+        vault = services.setdefault("vault", {})
+        if common_host and (
+            not str(vault.get("url") or "").strip()
+            or self._is_cluster_service_reference(vault.get("url"))
+            or self._is_loopback_hostname(urlparse(str(vault.get("url") or "")).hostname)
+        ):
+            vault["url"] = self._url_with_replaced_host(
+                vault.get("url") or "http://common-srvs-vault.common-srvs.svc:8200",
+                common_host,
+                default_port=8200,
+            )
+
+        keycloak = services.setdefault("keycloak", {})
+        if self._service_endpoint_needs_cross_cluster_rewrite(keycloak):
+            keycloak_url = self._vm_distributed_keycloak_runtime_url(deployer_config)
+            if keycloak_url:
+                self._set_service_endpoint_url(keycloak, keycloak_url, default_protocol="https")
+
+        minio = services.setdefault("minio", {})
+        if self._service_endpoint_needs_cross_cluster_rewrite(minio):
+            minio_url = self._vm_distributed_minio_runtime_url(deployer_config)
+            if minio_url:
+                self._set_service_endpoint_url(minio, minio_url, default_protocol="https")
+
+        registration_service = services.setdefault("registrationService", {})
+        if self._is_internal_service_hostname_reference(registration_service.get("hostname")):
+            public_registration_hostname = self._vm_distributed_public_registration_hostname(
+                resolved_ds_name,
+                deployer_config,
+            )
+            if public_registration_hostname:
+                registration_service["hostname"] = public_registration_hostname
+
+        self._rewrite_edc_multicluster_component_endpoints(
+            values,
+            deployer_config,
+            resolved_ds_name,
+        )
+
+        with open(values_file, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(values, handle, sort_keys=False)
 
     def _protocol_url(self, connector_name):
         base_url = self._connector_base_url(connector_name)
@@ -1796,6 +2360,42 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         namespace = str(connector_namespace or "").strip()
         host = f"{connector_name}.{namespace}.svc.cluster.local" if namespace else connector_name
         return f"http://{host}:{port}{path}"
+
+    @staticmethod
+    def _dashboard_public_service_target(public_api_base_url, service_name):
+        path_map = {
+            "management": "/management",
+            "api": "/api",
+            "control": "/control",
+            "protocol": "/protocol",
+        }
+        base_url = str(public_api_base_url or "").strip().rstrip("/")
+        if not base_url:
+            return ""
+        return f"{base_url}{path_map[service_name]}"
+
+    def _dashboard_proxy_service_target(
+        self,
+        *,
+        dashboard_connector_name,
+        target_connector_name,
+        service_name,
+        connector_namespace=None,
+    ):
+        if (
+            self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY
+            and dashboard_connector_name
+            and target_connector_name != dashboard_connector_name
+        ):
+            public_api_base_url = self._edc_connector_public_api_base_url(target_connector_name)
+            public_target = self._dashboard_public_service_target(public_api_base_url, service_name)
+            if public_target:
+                return public_target
+        return self._dashboard_service_target(
+            target_connector_name,
+            service_name,
+            connector_namespace=connector_namespace,
+        )
 
     def _dashboard_connector_namespace_map(self, ds_name, connector_hostnames):
         try:
@@ -2172,36 +2772,49 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         config = self.config_adapter.load_deployer_config()
         auth_mode = self.config_adapter.edc_dashboard_proxy_auth_mode()
         connector_namespaces = self._dashboard_connector_namespace_map(ds_name, connector_hostnames)
+        dashboard_connector_name = connector_name or (connector_hostnames or [""])[0]
         external_base_url = self._edc_connector_public_base_url_without_credentials(
-            connector_name or (connector_hostnames or [""])[0],
+            dashboard_connector_name,
             dataspace=ds_name,
         )
         connector_entries = []
-        for connector_name in connector_hostnames or []:
-            credentials = self.load_connector_credentials(connector_name)
+        for target_connector_name in connector_hostnames or []:
+            credentials = self.load_connector_credentials(target_connector_name)
             connector_user = credentials.get("connector_user", {}) if credentials else {}
-            connector_namespace = connector_namespaces.get(connector_name)
+            connector_namespace = connector_namespaces.get(target_connector_name)
+            layout = self._connector_layout_metadata(target_connector_name)
+            connector_role = (
+                layout.get("namespace_role")
+                or layout.get("validation_role")
+                or layout.get("role")
+                or self._connector_kubeconfig_role(target_connector_name)
+            )
             connector_entries.append(
                 {
-                    "connectorName": connector_name,
-                    "managementTarget": self._dashboard_service_target(
-                        connector_name,
-                        "management",
+                    "connectorName": target_connector_name,
+                    "role": connector_role,
+                    "managementTarget": self._dashboard_proxy_service_target(
+                        dashboard_connector_name=dashboard_connector_name,
+                        target_connector_name=target_connector_name,
+                        service_name="management",
                         connector_namespace=connector_namespace,
                     ),
-                    "defaultTarget": self._dashboard_service_target(
-                        connector_name,
-                        "api",
+                    "defaultTarget": self._dashboard_proxy_service_target(
+                        dashboard_connector_name=dashboard_connector_name,
+                        target_connector_name=target_connector_name,
+                        service_name="api",
                         connector_namespace=connector_namespace,
                     ),
-                    "controlTarget": self._dashboard_service_target(
-                        connector_name,
-                        "control",
+                    "controlTarget": self._dashboard_proxy_service_target(
+                        dashboard_connector_name=dashboard_connector_name,
+                        target_connector_name=target_connector_name,
+                        service_name="control",
                         connector_namespace=connector_namespace,
                     ),
-                    "protocolTarget": self._dashboard_service_target(
-                        connector_name,
-                        "protocol",
+                    "protocolTarget": self._dashboard_proxy_service_target(
+                        dashboard_connector_name=dashboard_connector_name,
+                        target_connector_name=target_connector_name,
+                        service_name="protocol",
                         connector_namespace=connector_namespace,
                     ),
                     "username": connector_user.get("user", ""),
@@ -2364,6 +2977,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         keycloak_endpoint = common_service_endpoints["keycloak"]
         minio_endpoint = common_service_endpoints["minio"]
         database_hostname = common_service_endpoints["database_hostname"]
+        database_port = common_service_endpoints["database_port"]
         ontology_hub_external_url = self._resolve_ontology_hub_url(
             deployer_config,
             dataspace_name=ds_name,
@@ -2388,6 +3002,18 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             connector_name=connector_name,
         )
         dashboard_proxy_auth = self._dashboard_proxy_auth_payload(connector_hostnames)
+        connector_public_urls = {}
+        if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+            public_api_base_url = self._edc_connector_public_api_base_url(
+                connector_name,
+                credentials=credentials,
+            )
+            if public_api_base_url:
+                public_api_base_url = public_api_base_url.rstrip("/")
+                connector_public_urls = {
+                    "protocolUrl": f"{public_api_base_url}/protocol",
+                    "publicUrl": f"{public_api_base_url}/public",
+                }
         if environment == "pro":
             registration_service_hostname = f"registration-service-{ds_name}.ds.dataspaceunit-project.eu"
         else:
@@ -2428,10 +3054,15 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 "sql": {
                     "schemaAutocreate": self.config_adapter.edc_sql_schema_autocreate(),
                 },
+                "inference": {
+                    "edrAttempts": self.config_adapter.edc_inference_edr_attempts(),
+                    "edrDelayMs": self.config_adapter.edc_inference_edr_delay_ms(),
+                },
                 "ingress": {
                     "hostname": f"{connector_name}.{ds_domain}",
                     "protocol": "https" if environment == "pro" else "http",
                 },
+                "public": connector_public_urls,
                 "minio": {
                     "accesskey": f"{ds_name}/{connector_name}/aws-access-key",
                     "secretkey": f"{ds_name}/{connector_name}/aws-secret-key",
@@ -2484,6 +3115,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             "services": {
                 "db": {
                     "hostname": database_hostname,
+                    "port": database_port,
                     "name": credentials["database"]["name"],
                     "user": credentials["database"]["user"],
                     "password": credentials["database"]["passwd"],
@@ -2535,6 +3167,11 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             )
         with open(values_path, "w", encoding="utf-8") as handle:
             yaml.safe_dump(payload, handle, sort_keys=False)
+        self.update_connector_multicluster_common_service_endpoints(
+            values_path,
+            connector_name,
+            ds_name=ds_name,
+        )
         return values_path
 
     def _redacted_values_preview(self, payload):
@@ -2764,6 +3401,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         if bootstrap_access is None:
             return False
         vault_url = bootstrap_access.get("vault_url")
+        _, vault_token = self._vault_management_runtime()
         keycloak_url = bootstrap_access.get("keycloak_url")
         pg_host = bootstrap_access.get("pg_host")
         pg_port = bootstrap_access.get("pg_port")
@@ -2796,6 +3434,8 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                     reconcile_kwargs = {"credentials": credentials}
                     if vault_url:
                         reconcile_kwargs["vault_url"] = vault_url
+                    if vault_token:
+                        reconcile_kwargs["vault_token"] = vault_token
                     if not self._reconcile_connector_vault_secrets(
                         connector_name,
                         ds_name,
@@ -2890,6 +3530,8 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             reconcile_kwargs = {}
             if vault_url:
                 reconcile_kwargs["vault_url"] = vault_url
+            if vault_token:
+                reconcile_kwargs["vault_token"] = vault_token
             if not self._reconcile_connector_vault_secrets(connector_name, ds_name, **reconcile_kwargs):
                 return False
             self.ensure_minio_policy_attached(connector_name, ds_name=ds_name)
@@ -2899,6 +3541,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
 
     def _discover_existing_connectors(self, ds_name, namespace, include_runtime_artifacts=True):
         existing = set()
+        current_dataspace = self._dataspace_by_name(ds_name)
         if include_runtime_artifacts:
             creds_dir = self._edc_runtime_dir(ds_name=ds_name)
             if os.path.isdir(creds_dir):
@@ -2909,33 +3552,34 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                     if connector and self._connector_belongs_to_dataspace(connector, ds_name):
                         existing.add(connector)
 
-        releases = self.run_silent(f"helm list -n {namespace} --no-headers")
-        if releases:
-            suffix = f"-{ds_name}"
-            for line in releases.splitlines():
-                parts = line.split()
-                if not parts:
-                    continue
-                release = parts[0]
-                if release.startswith("conn-") and release.endswith(suffix):
-                    connector = release[:-len(suffix)]
-                    if connector and self._connector_belongs_to_dataspace(connector, ds_name):
-                        existing.add(connector)
+        with self._temporary_namespace_kubeconfig(namespace, dataspace=current_dataspace):
+            releases = self.run_silent(f"helm list -n {namespace} --no-headers")
+            if releases:
+                suffix = f"-{ds_name}"
+                for line in releases.splitlines():
+                    parts = line.split()
+                    if not parts:
+                        continue
+                    release = parts[0]
+                    if release.startswith("conn-") and release.endswith(suffix):
+                        connector = release[:-len(suffix)]
+                        if connector and self._connector_belongs_to_dataspace(connector, ds_name):
+                            existing.add(connector)
 
-        pods = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
-        if pods:
-            for line in pods.splitlines():
-                cols = line.split()
-                if not cols:
-                    continue
-                pod_name = cols[0]
-                if not pod_name.startswith("conn-"):
-                    continue
-                base = pod_name.rsplit("-", 1)[0]
-                if base.endswith("-inteface") or base.endswith("-interface"):
-                    base = base.rsplit("-", 1)[0]
-                if base and self._connector_belongs_to_dataspace(base, ds_name):
-                    existing.add(base)
+            pods = self.run_silent(f"kubectl get pods -n {namespace} --no-headers")
+            if pods:
+                for line in pods.splitlines():
+                    cols = line.split()
+                    if not cols:
+                        continue
+                    pod_name = cols[0]
+                    if not pod_name.startswith("conn-"):
+                        continue
+                    base = pod_name.rsplit("-", 1)[0]
+                    if base.endswith("-inteface") or base.endswith("-interface"):
+                        base = base.rsplit("-", 1)[0]
+                    if base and self._connector_belongs_to_dataspace(base, ds_name):
+                        existing.add(base)
 
         return existing
 
@@ -2956,6 +3600,131 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         if callable(wait_for_namespace_pods):
             return bool(wait_for_namespace_pods(namespace, timeout=timeout))
         return False
+
+    @staticmethod
+    def _container_state_summary(status):
+        if not isinstance(status, dict):
+            return "unknown"
+        state = status.get("state") or {}
+        if "waiting" in state:
+            waiting = state.get("waiting") or {}
+            reason = str(waiting.get("reason") or "Waiting").strip()
+            message = str(waiting.get("message") or "").strip()
+            return f"waiting:{reason}" + (f" - {message}" if message else "")
+        if "terminated" in state:
+            terminated = state.get("terminated") or {}
+            reason = str(terminated.get("reason") or "Terminated").strip()
+            exit_code = terminated.get("exitCode")
+            suffix = f" exitCode={exit_code}" if exit_code is not None else ""
+            return f"terminated:{reason}{suffix}"
+        if "running" in state:
+            return "running"
+        return "unknown"
+
+    @staticmethod
+    def _event_timestamp(event):
+        return (
+            str(event.get("lastTimestamp") or "")
+            or str(event.get("eventTime") or "")
+            or str((event.get("metadata") or {}).get("creationTimestamp") or "")
+        )
+
+    def _print_edc_rollout_failure_diagnostics(self, deployment_name, namespace):
+        print("\nEDC rollout failure diagnostics")
+        print(f"- deployment: {deployment_name}")
+        print(f"- namespace: {namespace}")
+
+        namespace_q = shlex.quote(str(namespace))
+        deployment_q = shlex.quote(str(deployment_name))
+        deployment_output = self.run_silent(
+            f"kubectl get deployment {deployment_q} -n {namespace_q} -o json"
+        )
+        deployment_payload = {}
+        if deployment_output:
+            try:
+                deployment_payload = json.loads(deployment_output)
+            except json.JSONDecodeError:
+                deployment_payload = {}
+
+        containers = (
+            ((deployment_payload.get("spec") or {}).get("template") or {})
+            .get("spec", {})
+            .get("containers", [])
+        )
+        if containers:
+            print("- configured images:")
+            for container in containers:
+                name = str(container.get("name") or "container").strip()
+                image = str(container.get("image") or "").strip()
+                pull_policy = str(container.get("imagePullPolicy") or "").strip()
+                print(f"  - {name}: {image} (pullPolicy={pull_policy or 'default'})")
+        else:
+            print("- configured images: unavailable")
+
+        pod_output = self.run_silent(
+            f"kubectl get pods -n {namespace_q} -l service={deployment_q} -o json"
+        )
+        pod_payload = {}
+        if pod_output:
+            try:
+                pod_payload = json.loads(pod_output)
+            except json.JSONDecodeError:
+                pod_payload = {}
+
+        pods = list(pod_payload.get("items") or [])
+        pod_names = [
+            str((pod.get("metadata") or {}).get("name") or "").strip()
+            for pod in pods
+            if str((pod.get("metadata") or {}).get("name") or "").strip()
+        ]
+        if pods:
+            print("- pod states:")
+            for pod in pods:
+                metadata = pod.get("metadata") or {}
+                status = pod.get("status") or {}
+                pod_name = str(metadata.get("name") or "").strip()
+                phase = str(status.get("phase") or "Unknown").strip()
+                print(f"  - {pod_name}: phase={phase}")
+                for container_status in status.get("containerStatuses") or []:
+                    container_name = str(container_status.get("name") or "container").strip()
+                    ready = bool(container_status.get("ready"))
+                    state = self._container_state_summary(container_status)
+                    print(f"    - {container_name}: ready={ready} state={state}")
+        else:
+            print("- pod states: no pods matched label service=" + deployment_name)
+
+        if not pod_names:
+            return
+
+        events_output = self.run_silent(f"kubectl get events -n {namespace_q} -o json")
+        if not events_output:
+            print("- recent pod events: unavailable")
+            return
+        try:
+            events_payload = json.loads(events_output)
+        except json.JSONDecodeError:
+            print("- recent pod events: unavailable")
+            return
+
+        relevant_events = []
+        pod_name_set = set(pod_names)
+        for event in events_payload.get("items") or []:
+            involved = event.get("involvedObject") or {}
+            if involved.get("kind") != "Pod" or involved.get("name") not in pod_name_set:
+                continue
+            relevant_events.append(event)
+
+        if not relevant_events:
+            print("- recent pod events: none")
+            return
+
+        relevant_events.sort(key=self._event_timestamp)
+        print("- recent pod events:")
+        for event in relevant_events[-8:]:
+            reason = str(event.get("reason") or "").strip() or "Event"
+            message = str(event.get("message") or "").strip()
+            timestamp = self._event_timestamp(event)
+            print(f"  - {timestamp} {reason}: {message}")
 
     def _edc_local_image_prepared(self, attribute_name, env_name):
         prepared_targets = getattr(self, attribute_name, None)
@@ -2987,6 +3756,45 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 ]
             )
         return restart_targets
+
+    def _sync_vm_distributed_common_postgresql_access_if_required(self):
+        if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+            return True
+        if not self._vm_distributed_uses_separate_connector_kubeconfigs():
+            return True
+
+        deployer_config = self.config_adapter.load_deployer_config() or {}
+        access_mode = str(
+            deployer_config.get("VM_DISTRIBUTED_POSTGRES_ACCESS_MODE")
+            or deployer_config.get("VM_DISTRIBUTED_COMMON_POSTGRES_ACCESS_MODE")
+            or "direct"
+        ).strip().lower()
+        if access_mode not in {"nodeport", "node-port", "node_port"}:
+            return True
+
+        sync_postgres = getattr(
+            getattr(self, "infrastructure", None),
+            "sync_vm_distributed_common_postgresql_access",
+            None,
+        )
+        if not callable(sync_postgres):
+            print(
+                "Warning: vm-distributed PostgreSQL access sync skipped: "
+                "infrastructure adapter does not expose a targeted PostgreSQL sync method."
+            )
+            return False
+
+        with self._temporary_kubeconfig_role("common"):
+            result = sync_postgres()
+        status = (result or {}).get("status") if isinstance(result, dict) else None
+        if status == "synced":
+            return True
+
+        print(
+            "EDC Level 4 cannot continue because the common PostgreSQL endpoint "
+            "for vm-distributed connector clusters could not be reconciled."
+        )
+        return False
 
     def _restart_local_edc_deployments_if_needed(
         self,
@@ -3098,6 +3906,9 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             if not self._maybe_prepare_level4_local_edc_images():
                 return []
 
+            if not self._sync_vm_distributed_common_postgresql_access_if_required():
+                return []
+
             for connector in connectors:
                 target_namespace = self._connector_target_namespace(
                     connector,
@@ -3135,36 +3946,40 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 )
                 release_name = f"{connector}-{ds_name}"
                 print(f"Deploying generic EDC connector: {connector}")
-                if not self.infrastructure.deploy_helm_release(
-                    release_name,
-                    target_namespace,
-                    values_file,
-                    cwd=self._edc_connector_dir(),
-                ):
-                    print(f"Error deploying generic EDC connector: {connector}")
-                    return []
-
-                rollout_timeout = max(int(getattr(self.config, "TIMEOUT_POD_WAIT", 120)), 180)
-                restart_targets = self._edc_local_deployment_restart_targets(connector)
-                if restart_targets:
-                    if not self._restart_local_edc_deployments_if_needed(
-                        connector,
+                with self._temporary_connector_kubeconfig(connector):
+                    if not self.infrastructure.deploy_helm_release(
+                        release_name,
                         target_namespace,
-                        rollout_timeout=rollout_timeout,
-                        restart_targets=restart_targets,
+                        values_file,
+                        cwd=self._edc_connector_dir(),
                     ):
-                        return []
-                else:
-                    if not self._wait_for_edc_deployment_rollout(
-                        connector,
-                        target_namespace,
-                        timeout=rollout_timeout,
-                    ):
-                        print(f"Timeout waiting for EDC connector deployment rollout: {connector}")
+                        print(f"Error deploying generic EDC connector: {connector}")
                         return []
 
-                if not self._sync_vm_single_connector_public_path_ingresses(values_file, target_namespace):
-                    return []
+                    rollout_timeout = max(int(getattr(self.config, "TIMEOUT_POD_WAIT", 120)), 180)
+                    restart_targets = self._edc_local_deployment_restart_targets(connector)
+                    if restart_targets:
+                        if not self._restart_local_edc_deployments_if_needed(
+                            connector,
+                            target_namespace,
+                            rollout_timeout=rollout_timeout,
+                            restart_targets=restart_targets,
+                        ):
+                            return []
+                    else:
+                        if not self._wait_for_edc_deployment_rollout(
+                            connector,
+                            target_namespace,
+                            timeout=rollout_timeout,
+                        ):
+                            print(f"Timeout waiting for EDC connector deployment rollout: {connector}")
+                            self._print_edc_rollout_failure_diagnostics(connector, target_namespace)
+                            return []
+
+                    if not self._sync_vm_single_connector_public_path_ingresses(values_file, target_namespace):
+                        return []
+                    if not self._sync_vm_distributed_connector_public_host_ingresses(values_file, target_namespace):
+                        return []
 
                 all_connectors.append(connector)
 

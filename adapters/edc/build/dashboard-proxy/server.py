@@ -525,11 +525,15 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
         return self.rfile.read(content_length)
 
     def _rewrite_dashboard_proxy_url(self, value):
-        if not isinstance(value, str) or not value.startswith(PROXY_CONNECTOR_PREFIX):
+        if not isinstance(value, str):
             return value
 
         parsed = urllib.parse.urlsplit(value)
-        relative = parsed.path[len(PROXY_CONNECTOR_PREFIX):]
+        prefix_index = parsed.path.find(PROXY_CONNECTOR_PREFIX)
+        if prefix_index < 0:
+            return value
+
+        relative = parsed.path[prefix_index + len(PROXY_CONNECTOR_PREFIX):]
         parts = [part for part in relative.split("/") if part]
         if len(parts) < 2:
             return value

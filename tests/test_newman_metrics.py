@@ -1412,6 +1412,23 @@ class NewmanMetricsTests(unittest.TestCase):
         report_dir = fake_executor.run_validation_collections.call_args.kwargs["report_dir"]
         self.assertIn("newman_reports", report_dir)
 
+    def test_validation_engine_rejects_interoperability_without_connector_pair(self):
+        engine = ValidationEngine(
+            newman_executor=mock.Mock(),
+            load_connector_credentials=lambda name: {"connector_user": {"user": name, "passwd": "secret"}},
+            load_deployer_config=lambda: {
+                "KC_URL": "http://keycloak-admin.local",
+                "KC_INTERNAL_URL": "http://keycloak.local",
+            },
+            cleanup_test_entities=lambda connector: None,
+            validation_test_entities_absent=lambda connector: (True, []),
+            ds_domain_resolver=lambda: "example.local",
+            ds_name="demo",
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires at least two connectors"):
+            engine.run(["conn-a"], experiment_dir=None)
+
     def test_validation_engine_runs_management_preflight_before_collections(self):
         executor = NewmanExecutor()
         with mock.patch.object(
@@ -1640,6 +1657,117 @@ class NewmanMetricsTests(unittest.TestCase):
         self.assertEqual(env_vars["keycloakUrl"], "https://org1.pionera.oeg.fi.upm.es/auth")
         self.assertEqual(env_vars["providerBaseUrl"], "https://org2.pionera.oeg.fi.upm.es")
         self.assertEqual(env_vars["consumerBaseUrl"], "https://org3.pionera.oeg.fi.upm.es")
+
+    def test_validation_engine_derives_public_base_from_management_api_prefix(self):
+        def credentials(name):
+            public_url = {
+                "conn-citycounciledc-pionera-edc": "https://org2.pionera.oeg.fi.upm.es",
+                "conn-companyedc-pionera-edc": "https://org3.pionera.oeg.fi.upm.es",
+            }[name]
+            return {
+                "connector_user": {"user": name, "passwd": "secret"},
+                "public_access_urls": {
+                    "connector_ingress": public_url,
+                    "connector_management_api": f"{public_url}/edc/management",
+                    "connector_management_api_v3": f"{public_url}/edc/management/v3",
+                },
+            }
+
+        engine = ValidationEngine(
+            load_connector_credentials=credentials,
+            load_deployer_config=lambda: {
+                "PIONERA_ADAPTER": "edc",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+            },
+            ds_domain_resolver=lambda: "pionera.oeg.fi.upm.es",
+            ds_name="pionera-edc",
+        )
+
+        env_vars = engine.build_newman_env(
+            "conn-citycounciledc-pionera-edc",
+            "conn-companyedc-pionera-edc",
+        )
+
+        self.assertEqual(env_vars["providerBaseUrl"], "https://org2.pionera.oeg.fi.upm.es/edc")
+        self.assertEqual(env_vars["consumerBaseUrl"], "https://org3.pionera.oeg.fi.upm.es/edc")
+
+    def test_validation_engine_infers_edc_distributed_public_base_from_config_when_credentials_are_stale(self):
+        def credentials(name):
+            return {
+                "connector_user": {"user": name, "passwd": "secret"},
+                "public_access_urls": {
+                    "keycloak_realm": "http://127.0.0.1:45025/realms/pionera-edc",
+                },
+            }
+
+        engine = ValidationEngine(
+            load_connector_credentials=credentials,
+            load_deployer_config=lambda: {
+                "PIONERA_ADAPTER": "edc",
+                "TOPOLOGY": "vm-distributed",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                "VM_PROVIDER_PUBLIC_URL": "https://org2.pionera.oeg.fi.upm.es",
+                "VM_CONSUMER_PUBLIC_URL": "https://org3.pionera.oeg.fi.upm.es",
+                "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX": "/edc",
+            },
+            ds_domain_resolver=lambda: "pionera.oeg.fi.upm.es",
+            ds_name="pionera-edc",
+        )
+
+        env_vars = engine.build_newman_env(
+            "conn-citycounciledc-pionera-edc",
+            "conn-companyedc-pionera-edc",
+        )
+
+        self.assertEqual(env_vars["providerBaseUrl"], "https://org2.pionera.oeg.fi.upm.es/edc")
+        self.assertEqual(env_vars["consumerBaseUrl"], "https://org3.pionera.oeg.fi.upm.es/edc")
+        self.assertEqual(
+            env_vars["providerProtocolAddress"],
+            "https://org2.pionera.oeg.fi.upm.es/edc/protocol",
+        )
+        self.assertEqual(
+            env_vars["consumerProtocolAddress"],
+            "https://org3.pionera.oeg.fi.upm.es/edc/protocol",
+        )
+
+    def test_validation_engine_adds_edc_distributed_prefix_to_bare_public_ingress_urls(self):
+        def credentials(name):
+            public_url = {
+                "conn-citycounciledc-pionera-edc": "https://org2.pionera.oeg.fi.upm.es",
+                "conn-companyedc-pionera-edc": "https://org3.pionera.oeg.fi.upm.es",
+            }[name]
+            return {
+                "connector_user": {"user": name, "passwd": "secret"},
+                "public_access_urls": {"connector_ingress": public_url},
+            }
+
+        engine = ValidationEngine(
+            load_connector_credentials=credentials,
+            load_deployer_config=lambda: {
+                "PIONERA_ADAPTER": "edc",
+                "TOPOLOGY": "vm-distributed",
+                "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX": "/edc",
+            },
+            ds_domain_resolver=lambda: "pionera.oeg.fi.upm.es",
+            ds_name="pionera-edc",
+        )
+
+        env_vars = engine.build_newman_env(
+            "conn-citycounciledc-pionera-edc",
+            "conn-companyedc-pionera-edc",
+        )
+
+        self.assertEqual(env_vars["providerBaseUrl"], "https://org2.pionera.oeg.fi.upm.es/edc")
+        self.assertEqual(env_vars["consumerBaseUrl"], "https://org3.pionera.oeg.fi.upm.es/edc")
+        self.assertEqual(
+            env_vars["providerProtocolAddress"],
+            "https://org2.pionera.oeg.fi.upm.es/edc/protocol",
+        )
+        self.assertEqual(
+            env_vars["consumerProtocolAddress"],
+            "https://org3.pionera.oeg.fi.upm.es/edc/protocol",
+        )
 
     def test_newman_runtime_collection_rewrites_internal_urls_to_public_base_variables(self):
         executor = NewmanExecutor()

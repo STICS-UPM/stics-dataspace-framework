@@ -1148,6 +1148,19 @@ class SharedDataspaceDeploymentAdapter:
             env=env,
         )
 
+    @staticmethod
+    def _is_transient_postgres_admin_error(message):
+        normalized = str(message or "").lower()
+        transient_fragments = (
+            "server closed the connection unexpectedly",
+            "connection refused",
+            "connection timed out",
+            "could not connect to server",
+            "terminating connection",
+            "the database system is starting up",
+        )
+        return any(fragment in normalized for fragment in transient_fragments)
+
     def _postgres_cleanup_residual_state(self, database_name, database_user, pg_host=None, pg_port=None):
         checks = [
             (
@@ -1161,7 +1174,23 @@ class SharedDataspaceDeploymentAdapter:
         ]
         residual = []
         for label, sql_text in checks:
-            result = self._run_postgres_admin_query(sql_text, pg_host=pg_host, pg_port=pg_port)
+            result = None
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                result = self._run_postgres_admin_query(sql_text, pg_host=pg_host, pg_port=pg_port)
+                if result.returncode == 0:
+                    break
+
+                root_cause = (result.stderr or result.stdout or "").strip() or f"psql exited with code {result.returncode}"
+                if attempt >= max_attempts or not self._is_transient_postgres_admin_error(root_cause):
+                    break
+
+                print(
+                    "PostgreSQL cleanup verification was interrupted by a transient "
+                    f"connection issue while checking {label}; retrying ({attempt}/{max_attempts})..."
+                )
+                time.sleep(2)
+
             if result.returncode != 0:
                 root_cause = (result.stderr or result.stdout or "").strip() or f"psql exited with code {result.returncode}"
                 self._fail("Could not verify PostgreSQL cleanup state", root_cause=root_cause)

@@ -3,13 +3,14 @@ edc.runtime.id={{ .Values.connector.dataspace }}-{{ .Values.connector.name }}
 {{- if eq .Values.connector.environment "pro" }}
 edc.hostname={{ .Values.connector.ingress.hostname }}
 {{- end }}
+{{- $connectorPublic := default dict .Values.connector.public }}
+{{- $ingressProtocol := default "http" .Values.connector.ingress.protocol }}
+{{- $ingressBaseUrl := printf "%s://%s" $ingressProtocol .Values.connector.ingress.hostname | trimSuffix "/" }}
+{{- $protocolPublicUrl := default (printf "%s/protocol" $ingressBaseUrl) $connectorPublic.protocolUrl | trimSuffix "/" }}
+{{- $dataplanePublicUrl := default (printf "%s/public" $ingressBaseUrl) $connectorPublic.publicUrl | trimSuffix "/" }}
 
 # External callback address exposed through ingress
-{{- if eq .Values.connector.environment "pro" }}
-edc.dsp.callback.address=https://{{ .Values.connector.ingress.hostname }}/protocol
-{{- else }}
-edc.dsp.callback.address=http://{{ .Values.connector.ingress.hostname }}/protocol
-{{- end }}
+edc.dsp.callback.address={{ $protocolPublicUrl }}
 
 web.http.port=19191
 web.http.path=/api
@@ -26,13 +27,8 @@ web.http.version.path=/version
 web.http.shared.port=19196
 web.http.shared.path=/shared
 
-{{- if eq .Values.connector.environment "pro" }}
-edc.dataplane.api.public.baseurl=https://{{ .Values.connector.ingress.hostname }}/public
-edc.dataplane.proxy.public.endpoint=https://{{ .Values.connector.ingress.hostname }}/public
-{{- else }}
-edc.dataplane.api.public.baseurl=http://{{ .Values.connector.ingress.hostname }}/public
-edc.dataplane.proxy.public.endpoint=http://{{ .Values.connector.ingress.hostname }}/public
-{{- end }}
+edc.dataplane.api.public.baseurl={{ $dataplanePublicUrl }}
+edc.dataplane.proxy.public.endpoint={{ $dataplanePublicUrl }}
 
 edc.transfer.proxy.token.signer.privatekey.alias={{ .Values.connector.transfer.privatekey }}
 edc.transfer.proxy.token.verifier.publickey.alias={{ .Values.connector.transfer.publickey }}
@@ -44,7 +40,7 @@ edc.vault.hashicorp.url={{ .Values.services.vault.url }}
 edc.vault.hashicorp.token={{ .Values.services.vault.token }}
 edc.edr.vault.path={{ .Values.services.vault.path }}
 
-edc.datasource.default.url=jdbc:postgresql://{{ .Values.services.db.hostname }}:5432/{{ .Values.services.db.name }}
+edc.datasource.default.url=jdbc:postgresql://{{ .Values.services.db.hostname }}:{{ default 5432 .Values.services.db.port }}/{{ .Values.services.db.name }}
 edc.datasource.default.user={{ .Values.services.db.user }}
 edc.datasource.default.password={{ .Values.services.db.password }}
 edc.datasource.default.pool.maxIdleConnections=10

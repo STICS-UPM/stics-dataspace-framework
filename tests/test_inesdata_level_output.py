@@ -2930,6 +2930,52 @@ minio:
         self.assertIn("-p", first_command)
         self.assertIn("15432", first_command)
 
+    def test_level3_postgres_cleanup_retries_transient_verification_disconnect(self):
+        deployment = INESDataDeploymentAdapter(
+            run=self._run,
+            run_silent=self._run_silent,
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=self._make_infrastructure(),
+            config_adapter=self.config_adapter,
+            config_cls=self.config,
+        )
+        deployment.connectors_adapter = mock.Mock()
+        deployment.connectors_adapter.force_clean_postgres_db = mock.Mock()
+
+        subprocess_results = [
+            mock.Mock(
+                returncode=2,
+                stdout="",
+                stderr=(
+                    "psql: error: connection to server at \"127.0.0.1\", port 48503 failed: "
+                    "server closed the connection unexpectedly"
+                ),
+            ),
+            mock.Mock(returncode=0, stdout="", stderr=""),
+            mock.Mock(returncode=0, stdout="", stderr=""),
+        ]
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), mock.patch(
+            "adapters.shared.deployment.subprocess.run",
+            side_effect=subprocess_results,
+        ), mock.patch("adapters.shared.deployment.time.sleep"):
+            deployment._cleanup_level3_postgres_state(
+                "pionera_edc_rs",
+                "pionera_edc_rsusr",
+                "registration-service",
+                pg_host="127.0.0.1",
+                pg_port="48503",
+            )
+
+        self.assertIn("retrying", output.getvalue())
+        deployment.connectors_adapter.force_clean_postgres_db.assert_called_once_with(
+            "pionera_edc_rs",
+            "pionera_edc_rsusr",
+            pg_host="127.0.0.1",
+            pg_port="48503",
+        )
+
     def test_level3_vm_distributed_postgres_access_uses_common_kubeconfig(self):
         infrastructure = self._make_infrastructure()
 
@@ -3465,6 +3511,18 @@ minio:
         self.assertEqual(minio_aliases["spec"]["rules"][0]["host"], "org1.pionera.example.test")
         self.assertIn(
             "/browser",
+            [path["path"] for path in minio_aliases["spec"]["rules"][0]["http"]["paths"]],
+        )
+        self.assertIn(
+            "/styles",
+            [path["path"] for path in minio_aliases["spec"]["rules"][0]["http"]["paths"]],
+        )
+        self.assertIn(
+            "/images",
+            [path["path"] for path in minio_aliases["spec"]["rules"][0]["http"]["paths"]],
+        )
+        self.assertIn(
+            "/Loader.svg",
             [path["path"] for path in minio_aliases["spec"]["rules"][0]["http"]["paths"]],
         )
         self.assertTrue(

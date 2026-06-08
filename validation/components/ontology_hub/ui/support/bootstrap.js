@@ -104,6 +104,26 @@ async function pageShowsTransientAvailabilityFailure(page) {
   return textShowsTransientAvailabilityFailure(signalText);
 }
 
+async function waitForEditionShellOrTransientFailure(page) {
+  const editionShell = page.locator(
+    ".createVocab, a[href='/edition/logout'], a[href='/edition/'], a[href^='/edition/users/']",
+  );
+  const deadline = Date.now() + readyTimeoutMs;
+
+  while (Date.now() < deadline) {
+    if (await editionShell.first().isVisible().catch(() => false)) {
+      return true;
+    }
+    if (await pageShowsTransientAvailabilityFailure(page)) {
+      return false;
+    }
+    await page.waitForTimeout(500);
+  }
+
+  await editionShell.first().waitFor({ state: "visible", timeout: 1000 });
+  return true;
+}
+
 function loginErrorHint(runtime) {
   return (
     `Revisa ONTOLOGY_HUB_ADMIN_EMAIL y ONTOLOGY_HUB_ADMIN_PASSWORD. ` +
@@ -408,7 +428,11 @@ async function gotoEdition(page, runtime) {
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      await page.goto(`${runtime.baseUrl}/edition`, { waitUntil: "domcontentloaded" });
+      await page.goto(`${runtime.baseUrl}/edition`, {
+        waitUntil: "commit",
+        timeout: navigationTimeoutMs,
+      });
+      await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
 
       if (isEditionLoginUrl(page.url())) {
         await fillMarked(page.getByPlaceholder("Email"), runtime.adminEmail);
@@ -432,9 +456,10 @@ async function gotoEdition(page, runtime) {
           throw new Error(`Ontology Hub login returned HTTP ${response.status()}. ${loginErrorHint(runtime)}`);
         }
         await page.goto(`${runtime.baseUrl}/edition`, {
-          waitUntil: "domcontentloaded",
+          waitUntil: "commit",
           timeout: navigationTimeoutMs,
         });
+        await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
 
         const invalidCredentials = page.getByText("Invalid email or password.", { exact: true });
         const invalidCredentialsVisible = await invalidCredentials
@@ -456,14 +481,18 @@ async function gotoEdition(page, runtime) {
         }
       }
 
-      await page.locator(".createVocab").waitFor({ state: "visible", timeout: readyTimeoutMs });
+      const editionReady = await waitForEditionShellOrTransientFailure(page);
+      if (!editionReady) {
+        throw new Error("Ontology Hub edition is temporarily unavailable.");
+      }
       return;
     } catch (error) {
       lastError = error;
       const formErrors = await page.locator("#formErrors").first().textContent({ timeout: 1000 }).catch(() => "");
       const pageSignal = await readPageSignalText(page);
       const transientFailure = await pageShowsTransientAvailabilityFailure(page);
-      if (!transientFailure || attempt >= 3) {
+      const retryableLoginPage = isEditionLoginUrl(page.url()) && !/invalid email or password/i.test(formErrors || "");
+      if ((!transientFailure && !retryableLoginPage) || attempt >= 3) {
         throw new Error(
           `Could not access the Ontology Hub edition area from ${page.url()}. ` +
             `${String(formErrors || "").trim() || pageSignal || "No visible errors were detected."}`,

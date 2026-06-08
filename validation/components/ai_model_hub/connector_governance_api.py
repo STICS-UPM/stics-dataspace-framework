@@ -16,6 +16,8 @@ from validation.components.ai_model_hub.model_execution_api import DEFAULT_MODEL
 COMPONENT_KEY = "ai-model-hub"
 SUITE_NAME = "connector-governance-api"
 EDC_NAMESPACE = "https://w3id.org/edc/v0.0.1/ns/"
+DAIMO_NAMESPACE = "https://w3id.org/daimo/0.0.1/ns#"
+LEGACY_DAIMO_NAMESPACE = "https://pionera.ai/edc/daimo#"
 SUCCESS_TRANSFER_STATES = {"REQUESTED", "STARTED", "COMPLETED", "FINALIZED", "ENDED", "DEPROVISIONED"}
 CASE_IDS = ["PT5-MH-09", "PT5-MH-11", "PT5-MH-16", "PT5-MH-17", "PT5-MH-18"]
 
@@ -124,6 +126,7 @@ class AIModelHubConnectorGovernanceApiSuite:
         protocol_address_resolver: Callable[[str], str] | None = None,
         management_url_resolver: Callable[[str, str], str] | None = None,
         keycloak_url_resolver: Callable[[], str] | None = None,
+        adapter_name: str | None = None,
         session: requests.Session | None = None,
         uuid_factory: Callable[[], str] | None = None,
         time_provider: Callable[[], float] | None = None,
@@ -135,6 +138,7 @@ class AIModelHubConnectorGovernanceApiSuite:
         self.protocol_address_resolver = protocol_address_resolver
         self.management_url_resolver = management_url_resolver
         self.keycloak_url_resolver = keycloak_url_resolver
+        self.adapter_name = str(adapter_name or "").strip().lower()
         self.session = session or requests.Session()
         self.uuid_factory = uuid_factory or (lambda: str(uuid.uuid4()))
         self.time_provider = time_provider or time.time
@@ -183,7 +187,14 @@ class AIModelHubConnectorGovernanceApiSuite:
             "dataspace": str(self.ds_name_loader() or "demo").strip() or "demo",
             "ds_domain": str(self.ds_domain_resolver() or "").strip(),
             "keycloak_url": "",
-            "adapter": str(config.get("PIONERA_ADAPTER") or config.get("ADAPTER_NAME") or "inesdata").strip().lower(),
+            "adapter": str(
+                self.adapter_name
+                or os.environ.get("AI_MODEL_HUB_COMPONENT_ADAPTER")
+                or os.environ.get("PIONERA_ADAPTER")
+                or config.get("PIONERA_ADAPTER")
+                or config.get("ADAPTER_NAME")
+                or "inesdata"
+            ).strip().lower(),
             "negotiation_timeout_seconds": int(
                 config.get("AI_MODEL_HUB_NEGOTIATION_TIMEOUT_SECONDS")
                 or self.DEFAULT_NEGOTIATION_TIMEOUT_SECONDS
@@ -200,9 +211,20 @@ class AIModelHubConnectorGovernanceApiSuite:
         if callable(self.keycloak_url_resolver):
             runtime["keycloak_url"] = str(self.keycloak_url_resolver() or "").strip()
         if not runtime["keycloak_url"]:
-            runtime["keycloak_url"] = _env_first("AI_MODEL_HUB_KEYCLOAK_URL")
+            runtime["keycloak_url"] = _env_first(
+                "AI_MODEL_HUB_KEYCLOAK_URL",
+                "KEYCLOAK_FRONTEND_URL",
+                "KEYCLOAK_PUBLIC_URL",
+                "UI_KEYCLOAK_URL",
+            )
         if not runtime["keycloak_url"]:
-            runtime["keycloak_url"] = str(config.get("KC_INTERNAL_URL") or config.get("KC_URL") or "").strip()
+            runtime["keycloak_url"] = str(
+                config.get("KEYCLOAK_FRONTEND_URL")
+                or config.get("KEYCLOAK_PUBLIC_URL")
+                or config.get("KC_INTERNAL_URL")
+                or config.get("KC_URL")
+                or ""
+            ).strip()
         if runtime["keycloak_url"] and not runtime["keycloak_url"].startswith("http"):
             runtime["keycloak_url"] = f"http://{runtime['keycloak_url']}"
         if not runtime["ds_domain"]:
@@ -351,12 +373,14 @@ class AIModelHubConnectorGovernanceApiSuite:
 
     def _create_model_asset(self, provider: str, provider_jwt: str, model_url: str, model_path: str, suffix: str):
         asset_id = f"a52-amh-access-{suffix}"
+        keywords = ["validation", "ai-model-hub", "model-access", "A5.2"]
         payload = {
             "@context": {
                 "@vocab": EDC_NAMESPACE,
+                "edc": EDC_NAMESPACE,
                 "dct": "http://purl.org/dc/terms/",
                 "dcat": "http://www.w3.org/ns/dcat#",
-                "daimo": "https://w3id.org/daimo/0.0.1/ns#",
+                "daimo": DAIMO_NAMESPACE,
             },
             "@id": asset_id,
             "@type": "Asset",
@@ -365,15 +389,32 @@ class AIModelHubConnectorGovernanceApiSuite:
                 "version": "1.0.0",
                 "shortDescription": "Temporary executable model endpoint for A5.2 connector governance validation",
                 "assetType": "ai-model-execution-endpoint",
+                "assetData": {},
+                "asset:prop:type": "machineLearning",
+                "contenttype": "application/json",
+                "storageType": "HttpData",
+                "edc:dataAddressType": "HttpData",
+                f"{EDC_NAMESPACE}dataAddressType": "HttpData",
                 "dct:description": "HttpData model endpoint negotiated and accessed through connector APIs",
-                "dcat:keyword": ["validation", "ai-model-hub", "model-access", "A5.2"],
+                "dcat:keyword": keywords,
+                "daimo:asset_kind": "model",
+                f"{DAIMO_NAMESPACE}asset_kind": "model",
+                f"{LEGACY_DAIMO_NAMESPACE}asset_kind": "model",
+                "daimo:task": "text-classification",
+                f"{DAIMO_NAMESPACE}task": "text-classification",
+                f"{LEGACY_DAIMO_NAMESPACE}task": "text-classification",
                 "daimo:inference_path": model_path,
+                f"{DAIMO_NAMESPACE}inference_path": model_path,
+                f"{LEGACY_DAIMO_NAMESPACE}inference_path": model_path,
+                "daimo:tags": keywords,
+                f"{LEGACY_DAIMO_NAMESPACE}tags": keywords,
             },
             "dataAddress": {
                 "type": "HttpData",
                 "baseUrl": model_url,
                 "method": "POST",
                 "name": f"ai-model-hub-access-{suffix}",
+                "proxyPath": "true",
             },
         }
         body, status_code = self._post_json(
@@ -1120,6 +1161,39 @@ def _build_adapter(adapter_name: str, topology: str):
     return InesdataAdapter(topology=topology)
 
 
+def _adapter_management_url_resolver(adapter):
+    builder = getattr(getattr(adapter, "connectors", None), "build_connector_url", None)
+    if not callable(builder):
+        return None
+
+    def resolver(connector: str, path: str) -> str:
+        base = str(builder(connector) or "").strip().rstrip("/")
+        suffix = str(path or "").strip()
+        if not base:
+            return ""
+        if not suffix:
+            return base
+        if not suffix.startswith("/"):
+            suffix = f"/{suffix}"
+        if base.endswith("/management/v3") and suffix.startswith("/management/v3/"):
+            suffix = suffix[len("/management/v3") :]
+        elif base.endswith("/management") and suffix.startswith("/management/"):
+            suffix = suffix[len("/management") :]
+        return f"{base}{suffix}"
+
+    return resolver
+
+
+def _adapter_protocol_address_resolver(adapter):
+    builder = getattr(getattr(adapter, "connectors", None), "build_protocol_address", None)
+    if callable(builder):
+        return lambda connector: str(builder(connector) or "").strip()
+    fallback = getattr(getattr(adapter, "connectors", None), "build_internal_protocol_address", None)
+    if callable(fallback):
+        return lambda connector: str(fallback(connector) or "").strip()
+    return None
+
+
 def build_ai_model_hub_connector_governance_suite(adapter_name: str = "inesdata", topology: str = "local"):
     adapter = _build_adapter(adapter_name, topology)
     return AIModelHubConnectorGovernanceApiSuite(
@@ -1127,7 +1201,9 @@ def build_ai_model_hub_connector_governance_suite(adapter_name: str = "inesdata"
         load_deployer_config=adapter.load_deployer_config,
         ds_domain_resolver=adapter.config.ds_domain_base,
         ds_name_loader=_dataspace_name_loader(adapter),
-        protocol_address_resolver=getattr(adapter.connectors, "build_internal_protocol_address", None),
+        protocol_address_resolver=_adapter_protocol_address_resolver(adapter),
+        management_url_resolver=_adapter_management_url_resolver(adapter),
+        adapter_name=str(adapter_name or "inesdata").strip().lower(),
     ), adapter
 
 
@@ -1143,7 +1219,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Run AI Model Hub connector governance API validation for PT5-MH-09/11/16/17/18."
     )
-    parser.add_argument("--topology", default="local", choices=["local", "vm-single"])
+    parser.add_argument(
+        "--adapter",
+        default=str(os.environ.get("PIONERA_ADAPTER") or os.environ.get("AI_MODEL_HUB_COMPONENT_ADAPTER") or "inesdata"),
+        choices=["inesdata", "edc"],
+    )
+    parser.add_argument("--topology", default="local", choices=["local", "vm-single", "vm-distributed"])
     parser.add_argument("--provider", default="")
     parser.add_argument("--consumer", default="")
     parser.add_argument("--model-url", default="")
@@ -1152,7 +1233,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--experiment-dir", default="")
     args = parser.parse_args(argv)
 
-    suite, adapter = build_inesdata_ai_model_hub_connector_governance_suite(topology=args.topology)
+    suite, adapter = build_ai_model_hub_connector_governance_suite(args.adapter, topology=args.topology)
     connectors = list(adapter.get_cluster_connectors() or []) if not (args.provider and args.consumer) else []
     provider = args.provider or (connectors[0] if connectors else "")
     consumer = args.consumer or (connectors[1] if len(connectors) > 1 else "")
