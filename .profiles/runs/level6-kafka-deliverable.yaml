@@ -1,0 +1,46 @@
+# Level 6 deliverable validation plan. This file contains no secrets.
+version: 1
+defaults:
+  levels: [6]
+  validation_mode: stable
+  kafka: true
+  open_report: false
+  stop_on_failure: false
+  continue_on_error: true
+  auto_confirm: true
+  confirm_default: true
+  local_minikube_tunnel: auto
+  allow_adapter_switch: true
+  allow_vm_single_cluster_switch: true
+  evidence_root: validation/evidences
+runs:
+  - name: local-inesdata
+    topology: local
+    adapter: inesdata
+  - name: vm-single-inesdata
+    topology: vm-single
+    adapter: inesdata
+  - name: vm-single-edc
+    topology: vm-single
+    adapter: edc
+    env:
+      PIONERA_EDC_LOCAL_IMAGES_MODE: auto
+      PIONERA_EDC_CONNECTOR_IMAGE_PULL_POLICY: IfNotPresent
+      PIONERA_EDC_DASHBOARD_IMAGE_PULL_POLICY: IfNotPresent
+      PIONERA_EDC_DASHBOARD_PROXY_IMAGE_PULL_POLICY: IfNotPresent
+  - name: vm-distributed-inesdata
+    topology: vm-distributed
+    adapter: inesdata
+  - name: vm-distributed-edc
+    topology: vm-distributed
+    adapter: edc
+    profile: pionera-edc
+    env:
+      PIONERA_EDC_LOCAL_IMAGES_MODE: auto
+      PIONERA_EDC_CONNECTOR_IMAGE_PULL_POLICY: IfNotPresent
+      PIONERA_EDC_DASHBOARD_IMAGE_PULL_POLICY: IfNotPresent
+      PIONERA_EDC_DASHBOARD_PROXY_IMAGE_PULL_POLICY: IfNotPresent
+      VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT: "true"
+      VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE: auto
+      VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE: "true"
+      VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP: "2"

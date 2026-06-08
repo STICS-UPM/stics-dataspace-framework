@@ -993,7 +993,9 @@ Este repositorio forma parte del trabajo software del proyecto PIONERA. Para
 consultas, incidencias o propuestas de cambio, usa los issues y pull requests
 del repositorio en GitHub.
 
-- **Mantenedor del framework:** Adrián Vargas (<adrian.vargas@upm.es>)
+- **Mantenedores del framework:** 
+  - Adrián Vargas (<adrian.vargas@upm.es>)
+  - Raffaele Cuzzaniti (<r.cuzzaniti@upm.es>)
 
 ## Licencia
 
