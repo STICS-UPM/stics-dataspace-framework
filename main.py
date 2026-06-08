@@ -19453,7 +19453,248 @@ def _print_ai_model_hub_real_models_action_result(result):
         _print_vm_distributed_profile_result(payload.get("apply_result"))
 
 
-def _run_ai_model_hub_real_models_assistant(current_adapter=None, adapter_registry=None):
+def _ai_model_hub_use_case_demo_status(profile_values=None):
+    values = dict(profile_values or {})
+    source_dir = _ai_model_hub_real_models_default_source_dir(values)
+    source_ref = _ai_model_hub_real_models_source_ref(values)
+    resolved_commit = ""
+    if os.path.isdir(os.path.join(source_dir, ".git")):
+        try:
+            result = subprocess.run(
+                ["git", "-C", source_dir, "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            resolved_commit = str(result.stdout or "").strip()
+        except (OSError, subprocess.CalledProcessError):
+            resolved_commit = ""
+
+    required_files = [
+        os.path.join(source_dir, "src", "server.py"),
+        os.path.join(source_dir, "requirements.txt"),
+        os.path.join(source_dir, "data", "mobility-datasets", "segments_test.csv"),
+        os.path.join(source_dir, "data", "flares-datasets", "5w1h_subtarea_1_test.json"),
+        os.path.join(source_dir, "data", "flares-datasets", "5w1h_subtarea_2_test.json"),
+    ]
+    missing_files = [path for path in required_files if not os.path.isfile(path)]
+    seed_script = os.path.join(os.path.dirname(__file__), "scripts", "seed_ml_assets_for_connectors.sh")
+    mode, raw_mode = ai_model_hub_model_server.model_server_mode(values)
+    return {
+        "source_dir": source_dir,
+        "source_exists": os.path.isdir(source_dir),
+        "repository": _ai_model_hub_real_models_repository(values),
+        "source_ref": source_ref,
+        "resolved_commit": resolved_commit,
+        "required_files": required_files,
+        "missing_files": missing_files,
+        "seed_script": seed_script,
+        "seed_script_exists": os.path.isfile(seed_script),
+        "configured_mode": raw_mode,
+        "normalized_mode": mode,
+        "ready": os.path.isdir(source_dir) and not missing_files and os.path.isfile(seed_script),
+        "public_url": _ai_model_hub_real_models_public_url(values),
+    }
+
+
+def _print_ai_model_hub_use_case_demo_status(status, topology_config=None):
+    payload = dict(status or {})
+    execution_host = _normalized_vm_distributed_execution_host(topology_config or {})
+    print()
+    print("AI Model Hub use-case demo status:")
+    print(f"  Execution host: {execution_host}")
+    print(f"  Source: {_framework_relative_path(payload.get('source_dir'))}")
+    print(f"  Repository: {payload.get('repository') or '(not configured)'}")
+    print(f"  Source ref: {payload.get('source_ref') or '(default branch)'}")
+    print(f"  Resolved commit: {payload.get('resolved_commit') or '(not resolved yet)'}")
+    print(f"  Model-server mode: {payload.get('normalized_mode') or '(unset)'}")
+    print(f"  Seed script: {_framework_relative_path(payload.get('seed_script'))}")
+    print(f"  Ready for demo steps 9/10: {'yes' if payload.get('ready') else 'no'}")
+    for missing in list(payload.get("missing_files") or []):
+        print(f"  Missing: {_framework_relative_path(missing)}")
+    if payload.get("public_url"):
+        print(f"  Public model-server URL: {payload.get('public_url')}")
+
+
+def _ai_model_hub_use_case_demo_profile_updates(profile_values=None):
+    values = dict(profile_values or {})
+    status = _ai_model_hub_use_case_demo_status(values)
+    source_ref = status.get("source_ref") or status.get("resolved_commit") or ""
+    image_suffix = (source_ref or "demo")[:7]
+    updates = {
+        "AI_MODEL_HUB_MODEL_SERVER_MODE": "combined",
+        "AI_MODEL_HUB_MODEL_SERVER_IMAGE": f"model-server:combined-{image_suffix}",
+        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": _framework_relative_path(status["source_dir"]),
+        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": status.get("repository") or "",
+        "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH": "/models",
+        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH": "/models",
+        "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES": "true",
+    }
+    if source_ref:
+        updates["AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF"] = source_ref
+    if status.get("public_url"):
+        updates["AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL"] = status["public_url"]
+        updates["AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL"] = status["public_url"]
+    return updates
+
+
+def _write_ai_model_hub_use_case_demo_profile_updates(profile_path, updates):
+    _write_key_value_updates(
+        profile_path,
+        updates,
+        (
+            "AI_MODEL_HUB_MODEL_SERVER_MODE",
+            "AI_MODEL_HUB_MODEL_SERVER_IMAGE",
+            "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
+            "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
+            "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
+            "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
+            "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
+            "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL",
+            "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH",
+            "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES",
+        ),
+    )
+
+
+def _promote_ai_model_hub_use_case_demo_profile(profile_path, profile_values=None, adapter_name="inesdata"):
+    values = dict(profile_values or {})
+    status = _ai_model_hub_use_case_demo_status(values)
+    if not status.get("ready"):
+        return {"status": "failed", "reason": "use-case-demo-assets-not-ready", "demo_status": status}
+    updates = _ai_model_hub_use_case_demo_profile_updates(values)
+    _write_ai_model_hub_use_case_demo_profile_updates(profile_path, updates)
+    apply_result = apply_environment_configuration_profile(
+        profile_path,
+        topology="vm-distributed",
+        adapter_name=adapter_name,
+    )
+    return {
+        "status": "promoted",
+        "profile": profile_path,
+        "updates": updates,
+        "apply_result": apply_result,
+        "demo_status": _ai_model_hub_use_case_demo_status({**values, **updates}),
+    }
+
+
+def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="inesdata"):
+    values = dict(profile_values or {})
+    dataspace = str(
+        values.get("DS_1_NAME")
+        or values.get("DS_NAME")
+        or values.get("DATASPACE_NAME")
+        or ("pionera-edc" if str(adapter_name or "").strip().lower() == "edc" else "pionera")
+    ).strip()
+    components_namespace = str(values.get("COMPONENTS_NAMESPACE") or "components").strip() or "components"
+    connectors = parse_connector_list(values.get("DS_1_CONNECTORS"), dataspace)
+    if not connectors:
+        connectors = [
+            f"conn-org2-{dataspace}",
+            f"conn-org3-{dataspace}",
+        ]
+    credentials_dir = os.path.join(
+        os.path.dirname(__file__),
+        "deployers",
+        str(adapter_name or "inesdata").strip().lower() or "inesdata",
+        "deployments",
+        str(values.get("ENVIRONMENT_NAME") or "DEV").strip() or "DEV",
+        dataspace,
+    )
+    model_server_url = str(
+        values.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
+        or values.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL")
+        or _ai_model_hub_real_models_public_url(values)
+        or ""
+    ).strip().rstrip("/")
+    return {
+        "dataspace": dataspace,
+        "components_namespace": components_namespace,
+        "connectors": connectors,
+        "credentials_dir": credentials_dir,
+        "model_server_url": model_server_url,
+    }
+
+
+def _ai_model_hub_use_case_demo_seed_command(profile_values=None, adapter_name="inesdata", step="datasets"):
+    runtime = _ai_model_hub_use_case_demo_seed_runtime(profile_values, adapter_name=adapter_name)
+    script_path = os.path.join(os.path.dirname(__file__), "scripts", "seed_ml_assets_for_connectors.sh")
+    args = [
+        "bash",
+        script_path,
+        "--namespace",
+        runtime["dataspace"],
+        "--components-namespace",
+        runtime["components_namespace"],
+        "--connectors",
+        ",".join(runtime["connectors"]),
+        "--credentials-dir",
+        runtime["credentials_dir"],
+        "--strict",
+    ]
+    if step == "models":
+        args.extend(
+            [
+                "--seed-scope",
+                "models",
+                "--model-set",
+                "use-cases",
+                "--skip-inesdata-models",
+            ]
+        )
+        if runtime.get("model_server_url"):
+            args.extend(["--use-case-model-server-base-url", runtime["model_server_url"]])
+    else:
+        args.extend(["--seed-scope", "datasets"])
+    return args
+
+
+def _run_ai_model_hub_use_case_demo_seed_step(profile_values=None, adapter_name="inesdata", step="datasets"):
+    args = _ai_model_hub_use_case_demo_seed_command(profile_values, adapter_name=adapter_name, step=step)
+    started_at = time.strftime("%Y%m%d-%H%M%S")
+    artifact_dir = os.path.join(os.path.dirname(__file__), ".local", "artifacts", "ai-model-hub", "use-case-demo")
+    os.makedirs(artifact_dir, exist_ok=True)
+    log_path = os.path.join(artifact_dir, f"seed-{step}-{started_at}.log")
+    with open(log_path, "ab") as log_handle:
+        completed = subprocess.run(
+            args,
+            cwd=os.path.dirname(__file__),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+    return {
+        "status": "passed" if completed.returncode == 0 else "failed",
+        "step": step,
+        "returncode": completed.returncode,
+        "command": " ".join(shlex.quote(part) for part in args),
+        "log_path": log_path,
+    }
+
+
+def _print_ai_model_hub_use_case_demo_action_result(result):
+    payload = dict(result or {})
+    print()
+    print(f"Result: {payload.get('status') or 'unknown'}")
+    if payload.get("reason"):
+        print(f"Reason: {payload.get('reason')}")
+    if payload.get("profile"):
+        print(f"Profile: {_framework_relative_path(payload.get('profile'))}")
+    if payload.get("command"):
+        print(f"Command: {payload.get('command')}")
+    if payload.get("log_path"):
+        print(f"Log: {_framework_relative_path(payload.get('log_path'))}")
+    if payload.get("updates"):
+        print("Profile updates:")
+        for key, value in sorted(dict(payload.get("updates") or {}).items()):
+            print(f"  {key}={value}")
+    if payload.get("demo_status"):
+        _print_ai_model_hub_use_case_demo_status(payload.get("demo_status"))
+    if payload.get("apply_result"):
+        _print_vm_distributed_profile_result(payload.get("apply_result"))
+
+
+def _run_ai_model_hub_use_case_demo_assistant(current_adapter=None, adapter_registry=None):
     registry = adapter_registry or ADAPTER_REGISTRY
     selected_adapter = _interactive_require_adapter_selection(current_adapter, adapter_registry=registry)
     if not selected_adapter:
@@ -19468,64 +19709,89 @@ def _run_ai_model_hub_real_models_assistant(current_adapter=None, adapter_regist
     topology_config.update({key: value for key, value in profile_values.items() if str(value).strip()})
 
     while True:
-        status = _ai_model_hub_real_models_status(profile_values)
-        _print_ai_model_hub_real_models_status(status, topology_config=topology_config)
+        status = _ai_model_hub_use_case_demo_status(profile_values)
+        _print_ai_model_hub_use_case_demo_status(status, topology_config=topology_config)
         print()
-        print("1 - Prepare or update source checkout")
-        print("2 - Start real model training in background")
-        print("3 - Promote profile to real use-case model-server")
-        print("4 - Restore controlled mock model-server")
+        print("1 - Prepare/apply use-case demo profile (combined model-server)")
+        print("2 - Show Level 5 and demo seed commands")
+        print("3 - Run Step 9: seed benchmark datasets")
+        print("4 - Run Step 10: seed FLARES/Mobility model assets")
         print("B/Q - Back")
         choice = _interactive_read("\nSelection: ").strip().upper()
         if not choice or choice in {"B", "Q"}:
             return {"status": "completed", "adapter": selected_adapter, "topology": "vm-distributed"}
 
         if choice == "1":
-            try:
-                result = _ensure_ai_model_hub_real_models_source(profile_values)
-            except subprocess.CalledProcessError as exc:
-                result = {"status": "failed", "reason": "source-command-failed", "error": str(exc)}
-            _print_ai_model_hub_real_models_action_result(result)
-            profile_values, _parse_errors = _load_vm_distributed_profile(profile_path)
-            continue
-
-        if choice == "2":
-            print()
-            print("Training can take a long time and may download model dependencies.")
-            print("Run this only from the common-services/components VM.")
-            if not _interactive_confirm("Start background training now?", default=False):
-                print("Training cancelled.")
+            if not _interactive_confirm("Apply the AI Model Hub use-case demo profile now?", default=False):
+                print("Profile promotion cancelled.")
                 continue
-            try:
-                result = _start_ai_model_hub_real_models_training(profile_values, topology_config=topology_config)
-            except subprocess.CalledProcessError as exc:
-                result = {"status": "failed", "reason": "training-command-failed", "error": str(exc)}
-            _print_ai_model_hub_real_models_action_result(result)
-            continue
-
-        if choice == "3":
-            if not _interactive_confirm("Promote this environment to the real use-case model-server?", default=False):
-                print("Promotion cancelled.")
-                continue
-            result = _promote_ai_model_hub_real_models_profile(
+            result = _promote_ai_model_hub_use_case_demo_profile(
                 profile_path,
                 profile_values,
                 adapter_name=selected_adapter,
             )
-            _print_ai_model_hub_real_models_action_result(result)
+            _print_ai_model_hub_use_case_demo_action_result(result)
             profile_values, _parse_errors = _load_vm_distributed_profile(profile_path)
+            topology_config.update({key: value for key, value in profile_values.items() if str(value).strip()})
+            continue
+
+        if choice == "2":
+            level5_cmd = [
+                "python3",
+                "main.py",
+                selected_adapter,
+                "level",
+                "5",
+                "--topology",
+                "vm-distributed",
+            ]
+            datasets_cmd = _ai_model_hub_use_case_demo_seed_command(
+                profile_values,
+                adapter_name=selected_adapter,
+                step="datasets",
+            )
+            models_cmd = _ai_model_hub_use_case_demo_seed_command(
+                profile_values,
+                adapter_name=selected_adapter,
+                step="models",
+            )
+            print()
+            print("AI Model Hub use-case demo commands:")
+            print("  Level 5 / Step 7:")
+            print("    " + " ".join(shlex.quote(part) for part in level5_cmd))
+            print("  Step 9 datasets:")
+            print("    " + " ".join(shlex.quote(part) for part in datasets_cmd))
+            print("  Step 10 FLARES/Mobility models:")
+            print("    " + " ".join(shlex.quote(part) for part in models_cmd))
+            continue
+
+        if choice == "3":
+            if not _interactive_confirm("Run Step 9 dataset seeding now?", default=False):
+                print("Dataset seeding cancelled.")
+                continue
+            result = _run_ai_model_hub_use_case_demo_seed_step(
+                profile_values,
+                adapter_name=selected_adapter,
+                step="datasets",
+            )
+            _print_ai_model_hub_use_case_demo_action_result(result)
             continue
 
         if choice == "4":
-            if not _interactive_confirm("Restore controlled mock model-server mode?", default=False):
-                print("Restore cancelled.")
+            print()
+            print("This registers FLARES/Mobility HttpData assets discovered from the running model-server /models endpoint.")
+            if not _interactive_confirm("Run Step 10 model asset seeding now?", default=False):
+                print("Model asset seeding cancelled.")
                 continue
-            result = _restore_ai_model_hub_mock_model_server_profile(profile_path, adapter_name=selected_adapter)
-            _print_ai_model_hub_real_models_action_result(result)
-            profile_values, _parse_errors = _load_vm_distributed_profile(profile_path)
+            result = _run_ai_model_hub_use_case_demo_seed_step(
+                profile_values,
+                adapter_name=selected_adapter,
+                step="models",
+            )
+            _print_ai_model_hub_use_case_demo_action_result(result)
             continue
 
-        print("Invalid AI Model Hub real model-server selection.")
+        print("Invalid AI Model Hub use-case demo selection.")
 
 
 def _print_vm_distributed_assistant_menu(current_adapter=None):
@@ -19545,7 +19811,7 @@ def _print_vm_distributed_assistant_menu(current_adapter=None):
     print("7 - Local SSH key self-test")
     print("8 - Prepare local k3s kubeconfigs")
     print("9 - Show runtime artifact paths")
-    print("10 - AI Model Hub real model-server preparation")
+    print("10 - AI Model Hub use-case demo preparation")
     print("C - Show effective configuration values and sources")
     print("B/Q - Back")
     print("=" * 50)
@@ -19728,14 +19994,14 @@ def _run_vm_distributed_assistant(
             continue
 
         if choice == "10":
-            result = _run_ai_model_hub_real_models_assistant(
+            result = _run_ai_model_hub_use_case_demo_assistant(
                 current_adapter=current_adapter,
                 adapter_registry=registry,
             )
             if isinstance(result, dict):
                 current_adapter = result.get("adapter") or current_adapter
                 if result.get("status") not in {"completed", "cancelled"}:
-                    _print_ai_model_hub_real_models_action_result(result)
+                    _print_ai_model_hub_use_case_demo_action_result(result)
             continue
 
         if choice == "C":

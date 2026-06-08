@@ -12,6 +12,13 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(content)
 
+    def _write_use_case_demo_source(self, source_dir):
+        self._write_file(os.path.join(source_dir, "src", "server.py"), "from fastapi import FastAPI\napp = FastAPI()\n")
+        self._write_file(os.path.join(source_dir, "requirements.txt"), "fastapi\nuvicorn\n")
+        self._write_file(os.path.join(source_dir, "data", "mobility-datasets", "segments_test.csv"), "x,y\n1,2\n")
+        self._write_file(os.path.join(source_dir, "data", "flares-datasets", "5w1h_subtarea_1_test.json"), "{}\n")
+        self._write_file(os.path.join(source_dir, "data", "flares-datasets", "5w1h_subtarea_2_test.json"), "{}\n")
+
     def test_real_models_status_requires_flares_and_mobility_artifacts(self):
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as artifact_dir:
             self._write_file(os.path.join(source_dir, "models", "flares", "model.bin"))
@@ -96,6 +103,71 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
         self.assertIn("AI_MODEL_HUB_MODEL_SERVER_MODE=mock", content)
         self.assertIn("AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR=", content)
         apply_profile.assert_called_once()
+
+    def test_use_case_demo_profile_uses_combined_mode_without_training_artifacts(self):
+        with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as tmpdir:
+            self._write_use_case_demo_source(source_dir)
+            profile_path = os.path.join(tmpdir, "pionera.env")
+            self._write_file(
+                profile_path,
+                "\n".join(
+                    [
+                        "PROFILE_TOPOLOGY=vm-distributed",
+                        "PROFILE_ADAPTER=inesdata",
+                        f"AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR={source_dir}",
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY=https://example.test/use-cases.git",
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF=abc1234",
+                        "COMPONENTS_PUBLIC_BASE_URL=https://org1.example.test",
+                        "",
+                    ]
+                ),
+            )
+
+            with mock.patch.object(
+                main,
+                "apply_environment_configuration_profile",
+                return_value={"status": "applied"},
+            ) as apply_profile:
+                result = main._promote_ai_model_hub_use_case_demo_profile(
+                    profile_path,
+                    {
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": source_dir,
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": "https://example.test/use-cases.git",
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF": "abc1234",
+                        "COMPONENTS_PUBLIC_BASE_URL": "https://org1.example.test",
+                    },
+                )
+
+            with open(profile_path, encoding="utf-8") as handle:
+                content = handle.read()
+
+        self.assertEqual(result["status"], "promoted")
+        self.assertIn("AI_MODEL_HUB_MODEL_SERVER_MODE=combined", content)
+        self.assertIn("AI_MODEL_HUB_MODEL_SERVER_IMAGE=model-server:combined-abc1234", content)
+        self.assertIn("AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH=/models", content)
+        self.assertIn("AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES=true", content)
+        self.assertIn("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH=/models", content)
+        apply_profile.assert_called_once()
+
+    def test_use_case_demo_seed_commands_match_steps_9_and_10(self):
+        values = {
+            "DS_1_NAME": "pionera",
+            "DS_1_CONNECTORS": "conn-org2-pionera,conn-org3-pionera",
+            "COMPONENTS_NAMESPACE": "components",
+            "ENVIRONMENT_NAME": "DEV",
+            "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL": "http://model-server.components.svc.cluster.local:8080",
+        }
+
+        datasets_cmd = main._ai_model_hub_use_case_demo_seed_command(values, step="datasets")
+        models_cmd = main._ai_model_hub_use_case_demo_seed_command(values, step="models")
+
+        self.assertIn("--seed-scope", datasets_cmd)
+        self.assertIn("datasets", datasets_cmd)
+        self.assertIn("--model-set", models_cmd)
+        self.assertIn("use-cases", models_cmd)
+        self.assertIn("--skip-inesdata-models", models_cmd)
+        self.assertIn("--use-case-model-server-base-url", models_cmd)
+        self.assertIn("conn-org2-pionera,conn-org3-pionera", models_cmd)
 
 
 if __name__ == "__main__":
