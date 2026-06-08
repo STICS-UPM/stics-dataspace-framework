@@ -383,14 +383,13 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
         morsel = cookie.get(name)
         return morsel.value if morsel else None
 
-    @staticmethod
-    def _normalize_return_to(value, fallback):
+    def _normalize_return_to(self, value, fallback):
         candidate = value or fallback
         if not candidate or not candidate.startswith("/"):
             return fallback
         if candidate.startswith("//"):
             return fallback
-        return candidate
+        return self._public_path(candidate)
 
     def _external_base_url(self):
         if SETTINGS.external_base_url:
@@ -493,7 +492,8 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
         flash_id = SETTINGS.create_flash_notice(event, message, level=level)
         headers = list(set_cookie_headers or [])
         headers.append(self._flash_cookie_header(flash_id))
-        self._send_redirect(location, set_cookie_headers=headers)
+        redirect_location = self._public_path(location) if str(location or "").startswith("/") else location
+        self._send_redirect(redirect_location, set_cookie_headers=headers)
 
     def _handle_auth_info(self):
         flash_notice, flash_cookie_headers = self._consume_flash_notice()

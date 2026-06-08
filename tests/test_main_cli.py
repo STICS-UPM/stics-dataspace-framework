@@ -2146,7 +2146,7 @@ class InesdataPortalReadinessTests(unittest.TestCase):
         )
         self.assertEqual(
             result["urls"]["connectors"]["conn-citycounciledc-pionera-edc"]["edc_dashboard_login"],
-            "https://org4.example.test/edc/c/citycounciledc/edc-dashboard/",
+            "https://org4.example.test/c/citycounciledc/edc-dashboard/",
         )
 
 

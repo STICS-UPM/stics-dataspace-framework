@@ -259,12 +259,13 @@ def vm_single_connector_public_path_prefix(config: dict[str, str]) -> str:
         "EDC_VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
         "VM_SINGLE_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
         "EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+        "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
     ):
         prefix = str((config or {}).get(key) or "").strip()
         if prefix:
             break
     if not prefix:
-        prefix = "/edc/c"
+        prefix = "/c"
     if not prefix.startswith("/"):
         prefix = f"/{prefix}"
     return prefix.rstrip("/")
@@ -285,6 +286,22 @@ def vm_distributed_connector_public_path_prefix(config: dict[str, str]) -> str:
             prefix = f"/{prefix}"
         return prefix.rstrip("/")
     return "/edc"
+
+
+def vm_single_connector_public_api_path_prefix(config: dict[str, str]) -> str:
+    for key in (
+        "EDC_VM_SINGLE_CONNECTOR_PUBLIC_API_PATH_PREFIX",
+        "VM_SINGLE_EDC_CONNECTOR_PUBLIC_API_PATH_PREFIX",
+    ):
+        prefix = str((config or {}).get(key) or "").strip()
+        if not prefix:
+            continue
+        if prefix in {"/", ".", "root"}:
+            return ""
+        if not prefix.startswith("/"):
+            prefix = f"/{prefix}"
+        return prefix.rstrip("/")
+    return "/edc/c"
 
 
 def connector_public_base_url(config: dict[str, str], connector: str, dataspace: str) -> str:
@@ -327,7 +344,14 @@ def build_connector_public_access_urls(
     connector_base = connector_public_base_url(config, connector, dataspace)
     if connector_base:
         connector_api_base = connector_base
-        if active_public_topology(config) == "vm-distributed":
+        topology = active_public_topology(config)
+        if topology == "vm-single":
+            common_base = vm_public_common_base_url(config)
+            short_name = connector_short_name_for_public_path(connector, dataspace)
+            public_path_prefix = vm_single_connector_public_api_path_prefix(config)
+            if common_base and short_name and public_path_prefix:
+                connector_api_base = f"{common_base}{public_path_prefix}/{short_name}"
+        elif topology == "vm-distributed":
             public_path_prefix = vm_distributed_connector_public_path_prefix(config)
             if public_path_prefix:
                 connector_api_base = f"{connector_base}{public_path_prefix}"

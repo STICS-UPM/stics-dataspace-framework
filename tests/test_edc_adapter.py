@@ -1991,7 +1991,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         )
         self.assertEqual(
             enriched["public_access_urls"]["edc_dashboard_login"],
-            "https://org4.example.test/edc/c/citycounciledc/edc-dashboard/",
+            "https://org4.example.test/c/citycounciledc/edc-dashboard/",
         )
         self.assertEqual(
             adapter.build_connector_url("conn-citycounciledc-pionera-edc"),
@@ -2021,6 +2021,8 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                         "DS_DOMAIN_BASE": "example.test",
                     }
                 ),
+                "edc_dashboard_base_href": staticmethod(lambda: "/edc-dashboard/"),
+                "edc_dashboard_proxy_auth_mode": staticmethod(lambda: "oidc-bff"),
             },
         )()
         values = {
@@ -2041,14 +2043,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         routed = manifests[0]
         self.assertEqual(routed["spec"]["rules"][0]["host"], "org4.example.test")
         paths = routed["spec"]["rules"][0]["http"]["paths"]
-        management_path = next(path for path in paths if "(management.*)" in path["path"])
-        self.assertEqual(
-            management_path["backend"]["service"],
-            {
-                "name": "conn-citycounciledc-pionera-edc",
-                "port": {"number": 19193},
-            },
-        )
+        self.assertFalse(any("(management.*)" in path["path"] for path in paths))
         dashboard_proxy_path = next(path for path in paths if "(edc-dashboard-api.*)" in path["path"])
         self.assertEqual(
             dashboard_proxy_path["backend"]["service"],
@@ -2057,14 +2052,21 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 "port": {"number": 8080},
             },
         )
-        root = manifests[1]
+        dashboard = manifests[1]
+        self.assertEqual(dashboard["metadata"]["name"], "conn-citycounciledc-pionera-edc-public-dashboard-ingress")
         self.assertEqual(
-            root["metadata"]["annotations"]["nginx.ingress.kubernetes.io/rewrite-target"],
-            "/edc-dashboard/",
+            dashboard["metadata"]["annotations"]["nginx.ingress.kubernetes.io/auth-url"],
+            "http://conn-citycounciledc-pionera-edc-dashboard-proxy.provider.svc.cluster.local:"
+            "8080/edc-dashboard-api/auth/require",
         )
         self.assertEqual(
-            root["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"],
-            "conn-citycounciledc-pionera-edc-dashboard",
+            dashboard["metadata"]["annotations"]["nginx.ingress.kubernetes.io/auth-signin"],
+            "https://org4.example.test/c/citycounciledc/edc-dashboard-api/auth/login?"
+            "returnTo=%2Fc%2Fcitycounciledc%2Fedc-dashboard%2F",
+        )
+        self.assertEqual(
+            dashboard["spec"]["rules"][0]["http"]["paths"][0]["path"],
+            "/c/citycounciledc(/|$)(edc-dashboard.*)",
         )
 
     def test_vm_distributed_connector_credentials_keep_dashboard_root_and_prefix_apis(self):
@@ -3101,29 +3103,29 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         runtime = payload["dashboard"]["runtime"]
         self.assertEqual(
             proxy_config["externalBaseUrl"],
-            "https://org4.example.test/edc/c/citycounciledc",
+            "https://org4.example.test/c/citycounciledc",
         )
         self.assertEqual(proxy_config["callbackPath"], "/edc-dashboard-api/auth/callback")
         self.assertEqual(proxy_config["loginPath"], "/edc-dashboard-api/auth/login")
         self.assertEqual(proxy_config["logoutPath"], "/edc-dashboard-api/auth/logout")
         self.assertEqual(proxy_config["authCheckPath"], "/edc-dashboard-api/auth/require")
         self.assertTrue(proxy_config["cookieSecure"])
-        self.assertEqual(runtime["baseHref"], "/edc/c/citycounciledc/edc-dashboard/")
+        self.assertEqual(runtime["baseHref"], "/c/citycounciledc/edc-dashboard/")
         self.assertEqual(
             runtime["appConfig"]["runtime"]["ontologyUrl"],
-            "/edc/c/citycounciledc/edc-dashboard-api/components/ontology-hub",
+            "/c/citycounciledc/edc-dashboard-api/components/ontology-hub",
         )
         self.assertEqual(
             runtime["appConfig"]["runtime"]["modelObserverUrl"],
-            "/edc/c/citycounciledc/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/api/check",
+            "/c/citycounciledc/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/api/check",
         )
         self.assertEqual(
             runtime["connectorConfig"][0]["managementUrl"],
-            "/edc/c/citycounciledc/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/management",
+            "/c/citycounciledc/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/management",
         )
         self.assertEqual(
             runtime["connectorConfig"][1]["managementUrl"],
-            "/edc/c/citycounciledc/edc-dashboard-api/connectors/conn-companyedc-demoedc/management",
+            "/c/citycounciledc/edc-dashboard-api/connectors/conn-companyedc-demoedc/management",
         )
 
     def test_connector_values_payload_uses_registration_service_fqdn_when_namespace_differs(self):

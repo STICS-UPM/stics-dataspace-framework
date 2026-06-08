@@ -1152,6 +1152,14 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         if certs_dir and isinstance(certificates, dict):
             certificates["path"] = self._runtime_relative_path(certs_dir)
 
+        connector_name = None
+        try:
+            connector_name = os.path.basename(os.path.dirname(credentials_path))
+        except (TypeError, ValueError):
+            connector_name = None
+        if connector_name:
+            payload = self._with_connector_public_access_urls(connector_name, payload)
+
         with open(credentials_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=4)
         return credentials_path
@@ -1295,7 +1303,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                     f"{public_base_url}{self.DASHBOARD_PROXY_PREFIX}/auth/login"
                 )
             for key, value in inferred_urls.items():
-                if topology == VM_DISTRIBUTED_TOPOLOGY and key.startswith(
+                if topology in {VM_SINGLE_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY} and key.startswith(
                     ("connector_", "edc_dashboard_")
                 ):
                     public_urls[key] = value
@@ -1321,6 +1329,20 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             credentials = dict(credentials)
             credentials["public_access_urls"] = public_urls
         return credentials
+
+    @staticmethod
+    def _dashboard_auth_return_to(external_base_url, dashboard_path):
+        normalized_path = str(dashboard_path or "/edc-dashboard").strip() or "/edc-dashboard"
+        if not normalized_path.startswith("/"):
+            normalized_path = f"/{normalized_path}"
+        normalized_path = f"{normalized_path.rstrip('/')}/"
+
+        parsed = urlparse(str(external_base_url or "").strip())
+        base_path = parsed.path.rstrip("/") if parsed.path else ""
+        if base_path and not normalized_path.startswith(f"{base_path}/"):
+            normalized_path = f"{base_path}{normalized_path}"
+
+        return quote(normalized_path, safe="")
 
     def _edc_connector_public_base_url_without_credentials(self, connector_name, credentials=None, dataspace=None):
         deployer_config = self.config_adapter.load_deployer_config() or {}
@@ -1356,13 +1378,14 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             "EDC_VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
             "VM_SINGLE_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
             "EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
         ):
             raw_value = str((deployer_config or {}).get(key) or "").strip()
             if raw_value:
                 prefix = raw_value
                 break
         else:
-            prefix = "/edc/c"
+            prefix = "/c"
         if prefix in {"/", ".", "root"}:
             return ""
         if not prefix.startswith("/"):
@@ -1405,9 +1428,22 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             connector_name,
             credentials=credentials,
         )
-        if not public_base_url or self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
+        topology = self._normalized_topology()
+        if not public_base_url:
             return public_base_url
         deployer_config = self.config_adapter.load_deployer_config() or {}
+        if topology == VM_SINGLE_TOPOLOGY:
+            common_base_url = self._vm_public_common_base_url()
+            short_name = self._connector_short_name_for_public_path(
+                connector_name,
+                self._dataspace_name(),
+            )
+            public_path_prefix = self._edc_vm_single_connector_public_api_path_prefix(deployer_config)
+            if common_base_url and short_name and public_path_prefix:
+                return f"{common_base_url.rstrip('/')}{public_path_prefix}/{short_name}"
+            return public_base_url
+        if topology != VM_DISTRIBUTED_TOPOLOGY:
+            return public_base_url
         public_path_prefix = self._vm_distributed_edc_public_path_prefix(deployer_config)
         if public_path_prefix:
             return f"{public_base_url.rstrip('/')}{public_path_prefix}"
@@ -1427,6 +1463,20 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 return ""
             return f"/{raw_value.strip('/')}"
         return "/edc"
+
+    @staticmethod
+    def _edc_vm_single_connector_public_api_path_prefix(deployer_config):
+        for key in (
+            "EDC_VM_SINGLE_CONNECTOR_PUBLIC_API_PATH_PREFIX",
+            "VM_SINGLE_EDC_CONNECTOR_PUBLIC_API_PATH_PREFIX",
+        ):
+            raw_value = str((deployer_config or {}).get(key) or "").strip()
+            if not raw_value:
+                continue
+            if raw_value in {"/", ".", "root"}:
+                return ""
+            return f"/{raw_value.strip('/')}"
+        return "/edc/c"
 
     def _vm_public_common_base_url(self):
         deployer_config = self.config_adapter.load_deployer_config() or {}
@@ -1479,6 +1529,32 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             "nginx.ingress.kubernetes.io/use-regex": "true",
         }
 
+        def dashboard_auth_annotations(dashboard_proxy, dashboard_path):
+            if not (dashboard_proxy or {}).get("enabled"):
+                return {}
+            if self.config_adapter.edc_dashboard_proxy_auth_mode() != "oidc-bff":
+                return {}
+            proxy_port = int((dashboard_proxy or {}).get("port") or 8080)
+            dashboard_proxy_config = (dashboard_proxy or {}).get("config") or {}
+            external_base_url = str(
+                dashboard_proxy_config.get("externalBaseUrl") or public_url
+            ).strip().rstrip("/")
+            return_to = self._dashboard_auth_return_to(external_base_url, dashboard_path)
+            login_url = f"{external_base_url}{self.DASHBOARD_PROXY_PREFIX}/auth/login?returnTo={return_to}"
+            return {
+                "nginx.ingress.kubernetes.io/auth-url": (
+                    f"http://{connector_name}-dashboard-proxy.{namespace}.svc.cluster.local:"
+                    f"{proxy_port}{self.DASHBOARD_AUTH_CHECK_PATH}"
+                ),
+                "nginx.ingress.kubernetes.io/auth-signin": login_url,
+                "nginx.ingress.kubernetes.io/auth-response-headers": (
+                    "X-Auth-Request-User,X-Auth-Request-Email"
+                ),
+                "nginx.ingress.kubernetes.io/configuration-snippet": (
+                    f"error_page 401 =302 {login_url};"
+                ),
+            }
+
         def backend(service_name, port):
             return {
                 "service": {
@@ -1487,16 +1563,9 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 }
             }
 
-        route_specs = [
-            ("api", connector_name, 19191),
-            ("control", connector_name, 19192),
-            ("management", connector_name, 19193),
-            ("protocol", connector_name, 19194),
-            ("version", connector_name, 19195),
-            ("shared", connector_name, 19196),
-            ("public", connector_name, 19291),
-        ]
+        route_specs = []
         dashboard = (values or {}).get("dashboard") or {}
+        dashboard_proxy = {}
         if dashboard.get("enabled"):
             dashboard_proxy = dashboard.get("proxy") or {}
             if dashboard_proxy.get("enabled"):
@@ -1507,7 +1576,6 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                         int(dashboard_proxy.get("port") or 8080),
                     )
                 )
-            route_specs.append(("edc-dashboard", f"{connector_name}-dashboard", 80))
 
         routed_ingress = {
             "apiVersion": "networking.k8s.io/v1",
@@ -1515,6 +1583,9 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             "metadata": {
                 "name": f"{connector_name}-public-path-ingress",
                 "namespace": namespace,
+                "labels": {
+                    self.MANAGED_LABEL_KEY: self._managed_label_value(),
+                },
                 "annotations": {
                     **common_annotations,
                     "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
@@ -1541,16 +1612,25 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
 
         manifests = [routed_ingress]
         if dashboard.get("enabled"):
+            dashboard_base_href = str(self.config_adapter.edc_dashboard_base_href() or "").strip()
+            dashboard_path = f"/{dashboard_base_href.strip('/')}" if dashboard_base_href else "/edc-dashboard"
+            dashboard_annotations = {
+                **common_annotations,
+                **dashboard_auth_annotations(dashboard_proxy, dashboard_path),
+            }
             manifests.append(
                 {
                     "apiVersion": "networking.k8s.io/v1",
                     "kind": "Ingress",
                     "metadata": {
-                        "name": f"{connector_name}-public-root-ingress",
+                        "name": f"{connector_name}-public-dashboard-ingress",
                         "namespace": namespace,
+                        "labels": {
+                            self.MANAGED_LABEL_KEY: self._managed_label_value(),
+                        },
                         "annotations": {
-                            **common_annotations,
-                            "nginx.ingress.kubernetes.io/rewrite-target": "/edc-dashboard/",
+                            **dashboard_annotations,
+                            "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
                         },
                     },
                     "spec": {
@@ -1561,7 +1641,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                                     "paths": [
                                         {
                                             "pathType": "ImplementationSpecific",
-                                            "path": f"{escaped_prefix}/?$",
+                                            "path": f"{escaped_prefix}(/|$)(edc-dashboard.*)",
                                             "backend": backend(f"{connector_name}-dashboard", 80),
                                         }
                                     ]
@@ -1613,7 +1693,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             external_base_url = str(
                 dashboard_proxy_config.get("externalBaseUrl") or f"https://{host}"
             ).strip().rstrip("/")
-            return_to = quote(f"{str(dashboard_path or '/edc-dashboard').rstrip('/')}/", safe="")
+            return_to = self._dashboard_auth_return_to(external_base_url, dashboard_path)
             login_url = f"{external_base_url}{self.DASHBOARD_PROXY_PREFIX}/auth/login?returnTo={return_to}"
             return {
                 "nginx.ingress.kubernetes.io/auth-url": (
