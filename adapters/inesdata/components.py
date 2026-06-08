@@ -44,6 +44,7 @@ class INESDataComponentsAdapter:
     _ONTOLOGY_HUB_REPO_DIRNAME = "Ontology-Hub"
     _AI_MODEL_HUB_REPO_URL = "https://github.com/ProyectoPIONERA/AIModelHub.git"
     _AI_MODEL_HUB_REPO_DIRNAME = "AIModelHub"
+    _AI_MODEL_HUB_DASHBOARD_REF = "684560eb4a7543c4b0e0e359dfa401ff4ffde7e7"
     _MORPH_KGV_REPO_URL = "https://github.com/ProyectoPIONERA/morph-kgv.git"
     _MORPH_KGV_REPO_DIRNAME = "morph-kgv"
     _MAPPING_EDITOR_REPO_URL = "https://github.com/ProyectoPIONERA/mapping-editor.git"
@@ -894,6 +895,7 @@ class INESDataComponentsAdapter:
         ai_model_hub_dir = os.path.join(sources_dir, self._AI_MODEL_HUB_REPO_DIRNAME)
         dashboard_dir = os.path.join(ai_model_hub_dir, "DataDashboard")
         dockerfile_path = os.path.join(dashboard_dir, "Dockerfile")
+        dashboard_ref = self._ai_model_hub_dashboard_source_ref(deployer_config)
         if os.path.isfile(dockerfile_path):
             return dashboard_dir
 
@@ -916,11 +918,15 @@ class INESDataComponentsAdapter:
             import subprocess
             try:
                 subprocess.run(["git", "clone", self._AI_MODEL_HUB_REPO_URL, ai_model_hub_dir], check=True)
+                self._checkout_ai_model_hub_dashboard_source(ai_model_hub_dir, dashboard_ref)
             except Exception as exc:
                 self._fail(
                     "Could not clone AI Model Hub repository",
                     root_cause=str(exc),
                 )
+        elif self._checkout_ai_model_hub_dashboard_source(ai_model_hub_dir, dashboard_ref):
+            if os.path.isfile(dockerfile_path):
+                return dashboard_dir
 
         if os.path.isfile(dockerfile_path):
             return dashboard_dir
@@ -933,6 +939,80 @@ class INESDataComponentsAdapter:
                 "adapters/inesdata/sources/AIModelHub."
             ),
         )
+
+    def _ai_model_hub_dashboard_source_ref(self, deployer_config: dict | None = None) -> str:
+        for candidate in (
+            os.getenv("AI_MODEL_HUB_DASHBOARD_SOURCE_REF"),
+            (deployer_config or {}).get("AI_MODEL_HUB_DASHBOARD_SOURCE_REF"),
+            (deployer_config or {}).get("AI_MODEL_HUB_SOURCE_REF"),
+            self._AI_MODEL_HUB_DASHBOARD_REF,
+        ):
+            value = str(candidate or "").strip()
+            if value:
+                return value
+        return self._AI_MODEL_HUB_DASHBOARD_REF
+
+    def _checkout_ai_model_hub_dashboard_source(self, ai_model_hub_dir: str, source_ref: str) -> bool:
+        git_dir = os.path.join(ai_model_hub_dir, ".git")
+        if not os.path.isdir(git_dir):
+            return False
+        source_ref = str(source_ref or "").strip()
+        if not source_ref:
+            return False
+
+        import subprocess
+
+        status = subprocess.run(
+            ["git", "-C", ai_model_hub_dir, "status", "--porcelain", "--untracked-files=no"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if status.returncode != 0:
+            return False
+        if str(status.stdout or "").strip():
+            self._fail(
+                "AI Model Hub source directory is not usable",
+                root_cause=(
+                    f"Expected DataDashboard checkout at {ai_model_hub_dir}, but tracked local changes are present. "
+                    "Commit, stash or remove that checkout before Level 5 can switch to the compatible dashboard ref."
+                ),
+            )
+
+        current = subprocess.run(
+            ["git", "-C", ai_model_hub_dir, "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if current.returncode == 0 and str(current.stdout or "").strip() == source_ref:
+            return True
+
+        print(f"Checking out AI Model Hub dashboard source ref {source_ref} ...")
+        checkout = subprocess.run(
+            ["git", "-C", ai_model_hub_dir, "checkout", "--detach", source_ref],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if checkout.returncode == 0:
+            return True
+
+        fetch = subprocess.run(
+            ["git", "-C", ai_model_hub_dir, "fetch", "--all", "--tags"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if fetch.returncode != 0:
+            return False
+        checkout = subprocess.run(
+            ["git", "-C", ai_model_hub_dir, "checkout", "--detach", source_ref],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        return checkout.returncode == 0
 
     def _resolve_morph_kgv_source_dir(self, deployer_config: dict) -> str:
         sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")

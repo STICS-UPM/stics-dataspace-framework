@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -83,6 +84,19 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             config_cls=FakeConfig,
             active_adapter=active_adapter,
         )
+
+    def _git(self, repo_dir, *args):
+        return subprocess.run(
+            ["git", "-C", repo_dir, *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _commit_all(self, repo_dir, message):
+        self._git(repo_dir, "add", ".")
+        self._git(repo_dir, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", message)
+        return self._git(repo_dir, "rev-parse", "HEAD").stdout.strip()
 
     def test_edc_component_release_name_defaults_to_shared_base_dataspace(self):
         adapter = self._make_shared_adapter(active_adapter="edc")
@@ -2381,6 +2395,42 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         )
 
         self.assertTrue(resolved.endswith("adapters/inesdata/sources/model-server"))
+
+    def test_ai_model_hub_dashboard_checkout_restores_compatible_ref(self):
+        adapter = self._make_adapter()
+        with tempfile.TemporaryDirectory() as repo_dir:
+            subprocess.run(["git", "init", repo_dir], check=True, capture_output=True, text=True)
+            dockerfile_path = os.path.join(repo_dir, "DataDashboard", "Dockerfile")
+            os.makedirs(os.path.dirname(dockerfile_path), exist_ok=True)
+            with open(dockerfile_path, "w", encoding="utf-8") as handle:
+                handle.write("FROM scratch\n")
+            compatible_ref = self._commit_all(repo_dir, "compatible dashboard")
+            shutil.rmtree(os.path.join(repo_dir, "DataDashboard"))
+            with open(os.path.join(repo_dir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("new layout\n")
+            self._commit_all(repo_dir, "new layout")
+
+            restored = adapter._checkout_ai_model_hub_dashboard_source(repo_dir, compatible_ref)
+
+            self.assertTrue(restored)
+            self.assertTrue(os.path.isfile(dockerfile_path))
+            self.assertEqual(self._git(repo_dir, "rev-parse", "HEAD").stdout.strip(), compatible_ref)
+
+    def test_ai_model_hub_dashboard_checkout_refuses_tracked_local_changes(self):
+        adapter = self._make_adapter()
+        with tempfile.TemporaryDirectory() as repo_dir:
+            subprocess.run(["git", "init", repo_dir], check=True, capture_output=True, text=True)
+            readme_path = os.path.join(repo_dir, "README.md")
+            with open(readme_path, "w", encoding="utf-8") as handle:
+                handle.write("initial\n")
+            compatible_ref = self._commit_all(repo_dir, "initial")
+            with open(readme_path, "w", encoding="utf-8") as handle:
+                handle.write("dirty\n")
+
+            with self.assertRaises(RuntimeError) as raised:
+                adapter._checkout_ai_model_hub_dashboard_source(repo_dir, compatible_ref)
+
+        self.assertIn("tracked local changes", str(raised.exception))
 
     def test_load_image_into_k3s_uses_remote_import_for_vm_distributed_components(self):
         adapter = self._make_adapter()
