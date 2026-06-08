@@ -59,6 +59,7 @@ class EDCDeploymentAdapter:
             dataspace=dataspace,
             environment=environment,
             target_runtime_dir=target_runtime_dir,
+            topology=getattr(self, "topology", getattr(self.config_adapter, "topology", None)),
         )
 
     def _stage_shared_dataspace_credentials(self):

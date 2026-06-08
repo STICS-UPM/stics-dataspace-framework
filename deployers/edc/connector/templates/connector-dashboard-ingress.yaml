@@ -1,0 +1,46 @@
+{{- if .Values.dashboard.enabled }}
+{{- $dashboard := (index .Values "dashboard") | default dict }}
+{{- $dashboardProxy := (index $dashboard "proxy") | default dict }}
+{{- $dashboardProxyEnabled := (index $dashboardProxy "enabled") | default false }}
+{{- $dashboardProxyPort := (index $dashboardProxy "port") | default 8080 }}
+{{- $dashboardProxyConfig := (index $dashboardProxy "config") | default dict }}
+{{- $dashboardProxyAuthMode := (index $dashboardProxyConfig "authMode") | default "service-account" }}
+{{- $defaultDashboardExternalBaseUrl := printf "http://%s" .Values.connector.ingress.hostname }}
+{{- if eq .Values.connector.environment "pro" }}
+{{- $defaultDashboardExternalBaseUrl = printf "https://%s" .Values.connector.ingress.hostname }}
+{{- end }}
+{{- $dashboardExternalBaseUrl := trimSuffix "/" ((index $dashboardProxyConfig "externalBaseUrl") | default $defaultDashboardExternalBaseUrl) }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.connector.name }}-dashboard-ingress
+  labels:
+    validation-environment-adapter: edc
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: {{ default "800m" .Values.connector.ingress.proxyBodySize | quote }}
+    nginx.org/client-max-body-size: {{ default "800m" .Values.connector.ingress.proxyBodySize | quote }}
+{{- if and $dashboardProxyEnabled (eq $dashboardProxyAuthMode "oidc-bff") }}
+    nginx.ingress.kubernetes.io/auth-url: "http://{{ .Values.connector.name }}-dashboard-proxy.{{ .Release.Namespace }}.svc.cluster.local:{{ $dashboardProxyPort }}/edc-dashboard-api/auth/require"
+    nginx.ingress.kubernetes.io/auth-signin: "{{ $dashboardExternalBaseUrl }}/edc-dashboard-api/auth/login?returnTo=%2Fedc-dashboard%2F"
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email"
+    nginx.ingress.kubernetes.io/configuration-snippet: "error_page 401 =302 {{ $dashboardExternalBaseUrl }}/edc-dashboard-api/auth/login?returnTo=%2Fedc-dashboard%2F;"
+{{- end }}
+spec:
+  rules:
+    - host: {{ .Values.connector.ingress.hostname }}
+      http:
+        paths:
+          - pathType: Prefix
+            path: /edc-dashboard
+            backend:
+              service:
+                name: {{ .Values.connector.name }}-dashboard
+                port:
+                  number: 80
+{{- if eq .Values.connector.environment "pro" }}
+  tls:
+    - hosts:
+        - {{ .Values.connector.ingress.hostname }}
+      secretName: {{ .Values.connector.dataspace }}-{{ .Values.connector.name }}-tls-cert
+{{- end }}
+{{- end }}

@@ -9,7 +9,7 @@ import shlex
 import sys
 import tempfile
 import time
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import requests
 import yaml
@@ -38,6 +38,7 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
 
     MANAGED_LABEL_KEY = "validation-environment-adapter"
     DASHBOARD_PROXY_PREFIX = "/edc-dashboard-api"
+    DASHBOARD_AUTH_CHECK_PATH = "/edc-dashboard-api/auth/require"
     LEVEL4_LOCAL_IMAGE_TOPOLOGIES = {LOCAL_TOPOLOGY, VM_SINGLE_TOPOLOGY}
     # Backward-compatible fallback. Normal deployments resolve this from the
     # active dataspace and topology configuration.
@@ -1327,7 +1328,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         ds_name = str(dataspace or self._dataspace_name() or "").strip()
         if topology == VM_SINGLE_TOPOLOGY:
             return self._normalize_public_url(
-                self._vm_single_connector_public_base_url_from_config(
+                self._edc_vm_single_connector_public_base_url_from_config(
                     connector_name,
                     deployer_config,
                     dataspace=ds_name,
@@ -1348,6 +1349,56 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             return public_base_url
 
         return ""
+
+    @staticmethod
+    def _edc_vm_single_connector_public_path_prefix(deployer_config):
+        for key in (
+            "EDC_VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "VM_SINGLE_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+        ):
+            raw_value = str((deployer_config or {}).get(key) or "").strip()
+            if raw_value:
+                prefix = raw_value
+                break
+        else:
+            prefix = "/edc/c"
+        if prefix in {"/", ".", "root"}:
+            return ""
+        if not prefix.startswith("/"):
+            prefix = f"/{prefix}"
+        return prefix.rstrip("/")
+
+    def _edc_vm_single_connector_public_base_url_from_config(self, connector_name, deployer_config, dataspace=None):
+        if self._normalized_topology() != VM_SINGLE_TOPOLOGY:
+            return ""
+        public_urls = resolve_vm_distributed_public_urls(
+            {
+                **dict(deployer_config or {}),
+                "TOPOLOGY": VM_SINGLE_TOPOLOGY,
+            }
+        )
+        common_base = (
+            (deployer_config or {}).get("VM_SINGLE_PUBLIC_URL")
+            or (deployer_config or {}).get("VM_SINGLE_HTTP_URL")
+            or public_urls.get("VM_COMMON_PUBLIC_URL")
+            or (deployer_config or {}).get("VM_COMMON_PUBLIC_URL")
+            or (deployer_config or {}).get("VM_COMMON_HTTP_URL")
+            or ""
+        )
+        common_base = self._normalize_public_url(common_base)
+        if not common_base:
+            return ""
+        short_name = self._connector_short_name_for_public_path(
+            connector_name,
+            dataspace or self._dataspace_name(),
+        )
+        if not short_name:
+            return ""
+        path_prefix = self._edc_vm_single_connector_public_path_prefix(deployer_config)
+        if not path_prefix:
+            return f"{common_base}/{short_name}"
+        return f"{common_base}{path_prefix}/{short_name}"
 
     def _edc_connector_public_api_base_url(self, connector_name, credentials=None):
         public_base_url = self._edc_connector_public_base_url_without_credentials(
@@ -1552,6 +1603,32 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             "nginx.org/client-max-body-size": proxy_body_size,
         }
 
+        def dashboard_static_auth_annotations(dashboard_proxy, dashboard_path):
+            if not (dashboard_proxy or {}).get("enabled"):
+                return {}
+            if self.config_adapter.edc_dashboard_proxy_auth_mode() != "oidc-bff":
+                return {}
+            proxy_port = int((dashboard_proxy or {}).get("port") or 8080)
+            dashboard_proxy_config = (dashboard_proxy or {}).get("config") or {}
+            external_base_url = str(
+                dashboard_proxy_config.get("externalBaseUrl") or f"https://{host}"
+            ).strip().rstrip("/")
+            return_to = quote(f"{str(dashboard_path or '/edc-dashboard').rstrip('/')}/", safe="")
+            login_url = f"{external_base_url}{self.DASHBOARD_PROXY_PREFIX}/auth/login?returnTo={return_to}"
+            return {
+                "nginx.ingress.kubernetes.io/auth-url": (
+                    f"http://{connector_name}-dashboard-proxy.{namespace}.svc.cluster.local:"
+                    f"{proxy_port}{self.DASHBOARD_AUTH_CHECK_PATH}"
+                ),
+                "nginx.ingress.kubernetes.io/auth-signin": login_url,
+                "nginx.ingress.kubernetes.io/auth-response-headers": (
+                    "X-Auth-Request-User,X-Auth-Request-Email"
+                ),
+                "nginx.ingress.kubernetes.io/configuration-snippet": (
+                    f"error_page 401 =302 {login_url};"
+                ),
+            }
+
         def backend(service_name, port):
             return {
                 "service": {
@@ -1572,28 +1649,43 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         dashboard = (values or {}).get("dashboard") or {}
         manifests = []
         if dashboard.get("enabled"):
-            dashboard_paths = []
             dashboard_proxy = dashboard.get("proxy") or {}
             if dashboard_proxy.get("enabled"):
-                dashboard_paths.append(
+                manifests.append(
                     {
-                        "pathType": "Prefix",
-                        "path": self.DASHBOARD_PROXY_PREFIX,
-                        "backend": backend(
-                            f"{connector_name}-dashboard-proxy",
-                            int(dashboard_proxy.get("port") or 8080),
-                        ),
+                        "apiVersion": "networking.k8s.io/v1",
+                        "kind": "Ingress",
+                        "metadata": {
+                            "name": f"{connector_name}-public-dashboard-api-ingress",
+                            "namespace": namespace,
+                            "labels": {
+                                self.MANAGED_LABEL_KEY: self._managed_label_value(),
+                            },
+                            "annotations": common_annotations,
+                        },
+                        "spec": {
+                            "rules": [
+                                {
+                                    "host": host,
+                                    "http": {
+                                        "paths": [
+                                            {
+                                                "pathType": "Prefix",
+                                                "path": self.DASHBOARD_PROXY_PREFIX,
+                                                "backend": backend(
+                                                    f"{connector_name}-dashboard-proxy",
+                                                    int(dashboard_proxy.get("port") or 8080),
+                                                ),
+                                            }
+                                        ]
+                                    },
+                                }
+                            ]
+                        },
                     }
                 )
             dashboard_base_href = str(self.config_adapter.edc_dashboard_base_href() or "").strip()
             dashboard_path = f"/{dashboard_base_href.strip('/')}" if dashboard_base_href else "/edc-dashboard"
-            dashboard_paths.append(
-                {
-                    "pathType": "Prefix",
-                    "path": dashboard_path,
-                    "backend": backend(f"{connector_name}-dashboard", 80),
-                }
-            )
             manifests.append(
                 {
                     "apiVersion": "networking.k8s.io/v1",
@@ -1604,14 +1696,23 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                         "labels": {
                             self.MANAGED_LABEL_KEY: self._managed_label_value(),
                         },
-                        "annotations": common_annotations,
+                        "annotations": {
+                            **common_annotations,
+                            **dashboard_static_auth_annotations(dashboard_proxy, dashboard_path),
+                        },
                     },
                     "spec": {
                         "rules": [
                             {
                                 "host": host,
                                 "http": {
-                                    "paths": dashboard_paths,
+                                    "paths": [
+                                        {
+                                            "pathType": "Prefix",
+                                            "path": dashboard_path,
+                                            "backend": backend(f"{connector_name}-dashboard", 80),
+                                        }
+                                    ],
                                 },
                             }
                         ]
@@ -1672,6 +1773,97 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         )
         return manifests
 
+    @staticmethod
+    def _ingress_host_path_keys(ingress):
+        routes = set()
+        for rule in ((ingress.get("spec") or {}).get("rules") or []):
+            host = str(rule.get("host") or "").strip()
+            if not host:
+                continue
+            for path in (((rule.get("http") or {}).get("paths")) or []):
+                path_value = str(path.get("path") or "").strip()
+                if path_value:
+                    routes.add((host, path_value))
+        return routes
+
+    def _is_edc_public_ingress_candidate(self, metadata):
+        name = str((metadata or {}).get("name") or "").strip()
+        labels = (metadata or {}).get("labels") or {}
+        public_ingress_suffixes = (
+            "-public-dashboard-ingress",
+            "-public-dashboard-api-ingress",
+            "-public-api-ingress",
+            "-public-host-ingress",
+            "-public-root-ingress",
+        )
+        if labels.get(self.MANAGED_LABEL_KEY) == self._managed_label_value():
+            return True
+        return name.startswith("conn-") and name.endswith(public_ingress_suffixes)
+
+    def _delete_conflicting_vm_distributed_public_ingresses(self, manifests, namespace):
+        desired_routes_by_name = {}
+        desired_routes = set()
+        for manifest in manifests or []:
+            if str(manifest.get("kind") or "").strip().lower() == "ingress":
+                name = str(((manifest.get("metadata") or {}).get("name") or "")).strip()
+                routes = self._ingress_host_path_keys(manifest)
+                if name:
+                    desired_routes_by_name[name] = routes
+                desired_routes.update(routes)
+
+        if not desired_routes:
+            return True
+
+        output = self.run_silent(
+            f"kubectl get ingress -n {shlex.quote(str(namespace))} -o json"
+        )
+        if not output:
+            return True
+
+        try:
+            payload = json.loads(output)
+        except json.JSONDecodeError:
+            print("Warning: could not inspect existing EDC public ingresses before sync.")
+            return True
+
+        for ingress in payload.get("items") or []:
+            metadata = ingress.get("metadata") or {}
+            name = str(metadata.get("name") or "").strip()
+            if not name:
+                continue
+            if not self._is_edc_public_ingress_candidate(metadata):
+                continue
+
+            existing_routes = self._ingress_host_path_keys(ingress)
+            desired_routes_for_name = desired_routes_by_name.get(name)
+            if desired_routes_for_name is not None:
+                if existing_routes == desired_routes_for_name:
+                    continue
+                print(f"Removing outdated EDC public ingress before host/path layout update: {name}")
+                result = self.run(
+                    "kubectl delete ingress "
+                    f"{shlex.quote(name)} -n {shlex.quote(str(namespace))} "
+                    "--ignore-not-found",
+                    check=False,
+                )
+                if result is None:
+                    return False
+                continue
+
+            if not (existing_routes & desired_routes):
+                continue
+
+            print(f"Removing stale EDC public ingress with conflicting host/path: {name}")
+            result = self.run(
+                "kubectl delete ingress "
+                f"{shlex.quote(name)} -n {shlex.quote(str(namespace))} "
+                "--ignore-not-found",
+                check=False,
+            )
+            if result is None:
+                return False
+        return True
+
     def _sync_vm_distributed_connector_public_host_ingresses(self, values_file, namespace):
         if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
             return True
@@ -1700,6 +1892,9 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                     "--ignore-not-found",
                     check=False,
                 )
+
+        if not self._delete_conflicting_vm_distributed_public_ingresses(manifests, namespace):
+            return False
 
         tmp_path = ""
         try:
@@ -2281,6 +2476,39 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
         print(message)
         return False
 
+    def _ensure_keycloak_realm_available_for_level4(self, ds_name):
+        topology = str(
+            getattr(self, "topology", getattr(getattr(self, "config_adapter", None), "topology", "local"))
+            or "local"
+        ).strip().lower().replace("_", "-")
+        if topology != VM_DISTRIBUTED_TOPOLOGY:
+            return self._ensure_keycloak_realm_available(ds_name)
+
+        if not (
+            self._vm_distributed_keycloak_admin_needs_port_forward()
+            and callable(getattr(getattr(self, "infrastructure", None), "port_forward_service", None))
+        ):
+            return self._ensure_keycloak_realm_available(ds_name)
+
+        keycloak_bootstrap_access = self._start_keycloak_bootstrap_access()
+        if keycloak_bootstrap_access is None:
+            message = (
+                f"EDC Level 4 cannot verify Keycloak realm '{ds_name}' before connector bootstrap. "
+                "Detail: could not open a temporary Keycloak port-forward."
+            )
+            self._last_runtime_prerequisite_error = message
+            self._last_runtime_prerequisite_code = "keycloak_realm_unverified"
+            print(message)
+            return False
+
+        try:
+            return self._ensure_keycloak_realm_available(
+                ds_name,
+                keycloak_url=keycloak_bootstrap_access.get("keycloak_url"),
+            )
+        finally:
+            self._stop_keycloak_bootstrap_access(keycloak_bootstrap_access)
+
     def _keycloak_token_url_for_dataspace(self, ds_name):
         keycloak_url = self._keycloak_base_url()
         if not keycloak_url:
@@ -2831,6 +3059,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             "callbackPath": f"{self.DASHBOARD_PROXY_PREFIX}/auth/callback",
             "loginPath": f"{self.DASHBOARD_PROXY_PREFIX}/auth/login",
             "logoutPath": f"{self.DASHBOARD_PROXY_PREFIX}/auth/logout",
+            "authCheckPath": self.DASHBOARD_AUTH_CHECK_PATH,
             "postLoginRedirectPath": self.config_adapter.edc_dashboard_base_href(),
             "postLogoutRedirectPath": self.config_adapter.edc_dashboard_base_href(),
             "cookieName": self.config_adapter.edc_dashboard_proxy_cookie_name(),
@@ -3860,7 +4089,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                 print(f"Target connector namespaces: {target_namespaces}")
             print(f"Connectors defined: {connectors}\n")
 
-            if not self._ensure_keycloak_realm_available(ds_name):
+            if not self._ensure_keycloak_realm_available_for_level4(ds_name):
                 raise RuntimeError(
                     self._last_runtime_prerequisite_error
                     or "EDC Level 4 dataspace prerequisites are not ready."

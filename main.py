@@ -2177,20 +2177,54 @@ def _configured_public_connector_base_url(connector_name, deployer_context):
     connector = str(connector_name or "").strip()
     if not connector:
         return None
+    adapter_name = str(
+        getattr(deployer_context, "deployer", "")
+        or config.get("PIONERA_ADAPTER")
+        or config.get("ADAPTER_NAME")
+        or ""
+    ).strip().lower()
+
+    def _edc_public_path_prefix():
+        for key in (
+            "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "VM_DISTRIBUTED_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+        ):
+            raw_value = str(config.get(key) or "").strip()
+            if not raw_value:
+                continue
+            if raw_value in {"/", ".", "root"}:
+                return ""
+            return f"/{raw_value.strip('/')}"
+        return "/edc"
+
+    def _with_edc_public_path_prefix(base_url):
+        normalized = normalize_public_endpoint_url(base_url)
+        if (
+            adapter_name != "edc"
+            or _config_topology_value(config) != VM_DISTRIBUTED_TOPOLOGY
+            or not normalized
+        ):
+            return normalized
+        prefix = _edc_public_path_prefix()
+        if prefix and not normalized.rstrip("/").lower().endswith(prefix.lower()):
+            return f"{normalized.rstrip('/')}{prefix}"
+        return normalized
 
     if _config_topology_value(config) == VM_SINGLE_TOPOLOGY:
-        try:
-            from deployers.edc.bootstrap import connector_public_base_url as edc_connector_public_base_url
+        if adapter_name == "edc":
+            try:
+                from deployers.edc.bootstrap import connector_public_base_url as edc_connector_public_base_url
 
-            edc_vm_single_url = edc_connector_public_base_url(
-                {**config, "TOPOLOGY": VM_SINGLE_TOPOLOGY},
-                connector,
-                dataspace,
-            )
-        except Exception:
-            edc_vm_single_url = ""
-        if edc_vm_single_url:
-            return normalize_public_endpoint_url(edc_vm_single_url)
+                edc_vm_single_url = edc_connector_public_base_url(
+                    {**config, "TOPOLOGY": VM_SINGLE_TOPOLOGY},
+                    connector,
+                    dataspace,
+                )
+            except Exception:
+                edc_vm_single_url = ""
+            if edc_vm_single_url:
+                return _with_edc_public_path_prefix(edc_vm_single_url)
 
         try:
             from deployers.inesdata.access_urls import connector_public_base_url
@@ -2203,15 +2237,15 @@ def _configured_public_connector_base_url(connector_name, deployer_context):
         except Exception:
             vm_single_url = ""
         if vm_single_url:
-            return normalize_public_endpoint_url(vm_single_url)
+            return _with_edc_public_path_prefix(vm_single_url)
 
     public_urls = resolve_vm_distributed_public_urls(config)
     provider_connectors = set(parse_connector_list(config.get("VM_PROVIDER_CONNECTORS"), dataspace))
     consumer_connectors = set(parse_connector_list(config.get("VM_CONSUMER_CONNECTORS"), dataspace))
     if connector in provider_connectors:
-        return normalize_public_endpoint_url(public_urls.get("VM_PROVIDER_PUBLIC_URL"))
+        return _with_edc_public_path_prefix(public_urls.get("VM_PROVIDER_PUBLIC_URL"))
     if connector in consumer_connectors:
-        return normalize_public_endpoint_url(public_urls.get("VM_CONSUMER_PUBLIC_URL"))
+        return _with_edc_public_path_prefix(public_urls.get("VM_CONSUMER_PUBLIC_URL"))
     return None
 
 
@@ -5467,6 +5501,36 @@ def _level6_component_validation_needs_vm_single_mapping_editor(config, componen
     return enabled not in {"0", "false", "no", "off", "disabled"}
 
 
+LEVEL6_COMPONENT_CONFIG_ENV_SENSITIVE_TOKENS = (
+    "PASSWORD",
+    "PASSWD",
+    "_PASS",
+    "TOKEN",
+    "SECRET",
+    "PRIVATE_KEY",
+    "UNSEAL",
+    "ROOT_KEY",
+)
+
+
+def _level6_component_config_environment(config):
+    env = {}
+    for raw_key, raw_value in dict(config or {}).items():
+        key = str(raw_key or "").strip()
+        value = str(raw_value or "").strip()
+        if not key or not value:
+            continue
+        normalized_key = key.upper()
+        if not all(char.isalnum() or char == "_" for char in normalized_key):
+            continue
+        if any(token in normalized_key for token in LEVEL6_COMPONENT_CONFIG_ENV_SENSITIVE_TOKENS):
+            continue
+        env.setdefault(normalized_key, value)
+        if not normalized_key.startswith("PIONERA_"):
+            env.setdefault(f"PIONERA_{normalized_key}", value)
+    return env
+
+
 def _level6_component_validation_environment(deployer_context, deployer_name, components=None):
     if deployer_context is None:
         return {}
@@ -5512,6 +5576,23 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
         "UI_DS_DOMAIN": ds_domain,
         "AI_MODEL_HUB_KEYCLOAK_URL": keycloak_url,
     }
+    env.update(_level6_component_config_environment(config))
+    env.update(
+        {
+            "PIONERA_ADAPTER": adapter_name,
+            "UI_ADAPTER": adapter_name,
+            "AI_MODEL_HUB_COMPONENT_ADAPTER": adapter_name,
+            "PIONERA_TOPOLOGY": topology,
+            "INESDATA_TOPOLOGY": topology,
+            "UI_TOPOLOGY": topology,
+            "UI_DATASPACE": dataspace,
+            "UI_ENVIRONMENT": environment,
+            "UI_DS_DOMAIN": ds_domain,
+            "PIONERA_DS_DOMAIN_BASE": ds_domain,
+            "PIONERA_DOMAIN_BASE": str(config.get("DOMAIN_BASE") or ds_domain).strip(),
+            "AI_MODEL_HUB_KEYCLOAK_URL": keycloak_url,
+        }
+    )
     if runtime_dir:
         env["UI_RUNTIME_DIR"] = runtime_dir
     component_validation_mode = str(
@@ -16226,6 +16307,9 @@ VM_SINGLE_PROFILE_TEMPLATE_KEYS = (
     "VM_SINGLE_PUBLIC_URL",
     "VM_SINGLE_HTTP_URL",
     "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
+    "EDC_VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
+    "VM_SINGLE_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+    "EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
     "COMPONENTS_PUBLIC_BASE_URL",
     "COMPONENTS_PUBLIC_PATH_REWRITE",
     "VM_DISTRIBUTED_COMPONENT_PUBLIC_PATH_INGRESS_OWNER",

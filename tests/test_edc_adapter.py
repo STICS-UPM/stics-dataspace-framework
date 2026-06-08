@@ -1111,6 +1111,83 @@ class EdcDeploymentTests(unittest.TestCase):
             self.assertFalse(os.path.exists(source_file))
             self.assertFalse(os.path.exists(source_dir))
 
+    def test_edc_deployment_stages_topology_scoped_shared_credentials_into_edc_runtime(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_repo = os.path.join(tmpdir, "deployers", "inesdata")
+            target_repo = os.path.join(tmpdir, "deployers", "edc")
+            source_dir = os.path.join(source_repo, "deployments", "DEV", "vm-distributed", "demoedc")
+            target_dir = os.path.join(target_repo, "deployments", "DEV", "vm-distributed", "demoedc")
+            os.makedirs(source_dir, exist_ok=True)
+            os.makedirs(target_dir, exist_ok=True)
+            source_file = os.path.join(source_dir, "credentials-dataspace-demoedc.json")
+            target_file = os.path.join(target_dir, "credentials-dataspace-demoedc.json")
+            with open(source_file, "w", encoding="utf-8") as handle:
+                json.dump({"source": "inesdata-vm-distributed"}, handle)
+            with open(target_file, "w", encoding="utf-8") as handle:
+                json.dump({"source": "stale-edc"}, handle)
+
+            class SourceConfig:
+                @staticmethod
+                def repo_dir():
+                    return source_repo
+
+                @staticmethod
+                def shared_level3_dataspace_runtime_dir(ds_name=None, environment=None):
+                    return os.path.join(
+                        source_repo,
+                        "deployments",
+                        environment or "DEV",
+                        ds_name or "demoedc",
+                    )
+
+                @staticmethod
+                def shared_level3_dataspace_credentials_file(ds_name=None, environment=None):
+                    return os.path.join(
+                        source_repo,
+                        "deployments",
+                        environment or "DEV",
+                        ds_name or "demoedc",
+                        f"credentials-dataspace-{ds_name or 'demoedc'}.json",
+                    )
+
+            class ConfigAdapter:
+                topology = "vm-distributed"
+
+                @staticmethod
+                def primary_dataspace_name():
+                    return "demoedc"
+
+                @staticmethod
+                def deployment_environment_name():
+                    return "DEV"
+
+                @staticmethod
+                def edc_dataspace_runtime_dir(ds_name=None):
+                    return os.path.join(target_repo, "deployments", "DEV", "vm-distributed", ds_name or "demoedc")
+
+                @staticmethod
+                def edc_dataspace_credentials_file(ds_name=None):
+                    return os.path.join(
+                        target_repo,
+                        "deployments",
+                        "DEV",
+                        "vm-distributed",
+                        ds_name or "demoedc",
+                        f"credentials-dataspace-{ds_name or 'demoedc'}.json",
+                    )
+
+            deployment = EDCDeploymentAdapter.__new__(EDCDeploymentAdapter)
+            deployment._delegate = type("Delegate", (), {"config": SourceConfig})()
+            deployment.config_adapter = ConfigAdapter()
+
+            staged = deployment._stage_shared_dataspace_credentials()
+
+            self.assertEqual(staged, target_file)
+            with open(target_file, encoding="utf-8") as handle:
+                self.assertEqual(json.load(handle), {"source": "inesdata-vm-distributed"})
+            self.assertFalse(os.path.exists(source_file))
+            self.assertFalse(os.path.exists(source_dir))
+
     def test_edc_deployment_stages_registration_values_into_edc_runtime(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = tmpdir
@@ -1180,6 +1257,80 @@ class EdcDeploymentTests(unittest.TestCase):
             self.assertFalse(os.path.exists(source_file))
             with open(target_file, "r", encoding="utf-8") as handle:
                 self.assertEqual(handle.read(), "dataspace:\n  name: demoedc\n")
+
+    def test_edc_deployment_stages_public_portal_values_into_edc_runtime(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = tmpdir
+            source_repo = os.path.join(root, "deployers", "inesdata")
+            target_repo = os.path.join(root, "deployers", "edc")
+            source_dir = os.path.join(source_repo, "dataspace", "public-portal")
+            os.makedirs(source_dir, exist_ok=True)
+            source_file = os.path.join(source_dir, "values-demoedc.yaml")
+            with open(source_file, "w", encoding="utf-8") as handle:
+                handle.write("dataspace:\n  name: demoedc\n")
+
+            target_file = os.path.join(
+                target_repo,
+                "deployments",
+                "DEV",
+                "vm-distributed",
+                "demoedc",
+                "dataspace",
+                "public-portal",
+                "values-demoedc.yaml",
+            )
+
+            class SourceConfig:
+                @staticmethod
+                def repo_dir():
+                    return source_repo
+
+                @staticmethod
+                def legacy_public_portal_values_file():
+                    return source_file
+
+                @staticmethod
+                def public_portal_values_file():
+                    return os.path.join(
+                        target_repo,
+                        "deployments",
+                        "DEV",
+                        "demoedc",
+                        "dataspace",
+                        "public-portal",
+                        "values-demoedc.yaml",
+                    )
+
+            class ConfigAdapter:
+                topology = "vm-distributed"
+
+                @staticmethod
+                def primary_dataspace_name():
+                    return "demoedc"
+
+                @staticmethod
+                def deployment_environment_name():
+                    return "DEV"
+
+                @staticmethod
+                def edc_dataspace_runtime_dir(ds_name=None):
+                    return os.path.join(
+                        target_repo,
+                        "deployments",
+                        "DEV",
+                        "vm-distributed",
+                        ds_name or "demoedc",
+                    )
+
+            deployment = EDCDeploymentAdapter.__new__(EDCDeploymentAdapter)
+            deployment._delegate = type("Delegate", (), {"config": SourceConfig})()
+            deployment.config_adapter = ConfigAdapter()
+
+            staged = deployment._stage_shared_dataspace_runtime_artifacts()
+
+            self.assertEqual(staged["public_portal_values"], target_file)
+            self.assertTrue(os.path.isfile(target_file))
+            self.assertFalse(os.path.exists(source_file))
 
     def test_edc_deployment_recreate_dataspace_delegates_to_shared_level3_flow(self):
         deployment = EDCDeploymentAdapter.__new__(EDCDeploymentAdapter)
@@ -1836,15 +1987,15 @@ class EdcConnectorAdapterTests(unittest.TestCase):
 
         self.assertEqual(
             enriched["public_access_urls"]["connector_management_api_v3"],
-            "https://org4.example.test/c/citycounciledc/management/v3",
+            "https://org4.example.test/edc/c/citycounciledc/management/v3",
         )
         self.assertEqual(
             enriched["public_access_urls"]["edc_dashboard_login"],
-            "https://org4.example.test/c/citycounciledc/edc-dashboard/",
+            "https://org4.example.test/edc/c/citycounciledc/edc-dashboard/",
         )
         self.assertEqual(
             adapter.build_connector_url("conn-citycounciledc-pionera-edc"),
-            "https://org4.example.test/c/citycounciledc/management/v3",
+            "https://org4.example.test/edc/c/citycounciledc/management/v3",
         )
 
     def test_vm_single_edc_public_path_ingresses_route_management_and_dashboard(self):
@@ -1996,6 +2147,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                     }
                 ),
                 "edc_dashboard_base_href": staticmethod(lambda: "/edc-dashboard/"),
+                "edc_dashboard_proxy_auth_mode": staticmethod(lambda: "oidc-bff"),
             },
         )()
         adapter._connector_layout_metadata = lambda connector_name: {"role": "provider"}
@@ -2016,17 +2168,42 @@ class EdcConnectorAdapterTests(unittest.TestCase):
             "edc-provider",
         )
 
-        self.assertEqual(len(manifests), 2)
-        dashboard = manifests[0]
+        self.assertEqual(len(manifests), 3)
+        dashboard_api = manifests[0]
+        self.assertEqual(
+            dashboard_api["metadata"]["name"],
+            "conn-citycounciledc-pionera-edc-public-dashboard-api-ingress",
+        )
+        self.assertEqual(dashboard_api["spec"]["rules"][0]["host"], "org2.example.test")
+        dashboard_api_paths = dashboard_api["spec"]["rules"][0]["http"]["paths"]
+        self.assertEqual(
+            [path["path"] for path in dashboard_api_paths],
+            ["/edc-dashboard-api"],
+        )
+
+        dashboard = manifests[1]
         self.assertEqual(dashboard["metadata"]["name"], "conn-citycounciledc-pionera-edc-public-dashboard-ingress")
         self.assertEqual(dashboard["spec"]["rules"][0]["host"], "org2.example.test")
+        self.assertEqual(
+            dashboard["metadata"]["annotations"]["nginx.ingress.kubernetes.io/auth-url"],
+            "http://conn-citycounciledc-pionera-edc-dashboard-proxy.edc-provider.svc.cluster.local:"
+            "8080/edc-dashboard-api/auth/require",
+        )
+        self.assertEqual(
+            dashboard["metadata"]["annotations"]["nginx.ingress.kubernetes.io/auth-signin"],
+            "https://org2.example.test/edc-dashboard-api/auth/login?returnTo=%2Fedc-dashboard%2F",
+        )
+        self.assertEqual(
+            dashboard["metadata"]["annotations"]["nginx.ingress.kubernetes.io/configuration-snippet"],
+            "error_page 401 =302 https://org2.example.test/edc-dashboard-api/auth/login?returnTo=%2Fedc-dashboard%2F;",
+        )
         dashboard_paths = dashboard["spec"]["rules"][0]["http"]["paths"]
         self.assertEqual(
             [path["path"] for path in dashboard_paths],
-            ["/edc-dashboard-api", "/edc-dashboard"],
+            ["/edc-dashboard"],
         )
 
-        api = manifests[1]
+        api = manifests[2]
         self.assertEqual(api["metadata"]["name"], "conn-citycounciledc-pionera-edc-public-api-ingress")
         self.assertEqual(
             api["metadata"]["annotations"]["nginx.ingress.kubernetes.io/rewrite-target"],
@@ -2042,6 +2219,207 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 "port": {"number": 19193},
             },
         )
+
+    def test_vm_distributed_public_ingress_sync_removes_stale_edc_host_path_conflicts(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter.topology = "vm-distributed"
+        adapter.config = type(
+            "Config",
+            (),
+            {
+                "dataspace_name": staticmethod(lambda: "pionera-edc"),
+            },
+        )
+        adapter.config_adapter = type(
+            "ConfigAdapter",
+            (),
+            {
+                "topology": "vm-distributed",
+                "load_deployer_config": staticmethod(
+                    lambda: {
+                        "VM_PROVIDER_PUBLIC_URL": "https://org2.example.test",
+                        "DOMAIN_BASE": "example.test",
+                        "DS_DOMAIN_BASE": "example.test",
+                        "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX": "/edc",
+                    }
+                ),
+                "edc_dashboard_base_href": staticmethod(lambda: "/edc-dashboard/"),
+                "edc_dashboard_proxy_auth_mode": staticmethod(lambda: "oidc-bff"),
+            },
+        )()
+        adapter._connector_layout_metadata = lambda connector_name: {"role": "provider"}
+        values = {
+            "connector": {
+                "name": "conn-org2-pionera-edc",
+                "dataspace": "pionera-edc",
+            },
+            "dashboard": {
+                "enabled": True,
+                "proxy": {"enabled": True, "port": 8080},
+            },
+        }
+        manifests = adapter._vm_distributed_connector_public_host_ingress_manifests(
+            values,
+            "edc-provider",
+        )
+        existing_ingresses = {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "conn-citycounciledc-pionera-edc-public-dashboard-ingress",
+                        "labels": {"validation-environment-adapter": "edc"},
+                    },
+                    "spec": {
+                        "rules": [
+                            {
+                                "host": "org2.example.test",
+                                "http": {"paths": [{"path": "/edc-dashboard-api"}]},
+                            }
+                        ]
+                    },
+                },
+                {
+                    "metadata": {
+                        "name": "conn-citycounciledc-pionera-edc-public-api-ingress",
+                        "labels": {"validation-environment-adapter": "edc"},
+                    },
+                    "spec": {
+                        "rules": [
+                            {
+                                "host": "org2.example.test",
+                                "http": {"paths": [{"path": "/edc(/|$)(api.*)"}]},
+                            }
+                        ]
+                    },
+                },
+                {
+                    "metadata": {
+                        "name": "manual-ingress",
+                        "labels": {},
+                    },
+                    "spec": {
+                        "rules": [
+                            {
+                                "host": "org2.example.test",
+                                "http": {"paths": [{"path": "/edc-dashboard-api"}]},
+                            }
+                        ]
+                    },
+                },
+            ]
+        }
+        commands = []
+        adapter.run_silent = lambda command: json.dumps(existing_ingresses)
+
+        def run(command, **kwargs):
+            del kwargs
+            commands.append(command)
+            return mock.Mock(returncode=0)
+
+        adapter.run = run
+
+        self.assertTrue(
+            adapter._delete_conflicting_vm_distributed_public_ingresses(
+                manifests,
+                "edc-provider",
+            )
+        )
+
+        self.assertEqual(len(commands), 2)
+        self.assertTrue(
+            any("conn-citycounciledc-pionera-edc-public-dashboard-ingress" in command for command in commands)
+        )
+        self.assertTrue(
+            any("conn-citycounciledc-pionera-edc-public-api-ingress" in command for command in commands)
+        )
+        self.assertFalse(any("manual-ingress" in command for command in commands))
+
+    def test_vm_distributed_public_ingress_sync_recreates_same_named_ingress_when_paths_change(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter.topology = "vm-distributed"
+        adapter.config = type(
+            "Config",
+            (),
+            {
+                "dataspace_name": staticmethod(lambda: "pionera-edc"),
+            },
+        )
+        adapter.config_adapter = type(
+            "ConfigAdapter",
+            (),
+            {
+                "topology": "vm-distributed",
+                "load_deployer_config": staticmethod(
+                    lambda: {
+                        "VM_PROVIDER_PUBLIC_URL": "https://org2.example.test",
+                        "DOMAIN_BASE": "example.test",
+                        "DS_DOMAIN_BASE": "example.test",
+                        "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX": "/edc",
+                    }
+                ),
+                "edc_dashboard_base_href": staticmethod(lambda: "/edc-dashboard/"),
+                "edc_dashboard_proxy_auth_mode": staticmethod(lambda: "oidc-bff"),
+            },
+        )()
+        adapter._connector_layout_metadata = lambda connector_name: {"role": "provider"}
+        values = {
+            "connector": {
+                "name": "conn-org2-pionera-edc",
+                "dataspace": "pionera-edc",
+            },
+            "dashboard": {
+                "enabled": True,
+                "proxy": {"enabled": True, "port": 8080},
+            },
+        }
+        manifests = adapter._vm_distributed_connector_public_host_ingress_manifests(
+            values,
+            "edc-provider",
+        )
+        existing_ingresses = {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "conn-org2-pionera-edc-public-dashboard-ingress",
+                        "labels": {"validation-environment-adapter": "edc"},
+                    },
+                    "spec": {
+                        "rules": [
+                            {
+                                "host": "org2.example.test",
+                                "http": {"paths": [{"path": "/edc-dashboard-api"}]},
+                            }
+                        ]
+                    },
+                },
+                {
+                    "metadata": {
+                        "name": "conn-org2-pionera-edc-public-api-ingress",
+                        "labels": {"validation-environment-adapter": "edc"},
+                    },
+                    "spec": manifests[2]["spec"],
+                },
+            ]
+        }
+        commands = []
+        adapter.run_silent = lambda command: json.dumps(existing_ingresses)
+
+        def run(command, **kwargs):
+            del kwargs
+            commands.append(command)
+            return mock.Mock(returncode=0)
+
+        adapter.run = run
+
+        self.assertTrue(
+            adapter._delete_conflicting_vm_distributed_public_ingresses(
+                manifests,
+                "edc-provider",
+            )
+        )
+
+        self.assertEqual(len(commands), 1)
+        self.assertIn("conn-org2-pionera-edc-public-dashboard-ingress", commands[0])
 
     def test_keycloak_realm_preflight_can_use_bootstrap_url_override(self):
         adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
@@ -2070,6 +2448,27 @@ class EdcConnectorAdapterTests(unittest.TestCase):
             get_mock.call_args.args[0],
             "http://127.0.0.1:18080/realms/demoedc",
         )
+
+    def test_level4_keycloak_realm_preflight_uses_vm_distributed_bootstrap_access(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter.topology = "vm-distributed"
+        adapter.infrastructure = mock.Mock()
+        adapter.infrastructure.port_forward_service = mock.Mock()
+        adapter._vm_distributed_keycloak_admin_needs_port_forward = lambda: True
+        adapter._start_keycloak_bootstrap_access = mock.Mock(
+            return_value={"keycloak_url": "http://127.0.0.1:18080", "port_forward": object()}
+        )
+        adapter._stop_keycloak_bootstrap_access = mock.Mock()
+        adapter._ensure_keycloak_realm_available = mock.Mock(return_value=True)
+
+        result = adapter._ensure_keycloak_realm_available_for_level4("demoedc")
+
+        self.assertTrue(result)
+        adapter._ensure_keycloak_realm_available.assert_called_once_with(
+            "demoedc",
+            keycloak_url="http://127.0.0.1:18080",
+        )
+        adapter._stop_keycloak_bootstrap_access.assert_called_once()
 
     def test_connector_values_payload_maps_edc_runtime_and_shared_services(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2670,6 +3069,7 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         self.assertEqual(proxy_config["callbackPath"], "/edc-dashboard-api/auth/callback")
         self.assertEqual(proxy_config["loginPath"], "/edc-dashboard-api/auth/login")
         self.assertEqual(proxy_config["logoutPath"], "/edc-dashboard-api/auth/logout")
+        self.assertEqual(proxy_config["authCheckPath"], "/edc-dashboard-api/auth/require")
         self.assertEqual(proxy_config["externalBaseUrl"], "")
         self.assertEqual(proxy_config["cookieName"], "edc_dashboard_session")
         self.assertFalse(proxy_config["cookieSecure"])
@@ -2701,28 +3101,29 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         runtime = payload["dashboard"]["runtime"]
         self.assertEqual(
             proxy_config["externalBaseUrl"],
-            "https://org4.example.test/c/citycounciledc",
+            "https://org4.example.test/edc/c/citycounciledc",
         )
         self.assertEqual(proxy_config["callbackPath"], "/edc-dashboard-api/auth/callback")
         self.assertEqual(proxy_config["loginPath"], "/edc-dashboard-api/auth/login")
         self.assertEqual(proxy_config["logoutPath"], "/edc-dashboard-api/auth/logout")
+        self.assertEqual(proxy_config["authCheckPath"], "/edc-dashboard-api/auth/require")
         self.assertTrue(proxy_config["cookieSecure"])
-        self.assertEqual(runtime["baseHref"], "/c/citycounciledc/edc-dashboard/")
+        self.assertEqual(runtime["baseHref"], "/edc/c/citycounciledc/edc-dashboard/")
         self.assertEqual(
             runtime["appConfig"]["runtime"]["ontologyUrl"],
-            "/c/citycounciledc/edc-dashboard-api/components/ontology-hub",
+            "/edc/c/citycounciledc/edc-dashboard-api/components/ontology-hub",
         )
         self.assertEqual(
             runtime["appConfig"]["runtime"]["modelObserverUrl"],
-            "/c/citycounciledc/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/api/check",
+            "/edc/c/citycounciledc/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/api/check",
         )
         self.assertEqual(
             runtime["connectorConfig"][0]["managementUrl"],
-            "/c/citycounciledc/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/management",
+            "/edc/c/citycounciledc/edc-dashboard-api/connectors/conn-citycounciledc-demoedc/management",
         )
         self.assertEqual(
             runtime["connectorConfig"][1]["managementUrl"],
-            "/c/citycounciledc/edc-dashboard-api/connectors/conn-companyedc-demoedc/management",
+            "/edc/c/citycounciledc/edc-dashboard-api/connectors/conn-companyedc-demoedc/management",
         )
 
     def test_connector_values_payload_uses_registration_service_fqdn_when_namespace_differs(self):

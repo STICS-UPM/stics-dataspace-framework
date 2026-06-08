@@ -74,13 +74,6 @@ spec:
                 port:
                   number: {{ (index $dashboardProxy "port") | default 8080 }}
 {{- end }}
-          - pathType: Prefix
-            path: /edc-dashboard
-            backend:
-              service:
-                name: {{ .Values.connector.name }}-dashboard
-                port:
-                  number: 80
 {{- end }}
 {{- if eq .Values.connector.environment "pro" }}
   tls:

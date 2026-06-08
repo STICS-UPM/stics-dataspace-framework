@@ -254,9 +254,17 @@ def connector_matches_configured_name(connector: str, dataspace: str, configured
 
 
 def vm_single_connector_public_path_prefix(config: dict[str, str]) -> str:
-    prefix = str((config or {}).get("VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX") or "/c").strip()
+    prefix = ""
+    for key in (
+        "EDC_VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
+        "VM_SINGLE_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+        "EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+    ):
+        prefix = str((config or {}).get(key) or "").strip()
+        if prefix:
+            break
     if not prefix:
-        prefix = "/c"
+        prefix = "/edc/c"
     if not prefix.startswith("/"):
         prefix = f"/{prefix}"
     return prefix.rstrip("/")

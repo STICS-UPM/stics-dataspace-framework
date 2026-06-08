@@ -2142,11 +2142,11 @@ class InesdataPortalReadinessTests(unittest.TestCase):
 
         self.assertEqual(
             result["urls"]["connectors"]["conn-citycounciledc-pionera-edc"]["connector_management_api_v3"],
-            "https://org4.example.test/c/citycounciledc/management/v3",
+            "https://org4.example.test/edc/c/citycounciledc/management/v3",
         )
         self.assertEqual(
             result["urls"]["connectors"]["conn-citycounciledc-pionera-edc"]["edc_dashboard_login"],
-            "https://org4.example.test/c/citycounciledc/edc-dashboard/",
+            "https://org4.example.test/edc/c/citycounciledc/edc-dashboard/",
         )
 
 
@@ -7796,6 +7796,56 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(
             env["AI_MODEL_HUB_PROVIDER_PROTOCOL_URL"],
             "http://conn-org2-pionera.pionera.oeg.fi.upm.es/protocol",
+        )
+
+    def test_level6_component_validation_environment_uses_edc_vm_distributed_public_prefix(self):
+        context = DeploymentContext.from_mapping(
+            {
+                "deployer": "edc",
+                "topology": "vm-distributed",
+                "environment": "DEV",
+                "dataspace_name": "pionera-edc",
+                "ds_domain_base": "pionera.oeg.fi.upm.es",
+                "runtime_dir": "/repo/deployers/edc/deployments/DEV/vm-distributed/pionera-edc",
+                "connectors": [
+                    "conn-citycounciledc-pionera-edc",
+                    "conn-companyedc-pionera-edc",
+                ],
+                "config": {
+                    "PIONERA_ADAPTER": "edc",
+                    "TOPOLOGY": "vm-distributed",
+                    "DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                    "DS_DOMAIN_BASE": "pionera.oeg.fi.upm.es",
+                    "VM_PROVIDER_CONNECTORS": "citycounciledc",
+                    "VM_CONSUMER_CONNECTORS": "companyedc",
+                    "VM_PROVIDER_PUBLIC_URL": "https://org2.pionera.oeg.fi.upm.es",
+                    "VM_CONSUMER_PUBLIC_URL": "https://org3.pionera.oeg.fi.upm.es",
+                    "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                    "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX": "/edc",
+                    "CONNECTOR_PROTOCOL_ADDRESS_MODE": "public",
+                },
+            }
+        )
+
+        env = main._level6_component_validation_environment(context, "edc")
+
+        self.assertEqual(env["PIONERA_DS_DOMAIN_BASE"], "pionera.oeg.fi.upm.es")
+        self.assertEqual(env["PIONERA_DOMAIN_BASE"], "pionera.oeg.fi.upm.es")
+        self.assertEqual(
+            env["AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL"],
+            "https://org2.pionera.oeg.fi.upm.es/edc/management",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL"],
+            "https://org3.pionera.oeg.fi.upm.es/edc/management",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_PROVIDER_DEFAULT_URL"],
+            "https://org2.pionera.oeg.fi.upm.es/edc/api",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_PROVIDER_PROTOCOL_URL"],
+            "https://org2.pionera.oeg.fi.upm.es/edc/protocol",
         )
 
     def test_level6_component_validation_environment_uses_vm_single_public_path_urls(self):

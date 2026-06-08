@@ -356,14 +356,14 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         for key in (
             "EDC_VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
             "VM_SINGLE_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
-            "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
         ):
             raw_value = str((deployer_config or {}).get(key) or "").strip()
             if raw_value:
                 prefix = raw_value
                 break
         else:
-            prefix = "/c"
+            prefix = "/edc/c"
         if prefix in {"/", ".", "root"}:
             return ""
         if not prefix.startswith("/"):

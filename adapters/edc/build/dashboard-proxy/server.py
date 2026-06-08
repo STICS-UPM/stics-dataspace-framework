@@ -25,6 +25,10 @@ HOP_BY_HOP_HEADERS = {
     "upgrade",
 }
 
+AUTHORIZATION_HEADERS = {
+    "authorization",
+}
+
 PROXY_CONNECTOR_PREFIX = "/edc-dashboard-api/connectors/"
 PROXY_COMPONENT_PREFIX = "/edc-dashboard-api/components/"
 
@@ -49,11 +53,18 @@ class ProxySettings:
         self.callback_path = config_payload.get("callbackPath", "/edc-dashboard-api/auth/callback")
         self.login_path = config_payload.get("loginPath", "/edc-dashboard-api/auth/login")
         self.logout_path = config_payload.get("logoutPath", "/edc-dashboard-api/auth/logout")
+        self.auth_check_path = config_payload.get("authCheckPath", "/edc-dashboard-api/auth/require")
         self.post_login_redirect_path = config_payload.get("postLoginRedirectPath", "/edc-dashboard/")
         self.post_logout_redirect_path = config_payload.get("postLogoutRedirectPath", "/edc-dashboard/")
         self.cookie_name = config_payload.get("cookieName", "edc_dashboard_session")
         self.flash_cookie_name = f"{self.cookie_name}_flash"
         self.cookie_secure = bool(config_payload.get("cookieSecure", False))
+        self.forward_component_authorization = self._truthy(
+            config_payload.get(
+                "forwardComponentAuthorization",
+                os.getenv("PROXY_FORWARD_COMPONENT_AUTHORIZATION", "false"),
+            )
+        )
         self.connectors = {
             entry.get("connectorName"): entry
             for entry in config_payload.get("connectors", [])
@@ -80,6 +91,12 @@ class ProxySettings:
         self.sessions_lock = Lock()
         self.flash_messages = {}
         self.flash_messages_lock = Lock()
+
+    @staticmethod
+    def _truthy(value):
+        if isinstance(value, bool):
+            return value
+        return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
     @staticmethod
     def _normalize_external_base_url(value):
@@ -675,9 +692,12 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
     def _forward_component_headers(self):
         forwarded = {}
         for header_name, header_value in self.headers.items():
-            if header_name.lower() in HOP_BY_HOP_HEADERS:
+            lowered = header_name.lower()
+            if lowered in HOP_BY_HOP_HEADERS:
                 continue
-            if header_name.lower() in {"host", "cookie", "content-length"}:
+            if lowered in {"host", "cookie", "content-length"}:
+                continue
+            if lowered in AUTHORIZATION_HEADERS and not SETTINGS.forward_component_authorization:
                 continue
             forwarded[header_name] = header_value
         return forwarded
@@ -749,6 +769,37 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
                 "authMode": SETTINGS.auth_mode,
             },
         )
+
+    def _handle_auth_required(self):
+        if SETTINGS.auth_mode != "oidc-bff":
+            self.send_response(204)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
+
+        session = self._oidc_session()
+        if not session:
+            self._send_json(
+                401,
+                {
+                    "message": "Authentication required",
+                    "authMode": SETTINGS.auth_mode,
+                    "loginPath": self._public_path(SETTINGS.login_path),
+                    "authEvent": "session-required",
+                },
+            )
+            return
+
+        claims = session.get("claims", {})
+        username = str(claims.get("preferred_username") or "").strip()
+        email = str(claims.get("email") or "").strip()
+        self.send_response(204)
+        self.send_header("Cache-Control", "no-store")
+        if username:
+            self.send_header("X-Auth-Request-User", username)
+        if email:
+            self.send_header("X-Auth-Request-Email", email)
+        self.end_headers()
 
     def _handle_oidc_login(self, parsed):
         if not SETTINGS.authorization_url or not SETTINGS.token_url:
@@ -864,6 +915,9 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
     def _handle_request(self):
         parsed = urllib.parse.urlsplit(self.path)
         request_path = self._internal_request_path(parsed.path)
+        if request_path == SETTINGS.auth_check_path:
+            self._handle_auth_required()
+            return
         if request_path == "/edc-dashboard-api/auth/me":
             self._handle_auth_info()
             return
