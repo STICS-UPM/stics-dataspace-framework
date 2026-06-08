@@ -662,6 +662,9 @@ def run_seed_assets_pipeline(args):
         args.seed_vocabulary_schema,
     ]
 
+    if getattr(args, "seed_scope", "models"):
+        command_parts.extend(["--seed-scope", args.seed_scope])
+
     if args.seed_keycloak_token_url:
         command_parts.extend(["--keycloak-token-url", args.seed_keycloak_token_url])
 
@@ -672,6 +675,15 @@ def run_seed_assets_pipeline(args):
     model_server_mode = _seed_model_server_mode(deployer_config)
     if model_server_mode != "mock":
         command_parts.extend(["--model-set", model_server_mode])
+
+    if getattr(args, "seed_include_use_case_models", False):
+        command_parts.append("--include-use-case-models")
+
+    if getattr(args, "seed_skip_use_case_models", False):
+        command_parts.append("--skip-use-case-models")
+
+    if getattr(args, "seed_skip_inesdata_models", False):
+        command_parts.append("--skip-inesdata-models")
 
     env_parts = []
     model_server_base = _seed_model_server_base_url(deployer_config)
@@ -990,7 +1002,7 @@ def step_6_seed_assets(args):
         print("\n[Step 7/7] Assets seeding skipped (--skip-seed-assets)")
         return
 
-    print("\n[Step 7/7] Initialize connector data (vocabulary + ML assets)")
+    print(f"\n[Step 7/7] Initialize connector data (seed scope: {args.seed_scope})")
     run_seed_assets_pipeline(args)
 
 
@@ -1167,6 +1179,27 @@ def parse_args():
         type=int,
         default=8,
         help="Assets to insert per connector in Step 6 (default: 8)",
+    )
+    parser.add_argument(
+        "--seed-scope",
+        choices=("models", "datasets", "all"),
+        default="models",
+        help="Connector seed scope for Step 7: models, datasets or all (default: models)",
+    )
+    parser.add_argument(
+        "--seed-skip-use-case-models",
+        action="store_true",
+        help="Skip FLARES/Mobility HttpData model assets in Step 7",
+    )
+    parser.add_argument(
+        "--seed-include-use-case-models",
+        action="store_true",
+        help="Seed FLARES/Mobility HttpData model assets even when the model set default is mock",
+    )
+    parser.add_argument(
+        "--seed-skip-inesdata-models",
+        action="store_true",
+        help="Skip stored InesDataStore placeholder model assets in Step 7",
     )
     parser.add_argument(
         "--seed-connectors",
