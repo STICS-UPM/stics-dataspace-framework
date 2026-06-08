@@ -157,7 +157,7 @@ class InesdataDeployer:
         return ValidationProfile(
             adapter=self.name(),
             newman_enabled=True,
-            test_data_cleanup_enabled=True,
+            test_data_cleanup_enabled=False,
             playwright_enabled=True,
             playwright_config="validation/ui/playwright.inesdata.config.ts",
             component_validation_enabled=bool(component_groups),

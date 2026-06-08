@@ -221,7 +221,7 @@ class InesdataDeployerWrapperTests(unittest.TestCase):
         profile = deployer.get_validation_profile(context)
 
         self.assertTrue(profile.newman_enabled)
-        self.assertTrue(profile.test_data_cleanup_enabled)
+        self.assertFalse(profile.test_data_cleanup_enabled)
         self.assertTrue(profile.playwright_enabled)
         self.assertEqual(profile.playwright_config, "validation/ui/playwright.inesdata.config.ts")
         self.assertTrue(profile.component_validation_enabled)

@@ -6,6 +6,36 @@ import { gotoEdcDashboardRoute } from "./edc-dashboard.page";
 const SUCCESS_STATES = new Set(["COMPLETED", "STARTED"]);
 const FAILURE_STATES = new Set(["TERMINATED", "DEPROVISIONED", "SUSPENDED", "ERROR"]);
 
+function positiveIntegerFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) {
+    return fallback;
+  }
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function topologyDefaultTransferTimeoutMs(): number {
+  const topology = (process.env.UI_TOPOLOGY || process.env.PIONERA_TOPOLOGY || "")
+    .trim()
+    .toLowerCase();
+  if (topology === "vm-distributed") {
+    return 420_000;
+  }
+  if (topology === "vm-single") {
+    return 300_000;
+  }
+  return 180_000;
+}
+
+export function resolveEdcTransferSuccessTimeoutMs(): number {
+  const fallback = topologyDefaultTransferTimeoutMs();
+  return positiveIntegerFromEnv(
+    "UI_EDC_TRANSFER_SUCCESS_TIMEOUT_MS",
+    positiveIntegerFromEnv("PIONERA_EDC_TRANSFER_SUCCESS_TIMEOUT_MS", fallback),
+  );
+}
+
 export class EdcTransferHistoryPage {
   constructor(private readonly page: Page) {}
 
@@ -20,7 +50,10 @@ export class EdcTransferHistoryPage {
     });
   }
 
-  async waitForSuccessfulTransfer(assetId: string, timeoutMs = 90_000): Promise<string> {
+  async waitForSuccessfulTransfer(
+    assetId: string,
+    timeoutMs = resolveEdcTransferSuccessTimeoutMs(),
+  ): Promise<string> {
     const startedAt = Date.now();
     let lastState: string | undefined;
 

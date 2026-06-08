@@ -5,7 +5,7 @@ const {
   resolveOntologyHubTimeouts,
 } = require("../runtime");
 
-const { readyTimeoutMs } = resolveOntologyHubTimeouts();
+const { navigationTimeoutMs, readyTimeoutMs } = resolveOntologyHubTimeouts();
 
 function isPointerInterceptionError(error) {
   return /intercepts pointer events|element is not receiving pointer events/i.test(
@@ -19,12 +19,15 @@ class OntologyHubHomePage {
   }
 
   async goto(baseUrl) {
-    await this.page.goto(buildOntologyHubUrl(baseUrl, "dataset"), { waitUntil: "domcontentloaded" });
+    await this.page.goto(buildOntologyHubUrl(baseUrl, "dataset"), {
+      waitUntil: "domcontentloaded",
+      timeout: navigationTimeoutMs,
+    });
   }
 
   async expectReady() {
-    await this.page.locator("header nav").waitFor({ state: "visible" });
-    await this.page.locator("#searchInput").waitFor({ state: "visible" });
+    await this.page.locator("header nav").waitFor({ state: "visible", timeout: readyTimeoutMs });
+    await this.page.locator("#searchInput").waitFor({ state: "visible", timeout: readyTimeoutMs });
   }
 
   vocabularyBubble(prefix) {
@@ -77,6 +80,7 @@ class OntologyHubHomePage {
     const resolvedBaseUrl = baseUrl || inferOntologyHubBaseUrl(this.page.url());
     await this.page.goto(buildOntologyHubUrl(resolvedBaseUrl, "dataset/api"), {
       waitUntil: "domcontentloaded",
+      timeout: navigationTimeoutMs,
     });
   }
 }

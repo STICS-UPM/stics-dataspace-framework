@@ -171,6 +171,44 @@ class KafkaManagerTests(unittest.TestCase):
         self.assertEqual(manager.provisioning_mode, "kubernetes")
         self.assertTrue(any(call["args"][:3] == ["kubectl", "rollout", "status"] for call in commands))
 
+    def test_kubernetes_start_recovers_existing_runtime_when_nodeport_is_already_allocated(self):
+        commands = []
+
+        def fake_runner(args, input_text=None):
+            commands.append({"args": list(args), "input": input_text})
+            if args == ["kubectl", "apply", "-f", "-"]:
+                return _FakeCompletedProcess(
+                    returncode=1,
+                    stderr=(
+                        'The Service "framework-kafka-external" is invalid: '
+                        "spec.ports[0].nodePort: Invalid value: 32092: provided port is already allocated"
+                    ),
+                )
+            return _FakeCompletedProcess(stdout="")
+
+        manager = KafkaManager(
+            runtime_config={
+                "provisioner": "kubernetes",
+                "k8s_namespace": "demo",
+                "k8s_service_name": "framework-kafka",
+                "k8s_external_service_type": "NodePort",
+                "k8s_nodeport": "32092",
+            },
+            command_runner=fake_runner,
+        )
+
+        with mock.patch.object(KafkaManager, "_kubernetes_resources_exist", return_value=True):
+            with mock.patch.object(KafkaManager, "_wait_for_kubernetes_internal_bootstrap", return_value={"pod": "conn-a"}):
+                with mock.patch.object(KafkaManager, "_wait_for_kubernetes_external_service_bootstrap", return_value={"pod": "conn-a"}):
+                    with mock.patch.object(KafkaManager, "_start_kubernetes_port_forward", return_value=object()):
+                        with mock.patch.object(KafkaManager, "is_kafka_available", side_effect=[False, True]):
+                            bootstrap = manager.ensure_kafka_running()
+
+        self.assertEqual(bootstrap, "127.0.0.1:32092")
+        self.assertEqual(manager.cluster_bootstrap_servers, "framework-kafka.demo.svc.cluster.local:9092")
+        self.assertTrue(manager.started_by_framework)
+        self.assertTrue(any(call["args"] == ["kubectl", "apply", "-f", "-"] for call in commands))
+
     def test_kubernetes_start_removes_stale_split_controller_in_combined_mode(self):
         commands = []
 

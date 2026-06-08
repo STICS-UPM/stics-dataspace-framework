@@ -1526,6 +1526,51 @@ class NewmanMetricsTests(unittest.TestCase):
         self.assertEqual(env_vars["e2e_negotiation_start_max_attempts"], "12")
         self.assertEqual(env_vars["e2e_negotiation_status_max_attempts"], "7")
 
+    def test_validation_engine_uses_longer_negotiation_retry_budget_for_vm_topologies(self):
+        for topology in ("vm-single", "vm-distributed"):
+            engine = ValidationEngine(
+                load_connector_credentials=lambda name: {"connector_user": {"user": name, "passwd": "secret"}},
+                load_deployer_config=lambda: {
+                    "KC_URL": "http://keycloak-admin.local",
+                    "KC_INTERNAL_URL": "http://keycloak.local",
+                    "TOPOLOGY": topology,
+                },
+                ds_domain_resolver=lambda: "example.local",
+                ds_name="demo",
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PIONERA_NEWMAN_NEGOTIATION_START_MAX_ATTEMPTS": "",
+                    "PIONERA_NEWMAN_NEGOTIATION_STATUS_MAX_ATTEMPTS": "",
+                },
+            ):
+                env_vars = engine.build_newman_env("conn-a", "conn-b")
+
+            self.assertEqual(env_vars["e2e_negotiation_status_max_attempts"], "45")
+
+    def test_validation_engine_allows_configured_negotiation_retry_budget_for_vm_topologies(self):
+        engine = ValidationEngine(
+            load_connector_credentials=lambda name: {"connector_user": {"user": name, "passwd": "secret"}},
+            load_deployer_config=lambda: {
+                "KC_URL": "http://keycloak-admin.local",
+                "KC_INTERNAL_URL": "http://keycloak.local",
+                "TOPOLOGY": "vm-distributed",
+                "NEWMAN_NEGOTIATION_STATUS_MAX_ATTEMPTS": "33",
+            },
+            ds_domain_resolver=lambda: "example.local",
+            ds_name="demo",
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {"PIONERA_NEWMAN_NEGOTIATION_STATUS_MAX_ATTEMPTS": ""},
+        ):
+            env_vars = engine.build_newman_env("conn-a", "conn-b")
+
+        self.assertEqual(env_vars["e2e_negotiation_status_max_attempts"], "33")
+
     def test_negotiation_script_defaults_allow_longer_connector_warmup(self):
         with open("validation/core/tests/negotiation_tests.js", "r", encoding="utf-8") as handle:
             script = handle.read()
@@ -1768,6 +1813,37 @@ class NewmanMetricsTests(unittest.TestCase):
             env_vars["consumerProtocolAddress"],
             "https://org3.pionera.oeg.fi.upm.es/edc/protocol",
         )
+
+    def test_validation_engine_uses_larger_management_preflight_budget_for_vm_topologies(self):
+        for topology in ("vm-single", "vm-distributed"):
+            engine = ValidationEngine(
+                load_connector_credentials=lambda name: {"connector_user": {"user": name, "passwd": "secret"}},
+                load_deployer_config=lambda: {
+                    "KC_INTERNAL_URL": "http://keycloak.local",
+                    "TOPOLOGY": topology,
+                },
+                ds_domain_resolver=lambda: "example.local",
+                ds_name="demo",
+            )
+
+            with mock.patch.dict(os.environ, {"PIONERA_NEWMAN_PREFLIGHT_ATTEMPTS": ""}):
+                env_vars = engine.build_newman_env("conn-a", "conn-b")
+
+            self.assertEqual(env_vars["management_preflight_attempts"], "5")
+            self.assertEqual(env_vars["management_preflight_timeout_seconds"], "30")
+            self.assertEqual(env_vars["management_preflight_catalog_timeout_seconds"], "180")
+
+    def test_newman_preflight_attempts_can_come_from_environment_values(self):
+        executor = NewmanExecutor()
+        env_vars = {
+            "management_preflight_attempts": "7",
+        }
+
+        with mock.patch.object(executor, "_connector_login", side_effect=RuntimeError("stop")) as mocked_login:
+            with self.assertRaises(RuntimeError):
+                executor.run_management_api_preflight(env_vars)
+
+        self.assertEqual(mocked_login.call_args.args[2], 7)
 
     def test_newman_runtime_collection_rewrites_internal_urls_to_public_base_variables(self):
         executor = NewmanExecutor()

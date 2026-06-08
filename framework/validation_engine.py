@@ -15,6 +15,12 @@ class ValidationEngine:
 
     DEFAULT_NEGOTIATION_START_MAX_ATTEMPTS = 30
     DEFAULT_NEGOTIATION_STATUS_MAX_ATTEMPTS = 10
+    VM_NEGOTIATION_STATUS_MAX_ATTEMPTS = 45
+    DEFAULT_MANAGEMENT_PREFLIGHT_TIMEOUT_SECONDS = 15
+    DEFAULT_MANAGEMENT_PREFLIGHT_ATTEMPTS = 3
+    VM_MANAGEMENT_PREFLIGHT_ATTEMPTS = 5
+    VM_MANAGEMENT_PREFLIGHT_TIMEOUT_SECONDS = 30
+    VM_MANAGEMENT_PREFLIGHT_CATALOG_TIMEOUT_SECONDS = 180
 
     def __init__(
         self,
@@ -54,6 +60,36 @@ class ValidationEngine:
         except ValueError:
             return fallback
         return value if value > 0 else fallback
+
+    @staticmethod
+    def _positive_int_from_config(config, names, fallback):
+        for name in names:
+            raw = str(config.get(name) or "").strip()
+            if not raw:
+                continue
+            try:
+                value = int(raw)
+            except ValueError:
+                continue
+            if value > 0:
+                return value
+        return fallback
+
+    @classmethod
+    def _negotiation_status_default_attempts(cls, config):
+        configured = cls._positive_int_from_config(
+            config,
+            (
+                "PIONERA_NEWMAN_NEGOTIATION_STATUS_MAX_ATTEMPTS",
+                "NEWMAN_NEGOTIATION_STATUS_MAX_ATTEMPTS",
+            ),
+            0,
+        )
+        if configured:
+            return configured
+        if cls._normalized_topology(config) in {"vm-single", "vm-distributed"}:
+            return cls.VM_NEGOTIATION_STATUS_MAX_ATTEMPTS
+        return cls.DEFAULT_NEGOTIATION_STATUS_MAX_ATTEMPTS
 
     def _protocol_address(self, connector_name):
         resolver = self.protocol_address_resolver
@@ -265,6 +301,7 @@ class ValidationEngine:
             raise ValueError("Missing connector credentials")
 
         config = load_deployer_config()
+        topology = self._normalized_topology(config)
         adapter_name = str(config.get("PIONERA_ADAPTER") or config.get("ADAPTER_NAME") or "").strip().lower()
         if not adapter_name:
             if "edc" in provider.lower() or "edc" in consumer.lower():
@@ -304,11 +341,12 @@ class ValidationEngine:
             )),
             "e2e_negotiation_status_max_attempts": str(self._positive_int_from_env(
                 "PIONERA_NEWMAN_NEGOTIATION_STATUS_MAX_ATTEMPTS",
-                self.DEFAULT_NEGOTIATION_STATUS_MAX_ATTEMPTS,
+                self._negotiation_status_default_attempts(config),
             )),
             "e2e_expected_provider_bucket": f"{dataspace}-{provider}",
             "e2e_expected_consumer_bucket": f"{dataspace}-{consumer}",
             "adapter": adapter_name,
+            "topology": topology,
             "transferStartPath": (
                 "transferprocesses"
                 if adapter_name == "edc"
@@ -322,6 +360,58 @@ class ValidationEngine:
             "transferType": transfer_type,
             "transferDestinationType": transfer_destination_type,
         }
+        if topology in {"vm-single", "vm-distributed"}:
+            env["management_preflight_attempts"] = str(
+                self._positive_int_from_config(
+                    config,
+                    (
+                        "PIONERA_NEWMAN_PREFLIGHT_ATTEMPTS",
+                        "NEWMAN_PREFLIGHT_ATTEMPTS",
+                    ),
+                    self.VM_MANAGEMENT_PREFLIGHT_ATTEMPTS,
+                )
+            )
+            env["management_preflight_timeout_seconds"] = str(
+                self._positive_int_from_config(
+                    config,
+                    (
+                        "PIONERA_NEWMAN_PREFLIGHT_TIMEOUT_SECONDS",
+                        "NEWMAN_PREFLIGHT_TIMEOUT_SECONDS",
+                    ),
+                    self.VM_MANAGEMENT_PREFLIGHT_TIMEOUT_SECONDS,
+                )
+            )
+            env["management_preflight_catalog_timeout_seconds"] = str(
+                self._positive_int_from_config(
+                    config,
+                    (
+                        "PIONERA_NEWMAN_PREFLIGHT_CATALOG_TIMEOUT_SECONDS",
+                        "NEWMAN_PREFLIGHT_CATALOG_TIMEOUT_SECONDS",
+                    ),
+                    self.VM_MANAGEMENT_PREFLIGHT_CATALOG_TIMEOUT_SECONDS,
+                )
+            )
+        else:
+            env["management_preflight_attempts"] = str(
+                self._positive_int_from_config(
+                    config,
+                    (
+                        "PIONERA_NEWMAN_PREFLIGHT_ATTEMPTS",
+                        "NEWMAN_PREFLIGHT_ATTEMPTS",
+                    ),
+                    self.DEFAULT_MANAGEMENT_PREFLIGHT_ATTEMPTS,
+                )
+            )
+            env["management_preflight_timeout_seconds"] = str(
+                self._positive_int_from_config(
+                    config,
+                    (
+                        "PIONERA_NEWMAN_PREFLIGHT_TIMEOUT_SECONDS",
+                        "NEWMAN_PREFLIGHT_TIMEOUT_SECONDS",
+                    ),
+                    self.DEFAULT_MANAGEMENT_PREFLIGHT_TIMEOUT_SECONDS,
+                )
+            )
         provider_base_url = self._connector_public_base_url(provider_creds)
         consumer_base_url = self._connector_public_base_url(consumer_creds)
         if adapter_name == "edc":

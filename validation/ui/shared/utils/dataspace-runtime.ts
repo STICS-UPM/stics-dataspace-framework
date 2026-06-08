@@ -563,11 +563,10 @@ function discoverConnectorNames(adapter: string, environment: string, dataspace:
 }
 
 function resolveDataspaceDefaults(): DataspaceDefaults {
-  const deployerConfigPath = path.join(projectRoot(), "deployers", "inesdata", "deployer.config");
-  const deployerConfig = parseKeyValueFile(deployerConfigPath);
+  const adapter = normalizedAdapter();
+  const deployerConfig = parseKeyValueFile(deployerConfigPath(adapter));
   const infrastructureConfigPath = path.join(projectRoot(), "deployers", "infrastructure", "deployer.config");
   const infrastructureConfig = parseKeyValueFile(infrastructureConfigPath);
-  const adapter = normalizedAdapter();
 
   return {
     adapter,

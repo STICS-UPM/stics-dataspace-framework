@@ -48,6 +48,35 @@ function normalizePositiveInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function normalizedTopology() {
+  return String(process.env.UI_TOPOLOGY || process.env.PIONERA_TOPOLOGY || "")
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "-");
+}
+
+function defaultUiNavigationTimeoutMs() {
+  const topology = normalizedTopology();
+  if (topology === "vm-distributed") {
+    return 120000;
+  }
+  if (topology === "vm-single") {
+    return 90000;
+  }
+  return 30000;
+}
+
+function defaultUiReadyTimeoutMs() {
+  const topology = normalizedTopology();
+  if (topology === "vm-distributed") {
+    return 90000;
+  }
+  if (topology === "vm-single") {
+    return 60000;
+  }
+  return 30000;
+}
+
 function normalizeRepositoryUri(value) {
   const candidate = String(value || "").trim();
   if (!candidate) {
@@ -80,8 +109,11 @@ function normalizeRuntime(runtime) {
     uiWorkers: normalizePositiveInteger(runtime.uiWorkers, 1),
     uiExpectTimeoutMs: normalizePositiveInteger(runtime.uiExpectTimeoutMs, 15000),
     uiActionTimeoutMs: normalizePositiveInteger(runtime.uiActionTimeoutMs, 15000),
-    uiNavigationTimeoutMs: normalizePositiveInteger(runtime.uiNavigationTimeoutMs, 30000),
-    uiReadyTimeoutMs: normalizePositiveInteger(runtime.uiReadyTimeoutMs, 30000),
+    uiNavigationTimeoutMs: normalizePositiveInteger(
+      runtime.uiNavigationTimeoutMs,
+      defaultUiNavigationTimeoutMs(),
+    ),
+    uiReadyTimeoutMs: normalizePositiveInteger(runtime.uiReadyTimeoutMs, defaultUiReadyTimeoutMs()),
     preflightTimeout: normalizePositiveInteger(runtime.preflightTimeout, 180),
     versionTimeoutMs: normalizePositiveInteger(runtime.versionTimeoutMs, 240000),
     strictPreflight: Boolean(runtime.strictPreflight),
@@ -243,11 +275,11 @@ function resolveOntologyHubRuntime() {
     ),
     uiNavigationTimeoutMs: normalizePositiveInteger(
       process.env.ONTOLOGY_HUB_UI_NAVIGATION_TIMEOUT_MS,
-      30000,
+      defaultUiNavigationTimeoutMs(),
     ),
     uiReadyTimeoutMs: normalizePositiveInteger(
       process.env.ONTOLOGY_HUB_UI_READY_TIMEOUT_MS,
-      30000,
+      defaultUiReadyTimeoutMs(),
     ),
     strictPreflight: ["1", "true", "yes", "on"].includes(
       String(process.env.ONTOLOGY_HUB_UI_STRICT_PREFLIGHT || "").toLowerCase(),
@@ -267,8 +299,11 @@ function resolveOntologyHubTimeouts() {
   return {
     expectTimeoutMs: normalizePositiveInteger(runtime.uiExpectTimeoutMs, 15000),
     actionTimeoutMs: normalizePositiveInteger(runtime.uiActionTimeoutMs, 15000),
-    navigationTimeoutMs: normalizePositiveInteger(runtime.uiNavigationTimeoutMs, 15000),
-    readyTimeoutMs: normalizePositiveInteger(runtime.uiReadyTimeoutMs, 15000),
+    navigationTimeoutMs: normalizePositiveInteger(
+      runtime.uiNavigationTimeoutMs,
+      defaultUiNavigationTimeoutMs(),
+    ),
+    readyTimeoutMs: normalizePositiveInteger(runtime.uiReadyTimeoutMs, defaultUiReadyTimeoutMs()),
   };
 }
 

@@ -189,6 +189,11 @@ class KafkaManager:
             raise RuntimeError(combined or f"Command failed: {' '.join(args)}")
         return result
 
+    @staticmethod
+    def _is_nodeport_already_allocated_error(error):
+        text = str(error or "").lower()
+        return "nodeport" in text and ("already allocated" in text or "provided port is already allocated" in text)
+
     def _resolve_minikube_ip(self, config):
         configured_ip = str(config.get("minikube_ip") or "").strip()
         if configured_ip:
@@ -972,7 +977,15 @@ class KafkaManager:
         rollout_error = None
 
         self._cleanup_stale_kubernetes_resources(ids)
-        self._run_command(["kubectl", "apply", "-f", "-"], input_text=manifest)
+        try:
+            self._run_command(["kubectl", "apply", "-f", "-"], input_text=manifest)
+        except Exception as exc:
+            if not self._is_nodeport_already_allocated_error(exc):
+                raise
+            recovered_bootstrap = self._recover_existing_kubernetes_runtime()
+            if recovered_bootstrap:
+                return recovered_bootstrap
+            raise
         rollout_errors = []
         for rollout_target in self._kubernetes_rollout_targets(ids):
             try:

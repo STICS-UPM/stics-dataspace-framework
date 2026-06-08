@@ -7,7 +7,10 @@ import {
 import { EdcCatalogPage } from "../components/edc-catalog.page";
 import { EdcContractsPage } from "../components/edc-contracts.page";
 import { EdcDashboardPage } from "../components/edc-dashboard.page";
-import { EdcTransferHistoryPage } from "../components/edc-transfer-history.page";
+import {
+  EdcTransferHistoryPage,
+  resolveEdcTransferSuccessTimeoutMs,
+} from "../components/edc-transfer-history.page";
 
 type E2ETransferReport = {
   startedAt: string;
@@ -112,7 +115,10 @@ test("05 edc e2e transfer flow: catalog negotiation and transfer from the UI", a
     await transferHistoryPage.goto(dataspaceRuntime.consumer.portalBaseUrl);
     await dashboardPage.expectNoServerErrorBanner("EDC e2e transfer history");
     await transferHistoryPage.expectReady();
-    report.finalTransferState = await transferHistoryPage.waitForSuccessfulTransfer(assetId, 180_000);
+    report.finalTransferState = await transferHistoryPage.waitForSuccessfulTransfer(
+      assetId,
+      resolveEdcTransferSuccessTimeoutMs(),
+    );
     await captureStep(page, "05-edc-e2e-transfer-history");
 
     expect(report.selectedTransferType, "No transfer type was selected").toBeTruthy();

@@ -27,6 +27,8 @@ class NewmanExecutor:
     TRANSIENT_AUTH_RETRY_DELAY_SECONDS = 5
     MANAGEMENT_PREFLIGHT_ATTEMPTS = 3
     MANAGEMENT_PREFLIGHT_RETRY_DELAY_SECONDS = 2
+    MANAGEMENT_PREFLIGHT_TIMEOUT_SECONDS = 15
+    MANAGEMENT_PREFLIGHT_CATALOG_TIMEOUT_SECONDS = 15
     DSP_NEGOTIATION_RECOVERY_ATTEMPTS = 2
     DSP_NEGOTIATION_RECOVERY_DELAY_SECONDS = 10
     AUTH_LOGIN_REQUESTS = {"Provider Login", "Consumer Login"}
@@ -283,6 +285,18 @@ class NewmanExecutor:
             return default
 
     @staticmethod
+    def _positive_int_from_mapping(mapping, names, default):
+        for name in names:
+            value = mapping.get(name) if isinstance(mapping, dict) else None
+            if value in (None, ""):
+                continue
+            try:
+                return max(1, int(value))
+            except (TypeError, ValueError):
+                continue
+        return default
+
+    @staticmethod
     def _positive_float_from_env(name, default):
         value = os.getenv(name)
         if value in (None, ""):
@@ -479,7 +493,7 @@ class NewmanExecutor:
 
         raise RuntimeError(f"{label} request failed unexpectedly")
 
-    def _connector_login(self, env_vars, role, attempts, retry_delay):
+    def _connector_login(self, env_vars, role, attempts, retry_delay, timeout=None):
         keycloak_url = str(env_vars.get("keycloakUrl") or "").strip().rstrip("/")
         dataspace = str(env_vars.get("dataspace") or "").strip()
         client_id = str(env_vars.get("keycloakClientId") or "dataspace-users").strip()
@@ -511,7 +525,7 @@ class NewmanExecutor:
                 login_url,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
                 data=payload,
-                timeout=15,
+                timeout=timeout or self.MANAGEMENT_PREFLIGHT_TIMEOUT_SECONDS,
             ),
             f"{role} login",
             attempts,
@@ -534,7 +548,7 @@ class NewmanExecutor:
             raise RuntimeError(f"{role} login did not return access_token")
         return login_url, token
 
-    def _post_management_json(self, url, token, payload, label, attempts, retry_delay):
+    def _post_management_json(self, url, token, payload, label, attempts, retry_delay, timeout=None):
         response = self._request_with_transient_retry(
             lambda: requests.post(
                 url,
@@ -543,7 +557,7 @@ class NewmanExecutor:
                     "Content-Type": "application/json",
                 },
                 json=payload,
-                timeout=15,
+                timeout=timeout or self.MANAGEMENT_PREFLIGHT_TIMEOUT_SECONDS,
             ),
             label,
             attempts,
@@ -571,6 +585,7 @@ class NewmanExecutor:
         label,
         attempts,
         retry_delay,
+        timeout=None,
     ):
         current_token = token
         last_error = None
@@ -583,6 +598,7 @@ class NewmanExecutor:
                     label,
                     attempts,
                     retry_delay,
+                    timeout=timeout,
                 )
                 return response, body, current_token
             except ManagementAuthenticationError as exc:
@@ -594,6 +610,7 @@ class NewmanExecutor:
                     role,
                     attempts,
                     retry_delay,
+                    timeout=timeout,
                 )
                 continue
 
@@ -615,11 +632,34 @@ class NewmanExecutor:
     def run_management_api_preflight(self, env_vars, report_dir=None):
         attempts = self._positive_int_from_env(
             "PIONERA_NEWMAN_PREFLIGHT_ATTEMPTS",
-            self.MANAGEMENT_PREFLIGHT_ATTEMPTS,
+            self._positive_int_from_mapping(
+                env_vars,
+                ("management_preflight_attempts", "MANAGEMENT_PREFLIGHT_ATTEMPTS"),
+                self.MANAGEMENT_PREFLIGHT_ATTEMPTS,
+            ),
         )
         retry_delay = self._positive_float_from_env(
             "PIONERA_NEWMAN_PREFLIGHT_RETRY_DELAY_SECONDS",
             self.MANAGEMENT_PREFLIGHT_RETRY_DELAY_SECONDS,
+        )
+        request_timeout = self._positive_int_from_env(
+            "PIONERA_NEWMAN_PREFLIGHT_TIMEOUT_SECONDS",
+            self._positive_int_from_mapping(
+                env_vars,
+                ("management_preflight_timeout_seconds", "MANAGEMENT_PREFLIGHT_TIMEOUT_SECONDS"),
+                self.MANAGEMENT_PREFLIGHT_TIMEOUT_SECONDS,
+            ),
+        )
+        catalog_timeout = self._positive_int_from_env(
+            "PIONERA_NEWMAN_PREFLIGHT_CATALOG_TIMEOUT_SECONDS",
+            self._positive_int_from_mapping(
+                env_vars,
+                (
+                    "management_preflight_catalog_timeout_seconds",
+                    "MANAGEMENT_PREFLIGHT_CATALOG_TIMEOUT_SECONDS",
+                ),
+                request_timeout,
+            ),
         )
         provider = str(env_vars.get("provider") or "").strip()
         consumer = str(env_vars.get("consumer") or "").strip()
@@ -657,6 +697,7 @@ class NewmanExecutor:
                 "provider",
                 attempts,
                 retry_delay,
+                timeout=request_timeout,
             )
             record_check("provider-login", provider_login_url, True, "access_token acquired", 200)
         except RuntimeError as exc:
@@ -669,6 +710,7 @@ class NewmanExecutor:
                 "consumer",
                 attempts,
                 retry_delay,
+                timeout=request_timeout,
             )
             record_check("consumer-login", consumer_login_url, True, "access_token acquired", 200)
         except RuntimeError as exc:
@@ -698,6 +740,7 @@ class NewmanExecutor:
                     "provider assets preflight",
                     attempts,
                     retry_delay,
+                    timeout=request_timeout,
                 )
                 record_check(
                     "provider-assets-request",
@@ -731,6 +774,7 @@ class NewmanExecutor:
                     "consumer negotiation preflight",
                     attempts,
                     retry_delay,
+                    timeout=request_timeout,
                 )
                 record_check(
                     "consumer-contractnegotiations-request",
@@ -771,6 +815,7 @@ class NewmanExecutor:
                     "consumer catalog preflight",
                     attempts,
                     retry_delay,
+                    timeout=catalog_timeout,
                 )
                 record_check(
                     "consumer-catalog-request",
