@@ -155,6 +155,8 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
             "DS_1_CONNECTORS": "conn-org2-pionera,conn-org3-pionera",
             "COMPONENTS_NAMESPACE": "components",
             "ENVIRONMENT_NAME": "DEV",
+            "PROFILE_TOPOLOGY": "vm-distributed",
+            "KEYCLOAK_PUBLIC_URL": "https://org1.example.test/auth",
             "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL": "http://model-server.components.svc.cluster.local:8080",
         }
 
@@ -168,6 +170,18 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
         self.assertIn("--skip-inesdata-models", models_cmd)
         self.assertIn("--use-case-model-server-base-url", models_cmd)
         self.assertIn("conn-org2-pionera,conn-org3-pionera", models_cmd)
+        self.assertTrue(
+            any(
+                os.path.join("deployers", "inesdata", "deployments", "DEV", "vm-distributed", "pionera")
+                in arg
+                for arg in datasets_cmd
+            )
+        )
+        self.assertIn("--keycloak-token-url", datasets_cmd)
+        self.assertIn(
+            "https://org1.example.test/auth/realms/pionera/protocol/openid-connect/token",
+            datasets_cmd,
+        )
 
     def test_use_case_demo_flow_runs_profile_level5_and_seed_steps(self):
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as tmpdir:

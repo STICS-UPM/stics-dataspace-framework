@@ -19593,14 +19593,39 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
             f"conn-org2-{dataspace}",
             f"conn-org3-{dataspace}",
         ]
-    credentials_dir = os.path.join(
-        os.path.dirname(__file__),
-        "deployers",
-        str(adapter_name or "inesdata").strip().lower() or "inesdata",
-        "deployments",
-        str(values.get("ENVIRONMENT_NAME") or "DEV").strip() or "DEV",
-        dataspace,
+    root_dir = os.path.dirname(__file__)
+    normalized_adapter = str(adapter_name or "inesdata").strip().lower() or "inesdata"
+    environment = str(values.get("ENVIRONMENT_NAME") or "DEV").strip() or "DEV"
+    topology = str(values.get("PROFILE_TOPOLOGY") or values.get("TOPOLOGY") or VM_DISTRIBUTED_TOPOLOGY).strip()
+    configured_credentials_dir = str(
+        values.get("AI_MODEL_HUB_SEED_CREDENTIALS_DIR")
+        or values.get("AI_MODEL_HUB_USE_CASE_DEMO_CREDENTIALS_DIR")
+        or ""
+    ).strip()
+    credential_candidates = []
+    if configured_credentials_dir:
+        expanded_credentials_dir = os.path.expanduser(configured_credentials_dir)
+        if os.path.isabs(expanded_credentials_dir):
+            credential_candidates.append(os.path.abspath(expanded_credentials_dir))
+        else:
+            credential_candidates.append(os.path.abspath(os.path.join(root_dir, expanded_credentials_dir)))
+    credential_candidates.extend(
+        [
+            os.path.join(root_dir, "deployers", normalized_adapter, "deployments", environment, topology, dataspace),
+            os.path.join(root_dir, "deployers", normalized_adapter, "deployments", environment, dataspace),
+        ]
     )
+    credentials_dir = next((path for path in credential_candidates if os.path.isdir(path)), credential_candidates[0])
+    keycloak_base = str(
+        values.get("KEYCLOAK_PUBLIC_URL")
+        or values.get("KEYCLOAK_FRONTEND_URL")
+        or values.get("KC_URL")
+        or values.get("KC_INTERNAL_URL")
+        or ""
+    ).strip().rstrip("/")
+    keycloak_token_url = ""
+    if keycloak_base:
+        keycloak_token_url = f"{keycloak_base}/realms/{dataspace}/protocol/openid-connect/token"
     model_server_url = str(
         values.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
         or values.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL")
@@ -19612,6 +19637,7 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
         "components_namespace": components_namespace,
         "connectors": connectors,
         "credentials_dir": credentials_dir,
+        "keycloak_token_url": keycloak_token_url,
         "model_server_url": model_server_url,
     }
 
@@ -19632,6 +19658,8 @@ def _ai_model_hub_use_case_demo_seed_command(profile_values=None, adapter_name="
         runtime["credentials_dir"],
         "--strict",
     ]
+    if runtime.get("keycloak_token_url"):
+        args.extend(["--keycloak-token-url", runtime["keycloak_token_url"]])
     if step == "models":
         args.extend(
             [
