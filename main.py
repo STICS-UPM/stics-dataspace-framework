@@ -19595,7 +19595,12 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
         ]
     root_dir = os.path.dirname(__file__)
     normalized_adapter = str(adapter_name or "inesdata").strip().lower() or "inesdata"
-    environment = str(values.get("ENVIRONMENT_NAME") or "DEV").strip() or "DEV"
+    environment = str(
+        values.get("AI_MODEL_HUB_SEED_DEPLOYMENT_ENVIRONMENT")
+        or values.get("DEPLOYMENT_ENVIRONMENT")
+        or values.get("ENVIRONMENT")
+        or "DEV"
+    ).strip() or "DEV"
     topology = str(values.get("PROFILE_TOPOLOGY") or values.get("TOPOLOGY") or VM_DISTRIBUTED_TOPOLOGY).strip()
     configured_credentials_dir = str(
         values.get("AI_MODEL_HUB_SEED_CREDENTIALS_DIR")

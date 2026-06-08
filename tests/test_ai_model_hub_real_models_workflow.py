@@ -154,7 +154,7 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
             "DS_1_NAME": "pionera",
             "DS_1_CONNECTORS": "conn-org2-pionera,conn-org3-pionera",
             "COMPONENTS_NAMESPACE": "components",
-            "ENVIRONMENT_NAME": "DEV",
+            "ENVIRONMENT_NAME": "pionera",
             "PROFILE_TOPOLOGY": "vm-distributed",
             "KEYCLOAK_PUBLIC_URL": "https://org1.example.test/auth",
             "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL": "http://model-server.components.svc.cluster.local:8080",
