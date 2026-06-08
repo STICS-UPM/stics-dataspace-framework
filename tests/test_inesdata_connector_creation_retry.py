@@ -1313,11 +1313,11 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         self.assertTrue(rendered["connector"]["tlsCacerts"]["enabled"])
         self.assertEqual(rendered["connector"]["tlsCacerts"]["secretName"], "common-tls-cacerts")
         self.assertIn("javax.net.ssl.trustStore=/opt/connector/tls-cacerts/cacerts.jks", rendered["connector"]["jvmArgs"])
-        self.assertEqual(rendered["services"]["keycloak"]["protocol"], "https")
+        self.assertEqual(rendered["services"]["keycloak"]["protocol"], "http")
         self.assertEqual(rendered["services"]["keycloak"]["hostname"], "org1.pionera.oeg.fi.upm.es/auth")
         self.assertEqual(rendered["services"]["keycloak"]["publicProtocol"], "https")
         self.assertEqual(rendered["services"]["keycloak"]["external"], "org1.pionera.oeg.fi.upm.es/auth")
-        self.assertEqual(rendered["services"]["minio"]["protocol"], "https")
+        self.assertEqual(rendered["services"]["minio"]["protocol"], "http")
         self.assertEqual(rendered["services"]["minio"]["hostname"], "org1.pionera.oeg.fi.upm.es")
         self.assertEqual(
             ingress["additionalHosts"],
@@ -1398,7 +1398,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                 rendered = yaml.safe_load(handle)
 
         keycloak = rendered["services"]["keycloak"]
-        self.assertEqual(keycloak["protocol"], "https")
+        self.assertEqual(keycloak["protocol"], "http")
         self.assertEqual(keycloak["hostname"], "org1.pionera.oeg.fi.upm.es/auth")
         self.assertEqual(keycloak["publicProtocol"], "https")
         self.assertEqual(keycloak["external"], "org1.pionera.oeg.fi.upm.es/auth")

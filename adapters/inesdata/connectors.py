@@ -2696,6 +2696,15 @@ class INESDataConnectorsAdapter:
         return configured or self._common_service_internal_hostname(deployer_config, "minio", 9000)
 
     @staticmethod
+    def _vm_distributed_connector_common_services_protocol(deployer_config):
+        configured = str(
+            (deployer_config or {}).get("VM_DISTRIBUTED_CONNECTOR_COMMON_SERVICES_PROTOCOL")
+            or (deployer_config or {}).get("INESDATA_CONNECTOR_COMMON_SERVICES_PROTOCOL")
+            or "http"
+        ).strip().lower()
+        return configured if configured in {"http", "https"} else "http"
+
+    @staticmethod
     def _rewrite_connector_interface_asset_urls(value, old_base, new_base):
         raw_value = str(value or "").strip()
         if not raw_value:
@@ -2824,7 +2833,7 @@ class INESDataConnectorsAdapter:
             keycloak["external"] = keycloak_public_external
             if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
                 keycloak["hostname"] = keycloak_public_external
-                keycloak["protocol"] = keycloak_public_protocol or keycloak.get("publicProtocol") or public_protocol or "https"
+                keycloak["protocol"] = self._vm_distributed_connector_common_services_protocol(deployer_config)
 
         if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY and public_protocol == "https":
             self._enable_connector_tls_cacerts(values)
@@ -2837,7 +2846,7 @@ class INESDataConnectorsAdapter:
             minio_public_protocol, minio_public_external = self._minio_public_url_parts(deployer_config)
             if minio_public_protocol and minio_public_external:
                 minio["hostname"] = minio_public_external
-                minio["protocol"] = minio_public_protocol
+                minio["protocol"] = self._vm_distributed_connector_common_services_protocol(deployer_config)
 
         primary_hostname = str(ingress.get("hostname") or "").strip()
         if primary_hostname == public_hostname:
