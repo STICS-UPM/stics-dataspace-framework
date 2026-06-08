@@ -1307,6 +1307,8 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         ingress = rendered["connector"]["ingress"]
         self.assertEqual(ingress["publicProtocol"], "https")
         self.assertEqual(ingress["publicHostname"], "org2.pionera.oeg.fi.upm.es")
+        self.assertEqual(ingress["callbackProtocol"], "https")
+        self.assertEqual(ingress["callbackHostname"], "org2.pionera.oeg.fi.upm.es")
         self.assertEqual(rendered["services"]["keycloak"]["protocol"], "http")
         self.assertEqual(rendered["services"]["keycloak"]["publicProtocol"], "https")
         self.assertEqual(rendered["services"]["keycloak"]["external"], "org1.pionera.oeg.fi.upm.es/auth")
@@ -1393,6 +1395,9 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         self.assertEqual(keycloak["hostname"], "auth.pionera.oeg.fi.upm.es")
         self.assertEqual(keycloak["publicProtocol"], "https")
         self.assertEqual(keycloak["external"], "org1.pionera.oeg.fi.upm.es/auth")
+        ingress = rendered["connector"]["ingress"]
+        self.assertEqual(ingress["callbackProtocol"], "https")
+        self.assertEqual(ingress["callbackHostname"], "org2.pionera.oeg.fi.upm.es")
 
     def test_update_connector_public_ingress_config_uses_vm_single_public_path_and_internal_services(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3165,9 +3170,9 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             self.assertTrue(policy["allow_local_image_overrides"])
             self.assertEqual(policy["message"], "")
 
-    def test_level4_local_images_default_to_disabled_for_vm_topologies(self):
+    def test_level4_local_images_default_for_vm_topologies(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            for topology in ("vm-single", "vm-distributed"):
+            for topology, expected_mode in (("vm-single", "auto"), ("vm-distributed", "disabled")):
                 config = ConnectorRetryConfig(tmpdir)
                 config_adapter = ConnectorRetryConfigAdapter(tmpdir)
                 config_adapter.topology = topology
@@ -3180,7 +3185,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
                     config_cls=config,
                 )
 
-                self.assertEqual(adapter._level4_local_images_mode(), "disabled")
+                self.assertEqual(adapter._level4_local_images_mode(), expected_mode)
 
     def test_level4_local_images_default_to_auto_for_local_topology(self):
         with tempfile.TemporaryDirectory() as tmpdir:

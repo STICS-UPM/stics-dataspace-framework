@@ -2795,12 +2795,19 @@ class INESDataConnectorsAdapter:
         if primary_hostname == public_hostname:
             ingress["publicProtocol"] = public_protocol
             ingress["publicHostname"] = public_external
+            if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+                ingress["callbackProtocol"] = public_protocol
+                ingress["callbackHostname"] = public_external
             with open(values_file, "w") as f:
                 yaml.dump(values, f, sort_keys=False)
             return
 
         ingress["publicProtocol"] = public_protocol
         ingress["publicHostname"] = public_external
+        if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+            ingress["callbackProtocol"] = public_protocol
+            ingress["callbackHostname"] = public_external
+
         if self._normalized_topology() == VM_SINGLE_TOPOLOGY:
             ingress["callbackProtocol"] = public_protocol
             ingress["callbackHostname"] = public_external
