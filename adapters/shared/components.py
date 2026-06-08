@@ -1500,6 +1500,7 @@ def combined_models() -> Dict[str, Any]:
             "ENV PYTHONUNBUFFERED=1",
             "ENV PIP_NO_CACHE_DIR=1",
             "WORKDIR /app",
+            "RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*",
             "COPY use_cases/requirements.txt /tmp/use-case-requirements.txt",
             "RUN python -m pip install --upgrade pip && python -m pip install -r /tmp/use-case-requirements.txt",
             "COPY use_cases /app/use_cases",

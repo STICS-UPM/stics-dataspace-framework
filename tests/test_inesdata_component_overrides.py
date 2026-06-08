@@ -2293,6 +2293,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 with open(os.path.join(build_context, "Dockerfile"), encoding="utf-8") as handle:
                     dockerfile = handle.read()
                 self.assertIn("FROM python:3.11-slim", dockerfile)
+                self.assertIn("apt-get install -y --no-install-recommends libgomp1", dockerfile)
                 self.assertIn("COPY use_cases /app/use_cases", dockerfile)
                 self.assertIn("cp -a /app/use_cases/models /app/models", dockerfile)
                 self.assertIn("COPY combined_model_server /app/combined_model_server", dockerfile)
