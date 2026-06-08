@@ -1879,6 +1879,9 @@ negotiate_one() {
     return 1
   fi
 
+  local auth_header_file="$WORK_DIR/neg_auth_${consumer}.headers"
+  (umask 077 && printf 'Authorization: Bearer %s\n' "$token" > "$auth_header_file")
+
   # Port-forward consumer. In vm-distributed each connector may live in a
   # different namespace/cluster, so reuse the same maps used during seeding.
   local consumer_namespace consumer_kubeconfig
@@ -1897,6 +1900,7 @@ negotiate_one() {
       kill "$pf_pid" >/dev/null 2>&1 || true
       wait "$pf_pid" 2>/dev/null || true
     fi
+    rm -f "$auth_header_file"
   }
 
   # Step 1: Request catalog from provider
@@ -1923,7 +1927,7 @@ CAT_EOF
   local cat_code
   cat_code="$(curl -s --max-time 60 -o "$catalog_out" -w '%{http_code}' \
     -X POST "$mgmt_url/v3/catalog/request" \
-    -H "Authorization: Bearer $token" \
+    -H "@$auth_header_file" \
     -H 'Content-Type: application/json' \
     --data-binary "@$catalog_file")" || true
 
@@ -1994,7 +1998,7 @@ NEG_EOF
   local neg_code
   neg_code="$(curl -s --max-time 30 -o "$neg_out" -w '%{http_code}' \
     -X POST "$mgmt_url/v3/contractnegotiations" \
-    -H "Authorization: Bearer $token" \
+    -H "@$auth_header_file" \
     -H 'Content-Type: application/json' \
     --data-binary "@$neg_payload")" || true
 
@@ -2021,7 +2025,7 @@ NEG_EOF
     local state_out="$WORK_DIR/neg_state_${asset_id}.out"
     curl -s --max-time 15 -o "$state_out" \
       "$mgmt_url/v3/contractnegotiations/$neg_id" \
-      -H "Authorization: Bearer $token" 2>/dev/null || true
+      -H "@$auth_header_file" 2>/dev/null || true
 
     state="$(sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_out" | head -n1)" || true
     [[ -z "$state" ]] && state="$(sed -n 's/.*"edc:state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_out" | head -n1)" || true
