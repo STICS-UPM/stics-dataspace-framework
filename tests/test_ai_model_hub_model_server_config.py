@@ -27,7 +27,9 @@ class AIModelHubModelServerConfigTests(unittest.TestCase):
         )
 
     def test_runtime_defaults_are_stable(self):
-        self.assertTrue(model_server.model_server_enabled({}))
+        self.assertFalse(model_server.model_server_enabled({}))
+        self.assertTrue(model_server.model_server_enabled({"AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true"}))
+        self.assertTrue(model_server.model_server_enabled({"LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED": "yes"}))
         self.assertEqual(model_server.model_server_mode({})[0], "mock")
         self.assertEqual(model_server.source_repository({}), "")
         self.assertEqual(model_server.image_ref({}), "model-server:latest")

@@ -46,7 +46,12 @@ actual para EDC es `vm-distributed`.
 ## Model-Server de Casos de Uso
 
 El framework incluye soporte explícito para desplegar un `model-server`
-asociado a AI Model Hub. Los modos disponibles son:
+asociado a AI Model Hub, pero ese despliegue es opcional. `Level 5` solo crea o
+actualiza el `model-server` cuando `AI_MODEL_HUB_MODEL_SERVER_ENABLED=true`; si
+el flag no se declara, el componente AI Model Hub se despliega sin servidor de
+modelos gestionado por el framework.
+
+Los modos disponibles, una vez habilitado el despliegue del servidor, son:
 
 | Modo | Uso |
 | --- | --- |
@@ -56,8 +61,9 @@ asociado a AI Model Hub. Los modos disponibles son:
 | `external` | Servidor gestionado fuera del framework. |
 
 Para las demostraciones reproducibles de casos de uso, el modo operativo es
-`combined`. Este modo usa el repositorio de casos de uso configurado en el
-perfil, por defecto `ProyectoPIONERA/AIModelHub-Use-Cases`, y expone:
+`combined` junto con `AI_MODEL_HUB_MODEL_SERVER_ENABLED=true`. Este modo usa el
+repositorio de casos de uso configurado en el perfil, por defecto
+`ProyectoPIONERA/AIModelHub-Use-Cases`, y expone:
 
 - `/models`, para descubrir modelos FLARES y Mobility;
 - `/datasets`, para descubrir datasets de benchmark;

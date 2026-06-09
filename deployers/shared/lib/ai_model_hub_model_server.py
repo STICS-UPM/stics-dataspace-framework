@@ -24,7 +24,7 @@ def model_server_enabled(config: dict | None) -> bool:
     flag = values.get("AI_MODEL_HUB_MODEL_SERVER_ENABLED")
     if flag is None:
         flag = values.get("LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED")
-    return parse_bool(flag, default=True)
+    return parse_bool(flag, default=False)
 
 
 def normalize_model_server_mode(mode) -> str:

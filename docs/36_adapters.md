@@ -243,8 +243,11 @@ El dashboard EDC es opcional y sirve como apoyo visual para validación UI. Las 
 `deployers/shared/components/`, incluidos `ontology-hub`, `ai-model-hub` y
 `semantic-virtualization` cuando están habilitados. Para AI Model Hub, el mismo
 flujo de `model-server` y sembrado de assets usado por INESData está
-parametrizado para EDC; en ese caso se crean assets estándar `HttpData`,
-políticas y contratos, y se validan negociaciones DSP entre pares configurados.
+parametrizado para EDC. El despliegue del `model-server` es independiente del
+despliegue del componente: solo se gestiona cuando
+`AI_MODEL_HUB_MODEL_SERVER_ENABLED=true`; en ese caso se crean assets estándar
+`HttpData`, políticas y contratos, y se validan negociaciones DSP entre pares
+configurados.
 
 En el menú interactivo, el adapter EDC incluye una comprobación previa de
 hostnames antes de ejecutar niveles `3-6` en topología `local`. Si faltan

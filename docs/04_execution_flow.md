@@ -92,9 +92,12 @@ Por tanto, `Level 6` ya no debe entenderse como “solo Newman”, sino como el 
 
 En la práctica:
 
+- `COMPONENTS=` vacío hace que `Level 5` no despliegue componentes compartidos.
 - `COMPONENTS=ontology-hub` hace que `Level 5` lo despliegue
 - `COMPONENTS=ai-model-hub` hace que `Level 5` lo despliegue cuando el adapter
   tiene soporte real
+- `COMPONENTS=ontology-hub,ai-model-hub` despliega solo ese subconjunto; no hay
+  una lista fija de componentes obligatorios dentro de `Level 5`.
 - en `edc`, `Level 5` valida primero que el conector registre las extensiones
   requeridas por los componentes configurados
 - en el layout `role-aligned`, los componentes se publican en
@@ -113,6 +116,9 @@ En la práctica:
 - para `ai-model-hub`, `Level 6` ejecuta por defecto bootstrap, UI funcional,
   suite lingüística, benchmarking, movilidad, ejecución de modelo, gobernanza de
   conectores y Observer API cuando el componente está configurado
+- el `model-server` de AI Model Hub es un recurso auxiliar opcional. `Level 5`
+  solo lo despliega o gestiona cuando `AI_MODEL_HUB_MODEL_SERVER_ENABLED=true`;
+  si el flag no se declara, se considera deshabilitado.
 - para `semantic-virtualization`, `Level 6` ejecuta por defecto API, fixtures de
   mappings, trazabilidad GTFS-Bench, materialización y UI funcional antes de sus
   comprobaciones de integración

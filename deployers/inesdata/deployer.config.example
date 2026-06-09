@@ -29,7 +29,9 @@ SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT=
 SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_HOST=
 SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SERVICE_TYPE=
 SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_NODE_PORT=
-AI_MODEL_HUB_MODEL_SERVER_ENABLED=true
+# Optional. Enable only when Level 5 must deploy or manage the AI Model Hub
+# model-server. Keep false when the server is external or not required.
+AI_MODEL_HUB_MODEL_SERVER_ENABLED=false
 AI_MODEL_HUB_MODEL_SERVER_IMAGE=model-server:latest
 # Optional Level 5 model-server modes:
 # - blank/mock: deploy the controlled deterministic model-server baseline.

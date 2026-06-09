@@ -70,6 +70,9 @@ ONTOLOGY_HUB_IMAGE_REF=
 AI_MODEL_HUB_IMAGE_REF=
 SEMANTIC_VIRTUALIZATION_IMAGE_REF=
 SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_IMAGE_REF=
+# AI_MODEL_HUB_MODEL_SERVER_ENABLED controls whether Level 5 deploys/manages the
+# model-server. Set it to true only when this topology owns that service.
+AI_MODEL_HUB_MODEL_SERVER_ENABLED=false
 # AI_MODEL_HUB_MODEL_SERVER_MODE accepts blank, mock, use-cases, combined or external.
 # blank/mock uses the controlled deterministic model-server baseline.
 # use-cases/combined uses adapters/inesdata/sources/AIModelHub-Use-Cases and clones
