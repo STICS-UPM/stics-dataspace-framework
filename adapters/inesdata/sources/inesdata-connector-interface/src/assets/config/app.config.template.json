@@ -7,6 +7,10 @@
   "ontologyAdminUser": "$ONTOLOGY_ADMIN_USER",
   "ontologyAdminPassword": "$ONTOLOGY_ADMIN_PASSWORD",
   "participantId": "$PARTICIPANT_ID",
+  "branding": {
+    "primaryColor": "$APP_PRIMARY_COLOR",
+    "secondaryColor": "$APP_SECONDARY_COLOR"
+  },
   "storageAccount": "$STORAGE_ACCOUNT",
   "storageExplorerLinkTemplate": "$STORAGE_LINK_TEMPLATE",
   "service": {

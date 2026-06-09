@@ -82,6 +82,24 @@ class InesdataBrandingConfigTests(unittest.TestCase):
         self.assertIn("<base href=", entrypoint)
         self.assertIn("sed -i", entrypoint)
 
+    def test_connector_interface_runtime_branding_colors_are_applied(self):
+        template = (
+            ROOT
+            / "adapters/inesdata/sources/inesdata-connector-interface/src/assets/config/app.config.template.json"
+        ).read_text(encoding="utf-8")
+        main_ts = (
+            ROOT
+            / "adapters/inesdata/sources/inesdata-connector-interface/src/main.ts"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"branding"', template)
+        self.assertIn('"primaryColor": "$APP_PRIMARY_COLOR"', template)
+        self.assertIn('"secondaryColor": "$APP_SECONDARY_COLOR"', template)
+        self.assertIn("applyRuntimeBranding(runtimeEnv)", main_ts)
+        self.assertIn("root.style.setProperty('--brand-500', primaryColor)", main_ts)
+        self.assertIn("root.style.setProperty('--secondary-500', secondaryColor)", main_ts)
+        self.assertIn("root.style.setProperty('--secondary-600', secondaryColor)", main_ts)
+
     def test_connector_interface_branding_patch_keeps_balanced_footer_logos(self):
         source = (ROOT / "adapters/inesdata/connectors.py").read_text(encoding="utf-8")
 
