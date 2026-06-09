@@ -15,7 +15,17 @@ class ValidationEngine:
 
     DEFAULT_NEGOTIATION_START_MAX_ATTEMPTS = 30
     DEFAULT_NEGOTIATION_STATUS_MAX_ATTEMPTS = 10
-    VM_NEGOTIATION_STATUS_MAX_ATTEMPTS = 45
+    VM_NEGOTIATION_STATUS_MAX_ATTEMPTS = 120
+    DEFAULT_TRANSFER_START_MAX_ATTEMPTS = 8
+    DEFAULT_TRANSFER_STATUS_MAX_ATTEMPTS = 10
+    DEFAULT_TRANSFER_DESTINATION_MAX_ATTEMPTS = 10
+    VM_TRANSFER_START_MAX_ATTEMPTS = 20
+    VM_TRANSFER_STATUS_MAX_ATTEMPTS = 60
+    VM_TRANSFER_DESTINATION_MAX_ATTEMPTS = 60
+    DEFAULT_CONTRACT_AGREEMENT_TIMEOUT_SECONDS = 60
+    DEFAULT_CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS = 30
+    VM_CONTRACT_AGREEMENT_TIMEOUT_SECONDS = 240
+    VM_CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS = 90
     DEFAULT_MANAGEMENT_PREFLIGHT_TIMEOUT_SECONDS = 15
     DEFAULT_MANAGEMENT_PREFLIGHT_ATTEMPTS = 3
     VM_MANAGEMENT_PREFLIGHT_ATTEMPTS = 5
@@ -90,6 +100,21 @@ class ValidationEngine:
         if cls._normalized_topology(config) in {"vm-single", "vm-distributed"}:
             return cls.VM_NEGOTIATION_STATUS_MAX_ATTEMPTS
         return cls.DEFAULT_NEGOTIATION_STATUS_MAX_ATTEMPTS
+
+    @classmethod
+    def _topology_default(cls, config, vm_value, default_value):
+        if cls._normalized_topology(config) in {"vm-single", "vm-distributed"}:
+            return vm_value
+        return default_value
+
+    @classmethod
+    def _configured_positive_int(cls, config, names, fallback):
+        env_names = tuple(name for name in names if name.startswith("PIONERA_"))
+        for name in env_names:
+            configured = cls._positive_int_from_env(name, 0)
+            if configured:
+                return configured
+        return cls._positive_int_from_config(config, names, fallback)
 
     def _protocol_address(self, connector_name):
         resolver = self.protocol_address_resolver
@@ -342,6 +367,66 @@ class ValidationEngine:
             "e2e_negotiation_status_max_attempts": str(self._positive_int_from_env(
                 "PIONERA_NEWMAN_NEGOTIATION_STATUS_MAX_ATTEMPTS",
                 self._negotiation_status_default_attempts(config),
+            )),
+            "e2e_transfer_start_max_attempts": str(self._configured_positive_int(
+                config,
+                (
+                    "PIONERA_NEWMAN_TRANSFER_START_MAX_ATTEMPTS",
+                    "NEWMAN_TRANSFER_START_MAX_ATTEMPTS",
+                ),
+                self._topology_default(
+                    config,
+                    self.VM_TRANSFER_START_MAX_ATTEMPTS,
+                    self.DEFAULT_TRANSFER_START_MAX_ATTEMPTS,
+                ),
+            )),
+            "e2e_transfer_status_max_attempts": str(self._configured_positive_int(
+                config,
+                (
+                    "PIONERA_NEWMAN_TRANSFER_STATUS_MAX_ATTEMPTS",
+                    "NEWMAN_TRANSFER_STATUS_MAX_ATTEMPTS",
+                ),
+                self._topology_default(
+                    config,
+                    self.VM_TRANSFER_STATUS_MAX_ATTEMPTS,
+                    self.DEFAULT_TRANSFER_STATUS_MAX_ATTEMPTS,
+                ),
+            )),
+            "e2e_transfer_destination_max_attempts": str(self._configured_positive_int(
+                config,
+                (
+                    "PIONERA_NEWMAN_TRANSFER_DESTINATION_MAX_ATTEMPTS",
+                    "NEWMAN_TRANSFER_DESTINATION_MAX_ATTEMPTS",
+                ),
+                self._topology_default(
+                    config,
+                    self.VM_TRANSFER_DESTINATION_MAX_ATTEMPTS,
+                    self.DEFAULT_TRANSFER_DESTINATION_MAX_ATTEMPTS,
+                ),
+            )),
+            "e2e_contract_agreement_timeout_seconds": str(self._configured_positive_int(
+                config,
+                (
+                    "PIONERA_NEWMAN_CONTRACT_AGREEMENT_TIMEOUT_SECONDS",
+                    "NEWMAN_CONTRACT_AGREEMENT_TIMEOUT_SECONDS",
+                ),
+                self._topology_default(
+                    config,
+                    self.VM_CONTRACT_AGREEMENT_TIMEOUT_SECONDS,
+                    self.DEFAULT_CONTRACT_AGREEMENT_TIMEOUT_SECONDS,
+                ),
+            )),
+            "e2e_contract_agreement_visibility_timeout_seconds": str(self._configured_positive_int(
+                config,
+                (
+                    "PIONERA_NEWMAN_CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS",
+                    "NEWMAN_CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS",
+                ),
+                self._topology_default(
+                    config,
+                    self.VM_CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS,
+                    self.DEFAULT_CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS,
+                ),
             )),
             "e2e_expected_provider_bucket": f"{dataspace}-{provider}",
             "e2e_expected_consumer_bucket": f"{dataspace}-{consumer}",

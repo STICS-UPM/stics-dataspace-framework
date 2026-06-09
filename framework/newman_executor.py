@@ -425,6 +425,20 @@ class NewmanExecutor:
             return text
         return text[: max(0, limit - 3)] + "..."
 
+    @staticmethod
+    def _positive_int_from_values(values, keys, fallback):
+        for key in keys:
+            raw = str(values.get(key) or "").strip()
+            if not raw:
+                continue
+            try:
+                value = int(raw)
+            except ValueError:
+                continue
+            if value > 0:
+                return value
+        return fallback
+
     def _should_wait_for_contract_agreement(self, environment_path):
         _, env_vars = self._read_environment_values(environment_path)
         return bool(env_vars.get("e2e_negotiation_id") and not env_vars.get("e2e_agreement_id"))
@@ -965,14 +979,6 @@ class NewmanExecutor:
         timeout=None,
         poll_interval=None,
     ):
-        timeout = (
-            self._positive_int_from_env(
-                "PIONERA_NEWMAN_CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS",
-                self.CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS,
-            )
-            if timeout is None
-            else timeout
-        )
         poll_interval = (
             self.CONTRACT_AGREEMENT_POLL_INTERVAL_SECONDS
             if poll_interval is None
@@ -980,6 +986,22 @@ class NewmanExecutor:
         )
 
         _, env_vars = self._read_environment_values(environment_path)
+        timeout = (
+            self._positive_int_from_values(
+                env_vars,
+                (
+                    "e2e_contract_agreement_visibility_timeout_seconds",
+                    "PIONERA_NEWMAN_CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS",
+                    "NEWMAN_CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS",
+                ),
+                self._positive_int_from_env(
+                    "PIONERA_NEWMAN_CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS",
+                    self.CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS,
+                ),
+            )
+            if timeout is None
+            else timeout
+        )
         agreement_id = agreement_id or env_vars.get("e2e_agreement_id")
         provider = env_vars.get("provider")
         consumer = env_vars.get("consumer")
@@ -1154,11 +1176,6 @@ class NewmanExecutor:
         return summary or "provider diagnostics found a negotiation but could not summarize it"
 
     def wait_for_contract_agreement(self, environment_path, timeout=None, poll_interval=None):
-        timeout = (
-            self.CONTRACT_AGREEMENT_TIMEOUT_SECONDS
-            if timeout is None
-            else timeout
-        )
         poll_interval = (
             self.CONTRACT_AGREEMENT_POLL_INTERVAL_SECONDS
             if poll_interval is None
@@ -1166,6 +1183,22 @@ class NewmanExecutor:
         )
 
         _, env_vars = self._read_environment_values(environment_path)
+        timeout = (
+            self._positive_int_from_values(
+                env_vars,
+                (
+                    "e2e_contract_agreement_timeout_seconds",
+                    "PIONERA_NEWMAN_CONTRACT_AGREEMENT_TIMEOUT_SECONDS",
+                    "NEWMAN_CONTRACT_AGREEMENT_TIMEOUT_SECONDS",
+                ),
+                self._positive_int_from_env(
+                    "PIONERA_NEWMAN_CONTRACT_AGREEMENT_TIMEOUT_SECONDS",
+                    self.CONTRACT_AGREEMENT_TIMEOUT_SECONDS,
+                ),
+            )
+            if timeout is None
+            else timeout
+        )
         agreement_id = env_vars.get("e2e_agreement_id")
         if agreement_id:
             return agreement_id

@@ -744,6 +744,19 @@ class NewmanMetricsTests(unittest.TestCase):
         self.assertEqual(env_values["e2e_agreement_id"], "agreement-123")
         self.assertTrue(mock_get.call_args_list[0].args[0].endswith("/management/v3/contractnegotiations/neg-1"))
 
+    def test_newman_executor_reads_positive_int_from_environment_values(self):
+        value = NewmanExecutor._positive_int_from_values(
+            {
+                "invalid": "nope",
+                "zero": "0",
+                "valid": "42",
+            },
+            ("invalid", "zero", "valid"),
+            7,
+        )
+
+        self.assertEqual(value, 42)
+
     def test_find_negotiation_does_not_fallback_to_stale_entry_when_id_is_missing(self):
         executor = NewmanExecutor()
         body = [
@@ -1548,7 +1561,64 @@ class NewmanMetricsTests(unittest.TestCase):
             ):
                 env_vars = engine.build_newman_env("conn-a", "conn-b")
 
-            self.assertEqual(env_vars["e2e_negotiation_status_max_attempts"], "45")
+            self.assertEqual(env_vars["e2e_negotiation_status_max_attempts"], "120")
+
+    def test_validation_engine_uses_vm_retry_budgets_for_transfer_and_agreement_waits(self):
+        for topology in ("vm-single", "vm-distributed"):
+            engine = ValidationEngine(
+                load_connector_credentials=lambda name: {"connector_user": {"user": name, "passwd": "secret"}},
+                load_deployer_config=lambda: {
+                    "KC_URL": "http://keycloak-admin.local",
+                    "KC_INTERNAL_URL": "http://keycloak.local",
+                    "TOPOLOGY": topology,
+                },
+                ds_domain_resolver=lambda: "example.local",
+                ds_name="demo",
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PIONERA_NEWMAN_TRANSFER_START_MAX_ATTEMPTS": "",
+                    "PIONERA_NEWMAN_TRANSFER_STATUS_MAX_ATTEMPTS": "",
+                    "PIONERA_NEWMAN_TRANSFER_DESTINATION_MAX_ATTEMPTS": "",
+                    "PIONERA_NEWMAN_CONTRACT_AGREEMENT_TIMEOUT_SECONDS": "",
+                    "PIONERA_NEWMAN_CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS": "",
+                },
+            ):
+                env_vars = engine.build_newman_env("conn-a", "conn-b")
+
+            self.assertEqual(env_vars["e2e_transfer_start_max_attempts"], "20")
+            self.assertEqual(env_vars["e2e_transfer_status_max_attempts"], "60")
+            self.assertEqual(env_vars["e2e_transfer_destination_max_attempts"], "60")
+            self.assertEqual(env_vars["e2e_contract_agreement_timeout_seconds"], "240")
+            self.assertEqual(env_vars["e2e_contract_agreement_visibility_timeout_seconds"], "90")
+
+    def test_validation_engine_allows_configured_vm_retry_budgets_for_transfer_and_agreement_waits(self):
+        engine = ValidationEngine(
+            load_connector_credentials=lambda name: {"connector_user": {"user": name, "passwd": "secret"}},
+            load_deployer_config=lambda: {
+                "KC_URL": "http://keycloak-admin.local",
+                "KC_INTERNAL_URL": "http://keycloak.local",
+                "TOPOLOGY": "vm-distributed",
+                "NEWMAN_TRANSFER_STATUS_MAX_ATTEMPTS": "33",
+                "NEWMAN_CONTRACT_AGREEMENT_TIMEOUT_SECONDS": "144",
+            },
+            ds_domain_resolver=lambda: "example.local",
+            ds_name="demo",
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PIONERA_NEWMAN_TRANSFER_STATUS_MAX_ATTEMPTS": "",
+                "PIONERA_NEWMAN_CONTRACT_AGREEMENT_TIMEOUT_SECONDS": "",
+            },
+        ):
+            env_vars = engine.build_newman_env("conn-a", "conn-b")
+
+        self.assertEqual(env_vars["e2e_transfer_status_max_attempts"], "33")
+        self.assertEqual(env_vars["e2e_contract_agreement_timeout_seconds"], "144")
 
     def test_validation_engine_allows_configured_negotiation_retry_budget_for_vm_topologies(self):
         engine = ValidationEngine(
