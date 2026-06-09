@@ -60,7 +60,7 @@ support_checks:
   - id: MH-MODEL-SERVER-01
     component: ai_model_hub
     case_group: support
-    description: Real use-case model-server discovery endpoint
+    description: Use-case model discovery endpoint
     type: api
     validation_type: support
     dataspace_dimension: component-runtime
@@ -71,9 +71,9 @@ support_checks:
       - AI Model Hub model-server mode is use-cases or combined
       - A public or validation URL for the model-server is configured
     steps:
-      - Request the configured discovery endpoint
+      - Request the configured model discovery endpoint
       - Confirm that the endpoint returns a non-empty JSON payload
-    expected_result: The real AI Model Hub model-server exposes discoverable use-case metadata
+    expected_result: The AI Model Hub use-case model-server exposes discoverable model metadata
     automation:
       status: automated
       mode: api_support
@@ -86,7 +86,33 @@ support_checks:
   - id: MH-MODEL-SERVER-02
     component: ai_model_hub
     case_group: support
-    description: Configured real use-case model-server inference endpoints
+    description: Use-case dataset discovery endpoint
+    type: api
+    validation_type: support
+    dataspace_dimension: component-runtime
+    execution_mode: api_support
+    coverage_status: automated
+    mapping_status: supporting
+    preconditions:
+      - AI Model Hub model-server mode is use-cases or combined
+      - A public or validation URL for the model-server is configured
+    steps:
+      - Request the configured dataset discovery endpoint
+      - Confirm that the endpoint returns a non-empty JSON payload
+    expected_result: The AI Model Hub use-case model-server exposes discoverable dataset metadata
+    automation:
+      status: automated
+      mode: api_support
+      runner_case: mh_model_server_02_dataset_discovery
+      real_flow:
+        method: GET
+        path: /datasets
+      notes: Executed with model discovery to verify that Level 6 can validate the datasets used by Step 9 seeding.
+
+  - id: MH-MODEL-SERVER-03
+    component: ai_model_hub
+    case_group: support
+    description: Configured use-case model-server inference endpoints
     type: api
     validation_type: support
     dataspace_dimension: component-runtime
@@ -103,7 +129,7 @@ support_checks:
     automation:
       status: automated
       mode: api_support
-      runner_case: mh_model_server_02_endpoint_execution
+      runner_case: mh_model_server_03_endpoint_execution
       real_flow:
         method: POST
         path: configurable

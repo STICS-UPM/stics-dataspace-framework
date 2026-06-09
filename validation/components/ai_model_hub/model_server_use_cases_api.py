@@ -9,8 +9,10 @@ from deployers.shared.lib import ai_model_hub_model_server as model_server_confi
 
 COMPONENT_KEY = "ai-model-hub"
 SUITE_NAME = "model-server-use-cases-api"
+SUITE_DISPLAY_NAME = "AI Model Hub use cases"
 CASE_ID_DISCOVERY = "MH-MODEL-SERVER-01"
-CASE_ID_OPTIONAL_EXECUTION = "MH-MODEL-SERVER-02"
+CASE_ID_DATASETS = "MH-MODEL-SERVER-02"
+CASE_ID_OPTIONAL_EXECUTION = "MH-MODEL-SERVER-03"
 
 
 def _parse_bool(value, *, default=False) -> bool:
@@ -64,6 +66,26 @@ def _json_payload(body_text: str) -> Any:
         return None
 
 
+def _payload_item_count(payload: Any) -> int:
+    if isinstance(payload, list):
+        return len(payload)
+    if not isinstance(payload, dict):
+        return 0
+    if isinstance(payload.get("models"), list):
+        return len(payload["models"])
+    if isinstance(payload.get("datasets"), list):
+        return len(payload["datasets"])
+    count = 0
+    for value in payload.values():
+        if isinstance(value, list):
+            count += len(value)
+        elif isinstance(value, dict):
+            count += 1
+        elif value not in (None, "", []):
+            count += 1
+    return count
+
+
 def _summarize_cases(executed_cases: List[Dict[str, Any]]) -> Dict[str, int]:
     summary = {"total": len(executed_cases), "passed": 0, "failed": 0, "skipped": 0}
     for case in executed_cases:
@@ -99,7 +121,7 @@ def _case_result(
             "status": status,
             "assertions": assertions,
         },
-        "expected_result": "The real AI Model Hub model-server exposes discoverable use-case metadata",
+        "expected_result": "The AI Model Hub use-case model-server exposes the expected API contract",
     }
 
 
@@ -161,7 +183,15 @@ def run_ai_model_hub_model_server_use_cases_validation(
         executed_cases = [
             _case_result(
                 case_id=CASE_ID_DISCOVERY,
-                description="Real use-case model-server discovery endpoint",
+                description="Use-case model discovery endpoint",
+                status="skipped",
+                request_payload={"method": "GET", "url": ""},
+                response_payload={},
+                assertions=[skip_reason],
+            ),
+            _case_result(
+                case_id=CASE_ID_DATASETS,
+                description="Use-case dataset discovery endpoint",
                 status="skipped",
                 request_payload={"method": "GET", "url": ""},
                 response_payload={},
@@ -169,7 +199,7 @@ def run_ai_model_hub_model_server_use_cases_validation(
             ),
             _case_result(
                 case_id=CASE_ID_OPTIONAL_EXECUTION,
-                description="Configured real use-case model-server inference endpoints",
+                description="Configured use-case inference endpoints",
                 status="skipped",
                 request_payload={"method": "POST", "paths": []},
                 response_payload={},
@@ -179,6 +209,7 @@ def run_ai_model_hub_model_server_use_cases_validation(
         return {
             "component": COMPONENT_KEY,
             "suite": SUITE_NAME,
+            "suite_display_name": SUITE_DISPLAY_NAME,
             "status": "skipped",
             "summary": _summarize_cases(executed_cases),
             "executed_cases": executed_cases,
@@ -199,46 +230,68 @@ def run_ai_model_hub_model_server_use_cases_validation(
     ).strip()
     if not discovery_path.startswith("/"):
         discovery_path = f"/{discovery_path}"
+    datasets_path = str(
+        values.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH")
+        or values.get("AI_MODEL_HUB_MODEL_SERVER_DATASETS_PATH")
+        or "/datasets"
+    ).strip()
+    if not datasets_path.startswith("/"):
+        datasets_path = f"/{datasets_path}"
 
     executed_cases: List[Dict[str, Any]] = []
     artifacts: Dict[str, str] = {}
     evidence_index: List[Dict[str, Any]] = []
     component_dir = _component_dir(experiment_dir)
 
-    assertions: List[str] = []
-    discovery_url = _build_url(base_url, discovery_path)
-    discovery_status = 0
-    discovery_content_type = ""
-    discovery_body = ""
-    discovery_payload: Any = None
-    if not base_url:
-        assertions.append(
-            "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL or AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL is required"
+    def _get_discovery_case(*, case_id: str, description: str, path: str, label: str) -> Dict[str, Any]:
+        assertions: List[str] = []
+        url = _build_url(base_url, path)
+        status = 0
+        content_type = ""
+        body = ""
+        payload: Any = None
+        if not base_url:
+            assertions.append(
+                "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL or AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL is required"
+            )
+        else:
+            status, content_type, body = _http_request("GET", url)
+            payload = _json_payload(body)
+            if status != 200:
+                assertions.append(f"Expected HTTP 200 from {label} endpoint, got HTTP {status}")
+            if payload is None:
+                assertions.append(f"{label.capitalize()} endpoint did not return valid JSON")
+            elif _payload_item_count(payload) == 0:
+                assertions.append(f"{label.capitalize()} endpoint returned no entries")
+        return _case_result(
+            case_id=case_id,
+            description=description,
+            status="failed" if assertions else "passed",
+            request_payload={"method": "GET", "url": url},
+            response_payload={
+                "http_status": status,
+                "content_type": content_type,
+                "body_excerpt": body[:1000],
+                "json_payload": payload,
+                "item_count": _payload_item_count(payload),
+            },
+            assertions=assertions,
         )
-    else:
-        discovery_status, discovery_content_type, discovery_body = _http_request("GET", discovery_url)
-        discovery_payload = _json_payload(discovery_body)
-        if discovery_status != 200:
-            assertions.append(f"Expected HTTP 200 from discovery endpoint, got HTTP {discovery_status}")
-        if discovery_payload is None:
-            assertions.append("Discovery endpoint did not return valid JSON")
-        elif isinstance(discovery_payload, (list, dict)) and len(discovery_payload) == 0:
-            assertions.append("Discovery endpoint returned an empty JSON payload")
 
-    discovery_case = _case_result(
+    discovery_case = _get_discovery_case(
         case_id=CASE_ID_DISCOVERY,
-        description="Real use-case model-server discovery endpoint",
-        status="failed" if assertions else "passed",
-        request_payload={"method": "GET", "url": discovery_url},
-        response_payload={
-            "http_status": discovery_status,
-            "content_type": discovery_content_type,
-            "body_excerpt": discovery_body[:1000],
-            "json_payload": discovery_payload,
-        },
-        assertions=assertions,
+        description="Use-case model discovery endpoint",
+        path=discovery_path,
+        label="model discovery",
     )
     executed_cases.append(discovery_case)
+    datasets_case = _get_discovery_case(
+        case_id=CASE_ID_DATASETS,
+        description="Use-case dataset discovery endpoint",
+        path=datasets_path,
+        label="dataset discovery",
+    )
+    executed_cases.append(datasets_case)
 
     endpoint_paths = _validation_endpoint_paths(values)
     if endpoint_paths:
@@ -266,7 +319,7 @@ def run_ai_model_hub_model_server_use_cases_validation(
         executed_cases.append(
             _case_result(
                 case_id=CASE_ID_OPTIONAL_EXECUTION,
-                description="Configured real use-case model-server inference endpoints",
+                description="Configured use-case inference endpoints",
                 status="failed" if endpoint_assertions else "passed",
                 request_payload={
                     "method": "POST",
@@ -284,6 +337,7 @@ def run_ai_model_hub_model_server_use_cases_validation(
     result: Dict[str, Any] = {
         "component": COMPONENT_KEY,
         "suite": SUITE_NAME,
+        "suite_display_name": SUITE_DISPLAY_NAME,
         "timestamp": started_at,
         "status": suite_status,
         "summary": summary,
@@ -295,6 +349,7 @@ def run_ai_model_hub_model_server_use_cases_validation(
             "configured_mode": raw_mode,
             "base_url": base_url,
             "discovery_path": discovery_path,
+            "datasets_path": datasets_path,
             "source_repository": values.get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY") or "",
             "source_ref": values.get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF") or "",
         },
@@ -303,10 +358,12 @@ def run_ai_model_hub_model_server_use_cases_validation(
     if component_dir:
         report_path = os.path.join(component_dir, "ai_model_hub_model_server_use_cases_validation.json")
         discovery_path_json = os.path.join(component_dir, "mh-model-server-01-response.json")
+        datasets_path_json = os.path.join(component_dir, "mh-model-server-02-response.json")
         artifacts.update(
             {
                 "report_json": report_path,
                 "mh-model-server-01-response.json": discovery_path_json,
+                "mh-model-server-02-response.json": datasets_path_json,
             }
         )
         _write_json(
@@ -334,15 +391,32 @@ def run_ai_model_hub_model_server_use_cases_validation(
                 "path": discovery_path_json,
             }
         )
-        if len(executed_cases) > 1:
-            execution_path_json = os.path.join(component_dir, "mh-model-server-02-response.json")
-            artifacts["mh-model-server-02-response.json"] = execution_path_json
+        _write_json(
+            datasets_path_json,
+            {
+                "request": datasets_case["request"],
+                "response": datasets_case["response"],
+                "evaluation": datasets_case["evaluation"],
+            },
+        )
+        evidence_index.append(
+            {
+                "scope": "case",
+                "suite": SUITE_NAME,
+                "test_case_id": CASE_ID_DATASETS,
+                "artifact_name": "mh-model-server-02-response.json",
+                "path": datasets_path_json,
+            }
+        )
+        if len(executed_cases) > 2:
+            execution_path_json = os.path.join(component_dir, "mh-model-server-03-response.json")
+            artifacts["mh-model-server-03-response.json"] = execution_path_json
             _write_json(
                 execution_path_json,
                 {
-                    "request": executed_cases[1]["request"],
-                    "response": executed_cases[1]["response"],
-                    "evaluation": executed_cases[1]["evaluation"],
+                    "request": executed_cases[2]["request"],
+                    "response": executed_cases[2]["response"],
+                    "evaluation": executed_cases[2]["evaluation"],
                 },
             )
             evidence_index.append(
@@ -350,7 +424,7 @@ def run_ai_model_hub_model_server_use_cases_validation(
                     "scope": "case",
                     "suite": SUITE_NAME,
                     "test_case_id": CASE_ID_OPTIONAL_EXECUTION,
-                    "artifact_name": "mh-model-server-02-response.json",
+                    "artifact_name": "mh-model-server-03-response.json",
                     "path": execution_path_json,
                 }
             )

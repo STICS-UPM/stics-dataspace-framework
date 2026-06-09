@@ -5615,6 +5615,7 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
         "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL",
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH",
+        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH",
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS",
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD",
         "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES",
@@ -16190,6 +16191,7 @@ VM_DISTRIBUTED_PROFILE_TEMPLATE_KEYS = (
     "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
     "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL",
     "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH",
+    "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH",
     "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS",
     "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD",
     "AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR",
@@ -19368,6 +19370,7 @@ def _write_ai_model_hub_real_models_profile_updates(profile_path, updates):
             "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
             "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL",
             "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH",
+            "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH",
             "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES",
             "AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR",
             "AI_MODEL_HUB_REAL_MODELS_TRAIN_COMMAND",
@@ -19387,6 +19390,7 @@ def _promote_ai_model_hub_real_models_profile(profile_path, profile_values=None,
         "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": status.get("repository") or "",
         "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH": "/models",
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH": "/models",
+        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH": "/datasets",
         "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES": "true",
     }
     if status.get("public_url"):
@@ -19416,6 +19420,7 @@ def _restore_ai_model_hub_mock_model_server_profile(profile_path, adapter_name="
         "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH": "",
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL": "",
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH": "",
+        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH": "",
         "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES": "",
     }
     _write_ai_model_hub_real_models_profile_updates(profile_path, updates)
@@ -19528,6 +19533,7 @@ def _ai_model_hub_use_case_demo_profile_updates(profile_values=None):
         "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": status.get("repository") or "",
         "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH": "/models",
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH": "/models",
+        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH": "/datasets",
         "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES": "true",
     }
     if source_ref:
@@ -19552,6 +19558,7 @@ def _write_ai_model_hub_use_case_demo_profile_updates(profile_path, updates):
             "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
             "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL",
             "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH",
+            "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH",
             "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES",
         ),
     )

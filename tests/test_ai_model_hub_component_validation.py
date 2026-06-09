@@ -128,20 +128,20 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
 
             self.assertEqual(result["component"], "ai-model-hub")
             self.assertEqual(result["status"], "passed")
-            self.assertEqual(result["summary"]["total"], 4)
+            self.assertEqual(result["summary"]["total"], 5)
             self.assertEqual(result["summary"]["passed"], 2)
-            self.assertEqual(result["summary"]["skipped"], 2)
+            self.assertEqual(result["summary"]["skipped"], 3)
             self.assertEqual(result["suites"]["bootstrap"]["status"], "passed")
             self.assertEqual(result["suites"]["ui"]["status"], "skipped")
             self.assertEqual(result["suites"]["model_server_use_cases"]["status"], "skipped")
-            self.assertEqual(result["support_summary"]["total"], 4)
+            self.assertEqual(result["support_summary"]["total"], 5)
             self.assertEqual(result["support_summary"]["passed"], 2)
-            self.assertEqual(result["support_summary"]["skipped"], 2)
+            self.assertEqual(result["support_summary"]["skipped"], 3)
             self.assertEqual(result["pt5_summary"]["total"], 0)
             self.assertEqual(result["catalog_alignment"]["summary"]["declared_pt5_cases"], 18)
             self.assertEqual(result["catalog_alignment"]["summary"]["uncovered_pt5_cases"], 18)
-            self.assertEqual(result["catalog_alignment"]["summary"]["declared_support_checks"], 4)
-            self.assertEqual(result["catalog_alignment"]["summary"]["executed_support_checks"], 4)
+            self.assertEqual(result["catalog_alignment"]["summary"]["declared_support_checks"], 5)
+            self.assertEqual(result["catalog_alignment"]["summary"]["executed_support_checks"], 5)
             self.assertEqual(result["catalog_alignment"]["summary"]["missing_support_checks"], 0)
             self.assertEqual(len(result["findings"]), 0)
             self.assertTrue(result["artifacts"]["report_json"].endswith("ai_model_hub_component_validation.json"))
@@ -220,20 +220,20 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
 
             self.assertEqual(result["component"], "ai-model-hub")
             self.assertEqual(result["status"], "passed")
-            self.assertEqual(result["summary"]["total"], 8)
+            self.assertEqual(result["summary"]["total"], 9)
             self.assertEqual(result["summary"]["passed"], 6)
-            self.assertEqual(result["summary"]["skipped"], 2)
+            self.assertEqual(result["summary"]["skipped"], 3)
             self.assertEqual(result["phase_order"], ["preflight", "functional", "integration"])
             self.assertIn("bootstrap", result["phases"]["preflight"]["suites"])
             self.assertIn("ui", result["phases"]["functional"]["suites"])
             self.assertIn("model_server_use_cases", result["phases"]["functional"]["suites"])
             self.assertEqual(result["pt5_summary"]["total"], 1)
             self.assertEqual(result["pt5_summary"]["passed"], 1)
-            self.assertEqual(result["support_summary"]["total"], 3)
+            self.assertEqual(result["support_summary"]["total"], 4)
             self.assertEqual(result["support_summary"]["passed"], 1)
-            self.assertEqual(result["support_summary"]["skipped"], 2)
+            self.assertEqual(result["support_summary"]["skipped"], 3)
             self.assertEqual(result["catalog_alignment"]["summary"]["executed_pt5_cases"], 1)
-            self.assertEqual(result["catalog_alignment"]["summary"]["executed_support_checks"], 3)
+            self.assertEqual(result["catalog_alignment"]["summary"]["executed_support_checks"], 4)
             self.assertEqual(result["pt5_case_results"][0]["traceability"], ["MH-01"])
             self.assertTrue(result["artifacts"]["ui_report_json"].endswith("ui.json"))
 
@@ -379,8 +379,11 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
     def test_model_server_use_cases_validation_records_discovery_evidence(self):
         def fake_http_request(method, url, payload=None, timeout=30):
             self.assertEqual(method, "GET")
-            self.assertEqual(url, "https://org.example.test/model-server/models")
-            return 200, "application/json", json.dumps([{"name": "flares-reliability"}])
+            if url == "https://org.example.test/model-server/models":
+                return 200, "application/json", json.dumps({"flares": [{"name": "flares-reliability"}]})
+            if url == "https://org.example.test/model-server/datasets":
+                return 200, "application/json", json.dumps({"datasets": [{"name": "segments_test.csv"}]})
+            self.fail(f"unexpected URL: {url}")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch(
@@ -398,10 +401,13 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                 )
                 self.assertTrue(os.path.exists(result["artifacts"]["report_json"]))
                 self.assertTrue(os.path.exists(result["artifacts"]["mh-model-server-01-response.json"]))
+                self.assertTrue(os.path.exists(result["artifacts"]["mh-model-server-02-response.json"]))
 
         self.assertEqual(result["status"], "passed")
-        self.assertEqual(result["summary"], {"total": 1, "passed": 1, "failed": 0, "skipped": 0})
+        self.assertEqual(result["suite_display_name"], "AI Model Hub use cases")
+        self.assertEqual(result["summary"], {"total": 2, "passed": 2, "failed": 0, "skipped": 0})
         self.assertEqual(result["executed_cases"][0]["test_case_id"], "MH-MODEL-SERVER-01")
+        self.assertEqual(result["executed_cases"][1]["test_case_id"], "MH-MODEL-SERVER-02")
         self.assertEqual(result["model_server"]["source_ref"], "abc123")
 
     def test_model_server_use_cases_validation_can_probe_configured_endpoints(self):
@@ -410,7 +416,9 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
         def fake_http_request(method, url, payload=None, timeout=30):
             calls.append((method, url, payload))
             if method == "GET":
-                return 200, "application/json", json.dumps({"models": [{"endpoint": "/api/v1/flares"}]})
+                if url.endswith("/models"):
+                    return 200, "application/json", json.dumps({"models": [{"endpoint": "/api/v1/flares"}]})
+                return 200, "application/json", json.dumps({"datasets": [{"name": "segments_test.csv"}]})
             return 200, "application/json", json.dumps({"result": {"label": "confiable"}})
 
         with mock.patch(
@@ -427,12 +435,13 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "passed")
-        self.assertEqual(result["summary"]["total"], 2)
-        self.assertEqual(result["executed_cases"][1]["test_case_id"], "MH-MODEL-SERVER-02")
+        self.assertEqual(result["summary"]["total"], 3)
+        self.assertEqual(result["executed_cases"][2]["test_case_id"], "MH-MODEL-SERVER-03")
         self.assertEqual(
             calls,
             [
                 ("GET", "http://model-server.example.test/models", None),
+                ("GET", "http://model-server.example.test/datasets", None),
                 ("POST", "http://model-server.example.test/api/v1/flares", {"text": "sample"}),
                 ("POST", "http://model-server.example.test/api/v1/gtfs", {"text": "sample"}),
             ],
@@ -620,9 +629,9 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                     experiment_dir=tmpdir,
                 )
 
-            self.assertEqual(result["summary"]["total"], 8)
+            self.assertEqual(result["summary"]["total"], 9)
             self.assertEqual(result["summary"]["passed"], 6)
-            self.assertEqual(result["summary"]["skipped"], 2)
+            self.assertEqual(result["summary"]["skipped"], 3)
             self.assertIn("connector_governance", result["suites"])
             self.assertIn("model_server_use_cases", result["suites"])
             self.assertIn("connector_governance", result["phases"]["integration"]["suites"])
@@ -716,9 +725,9 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                     experiment_dir=tmpdir,
                 )
 
-            self.assertEqual(result["summary"]["total"], 7)
+            self.assertEqual(result["summary"]["total"], 8)
             self.assertEqual(result["summary"]["passed"], 5)
-            self.assertEqual(result["summary"]["skipped"], 2)
+            self.assertEqual(result["summary"]["skipped"], 3)
             self.assertIn("model_benchmarking", result["suites"])
             self.assertIn("model_server_use_cases", result["suites"])
             self.assertIn("model_benchmarking", result["phases"]["functional"]["suites"])
@@ -812,9 +821,9 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                     experiment_dir=tmpdir,
                 )
 
-            self.assertEqual(result["summary"]["total"], 4)
+            self.assertEqual(result["summary"]["total"], 5)
             self.assertEqual(result["summary"]["passed"], 2)
-            self.assertEqual(result["summary"]["skipped"], 2)
+            self.assertEqual(result["summary"]["skipped"], 3)
             self.assertIn("mobility_benchmarking", result["suites"])
             self.assertIn("model_server_use_cases", result["suites"])
             self.assertEqual(result["functional_use_case_summary"]["total"], 1)
@@ -924,9 +933,9 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertIn("Component Playwright suite: AI Model Hub functional", printed)
             self.assertIn("Component API suite: AI Model Hub integration", printed)
             self.assertIn("✓ MH-OBS-02", printed)
-            self.assertEqual(result["summary"]["total"], 4)
+            self.assertEqual(result["summary"]["total"], 5)
             self.assertEqual(result["summary"]["passed"], 2)
-            self.assertEqual(result["summary"]["skipped"], 2)
+            self.assertEqual(result["summary"]["skipped"], 3)
             self.assertIn("model_observer", result["suites"])
             self.assertIn("model_server_use_cases", result["suites"])
             self.assertEqual(result["phase_execution_channels"]["preflight"], ["api"])
