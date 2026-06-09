@@ -3,6 +3,7 @@ import os
 import shutil
 import shlex
 import socket
+import sys
 import tempfile
 import time
 import ipaddress
@@ -17,6 +18,7 @@ from deployers.shared.lib.components import (
     configured_component_public_path,
     configured_component_public_url,
     infer_component_hostname,
+    public_path_ingress_annotations,
     strip_url_scheme,
 )
 from deployers.shared.lib.cluster_runtime import build_cluster_runtime
@@ -1521,6 +1523,10 @@ class INESDataComponentsAdapter:
             return command
         return f"printf '%s\\n' \"${{{env_name}}}\" | {command}"
 
+    @staticmethod
+    def _remote_k3s_interactive_fallback_allowed() -> bool:
+        return bool(sys.stdin.isatty() and sys.stdout.isatty())
+
     def _load_images_into_k3s(self, image_refs, deployer_config: dict | None = None):
         image_refs = self._dedupe_image_refs(image_refs)
         if not image_refs:
@@ -1578,11 +1584,19 @@ class INESDataComponentsAdapter:
                                     root_cause=refs_label,
                                 )
                             return
-                        print(
-                            "Remote k3s image import needs sudo password; "
-                            "retrying with an interactive prompt."
-                        )
-                        interactive_import = True
+                        if self._remote_k3s_interactive_fallback_allowed():
+                            print(
+                                "Remote k3s image import needs sudo password; "
+                                "retrying with an interactive prompt."
+                            )
+                            interactive_import = True
+                        else:
+                            print(
+                                "Remote k3s image import needs sudo password, but this run is non-interactive. "
+                                "Set K3S_REMOTE_IMPORT_SUDO_PASSWORD, PIONERA_REMOTE_SUDO_PASSWORD or "
+                                "PIONERA_SUDO_PASSWORD, or configure passwordless sudo for the remote k3s "
+                                "image import command."
+                            )
                 ssh_command = shell_join(
                     remote_target.ssh_import_args(remote_archive_path, interactive=interactive_import)
                 )
@@ -2097,13 +2111,11 @@ class INESDataComponentsAdapter:
         if self._component_public_path_rewrite_enabled(normalized_component, deployer_config, public_path):
             ingress["path"] = f"{public_path}(/|$)(.*)"
             ingress["pathType"] = "ImplementationSpecific"
-            ingress["annotations"] = {
-                "nginx.ingress.kubernetes.io/use-regex": "true",
-                "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
-            }
+            ingress["annotations"] = public_path_ingress_annotations(rewrite_enabled=True)
         else:
             ingress["path"] = public_path
             ingress["pathType"] = "Prefix"
+            ingress["annotations"] = public_path_ingress_annotations(rewrite_enabled=False)
         return ingress
 
     def _resolve_dataspace_connector_ids(self, *, ds_name=None, deployer_config=None):

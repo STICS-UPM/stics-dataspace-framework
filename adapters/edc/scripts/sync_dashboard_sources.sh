@@ -44,7 +44,7 @@ if [[ "$APPLY" != true ]]; then
   exit 0
 fi
 
-if git -C "$TARGET_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+if [[ -d "$TARGET_DIR/.git" ]] && [[ "$(git -C "$TARGET_DIR" rev-parse --show-toplevel 2>/dev/null || true)" == "$(cd "$TARGET_DIR" && pwd)" ]]; then
   git -C "$TARGET_DIR" remote set-url origin "$SOURCE_URL"
   git -C "$TARGET_DIR" fetch origin
 else

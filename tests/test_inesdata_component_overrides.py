@@ -401,6 +401,8 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                     "path": "/ontology-hub(/|$)(.*)",
                     "pathType": "ImplementationSpecific",
                     "annotations": {
+                        "nginx.ingress.kubernetes.io/ssl-redirect": "false",
+                        "nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
                         "nginx.ingress.kubernetes.io/use-regex": "true",
                         "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
                     },
@@ -2303,6 +2305,10 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                     os.path.isfile(os.path.join(build_context, "use_cases", "models", "mobility", "demo_model.pkl"))
                 )
                 self.assertTrue(os.path.isfile(os.path.join(build_context, "combined_model_server", "server.py")))
+                with open(os.path.join(build_context, "combined_model_server", "server.py"), encoding="utf-8") as handle:
+                    combined_server = handle.read()
+                self.assertIn('@app.get("/datasets")', combined_server)
+                self.assertIn('@app.get("/datasets/{filename}")', combined_server)
             finally:
                 shutil.rmtree(build_context, ignore_errors=True)
 
@@ -2454,7 +2460,10 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             "VM_COMPONENTS_SSH_PORT": "22",
         }
 
-        with mock.patch.object(adapter, "_docker_cmd", return_value="docker"):
+        with (
+            mock.patch.object(adapter, "_docker_cmd", return_value="docker"),
+            mock.patch.object(adapter, "_remote_k3s_interactive_fallback_allowed", return_value=True),
+        ):
             adapter._load_image_into_k3s("ontology-hub:local", deployer_config)
 
         commands = [call.args[0] for call in adapter.run.call_args_list]
@@ -2533,7 +2542,10 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             "VM_COMPONENTS_SSH_PORT": "22",
         }
 
-        with mock.patch.object(adapter, "_docker_cmd", return_value="docker"):
+        with (
+            mock.patch.object(adapter, "_docker_cmd", return_value="docker"),
+            mock.patch.object(adapter, "_remote_k3s_interactive_fallback_allowed", return_value=True),
+        ):
             adapter._load_image_into_k3s("ontology-hub:local", deployer_config)
 
         commands = [call.args[0] for call in adapter.run.call_args_list]
@@ -2543,6 +2555,34 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertIn("sudo -n k3s ctr -n k8s.io images ls -q", commands[3])
         self.assertIn("ssh -tt", commands[4])
         self.assertIn("sudo k3s ctr -n k8s.io images import", commands[4])
+
+    def test_load_image_into_k3s_auto_does_not_prompt_in_non_interactive_batch(self):
+        adapter = self._make_adapter()
+        adapter.config_adapter.topology = "vm-distributed"
+        adapter.run = mock.Mock(side_effect=["tagged", "saved", "copied", None, None])
+        deployer_config = {
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT": "true",
+            "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_INTERACTIVE": "auto",
+            "SSH_ACCESS_MODE": "bastion",
+            "SSH_BASTION_HOST": "orion.example.test",
+            "SSH_BASTION_PORT": "2222",
+            "SSH_BASTION_USER": "jump",
+            "VM_COMPONENTS_SSH_HOST": "pionera40",
+            "VM_COMPONENTS_SSH_USER": "pionera",
+            "VM_COMPONENTS_SSH_PORT": "22",
+        }
+
+        with (
+            mock.patch.object(adapter, "_docker_cmd", return_value="docker"),
+            mock.patch.object(adapter, "_remote_k3s_interactive_fallback_allowed", return_value=False),
+        ):
+            with self.assertRaises(RuntimeError):
+                adapter._load_image_into_k3s("ontology-hub:local", deployer_config)
+
+        commands = [call.args[0] for call in adapter.run.call_args_list]
+        self.assertIn("sudo -n k3s ctr -n k8s.io images ls -q", commands[3])
+        self.assertNotIn("ssh -tt", commands[4])
+        self.assertIn("sudo -n k3s ctr -n k8s.io images import", commands[4])
 
     def test_load_image_into_k3s_auto_uses_batch_sudo_secret_before_interactive_prompt(self):
         adapter = self._make_adapter()
@@ -3386,6 +3426,41 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         adapter.run_silent.assert_called_once_with(
             "kubectl get ingress demo-ai-model-hub -n components -o jsonpath='{.spec.rules[0].host}'"
         )
+
+    def test_verify_component_publication_follows_ai_model_hub_https_redirects(self):
+        adapter = self._make_shared_adapter()
+        adapter.run_silent = mock.Mock(return_value="org1.pionera.oeg.fi.upm.es")
+
+        root_response = mock.Mock(status_code=200, headers={}, history=[mock.Mock(status_code=308)])
+        config_response = mock.Mock(status_code=200, headers={}, history=[mock.Mock(status_code=308)])
+
+        with mock.patch("adapters.shared.components.requests.get", side_effect=[root_response, config_response]) as get_mock:
+            result = adapter.verify_component_publication(
+                "ai-model-hub",
+                deployment_plan={
+                    "release_name": "pionera-ai-model-hub",
+                    "host": "org1.pionera.oeg.fi.upm.es",
+                    "public_url": "http://org1.pionera.oeg.fi.upm.es/ai-model-hub",
+                },
+                namespace="components",
+                timeout_seconds=1,
+                poll_interval_seconds=1,
+            )
+
+        self.assertTrue(result["verified"])
+        self.assertEqual(
+            [call.kwargs.get("allow_redirects") for call in get_mock.call_args_list],
+            [True, True],
+        )
+        self.assertEqual(
+            [call.args[0] for call in get_mock.call_args_list],
+            [
+                "http://org1.pionera.oeg.fi.upm.es/ai-model-hub",
+                "http://org1.pionera.oeg.fi.upm.es/ai-model-hub/config/app-config.json",
+            ],
+        )
+        self.assertIn("redirect", result["root_detail"])
+        self.assertIn("redirect", result["config_detail"])
 
     def test_shared_components_adapter_deploy_component_release_writes_override_and_cleans_it_up(self):
         infrastructure = FakeInfrastructure()
