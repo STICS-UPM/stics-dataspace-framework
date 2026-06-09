@@ -11,7 +11,7 @@
       <mat-toolbar class="sidenav-toolbar">
         <span class="brand-label">
           <img class="brand-logo" src="assets/branding/pionera-logo.svg" alt="PIONERA logo">
-          <span class="brand-name">PIONERA</span>
+          <span class="brand-name" *ngIf="showBrandName">{{ brandName }}</span>
         </span>
       </mat-toolbar>
       <mat-nav-list>

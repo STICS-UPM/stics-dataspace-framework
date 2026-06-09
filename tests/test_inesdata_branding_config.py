@@ -93,6 +93,8 @@ class InesdataBrandingConfigTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn('"branding"', template)
+        self.assertIn('"name": "$APP_BRAND_NAME"', template)
+        self.assertIn('"showMenuText": "$APP_SHOW_MENU_TEXT"', template)
         self.assertIn('"primaryColor": "$APP_PRIMARY_COLOR"', template)
         self.assertIn('"secondaryColor": "$APP_SECONDARY_COLOR"', template)
         self.assertIn("applyRuntimeBranding(runtimeEnv)", main_ts)
@@ -134,6 +136,12 @@ class InesdataBrandingConfigTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn('src="assets/branding/pionera-logo.svg"', navigation_html)
+        self.assertIn('*ngIf="showBrandName"', navigation_html)
+        self.assertIn("{{ brandName }}", navigation_html)
+        self.assertNotIn('<span class="brand-name">PIONERA</span>', navigation_html)
+        self.assertIn("environment.runtime", navigation_ts)
+        self.assertIn("showBrandName", navigation_ts)
+        self.assertIn("brandName", navigation_ts)
         self.assertNotIn("collapse-button", navigation_html)
         self.assertNotIn("isMenuCollapsed", navigation_html)
         self.assertNotIn("toggleMenu", navigation_ts)
