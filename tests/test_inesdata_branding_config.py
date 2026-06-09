@@ -154,6 +154,17 @@ class InesdataBrandingConfigTests(unittest.TestCase):
         self.assertIn("data: {title: 'AI Model Observer', icon: 'desktop_windows'}", routing_ts)
         self.assertNotIn("icon: 'monitoring'", routing_ts)
 
+    def test_model_observer_home_inputs_stay_inside_cards(self):
+        scss = (
+            ROOT
+            / "adapters/inesdata/sources/inesdata-connector-interface/src/app/pages/ai-model-observer/ai-model-observer-home/ai-model-observer-home.component.scss"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));", scss)
+        self.assertIn("min-width: 0;", scss)
+        self.assertIn("box-sizing: border-box;", scss)
+        self.assertIn("max-width: 100%;", scss)
+
     def test_public_portal_receives_branding_environment(self):
         configmap = (
             ROOT
