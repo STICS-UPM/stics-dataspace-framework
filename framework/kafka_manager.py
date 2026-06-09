@@ -1053,6 +1053,15 @@ class KafkaManager:
         config = self._load_manager_config()
         ids = self._kubernetes_identifiers(config)
         connector_bootstrap = self._kubernetes_connector_bootstrap(config, ids)
+        for candidate in self._candidate_bootstrap_servers():
+            if self.is_kafka_available(candidate):
+                self.container = None
+                self.started_by_framework = False
+                self.bootstrap_servers = candidate
+                self.cluster_bootstrap_servers = connector_bootstrap
+                self.provisioning_mode = ids["provisioner"]
+                self.last_error = None
+                return candidate
         if not self._kubernetes_resources_exist(ids) and not self._kubernetes_external_service_exists(ids):
             return None
 

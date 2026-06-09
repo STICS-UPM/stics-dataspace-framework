@@ -209,6 +209,49 @@ class KafkaManagerTests(unittest.TestCase):
         self.assertTrue(manager.started_by_framework)
         self.assertTrue(any(call["args"] == ["kubectl", "apply", "-f", "-"] for call in commands))
 
+    def test_kubernetes_start_reuses_configured_bootstrap_when_nodeport_is_already_allocated_elsewhere(self):
+        commands = []
+
+        def fake_runner(args, input_text=None):
+            commands.append({"args": list(args), "input": input_text})
+            if args == ["kubectl", "apply", "-f", "-"]:
+                return _FakeCompletedProcess(
+                    returncode=1,
+                    stderr=(
+                        'The Service "framework-kafka-external" is invalid: '
+                        "spec.ports[0].nodePort: Invalid value: 32092: provided port is already allocated"
+                    ),
+                )
+            return _FakeCompletedProcess(stdout="")
+
+        manager = KafkaManager(
+            runtime_config={
+                "provisioner": "kubernetes",
+                "k8s_namespace": "core-control",
+                "k8s_service_name": "framework-kafka",
+                "k8s_external_service_type": "NodePort",
+                "k8s_nodeport": "32092",
+                "cluster_bootstrap_servers": "192.168.122.64:32092",
+            },
+            command_runner=fake_runner,
+        )
+
+        attempts = {"192.168.122.64:32092": 0}
+
+        def is_available(candidate):
+            if candidate != "192.168.122.64:32092":
+                return False
+            attempts[candidate] += 1
+            return attempts[candidate] > 1
+
+        with mock.patch.object(KafkaManager, "is_kafka_available", side_effect=is_available):
+            bootstrap = manager.ensure_kafka_running()
+
+        self.assertEqual(bootstrap, "192.168.122.64:32092")
+        self.assertEqual(manager.cluster_bootstrap_servers, "192.168.122.64:32092")
+        self.assertFalse(manager.started_by_framework)
+        self.assertTrue(any(call["args"] == ["kubectl", "apply", "-f", "-"] for call in commands))
+
     def test_kubernetes_start_removes_stale_split_controller_in_combined_mode(self):
         commands = []
 
