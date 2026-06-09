@@ -221,6 +221,25 @@ print(json.dumps(bootstrap.load_effective_deployer_config(), sort_keys=True))
             ["conn-org2-pionera", "connector-user", "conn-org3-pionera"],
         )
 
+    def test_inesdata_connector_service_account_roles_include_peer_connector_names_without_attributes(self):
+        keycloak_admin = mock.Mock()
+        keycloak_admin.get_realm_roles.return_value = [
+            {"name": "conn-org2-pionera"},
+            {"name": "conn-org3-pionera"},
+            {"name": "connector-user"},
+            {"name": "dataspace-admin"},
+        ]
+
+        roles = inesdata_bootstrap.connector_service_account_role_names(
+            keycloak_admin,
+            "conn-org2-pionera",
+        )
+
+        self.assertEqual(
+            roles,
+            ["conn-org2-pionera", "connector-user", "conn-org3-pionera"],
+        )
+
     def test_inesdata_connector_minio_policy_file_uses_scoped_layout_for_vm_distributed(self):
         previous = self._clear_pionera_overrides()
         os.environ["PIONERA_TOPOLOGY"] = "vm-distributed"

@@ -1844,7 +1844,7 @@ def connector_service_account_role_names(keycloak_admin, client_name):
             continue
         attributes = role.get("attributes") or {}
         connector_attribute = attributes.get("connector")
-        if connector_attribute:
+        if connector_attribute or name.startswith("conn-"):
             role_names.append(name)
     return role_names
 
