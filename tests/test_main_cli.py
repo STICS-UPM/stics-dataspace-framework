@@ -347,6 +347,47 @@ class KafkaTransferConsoleOutputTests(unittest.TestCase):
         experiment_storage.save_kafka_edc_results_json.assert_called_once()
         self.assertIn("Kafka runtime preflight failed", stdout.getvalue())
 
+    def test_vm_distributed_kafka_preparation_reuses_connector_visible_bootstrap(self):
+        class VmDistributedKafkaAdapter(FakeAdapter):
+            topology = "vm-distributed"
+
+            def get_kafka_config(self):
+                return {
+                    "topology": "vm-distributed",
+                    "bootstrap_servers": "127.0.0.1:39092",
+                    "cluster_bootstrap_servers": "192.0.2.10:32092",
+                    "k8s_external_service_type": "NodePort",
+                    "k8s_nodeport": "32092",
+                }
+
+        class FailingKafkaManager:
+            def __init__(self, *args, **kwargs):
+                self.bootstrap_servers = None
+                self.cluster_bootstrap_servers = None
+                self.started_by_framework = False
+                self.provisioning_mode = None
+
+            def ensure_kafka_running(self):
+                raise AssertionError("external vm-distributed Kafka should not be auto-provisioned")
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            preparation = main._start_level6_kafka_preparation(
+                VmDistributedKafkaAdapter(),
+                ["conn-a", "conn-b"],
+                deployer_name="inesdata",
+                kafka_manager_cls=FailingKafkaManager,
+                kafka_enabled=True,
+            )
+
+        result = preparation.wait()
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["bootstrap_servers"], "127.0.0.1:39092")
+        self.assertEqual(result["cluster_bootstrap_servers"], "192.0.2.10:32092")
+        self.assertFalse(result["started_by_framework"])
+        self.assertEqual(result["provisioning_mode"], "external")
+        self.assertIn("configured vm-distributed connector-visible bootstrap", stdout.getvalue())
+
     def test_level6_kafka_prompt_enables_suite_when_user_confirms(self):
         class KafkaReadyAdapter(FakeAdapter):
             def get_kafka_config(self):

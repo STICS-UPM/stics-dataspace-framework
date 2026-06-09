@@ -3160,6 +3160,20 @@ class _Level6KafkaPreparationHandle:
             stop_method()
 
 
+class _CompletedLevel6KafkaPreparationHandle:
+    """Completed Kafka preparation for externally managed runtimes."""
+
+    def __init__(self, result, kafka_manager=None):
+        self.kafka_manager = kafka_manager
+        self._result = dict(result or {})
+
+    def wait(self):
+        return dict(self._result)
+
+    def stop_runtime(self):
+        return None
+
+
 class _Level6LocalHttpPortForwardFallback:
     """Temporary local-only HTTP fallback for Level 6 Kafka validation."""
 
@@ -3494,6 +3508,7 @@ def _start_level6_kafka_preparation(
     ):
         return None
 
+    runtime_config = _load_level6_kafka_runtime_config(adapter)
     preflight = _run_level6_kafka_preflight(adapter, persist=False)
     if str(preflight.get("status") or "").lower() == "failed":
         print(
@@ -3502,7 +3517,46 @@ def _start_level6_kafka_preparation(
         )
         return None
 
-    kafka_manager = build_kafka_manager(adapter, manager_cls=kafka_manager_cls)
+    topology = str(runtime_config.get("topology") or getattr(adapter, "topology", "") or "").strip().lower()
+    connector_bootstrap_servers = preflight.get("connector_bootstrap_servers") or []
+    if topology == "vm-distributed" and connector_bootstrap_servers:
+        cluster_bootstrap_servers = ",".join(connector_bootstrap_servers)
+        local_bootstrap_servers = runtime_config.get("bootstrap_servers") or cluster_bootstrap_servers
+        kafka_manager = build_kafka_manager(
+            adapter,
+            manager_cls=kafka_manager_cls,
+            kafka_runtime_config={
+                **runtime_config,
+                "bootstrap_servers": local_bootstrap_servers,
+                "cluster_bootstrap_servers": cluster_bootstrap_servers,
+            },
+        )
+        kafka_manager.bootstrap_servers = local_bootstrap_servers
+        kafka_manager.cluster_bootstrap_servers = cluster_bootstrap_servers
+        kafka_manager.started_by_framework = False
+        kafka_manager.provisioning_mode = "external"
+        now = time.strftime("%Y-%m-%dT%H:%M:%S")
+        print("\nKafka runtime uses the configured vm-distributed connector-visible bootstrap server.")
+        return _CompletedLevel6KafkaPreparationHandle(
+            {
+                "status": "ready",
+                "started_at": now,
+                "finished_at": now,
+                "duration_seconds": 0.0,
+                "bootstrap_servers": local_bootstrap_servers,
+                "cluster_bootstrap_servers": cluster_bootstrap_servers,
+                "started_by_framework": False,
+                "provisioning_mode": "external",
+                "error": None,
+            },
+            kafka_manager=kafka_manager,
+        )
+
+    kafka_manager = build_kafka_manager(
+        adapter,
+        manager_cls=kafka_manager_cls,
+        kafka_runtime_config=runtime_config,
+    )
     if not background:
         print("\nKafka runtime preparation deferred until Kafka validation (stable local mode).")
         return None
