@@ -41,7 +41,7 @@ test("PT5-MH-05: model discovery search returns the controlled matching model", 
   const connectorAuthorization = await attachManagementAuthorizationRoutes(page, aiModelHubRuntime);
 
   await expect(async () => {
-    await assetsPage.goto();
+    await assetsPage.goto(aiModelHubRuntime.consumerConnectorName);
     await assetsPage.waitUntilReady();
     await assetsPage.search(searchToken);
     await assetsPage.expectCardVisible(matchingAsset.assetName);

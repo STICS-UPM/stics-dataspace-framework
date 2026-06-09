@@ -5,8 +5,11 @@ import hashlib
 import json
 import math
 import os
+import time
 from datetime import datetime
 from typing import Any
+
+import requests
 
 from validation.components.ai_model_hub.model_execution_api import (
     FLARES_DATASET_DIR,
@@ -18,34 +21,44 @@ COMPONENT_KEY = "ai-model-hub"
 SUITE_NAME = "model-benchmarking-api"
 CASE_IDS = ["PT5-MH-12", "PT5-MH-13", "PT5-MH-14", "PT5-MH-15"]
 BENCHMARK_MAPPING = {
-    "inputPath": "input",
+    "inputPath": "request",
     "expectedPath": "expected_label",
-    "predictionPath": "result.label",
+    "predictionPath": "0.Reliability_Label",
 }
 
 DEFAULT_MODELS = [
     {
-        "asset_id": "model-flares-reliability-baseline-a",
-        "name": "FLARES Reliability Baseline A",
-        "variant": "baseline-a",
+        "asset_id": "model-flares-reliability-albert",
+        "name": "FLARES Reliability ALBERT",
+        "variant": "albert",
         "task": "text-classification",
         "framework": "flares",
-        "base_latency_ms": 42,
-        "latency_step_ms": 4,
-        "mispredict_record_ids": [],
-        "description": "Controlled benchmark baseline that mirrors the expected FLARES label.",
+        "endpoint_path": "/flares/dccuchile-albert-base-spanish-reliability",
+        "base_latency_ms": 54,
+        "latency_step_ms": 5,
+        "description": "Real FLARES reliability Transformer model exposed by the AIModelHub use-case model server.",
     },
     {
-        "asset_id": "model-flares-reliability-baseline-b",
-        "name": "FLARES Reliability Baseline B",
-        "variant": "baseline-b",
+        "asset_id": "model-flares-reliability-bert",
+        "name": "FLARES Reliability BERT",
+        "variant": "bert",
         "task": "text-classification",
         "framework": "flares",
-        "base_latency_ms": 30,
-        "latency_step_ms": 3,
-        "mispredict_record_ids": [106, 534],
-        "misprediction_label": "confiable",
-        "description": "Controlled benchmark baseline with lower latency and two expected-label misses.",
+        "endpoint_path": "/flares/dccuchile-bert-base-spanish-wwm-uncased-reliability",
+        "base_latency_ms": 72,
+        "latency_step_ms": 6,
+        "description": "Real FLARES reliability Transformer model exposed by the AIModelHub use-case model server.",
+    },
+    {
+        "asset_id": "model-flares-reliability-distilbert",
+        "name": "FLARES Reliability DistilBERT",
+        "variant": "distilbert",
+        "task": "text-classification",
+        "framework": "flares",
+        "endpoint_path": "/flares/dccuchile-distilbert-base-spanish-uncased-reliability",
+        "base_latency_ms": 40,
+        "latency_step_ms": 4,
+        "description": "Real FLARES reliability Transformer model exposed by the AIModelHub use-case model server.",
     },
 ]
 
@@ -100,6 +113,16 @@ def build_flares_benchmark_rows(fixture: dict[str, Any]) -> list[dict[str, Any]]
                     "w1h_label": record.get("5W1H_Label"),
                     "tag_text": record.get("Tag_Text"),
                 },
+                "request": [
+                    {
+                        "Id": record_id,
+                        "Text": record.get("Text"),
+                        "5W1H_Label": record.get("5W1H_Label"),
+                        "Tag_Text": record.get("Tag_Text"),
+                        "Tag_Start": record.get("Tag_Start"),
+                        "Tag_End": record.get("Tag_End"),
+                    }
+                ],
                 "expected_label": expected_label,
                 "annotation": {
                     "tag_start": record.get("Tag_Start"),
@@ -110,9 +133,39 @@ def build_flares_benchmark_rows(fixture: dict[str, Any]) -> list[dict[str, Any]]
     return rows
 
 
-def _input_fingerprint(payload: dict[str, Any]) -> str:
+def _input_fingerprint(payload: Any) -> str:
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+def _model_server_base_url(explicit_base_url: str | None = None) -> str:
+    candidates = [
+        explicit_base_url,
+        os.environ.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL"),
+        os.environ.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL"),
+        os.environ.get("AI_MODEL_HUB_MODEL_SERVER_BASE_URL"),
+        os.environ.get("UI_AI_MODEL_HUB_MODEL_SERVER_BASE_URL"),
+    ]
+    for candidate in candidates:
+        normalized = str(candidate or "").strip().rstrip("/")
+        if normalized:
+            return normalized
+    return ""
+
+
+def _join_url(base_url: str, path: str) -> str:
+    return f"{base_url.rstrip('/')}/{str(path or '').lstrip('/')}"
+
+
+def _predicted_label_from_response(body: Any) -> str:
+    if isinstance(body, list) and body and isinstance(body[0], dict):
+        return str(body[0].get("Reliability_Label") or "")
+    if isinstance(body, dict):
+        result = body.get("result")
+        if isinstance(result, dict):
+            return str(result.get("label") or result.get("Reliability_Label") or "")
+        return str(body.get("Reliability_Label") or body.get("label") or "")
+    return ""
 
 
 def _predict_label(model: dict[str, Any], row: dict[str, Any]) -> str:
@@ -122,25 +175,64 @@ def _predict_label(model: dict[str, Any], row: dict[str, Any]) -> str:
     return str(row.get("expected_label") or "")
 
 
-def _execute_model(model: dict[str, Any], row: dict[str, Any], row_index: int) -> dict[str, Any]:
-    latency_ms = int(model.get("base_latency_ms") or 0) + (row_index % 3) * int(model.get("latency_step_ms") or 0)
-    predicted_label = _predict_label(model, row)
+def _execute_model(
+    model: dict[str, Any],
+    row: dict[str, Any],
+    row_index: int,
+    *,
+    model_server_base_url: str = "",
+) -> dict[str, Any]:
     expected_label = str(row.get("expected_label") or "")
+    request_payload = row.get("request")
+    endpoint_path = str(model.get("endpoint_path") or "")
+    endpoint_url = _join_url(model_server_base_url, endpoint_path) if model_server_base_url and endpoint_path else ""
+    response_body: Any
+    http_status: int | None
+    error = ""
+
+    if endpoint_url:
+        started = time.perf_counter()
+        try:
+            response = requests.post(endpoint_url, json=request_payload, timeout=60)
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            http_status = response.status_code
+            try:
+                response_body = response.json()
+            except ValueError:
+                response_body = {"text": response.text[:500]}
+            predicted_label = _predicted_label_from_response(response_body)
+            status = "passed" if 200 <= response.status_code < 300 and predicted_label else "failed"
+            if response.status_code < 200 or response.status_code >= 300:
+                error = f"Model server returned HTTP {response.status_code}"
+            elif not predicted_label:
+                error = "Model server response did not include Reliability_Label"
+        except requests.RequestException as exc:
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            http_status = None
+            response_body = None
+            predicted_label = ""
+            status = "failed"
+            error = str(exc)
+    else:
+        latency_ms = int(model.get("base_latency_ms") or 0) + (row_index % 3) * int(model.get("latency_step_ms") or 0)
+        predicted_label = _predict_label(model, row)
+        http_status = None
+        response_body = [{"Reliability_Label": predicted_label}]
+        status = "passed"
+
     return {
         "model_asset_id": model.get("asset_id"),
         "model_name": model.get("name"),
         "record_id": row.get("record_id"),
-        "input_fingerprint": _input_fingerprint(dict(row.get("input") or {})),
+        "input_fingerprint": _input_fingerprint(request_payload),
         "expected_label": expected_label,
-        "response": {
-            "result": {
-                "label": predicted_label,
-            },
-            "model": model.get("name"),
-            "variant": model.get("variant"),
-        },
+        "request": request_payload,
+        "endpoint_url": endpoint_url,
+        "http_status": http_status,
+        "response": response_body,
         "latency_ms": latency_ms,
-        "status": "passed",
+        "status": status,
+        "error": error,
         "correct": predicted_label == expected_label,
     }
 
@@ -267,14 +359,18 @@ def run_ai_model_hub_model_benchmarking_validation(
     source_dir: str | None = None,
     experiment_dir: str | None = None,
     models: list[dict[str, Any]] | None = None,
+    model_server_base_url: str | None = None,
 ) -> dict[str, Any]:
     started_at = datetime.now().isoformat()
     dataset = load_flares_dataset(source_dir or FLARES_DATASET_DIR)
     benchmark_rows = build_flares_benchmark_rows(dataset)
     selected_models = [dict(model) for model in (models or DEFAULT_MODELS)]
+    resolved_model_server_base_url = _model_server_base_url(model_server_base_url)
+    execution_mode = "api_model_server" if resolved_model_server_base_url else "api_fixture"
+    coverage_status = "automated_real_model_server" if resolved_model_server_base_url else "automated_fixture_fallback"
     executions_by_model = {
         str(model["asset_id"]): [
-            _execute_model(model, row, row_index)
+            _execute_model(model, row, row_index, model_server_base_url=resolved_model_server_base_url)
             for row_index, row in enumerate(benchmark_rows)
         ]
         for model in selected_models
@@ -290,6 +386,7 @@ def run_ai_model_hub_model_benchmarking_validation(
         "domain": (dataset.get("metadata") or {}).get("domain") or "linguistic",
         "row_count": len(benchmark_rows),
         "mapping": BENCHMARK_MAPPING,
+        "model_server_base_url": resolved_model_server_base_url,
         "expected_outputs_source": dataset.get("expected_outputs_source"),
         "class_distribution": ((dataset.get("expected_outputs") or {}).get("subtask2_trial_sample") or {}).get(
             "classDistribution"
@@ -297,7 +394,7 @@ def run_ai_model_hub_model_benchmarking_validation(
     }
 
     comparable_input_fingerprints = {
-        row.get("record_id"): _input_fingerprint(dict(row.get("input") or {}))
+        row.get("record_id"): _input_fingerprint(row.get("request"))
         for row in benchmark_rows
     }
     selected_model_ids = [str(model.get("asset_id")) for model in selected_models]
@@ -310,6 +407,8 @@ def run_ai_model_hub_model_benchmarking_validation(
         selection_assertions.append("Selected model asset identifiers must be unique")
 
     execution_assertions: list[str] = []
+    if not resolved_model_server_base_url:
+        execution_assertions.append("AI Model Hub model-server URL is required to execute real FLARES models")
     expected_execution_count = len(selected_models) * len(benchmark_rows)
     actual_execution_count = sum(len(executions) for executions in executions_by_model.values())
     if actual_execution_count != expected_execution_count:
@@ -323,6 +422,10 @@ def run_ai_model_hub_model_benchmarking_validation(
         }
         if executed_fingerprints != comparable_input_fingerprints:
             execution_assertions.append(f"Model {model_id} was not executed with the same benchmark inputs")
+        failed_executions = [execution for execution in executions if execution.get("status") != "passed"]
+        if failed_executions:
+            first_error = str(failed_executions[0].get("error") or "unknown error")
+            execution_assertions.append(f"Model {model_id} had {len(failed_executions)} failed real executions: {first_error}")
 
     metrics_assertions: list[str] = []
     if len(ranked_metrics) != len(selected_models):
@@ -349,8 +452,8 @@ def run_ai_model_hub_model_benchmarking_validation(
             description="Select multiple comparable models for AI Model Hub benchmarking",
             validation_type="functional",
             dataspace_dimension="comparison",
-            execution_mode="api_fixture",
-            coverage_status="automated",
+            execution_mode=execution_mode,
+            coverage_status=coverage_status,
             assertions=selection_assertions,
             evidence_artifact="pt5-mh-12-model-selection.json",
             observed={
@@ -364,8 +467,8 @@ def run_ai_model_hub_model_benchmarking_validation(
             description="Execute selected models with the same FLARES benchmark inputs",
             validation_type="functional",
             dataspace_dimension="comparison",
-            execution_mode="api_fixture",
-            coverage_status="automated",
+            execution_mode=execution_mode,
+            coverage_status=coverage_status,
             assertions=execution_assertions,
             evidence_artifact="pt5-mh-13-benchmark-executions.json",
             observed={
@@ -379,8 +482,8 @@ def run_ai_model_hub_model_benchmarking_validation(
             description="Collect and calculate coherent comparison metrics",
             validation_type="functional",
             dataspace_dimension="comparison",
-            execution_mode="api_fixture",
-            coverage_status="automated",
+            execution_mode=execution_mode,
+            coverage_status=coverage_status,
             assertions=metrics_assertions,
             evidence_artifact="pt5-mh-14-benchmark-metrics.json",
             observed={
@@ -393,8 +496,8 @@ def run_ai_model_hub_model_benchmarking_validation(
             description="Produce renderable benchmark tables and chart data",
             validation_type="functional",
             dataspace_dimension="comparison",
-            execution_mode="api_fixture_ui_ready",
-            coverage_status="automated",
+            execution_mode=execution_mode,
+            coverage_status=coverage_status,
             assertions=visualization_assertions,
             evidence_artifact="pt5-mh-15-benchmark-visualization-data.json",
             observed={
@@ -415,16 +518,20 @@ def run_ai_model_hub_model_benchmarking_validation(
         "timestamp": started_at,
         "dataset": dataset_summary,
         "selected_models": selected_models,
+        "model_server_base_url": resolved_model_server_base_url,
         "executions_by_model": executions_by_model,
         "metrics": ranked_metrics,
         "visualization_data": visualization_data,
         "executed_cases": executed_cases,
         "evidence_index": [],
         "artifacts": {},
-        "limitations": [
-            "This deterministic suite validates the benchmarking logic and evidence shape without mutating AIModelHub sources.",
-            "The final auditor-facing UI demo can reuse the same FLARES models and dataset through the Playwright functional flow.",
-        ],
+        "limitations": (
+            [
+                "This run did not receive an AI Model Hub model-server URL; the suite kept fixture evidence explicit and failed the real-execution case.",
+            ]
+            if not resolved_model_server_base_url
+            else []
+        ),
     }
 
     component_dir = _component_dir(experiment_dir)

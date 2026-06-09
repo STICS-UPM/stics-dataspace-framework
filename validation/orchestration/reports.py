@@ -192,6 +192,15 @@ def _summarize_status_items(items: list[dict[str, Any]], status_key: str = "stat
     return summary
 
 
+def _number(value: Any) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _summary_count(summary: dict[str, Any], key: str) -> int:
     try:
         return int(summary.get(key) or 0)
@@ -290,11 +299,44 @@ def _summarize_kafka(experiment_path: Path) -> dict[str, Any] | None:
             if isinstance(raw_results, list):
                 records.extend(item for item in raw_results if isinstance(item, dict))
 
-    summary = _summarize_status_items(records)
+    summary = {"passed": 0, "failed": 0, "skipped": 0, "other": 0, "total": 0}
     latencies = []
     throughputs = []
+    messages_produced = 0
+    messages_consumed = 0
+    messages_missing = 0
+    incomplete_transfers = 0
     for record in records:
         metrics = record.get("metrics") if isinstance(record.get("metrics"), dict) else {}
+        produced = _number(metrics.get("messages_produced"))
+        consumed = _number(metrics.get("messages_consumed"))
+        explicit_missing = _number(metrics.get("messages_missing"))
+        record_missing = 0
+        if produced is not None:
+            messages_produced += int(produced)
+        if consumed is not None:
+            messages_consumed += int(consumed)
+        if produced is not None and consumed is not None and consumed < produced:
+            record_missing = int(produced - consumed)
+        if explicit_missing is not None:
+            record_missing = max(record_missing, int(explicit_missing))
+        if record_missing > 0:
+            messages_missing += record_missing
+            incomplete_transfers += 1
+
+        summary["total"] += 1
+        status = str(record.get("status") or "").strip().lower()
+        if record_missing > 0:
+            summary["failed"] += 1
+        elif status in {"pass", "passed", "ok", "success", "succeeded", "completed"}:
+            summary["passed"] += 1
+        elif status in {"fail", "failed", "error", "terminated"}:
+            summary["failed"] += 1
+        elif status in {"skip", "skipped"}:
+            summary["skipped"] += 1
+        else:
+            summary["other"] += 1
+
         latency = metrics.get("average_latency_ms", record.get("average_latency_ms"))
         throughput = metrics.get("throughput_messages_per_second", record.get("throughput_messages_per_second"))
         if isinstance(latency, (int, float)):
@@ -307,6 +349,10 @@ def _summarize_kafka(experiment_path: Path) -> dict[str, Any] | None:
         "title": "Kafka transfer",
         "status": _summary_status(summary),
         "summary": summary,
+        "messages_produced": messages_produced,
+        "messages_consumed": messages_consumed,
+        "messages_missing": messages_missing,
+        "incomplete_transfers": incomplete_transfers,
         "average_latency_ms": round(sum(latencies) / len(latencies), 2) if latencies else None,
         "average_throughput": round(sum(throughputs) / len(throughputs), 2) if throughputs else None,
         "transfer_files": len(transfer_files),
@@ -1334,7 +1380,14 @@ def _suite_details(suite: dict[str, Any]) -> str:
         if throughput is not None:
             metrics.append(f"avg throughput {throughput} msg/s")
         suffix = f" ({', '.join(metrics)})" if metrics else ""
-        return f"Transfers: {summary.get('passed', 0)} passed, {summary.get('failed', 0)} failed{suffix}."
+        return (
+            f"Transfers: total {summary.get('total', 0)}, {summary.get('passed', 0)} passed, "
+            f"{summary.get('failed', 0)} failed, {summary.get('skipped', 0)} skipped. "
+            f"Messages: produced {suite.get('messages_produced', 0)}, "
+            f"consumed {suite.get('messages_consumed', 0)}, "
+            f"missing {suite.get('messages_missing', 0)}. "
+            f"Incomplete transfers: {suite.get('incomplete_transfers', 0)}{suffix}."
+        )
     if kind in {"component", "component-report", "playwright-json"}:
         summary = suite.get("summary") or {}
         details = (

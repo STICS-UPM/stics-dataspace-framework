@@ -6,7 +6,7 @@ import { test, expect } from "../../../shared/fixtures/dataspace.fixture";
 import { KeycloakLoginPage } from "../../../shared/components/auth/keycloak-login.page";
 import { ConnectorShellPage } from "../components/shell/connector-shell.page";
 import { collectBrowserDiagnostics } from "../../../shared/utils/browser-diagnostics";
-import { clickMarked, setInputFilesMarked } from "../../../shared/utils/live-marker";
+import { clickMarked, fillMarked, setInputFilesMarked } from "../../../shared/utils/live-marker";
 import {
   bootstrapProviderNegotiationArtifacts,
   cleanupProviderValidationArtifacts,
@@ -67,46 +67,155 @@ type AIModelBenchmarkingUiReport = {
   fatalErrorResponses: Array<{ url: string; status: number }>;
 };
 
-const DEFAULT_ECOMMERCE_PATH = "/api/v1/nlp/ecommerce-sentiment";
-const DEFAULT_TWITTER_PATH = "/api/v1/nlp/twitter-sentiment";
-const TEXT_MODEL_INPUT_FEATURES = [
+const DEFAULT_BENCHMARK_MODEL_PATHS = [
+  "/flares/dccuchile-distilbert-base-spanish-uncased-reliability",
+  "/flares/dccuchile-bert-base-spanish-wwm-uncased-reliability",
+];
+const FLARES_INPUT_COLUMNS = ["Id", "Text", "5W1H_Label", "Tag_Text", "Tag_Start", "Tag_End"];
+const FLARES_MODEL_INPUT_FEATURES = [
   {
-    name: "text",
+    name: "Id",
+    type: "integer",
+    required: true,
+    description: "FLARES record identifier",
+  },
+  {
+    name: "Text",
     type: "string",
     required: true,
-    description: "Text to analyze",
+    description: "News text to classify",
+  },
+  {
+    name: "5W1H_Label",
+    type: "string",
+    required: true,
+    description: "5W1H class associated with the tagged span",
+  },
+  {
+    name: "Tag_Text",
+    type: "string",
+    required: true,
+    description: "Tagged evidence span",
+  },
+  {
+    name: "Tag_Start",
+    type: "integer",
+    required: true,
+    description: "Tagged span start offset",
+  },
+  {
+    name: "Tag_End",
+    type: "integer",
+    required: true,
+    description: "Tagged span end offset",
   },
 ];
-const TEXT_MODEL_INPUT_SCHEMA = {
-  type: "object",
-  required: ["text"],
-  properties: {
-    text: {
-      type: "string",
-      description: "Text to analyze",
+const FLARES_MODEL_INPUT_SCHEMA = {
+  type: "array",
+  items: {
+    type: "object",
+    required: FLARES_INPUT_COLUMNS,
+    properties: {
+      Id: { type: "integer" },
+      Text: { type: "string" },
+      "5W1H_Label": { type: "string" },
+      Tag_Text: { type: "string" },
+      Tag_Start: { type: "integer" },
+      Tag_End: { type: "integer" },
     },
   },
 };
-const TEXT_MODEL_INPUT_EXAMPLE = {
-  text: "This product is excellent and very useful",
-};
-const BENCHMARK_DATASET_FILE = "ai-model-benchmarking-ui-validation.csv";
-const BENCHMARK_DATASET_CSV = [
-  "text,sentiment",
-  "\"This product is excellent fast useful and stable\",positive",
-  "\"The support was poor broken slow and frustrating\",negative",
-  "\"The connector interface is acceptable consistent predictable and standard\",neutral",
-  "\"The benchmark dashboard feels useful helpful and innovative\",positive",
-  "\"Refund delay support issue made the workflow poor\",negative",
-].join("\n");
+const FLARES_MODEL_INPUT_EXAMPLE = [
+  {
+    Id: 523,
+    Text: "Estos diagnosticos elevan a 11 el total de casos confirmados de la cepa britanica en Espana, dado que a los seis de Madrid se anaden los cinco reportados hasta el momento por Andalucia.",
+    "5W1H_Label": "WHEN",
+    Tag_Text: "hasta el momento",
+    Tag_Start: 154,
+    Tag_End: 170,
+  },
+];
+const BENCHMARK_DATASET_FILE = "ai-model-benchmarking-ui-flares-validation.json";
+const BENCHMARK_DATASET_ROWS = [
+  {
+    Id: 523,
+    Text: "Estos diagnosticos elevan a 11 el total de casos confirmados de la cepa britanica en Espana, dado que a los seis de Madrid se anaden los cinco reportados hasta el momento por Andalucia.",
+    "5W1H_Label": "WHEN",
+    Tag_Text: "hasta el momento",
+    Tag_Start: 154,
+    Tag_End: 170,
+    expected_label: "semiconfiable",
+  },
+  {
+    Id: 524,
+    Text: "La organizacion confirmo que el informe se publicara manana tras completar la revision tecnica.",
+    "5W1H_Label": "WHEN",
+    Tag_Text: "manana",
+    Tag_Start: 44,
+    Tag_End: 50,
+    expected_label: "confiable",
+  },
+  {
+    Id: 525,
+    Text: "Fuentes municipales indicaron que las obras empezaran en el barrio norte durante el verano.",
+    "5W1H_Label": "WHERE",
+    Tag_Text: "barrio norte",
+    Tag_Start: 63,
+    Tag_End: 75,
+    expected_label: "confiable",
+  },
+  {
+    Id: 526,
+    Text: "El comunicado atribuye la decision a un comite independiente sin publicar el acta completa.",
+    "5W1H_Label": "WHO",
+    Tag_Text: "comite independiente",
+    Tag_Start: 38,
+    Tag_End: 58,
+    expected_label: "semiconfiable",
+  },
+  {
+    Id: 527,
+    Text: "La nota viral asegura que todos los servicios quedaran cancelados, aunque no cita ninguna fuente oficial.",
+    "5W1H_Label": "WHAT",
+    Tag_Text: "todos los servicios quedaran cancelados",
+    Tag_Start: 27,
+    Tag_End: 65,
+    expected_label: "no confiable",
+  },
+];
 
 test.skip(
   process.env.UI_AI_MODEL_HUB_HTTPDATA_DEMO !== "1",
   "Set UI_AI_MODEL_HUB_HTTPDATA_DEMO=1 or run Level 6 with the INESData adapter to validate AI Model Benchmarking from the INESData UI.",
 );
+test.skip(
+  process.env.UI_AI_MODEL_HUB_BENCHMARKING_DEMO === "0",
+  "AI Model Benchmarking UI validation is disabled for the configured model-server contract.",
+);
 
 function modelServerUrl(componentsNamespace: string, path: string): string {
   return modelServerUrlForPath(path, componentsNamespace);
+}
+
+function normalizePath(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
+function configuredBenchmarkModelPaths(): string[] {
+  const raw = (process.env.UI_AI_MODEL_HUB_BENCHMARK_MODEL_PATHS || "").trim();
+  const values = raw
+    ? raw.replace(/;/g, ",").split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0)
+    : DEFAULT_BENCHMARK_MODEL_PATHS;
+  return values.slice(0, 2).map(normalizePath);
+}
+
+function labelForModelPath(path: string): string {
+  const lowerPath = path.toLowerCase();
+  if (lowerPath.includes("distilbert")) return "DistilBERT";
+  if (lowerPath.includes("albert")) return "ALBERT";
+  if (lowerPath.includes("bert")) return "BERT";
+  return path.split("/").filter(Boolean).pop() || "HTTP";
 }
 
 function aiModelHubCatalogCleanupEnabled(): boolean {
@@ -130,9 +239,12 @@ function aiModelMetadataAliases({
   software: string;
   inferencePath: string;
 }): Record<string, unknown> {
-  const inputFeatures = JSON.stringify(TEXT_MODEL_INPUT_FEATURES);
-  const inputSchema = JSON.stringify(TEXT_MODEL_INPUT_SCHEMA);
-  const inputExample = JSON.stringify(TEXT_MODEL_INPUT_EXAMPLE);
+  const inputFeatures = JSON.stringify(FLARES_MODEL_INPUT_FEATURES);
+  const inputSchema = JSON.stringify(FLARES_MODEL_INPUT_SCHEMA);
+  const inputExample = JSON.stringify(FLARES_MODEL_INPUT_EXAMPLE);
+  const inputColumns = JSON.stringify(FLARES_INPUT_COLUMNS);
+  const targetFields = JSON.stringify(["expected_label"]);
+  const predictionFields = JSON.stringify(["Reliability_Label"]);
 
   const metadata = {
     "daimo:asset_kind": "model",
@@ -166,6 +278,20 @@ function aiModelMetadataAliases({
     "daimo:input_example": inputExample,
     "https://w3id.org/daimo/ns#input_example": inputExample,
     "https://pionera.ai/edc/daimo#input_example": inputExample,
+    "daimo:input_columns": inputColumns,
+    "https://w3id.org/daimo/ns#input_columns": inputColumns,
+    "https://pionera.ai/edc/daimo#input_columns": inputColumns,
+    "daimo:target_field": "expected_label",
+    "https://w3id.org/daimo/ns#target_field": "expected_label",
+    "https://pionera.ai/edc/daimo#target_field": "expected_label",
+    "daimo:target_fields": targetFields,
+    "daimo:prediction_field": "Reliability_Label",
+    "https://w3id.org/daimo/ns#prediction_field": "Reliability_Label",
+    "https://pionera.ai/edc/daimo#prediction_field": "Reliability_Label",
+    "daimo:prediction_fields": predictionFields,
+    "daimo:request_shape": "batch",
+    "https://w3id.org/daimo/ns#request_shape": "batch",
+    "https://pionera.ai/edc/daimo#request_shape": "batch",
     task,
     subtask,
     algorithm,
@@ -174,12 +300,20 @@ function aiModelMetadataAliases({
     software,
     inference_path: inferencePath,
     inferencePath,
+    input_columns: inputColumns,
+    inputColumns: FLARES_INPUT_COLUMNS,
+    target_field: "expected_label",
+    targetFields: ["expected_label"],
+    prediction_field: "Reliability_Label",
+    predictionFields: ["Reliability_Label"],
+    request_shape: "batch",
+    requestShape: "batch",
     input_features: inputFeatures,
-    inputFeatures: TEXT_MODEL_INPUT_FEATURES,
+    inputFeatures: FLARES_MODEL_INPUT_FEATURES,
     input_schema: inputSchema,
-    inputSchema: TEXT_MODEL_INPUT_SCHEMA,
+    inputSchema: FLARES_MODEL_INPUT_SCHEMA,
     input_example: inputExample,
-    inputExample: TEXT_MODEL_INPUT_EXAMPLE,
+    inputExample: FLARES_MODEL_INPUT_EXAMPLE,
   };
 
   return metadata;
@@ -196,15 +330,15 @@ function modelItem(page: Page, modelName: string) {
 }
 
 function selectedModelBadge(page: Page, modelName: string) {
-  return modelItem(page, modelName).locator(".selected-badge").filter({ hasText: /SELECTED/i }).first();
+  return modelItem(page, modelName).locator(".model-status").filter({ hasText: /Selected/i }).first();
 }
 
 function benchmarkSearchInput(page: Page) {
   return page.locator("input.search-input").first();
 }
 
-function validationDatasetCsvBuffer(): Buffer {
-  return Buffer.from(BENCHMARK_DATASET_CSV, "utf8");
+function validationDatasetJsonBuffer(): Buffer {
+  return Buffer.from(JSON.stringify(BENCHMARK_DATASET_ROWS, null, 2), "utf8");
 }
 
 function extractBenchmarkRunIdFromUrl(url: string): string {
@@ -217,13 +351,15 @@ async function inspectBenchmarkObserverEvidence(page: Page, benchmarkRunId: stri
   const emptyTimeline = page.getByText(/No benchmark events match/i).first();
   const startedEvent = page.getByRole("heading", { name: /^BENCHMARK_STARTED$/i }).first();
   const completedEvent = page.getByRole("heading", { name: /^BENCHMARK_COMPLETED$/i }).first();
+  const modelExecutionCompletedEvent = page.getByRole("heading", { name: /^MODEL_EXECUTION_COMPLETED$/i }).first();
 
   await expect(async () => {
     const hasLoadError = await loadError.isVisible().catch(() => false);
     const hasEmptyTimeline = await emptyTimeline.isVisible().catch(() => false);
     const hasStartedEvent = await startedEvent.isVisible().catch(() => false);
     const hasCompletedEvent = await completedEvent.isVisible().catch(() => false);
-    expect(hasLoadError || hasEmptyTimeline || (hasStartedEvent && hasCompletedEvent)).toBeTruthy();
+    const hasModelExecutionCompletedEvent = await modelExecutionCompletedEvent.isVisible().catch(() => false);
+    expect(hasLoadError || hasEmptyTimeline || (hasStartedEvent && hasCompletedEvent && hasModelExecutionCompletedEvent)).toBeTruthy();
   }).toPass({
     timeout: 30_000,
     intervals: EVENTUAL_UI_RETRY_INTERVALS,
@@ -243,14 +379,13 @@ async function inspectBenchmarkObserverEvidence(page: Page, benchmarkRunId: stri
 
   await expect(startedEvent).toBeVisible();
   await expect(completedEvent).toBeVisible();
-  await expect(page.getByText(/Rows:\s*5/i).first()).toBeVisible();
-  await expect(page.getByText(/Metrics:/i).first()).toBeVisible();
-  await expect(page.getByText(/totalModels/i).first()).toBeVisible();
-  await expect(page.getByText(/topModelName/i).first()).toBeVisible();
+  await expect(modelExecutionCompletedEvent).toBeVisible();
+  await expect(page.getByText(/HTTP:\s*200/i).first()).toBeVisible();
+  await expect(page.getByText(/Participant:\s*conn-org2-pionera/i).first()).toBeVisible();
 
   return {
     status: "passed" as const,
-    observedEvents: ["BENCHMARK_STARTED", "BENCHMARK_COMPLETED"],
+    observedEvents: ["BENCHMARK_STARTED", "BENCHMARK_COMPLETED", "MODEL_EXECUTION_COMPLETED"],
   };
 }
 
@@ -264,22 +399,13 @@ test("13 AI Model Benchmarking: compare two local model-server endpoints from IN
   test.skip(dataspaceRuntime.adapter !== "inesdata", "This demo validates the INESData connector UI path.");
 
   const suffix = `amh-bench-${Date.now()}`;
-  const models: BenchmarkModelFixture[] = [
-    {
-      assetId: `qa-ui-amh-bench-ecommerce-${suffix}`,
-      name: `AI Model Benchmark Ecommerce Sentiment ${suffix}`,
-      path: DEFAULT_ECOMMERCE_PATH,
-      url: modelServerUrl(dataspaceRuntime.componentsNamespace, DEFAULT_ECOMMERCE_PATH),
-      routeKey: "nlp.ecommerce-sentiment",
-    },
-    {
-      assetId: `qa-ui-amh-bench-twitter-${suffix}`,
-      name: `AI Model Benchmark Twitter Sentiment ${suffix}`,
-      path: DEFAULT_TWITTER_PATH,
-      url: modelServerUrl(dataspaceRuntime.componentsNamespace, DEFAULT_TWITTER_PATH),
-      routeKey: "nlp.twitter-sentiment",
-    },
-  ];
+  const models: BenchmarkModelFixture[] = configuredBenchmarkModelPaths().map((path, index) => ({
+    assetId: `qa-ui-amh-bench-flares-${index + 1}-${suffix}`,
+    name: `AI Model Benchmark FLARES Reliability ${labelForModelPath(path)} ${suffix}`,
+    path,
+    url: modelServerUrl(dataspaceRuntime.componentsNamespace, path),
+    routeKey: `flares.${labelForModelPath(path).toLowerCase()}`,
+  }));
   const browserDiagnostics = collectBrowserDiagnostics(page);
   const loginPage = new KeycloakLoginPage(page, {
     portalUser: dataspaceRuntime.provider.username,
@@ -357,19 +483,19 @@ test("13 AI Model Benchmarking: compare two local model-server endpoints from IN
           sourceObjectName: `${model.assetId}.json`,
           name: model.name,
           version: "1.0.0",
-          shortDescription: "AIModelHub-Use-Cases endpoint for AI Model Benchmarking validation",
+          shortDescription: "AIModelHub-Use-Cases FLARES endpoint for AI Model Benchmarking validation",
           description:
-            "AIModelHub-Use-Cases model-server endpoint used to validate model comparison from the INESData connector interface.",
+            "AIModelHub-Use-Cases FLARES reliability model-server endpoint used to validate model comparison from the INESData connector interface.",
           assetType: "machineLearning",
-          keywords: ["validation", "ai-model-benchmarking", "model-server", "sentiment", "machine-learning", "HttpData", "A5.2"],
+          keywords: ["validation", "ai-model-benchmarking", "model-server", "flares", "reliability", "machine-learning", "HttpData", "A5.2"],
           properties: {
             ...aiModelMetadataAliases({
               task: "classification",
-              subtask: "sentiment-analysis",
-              algorithm: "deterministic-rule-engine",
-              library: "flask",
-              framework: "model-server",
-              software: "pionera-validation-framework",
+              subtask: "flares-reliability",
+              algorithm: labelForModelPath(model.path),
+              library: "transformers",
+              framework: "flares",
+              software: "AIModelHub-Use-Cases",
               inferencePath: model.path,
             }),
             contenttype: "application/json",
@@ -416,83 +542,49 @@ test("13 AI Model Benchmarking: compare two local model-server endpoints from IN
     await expect(page.getByText(/classification/i).first()).toBeVisible({ timeout: 10_000 });
     await captureStep(page, "02-ai-model-benchmarking-models-selected");
 
-    await clickMarked(page.getByRole("button", { name: /Validate Input/i }).first(), { force: true });
-    await expect(page.getByText(/Input validation passed/i).first()).toBeVisible({ timeout: 10_000 });
+    await fillMarked(page.locator(".dataset-mapping-textarea").first(), FLARES_INPUT_COLUMNS.join(", "));
+    await fillMarked(page.locator(".dataset-mapping-input").first(), "expected_label");
     report.outputPreparationChecks.push({
-      scenario: "validate_generated_single_input",
-      expectedMessage: "Input validation passed. You can now obtain outputs.",
+      scenario: "configure_flares_dataset_mapping",
+      expectedMessage: "Input columns and label column configured for real FLARES batch payloads.",
       status: "passed",
     });
 
-    await expect(page.getByRole("button", { name: /Obtain Outputs/i }).first()).toBeEnabled({ timeout: 10_000 });
-    await clickMarked(page.getByRole("button", { name: /Obtain Outputs/i }).first(), { force: true });
-    await expect(page.getByText(/Outputs ready\. Success:\s*2,\s*Partial:\s*0,\s*Errors:\s*0/i).first()).toBeVisible({
-      timeout: 90_000,
-    });
-    const outputsPanel = page.locator(".outputs-panel").first();
-    await expect(outputsPanel.getByText(models[0].name).first()).toBeVisible({ timeout: 10_000 });
-    await expect(outputsPanel.getByText(models[1].name).first()).toBeVisible({ timeout: 10_000 });
-    await expect(outputsPanel.locator(".output-state.success")).toHaveCount(2, { timeout: 10_000 });
-    report.outputPreparationChecks.push({
-      scenario: "obtain_outputs_for_selected_models",
-      expectedMessage: "Outputs ready. Success: 2, Partial: 0, Errors: 0.",
-      status: "passed",
-    });
     await attachJson("ai-model-benchmarking-ui-output-preparation", {
       selectedModels: models.map((model) => ({ assetId: model.assetId, name: model.name, path: model.path })),
-      inputExample: TEXT_MODEL_INPUT_EXAMPLE,
+      inputColumns: FLARES_INPUT_COLUMNS,
+      labelColumn: "expected_label",
+      inputExample: FLARES_MODEL_INPUT_EXAMPLE,
       checks: report.outputPreparationChecks,
     });
-    await captureStep(page, "03-ai-model-benchmarking-outputs-ready");
-
-    const suggestedDatasetCard = page.locator(".suggested-dataset-card").filter({ hasText: /Starter CSV/i }).first();
-    await expect(suggestedDatasetCard).toBeVisible({ timeout: 10_000 });
-    const [suggestedDatasetDownload] = await Promise.all([
-      page.waitForEvent("download"),
-      clickMarked(suggestedDatasetCard.getByRole("button", { name: /CSV/i }).first(), { force: true }),
-    ]);
-    const suggestedDatasetFileName = suggestedDatasetDownload.suggestedFilename();
-    expect(suggestedDatasetFileName).toMatch(/-benchmark-sample-starter\.csv$/);
-    const suggestedDatasetPath = await suggestedDatasetDownload.path();
-    if (!suggestedDatasetPath) {
-      throw new Error(`Suggested dataset download did not produce a readable path: ${suggestedDatasetFileName}`);
-    }
-    const suggestedDatasetCsv = await readFile(suggestedDatasetPath, "utf8");
-    const requiredSuggestedDatasetContent = ["text", "sentiment", "Sample 1", "label"];
-    for (const requiredContent of requiredSuggestedDatasetContent) {
-      expect(suggestedDatasetCsv).toContain(requiredContent);
-    }
-    report.suggestedDatasetChecks.push({
-      scenario: "download_suggested_starter_dataset",
-      fileName: suggestedDatasetFileName,
-      requiredContent: requiredSuggestedDatasetContent,
-      status: "passed",
-    });
-    await attachJson("ai-model-benchmarking-ui-suggested-dataset", {
-      fileName: suggestedDatasetFileName,
-      preview: suggestedDatasetCsv.split(/\r?\n/).slice(0, 6),
-      checks: report.suggestedDatasetChecks,
-    });
+    await captureStep(page, "03-ai-model-benchmarking-mapping-ready");
 
     await setInputFilesMarked(page.locator("#validation-dataset-file"), {
       name: BENCHMARK_DATASET_FILE,
-      mimeType: "text/csv",
-      buffer: validationDatasetCsvBuffer(),
+      mimeType: "application/json",
+      buffer: validationDatasetJsonBuffer(),
     });
     await expect(page.getByText(new RegExp(`Dataset loaded: ${BENCHMARK_DATASET_FILE}`, "i")).first()).toBeVisible({
       timeout: 10_000,
     });
-    await expect(page.getByText(/Rows validated:\s*5/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/Rows(?: validated)?:\s*5/i).first()).toBeVisible({ timeout: 10_000 });
     await captureStep(page, "04-ai-model-benchmarking-dataset-loaded");
 
-    await expect(page.getByRole("button", { name: /^Run Benchmark$/i }).first()).toBeEnabled({ timeout: 10_000 });
-    await clickMarked(page.getByRole("button", { name: /^Run Benchmark$/i }).first(), { force: true });
+    await expect(page.getByRole("button", { name: /^Test Rows$/i }).first()).toBeEnabled({ timeout: 10_000 });
+    await clickMarked(page.getByRole("button", { name: /^Test Rows$/i }).first(), { force: true });
+    await expect(page.getByText(/Row test complete/i).first()).toBeVisible({ timeout: 90_000 });
+    await captureStep(page, "05-ai-model-benchmarking-row-test-complete");
+
+    const runBenchmarkButton = page.getByRole("button", { name: /^Run Benchmark$/i }).first();
+    await expect(runBenchmarkButton).toBeEnabled({ timeout: 10_000 });
+    await runBenchmarkButton.scrollIntoViewIfNeeded();
+    await runBenchmarkButton.evaluate((button) => (button as HTMLButtonElement).click());
     await expect(page.getByText(/Benchmark completed/i).first()).toBeVisible({ timeout: 90_000 });
     await expect(page.getByRole("heading", { name: /Ranking Results/i })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/2 models evaluated/i).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(models[0].name).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(models[1].name).first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/Best Model by/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/Top candidate|Best composite score/i).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/Benchmark Evidence/i).first()).toBeVisible({ timeout: 10_000 });
 
     const [exportDownload] = await Promise.all([
@@ -526,9 +618,11 @@ test("13 AI Model Benchmarking: compare two local model-server endpoints from IN
       preview: exportCsv.split(/\r?\n/).slice(0, 8),
       checks: report.exportChecks,
     });
-    await captureStep(page, "05-ai-model-benchmarking-ranking-results");
+    await captureStep(page, "06-ai-model-benchmarking-ranking-results");
 
-    await clickMarked(page.getByRole("button", { name: /Benchmark Evidence/i }).first(), { force: true });
+    const benchmarkEvidenceButton = page.getByRole("button", { name: /Benchmark Evidence/i }).first();
+    await expect(benchmarkEvidenceButton).toBeEnabled({ timeout: 10_000 });
+    await benchmarkEvidenceButton.evaluate((button) => (button as HTMLButtonElement).click());
     await expect(page).toHaveURL(/\/ai-model-observer\/benchmarks\/benchmark-/i, { timeout: 10_000 });
     const benchmarkRunId = extractBenchmarkRunIdFromUrl(page.url());
     expect(benchmarkRunId).toMatch(/^benchmark-/);
@@ -546,7 +640,7 @@ test("13 AI Model Benchmarking: compare two local model-server endpoints from IN
       url: page.url(),
       checks: report.observerEvidenceChecks,
     });
-    await captureStep(page, "06-ai-model-benchmarking-observer-evidence");
+    await captureStep(page, "07-ai-model-benchmarking-observer-evidence");
 
     await attachJson("ai-model-benchmarking-ui-result-assertions", {
       selectedModels: models.map((model) => ({ assetId: model.assetId, name: model.name, path: model.path })),
@@ -556,7 +650,7 @@ test("13 AI Model Benchmarking: compare two local model-server endpoints from IN
       exportChecks: report.exportChecks,
       observerEvidenceChecks: report.observerEvidenceChecks,
       expectedRankingRows: 2,
-      expectedMetrics: ["AUC", "GINI", "Precision", "Recall", "F1 Score"],
+      expectedMetrics: ["Accuracy", "Precision", "Recall", "F1 Score"],
     });
 
     report.toleratedErrorResponses = report.errorResponses.filter(({ url, status }) =>

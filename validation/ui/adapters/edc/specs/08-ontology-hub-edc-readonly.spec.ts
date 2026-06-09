@@ -45,7 +45,6 @@ async function responseJsonArrayLength(response: APIResponse | Response): Promis
 
 test("08 edc ontology hub: read-only dashboard integration surfaces ontology endpoint", async ({
   page,
-  request,
   dataspaceRuntime,
   captureStep,
   attachJson,
@@ -73,8 +72,15 @@ test("08 edc ontology hub: read-only dashboard integration surfaces ontology end
   });
 
   try {
-    const configResponse = await request.get(dashboardConfigUrl(dataspaceRuntime.consumer.portalBaseUrl));
-    expect(configResponse.ok(), "The EDC dashboard runtime config is not available").toBeTruthy();
+    await loginPage.open(dataspaceRuntime.consumer.portalBaseUrl);
+    await loginPage.loginIfNeeded();
+    await dashboardPage.expectShellReady();
+    await captureStep(page, "01-edc-ontology-hub-after-login");
+
+    const configResponse = await page.context().request.get(
+      dashboardConfigUrl(dataspaceRuntime.consumer.portalBaseUrl),
+    );
+    expect(configResponse.ok(), "The authenticated EDC dashboard runtime config is not available").toBeTruthy();
     const config = await configResponse.json();
     const runtime = config.runtime ?? config;
     report.runtimeConfig = {
@@ -82,11 +88,6 @@ test("08 edc ontology hub: read-only dashboard integration surfaces ontology end
     };
     await attachJson("edc-ontology-hub-runtime-config", report.runtimeConfig);
     expect(report.runtimeConfig.ontologyUrl, "EDC dashboard does not expose an Ontology Hub URL").toBeTruthy();
-
-    await loginPage.open(dataspaceRuntime.consumer.portalBaseUrl);
-    await loginPage.loginIfNeeded();
-    await dashboardPage.expectShellReady();
-    await captureStep(page, "01-edc-ontology-hub-after-login");
 
     const ontologyHubResponsePromise = page.waitForResponse(
       (response) => response.url().includes("/dataset/api/v2/vocabulary/list"),

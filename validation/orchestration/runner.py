@@ -52,6 +52,76 @@ def _format_console_metric(value: Any, suffix: str = "") -> str:
     return f"{value}{suffix}"
 
 
+def _number(value: Any) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _kafka_result_missing_messages(result: dict[str, Any]) -> int:
+    metrics = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
+    produced = _number(metrics.get("messages_produced"))
+    consumed = _number(metrics.get("messages_consumed"))
+    explicit_missing = _number(metrics.get("messages_missing"))
+    missing = 0
+    if produced is not None and consumed is not None and consumed < produced:
+        missing = int(produced - consumed)
+    if explicit_missing is not None:
+        missing = max(missing, int(explicit_missing))
+    return max(missing, 0)
+
+
+def _kafka_result_status(result: dict[str, Any]) -> str:
+    if _kafka_result_missing_messages(result) > 0:
+        return "failed"
+    normalized = str(result.get("status") or "unknown").strip().lower()
+    if normalized in {"pass", "passed", "ok", "success", "succeeded", "completed"}:
+        return "passed"
+    if normalized in {"fail", "failed", "error", "terminated"}:
+        return "failed"
+    if normalized in {"skip", "skipped"}:
+        return "skipped"
+    return "unknown"
+
+
+def _kafka_results_summary(results: list[dict[str, Any]]) -> dict[str, int]:
+    summary = {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0,
+        "messages_produced": 0,
+        "messages_consumed": 0,
+        "messages_missing": 0,
+    }
+    for result in results or []:
+        if not isinstance(result, dict):
+            continue
+        summary["total"] += 1
+        status = _kafka_result_status(result)
+        if status == "passed":
+            summary["passed"] += 1
+        elif status == "failed":
+            summary["failed"] += 1
+        elif status == "skipped":
+            summary["skipped"] += 1
+        else:
+            summary["other"] += 1
+        metrics = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
+        produced = _number(metrics.get("messages_produced"))
+        consumed = _number(metrics.get("messages_consumed"))
+        if produced is not None:
+            summary["messages_produced"] += int(produced)
+        if consumed is not None:
+            summary["messages_consumed"] += int(consumed)
+        summary["messages_missing"] += _kafka_result_missing_messages(result)
+    return summary
+
+
 def _console_supports_color(stream=None) -> bool:
     if os.getenv("NO_COLOR") is not None:
         return False
@@ -222,11 +292,29 @@ def run_level6(runtime: Level6Runtime) -> None:
         if runtime.should_run_kafka_edc_validation():
             print_interoperability_suite_header("Kafka transfer interoperability", "Kafka")
             kafka_edc_results = runtime.run_kafka_edc_validation(connectors, experiment_dir) or []
-            print("Kafka transfer validation results:")
+            kafka_summary = _kafka_results_summary(kafka_edc_results)
+            print(
+                "Kafka transfer validation results "
+                "(EDC-mediated Kafka transfer; counts derived from result artifacts):"
+            )
+            print(
+                "  Summary: "
+                f"total={kafka_summary['total']} "
+                f"passed={kafka_summary['passed']} "
+                f"failed={kafka_summary['failed']} "
+                f"skipped={kafka_summary['skipped']} "
+                f"other={kafka_summary['other']}"
+            )
+            print(
+                "  Messages: "
+                f"produced={kafka_summary['messages_produced']} "
+                f"consumed={kafka_summary['messages_consumed']} "
+                f"missing={kafka_summary['messages_missing']}"
+            )
             for result in kafka_edc_results:
                 provider = result.get("provider", "unknown-provider")
                 consumer = result.get("consumer", "unknown-consumer")
-                status = result.get("status", "unknown")
+                status = _kafka_result_status(result)
                 metrics = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
                 if status == "passed":
                     print(f"  {_console_status_icon(status)} Kafka transfer: {provider} -> {consumer}")
@@ -245,7 +333,11 @@ def run_level6(runtime: Level6Runtime) -> None:
                             f"p99={_format_console_metric(metrics.get('p99_latency_ms'), 'ms')}"
                         )
                 elif status == "failed":
-                    error = (result.get("error") or {}).get("message", "unknown reason")
+                    missing = _kafka_result_missing_messages(result)
+                    if missing:
+                        error = f"incomplete transfer: {missing} message(s) missing"
+                    else:
+                        error = (result.get("error") or {}).get("message", "unknown reason")
                     print(f"  {_console_status_icon(status)} Kafka transfer: {provider} -> {consumer} ({error})")
                     _print_kafka_transfer_steps(result)
                 else:

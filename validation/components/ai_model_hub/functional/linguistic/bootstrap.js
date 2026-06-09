@@ -17,6 +17,29 @@ const FLARES_TEST_FILE = "5w1h_subtarea_2_test.json";
 const EDC_NAMESPACE = "https://w3id.org/edc/v0.0.1/ns/";
 const DAIMO_NAMESPACE = "https://w3id.org/daimo/0.0.1/ns#";
 const LEGACY_DAIMO_NAMESPACE = "https://pionera.ai/edc/daimo#";
+const FLARES_REAL_RELIABILITY_MODELS = [
+  {
+    assetId: "model-flares-reliability-albert",
+    assetName: "FLARES Reliability ALBERT",
+    library: "dccuchile/albert-base-spanish",
+    variant: "albert",
+    endpointPath: "/flares/dccuchile-albert-base-spanish-reliability",
+  },
+  {
+    assetId: "model-flares-reliability-bert",
+    assetName: "FLARES Reliability BERT",
+    library: "dccuchile/bert-base-spanish-wwm-uncased",
+    variant: "bert",
+    endpointPath: "/flares/dccuchile-bert-base-spanish-wwm-uncased-reliability",
+  },
+  {
+    assetId: "model-flares-reliability-distilbert",
+    assetName: "FLARES Reliability DistilBERT",
+    library: "dccuchile/distilbert-base-spanish-uncased",
+    variant: "distilbert",
+    endpointPath: "/flares/dccuchile-distilbert-base-spanish-uncased-reliability",
+  },
+];
 
 function readJson(filePath) {
   const raw = fs.readFileSync(filePath, "utf8");
@@ -160,6 +183,16 @@ function loadFlaresDataset(sourceDir = FLARES_DATASET_DIR) {
 function buildFlaresBenchmarkRows(fixture) {
   return fixture.subtask2TrialSample.map((record) => ({
     record_id: record.Id,
+    request: [
+      {
+        Id: record.Id,
+        Text: record.Text,
+        "5W1H_Label": record["5W1H_Label"],
+        Tag_Text: record.Tag_Text,
+        Tag_Start: record.Tag_Start,
+        Tag_End: record.Tag_End,
+      },
+    ],
     input: {
       text: record.Text,
       w1h_label: record["5W1H_Label"],
@@ -175,9 +208,9 @@ function buildFlaresBenchmarkRows(fixture) {
 
 function buildFlaresBenchmarkMapping() {
   return {
-    inputPath: "input",
+    inputPath: "request",
     expectedPath: "expected_label",
-    predictionPath: "result.label",
+    predictionPath: "0.Reliability_Label",
   };
 }
 
@@ -394,6 +427,24 @@ function consumerAssetSupportsBenchmarkMetadata(asset) {
   return providerAssetSupportsBenchmarkMetadata(asset);
 }
 
+function consumerModelSupportsInputSchema(asset) {
+  const properties = extractAssetProperties(asset);
+  const inputSchema =
+    properties["daimo:input_schema"] ||
+    properties[`${DAIMO_NAMESPACE}input_schema`] ||
+    properties[`${LEGACY_DAIMO_NAMESPACE}input_schema`] ||
+    properties.input_schema ||
+    properties.inputSchema;
+  const inputFeatures =
+    properties["daimo:input_features"] ||
+    properties[`${DAIMO_NAMESPACE}input_features`] ||
+    properties[`${LEGACY_DAIMO_NAMESPACE}input_features`] ||
+    properties.input_features ||
+    properties.inputFeatures;
+
+  return inputSchema !== undefined || inputFeatures !== undefined;
+}
+
 async function deleteProviderResource(request, runtime, resourcePath, action) {
   const providerToken = await requestConnectorManagementToken(runtime, runtime.providerConnectorId);
   const response = await request.delete(`${runtime.providerManagementUrl}${resourcePath}`, {
@@ -588,6 +639,7 @@ function buildFlaresLinguisticModelPayload(fixture, runtime, spec) {
       "benchmark",
       "classification",
       "mh-ling-01",
+      "real-model-server",
       spec.variant,
     ],
     extraProperties: {
@@ -597,48 +649,59 @@ function buildFlaresLinguisticModelPayload(fixture, runtime, spec) {
       "daimo:framework": ["flares"],
       "daimo:inference_path": spec.endpointPath || "/infer",
       "daimo:input_schema": JSON.stringify(inputSchema),
+      [`${DAIMO_NAMESPACE}input_schema`]: inputSchema,
+      [`${LEGACY_DAIMO_NAMESPACE}input_schema`]: inputSchema,
+      input_schema: inputSchema,
+      inputSchema,
       "daimo:input_schema_draft": "https://json-schema.org/draft/2020-12/schema",
+      [`${DAIMO_NAMESPACE}input_schema_draft`]: "https://json-schema.org/draft/2020-12/schema",
+      [`${LEGACY_DAIMO_NAMESPACE}input_schema_draft`]: "https://json-schema.org/draft/2020-12/schema",
       "daimo:input_features": JSON.stringify(inputFeatures),
+      [`${DAIMO_NAMESPACE}input_features`]: inputFeatures,
+      [`${LEGACY_DAIMO_NAMESPACE}input_features`]: inputFeatures,
+      input_features: inputFeatures,
+      inputFeatures,
       "daimo:input_example": JSON.stringify(inputExample),
+      [`${DAIMO_NAMESPACE}input_example`]: inputExample,
+      [`${LEGACY_DAIMO_NAMESPACE}input_example`]: inputExample,
+      input_example: inputExample,
+      inputExample,
       "daimo:output_schema": JSON.stringify(outputSchema),
+      [`${DAIMO_NAMESPACE}output_schema`]: outputSchema,
+      [`${LEGACY_DAIMO_NAMESPACE}output_schema`]: outputSchema,
       "daimo:output_example": JSON.stringify(outputExample),
+      [`${DAIMO_NAMESPACE}output_example`]: outputExample,
+      [`${LEGACY_DAIMO_NAMESPACE}output_example`]: outputExample,
     },
   };
 }
 
 async function ensureFlaresLinguisticModelsPublished(request, runtime, fixture = loadFlaresDataset()) {
-  const modelSpecs = [
-    {
-      assetId: "model-flares-reliability-baseline-a",
-      assetName: "FLARES Reliability Baseline A",
-      description:
-        "Local linguistic baseline prepared for MH-LING-01. It exposes FLARES-compatible input metadata for benchmark readiness checks.",
-      library: "flares-baseline-a",
-      variant: "baseline-a",
-      endpointPath: "/api/v1/nlp/flares-reliability-baseline-a",
-    },
-    {
-      assetId: "model-flares-reliability-baseline-b",
-      assetName: "FLARES Reliability Baseline B",
-      description:
-        "Second local linguistic baseline prepared for MH-LING-01. It shares the same FLARES-compatible input contract for comparison readiness.",
-      library: "flares-baseline-b",
-      variant: "baseline-b",
-      endpointPath: "/api/v1/nlp/flares-reliability-baseline-b",
-    },
-  ];
+  const modelSpecs = FLARES_REAL_RELIABILITY_MODELS.map((model) => ({
+    ...model,
+    description:
+      "Real FLARES reliability model exposed by the AIModelHub-Use-Cases model-server for MH-LING-01 and benchmarking validation.",
+  }));
 
   const results = [];
 
   for (const spec of modelSpecs) {
     const existingAsset = await findConsumerAssetById(request, runtime, spec.assetId);
     if (existingAsset) {
-      results.push({
-        ...spec,
-        existing: true,
-        created: false,
-      });
-      continue;
+      if (consumerModelSupportsInputSchema(existingAsset)) {
+        results.push({
+          ...spec,
+          existing: true,
+          created: false,
+        });
+        continue;
+      }
+      await deleteConsumerResource(
+        request,
+        runtime,
+        `/v3/assets/${encodeURIComponent(spec.assetId)}`,
+        "Delete stale FLARES model without input schema",
+      );
     }
 
     const payload = buildFlaresLinguisticModelPayload(fixture, runtime, spec);

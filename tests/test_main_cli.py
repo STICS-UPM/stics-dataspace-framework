@@ -275,6 +275,19 @@ class RuntimeArtifactPathSummaryTests(unittest.TestCase):
 
 
 class KafkaTransferConsoleOutputTests(unittest.TestCase):
+    def test_level6_kafka_runtime_uses_cluster_endpoint_as_framework_bootstrap_when_missing(self):
+        class VmDistributedKafkaAdapter(FakeAdapter):
+            def get_kafka_config(self):
+                return {
+                    "topology": "vm-distributed",
+                    "cluster_bootstrap_servers": "192.0.2.10:32092",
+                }
+
+        config = main._load_level6_kafka_runtime_config(VmDistributedKafkaAdapter())
+
+        self.assertEqual(config["bootstrap_servers"], "192.0.2.10:32092")
+        self.assertEqual(config["cluster_bootstrap_servers"], "192.0.2.10:32092")
+
     def test_level6_kafka_disabled_message_explains_how_to_enable(self):
         class KafkaReadyAdapter(FakeAdapter):
             def get_kafka_config(self):
@@ -955,6 +968,32 @@ class KafkaTransferConsoleOutputTests(unittest.TestCase):
         self.assertNotIn("FAIL", output)
         self.assertNotIn("SKIP", output)
 
+    def test_kafka_transfer_results_treat_missing_messages_as_failed(self):
+        results = [
+            {
+                "provider": "conn-provider",
+                "consumer": "conn-consumer",
+                "status": "passed",
+                "metrics": {
+                    "messages_produced": 10,
+                    "messages_consumed": 8,
+                    "messages_missing": 2,
+                },
+            }
+        ]
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            main._print_kafka_edc_results(results)
+
+        output = stdout.getvalue()
+        self.assertEqual(main._status_from_kafka_results(results), "failed")
+        self.assertEqual(main._level6_counts_from_kafka(results)["failed"], 1)
+        self.assertIn("✗ Kafka transfer: conn-provider -> conn-consumer (incomplete transfer: 2 message(s) missing)", output)
+        self.assertIn("Messages: produced=10 consumed=8 missing=2", output)
+        self.assertIn("Summary: ✓ 0  ✗ 1  - 0", output)
+        self.assertIn("Messages: produced=10 consumed=8 missing=2", output)
+
     def test_kafka_transfer_results_can_print_message_samples_when_enabled(self):
         results = [
             {
@@ -1495,6 +1534,44 @@ class EdcDashboardReadinessTests(unittest.TestCase):
             failing_gate["detail"],
             "HTTP 301 -> http://dev.ed.dataspaceunit.upm/edc-dashboard/",
         )
+
+    def test_probe_edc_dashboard_readiness_accepts_keycloak_login_redirect(self):
+        context = self._context()
+
+        def fake_http_get(url, **kwargs):
+            if url.endswith("/.well-known/openid-configuration"):
+                return types.SimpleNamespace(status_code=200, headers={})
+            if url.endswith("/edc-dashboard/"):
+                return types.SimpleNamespace(
+                    status_code=302,
+                    headers={
+                        "Location": (
+                            "https://org2.example.test/edc-dashboard-api/auth/login"
+                            "?returnTo=%2Fedc-dashboard%2F"
+                        )
+                    },
+                )
+            if url.endswith("/edc-dashboard-api/auth/me"):
+                return types.SimpleNamespace(status_code=401, headers={})
+            if url.endswith("/management/v3/assets/request"):
+                return types.SimpleNamespace(status_code=405, headers={})
+            raise AssertionError(f"Unexpected URL probed: {url}")
+
+        with mock.patch.object(
+            main,
+            "_kubectl_endpoint_ready",
+            return_value=(True, "1 endpoint address(es)"),
+        ), mock.patch.object(main.requests, "get", side_effect=fake_http_get):
+            readiness = main._probe_edc_dashboard_readiness(context)
+
+        self.assertEqual(readiness["status"], "passed")
+        route_gate = next(
+            gate
+            for gate in readiness["gates"]
+            if gate["gate"] == "dashboard-route:conn-citycounciledc-demoedc"
+        )
+        self.assertTrue(route_gate["ready"])
+        self.assertIn("auth redirect accepted", route_gate["detail"])
 
 
 class InesdataPortalReadinessTests(unittest.TestCase):

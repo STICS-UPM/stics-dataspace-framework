@@ -40,7 +40,7 @@ test("PT5-MH-08: contract negotiation from catalog registers an agreement in the
 
   const connectorAuthorization = await attachManagementAuthorizationRoutes(page, aiModelHubRuntime);
 
-  await catalogPage.goto();
+  await catalogPage.goto(aiModelHubRuntime.consumerConnectorName);
   await catalogPage.waitUntilReady();
   await catalogPage.requestCatalogManually(aiModelHubRuntime.providerProtocolUrl);
 

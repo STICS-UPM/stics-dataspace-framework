@@ -41,7 +41,7 @@ test("PT5-MH-06: model discovery filter shell is available in the ML assets view
   }
   const connectorAuthorization = await attachManagementAuthorizationRoutes(page, aiModelHubRuntime);
 
-  await assetsPage.goto();
+  await assetsPage.goto(aiModelHubRuntime.consumerConnectorName);
   await assetsPage.waitUntilReady();
   await assetsPage.search(searchScope);
 

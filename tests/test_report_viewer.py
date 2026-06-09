@@ -217,6 +217,49 @@ class ReportViewerTests(unittest.TestCase):
         self.assertNotIn("\x1b", content)
         self.assertNotIn("must-not-appear-in-dashboard", content)
 
+    def test_dashboard_marks_kafka_transfer_incomplete_when_messages_are_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_10-10-00"
+            self._write_json(experiment / "metadata.json", {"adapter": "InesdataAdapter", "topology": "vm-distributed"})
+            self._write_json(
+                experiment / "kafka_transfer_results.json",
+                [
+                    {
+                        "status": "passed",
+                        "metrics": {
+                            "messages_produced": 10,
+                            "messages_consumed": 8,
+                            "messages_missing": 2,
+                            "average_latency_ms": 12.0,
+                            "throughput_messages_per_second": 3.5,
+                        },
+                    },
+                    {
+                        "status": "skipped",
+                        "reason": "not_applicable",
+                    }
+                ],
+            )
+
+            inspected = reports.inspect_experiment(experiment)
+            dashboard = reports.build_experiment_dashboard(inspected)
+            content = dashboard.read_text(encoding="utf-8")
+
+        kafka = next(suite for suite in inspected["suites"] if suite["kind"] == "kafka")
+        self.assertEqual(kafka["status"], "failed")
+        self.assertEqual(kafka["summary"]["total"], 2)
+        self.assertEqual(kafka["summary"]["passed"], 0)
+        self.assertEqual(kafka["summary"]["failed"], 1)
+        self.assertEqual(kafka["summary"]["skipped"], 1)
+        self.assertEqual(kafka["messages_produced"], 10)
+        self.assertEqual(kafka["messages_consumed"], 8)
+        self.assertEqual(kafka["messages_missing"], 2)
+        self.assertEqual(kafka["incomplete_transfers"], 1)
+        self.assertIn("Transfers: total 2, 0 passed, 1 failed, 1 skipped", content)
+        self.assertIn("Messages: produced 10, consumed 8, missing 2", content)
+        self.assertIn("Incomplete transfers: 1", content)
+        self.assertEqual(inspected["result"], "Issues detected")
+
     def test_dashboard_renders_standalone_newman_console_log_with_ansi_colors(self):
         with tempfile.TemporaryDirectory() as tmp:
             experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_10-15-00"

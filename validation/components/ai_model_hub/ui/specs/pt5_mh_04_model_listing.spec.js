@@ -28,7 +28,7 @@ test("PT5-MH-04: model listing view renders a controlled model card", async ({
   const connectorAuthorization = await attachManagementAuthorizationRoutes(page, aiModelHubRuntime);
 
   await expect(async () => {
-    await assetsPage.goto();
+    await assetsPage.goto(aiModelHubRuntime.consumerConnectorName);
     await assetsPage.waitUntilReady();
     // The ML Assets page can briefly render an empty state before connector data is hydrated.
     await expect(assetsPage.assetCards.first()).toBeVisible({ timeout: 30000 });

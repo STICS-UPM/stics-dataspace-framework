@@ -231,6 +231,67 @@ class ExperimentSummaryTests(unittest.TestCase):
         self.assertEqual(result["metrics"]["kafka_transfer"]["missing_messages_delta"], -1)
         self.assertEqual(result["metrics"]["validation_layers"][0]["experiment_b"]["total"], 5)
 
+    def test_report_generator_sums_kafka_missing_messages_per_transfer(self):
+        generator = ExperimentReportGenerator(storage=ExperimentStorage)
+
+        def write_json(path, payload):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_json(
+                os.path.join(tmpdir, "metadata.json"),
+                {
+                    "experiment_id": os.path.basename(tmpdir),
+                    "timestamp": "2026-05-25T10:00:00",
+                    "adapter": "InesdataAdapter",
+                    "topology": "vm-distributed",
+                },
+            )
+            write_json(
+                os.path.join(tmpdir, "kafka_transfer_results.json"),
+                [
+                    {
+                        "status": "passed",
+                        "metrics": {
+                            "messages_produced": 10,
+                            "messages_consumed": 8,
+                            "messages_missing": 2,
+                            "average_latency_ms": 20.0,
+                            "throughput_messages_per_second": 1.0,
+                        },
+                    },
+                    {
+                        "status": "passed",
+                        "metrics": {
+                            "messages_produced": 5,
+                            "messages_consumed": 4,
+                            "messages_missing": 1,
+                            "average_latency_ms": 30.0,
+                            "throughput_messages_per_second": 2.0,
+                        },
+                    },
+                ],
+            )
+
+            summary = generator.build_summary(
+                tmpdir,
+                adapter="InesdataAdapter",
+                kafka_enabled=True,
+                timestamp="2026-05-25T10:00:00",
+            )
+
+        kafka = summary["kafka_transfer"]
+        self.assertEqual(kafka["summary"]["total"], 2)
+        self.assertEqual(kafka["summary"]["passed"], 0)
+        self.assertEqual(kafka["summary"]["failed"], 2)
+        self.assertEqual(kafka["messages_produced"], 15)
+        self.assertEqual(kafka["messages_consumed"], 12)
+        self.assertEqual(kafka["messages_missing"], 3)
+        self.assertEqual(kafka["incomplete_transfers"], 2)
+        self.assertEqual(summary["validation_layers"]["Kafka transfer"]["failed"], 2)
+
     def test_experiment_runner_generates_summary_files(self):
         class FakeAdapter:
             def deploy_infrastructure(self):

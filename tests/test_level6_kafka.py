@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from validation.orchestration import kafka
+from validation.orchestration import kafka, runner
 
 
 class Level6KafkaTests(unittest.TestCase):
@@ -173,6 +173,30 @@ class Level6KafkaTests(unittest.TestCase):
             results,
             "/tmp/experiment",
         )
+
+    def test_level6_kafka_summary_treats_missing_messages_as_failed(self):
+        results = [
+            {
+                "status": "passed",
+                "metrics": {
+                    "messages_produced": 10,
+                    "messages_consumed": 9,
+                    "messages_missing": 1,
+                },
+            },
+            {"status": "skipped"},
+        ]
+
+        summary = runner._kafka_results_summary(results)
+
+        self.assertEqual(runner._kafka_result_status(results[0]), "failed")
+        self.assertEqual(summary["total"], 2)
+        self.assertEqual(summary["passed"], 0)
+        self.assertEqual(summary["failed"], 1)
+        self.assertEqual(summary["skipped"], 1)
+        self.assertEqual(summary["messages_produced"], 10)
+        self.assertEqual(summary["messages_consumed"], 9)
+        self.assertEqual(summary["messages_missing"], 1)
 
 
 if __name__ == "__main__":

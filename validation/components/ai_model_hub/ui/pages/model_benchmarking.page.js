@@ -38,8 +38,14 @@ class ModelBenchmarkingPage {
     this.errorAlert = page.locator(".alert-error");
   }
 
-  async goto() {
-    await gotoDashboardRoute(this.page, this.runtime, this.runtime.modelBenchmarkingPath, "Model Benchmarking");
+  async goto(activeConnectorName = "") {
+    await gotoDashboardRoute(
+      this.page,
+      this.runtime,
+      this.runtime.modelBenchmarkingPath,
+      "Model Benchmarking",
+      activeConnectorName,
+    );
   }
 
   async waitUntilReady() {

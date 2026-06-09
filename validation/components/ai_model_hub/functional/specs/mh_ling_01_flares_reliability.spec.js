@@ -52,7 +52,7 @@ test.describe("MH-LING-01 scaffold", () => {
     );
     const authorizedConnectors = await attachManagementAuthorizationRoutes(page, aiModelHubRuntime);
 
-    await catalogPage.goto();
+    await catalogPage.goto(aiModelHubRuntime.consumerConnectorName);
     await catalogPage.waitUntilReady();
     await catalogPage.requestCatalogManually(aiModelHubRuntime.providerProtocolUrl);
 
@@ -96,20 +96,20 @@ test.describe("MH-LING-01 scaffold", () => {
     await expect(contractsPage.cardByAssetId(publication.assetId)).toBeVisible({ timeout: 30000 });
     await captureStep(page, "mh-ling-01-flares-contracts-route");
 
-    await benchmarkingPage.goto();
+    await benchmarkingPage.goto(aiModelHubRuntime.consumerConnectorName);
     await benchmarkingPage.waitUntilReady();
 
     await benchmarkingPage.selectCompatibleModelsBySearch(
-      "model-flares-reliability-baseline",
+      "FLARES Reliability",
       linguisticModels.models.map((model) => model.assetName),
     );
 
     await benchmarkingPage.datasetSearchInput.fill(localBenchmarkDataset.assetId);
     await benchmarkingPage.selectDataspaceDatasetByText(localBenchmarkDataset.assetId);
     await benchmarkingPage.loadSelectedDataset();
-    await expect(benchmarkingPage.inputPathInput).toHaveValue("input");
+    await expect(benchmarkingPage.inputPathInput).toHaveValue("request");
     await expect(benchmarkingPage.expectedPathInput).toHaveValue("expected_label");
-    await expect(benchmarkingPage.predictionPathInput).toHaveValue("result.label");
+    await expect(benchmarkingPage.predictionPathInput).toHaveValue("0.Reliability_Label");
     await expect(benchmarkingPage.statusMessage).toContainText(/Dataset loaded from dataspace/i, {
       timeout: 30000,
     });
@@ -155,7 +155,7 @@ test.describe("MH-LING-01 scaffold", () => {
     expect(publication.assetId).toMatch(/^dataset-flares-subtask2/);
     expect(publication.created || publication.existing).toBeTruthy();
     expect(agreementState.assetId).toBe(publication.assetId);
-    expect(linguisticModels.models).toHaveLength(2);
+    expect(linguisticModels.models).toHaveLength(3);
     expect(linguisticModels.benchmarkRows).toHaveLength(
       fixture.expectedOutputs.subtask2_trial_sample.recordCount,
     );

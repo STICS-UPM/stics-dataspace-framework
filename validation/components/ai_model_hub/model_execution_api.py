@@ -24,8 +24,8 @@ LEGACY_DAIMO_NAMESPACE = "https://pionera.ai/edc/daimo#"
 DEFAULT_MODEL_PATH = "/api/v1/nlp/ecommerce-sentiment"
 DEFAULT_PAYLOAD = {"text": "This product is excellent and very useful"}
 DEFAULT_EXPECTED_MODEL = "E-commerce Sentiment Analyzer"
-FLARES_MODEL_PATH = "/api/v1/nlp/flares-reliability-baseline-a"
-FLARES_EXPECTED_MODEL = "FLARES Reliability Baseline A"
+FLARES_MODEL_PATH = "/flares/dccuchile-distilbert-base-spanish-uncased-reliability"
+FLARES_EXPECTED_MODEL = ""
 FLARES_DATASET_DIR = str(dataset_source_dir("flares-dataset"))
 FLARES_TRIAL_FILE = "5w1h_subtask_2_trial.json"
 FLARES_TEST_FILE = "5w1h_subtarea_2_test.json"
@@ -397,7 +397,7 @@ class AIModelHubModelExecutionApiSuite:
         provider: str,
         provider_jwt: str,
         asset_id: str,
-        payload: dict[str, Any],
+        payload: Any,
         runtime: dict[str, Any],
     ) -> tuple[int, Any, str]:
         if runtime.get("adapter") == "edc":
@@ -439,24 +439,30 @@ class AIModelHubModelExecutionApiSuite:
         assertions: list[str] = []
         if status_code < 200 or status_code >= 300:
             assertions.append(f"Expected HTTP 2xx, got HTTP {status_code}")
-        if not isinstance(body, dict):
-            assertions.append("Model execution response must be a JSON object")
-        elif expected_model and body.get("model") != expected_model:
+        if not isinstance(body, (dict, list)):
+            assertions.append("Model execution response must be a JSON object or array")
+        elif expected_model and isinstance(body, dict) and body.get("model") != expected_model:
             assertions.append(f"Expected model '{expected_model}', got '{body.get('model')}'")
 
         return {
             "status": "failed" if assertions else "passed",
             "assertions": assertions,
             "http_status": status_code,
-            "response_keys": sorted(body.keys()) if isinstance(body, dict) else [],
+            "response_keys": sorted(body.keys()) if isinstance(body, dict) else (["<array>"] if isinstance(body, list) else []),
         }
 
     @staticmethod
     def evaluate_flares_semantic_response(body: Any, functional_context: dict[str, Any]) -> dict[str, Any]:
         expected_output = dict(functional_context.get("expected_output") or {})
         expected_label = str(expected_output.get("expectedReliability") or "").strip()
-        result = body.get("result") if isinstance(body, dict) else None
-        actual_label = str((result or {}).get("label") or "").strip() if isinstance(result, dict) else ""
+        actual_label = ""
+        if isinstance(body, list) and body:
+            first_prediction = body[0]
+            if isinstance(first_prediction, dict):
+                actual_label = str(first_prediction.get("Reliability_Label") or "").strip()
+        elif isinstance(body, dict):
+            result = body.get("result")
+            actual_label = str((result or {}).get("label") or "").strip() if isinstance(result, dict) else ""
         if not actual_label:
             return {
                 "coverage_status": "partial_api_execution",
@@ -575,8 +581,8 @@ class AIModelHubModelExecutionApiSuite:
                 if pending_semantic_comparison
                 else {
                     "baseline_note": (
-                        "The FLARES reliability label is validated through the controlled model-server baseline. "
-                        "Real model quality remains a component evolution item."
+                        "The FLARES reliability label is validated through the real AIModelHub-Use-Cases "
+                        "model-server endpoint. Model quality is reported as observed validation evidence."
                     )
                 }
             ),
@@ -604,7 +610,7 @@ class AIModelHubModelExecutionApiSuite:
         *,
         provider: str,
         model_url: str,
-        payload: dict[str, Any] | None = None,
+        payload: Any | None = None,
         expected_model: str | None = DEFAULT_EXPECTED_MODEL,
         functional_context: dict[str, Any] | None = None,
         experiment_dir: str | None = None,
@@ -613,7 +619,12 @@ class AIModelHubModelExecutionApiSuite:
         runtime = self._runtime()
         component_dir = self._component_dir(experiment_dir)
         suffix = self._safe_suffix(self.uuid_factory())
-        inference_payload = dict(payload or DEFAULT_PAYLOAD)
+        if payload is None:
+            inference_payload: Any = dict(DEFAULT_PAYLOAD)
+        elif isinstance(payload, dict):
+            inference_payload = dict(payload)
+        else:
+            inference_payload = payload
         steps: list[dict[str, Any]] = []
         artifacts: dict[str, str] = {}
         executed_cases: list[dict[str, Any]] = []
@@ -1198,16 +1209,16 @@ def build_flares_execution_context(
     record = _select_flares_trial_record(dataset, record_id)
     resolved_record_id = int(record["Id"])
     expected_output = _expected_flares_output(dataset, resolved_record_id)
-    payload = {
-        "text": record.get("Text"),
-        "w1h_label": record.get("5W1H_Label"),
-        "tag_text": record.get("Tag_Text"),
-        "tag_start": record.get("Tag_Start"),
-        "tag_end": record.get("Tag_End"),
-        "dataset": metadata.get("datasetName") or FLARES_DATASET_NAME,
-        "record_id": resolved_record_id,
-        "expected_label": expected_output.get("expectedReliability"),
-    }
+    payload = [
+        {
+            "Id": resolved_record_id,
+            "Text": record.get("Text"),
+            "5W1H_Label": record.get("5W1H_Label"),
+            "Tag_Text": record.get("Tag_Text"),
+            "Tag_Start": record.get("Tag_Start"),
+            "Tag_End": record.get("Tag_End"),
+        }
+    ]
     return {
         "use_case_id": FUNCTIONAL_CASE_ID,
         "dataset_name": metadata.get("datasetName") or FLARES_DATASET_NAME,
@@ -1272,7 +1283,7 @@ def main(argv: list[str] | None = None) -> int:
             source_dir=args.flares_source_dir or None,
             record_id=args.flares_record_id or None,
         )
-        payload = dict(functional_context["payload"])
+        payload = functional_context["payload"]
         if args.model_path == DEFAULT_MODEL_PATH and not args.model_url:
             args.model_path = FLARES_MODEL_PATH
         if args.expected_model == DEFAULT_EXPECTED_MODEL:

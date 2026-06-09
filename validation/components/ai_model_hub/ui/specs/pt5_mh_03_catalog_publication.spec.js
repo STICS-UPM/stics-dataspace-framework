@@ -33,7 +33,7 @@ test("PT5-MH-03: provider publication becomes visible through the consumer catal
 
   const connectorAuthorization = await attachManagementAuthorizationRoutes(page, aiModelHubRuntime);
 
-  await catalogPage.goto();
+  await catalogPage.goto(aiModelHubRuntime.consumerConnectorName);
   await catalogPage.waitUntilReady();
   await captureStep(page, "pt5-mh-03-before-catalog-request");
 

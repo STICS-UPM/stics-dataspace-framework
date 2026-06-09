@@ -150,9 +150,9 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         self.assertEqual(functional_case["fixture"]["record_id"], 463)
         self.assertEqual(functional_case["fixture"]["expected_reliability"], "confiable")
         self.assertEqual(functional_case["evaluation"]["semantic_comparison_status"], "pending_flares_model_endpoint")
-        self.assertIn("text", session.posts[-1]["json"]["payload"])
-        self.assertEqual(session.posts[-1]["json"]["payload"]["record_id"], 463)
-        self.assertEqual(session.posts[-1]["json"]["payload"]["expected_label"], "confiable")
+        self.assertIsInstance(session.posts[-1]["json"]["payload"], list)
+        self.assertEqual(session.posts[-1]["json"]["payload"][0]["Id"], 463)
+        self.assertEqual(session.posts[-1]["json"]["payload"][0]["5W1H_Label"], "WHO")
 
     def test_run_with_flares_model_server_response_validates_semantic_label(self):
         session = FakeSession(
@@ -191,7 +191,7 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         self.assertEqual(context["use_case_id"], FUNCTIONAL_CASE_ID)
         self.assertEqual(context["dataset_name"], "FLARES")
         self.assertEqual(context["expected_output"]["expectedReliability"], "no confiable")
-        self.assertEqual(context["payload"]["w1h_label"], "WHAT")
+        self.assertEqual(context["payload"][0]["5W1H_Label"], "WHAT")
         self.assertEqual(context["sample"]["original_reliability_label"], "no confiable")
 
     def test_default_model_url_uses_components_namespace_service_dns(self):

@@ -244,14 +244,16 @@ class ExperimentReportGenerator:
                 produced += int(produced_value)
             if consumed_value is not None:
                 consumed += int(consumed_value)
+            record_missing = 0
             if produced_value is not None and consumed_value is not None and consumed_value < produced_value:
-                record_incomplete = True
-                incomplete += 1
-                missing += int(produced_value - consumed_value)
+                record_missing = int(produced_value - consumed_value)
             explicit_missing = cls._number(metrics.get("messages_missing"))
             if explicit_missing is not None:
-                missing = max(missing, int(explicit_missing))
-                record_incomplete = record_incomplete or explicit_missing > 0
+                record_missing = max(record_missing, int(explicit_missing))
+            if record_missing > 0:
+                record_incomplete = True
+                incomplete += 1
+                missing += record_missing
             summary["total"] += 1
             status = str(record.get("status") or "").strip().lower()
             if record_incomplete:

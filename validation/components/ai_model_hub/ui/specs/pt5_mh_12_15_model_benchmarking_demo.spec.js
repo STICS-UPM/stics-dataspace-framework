@@ -9,136 +9,13 @@ const {
 } = require("../../functional/linguistic/bootstrap");
 
 const DEMO_ENV = "AI_MODEL_HUB_ENABLE_BENCHMARKING_UI_DEMO";
-const BASELINE_A = "model-flares-reliability-baseline-a";
-const BASELINE_B = "model-flares-reliability-baseline-b";
 
 function demoEnabled() {
   return (process.env[DEMO_ENV] || "").trim().toLowerCase() === "1";
 }
 
-function stablePayloadKey(payload) {
-  return JSON.stringify({
-    tag_text: payload?.tag_text || "",
-    text: payload?.text || "",
-    w1h_label: payload?.w1h_label || "",
-  });
-}
-
-function buildExpectedByPayload(rows) {
-  const expectedByPayload = new Map();
-  for (const row of rows) {
-    expectedByPayload.set(stablePayloadKey(row.input), {
-      recordId: row.record_id,
-      expectedLabel: row.expected_label,
-    });
-  }
-  return expectedByPayload;
-}
-
-function predictionFor(assetId, expected) {
-  if (assetId === BASELINE_B && [106, 534].includes(expected.recordId)) {
-    return "confiable";
-  }
-  return expected.expectedLabel;
-}
-
-function appendPath(baseUrl, pathValue) {
-  const base = String(baseUrl || "").trim().replace(/\/+$/, "");
-  if (!base) {
-    return "";
-  }
-  const pathPart = String(pathValue || "").trim();
-  if (!pathPart) {
-    return base;
-  }
-  return `${base}${pathPart.startsWith("/") ? pathPart : `/${pathPart}`}`;
-}
-
-function normalizeEndpointUrl(value) {
-  const url = new URL(value);
-  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
-}
-
-function configuredInferEndpoints(runtime) {
-  return Array.from(
-    new Set([
-      appendPath(runtime.consumerDefaultUrl, "/infer"),
-      appendPath(runtime.providerDefaultUrl, "/infer"),
-    ].filter(Boolean).map(normalizeEndpointUrl)),
-  );
-}
-
 function commonModelSearchText(models) {
-  const assetIds = models.map((model) => String(model.assetId || ""));
-  if (assetIds.every((assetId) => assetId.startsWith("model-flares-reliability-baseline"))) {
-    return "model-flares-reliability-baseline";
-  }
-  return "FLARES Reliability Baseline";
-}
-
-async function installBenchmarkInferDemoRoute(page, runtime, rows) {
-  const expectedByPayload = buildExpectedByPayload(rows);
-  const inferEndpoints = configuredInferEndpoints(runtime);
-  const inferenceCalls = [];
-  const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "*",
-    "Content-Type": "application/json",
-  };
-
-  await page.route((url) => inferEndpoints.includes(normalizeEndpointUrl(url.href)), async (route) => {
-    const request = route.request();
-    if (request.method().toUpperCase() === "OPTIONS") {
-      await route.fulfill({
-        status: 204,
-        headers: corsHeaders,
-        body: "",
-      });
-      return;
-    }
-
-    const body = request.postDataJSON();
-    const assetId = String(body?.assetId || "");
-    const payload = body?.payload || {};
-    const expected = expectedByPayload.get(stablePayloadKey(payload));
-
-    if (!expected) {
-      await route.fulfill({
-        status: 422,
-        headers: corsHeaders,
-        body: JSON.stringify({
-          error: "Unknown FLARES demo payload",
-          assetId,
-        }),
-      });
-      return;
-    }
-
-    const label = predictionFor(assetId, expected);
-    inferenceCalls.push({
-      assetId,
-      recordId: expected.recordId,
-      expectedLabel: expected.expectedLabel,
-      predictedLabel: label,
-      path: body?.path || "/infer",
-      endpoint: normalizeEndpointUrl(request.url()),
-    });
-
-    await route.fulfill({
-      status: 200,
-      headers: corsHeaders,
-      body: JSON.stringify({
-        result: {
-          label,
-        },
-        model: assetId,
-        demo: "ai-model-hub-benchmarking-ui",
-      }),
-    });
-  });
-
-  return inferenceCalls;
+  return "FLARES Reliability";
 }
 
 async function prepareBenchmarkingDemo({
@@ -153,7 +30,6 @@ async function prepareBenchmarkingDemo({
   const fixture = loadFlaresDataset();
   const benchmarkRows = buildFlaresBenchmarkRows(fixture);
   const authorizedConnectors = await attachManagementAuthorizationRoutes(page, aiModelHubRuntime);
-  const inferenceCalls = await installBenchmarkInferDemoRoute(page, aiModelHubRuntime, benchmarkRows);
   const linguisticModels = await ensureFlaresLinguisticModelsPublished(
     request,
     aiModelHubRuntime,
@@ -166,7 +42,7 @@ async function prepareBenchmarkingDemo({
   );
   const benchmarkingPage = new ModelBenchmarkingPage(page, aiModelHubRuntime);
 
-  await benchmarkingPage.goto();
+  await benchmarkingPage.goto(aiModelHubRuntime.consumerConnectorName);
   await benchmarkingPage.waitUntilReady();
 
   await benchmarkingPage.selectCompatibleModelsBySearch(
@@ -177,9 +53,9 @@ async function prepareBenchmarkingDemo({
   await benchmarkingPage.datasetSearchInput.fill(localBenchmarkDataset.assetId);
   await benchmarkingPage.selectDataspaceDatasetByText(localBenchmarkDataset.assetId);
   await benchmarkingPage.loadSelectedDataset();
-  await expect(benchmarkingPage.inputPathInput).toHaveValue("input");
+  await expect(benchmarkingPage.inputPathInput).toHaveValue("request");
   await expect(benchmarkingPage.expectedPathInput).toHaveValue("expected_label");
-  await expect(benchmarkingPage.predictionPathInput).toHaveValue("result.label");
+  await expect(benchmarkingPage.predictionPathInput).toHaveValue("0.Reliability_Label");
   await captureStep(page, `${stepPrefix}-benchmark-configured`);
 
   if (runBenchmark) {
@@ -190,8 +66,8 @@ async function prepareBenchmarkingDemo({
 
   const resultRowsText = runBenchmark ? await benchmarkingPage.resultRowsText() : [];
   await attachJson(`${stepPrefix}-benchmarking-demo`, {
-    demoMode: "playwright-ui-with-controlled-infer-route",
-    inferenceEndpointMockedInBrowser: configuredInferEndpoints(aiModelHubRuntime),
+    demoMode: "playwright-ui-with-real-flares-model-server",
+    modelServerBaseUrl: aiModelHubRuntime.modelServerBaseUrl,
     route: aiModelHubRuntime.modelBenchmarkingPath,
     selectedModels: linguisticModels.models.map((model) => ({
       assetId: model.assetId,
@@ -203,7 +79,6 @@ async function prepareBenchmarkingDemo({
     mapping: linguisticModels.benchmarkMapping,
     datasetRows: linguisticModels.benchmarkRows.length,
     expectedClasses: fixture.expectedOutputs.subtask2_trial_sample.classDistribution,
-    inferenceCalls,
     resultRowsText,
     authorizedConnectors: Object.keys(authorizedConnectors),
   });
@@ -213,7 +88,6 @@ async function prepareBenchmarkingDemo({
     fixture,
     linguisticModels,
     localBenchmarkDataset,
-    inferenceCalls,
     resultRowsText,
   };
 }
@@ -239,7 +113,7 @@ test.describe("AI Model Hub benchmarking visual demo", () => {
       stepPrefix: "pt5-mh-12",
     });
 
-    expect(state.linguisticModels.models).toHaveLength(2);
+    expect(state.linguisticModels.models).toHaveLength(3);
     await expect(state.benchmarkingPage.runBenchmarkButton).toBeVisible();
     await expect(state.benchmarkingPage.runBenchmarkButton).toBeEnabled();
   });
@@ -261,11 +135,11 @@ test.describe("AI Model Hub benchmarking visual demo", () => {
       stepPrefix: "pt5-mh-13",
     });
 
-    const expectedCalls = state.linguisticModels.models.length * state.linguisticModels.benchmarkRows.length;
-    expect(state.inferenceCalls).toHaveLength(expectedCalls);
-    expect(new Set(state.inferenceCalls.map((call) => call.recordId)).size).toBe(
-      state.linguisticModels.benchmarkRows.length,
-    );
+    await expect(state.benchmarkingPage.resultsRows).toHaveCount(state.linguisticModels.models.length);
+    const rowsText = state.resultRowsText.join("\n");
+    for (const model of state.linguisticModels.models) {
+      expect(rowsText).toContain(model.assetName);
+    }
   });
 
   test("PT5-MH-14: benchmarking UI renders calculated comparison metrics", async ({
@@ -309,9 +183,10 @@ test.describe("AI Model Hub benchmarking visual demo", () => {
     });
 
     await expect(state.benchmarkingPage.bestModelSummary).toContainText(/Best Model:/i);
-    await expect(state.benchmarkingPage.bestModelSummary).toContainText(/FLARES Reliability Baseline A/i);
     await expect(state.benchmarkingPage.resultsRows).toHaveCount(state.linguisticModels.models.length);
-    expect(state.resultRowsText.join("\n")).toContain("FLARES Reliability Baseline A");
-    expect(state.resultRowsText.join("\n")).toContain("FLARES Reliability Baseline B");
+    const rowsText = state.resultRowsText.join("\n");
+    for (const model of state.linguisticModels.models) {
+      expect(rowsText).toContain(model.assetName);
+    }
   });
 });

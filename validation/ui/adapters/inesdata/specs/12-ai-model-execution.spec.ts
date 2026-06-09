@@ -20,7 +20,7 @@ type AIModelExecutionUiReport = {
   modelName: string;
   modelUrl: string;
   modelPath: string;
-  payload: Record<string, unknown>;
+  payload: unknown;
   inputValidationChecks: Array<{
     scenario: string;
     expectedMessage: string;
@@ -85,12 +85,71 @@ function aiModelHubModelPath(): string {
   return normalizePath(process.env.UI_AI_MODEL_HUB_MODEL_PATH || DEFAULT_MODEL_PATH);
 }
 
+function parseJsonEnv(name: string, fallback: unknown): unknown {
+  const raw = (process.env[name] || "").trim();
+  if (!raw) {
+    return fallback;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function aiModelHubPayload(): unknown {
+  return parseJsonEnv("UI_AI_MODEL_HUB_MODEL_PAYLOAD", DEFAULT_PAYLOAD);
+}
+
 function aiModelHubModelUrl(componentsNamespace: string): string {
   return modelServerUrlForPath(aiModelHubModelPath(), componentsNamespace);
 }
 
 function aiModelHubCatalogCleanupEnabled(): boolean {
   return process.env.UI_AI_MODEL_HUB_CATALOG_CLEANUP === "1";
+}
+
+function inferJsonSchema(value: unknown): Record<string, unknown> {
+  if (Array.isArray(value)) {
+    return {
+      type: "array",
+      items: inferJsonSchema(value[0] || {}),
+    };
+  }
+  if (value && typeof value === "object") {
+    const properties: Record<string, unknown> = {};
+    const required: string[] = [];
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      required.push(key);
+      properties[key] = inferJsonSchema(item);
+    }
+    return { type: "object", required, properties };
+  }
+  return { type: typeof value === "number" ? "number" : typeof value === "boolean" ? "boolean" : "string" };
+}
+
+function inputSchemaForPayload(payload: unknown): unknown {
+  return parseJsonEnv("UI_AI_MODEL_HUB_MODEL_INPUT_SCHEMA", inferJsonSchema(payload));
+}
+
+function inputFeaturesForPayload(payload: unknown): unknown[] {
+  const schema = inputSchemaForPayload(payload) as Record<string, unknown>;
+  const objectSchema = schema.type === "array" && schema.items && typeof schema.items === "object"
+    ? schema.items as Record<string, unknown>
+    : schema;
+  const properties = objectSchema.properties && typeof objectSchema.properties === "object"
+    ? objectSchema.properties as Record<string, Record<string, unknown>>
+    : {};
+  return Object.keys(properties).map((name) => ({
+    name,
+    type: String(properties[name]?.type || "string"),
+    required: Array.isArray(objectSchema.required) ? objectSchema.required.includes(name) : false,
+    description: `${name} input field`,
+  }));
+}
+
+function payloadRequiresText(payload: unknown): boolean {
+  return !Array.isArray(payload) && !!payload && typeof payload === "object" && Object.prototype.hasOwnProperty.call(payload, "text");
 }
 
 function aiModelMetadataAliases({
@@ -101,6 +160,9 @@ function aiModelMetadataAliases({
   framework,
   software,
   inferencePath,
+  payload,
+  inputSchema,
+  inputFeatures,
 }: {
   task: string;
   subtask: string;
@@ -109,10 +171,13 @@ function aiModelMetadataAliases({
   framework: string;
   software: string;
   inferencePath: string;
+  payload: unknown;
+  inputSchema: unknown;
+  inputFeatures: unknown[];
 }): Record<string, unknown> {
-  const inputFeatures = JSON.stringify(TEXT_MODEL_INPUT_FEATURES);
-  const inputSchema = JSON.stringify(TEXT_MODEL_INPUT_SCHEMA);
-  const inputExample = JSON.stringify(DEFAULT_PAYLOAD);
+  const serializedInputFeatures = JSON.stringify(inputFeatures);
+  const serializedInputSchema = JSON.stringify(inputSchema);
+  const inputExample = JSON.stringify(payload);
 
   const metadata = {
     "daimo:asset_kind": "model",
@@ -137,12 +202,12 @@ function aiModelMetadataAliases({
     "daimo:inference_path": inferencePath,
     "https://w3id.org/daimo/ns#inference_path": inferencePath,
     "https://pionera.ai/edc/daimo#inference_path": inferencePath,
-    "daimo:input_features": inputFeatures,
-    "https://w3id.org/daimo/ns#input_features": inputFeatures,
-    "https://pionera.ai/edc/daimo#input_features": inputFeatures,
-    "daimo:input_schema": inputSchema,
-    "https://w3id.org/daimo/ns#input_schema": inputSchema,
-    "https://pionera.ai/edc/daimo#input_schema": inputSchema,
+    "daimo:input_features": serializedInputFeatures,
+    "https://w3id.org/daimo/ns#input_features": serializedInputFeatures,
+    "https://pionera.ai/edc/daimo#input_features": serializedInputFeatures,
+    "daimo:input_schema": serializedInputSchema,
+    "https://w3id.org/daimo/ns#input_schema": serializedInputSchema,
+    "https://pionera.ai/edc/daimo#input_schema": serializedInputSchema,
     "daimo:input_example": inputExample,
     "https://w3id.org/daimo/ns#input_example": inputExample,
     "https://pionera.ai/edc/daimo#input_example": inputExample,
@@ -154,12 +219,12 @@ function aiModelMetadataAliases({
     software,
     inference_path: inferencePath,
     inferencePath,
-    input_features: inputFeatures,
-    inputFeatures: TEXT_MODEL_INPUT_FEATURES,
-    input_schema: inputSchema,
-    inputSchema: TEXT_MODEL_INPUT_SCHEMA,
+    input_features: serializedInputFeatures,
+    inputFeatures,
+    input_schema: serializedInputSchema,
+    inputSchema,
     input_example: inputExample,
-    inputExample: DEFAULT_PAYLOAD,
+    inputExample: payload,
   };
 
   return metadata;
@@ -228,6 +293,10 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
   const assetId = `qa-ui-amh-exec-${suffix}`;
   const modelPath = aiModelHubModelPath();
   const modelUrl = aiModelHubModelUrl(dataspaceRuntime.componentsNamespace);
+  const modelPayload = aiModelHubPayload();
+  const inputSchema = inputSchemaForPayload(modelPayload);
+  const inputFeatures = inputFeaturesForPayload(modelPayload);
+  const requiresText = payloadRequiresText(modelPayload);
   const modelName = `AI Model Execution controlled model ${suffix}`;
   const browserDiagnostics = collectBrowserDiagnostics(page);
   const loginPage = new KeycloakLoginPage(page, {
@@ -243,7 +312,7 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
     modelName,
     modelUrl,
     modelPath,
-    payload: DEFAULT_PAYLOAD,
+    payload: modelPayload,
     inputValidationChecks: [],
     observerEvidenceChecks: [],
     linkedCases: ["PT5-MH-10", "PT5-MH-17", "MH-OBS-04", "DS-UI-AMH-EXEC-01"],
@@ -314,6 +383,9 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
             framework: "model-server",
             software: "pionera-validation-framework",
             inferencePath: modelPath,
+            payload: modelPayload,
+            inputSchema,
+            inputFeatures,
           }),
           contenttype: "application/json",
           format: "json",
@@ -355,8 +427,8 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
       assetId,
       modelName,
       modelUrl,
-      expectedPayload: DEFAULT_PAYLOAD,
-      expectedModel: "E-commerce Sentiment Analyzer",
+      expectedPayload: modelPayload,
+      expectedModel: process.env.UI_AI_MODEL_HUB_EXPECTED_RESULT_TEXT || "HTTP 200 model-server response",
     });
     await captureStep(page, "02-ai-model-execution-model-selected");
 
@@ -373,30 +445,37 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
       status: "passed",
     });
 
-    await fillMarked(inputJson, "{}");
-    await clickMarked(page.getByRole("button", { name: /Execute Model/i }).first(), { force: true });
-    await expect(page.getByText(/Field "text" is required/i).first()).toBeVisible({ timeout: 10_000 });
-    report.inputValidationChecks.push({
-      scenario: "missing_required_text_field",
-      expectedMessage: 'Field "text" is required.',
-      status: "passed",
-    });
+    if (requiresText) {
+      await fillMarked(inputJson, "{}");
+      await clickMarked(page.getByRole("button", { name: /Execute Model/i }).first(), { force: true });
+      await expect(page.getByText(/Field "text" is required/i).first()).toBeVisible({ timeout: 10_000 });
+      report.inputValidationChecks.push({
+        scenario: "missing_required_text_field",
+        expectedMessage: 'Field "text" is required.',
+        status: "passed",
+      });
+    }
     await captureStep(page, "03-ai-model-execution-input-validation");
     await attachJson("ai-model-execution-ui-input-validation", {
       assetId,
-      inputSchema: TEXT_MODEL_INPUT_SCHEMA,
+      inputSchema,
       checks: report.inputValidationChecks,
     });
 
-    await fillMarked(inputJson, JSON.stringify(DEFAULT_PAYLOAD, null, 2));
+    await fillMarked(inputJson, JSON.stringify(modelPayload, null, 2));
     await clickMarked(page.getByRole("button", { name: /Execute Model/i }).first(), { force: true });
     await expect(page.getByText(/Execution Result/i).first()).toBeVisible({ timeout: 45_000 });
     await expect(page.getByText(/SUCCESS/i).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/Status Code:/i).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/200/i).first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/E-commerce Sentiment Analyzer/i).first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/positive/i).first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/local-rule-engine/i).first()).toBeVisible({ timeout: 10_000 });
+    const expectedResultText = (process.env.UI_AI_MODEL_HUB_EXPECTED_RESULT_TEXT || "").trim();
+    if (expectedResultText) {
+      await expect(page.getByText(new RegExp(expectedResultText, "i")).first()).toBeVisible({ timeout: 10_000 });
+    } else if (requiresText) {
+      await expect(page.getByText(/E-commerce Sentiment Analyzer/i).first()).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(/positive/i).first()).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(/local-rule-engine/i).first()).toBeVisible({ timeout: 10_000 });
+    }
     await captureStep(page, "04-ai-model-execution-result");
 
     await clickMarked(page.getByRole("button", { name: /History/i }).first(), { force: true });

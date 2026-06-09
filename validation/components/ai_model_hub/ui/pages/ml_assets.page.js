@@ -28,8 +28,8 @@ class MlAssetsPage {
     this.detailsDialogCloseButton = this.detailsDialog.locator("form[method='dialog'] button").first();
   }
 
-  async goto() {
-    await gotoDashboardRoute(this.page, this.runtime, this.runtime.mlAssetsPath, "ML Assets");
+  async goto(activeConnectorName = "") {
+    await gotoDashboardRoute(this.page, this.runtime, this.runtime.mlAssetsPath, "ML Assets", activeConnectorName);
   }
 
   async waitUntilReady() {

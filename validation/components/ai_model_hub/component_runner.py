@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -315,6 +316,19 @@ def _component_adapter_name() -> str:
     ).strip().lower() or "inesdata"
 
 
+def _split_model_server_validation_endpoints() -> List[str]:
+    raw_value = str(os.environ.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS") or "").strip()
+    return [entry.strip() for entry in raw_value.replace(";", ",").split(",") if entry.strip()]
+
+
+def _parse_json_env(*names: str) -> Any | None:
+    for name in names:
+        raw_value = str(os.environ.get(name) or "").strip()
+        if raw_value:
+            return json.loads(raw_value)
+    return None
+
+
 def _model_observer_topology() -> str:
     return (
         os.environ.get("AI_MODEL_HUB_MODEL_OBSERVER_TOPOLOGY")
@@ -577,6 +591,7 @@ def run_ai_model_hub_connector_governance_validation(experiment_dir: str | None 
 def run_ai_model_hub_model_execution_validation(experiment_dir: str | None = None) -> Dict[str, Any]:
     from validation.components.ai_model_hub.model_execution_api import (
         DEFAULT_EXPECTED_MODEL,
+        build_flares_execution_context,
         build_ai_model_hub_model_execution_suite,
         default_model_url,
     )
@@ -605,15 +620,33 @@ def run_ai_model_hub_model_execution_validation(experiment_dir: str | None = Non
             "skip_reason": "Provider connector is not discoverable",
         }
 
-    model_path = os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_MODEL_PATH") or None
+    validation_endpoints = _split_model_server_validation_endpoints()
+    model_path = (
+        os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_MODEL_PATH")
+        or (validation_endpoints[0] if validation_endpoints else None)
+    )
     model_url = os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_MODEL_URL") or (
         default_model_url(adapter, model_path) if model_path else default_model_url(adapter)
     )
-    expected_model = os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_EXPECTED_MODEL", DEFAULT_EXPECTED_MODEL)
+    payload = _parse_json_env(
+        "AI_MODEL_HUB_MODEL_EXECUTION_PAYLOAD",
+        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD",
+    )
+    functional_context = None
+    if payload is None and str(model_path or "").startswith("/flares/"):
+        functional_context = build_flares_execution_context()
+        payload = functional_context["payload"]
+
+    expected_model = os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_EXPECTED_MODEL")
+    if expected_model is None:
+        expected_model = "" if str(model_path or "").startswith("/flares/") else DEFAULT_EXPECTED_MODEL
+
     return suite.run(
         provider=provider,
         model_url=model_url,
+        payload=payload,
         expected_model=expected_model or None,
+        functional_context=functional_context,
         experiment_dir=experiment_dir,
     )
 

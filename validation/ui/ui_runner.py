@@ -421,6 +421,47 @@ def _model_server_public_base_url(config: dict[str, Any]) -> str:
     return _join_url_path(components_base, path_value)
 
 
+def _split_model_server_validation_endpoints(config: dict[str, Any]) -> list[str]:
+    raw_value = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS")
+        or os.environ.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS")
+        or ""
+    ).strip()
+    return [entry.strip() for entry in raw_value.replace(";", ",").split(",") if entry.strip()]
+
+
+def _validation_payload_is_array(config: dict[str, Any]) -> bool:
+    raw_value = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD")
+        or os.environ.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD")
+        or ""
+    ).strip()
+    if not raw_value:
+        return False
+    try:
+        return isinstance(json.loads(raw_value), list)
+    except json.JSONDecodeError:
+        return False
+
+
+def _export_ai_model_hub_model_server_validation_env(env: dict[str, str], config: dict[str, Any]) -> None:
+    endpoints = _split_model_server_validation_endpoints(config)
+    if endpoints:
+        env["UI_AI_MODEL_HUB_MODEL_PATH"] = endpoints[0]
+        env["UI_AI_MODEL_HUB_EXTERNAL_MODEL_PATH"] = endpoints[0]
+        if len(endpoints) >= 2:
+            env["UI_AI_MODEL_HUB_BENCHMARK_MODEL_PATHS"] = ",".join(endpoints[:2])
+
+    payload = str(
+        config.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD")
+        or os.environ.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD")
+        or ""
+    ).strip()
+    if payload:
+        env["UI_AI_MODEL_HUB_MODEL_PAYLOAD"] = payload
+        env["UI_AI_MODEL_HUB_EXTERNAL_MODEL_PAYLOAD"] = payload
+
+
 def _build_playwright_environment(
     *,
     context: DeploymentContext,
@@ -443,6 +484,8 @@ def _build_playwright_environment(
     env["UI_DOMAIN_BASE"] = str(config.get("DOMAIN_BASE") or "").strip()
     env["UI_TOPOLOGY"] = topology
     env["UI_KEYCLOAK_URL"] = keycloak_url
+    if topology == VM_DISTRIBUTED_TOPOLOGY:
+        env.setdefault("UI_EDC_NEGOTIATION_TIMEOUT_MS", "360000")
     if ingress_proxy_port:
         env["UI_INGRESS_PORT"] = ingress_proxy_port
         env["PLAYWRIGHT_INGRESS_PROXY_PORT"] = ingress_proxy_port
@@ -496,6 +539,7 @@ def _build_playwright_environment(
     model_server_url = connector_model_server_url or _model_server_public_base_url(config)
     if model_server_url:
         env.setdefault("AI_MODEL_HUB_MODEL_SERVER_BASE_URL", model_server_url)
+    _export_ai_model_hub_model_server_validation_env(env, config)
 
     connectors = list(context.connectors or [])
     if connectors:

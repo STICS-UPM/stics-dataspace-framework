@@ -28,8 +28,8 @@ class CatalogPage {
     this.nextPageButton = page.getByRole("button", { name: "»" }).first();
   }
 
-  async goto() {
-    await gotoDashboardRoute(this.page, this.runtime, this.runtime.catalogPath, "Catalog");
+  async goto(activeConnectorName = "") {
+    await gotoDashboardRoute(this.page, this.runtime, this.runtime.catalogPath, "Catalog", activeConnectorName);
   }
 
   async waitUntilReady() {
