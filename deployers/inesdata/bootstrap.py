@@ -595,6 +595,48 @@ def create(ctx, name, dataspace):
 @click.argument('name')
 @click.argument('dataspace')
 @click.pass_context
+def sync_client(ctx, name, dataspace):
+    """Synchronize the connector Keycloak client without touching user credentials."""
+
+    click.echo(f'Synchronizing Keycloak client for connector {name} in dataspace {dataspace}')
+
+    environment = ctx.obj['in_env']
+    keycloak_base_url = keycloak_client_base_url(ctx.obj['kc_url'])
+    keycloak_openid = KeycloakOpenID(server_url=keycloak_base_url,
+                                     realm_name="master",
+                                     client_id='admin-cli',
+                                     verify=False)
+
+    try:
+        token = keycloak_openid.token(username=ctx.obj['kc_user'], password=ctx.obj['kc_password'])
+        token_obj = {
+            'access_token': token.get('access_token'),
+            'refresh_token': token.get('refresh_token'),
+            'expires_in': token.get('expires_in')
+        }
+    except Exception as e:
+        click.echo(f"    - Error obtaining token: {e}")
+        ctx.exit(1)
+
+    keycloak_admin = _dataspace_keycloak_admin_with_master_token(
+        keycloak_base_url,
+        token_obj,
+        dataspace,
+    )
+
+    config = load_effective_deployer_config()
+    audience = dataspace_audience_value(config, ctx.obj.get('kc_internal_url') or ctx.obj['kc_url'], dataspace)
+    ensure_dataspace_audience_scope(keycloak_admin, dataspace, dataspace, audience)
+    create_role(keycloak_admin, name)
+    create_group(keycloak_admin, name)
+    create_client(keycloak_admin, dataspace, name, environment)
+
+    click.echo(f'Connector {name} Keycloak client synchronized successfuly!')
+
+@connector.command()
+@click.argument('name')
+@click.argument('dataspace')
+@click.pass_context
 def delete(ctx, name, dataspace):
     click.echo(f'Deleting dataspace {name}...')
 

@@ -75,6 +75,9 @@ metadata:
   name: {{ .Values.connector.name }}-ingress
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: {{ default "800m" .Values.connector.ingress.proxyBodySize | quote }}
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ default "300" .Values.connector.ingress.proxyReadTimeout | quote }}
+    nginx.ingress.kubernetes.io/proxy-send-timeout: {{ default "300" .Values.connector.ingress.proxySendTimeout | quote }}
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: {{ default "30" .Values.connector.ingress.proxyConnectTimeout | quote }}
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
     nginx.org/client-max-body-size: {{ default "800m" .Values.connector.ingress.proxyBodySize | quote }}

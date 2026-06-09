@@ -21,6 +21,9 @@ connector:
   ingress:
     hostname: {{ keys.connector_name }}.{% if keys.environment == 'PRO' %}ds.dataspaceunit-project.eu{% else %}{{ keys.ds_domain_base | default('pionera.oeg.fi.upm.es') }}{% endif %}
     protocol: {{ 'https' if keys.environment == 'PRO' else 'http' }}
+    proxyReadTimeout: {{ keys.connector_ingress_proxy_read_timeout | default('300', true) | tojson }}
+    proxySendTimeout: {{ keys.connector_ingress_proxy_send_timeout | default('300', true) | tojson }}
+    proxyConnectTimeout: {{ keys.connector_ingress_proxy_connect_timeout | default('30', true) | tojson }}
   minio:
     accesskey: {{ keys.dataspace_name }}/{{ keys.connector_name }}/aws-access-key
     secretkey: {{ keys.dataspace_name }}/{{ keys.connector_name }}/aws-secret-key

@@ -546,6 +546,18 @@ class INESDataConnectorsAdapter:
             return "additive"
         return "full"
 
+    def _level4_sync_existing_connector_keycloak_clients_enabled(self):
+        raw_value = os.environ.get("PIONERA_LEVEL4_SYNC_EXISTING_CONNECTOR_KEYCLOAK_CLIENTS")
+        if raw_value is None:
+            try:
+                deployer_config = self.config_adapter.load_deployer_config() or {}
+            except Exception:
+                deployer_config = {}
+            raw_value = deployer_config.get("LEVEL4_SYNC_EXISTING_CONNECTOR_KEYCLOAK_CLIENTS")
+        if raw_value is None:
+            return True
+        return self._is_truthy(raw_value)
+
     def _allow_connector_port_forward_fallback(self):
         env_value = os.environ.get("PIONERA_ALLOW_CONNECTOR_PORT_FORWARD_FALLBACK")
         if env_value is not None:
@@ -1597,6 +1609,58 @@ class INESDataConnectorsAdapter:
             f"{self._bootstrap_connector_environment_prefix(vault_url, keycloak_url, pg_host, pg_port)}{python_exec} "
             f"bootstrap.py connector delete {connector_name} {ds_name}"
         )
+
+    def _bootstrap_connector_sync_client_command(
+        self,
+        python_exec,
+        connector_name,
+        ds_name,
+        keycloak_url=None,
+    ):
+        return (
+            f"{self._bootstrap_connector_environment_prefix(keycloak_url=keycloak_url)}"
+            f"{self._connector_runtime_environment_prefix(connector_name, ds_name)}{python_exec} "
+            f"bootstrap.py connector sync-client {connector_name} {ds_name}"
+        )
+
+    def _sync_existing_connector_keycloak_client(
+        self,
+        connector_name,
+        ds_name,
+        python_exec,
+        bootstrap_access=None,
+    ):
+        if not self._level4_sync_existing_connector_keycloak_clients_enabled():
+            return True
+
+        owns_bootstrap_access = False
+        if bootstrap_access is None:
+            bootstrap_access = {"keycloak_url": None, "keycloak_access": None}
+            owns_bootstrap_access = True
+            if (
+                self._vm_distributed_keycloak_admin_needs_port_forward()
+                and callable(getattr(self.infrastructure, "port_forward_service", None))
+            ):
+                keycloak_access = self._start_keycloak_bootstrap_access()
+                if keycloak_access is None:
+                    return False
+                bootstrap_access["keycloak_access"] = keycloak_access
+                bootstrap_access["keycloak_url"] = keycloak_access.get("keycloak_url")
+
+        try:
+            if not self._ensure_level4_keycloak_ready(bootstrap_access, "client synchronization"):
+                return False
+            print(f"Synchronizing existing connector Keycloak client: {connector_name}")
+            command = self._bootstrap_connector_sync_client_command(
+                python_exec,
+                connector_name,
+                ds_name,
+                keycloak_url=bootstrap_access.get("keycloak_url"),
+            )
+            return self.run(command, cwd=self._bootstrap_repo_dir(), check=False) is not None
+        finally:
+            if owns_bootstrap_access:
+                self._stop_keycloak_bootstrap_access(bootstrap_access.get("keycloak_access"))
 
     def validate_connector_name(self, name):
         if not isinstance(name, str) or not name:
@@ -2868,6 +2932,7 @@ class INESDataConnectorsAdapter:
                     fallback=public_protocol,
                 )
                 ingress["callbackHostname"] = public_external
+                ingress["dataplanePublicBaseUrl"] = f"{public_protocol}://{public_external}/public"
             with open(values_file, "w") as f:
                 yaml.dump(values, f, sort_keys=False)
             return
@@ -2880,6 +2945,7 @@ class INESDataConnectorsAdapter:
                 fallback=public_protocol,
             )
             ingress["callbackHostname"] = public_external
+            ingress["dataplanePublicBaseUrl"] = f"{public_protocol}://{public_external}/public"
 
         if self._normalized_topology() == VM_SINGLE_TOPOLOGY:
             ingress["callbackProtocol"] = public_protocol
@@ -5796,6 +5862,16 @@ class INESDataConnectorsAdapter:
                         print(f"Connector already running: {connector}")
                         if reconciliation_mode == "additive":
                             print("Preserving existing connector in additive Level 4 mode")
+                            if not self._sync_existing_connector_keycloak_client(
+                                connector,
+                                ds_name,
+                                python_exec,
+                            ):
+                                print(
+                                    "Aborting Level 4 because existing connector Keycloak client "
+                                    f"synchronization failed: {connector}"
+                                )
+                                return []
                             continue
                         print("Recreating connector to ensure a clean Level 4 deployment")
                     else:

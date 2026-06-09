@@ -98,6 +98,32 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self._git(repo_dir, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", message)
         return self._git(repo_dir, "rev-parse", "HEAD").stdout.strip()
 
+    def _fake_component_source_git(self, source_dir, clone_calls=None, requested_commit=None):
+        resolved_commit = requested_commit or ("a" * 40)
+
+        def fake_run(args, *unused_args, **unused_kwargs):
+            command = tuple(args)
+            if len(command) >= 4 and command[:2] == ("git", "clone"):
+                if clone_calls is not None:
+                    clone_calls.append((command, True))
+                os.makedirs(os.path.join(source_dir, ".git"), exist_ok=True)
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            if command[:5] == ("git", "-C", source_dir, "status", "--porcelain"):
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            if command[:5] == ("git", "-C", source_dir, "remote", "set-url"):
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            if command[:5] == ("git", "-C", source_dir, "fetch", "origin"):
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            if command[:5] == ("git", "-C", source_dir, "rev-parse", "--verify"):
+                return subprocess.CompletedProcess(args, 0, stdout=f"{resolved_commit}\n", stderr="")
+            if command == ("git", "-C", source_dir, "rev-parse", "HEAD"):
+                return subprocess.CompletedProcess(args, 0, stdout=f"{'b' * 40}\n", stderr="")
+            if command == ("git", "-C", source_dir, "checkout", "--detach", resolved_commit):
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr=f"unexpected command: {command}")
+
+        return fake_run
+
     def test_edc_component_release_name_defaults_to_shared_base_dataspace(self):
         adapter = self._make_shared_adapter(active_adapter="edc")
         adapter.config_adapter.load_deployer_config = mock.Mock(return_value={"DS_1_NAME": "pionera-edc"})
@@ -1478,7 +1504,12 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 return True
             return False
 
-        with mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=fake_isfile):
+        git_dir = os.path.join(sources_dir, ".git")
+        with (
+            mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=fake_isfile),
+            mock.patch("adapters.inesdata.components.os.path.isdir", side_effect=lambda path: path == git_dir),
+            mock.patch("subprocess.run", side_effect=self._fake_component_source_git(sources_dir)),
+        ):
             resolved = adapter._resolve_ontology_hub_source_dir(
                 {"ONTOLOGY_HUB_SOURCE_DIR": "/tmp/custom-ontology-hub"}
             )
@@ -1493,23 +1524,23 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         )
         ontology_hub_dir = os.path.join(sources_dir, "Ontology-Hub")
         dockerfile_path = os.path.join(ontology_hub_dir, "Dockerfile")
+        git_dir = os.path.join(ontology_hub_dir, ".git")
 
         clone_calls = []
 
         def fake_isfile(path):
             return path == dockerfile_path and len(clone_calls) > 0
 
-        def fake_run(args, check):
-            clone_calls.append((tuple(args), check))
-            return None
-
         with (
-            mock.patch("adapters.inesdata.components.os.path.isdir", side_effect=lambda path: path == ontology_hub_dir),
+            mock.patch(
+                "adapters.inesdata.components.os.path.isdir",
+                side_effect=lambda path: path == ontology_hub_dir or (path == git_dir and bool(clone_calls)),
+            ),
             mock.patch("adapters.inesdata.components.os.listdir", return_value=[]),
             mock.patch("adapters.inesdata.components.os.makedirs"),
             mock.patch("adapters.inesdata.components.os.rmdir"),
             mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=fake_isfile),
-            mock.patch("subprocess.run", side_effect=fake_run),
+            mock.patch("subprocess.run", side_effect=self._fake_component_source_git(ontology_hub_dir, clone_calls)),
         ):
             resolved = adapter._resolve_ontology_hub_source_dir({})
 
@@ -1545,6 +1576,84 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Ontology-Hub source directory is not usable"):
                 adapter._resolve_ontology_hub_source_dir({})
 
+    def test_resolve_ontology_hub_source_dir_refreshes_and_checks_out_configured_ref(self):
+        adapter = self._make_adapter()
+        ontology_hub_dir = os.path.join(
+            os.path.dirname(os.path.abspath(components_module.__file__)),
+            "sources",
+            "Ontology-Hub",
+        )
+        dockerfile_path = os.path.join(ontology_hub_dir, "Dockerfile")
+        git_dir = os.path.join(ontology_hub_dir, ".git")
+        requested_commit = "a" * 40
+        commands = []
+
+        def fake_run(args, **kwargs):
+            command = tuple(args)
+            commands.append(command)
+            if command[:5] == ("git", "-C", ontology_hub_dir, "status", "--porcelain"):
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            if command[:5] == ("git", "-C", ontology_hub_dir, "remote", "set-url"):
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            if command[:5] == ("git", "-C", ontology_hub_dir, "fetch", "origin"):
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            if command == (
+                "git",
+                "-C",
+                ontology_hub_dir,
+                "rev-parse",
+                "--verify",
+                "origin/main^{commit}",
+            ):
+                return subprocess.CompletedProcess(args, 0, stdout=f"{requested_commit}\n", stderr="")
+            if command == ("git", "-C", ontology_hub_dir, "rev-parse", "HEAD"):
+                return subprocess.CompletedProcess(args, 0, stdout=f"{'b' * 40}\n", stderr="")
+            if command == ("git", "-C", ontology_hub_dir, "checkout", "--detach", requested_commit):
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="unexpected command")
+
+        with (
+            mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=lambda path: path == dockerfile_path),
+            mock.patch("adapters.inesdata.components.os.path.isdir", side_effect=lambda path: path == git_dir),
+            mock.patch("subprocess.run", side_effect=fake_run),
+        ):
+            resolved = adapter._resolve_ontology_hub_source_dir(
+                {
+                    "ONTOLOGY_HUB_SOURCE_REF": "main",
+                    "ONTOLOGY_HUB_SOURCE_REFRESH": "true",
+                }
+            )
+
+        self.assertEqual(resolved, ontology_hub_dir)
+        self.assertIn(("git", "-C", ontology_hub_dir, "fetch", "origin", "--tags", "--prune"), commands)
+        self.assertIn(("git", "-C", ontology_hub_dir, "checkout", "--detach", requested_commit), commands)
+
+    def test_resolve_ontology_hub_source_dir_refuses_refresh_with_local_tracked_changes(self):
+        adapter = self._make_adapter()
+        ontology_hub_dir = os.path.join(
+            os.path.dirname(os.path.abspath(components_module.__file__)),
+            "sources",
+            "Ontology-Hub",
+        )
+        dockerfile_path = os.path.join(ontology_hub_dir, "Dockerfile")
+        git_dir = os.path.join(ontology_hub_dir, ".git")
+
+        def fake_run(args, **kwargs):
+            return subprocess.CompletedProcess(args, 0, stdout=" M Dockerfile\n", stderr="")
+
+        with (
+            mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=lambda path: path == dockerfile_path),
+            mock.patch("adapters.inesdata.components.os.path.isdir", side_effect=lambda path: path == git_dir),
+            mock.patch("subprocess.run", side_effect=fake_run),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "local tracked changes"):
+                adapter._resolve_ontology_hub_source_dir(
+                    {
+                        "ONTOLOGY_HUB_SOURCE_REF": "main",
+                        "ONTOLOGY_HUB_SOURCE_REFRESH": "true",
+                    }
+                )
+
     def test_resolve_morph_kgv_source_dir_clones_when_sources_dir_exists_but_is_empty(self):
         adapter = self._make_adapter()
         sources_dir = os.path.join(
@@ -1555,23 +1664,23 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         pyproject_path = os.path.join(morph_kgv_dir, "pyproject.toml")
         package_path = os.path.join(morph_kgv_dir, "src", "morph_kgc", "__init__.py")
         virt_store_path = os.path.join(morph_kgv_dir, "src", "morph_kgc", "sparql", "virt_store.py")
+        git_dir = os.path.join(morph_kgv_dir, ".git")
 
         clone_calls = []
 
         def fake_isfile(path):
             return path in {pyproject_path, package_path, virt_store_path} and len(clone_calls) > 0
 
-        def fake_run(args, check):
-            clone_calls.append((tuple(args), check))
-            return None
-
         with (
-            mock.patch("adapters.inesdata.components.os.path.isdir", side_effect=lambda path: path == morph_kgv_dir),
+            mock.patch(
+                "adapters.inesdata.components.os.path.isdir",
+                side_effect=lambda path: path == morph_kgv_dir or (path == git_dir and bool(clone_calls)),
+            ),
             mock.patch("adapters.inesdata.components.os.listdir", return_value=[]),
             mock.patch("adapters.inesdata.components.os.makedirs"),
             mock.patch("adapters.inesdata.components.os.rmdir"),
             mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=fake_isfile),
-            mock.patch("subprocess.run", side_effect=fake_run),
+            mock.patch("subprocess.run", side_effect=self._fake_component_source_git(morph_kgv_dir, clone_calls)),
         ):
             resolved = adapter._resolve_morph_kgv_source_dir({})
 
@@ -1600,23 +1709,23 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         mapping_editor_dir = os.path.join(sources_dir, "mapping-editor")
         app_path = os.path.join(mapping_editor_dir, "Mapping_Editor.py")
         requirements_path = os.path.join(mapping_editor_dir, "requirements.txt")
+        git_dir = os.path.join(mapping_editor_dir, ".git")
 
         clone_calls = []
 
         def fake_isfile(path):
             return path in {app_path, requirements_path} and len(clone_calls) > 0
 
-        def fake_run(args, check):
-            clone_calls.append((tuple(args), check))
-            return None
-
         with (
-            mock.patch("adapters.inesdata.components.os.path.isdir", side_effect=lambda path: path == mapping_editor_dir),
+            mock.patch(
+                "adapters.inesdata.components.os.path.isdir",
+                side_effect=lambda path: path == mapping_editor_dir or (path == git_dir and bool(clone_calls)),
+            ),
             mock.patch("adapters.inesdata.components.os.listdir", return_value=[]),
             mock.patch("adapters.inesdata.components.os.makedirs"),
             mock.patch("adapters.inesdata.components.os.rmdir"),
             mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=fake_isfile),
-            mock.patch("subprocess.run", side_effect=fake_run),
+            mock.patch("subprocess.run", side_effect=self._fake_component_source_git(mapping_editor_dir, clone_calls)),
         ):
             resolved = adapter._resolve_mapping_editor_source_dir({})
 
@@ -1653,23 +1762,23 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             os.path.join(automap_dir, "tools", "rml_tools.py"),
             os.path.join(automap_dir, "evaluation", "metrics.py"),
         }
+        git_dir = os.path.join(automap_dir, ".git")
 
         clone_calls = []
 
         def fake_isfile(path):
             return path in required_paths and len(clone_calls) > 0
 
-        def fake_run(args, check):
-            clone_calls.append((tuple(args), check))
-            return None
-
         with (
-            mock.patch("adapters.inesdata.components.os.path.isdir", side_effect=lambda path: path == automap_dir),
+            mock.patch(
+                "adapters.inesdata.components.os.path.isdir",
+                side_effect=lambda path: path == automap_dir or (path == git_dir and bool(clone_calls)),
+            ),
             mock.patch("adapters.inesdata.components.os.listdir", return_value=[]),
             mock.patch("adapters.inesdata.components.os.makedirs"),
             mock.patch("adapters.inesdata.components.os.rmdir"),
             mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=fake_isfile),
-            mock.patch("subprocess.run", side_effect=fake_run),
+            mock.patch("subprocess.run", side_effect=self._fake_component_source_git(automap_dir, clone_calls)),
         ):
             resolved = adapter._resolve_automap_source_dir({})
 
@@ -2178,6 +2287,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         adapter = self._make_shared_adapter()
         adapter.config_adapter.topology = "vm-distributed"
         deployer_config = {
+            "AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true",
             "AI_MODEL_HUB_MODEL_SERVER_MODE": "external",
             "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL": "http://org1.example.test/model-server",
             "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL": "https://org1.example.test/model-server",
@@ -2237,6 +2347,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 )
 
             deployer_config = {
+                "AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true",
                 "AI_MODEL_HUB_MODEL_SERVER_MODE": "combined",
                 "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": source_dir,
                 "AI_MODEL_HUB_MODEL_SERVER_IMAGE": "local/real-model-server:latest",
@@ -2340,15 +2451,17 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             source_dir = os.path.join(tmpdir, "AIModelHub-Use-Cases")
             clone_calls = []
+            git_runner = self._fake_component_source_git(source_dir, clone_calls)
 
-            def fake_run(args, check):
-                clone_calls.append((tuple(args), check))
-                os.makedirs(os.path.join(source_dir, "src"), exist_ok=True)
-                with open(os.path.join(source_dir, "requirements.txt"), "w", encoding="utf-8") as handle:
-                    handle.write("fastapi\nuvicorn\n")
-                with open(os.path.join(source_dir, "src", "server.py"), "w", encoding="utf-8") as handle:
-                    handle.write("from fastapi import FastAPI\napp = FastAPI()\n")
-                return None
+            def fake_run(args, *unused_args, **unused_kwargs):
+                result = git_runner(args, *unused_args, **unused_kwargs)
+                if tuple(args)[:2] == ("git", "clone"):
+                    os.makedirs(os.path.join(source_dir, "src"), exist_ok=True)
+                    with open(os.path.join(source_dir, "requirements.txt"), "w", encoding="utf-8") as handle:
+                        handle.write("fastapi\nuvicorn\n")
+                    with open(os.path.join(source_dir, "src", "server.py"), "w", encoding="utf-8") as handle:
+                        handle.write("from fastapi import FastAPI\napp = FastAPI()\n")
+                return result
 
             with mock.patch("adapters.shared.components.subprocess.run", side_effect=fake_run):
                 resolved = adapter._ai_model_hub_model_server_source_dir(
@@ -2379,13 +2492,18 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         adapter = self._make_shared_adapter()
 
         with tempfile.TemporaryDirectory() as source_dir:
+            os.makedirs(os.path.join(source_dir, ".git"), exist_ok=True)
             os.makedirs(os.path.join(source_dir, "src"), exist_ok=True)
             with open(os.path.join(source_dir, "requirements.txt"), "w", encoding="utf-8") as handle:
                 handle.write("fastapi\nuvicorn\n")
             with open(os.path.join(source_dir, "src", "server.py"), "w", encoding="utf-8") as handle:
                 handle.write("from fastapi import FastAPI\napp = FastAPI()\n")
+            clone_calls = []
 
-            with mock.patch("adapters.shared.components.subprocess.run") as run_mock:
+            with mock.patch(
+                "adapters.shared.components.subprocess.run",
+                side_effect=self._fake_component_source_git(source_dir, clone_calls),
+            ):
                 resolved = adapter._ai_model_hub_model_server_source_dir(
                     {
                         "AI_MODEL_HUB_MODEL_SERVER_MODE": "combined",
@@ -2395,7 +2513,26 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 )
 
         self.assertEqual(resolved, source_dir)
-        run_mock.assert_not_called()
+        self.assertEqual(clone_calls, [])
+
+    def test_ai_model_hub_model_server_source_repository_refuses_populated_non_git_source_dir(self):
+        adapter = self._make_shared_adapter()
+
+        with tempfile.TemporaryDirectory() as source_dir:
+            os.makedirs(os.path.join(source_dir, "src"), exist_ok=True)
+            with open(os.path.join(source_dir, "requirements.txt"), "w", encoding="utf-8") as handle:
+                handle.write("fastapi\nuvicorn\n")
+            with open(os.path.join(source_dir, "src", "server.py"), "w", encoding="utf-8") as handle:
+                handle.write("from fastapi import FastAPI\napp = FastAPI()\n")
+
+            with self.assertRaisesRegex(RuntimeError, "source directory is not usable"):
+                adapter._ai_model_hub_model_server_source_dir(
+                    {
+                        "AI_MODEL_HUB_MODEL_SERVER_MODE": "combined",
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": source_dir,
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": "https://example.test/use-cases.git",
+                    }
+                )
 
     def test_ai_model_hub_mock_model_server_ignores_stale_real_source_configuration(self):
         adapter = self._make_shared_adapter()
@@ -2409,6 +2546,32 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         )
 
         self.assertTrue(resolved.endswith("adapters/inesdata/sources/model-server"))
+
+    def test_ai_model_hub_dashboard_source_dir_does_not_fall_back_to_edc_dashboard_layout(self):
+        adapter = self._make_adapter()
+
+        with tempfile.TemporaryDirectory() as repo_dir:
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(components_module.__file__)))
+            dashboard_dir = os.path.join(project_root, "edc", "sources", "dashboard", "DataDashboard")
+            dockerfile_path = os.path.join(dashboard_dir, "Dockerfile")
+
+            def fake_isfile(path):
+                return path == dockerfile_path
+
+            with mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=fake_isfile):
+                self.assertEqual(adapter._ai_model_hub_dashboard_source_dir(repo_dir), "")
+
+    def test_ai_model_hub_dashboard_source_dir_prefers_repo_datadashboard_layout(self):
+        adapter = self._make_adapter()
+
+        with tempfile.TemporaryDirectory() as repo_dir:
+            dashboard_dir = os.path.join(repo_dir, "DataDashboard")
+            os.makedirs(dashboard_dir, exist_ok=True)
+            with open(os.path.join(dashboard_dir, "Dockerfile"), "w", encoding="utf-8") as handle:
+                handle.write("FROM node:lts\n")
+
+            self.assertEqual(adapter._ai_model_hub_dashboard_source_dir(repo_dir), dashboard_dir)
+            self.assertEqual(adapter._ai_model_hub_dashboard_dockerfile(dashboard_dir), "Dockerfile")
 
     def test_ai_model_hub_dashboard_checkout_restores_compatible_ref(self):
         adapter = self._make_adapter()
@@ -2424,11 +2587,43 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 handle.write("new layout\n")
             self._commit_all(repo_dir, "new layout")
 
-            restored = adapter._checkout_ai_model_hub_dashboard_source(repo_dir, compatible_ref)
+            adapter._refresh_ai_model_hub_source_checkout(
+                repo_dir,
+                {
+                    "AI_MODEL_HUB_SOURCE_REF": compatible_ref,
+                    "AI_MODEL_HUB_SOURCE_REFRESH": "false",
+                },
+            )
 
-            self.assertTrue(restored)
             self.assertTrue(os.path.isfile(dockerfile_path))
             self.assertEqual(self._git(repo_dir, "rev-parse", "HEAD").stdout.strip(), compatible_ref)
+
+    def test_ai_model_hub_source_dir_checks_out_compatible_ref_before_dashboard_validation(self):
+        adapter = self._make_adapter()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sources_dir = os.path.join(tmpdir, "sources")
+            repo_dir = os.path.join(sources_dir, "AIModelHub")
+            os.makedirs(sources_dir, exist_ok=True)
+            subprocess.run(["git", "init", repo_dir], check=True, capture_output=True, text=True)
+            dockerfile_path = os.path.join(repo_dir, "DataDashboard", "Dockerfile")
+            os.makedirs(os.path.dirname(dockerfile_path), exist_ok=True)
+            with open(dockerfile_path, "w", encoding="utf-8") as handle:
+                handle.write("FROM scratch\n")
+            compatible_ref = self._commit_all(repo_dir, "compatible dashboard")
+            shutil.rmtree(os.path.join(repo_dir, "DataDashboard"))
+            with open(os.path.join(repo_dir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("new incompatible layout\n")
+            self._commit_all(repo_dir, "new incompatible layout")
+
+            with mock.patch("adapters.inesdata.components.os.path.abspath", return_value=os.path.join(tmpdir, "components.py")):
+                resolved = adapter._resolve_ai_model_hub_source_dir(
+                    {
+                        "AI_MODEL_HUB_SOURCE_REF": compatible_ref,
+                        "AI_MODEL_HUB_SOURCE_REFRESH": "false",
+                    }
+                )
+
+        self.assertEqual(resolved, os.path.join(repo_dir, "DataDashboard"))
 
     def test_ai_model_hub_dashboard_checkout_refuses_tracked_local_changes(self):
         adapter = self._make_adapter()
@@ -2442,9 +2637,15 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 handle.write("dirty\n")
 
             with self.assertRaises(RuntimeError) as raised:
-                adapter._checkout_ai_model_hub_dashboard_source(repo_dir, compatible_ref)
+                adapter._refresh_ai_model_hub_source_checkout(
+                    repo_dir,
+                    {
+                        "AI_MODEL_HUB_SOURCE_REF": compatible_ref,
+                        "AI_MODEL_HUB_SOURCE_REFRESH": "false",
+                    },
+                )
 
-        self.assertIn("tracked local changes", str(raised.exception))
+        self.assertIn("local tracked changes", str(raised.exception))
 
     def test_load_image_into_k3s_uses_remote_import_for_vm_distributed_components(self):
         adapter = self._make_adapter()

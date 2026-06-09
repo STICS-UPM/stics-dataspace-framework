@@ -109,9 +109,22 @@ En la práctica:
 - si la sincronización de datasets no puede completarse por falta de red,
   `Level 5` lo reporta como warning por defecto para no romper despliegues
   existentes; puede hacerse estricta con `PIONERA_LEVEL5_DATASET_SYNC_STRICT=true`
-- para `ontology-hub`, `Level 5` usa un checkout local en `adapters/inesdata/sources/Ontology-Hub`; si no existe, lo clona automáticamente
-- `Level 5` reconstruye esa imagen en el host y la carga en minikube antes del despliegue
-- ese flujo es deliberadamente estricto: no usa overrides de `source dir` ni de imagen para `ontology-hub`
+- para los componentes que el framework construye desde fuentes locales
+  gestionadas, `Level 5` usa los checkouts canónicos bajo
+  `adapters/inesdata/sources/`; si faltan, los clona automáticamente desde el
+  repositorio configurado
+- los ejemplos de configuración usan `main` y `*_SOURCE_REFRESH=true` para
+  `ontology-hub`, `ai-model-hub`, `semantic-virtualization`, `mapping-editor`,
+  `automap` y el `model-server` real; antes de reconstruir la imagen, `Level 5`
+  ejecuta `git fetch` y hace checkout de la rama, etiqueta o commit indicado en
+  `*_SOURCE_REF`
+- si un checkout tiene cambios locales rastreados, `Level 5` se detiene antes
+  de refrescar para evitar sobrescribir trabajo no integrado
+- `Level 5` reconstruye esas imágenes en el host y las carga en minikube o k3s
+  antes del despliegue, según la topología activa
+- este flujo es deliberadamente estricto para los componentes gestionados; si se
+  necesita un despliegue reproducible, se debe fijar `*_SOURCE_REF` a un commit
+  o tag concreto
 - y hace que `Level 6` intente validarlo automáticamente
 - para `ai-model-hub`, `Level 6` ejecuta por defecto bootstrap, UI funcional,
   suite lingüística, benchmarking, movilidad, ejecución de modelo, gobernanza de

@@ -100,6 +100,70 @@ class MainMenuMigrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "exited")
         semantic_virtualization.assert_called_once_with()
 
+    def test_components_menu_runs_level5_with_selected_components_and_model_server(self):
+        captured_env = {}
+
+        def fake_run_levels(*args, **kwargs):
+            captured_env["components"] = main.os.environ.get("PIONERA_COMPONENTS")
+            captured_env["model_server"] = main.os.environ.get("PIONERA_AI_MODEL_HUB_MODEL_SERVER_ENABLED")
+            captured_env["legacy_model_server"] = main.os.environ.get(
+                "PIONERA_LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED"
+            )
+            return {"status": "completed", "adapter": args[0], "topology": kwargs.get("topology"), "levels": []}
+
+        with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch(
+            "builtins.input",
+            side_effect=["CM", "2,4", "Y", "Q"],
+        ), mock.patch.object(
+            main,
+            "run_levels",
+            side_effect=fake_run_levels,
+        ) as run_levels:
+            result = main.main(
+                ["menu"],
+                adapter_registry={"inesdata": "fake_adapter_module:FakeAdapter"},
+                deployer_registry={"inesdata": "fake_deployer_module:FakeDeployer"},
+                validation_engine_cls=FakeValidationEngine,
+                metrics_collector_cls=FakeMetricsCollector,
+                experiment_storage=FakeStorage,
+            )
+
+        self.assertEqual(result["status"], "exited")
+        run_levels.assert_called_once()
+        self.assertEqual(run_levels.call_args.kwargs["levels"], [5])
+        self.assertEqual(captured_env["components"], "ai-model-hub")
+        self.assertEqual(captured_env["model_server"], "true")
+        self.assertEqual(captured_env["legacy_model_server"], "true")
+
+    def test_components_menu_disables_model_server_when_not_selected(self):
+        captured_env = {}
+
+        def fake_run_levels(*args, **kwargs):
+            captured_env["components"] = main.os.environ.get("PIONERA_COMPONENTS")
+            captured_env["model_server"] = main.os.environ.get("PIONERA_AI_MODEL_HUB_MODEL_SERVER_ENABLED")
+            return {"status": "completed", "adapter": args[0], "topology": kwargs.get("topology"), "levels": []}
+
+        with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch(
+            "builtins.input",
+            side_effect=["CM", "1", "Y", "Q"],
+        ), mock.patch.object(
+            main,
+            "run_levels",
+            side_effect=fake_run_levels,
+        ):
+            result = main.main(
+                ["menu"],
+                adapter_registry={"inesdata": "fake_adapter_module:FakeAdapter"},
+                deployer_registry={"inesdata": "fake_deployer_module:FakeDeployer"},
+                validation_engine_cls=FakeValidationEngine,
+                metrics_collector_cls=FakeMetricsCollector,
+                experiment_storage=FakeStorage,
+            )
+
+        self.assertEqual(result["status"], "exited")
+        self.assertEqual(captured_env["components"], "ontology-hub")
+        self.assertEqual(captured_env["model_server"], "false")
+
     def test_legacy_shortcuts_are_routed_by_main_without_inesdata_py(self):
         with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch(
             "builtins.input",

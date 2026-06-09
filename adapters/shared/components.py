@@ -868,10 +868,36 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         if not images_to_import:
             return False
 
+        auto_build_enabled = self._level5_auto_build_local_images(resolved_config)
         print(
             "Ensuring vm-single local component image(s) are available in k3s before rollout: "
             f"{', '.join(images_to_import)}"
         )
+        if auto_build_enabled:
+            print(
+                "LEVEL5_AUTO_BUILD_LOCAL_IMAGES is enabled; rebuilding local component "
+                "image(s) before importing them into k3s."
+            )
+            for image_ref in images_to_import:
+                self._ensure_k3s_local_image_import_supported(image_ref, resolved_config)
+                self._build_component_local_image_for_rollout(
+                    image_labels.get(image_ref, ""),
+                    image_ref,
+                    resolved_config,
+                )
+            profile = (
+                resolved_config.get("MINIKUBE_PROFILE")
+                or getattr(self.config, "MINIKUBE_PROFILE", "minikube")
+                or "minikube"
+            ).strip() or "minikube"
+            self._load_images_into_cluster_runtime(
+                "k3s",
+                profile,
+                images_to_import,
+                resolved_config,
+            )
+            return True
+
         missing_images = []
         for image_ref in images_to_import:
             if self._k3s_runtime_has_image(image_ref, resolved_config):
@@ -1055,7 +1081,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         ).strip()
         if explicit:
             source_dir = self._resolve_project_path(explicit)
-            repository_url = self._ai_model_hub_model_server_source_repository(config)
+            repository_url = model_server.explicit_source_repository(config)
             if repository_url:
                 return self._ensure_ai_model_hub_model_server_source_checkout(
                     source_dir,
@@ -1073,7 +1099,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             ).strip()
             if real_source:
                 source_dir = self._resolve_project_path(real_source)
-                repository_url = self._ai_model_hub_model_server_source_repository(config)
+                repository_url = model_server.explicit_source_repository(config)
                 if repository_url:
                     return self._ensure_ai_model_hub_model_server_source_checkout(
                         source_dir,
@@ -1113,6 +1139,10 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
     @staticmethod
     def _ai_model_hub_model_server_source_ref(deployer_config):
         return model_server.source_ref(deployer_config)
+
+    @staticmethod
+    def _ai_model_hub_model_server_source_refresh_enabled(deployer_config):
+        return model_server.source_refresh_enabled(deployer_config)
 
     @staticmethod
     def _git_stdout(args):
@@ -1189,24 +1219,75 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 )
 
         source_ref = self._ai_model_hub_model_server_source_ref(deployer_config)
-        if not source_ref:
+        refresh_enabled = self._ai_model_hub_model_server_source_refresh_enabled(deployer_config)
+        if refresh_enabled or source_ref:
+            if not os.path.isdir(os.path.join(resolved_source_dir, ".git")):
+                self._fail(
+                    "AI Model Hub model-server source directory is not usable",
+                    root_cause=(
+                        f"Expected a Git working tree at {resolved_source_dir}. "
+                        "Move it away so Level 5 can clone the configured source, or disable "
+                        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REFRESH."
+                    ),
+                )
+            status = self._run_git_capture(
+                ["git", "-C", resolved_source_dir, "status", "--porcelain", "--untracked-files=no"]
+            )
+            if status.returncode != 0:
+                self._fail(
+                    "AI Model Hub model-server source directory is not usable",
+                    root_cause=f"Could not inspect Git status in {resolved_source_dir}",
+                )
+            if str(status.stdout or "").strip():
+                self._fail(
+                    "AI Model Hub model-server source directory has local tracked changes",
+                    root_cause=(
+                        f"Commit, stash or move {resolved_source_dir} before Level 5 can refresh "
+                        "or switch AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF."
+                    ),
+                )
+            subprocess.run(
+                ["git", "-C", resolved_source_dir, "remote", "set-url", "origin", resolved_repository_url],
+                check=False,
+            )
+            if refresh_enabled:
+                print(f"Refreshing AI Model Hub model-server source from {resolved_repository_url} ...")
+                fetch = self._run_git_capture(
+                    ["git", "-C", resolved_source_dir, "fetch", "origin", "--tags", "--prune"]
+                )
+                if fetch.returncode != 0:
+                    self._fail(
+                        "Could not refresh AI Model Hub model-server source repository",
+                        root_cause=(fetch.stderr or fetch.stdout or resolved_repository_url).strip(),
+                    )
+
+        if source_ref:
+            commit = self._resolve_component_source_ref_commit(
+                resolved_source_dir,
+                source_ref,
+                refresh_enabled,
+            )
+            if not commit:
+                self._fail(
+                    "Could not resolve AI Model Hub model-server source ref",
+                    root_cause=f"{source_ref} in {resolved_source_dir}",
+                )
+            current = self._run_git_capture(["git", "-C", resolved_source_dir, "rev-parse", "HEAD"])
+            if current.returncode == 0 and str(current.stdout or "").strip() == commit:
+                print(f"AI Model Hub model-server source already at requested ref {source_ref}.")
+            else:
+                print(f"Checking out AI Model Hub model-server source ref {source_ref} ...")
+                checkout = self._run_git_capture(["git", "-C", resolved_source_dir, "checkout", "--detach", commit])
+                if checkout.returncode != 0:
+                    self._fail(
+                        "Could not checkout AI Model Hub model-server source ref",
+                        root_cause=(checkout.stderr or checkout.stdout or source_ref).strip(),
+                    )
+        elif not refresh_enabled:
             print(
                 "AI Model Hub model-server source ref not configured; using the repository default branch "
                 "and recording the resolved commit as deployment evidence."
             )
-        if source_ref:
-            checkout_args = ["git", "-C", resolved_source_dir, "checkout", "--detach", source_ref]
-            try:
-                subprocess.run(checkout_args, check=True)
-            except subprocess.CalledProcessError as exc:
-                try:
-                    subprocess.run(["git", "-C", resolved_source_dir, "fetch", "--all", "--tags"], check=True)
-                    subprocess.run(checkout_args, check=True)
-                except subprocess.CalledProcessError:
-                    self._fail(
-                        "Could not checkout AI Model Hub model-server source ref",
-                        root_cause=f"{source_ref}: {exc}",
-                    )
 
         return resolved_source_dir
 
@@ -1244,6 +1325,14 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
     @staticmethod
     def _ai_model_hub_model_server_docker_base_image(deployer_config):
         return model_server.docker_base_image(deployer_config)
+
+    @staticmethod
+    def _ai_model_hub_model_server_torch_package(deployer_config):
+        return model_server.torch_package(deployer_config)
+
+    @staticmethod
+    def _ai_model_hub_model_server_torch_index_url(deployer_config):
+        return model_server.torch_index_url(deployer_config)
 
     @staticmethod
     def _ai_model_hub_model_server_uvicorn_app(deployer_config, mode):
@@ -1526,6 +1615,8 @@ def combined_models() -> Dict[str, Any]:
 
         container_port = self._ai_model_hub_model_server_container_port(deployer_config)
         uvicorn_app = self._ai_model_hub_model_server_uvicorn_app(deployer_config, mode)
+        torch_package = shlex.quote(self._ai_model_hub_model_server_torch_package(deployer_config))
+        torch_index_url = shlex.quote(self._ai_model_hub_model_server_torch_index_url(deployer_config))
         dockerfile_lines = [
             f"FROM {self._ai_model_hub_model_server_docker_base_image(deployer_config)}",
             "ENV PYTHONUNBUFFERED=1",
@@ -1533,7 +1624,13 @@ def combined_models() -> Dict[str, Any]:
             "WORKDIR /app",
             "RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*",
             "COPY use_cases/requirements.txt /tmp/use-case-requirements.txt",
-            "RUN python -m pip install --upgrade pip && python -m pip install -r /tmp/use-case-requirements.txt",
+            (
+                "RUN python -m pip install --upgrade pip && "
+                "grep -v -E '^torch([<>=~! ].*)?$' /tmp/use-case-requirements.txt "
+                "> /tmp/use-case-requirements-no-torch.txt && "
+                f"python -m pip install --no-deps --index-url {torch_index_url} {torch_package} && "
+                "python -m pip install -r /tmp/use-case-requirements-no-torch.txt"
+            ),
             "COPY use_cases /app/use_cases",
             "RUN if [ -d /app/use_cases/models ]; then cp -a /app/use_cases/models /app/models; fi",
             "ENV PYTHONPATH=/app/use_cases:/app",

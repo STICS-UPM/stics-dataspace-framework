@@ -66,6 +66,12 @@ importar imágenes desde fuentes en una VM, activa el modo de desarrollo con
 
 Despliega componentes opcionales configurados, como Ontology Hub o AI Model Hub cuando correspondan al adapter y configuración activos.
 
+Cuando se quiere desplegar solo un subconjunto sin modificar ficheros
+`deployer.config`, se recomienda usar la sección `Components` del menú. Esa
+sección ejecuta internamente `Level 5` con overrides temporales y permite
+seleccionar explícitamente Ontology Hub, AI Model Hub, Semantic Virtualization y
+el servidor de modelos de AI Model Hub.
+
 `6 - Level 6: Run Validation Tests`
 
 Ejecuta la validación integral del adapter activo. Según el perfil de validación,
@@ -234,6 +240,29 @@ Ejecuta métricas o benchmarks independientes sobre el adapter elegido para esa 
 `X - Recreate dataspace`
 
 Destruye y recrea el dataspace seleccionado preservando servicios comunes. Requiere escribir el nombre exacto del dataspace. Invalida conectores de nivel 4 y permite recrearlos inmediatamente si se confirma.
+
+## Components
+
+`CM - Deploy selected components`
+
+Ejecuta `Level 5` para una selección concreta de componentes del adapter y
+topología activos. La selección no persiste cambios en `deployer.config`; el
+framework usa `PIONERA_COMPONENTS` durante esa ejecución para limitar el alcance
+del despliegue.
+
+El submenú permite elegir Ontology Hub, AI Model Hub, Semantic Virtualization,
+la lista configurada en el adapter o todos los componentes compartidos
+desplegables. El servidor de modelos se muestra como opción explícita y se
+habilita solo para esa ejecución mediante
+`PIONERA_AI_MODEL_HUB_MODEL_SERVER_ENABLED=true`. Técnicamente se despliega bajo
+AI Model Hub, por lo que seleccionar el servidor añade también `ai-model-hub` a
+la ejecución de `Level 5`.
+
+Cuando los componentes se construyen desde fuentes gestionadas por el
+framework, `Level 5` refresca los checkouts configurados antes de construir la
+imagen. Los ejemplos de configuración usan `main` para desplegar la versión más
+reciente disponible; para ejecuciones reproducibles se debe fijar
+`*_SOURCE_REF` a una etiqueta o commit.
 
 ## Developer
 

@@ -458,6 +458,31 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         self.assertIn(expected, create_cmd)
         self.assertIn("bootstrap.py connector create conn-demo demo", create_cmd)
 
+    def test_bootstrap_connector_sync_client_command_does_not_use_connector_create(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = INESDataConnectorsAdapter(
+                run=lambda *_args, **_kwargs: object(),
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=ConnectorRetryConfigAdapter(tmpdir),
+                config_cls=ConnectorRetryConfig(tmpdir),
+            )
+            adapter.config_adapter.topology = "vm-distributed"
+
+            sync_cmd = adapter._bootstrap_connector_sync_client_command(
+                "python3",
+                "conn-demo",
+                "demo",
+                keycloak_url="http://127.0.0.1:18081/",
+            )
+
+        self.assertIn("PIONERA_TOPOLOGY=vm-distributed", sync_cmd)
+        self.assertIn("PIONERA_KC_MANAGEMENT_URL=http://127.0.0.1:18081", sync_cmd)
+        self.assertIn("bootstrap.py connector sync-client conn-demo demo", sync_cmd)
+        self.assertNotIn("bootstrap.py connector create", sync_cmd)
+        self.assertNotIn("bootstrap.py connector delete", sync_cmd)
+
     def test_bootstrap_connector_commands_can_override_vault_url_for_host_runtime(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             adapter = INESDataConnectorsAdapter(
@@ -1310,6 +1335,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
         self.assertEqual(ingress["publicHostname"], "org2.pionera.oeg.fi.upm.es")
         self.assertEqual(ingress["callbackProtocol"], "https")
         self.assertEqual(ingress["callbackHostname"], "org2.pionera.oeg.fi.upm.es")
+        self.assertEqual(ingress["dataplanePublicBaseUrl"], "https://org2.pionera.oeg.fi.upm.es/public")
         self.assertTrue(rendered["connector"]["tlsCacerts"]["enabled"])
         self.assertEqual(rendered["connector"]["tlsCacerts"]["secretName"], "common-tls-cacerts")
         self.assertIn("javax.net.ssl.trustStore=/opt/connector/tls-cacerts/cacerts.jks", rendered["connector"]["jvmArgs"])
@@ -4173,6 +4199,52 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             self.assertTrue(
                 any(call == ("rollout", "/clusters/provider.yaml", "provider") for call in calls)
             )
+
+    def test_additive_level4_syncs_existing_connector_keycloak_client_without_recreate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = ConnectorRetryConfig(tmpdir)
+            config_adapter = AdditiveConnectorRetryConfigAdapter(tmpdir)
+            config_adapter.topology = "vm-distributed"
+            os.makedirs(config.repo_dir(), exist_ok=True)
+            os.makedirs(config.venv_path(), exist_ok=True)
+            open(config.repo_requirements_path(), "w", encoding="utf-8").close()
+            calls = []
+
+            def fake_run(cmd, **_kwargs):
+                calls.append(cmd)
+                return object()
+
+            adapter = INESDataConnectorsAdapter(
+                run=fake_run,
+                run_silent=lambda *_args, **_kwargs: "",
+                auto_mode_getter=lambda: True,
+                infrastructure_adapter=mock.Mock(),
+                config_adapter=config_adapter,
+                config_cls=config,
+            )
+            adapter.load_dataspace_connectors = lambda: [
+                {
+                    "name": "demo",
+                    "namespace": "demo",
+                    "connectors": ["conn-a-demo"],
+                }
+            ]
+            adapter._prepare_level4_local_connector_images_for_namespaces = lambda *_args, **_kwargs: True
+            adapter._discover_existing_connectors = lambda *_args, **_kwargs: ["conn-a-demo"]
+            adapter.connector_already_exists = lambda *_args, **_kwargs: True
+            adapter.connector_is_healthy = lambda *_args, **_kwargs: True
+            adapter.connector_database_credentials_valid = lambda *_args, **_kwargs: True
+            adapter._vm_distributed_keycloak_admin_needs_port_forward = lambda: False
+            adapter.wait_for_keycloak_admin_ready = lambda *_args, **_kwargs: True
+            adapter.wait_for_all_connectors = lambda *_args, **_kwargs: True
+
+            with mock.patch("adapters.inesdata.connectors.ensure_python_requirements", lambda *_args, **_kwargs: None):
+                connectors = adapter.deploy_connectors()
+
+        self.assertEqual(connectors, ["conn-a-demo"])
+        self.assertTrue(any("bootstrap.py connector sync-client conn-a-demo demo" in call for call in calls))
+        self.assertFalse(any("bootstrap.py connector create" in call for call in calls))
+        self.assertFalse(any("bootstrap.py connector delete" in call for call in calls))
 
     def test_create_connector_retries_after_partial_credentials_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:

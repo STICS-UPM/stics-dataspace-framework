@@ -273,6 +273,13 @@ Estos artefactos separan `support_checks`, `dataspace_cases`, `ops_checks`, `evi
 - `UI_AI_MODEL_HUB_CATALOG_CLEANUP`
 - `UI_AI_MODEL_HUB_MODEL_URL`
 - `UI_AI_MODEL_HUB_MODEL_PATH`
+- `UI_AI_MODEL_HUB_MODEL_PAYLOAD`
+- `UI_AI_MODEL_HUB_MODEL_INPUT_SCHEMA`
+- `UI_AI_MODEL_HUB_EXPECTED_RESULT_TEXT`
+- `UI_AI_MODEL_HUB_EXTERNAL_MODEL_PATH`
+- `UI_AI_MODEL_HUB_EXTERNAL_MODEL_PAYLOAD`
+- `UI_AI_MODEL_HUB_EXTERNAL_EXPECTED_RESULT_TEXT`
+- `UI_AI_MODEL_HUB_BENCHMARKING_DEMO`
 - `UI_AI_MODEL_HUB_MODEL_NAMESPACE`
 - `UI_CATALOG_READINESS_TIMEOUT_MS`
 - `UI_FEDERATED_CATALOG_READINESS_TIMEOUT_MS`
@@ -317,10 +324,22 @@ visual, contractual, de descubrimiento especializado, ejecución y comparación
 con el servidor real de modelos configurado por el framework.
 `UI_AI_MODEL_HUB_MODEL_URL` permite fijar la URL completa del endpoint y
 `UI_AI_MODEL_HUB_MODEL_PATH` cambia la ruta por defecto
-`/api/v1/nlp/ecommerce-sentiment`. Si no se define una URL explícita, las
-pruebas usan `model-server` en `UI_AI_MODEL_HUB_MODEL_NAMESPACE`, en
-`UI_COMPONENTS_NAMESPACE` o, por defecto, en el namespace `components`. Level 5
-despliega ese fixture automáticamente cuando `AI Model Hub` está configurado.
+`/api/v1/nlp/ecommerce-sentiment`. `UI_AI_MODEL_HUB_MODEL_PAYLOAD` permite
+proporcionar el cuerpo JSON usado por las pruebas de ejecución, y
+`UI_AI_MODEL_HUB_MODEL_INPUT_SCHEMA` permite fijar el esquema visible en la UI.
+Para ejecución externa pueden usarse las variables equivalentes con prefijo
+`UI_AI_MODEL_HUB_EXTERNAL_`; si no se definen, se reutiliza la configuración
+general. Si no se define una URL explícita, las pruebas usan `model-server` en
+`UI_AI_MODEL_HUB_MODEL_NAMESPACE`, en `UI_COMPONENTS_NAMESPACE` o, por defecto,
+en el namespace `components`. En Level 6, el runner traduce
+`AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS` y
+`AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD` a estas variables de Playwright
+para que los flujos de ejecución apunten al contrato real del servidor de
+modelos. Cuando el payload configurado es un array, el runner desactiva
+`AI Model Benchmarking` UI mediante `UI_AI_MODEL_HUB_BENCHMARKING_DEMO=0`,
+porque el componente de benchmarking actual ejecuta filas individuales del CSV;
+la validación real de esos endpoints queda cubierta por la suite API del
+model-server.
 
 `UI_AI_MODEL_OBSERVER_DEMO=1` habilita `DS-UI-AMH-OBS-01` / `MH-OBS-01`: abre
 `AI Model Observer` desde INESData y valida la navegación visual hacia

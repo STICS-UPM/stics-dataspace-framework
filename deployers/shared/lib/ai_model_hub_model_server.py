@@ -7,6 +7,21 @@ from deployers.shared.lib.components import public_path_ingress_annotations
 
 DEFAULT_USE_CASES_SOURCE_REPOSITORY = "https://github.com/ProyectoPIONERA/AIModelHub-Use-Cases.git"
 
+SOURCE_DIR_KEYS = (
+    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
+    "MODEL_SERVER_SOURCE_DIR",
+    "AI_MODEL_HUB_REAL_MODEL_SERVER_SOURCE_DIR",
+    "AI_MODEL_HUB_USE_CASE_MODEL_SERVER_SOURCE_DIR",
+    "MODEL_SERVER_REAL_SOURCE_DIR",
+)
+
+SOURCE_REPOSITORY_KEYS = (
+    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
+    "AI_MODEL_HUB_USE_CASE_MODEL_SERVER_REPOSITORY",
+    "AI_MODEL_HUB_REAL_MODEL_SERVER_REPOSITORY",
+    "MODEL_SERVER_SOURCE_REPOSITORY",
+)
+
 
 def parse_bool(value, *, default: bool = False) -> bool:
     if value is None:
@@ -57,13 +72,7 @@ def model_server_mode(config: dict | None) -> tuple[str, str]:
 
 def source_repository(config: dict | None) -> str:
     values = dict(config or {})
-    explicit = str(
-        values.get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY")
-        or values.get("AI_MODEL_HUB_USE_CASE_MODEL_SERVER_REPOSITORY")
-        or values.get("AI_MODEL_HUB_REAL_MODEL_SERVER_REPOSITORY")
-        or values.get("MODEL_SERVER_SOURCE_REPOSITORY")
-        or ""
-    ).strip()
+    explicit = explicit_source_repository(values)
     if explicit:
         return explicit
     mode, _raw_mode = model_server_mode(values)
@@ -74,11 +83,49 @@ def source_repository(config: dict | None) -> str:
 
 def source_ref(config: dict | None) -> str:
     values = dict(config or {})
-    return str(
+    explicit = str(
         values.get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF")
         or values.get("MODEL_SERVER_SOURCE_REF")
         or ""
     ).strip()
+    if explicit:
+        return explicit
+    if explicit_source_dir(values) and not explicit_source_repository(values):
+        return ""
+    mode, _raw_mode = model_server_mode(values)
+    if mode in {"use-cases", "combined"} and source_repository(values):
+        return "main"
+    return ""
+
+
+def explicit_source_dir(config: dict | None) -> str:
+    values = dict(config or {})
+    for key in SOURCE_DIR_KEYS:
+        value = str(values.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def explicit_source_repository(config: dict | None) -> str:
+    values = dict(config or {})
+    for key in SOURCE_REPOSITORY_KEYS:
+        value = str(values.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def source_refresh_enabled(config: dict | None) -> bool:
+    values = dict(config or {})
+    for key in (
+        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REFRESH",
+        "MODEL_SERVER_SOURCE_REFRESH",
+        "LEVEL5_AI_MODEL_HUB_MODEL_SERVER_SOURCE_REFRESH",
+    ):
+        if key in values and str(values.get(key) or "").strip() != "":
+            return parse_bool(values.get(key), default=False)
+    return bool(source_ref(values))
 
 
 def image_ref(config: dict | None) -> str:
@@ -133,6 +180,24 @@ def docker_base_image(config: dict | None) -> str:
         values.get("AI_MODEL_HUB_MODEL_SERVER_DOCKER_BASE_IMAGE")
         or values.get("MODEL_SERVER_DOCKER_BASE_IMAGE")
         or "python:3.10-slim"
+    ).strip()
+
+
+def torch_package(config: dict | None) -> str:
+    values = dict(config or {})
+    return str(
+        values.get("AI_MODEL_HUB_MODEL_SERVER_TORCH_PACKAGE")
+        or values.get("MODEL_SERVER_TORCH_PACKAGE")
+        or "torch"
+    ).strip()
+
+
+def torch_index_url(config: dict | None) -> str:
+    values = dict(config or {})
+    return str(
+        values.get("AI_MODEL_HUB_MODEL_SERVER_TORCH_INDEX_URL")
+        or values.get("MODEL_SERVER_TORCH_INDEX_URL")
+        or "https://download.pytorch.org/whl/cpu"
     ).strip()
 
 

@@ -53,9 +53,19 @@ Modos disponibles para `Level 4 local`:
   Helm o en los overrides explícitos.
 
 Para componentes de `Level 5`, `LEVEL5_AUTO_BUILD_LOCAL_IMAGES=true` es el
-comportamiento de desarrollo local. En topologías VM, el valor por defecto es
-`false`; configura `*_IMAGE_REF` con imágenes de registry o activa el build local
-solo cuando el operador quiera importar imágenes desde fuentes.
+comportamiento por defecto de las topologías soportadas para evitar reutilizar
+tags locales antiguos. En topologías VM, el framework reconstruye e importa la
+imagen en el k3s remoto cuando la configuración lo permite. Para
+`ontology-hub`, `ai-model-hub`, `semantic-virtualization`, `mapping-editor`,
+`automap` y el `model-server` real, los ejemplos de configuración apuntan a
+`main` y activan `*_SOURCE_REFRESH=true`; por tanto, el checkout local se
+refresca antes del build. Los campos `*_SOURCE_REF` aceptan rama, etiqueta o
+commit. Si se requiere reproducibilidad congelada para un informe o auditoría,
+fija `*_SOURCE_REF` a un commit o tag concreto. Si el checkout tiene cambios
+locales rastreados, el framework se detiene antes de refrescar para no mezclar
+trabajo local con fuentes remotas. Si se prefiere una imagen de registry,
+configura `*_IMAGE_REF` con una referencia completa y desactiva el build local
+de forma explícita.
 
 Después de cargar una imagen local, valida con una prueba focalizada antes de
 ejecutar toda la suite. Para el conector INESData, el flujo E2E recomendado es:

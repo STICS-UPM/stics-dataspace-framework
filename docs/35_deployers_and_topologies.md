@@ -186,6 +186,13 @@ configurado y recrea conectores existentes para dejar un despliegue limpio. Para
 añadir conectores sin recrear los que ya están sanos, usa
 `LEVEL4_CONNECTOR_RECONCILIATION_MODE=additive`.
 
+En modo `additive`, el framework preserva los usuarios y credenciales de acceso
+de los conectores existentes. Por defecto, también reconcilia el cliente técnico
+de Keycloak asociado a cada conector preservado mediante
+`LEVEL4_SYNC_EXISTING_CONNECTOR_KEYCLOAK_CLIENTS=true`; esta reconciliación
+sincroniza roles, grupos y el certificado público usado por OAuth/DSP, pero no
+regenera los usuarios `user-conn-*` ni sus contraseñas.
+
 Si las claves de mapeo no se definen, el framework conserva el comportamiento
 histórico: primer conector como origen de validación, segundo como destino de
 validación y conectores adicionales en el namespace del dataspace.

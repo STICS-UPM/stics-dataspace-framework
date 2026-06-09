@@ -509,6 +509,39 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
                 "http://components.internal/model-server",
             )
 
+    def test_playwright_validation_exports_model_server_validation_contract(self):
+        context = self._context()
+        context.topology = "vm-distributed"
+        context.config.update(
+            {
+                "COMPONENTS_PUBLIC_BASE_URL": "https://org1.example.test",
+                "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS": "/mobility/lightgbm_previous_delay,/mobility/randomforest_previous_delay",
+                "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD": '[{"trip_id":"trip-1"}]',
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            ui_runner.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0),
+        ) as subprocess_run:
+            ui_runner.run_playwright_validation(
+                profile=self._profile(),
+                context=context,
+                experiment_dir=tmpdir,
+            )
+
+            env = subprocess_run.call_args.kwargs["env"]
+            self.assertEqual(env["UI_AI_MODEL_HUB_MODEL_PATH"], "/mobility/lightgbm_previous_delay")
+            self.assertEqual(env["UI_AI_MODEL_HUB_EXTERNAL_MODEL_PATH"], "/mobility/lightgbm_previous_delay")
+            self.assertEqual(env["UI_AI_MODEL_HUB_MODEL_PAYLOAD"], '[{"trip_id":"trip-1"}]')
+            self.assertEqual(env["UI_AI_MODEL_HUB_EXTERNAL_MODEL_PAYLOAD"], '[{"trip_id":"trip-1"}]')
+            self.assertEqual(
+                env["UI_AI_MODEL_HUB_BENCHMARK_MODEL_PATHS"],
+                "/mobility/lightgbm_previous_delay,/mobility/randomforest_previous_delay",
+            )
+            self.assertEqual(env["UI_AI_MODEL_HUB_BENCHMARKING_DEMO"], "0")
+
     def test_playwright_validation_respects_explicit_vm_distributed_protocol_mode(self):
         context = self._context()
         context.topology = "vm-distributed"

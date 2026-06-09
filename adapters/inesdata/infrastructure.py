@@ -2629,6 +2629,9 @@ class INESDataInfrastructureAdapter:
                     "metadata": {
                         "name": "common-srvs-minio-api-public-root",
                         "namespace": namespace,
+                        "annotations": {
+                            "nginx.ingress.kubernetes.io/proxy-body-size": "0",
+                        },
                         "labels": {
                             "app.kubernetes.io/managed-by": "validation-environment",
                             "app.kubernetes.io/part-of": topology_label,

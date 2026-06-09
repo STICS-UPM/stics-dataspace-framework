@@ -1,8 +1,10 @@
 import json
 import os
+import re
 import shutil
 import shlex
 import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -42,11 +44,12 @@ class INESDataComponentsAdapter:
         "registration-service",
         "public-portal",
     }
+    _DEFAULT_COMPONENT_SOURCE_REF = "main"
     _ONTOLOGY_HUB_REPO_URL = "https://github.com/ProyectoPIONERA/Ontology-Hub.git"
     _ONTOLOGY_HUB_REPO_DIRNAME = "Ontology-Hub"
     _AI_MODEL_HUB_REPO_URL = "https://github.com/ProyectoPIONERA/AIModelHub.git"
     _AI_MODEL_HUB_REPO_DIRNAME = "AIModelHub"
-    _AI_MODEL_HUB_DASHBOARD_REF = "684560eb4a7543c4b0e0e359dfa401ff4ffde7e7"
+    _AI_MODEL_HUB_DASHBOARD_REF = "main"
     _MORPH_KGV_REPO_URL = "https://github.com/ProyectoPIONERA/morph-kgv.git"
     _MORPH_KGV_REPO_DIRNAME = "morph-kgv"
     _MAPPING_EDITOR_REPO_URL = "https://github.com/ProyectoPIONERA/mapping-editor.git"
@@ -848,11 +851,413 @@ class INESDataComponentsAdapter:
             else:
                 os.environ["PIONERA_KUBECONFIG_ROLE"] = previous_role
 
+    def _ontology_hub_source_repository(self, deployer_config: dict | None = None) -> str:
+        for candidate in (
+            os.getenv("ONTOLOGY_HUB_SOURCE_REPOSITORY"),
+            os.getenv("ONTOLOGY_HUB_REPOSITORY"),
+            (deployer_config or {}).get("ONTOLOGY_HUB_SOURCE_REPOSITORY"),
+            (deployer_config or {}).get("ONTOLOGY_HUB_REPOSITORY"),
+            self._ONTOLOGY_HUB_REPO_URL,
+        ):
+            value = str(candidate or "").strip()
+            if value:
+                return value
+        return self._ONTOLOGY_HUB_REPO_URL
+
+    def _ontology_hub_source_ref(self, deployer_config: dict | None = None) -> str:
+        for candidate in (
+            os.getenv("ONTOLOGY_HUB_SOURCE_REF"),
+            os.getenv("ONTOLOGY_HUB_REPO_REF"),
+            (deployer_config or {}).get("ONTOLOGY_HUB_SOURCE_REF"),
+            (deployer_config or {}).get("ONTOLOGY_HUB_REPO_REF"),
+            self._DEFAULT_COMPONENT_SOURCE_REF,
+        ):
+            value = str(candidate or "").strip()
+            if value:
+                return value
+        return self._DEFAULT_COMPONENT_SOURCE_REF
+
+    def _ontology_hub_source_refresh_enabled(self, deployer_config: dict | None = None) -> bool:
+        explicit = None
+        for candidate in (
+            os.getenv("ONTOLOGY_HUB_SOURCE_REFRESH"),
+            os.getenv("ONTOLOGY_HUB_REFRESH_SOURCE"),
+            os.getenv("LEVEL5_ONTOLOGY_HUB_SOURCE_REFRESH"),
+            (deployer_config or {}).get("ONTOLOGY_HUB_SOURCE_REFRESH"),
+            (deployer_config or {}).get("ONTOLOGY_HUB_REFRESH_SOURCE"),
+            (deployer_config or {}).get("LEVEL5_ONTOLOGY_HUB_SOURCE_REFRESH"),
+        ):
+            if candidate is not None and str(candidate).strip() != "":
+                explicit = candidate
+                break
+        if explicit is not None:
+            return self._parse_bool(explicit, default=False)
+        return bool(self._ontology_hub_source_ref(deployer_config))
+
+    @staticmethod
+    def _looks_like_git_sha(value: str) -> bool:
+        return bool(re.fullmatch(r"[0-9a-fA-F]{7,40}", str(value or "").strip()))
+
+    def _run_git_capture(self, args: list[str]):
+        return subprocess.run(
+            args,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def _ensure_ontology_hub_checkout_clean(self, ontology_hub_dir: str):
+        status = self._run_git_capture(
+            ["git", "-C", ontology_hub_dir, "status", "--porcelain", "--untracked-files=no"]
+        )
+        if status.returncode != 0:
+            self._fail(
+                "Ontology-Hub source directory is not usable",
+                root_cause=f"Could not inspect Git status in {ontology_hub_dir}",
+            )
+        if str(status.stdout or "").strip():
+            self._fail(
+                "Ontology-Hub source directory has local tracked changes",
+                root_cause=(
+                    f"Commit, stash or move {ontology_hub_dir} before Level 5 can refresh "
+                    "or switch the Ontology Hub source ref."
+                ),
+            )
+
+    def _resolve_ontology_hub_source_ref_commit(
+        self,
+        ontology_hub_dir: str,
+        source_ref: str,
+        refresh_enabled: bool,
+    ) -> str:
+        source_ref = str(source_ref or "").strip()
+        if not source_ref:
+            return ""
+
+        candidates = []
+        if (
+            refresh_enabled
+            and not source_ref.startswith(("origin/", "refs/"))
+            and not self._looks_like_git_sha(source_ref)
+        ):
+            candidates.append(f"origin/{source_ref}")
+        candidates.append(source_ref)
+
+        for candidate in candidates:
+            resolved = self._run_git_capture(
+                ["git", "-C", ontology_hub_dir, "rev-parse", "--verify", f"{candidate}^{{commit}}"]
+            )
+            if resolved.returncode == 0 and str(resolved.stdout or "").strip():
+                return str(resolved.stdout or "").strip()
+        return ""
+
+    def _refresh_ontology_hub_source_checkout(self, ontology_hub_dir: str, deployer_config: dict):
+        source_ref = self._ontology_hub_source_ref(deployer_config)
+        refresh_enabled = self._ontology_hub_source_refresh_enabled(deployer_config)
+        if not refresh_enabled and not source_ref:
+            return
+
+        git_dir = os.path.join(ontology_hub_dir, ".git")
+        if not os.path.isdir(git_dir):
+            self._fail(
+                "Ontology-Hub source directory is not usable",
+                root_cause=(
+                    f"Expected a Git working tree at {ontology_hub_dir}. "
+                    "Move it away so Level 5 can clone the canonical source, or disable "
+                    "ONTOLOGY_HUB_SOURCE_REFRESH."
+                ),
+            )
+
+        self._ensure_ontology_hub_checkout_clean(ontology_hub_dir)
+        repository = self._ontology_hub_source_repository(deployer_config)
+        subprocess.run(["git", "-C", ontology_hub_dir, "remote", "set-url", "origin", repository], check=False)
+
+        if refresh_enabled:
+            print(f"Refreshing Ontology-Hub source from {repository} ...")
+            fetch = self._run_git_capture(["git", "-C", ontology_hub_dir, "fetch", "origin", "--tags", "--prune"])
+            if fetch.returncode != 0:
+                self._fail(
+                    "Could not refresh Ontology-Hub repository",
+                    root_cause=(fetch.stderr or fetch.stdout or repository).strip(),
+                )
+
+        if source_ref:
+            commit = self._resolve_ontology_hub_source_ref_commit(
+                ontology_hub_dir,
+                source_ref,
+                refresh_enabled,
+            )
+            if not commit:
+                self._fail(
+                    "Could not resolve Ontology-Hub source ref",
+                    root_cause=f"{source_ref} in {ontology_hub_dir}",
+                )
+            current = self._run_git_capture(["git", "-C", ontology_hub_dir, "rev-parse", "HEAD"])
+            if current.returncode == 0 and str(current.stdout or "").strip() == commit:
+                print(f"Ontology-Hub sources already at requested ref {source_ref}.")
+                return
+            print(f"Checking out Ontology-Hub source ref {source_ref} ...")
+            checkout = self._run_git_capture(["git", "-C", ontology_hub_dir, "checkout", "--detach", commit])
+            if checkout.returncode != 0:
+                self._fail(
+                    "Could not checkout Ontology-Hub source ref",
+                    root_cause=(checkout.stderr or checkout.stdout or source_ref).strip(),
+                )
+            return
+
+        branch = self._run_git_capture(["git", "-C", ontology_hub_dir, "rev-parse", "--abbrev-ref", "HEAD"])
+        branch_name = str(branch.stdout or "").strip() if branch.returncode == 0 else ""
+        if refresh_enabled and branch_name and branch_name != "HEAD":
+            print(f"Fast-forwarding Ontology-Hub source branch {branch_name} ...")
+            pull = self._run_git_capture(["git", "-C", ontology_hub_dir, "pull", "--ff-only", "origin", branch_name])
+            if pull.returncode != 0:
+                self._fail(
+                    "Could not fast-forward Ontology-Hub source branch",
+                    root_cause=(pull.stderr or pull.stdout or branch_name).strip(),
+                )
+
+    def _component_source_value(self, names: tuple[str, ...], deployer_config: dict | None, default: str = "") -> str:
+        config = deployer_config or {}
+        for name in names:
+            value = str(os.getenv(name) or "").strip()
+            if value:
+                return value
+        for name in names:
+            value = str(config.get(name) or "").strip()
+            if value:
+                return value
+        return str(default or "").strip()
+
+    def _component_source_refresh_enabled(
+        self,
+        names: tuple[str, ...],
+        deployer_config: dict | None,
+        *,
+        source_ref: str,
+    ) -> bool:
+        config = deployer_config or {}
+        for name in names:
+            candidate = os.getenv(name)
+            if candidate is not None and str(candidate).strip() != "":
+                return self._parse_bool(candidate, default=False)
+        for name in names:
+            candidate = config.get(name)
+            if candidate is not None and str(candidate).strip() != "":
+                return self._parse_bool(candidate, default=False)
+        return bool(str(source_ref or "").strip())
+
+    def _ensure_component_checkout_clean(self, source_dir: str, label: str):
+        status = self._run_git_capture(["git", "-C", source_dir, "status", "--porcelain", "--untracked-files=no"])
+        if status.returncode != 0:
+            self._fail(
+                f"{label} source directory is not usable",
+                root_cause=f"Could not inspect Git status in {source_dir}",
+            )
+        if str(status.stdout or "").strip():
+            self._fail(
+                f"{label} source directory has local tracked changes",
+                root_cause=(
+                    f"Commit, stash or move {source_dir} before Level 5 can refresh "
+                    f"or switch the {label} source ref."
+                ),
+            )
+
+    def _resolve_component_source_ref_commit(self, source_dir: str, source_ref: str, refresh_enabled: bool) -> str:
+        source_ref = str(source_ref or "").strip()
+        if not source_ref:
+            return ""
+
+        candidates = []
+        if (
+            refresh_enabled
+            and not source_ref.startswith(("origin/", "refs/"))
+            and not self._looks_like_git_sha(source_ref)
+        ):
+            candidates.append(f"origin/{source_ref}")
+        candidates.append(source_ref)
+
+        for candidate in candidates:
+            resolved = self._run_git_capture(
+                ["git", "-C", source_dir, "rev-parse", "--verify", f"{candidate}^{{commit}}"]
+            )
+            if resolved.returncode == 0 and str(resolved.stdout or "").strip():
+                return str(resolved.stdout or "").strip()
+        return ""
+
+    def _refresh_component_source_checkout(
+        self,
+        source_dir: str,
+        *,
+        label: str,
+        repository: str,
+        source_ref: str,
+        refresh_enabled: bool,
+        disable_key: str,
+    ):
+        if not refresh_enabled and not source_ref:
+            return
+
+        git_dir = os.path.join(source_dir, ".git")
+        if not os.path.isdir(git_dir):
+            self._fail(
+                f"{label} source directory is not usable",
+                root_cause=(
+                    f"Expected a Git working tree at {source_dir}. "
+                    f"Move it away so Level 5 can clone the canonical source, or disable {disable_key}."
+                ),
+            )
+
+        self._ensure_component_checkout_clean(source_dir, label)
+        subprocess.run(["git", "-C", source_dir, "remote", "set-url", "origin", repository], check=False)
+
+        if refresh_enabled:
+            print(f"Refreshing {label} source from {repository} ...")
+            fetch = self._run_git_capture(["git", "-C", source_dir, "fetch", "origin", "--tags", "--prune"])
+            if fetch.returncode != 0:
+                self._fail(
+                    f"Could not refresh {label} repository",
+                    root_cause=(fetch.stderr or fetch.stdout or repository).strip(),
+                )
+
+        if source_ref:
+            commit = self._resolve_component_source_ref_commit(source_dir, source_ref, refresh_enabled)
+            if not commit:
+                self._fail(
+                    f"Could not resolve {label} source ref",
+                    root_cause=f"{source_ref} in {source_dir}",
+                )
+            current = self._run_git_capture(["git", "-C", source_dir, "rev-parse", "HEAD"])
+            if current.returncode == 0 and str(current.stdout or "").strip() == commit:
+                print(f"{label} sources already at requested ref {source_ref}.")
+                return
+            print(f"Checking out {label} source ref {source_ref} ...")
+            checkout = self._run_git_capture(["git", "-C", source_dir, "checkout", "--detach", commit])
+            if checkout.returncode != 0:
+                self._fail(
+                    f"Could not checkout {label} source ref",
+                    root_cause=(checkout.stderr or checkout.stdout or source_ref).strip(),
+                )
+            return
+
+        branch = self._run_git_capture(["git", "-C", source_dir, "rev-parse", "--abbrev-ref", "HEAD"])
+        branch_name = str(branch.stdout or "").strip() if branch.returncode == 0 else ""
+        if refresh_enabled and branch_name and branch_name != "HEAD":
+            print(f"Fast-forwarding {label} source branch {branch_name} ...")
+            pull = self._run_git_capture(["git", "-C", source_dir, "pull", "--ff-only", "origin", branch_name])
+            if pull.returncode != 0:
+                self._fail(
+                    f"Could not fast-forward {label} source branch",
+                    root_cause=(pull.stderr or pull.stdout or branch_name).strip(),
+                )
+
+    def _morph_kgv_source_repository(self, deployer_config: dict | None = None) -> str:
+        return self._component_source_value(
+            (
+                "MORPH_KGV_SOURCE_REPOSITORY",
+                "SEMANTIC_VIRTUALIZATION_SOURCE_REPOSITORY",
+                "MORPH_KGV_REPOSITORY",
+            ),
+            deployer_config,
+            self._MORPH_KGV_REPO_URL,
+        )
+
+    def _morph_kgv_source_ref(self, deployer_config: dict | None = None) -> str:
+        return self._component_source_value(
+            (
+                "MORPH_KGV_SOURCE_REF",
+                "SEMANTIC_VIRTUALIZATION_SOURCE_REF",
+                "MORPH_KGV_REPO_REF",
+            ),
+            deployer_config,
+            self._DEFAULT_COMPONENT_SOURCE_REF,
+        )
+
+    def _morph_kgv_source_refresh_enabled(self, deployer_config: dict | None = None) -> bool:
+        source_ref = self._morph_kgv_source_ref(deployer_config)
+        return self._component_source_refresh_enabled(
+            (
+                "MORPH_KGV_SOURCE_REFRESH",
+                "SEMANTIC_VIRTUALIZATION_SOURCE_REFRESH",
+                "LEVEL5_SEMANTIC_VIRTUALIZATION_SOURCE_REFRESH",
+            ),
+            deployer_config,
+            source_ref=source_ref,
+        )
+
+    def _mapping_editor_source_repository(self, deployer_config: dict | None = None) -> str:
+        return self._component_source_value(
+            (
+                "MAPPING_EDITOR_SOURCE_REPOSITORY",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SOURCE_REPOSITORY",
+                "SEMANTIC_VIRTUALIZATION_EDITOR_SOURCE_REPOSITORY",
+                "MAPPING_EDITOR_REPOSITORY",
+            ),
+            deployer_config,
+            self._MAPPING_EDITOR_REPO_URL,
+        )
+
+    def _mapping_editor_source_ref(self, deployer_config: dict | None = None) -> str:
+        return self._component_source_value(
+            (
+                "MAPPING_EDITOR_SOURCE_REF",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SOURCE_REF",
+                "SEMANTIC_VIRTUALIZATION_EDITOR_SOURCE_REF",
+                "MAPPING_EDITOR_REPO_REF",
+            ),
+            deployer_config,
+            self._DEFAULT_COMPONENT_SOURCE_REF,
+        )
+
+    def _mapping_editor_source_refresh_enabled(self, deployer_config: dict | None = None) -> bool:
+        source_ref = self._mapping_editor_source_ref(deployer_config)
+        return self._component_source_refresh_enabled(
+            (
+                "MAPPING_EDITOR_SOURCE_REFRESH",
+                "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SOURCE_REFRESH",
+                "SEMANTIC_VIRTUALIZATION_EDITOR_SOURCE_REFRESH",
+                "LEVEL5_SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SOURCE_REFRESH",
+            ),
+            deployer_config,
+            source_ref=source_ref,
+        )
+
+    def _automap_source_repository(self, deployer_config: dict | None = None) -> str:
+        return self._component_source_value(
+            (
+                "AUTOMAP_SOURCE_REPOSITORY",
+                "AUTOMAP_REPOSITORY",
+            ),
+            deployer_config,
+            self._AUTOMAP_REPO_URL,
+        )
+
+    def _automap_source_ref(self, deployer_config: dict | None = None) -> str:
+        return self._component_source_value(
+            (
+                "AUTOMAP_SOURCE_REF",
+                "AUTOMAP_REPO_REF",
+            ),
+            deployer_config,
+            self._DEFAULT_COMPONENT_SOURCE_REF,
+        )
+
+    def _automap_source_refresh_enabled(self, deployer_config: dict | None = None) -> bool:
+        source_ref = self._automap_source_ref(deployer_config)
+        return self._component_source_refresh_enabled(
+            (
+                "AUTOMAP_SOURCE_REFRESH",
+                "LEVEL5_AUTOMAP_SOURCE_REFRESH",
+            ),
+            deployer_config,
+            source_ref=source_ref,
+        )
+
     def _resolve_ontology_hub_source_dir(self, deployer_config: dict) -> str:
         sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")
         ontology_hub_dir = os.path.join(sources_dir, self._ONTOLOGY_HUB_REPO_DIRNAME)
         dockerfile_path = os.path.join(ontology_hub_dir, "Dockerfile")
         if os.path.isfile(dockerfile_path):
+            self._refresh_ontology_hub_source_checkout(ontology_hub_dir, deployer_config)
             return ontology_hub_dir
 
         should_clone = not os.path.isdir(ontology_hub_dir)
@@ -871,16 +1276,20 @@ class INESDataComponentsAdapter:
                 except OSError:
                     pass
             print(f"Cloning Ontology-Hub into {ontology_hub_dir} ...")
-            import subprocess
             try:
-                subprocess.run(["git", "clone", self._ONTOLOGY_HUB_REPO_URL, ontology_hub_dir], check=True)
+                subprocess.run(
+                    ["git", "clone", self._ontology_hub_source_repository(deployer_config), ontology_hub_dir],
+                    check=True,
+                )
             except Exception as exc:
                 self._fail(
                     "Could not clone Ontology-Hub repository",
                     root_cause=str(exc),
                 )
+            self._refresh_ontology_hub_source_checkout(ontology_hub_dir, deployer_config)
 
         if os.path.isfile(dockerfile_path):
+            self._refresh_ontology_hub_source_checkout(ontology_hub_dir, deployer_config)
             return ontology_hub_dir
 
         self._fail(
@@ -892,14 +1301,160 @@ class INESDataComponentsAdapter:
             ),
         )
 
+    def _ai_model_hub_source_repository(self, deployer_config: dict | None = None) -> str:
+        for candidate in (
+            os.getenv("AI_MODEL_HUB_SOURCE_REPOSITORY"),
+            os.getenv("AI_MODEL_HUB_REPOSITORY"),
+            os.getenv("AI_MODEL_HUB_DASHBOARD_SOURCE_REPOSITORY"),
+            (deployer_config or {}).get("AI_MODEL_HUB_SOURCE_REPOSITORY"),
+            (deployer_config or {}).get("AI_MODEL_HUB_REPOSITORY"),
+            (deployer_config or {}).get("AI_MODEL_HUB_DASHBOARD_SOURCE_REPOSITORY"),
+            self._AI_MODEL_HUB_REPO_URL,
+        ):
+            value = str(candidate or "").strip()
+            if value:
+                return value
+        return self._AI_MODEL_HUB_REPO_URL
+
+    def _ai_model_hub_source_ref(self, deployer_config: dict | None = None) -> str:
+        for candidate in (
+            os.getenv("AI_MODEL_HUB_DASHBOARD_SOURCE_REF"),
+            os.getenv("AI_MODEL_HUB_SOURCE_REF"),
+            os.getenv("AI_MODEL_HUB_REPO_REF"),
+            (deployer_config or {}).get("AI_MODEL_HUB_DASHBOARD_SOURCE_REF"),
+            (deployer_config or {}).get("AI_MODEL_HUB_SOURCE_REF"),
+            (deployer_config or {}).get("AI_MODEL_HUB_REPO_REF"),
+            self._AI_MODEL_HUB_DASHBOARD_REF,
+        ):
+            value = str(candidate or "").strip()
+            if value:
+                return value
+        return self._AI_MODEL_HUB_DASHBOARD_REF
+
+    def _ai_model_hub_source_refresh_enabled(self, deployer_config: dict | None = None) -> bool:
+        explicit = None
+        for candidate in (
+            os.getenv("AI_MODEL_HUB_SOURCE_REFRESH"),
+            os.getenv("AI_MODEL_HUB_REFRESH_SOURCE"),
+            os.getenv("AI_MODEL_HUB_DASHBOARD_SOURCE_REFRESH"),
+            os.getenv("LEVEL5_AI_MODEL_HUB_SOURCE_REFRESH"),
+            (deployer_config or {}).get("AI_MODEL_HUB_SOURCE_REFRESH"),
+            (deployer_config or {}).get("AI_MODEL_HUB_REFRESH_SOURCE"),
+            (deployer_config or {}).get("AI_MODEL_HUB_DASHBOARD_SOURCE_REFRESH"),
+            (deployer_config or {}).get("LEVEL5_AI_MODEL_HUB_SOURCE_REFRESH"),
+        ):
+            if candidate is not None and str(candidate).strip() != "":
+                explicit = candidate
+                break
+        if explicit is not None:
+            return self._parse_bool(explicit, default=False)
+        return bool(self._ai_model_hub_source_ref(deployer_config))
+
+    def _ensure_ai_model_hub_checkout_clean(self, ai_model_hub_dir: str):
+        status = self._run_git_capture(
+            ["git", "-C", ai_model_hub_dir, "status", "--porcelain", "--untracked-files=no"]
+        )
+        if status.returncode != 0:
+            self._fail(
+                "AI Model Hub source directory is not usable",
+                root_cause=f"Could not inspect Git status in {ai_model_hub_dir}",
+            )
+        if str(status.stdout or "").strip():
+            self._fail(
+                "AI Model Hub source directory has local tracked changes",
+                root_cause=(
+                    f"Commit, stash or move {ai_model_hub_dir} before Level 5 can refresh "
+                    "or switch the AI Model Hub source ref."
+                ),
+            )
+
+    def _resolve_ai_model_hub_source_ref_commit(
+        self,
+        ai_model_hub_dir: str,
+        source_ref: str,
+        refresh_enabled: bool,
+    ) -> str:
+        source_ref = str(source_ref or "").strip()
+        if not source_ref:
+            return ""
+
+        candidates = []
+        if (
+            refresh_enabled
+            and not source_ref.startswith(("origin/", "refs/"))
+            and not self._looks_like_git_sha(source_ref)
+        ):
+            candidates.append(f"origin/{source_ref}")
+        candidates.append(source_ref)
+
+        for candidate in candidates:
+            resolved = self._run_git_capture(
+                ["git", "-C", ai_model_hub_dir, "rev-parse", "--verify", f"{candidate}^{{commit}}"]
+            )
+            if resolved.returncode == 0 and str(resolved.stdout or "").strip():
+                return str(resolved.stdout or "").strip()
+        return ""
+
+    def _refresh_ai_model_hub_source_checkout(self, ai_model_hub_dir: str, deployer_config: dict):
+        source_ref = self._ai_model_hub_source_ref(deployer_config)
+        refresh_enabled = self._ai_model_hub_source_refresh_enabled(deployer_config)
+        if not refresh_enabled and not source_ref:
+            return
+
+        git_dir = os.path.join(ai_model_hub_dir, ".git")
+        if not os.path.isdir(git_dir):
+            self._fail(
+                "AI Model Hub source directory is not usable",
+                root_cause=(
+                    f"Expected a Git working tree at {ai_model_hub_dir}. "
+                    "Move it away so Level 5 can clone the canonical source, or disable "
+                    "AI_MODEL_HUB_SOURCE_REFRESH."
+                ),
+            )
+
+        self._ensure_ai_model_hub_checkout_clean(ai_model_hub_dir)
+        repository = self._ai_model_hub_source_repository(deployer_config)
+        subprocess.run(["git", "-C", ai_model_hub_dir, "remote", "set-url", "origin", repository], check=False)
+
+        if refresh_enabled:
+            print(f"Refreshing AI Model Hub source from {repository} ...")
+            fetch = self._run_git_capture(["git", "-C", ai_model_hub_dir, "fetch", "origin", "--tags", "--prune"])
+            if fetch.returncode != 0:
+                self._fail(
+                    "Could not refresh AI Model Hub repository",
+                    root_cause=(fetch.stderr or fetch.stdout or repository).strip(),
+                )
+
+        commit = self._resolve_ai_model_hub_source_ref_commit(
+            ai_model_hub_dir,
+            source_ref,
+            refresh_enabled,
+        )
+        if not commit:
+            self._fail(
+                "Could not resolve AI Model Hub source ref",
+                root_cause=f"{source_ref} in {ai_model_hub_dir}",
+            )
+        current = self._run_git_capture(["git", "-C", ai_model_hub_dir, "rev-parse", "HEAD"])
+        if current.returncode == 0 and str(current.stdout or "").strip() == commit:
+            print(f"AI Model Hub sources already at requested ref {source_ref}.")
+            return
+        print(f"Checking out AI Model Hub source ref {source_ref} ...")
+        checkout = self._run_git_capture(["git", "-C", ai_model_hub_dir, "checkout", "--detach", commit])
+        if checkout.returncode != 0:
+            self._fail(
+                "Could not checkout AI Model Hub source ref",
+                root_cause=(checkout.stderr or checkout.stdout or source_ref).strip(),
+            )
+
     def _resolve_ai_model_hub_source_dir(self, deployer_config: dict) -> str:
         sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")
         ai_model_hub_dir = os.path.join(sources_dir, self._AI_MODEL_HUB_REPO_DIRNAME)
-        dashboard_dir = os.path.join(ai_model_hub_dir, "DataDashboard")
-        dockerfile_path = os.path.join(dashboard_dir, "Dockerfile")
-        dashboard_ref = self._ai_model_hub_dashboard_source_ref(deployer_config)
-        if os.path.isfile(dockerfile_path):
-            return dashboard_dir
+        dashboard_dir = self._ai_model_hub_dashboard_source_dir(ai_model_hub_dir)
+        if dashboard_dir:
+            self._refresh_ai_model_hub_source_checkout(ai_model_hub_dir, deployer_config)
+            refreshed_dashboard_dir = self._ai_model_hub_dashboard_source_dir(ai_model_hub_dir)
+            return refreshed_dashboard_dir or dashboard_dir
 
         should_clone = not os.path.isdir(ai_model_hub_dir)
         if not should_clone:
@@ -919,102 +1474,46 @@ class INESDataComponentsAdapter:
             print(f"Cloning AI Model Hub into {ai_model_hub_dir} ...")
             import subprocess
             try:
-                subprocess.run(["git", "clone", self._AI_MODEL_HUB_REPO_URL, ai_model_hub_dir], check=True)
-                self._checkout_ai_model_hub_dashboard_source(ai_model_hub_dir, dashboard_ref)
+                subprocess.run(["git", "clone", self._ai_model_hub_source_repository(deployer_config), ai_model_hub_dir], check=True)
+                self._refresh_ai_model_hub_source_checkout(ai_model_hub_dir, deployer_config)
             except Exception as exc:
                 self._fail(
                     "Could not clone AI Model Hub repository",
                     root_cause=str(exc),
                 )
-        elif self._checkout_ai_model_hub_dashboard_source(ai_model_hub_dir, dashboard_ref):
-            if os.path.isfile(dockerfile_path):
-                return dashboard_dir
+        elif os.path.isdir(os.path.join(ai_model_hub_dir, ".git")):
+            self._refresh_ai_model_hub_source_checkout(ai_model_hub_dir, deployer_config)
 
-        if os.path.isfile(dockerfile_path):
-            return dashboard_dir
+        dashboard_dir = self._ai_model_hub_dashboard_source_dir(ai_model_hub_dir)
+        if dashboard_dir:
+            self._refresh_ai_model_hub_source_checkout(ai_model_hub_dir, deployer_config)
+            refreshed_dashboard_dir = self._ai_model_hub_dashboard_source_dir(ai_model_hub_dir)
+            return refreshed_dashboard_dir or dashboard_dir
 
         self._fail(
             "AI Model Hub source directory is not usable",
             root_cause=(
-                f"Expected Dockerfile at: {dockerfile_path}. "
-                "Level 5 expects the canonical checkout at "
-                "adapters/inesdata/sources/AIModelHub."
+                "Expected the AI Model Hub dashboard Dockerfile at "
+                "DataDashboard/Dockerfile inside the configured AIModelHub checkout. "
+                "Level 5 expects the canonical checkout at adapters/inesdata/sources/AIModelHub."
             ),
         )
 
-    def _ai_model_hub_dashboard_source_ref(self, deployer_config: dict | None = None) -> str:
-        for candidate in (
-            os.getenv("AI_MODEL_HUB_DASHBOARD_SOURCE_REF"),
-            (deployer_config or {}).get("AI_MODEL_HUB_DASHBOARD_SOURCE_REF"),
-            (deployer_config or {}).get("AI_MODEL_HUB_SOURCE_REF"),
-            self._AI_MODEL_HUB_DASHBOARD_REF,
-        ):
-            value = str(candidate or "").strip()
-            if value:
-                return value
-        return self._AI_MODEL_HUB_DASHBOARD_REF
+    def _ai_model_hub_dashboard_source_dir(self, ai_model_hub_dir: str) -> str:
+        for candidate_dir, dockerfile in self._ai_model_hub_dashboard_source_candidates(ai_model_hub_dir):
+            if os.path.isfile(os.path.join(candidate_dir, dockerfile)):
+                return candidate_dir
+        return ""
 
-    def _checkout_ai_model_hub_dashboard_source(self, ai_model_hub_dir: str, source_ref: str) -> bool:
-        git_dir = os.path.join(ai_model_hub_dir, ".git")
-        if not os.path.isdir(git_dir):
-            return False
-        source_ref = str(source_ref or "").strip()
-        if not source_ref:
-            return False
-
-        import subprocess
-
-        status = subprocess.run(
-            ["git", "-C", ai_model_hub_dir, "status", "--porcelain", "--untracked-files=no"],
-            check=False,
-            capture_output=True,
-            text=True,
+    @staticmethod
+    def _ai_model_hub_dashboard_source_candidates(ai_model_hub_dir: str):
+        return (
+            (os.path.join(ai_model_hub_dir, "DataDashboard"), "Dockerfile"),
         )
-        if status.returncode != 0:
-            return False
-        if str(status.stdout or "").strip():
-            self._fail(
-                "AI Model Hub source directory is not usable",
-                root_cause=(
-                    f"Expected DataDashboard checkout at {ai_model_hub_dir}, but tracked local changes are present. "
-                    "Commit, stash or remove that checkout before Level 5 can switch to the compatible dashboard ref."
-                ),
-            )
 
-        current = subprocess.run(
-            ["git", "-C", ai_model_hub_dir, "rev-parse", "HEAD"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if current.returncode == 0 and str(current.stdout or "").strip() == source_ref:
-            return True
-
-        print(f"Checking out AI Model Hub dashboard source ref {source_ref} ...")
-        checkout = subprocess.run(
-            ["git", "-C", ai_model_hub_dir, "checkout", "--detach", source_ref],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if checkout.returncode == 0:
-            return True
-
-        fetch = subprocess.run(
-            ["git", "-C", ai_model_hub_dir, "fetch", "--all", "--tags"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if fetch.returncode != 0:
-            return False
-        checkout = subprocess.run(
-            ["git", "-C", ai_model_hub_dir, "checkout", "--detach", source_ref],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        return checkout.returncode == 0
+    @staticmethod
+    def _ai_model_hub_dashboard_dockerfile(dashboard_dir: str) -> str:
+        return "Dockerfile"
 
     def _resolve_morph_kgv_source_dir(self, deployer_config: dict) -> str:
         sources_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sources")
@@ -1023,6 +1522,14 @@ class INESDataComponentsAdapter:
         package_path = os.path.join(morph_kgv_dir, "src", "morph_kgc", "__init__.py")
         virt_store_path = os.path.join(morph_kgv_dir, "src", "morph_kgc", "sparql", "virt_store.py")
         if os.path.isfile(pyproject_path) and os.path.isfile(package_path) and os.path.isfile(virt_store_path):
+            self._refresh_component_source_checkout(
+                morph_kgv_dir,
+                label="morph-kgv",
+                repository=self._morph_kgv_source_repository(deployer_config),
+                source_ref=self._morph_kgv_source_ref(deployer_config),
+                refresh_enabled=self._morph_kgv_source_refresh_enabled(deployer_config),
+                disable_key="SEMANTIC_VIRTUALIZATION_SOURCE_REFRESH",
+            )
             return morph_kgv_dir
 
         should_clone = not os.path.isdir(morph_kgv_dir)
@@ -1041,9 +1548,8 @@ class INESDataComponentsAdapter:
                 except OSError:
                     pass
             print(f"Cloning morph-kgv into {morph_kgv_dir} ...")
-            import subprocess
             try:
-                subprocess.run(["git", "clone", self._MORPH_KGV_REPO_URL, morph_kgv_dir], check=True)
+                subprocess.run(["git", "clone", self._morph_kgv_source_repository(deployer_config), morph_kgv_dir], check=True)
             except Exception as exc:
                 self._fail(
                     "Could not clone morph-kgv repository",
@@ -1051,6 +1557,14 @@ class INESDataComponentsAdapter:
                 )
 
         if os.path.isfile(pyproject_path) and os.path.isfile(package_path) and os.path.isfile(virt_store_path):
+            self._refresh_component_source_checkout(
+                morph_kgv_dir,
+                label="morph-kgv",
+                repository=self._morph_kgv_source_repository(deployer_config),
+                source_ref=self._morph_kgv_source_ref(deployer_config),
+                refresh_enabled=self._morph_kgv_source_refresh_enabled(deployer_config),
+                disable_key="SEMANTIC_VIRTUALIZATION_SOURCE_REFRESH",
+            )
             return morph_kgv_dir
 
         self._fail(
@@ -1069,6 +1583,14 @@ class INESDataComponentsAdapter:
         app_path = os.path.join(mapping_editor_dir, "Mapping_Editor.py")
         requirements_path = os.path.join(mapping_editor_dir, "requirements.txt")
         if os.path.isfile(app_path) and os.path.isfile(requirements_path):
+            self._refresh_component_source_checkout(
+                mapping_editor_dir,
+                label="mapping-editor",
+                repository=self._mapping_editor_source_repository(deployer_config),
+                source_ref=self._mapping_editor_source_ref(deployer_config),
+                refresh_enabled=self._mapping_editor_source_refresh_enabled(deployer_config),
+                disable_key="SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SOURCE_REFRESH",
+            )
             return mapping_editor_dir
 
         should_clone = not os.path.isdir(mapping_editor_dir)
@@ -1087,9 +1609,8 @@ class INESDataComponentsAdapter:
                 except OSError:
                     pass
             print(f"Cloning mapping-editor into {mapping_editor_dir} ...")
-            import subprocess
             try:
-                subprocess.run(["git", "clone", self._MAPPING_EDITOR_REPO_URL, mapping_editor_dir], check=True)
+                subprocess.run(["git", "clone", self._mapping_editor_source_repository(deployer_config), mapping_editor_dir], check=True)
             except Exception as exc:
                 self._fail(
                     "Could not clone mapping-editor repository",
@@ -1097,6 +1618,14 @@ class INESDataComponentsAdapter:
                 )
 
         if os.path.isfile(app_path) and os.path.isfile(requirements_path):
+            self._refresh_component_source_checkout(
+                mapping_editor_dir,
+                label="mapping-editor",
+                repository=self._mapping_editor_source_repository(deployer_config),
+                source_ref=self._mapping_editor_source_ref(deployer_config),
+                refresh_enabled=self._mapping_editor_source_refresh_enabled(deployer_config),
+                disable_key="SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SOURCE_REFRESH",
+            )
             return mapping_editor_dir
 
         self._fail(
@@ -1122,6 +1651,14 @@ class INESDataComponentsAdapter:
             os.path.join(automap_dir, "evaluation", "metrics.py"),
         ]
         if all(os.path.isfile(path) for path in required_paths):
+            self._refresh_component_source_checkout(
+                automap_dir,
+                label="automap",
+                repository=self._automap_source_repository(deployer_config),
+                source_ref=self._automap_source_ref(deployer_config),
+                refresh_enabled=self._automap_source_refresh_enabled(deployer_config),
+                disable_key="AUTOMAP_SOURCE_REFRESH",
+            )
             return automap_dir
 
         should_clone = not os.path.isdir(automap_dir)
@@ -1140,9 +1677,8 @@ class INESDataComponentsAdapter:
                 except OSError:
                     pass
             print(f"Cloning automap into {automap_dir} ...")
-            import subprocess
             try:
-                subprocess.run(["git", "clone", self._AUTOMAP_REPO_URL, automap_dir], check=True)
+                subprocess.run(["git", "clone", self._automap_source_repository(deployer_config), automap_dir], check=True)
             except Exception as exc:
                 self._fail(
                     "Could not clone automap repository",
@@ -1150,6 +1686,14 @@ class INESDataComponentsAdapter:
                 )
 
         if all(os.path.isfile(path) for path in required_paths):
+            self._refresh_component_source_checkout(
+                automap_dir,
+                label="automap",
+                repository=self._automap_source_repository(deployer_config),
+                source_ref=self._automap_source_ref(deployer_config),
+                refresh_enabled=self._automap_source_refresh_enabled(deployer_config),
+                disable_key="AUTOMAP_SOURCE_REFRESH",
+            )
             return automap_dir
 
         self._fail(
@@ -1781,7 +2325,8 @@ class INESDataComponentsAdapter:
 
     def _build_ai_model_hub_image_on_host(self, image_ref: str, deployer_config: dict):
         dashboard_dir = self._resolve_ai_model_hub_source_dir(deployer_config)
-        dockerfile_path = os.path.join(dashboard_dir, "Dockerfile")
+        dockerfile = self._ai_model_hub_dashboard_dockerfile(dashboard_dir)
+        dockerfile_path = os.path.join(dashboard_dir, dockerfile)
         if not os.path.isfile(dockerfile_path):
             self._fail(
                 "AI Model Hub source directory not found",
@@ -1793,7 +2338,11 @@ class INESDataComponentsAdapter:
 
         print(f"\nBuilding local image on host: {image_ref}")
         self._remove_host_image_if_present(image_ref)
-        cmd = image_runtime.docker_build_command(self._docker_cmd(), image_ref)
+        cmd = image_runtime.docker_build_command(
+            self._docker_cmd(),
+            image_ref,
+            dockerfile=dockerfile,
+        )
         if self.run(cmd, check=False, cwd=dashboard_dir) is None:
             self._fail("Failed to build AI Model Hub image on host", root_cause=image_ref)
 

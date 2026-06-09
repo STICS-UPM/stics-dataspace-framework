@@ -3512,6 +3512,10 @@ minio:
         self.assertEqual(minio_api["spec"]["rules"][0]["host"], "org1.pionera.example.test")
         self.assertEqual(minio_api["spec"]["rules"][0]["http"]["paths"][0]["path"], "/")
         self.assertEqual(
+            minio_api["metadata"]["annotations"]["nginx.ingress.kubernetes.io/proxy-body-size"],
+            "0",
+        )
+        self.assertEqual(
             minio_api["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["port"]["number"],
             9000,
         )

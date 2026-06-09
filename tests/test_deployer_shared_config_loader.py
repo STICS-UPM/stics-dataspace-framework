@@ -9,6 +9,7 @@ from deployers.shared.lib.config_loader import (
     AI_MODEL_HUB_MODEL_SERVER_TOPOLOGY_KEYS,
     COMMON_SERVICE_TOPOLOGY_KEYS,
     COMPONENT_IMAGE_TOPOLOGY_KEYS,
+    COMPONENT_SOURCE_TOPOLOGY_KEYS,
     EDC_IMAGE_TOPOLOGY_KEYS,
     IMAGE_BUILD_POLICY_TOPOLOGY_KEYS,
     INESDATA_CONNECTOR_IMAGE_TOPOLOGY_KEYS,
@@ -258,6 +259,13 @@ class SharedConfigLoaderTests(unittest.TestCase):
             self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
             self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
             self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("vm-distributed", "vm-single"))
+
+    def test_component_source_keys_are_available_in_all_topologies(self):
+        for key in COMPONENT_SOURCE_TOPOLOGY_KEYS:
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["local"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-single"])
+            self.assertIn(key, TOPOLOGY_OVERLAY_KEYS["vm-distributed"])
+            self.assertEqual(TOPOLOGY_KEY_TARGETS[key], ("local", "vm-distributed", "vm-single"))
 
     def test_vm_ssh_access_keys_are_topology_scoped(self):
         shared_vm_keys = (

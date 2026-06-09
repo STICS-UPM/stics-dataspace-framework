@@ -109,6 +109,7 @@ from deployers.shared.lib.config_loader import (
     TOPOLOGY_OVERLAY_KEYS,
     VM_SERVICE_TOPOLOGY_KEYS,
 )
+from deployers.shared.lib.components import COMPONENT_CONTRACTS, components_for_adapter
 from deployers.shared.lib.connectors import (
     parse_connector_list,
     parse_connector_mapping,
@@ -2125,9 +2126,33 @@ def _http_readiness_gate(
         "gate": label,
         "url": normalized_url,
         "status_code": status_code,
+        "location": location or None,
         "ready": ready,
         "detail": detail,
     }
+
+
+def _edc_dashboard_route_readiness_gate(label, url, timeout_seconds):
+    gate = _http_readiness_gate(
+        label,
+        url,
+        expected_statuses={200},
+        timeout_seconds=timeout_seconds,
+        preserve_trailing_slash=True,
+    )
+    if gate.get("ready"):
+        return gate
+
+    status_code = int(gate.get("status_code") or 0)
+    location = str(gate.get("location") or "").strip()
+    if status_code not in {301, 302, 303, 307, 308} or not location:
+        return gate
+
+    parsed = urllib.parse.urlparse(location)
+    if parsed.path.rstrip("/") == "/edc-dashboard-api/auth/login":
+        gate["ready"] = True
+        gate["detail"] = f"{gate.get('detail')} (auth redirect accepted)"
+    return gate
 
 
 def _http_form_readiness_gate(label, url, form_data, expected_statuses, timeout_seconds):
@@ -2428,12 +2453,10 @@ def _edc_dashboard_http_gates(deployer_context, connectors, timeout_seconds):
             continue
 
         gates.append(
-            _http_readiness_gate(
+            _edc_dashboard_route_readiness_gate(
                 f"dashboard-route:{connector}",
                 f"{base_url}{dashboard_base_href}",
-                expected_statuses={200},
                 timeout_seconds=timeout_seconds,
-                preserve_trailing_slash=True,
             )
         )
         gates.append(
@@ -3357,7 +3380,10 @@ def _load_level6_kafka_runtime_config(adapter):
     if not callable(kafka_config_loader):
         return {}
     loaded = kafka_config_loader()
-    return dict(loaded or {}) if isinstance(loaded, dict) else {}
+    runtime = dict(loaded or {}) if isinstance(loaded, dict) else {}
+    if not runtime.get("bootstrap_servers") and runtime.get("cluster_bootstrap_servers"):
+        runtime["bootstrap_servers"] = runtime.get("cluster_bootstrap_servers")
+    return runtime
 
 
 def _load_level6_kafka_deployer_config(adapter, deployer_context=None):
@@ -3705,6 +3731,72 @@ def _format_console_metric(value, suffix=""):
     return f"{value}{suffix}"
 
 
+def _number(value):
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _kafka_result_missing_messages(result):
+    metrics = result.get("metrics") if isinstance(result, dict) and isinstance(result.get("metrics"), dict) else {}
+    produced = _number(metrics.get("messages_produced"))
+    consumed = _number(metrics.get("messages_consumed"))
+    explicit_missing = _number(metrics.get("messages_missing"))
+    missing = 0
+    if produced is not None and consumed is not None and consumed < produced:
+        missing = int(produced - consumed)
+    if explicit_missing is not None:
+        missing = max(missing, int(explicit_missing))
+    return max(missing, 0)
+
+
+def _kafka_result_status(result):
+    if _kafka_result_missing_messages(result) > 0:
+        return "failed"
+    normalized = str(result.get("status", "unknown") if isinstance(result, dict) else "unknown").strip().lower()
+    if normalized in {"pass", "passed", "ok", "success", "succeeded", "completed"}:
+        return "passed"
+    if normalized in {"fail", "failed", "error", "terminated"}:
+        return "failed"
+    if normalized in {"skip", "skipped"}:
+        return "skipped"
+    return "unknown"
+
+
+def _kafka_results_summary(results):
+    summary = {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0,
+        "messages_produced": 0,
+        "messages_consumed": 0,
+        "messages_missing": 0,
+    }
+    for result in results or []:
+        if not isinstance(result, dict):
+            continue
+        summary["total"] += 1
+        status = _kafka_result_status(result)
+        if status in {"passed", "failed", "skipped"}:
+            summary[status] += 1
+        else:
+            summary["other"] += 1
+        metrics = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
+        produced = _number(metrics.get("messages_produced"))
+        consumed = _number(metrics.get("messages_consumed"))
+        if produced is not None:
+            summary["messages_produced"] += int(produced)
+        if consumed is not None:
+            summary["messages_consumed"] += int(consumed)
+        summary["messages_missing"] += _kafka_result_missing_messages(result)
+    return summary
+
+
 def _console_supports_color(stream=None):
     if os.getenv("NO_COLOR") is not None:
         return False
@@ -3785,7 +3877,7 @@ def _print_kafka_edc_result(result, *, indent="  ", verbose_messages=None):
     verbose_messages = bool(verbose_messages)
     provider = result.get("provider", "unknown-provider")
     consumer = result.get("consumer", "unknown-consumer")
-    status = result.get("status", "unknown")
+    status = _kafka_result_status(result)
     metrics = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
     artifact_path = result.get("artifact_path")
 
@@ -3824,9 +3916,20 @@ def _print_kafka_edc_result(result, *, indent="  ", verbose_messages=None):
         return
 
     if status == "failed":
-        error = (result.get("error") or {}).get("message", "unknown reason")
+        missing = _kafka_result_missing_messages(result)
+        if missing:
+            error = f"incomplete transfer: {missing} message(s) missing"
+        else:
+            error = (result.get("error") or {}).get("message", "unknown reason")
         print(f"{indent}{_console_status_label(status)} Kafka transfer: {provider} -> {consumer} ({error})")
         _print_kafka_transfer_steps(result, indent=f"{indent}  ")
+        if metrics:
+            print(
+                f"{indent}  Messages: "
+                f"produced={_format_console_metric(metrics.get('messages_produced'))} "
+                f"consumed={_format_console_metric(metrics.get('messages_consumed'))} "
+                f"missing={missing}"
+            )
         if artifact_path:
             print(f"{indent}  Artifact: {artifact_path}")
         return
@@ -3839,23 +3942,22 @@ def _print_kafka_edc_result(result, *, indent="  ", verbose_messages=None):
 
 
 def _print_kafka_edc_summary(results, *, indent="  "):
-    counts = {"passed": 0, "failed": 0, "skipped": 0}
-    unknown_count = 0
-    for result in results or []:
-        normalized = str(result.get("status", "unknown")).lower()
-        if normalized in counts:
-            counts[normalized] += 1
-        else:
-            unknown_count += 1
+    summary = _kafka_results_summary(results)
 
     summary_parts = [
-        f"{_console_status_label('passed')} {counts['passed']}",
-        f"{_console_status_label('failed')} {counts['failed']}",
-        f"{_console_status_label('skipped')} {counts['skipped']}",
+        f"{_console_status_label('passed')} {summary['passed']}",
+        f"{_console_status_label('failed')} {summary['failed']}",
+        f"{_console_status_label('skipped')} {summary['skipped']}",
     ]
-    if unknown_count:
-        summary_parts.append(f"{_console_status_label('unknown')} {unknown_count}")
+    if summary["other"]:
+        summary_parts.append(f"{_console_status_label('unknown')} {summary['other']}")
+    summary_parts.append(f"total={summary['total']}")
     print(f"{indent}Summary: {'  '.join(summary_parts)}")
+    print(
+        f"{indent}Messages: produced={summary['messages_produced']} "
+        f"consumed={summary['messages_consumed']} "
+        f"missing={summary['messages_missing']}"
+    )
 
 
 def _kafka_result_log_key(result):
@@ -3868,7 +3970,7 @@ def _kafka_result_log_key(result):
 
 def _print_kafka_edc_results(results, *, include_heading=True, include_results=True, include_summary=True):
     if include_heading:
-        print("Kafka transfer validation results:")
+        print("Kafka transfer validation results (EDC-mediated Kafka transfer; counts derived from result artifacts):")
     verbose_messages = _env_flag(
         "PIONERA_KAFKA_TRANSFER_LOG_MESSAGES",
         _env_flag("KAFKA_TRANSFER_LOG_MESSAGES", False),
@@ -3964,7 +4066,7 @@ def run_level6_kafka_edc_after_newman(
 
     def _print_progress_result(result):
         if not progress_state["heading_printed"]:
-            print("Kafka transfer validation results:")
+            print("Kafka transfer validation results (EDC-mediated Kafka transfer; counts derived from result artifacts):")
             progress_state["heading_printed"] = True
         verbose_messages = _env_flag(
             "PIONERA_KAFKA_TRANSFER_LOG_MESSAGES",
@@ -4037,7 +4139,7 @@ def run_level6_kafka_edc_after_newman(
 
 def _status_from_kafka_results(results):
     normalized_statuses = {
-        str(item.get("status", "")).strip().lower()
+        _kafka_result_status(item)
         for item in list(results or [])
         if isinstance(item, dict)
     }
@@ -4183,14 +4285,20 @@ def _iter_level6_kafka_failed_tests(kafka_results):
     for result in kafka_results or []:
         if not isinstance(result, dict):
             continue
-        if _level6_normalized_status(result.get("status")) != "failed":
+        if _kafka_result_status(result) != "failed":
             continue
         provider = result.get("provider", "unknown-provider")
         consumer = result.get("consumer", "unknown-consumer")
+        missing = _kafka_result_missing_messages(result)
+        reason = (
+            f"incomplete transfer: {missing} message(s) missing"
+            if missing
+            else _level6_failure_reason(result.get("error"), result.get("reason"))
+        )
         yield {
             "suite": "Kafka transfer interoperability",
             "test": f"Kafka transfer: {provider} -> {consumer}",
-            "reason": _level6_failure_reason(result.get("error"), result.get("reason")),
+            "reason": reason,
         }
 
 
@@ -4346,7 +4454,7 @@ def _level6_counts_from_kafka(kafka_edc_results):
     counts = _level6_empty_counts()
     for result in kafka_edc_results or []:
         if isinstance(result, dict):
-            _level6_increment_counts(counts, result.get("status"))
+            _level6_increment_counts(counts, _kafka_result_status(result))
     return counts
 
 
@@ -6434,14 +6542,14 @@ def _interactive_offer_vm_single_address_configuration(required=False):
 
 def _menu_action_requires_vm_single_address(choice):
     normalized = str(choice or "").strip().upper()
-    if normalized in {"0", "P", "H", "U", "X", "J"}:
+    if normalized in {"0", "P", "H", "U", "X", "J", "CM", "COMPONENTS"}:
         return True
     return normalized in {"3", "4", "5", "6"}
 
 
 def _menu_action_benefits_from_vm_distributed_configuration(choice):
     normalized = str(choice or "").strip().upper()
-    if normalized in {"0", "P", "H", "U", "X", "J"}:
+    if normalized in {"0", "P", "H", "U", "X", "J", "CM", "COMPONENTS"}:
         return True
     return normalized in {str(level_id) for level_id in LEVEL_DESCRIPTIONS}
 
@@ -21106,6 +21214,9 @@ def _print_interactive_menu(adapter_name, adapter_registry=None, topology="local
     print("F - Dataspace Interoperability Tests (Newman/Kafka)")
     print("Y - Run Test by ID (Playwright/API)")
     print()
+    print("[Components]")
+    print("CM - Deploy selected components")
+    print()
     print("[Control]")
     print("? - Help")
     print("Q - Exit")
@@ -21177,6 +21288,11 @@ def _print_interactive_help():
     print("    Kafka still requires explicit confirmation because it can take significantly longer.")
     print("Y - Use to run one mapped automated test by its audit/test ID.")
     print("    The framework resolves whether the selected ID belongs to Playwright UI or component API validation.")
+    print()
+    print("[Components]")
+    print("CM - Use to deploy a selected subset of Level 5 components without editing deployer.config.")
+    print("     It accepts Ontology Hub, AI Model Hub, Semantic Virtualization, and the optional AI Model Hub model server.")
+    print("     The model server is enabled only for that run and is deployed through AI Model Hub.")
     print()
     print("[Compatibility]")
     print("Levels 1-2 belong to the shared local foundation; the menu asks for an adapter only when an operation needs Levels 3-6, unless you preselect one with S.")
@@ -21993,6 +22109,186 @@ def _run_recreate_dataspace_interactive(
     )
 
 
+def _load_effective_adapter_deployer_config(adapter_name, topology="local"):
+    normalized = str(adapter_name or "").strip().lower()
+    if not normalized:
+        return {}
+    paths = [
+        _adapter_deployer_config_example_path(normalized),
+        _adapter_deployer_config_path(normalized),
+    ]
+    return load_layered_deployer_config(paths, topology=topology, apply_environment=True)
+
+
+def _component_menu_label(component):
+    labels = {
+        "ontology-hub": "Ontology Hub",
+        "ai-model-hub": "AI Model Hub",
+        "semantic-virtualization": "Semantic Virtualization",
+    }
+    return labels.get(str(component or "").strip().lower(), str(component or "").strip())
+
+
+def _ordered_deployable_components_for_adapter(adapter_name):
+    adapter = str(adapter_name or "").strip().lower()
+    return [
+        component
+        for component, contract in COMPONENT_CONTRACTS.items()
+        if adapter in contract.deployable_adapters
+    ]
+
+
+def _append_unique_components(target, values):
+    seen = set(target)
+    for value in values:
+        normalized = str(value or "").strip().lower().replace("_", "-")
+        if not normalized or normalized in seen:
+            continue
+        target.append(normalized)
+        seen.add(normalized)
+
+
+def _parse_components_menu_selection(choice, *, configured_components, all_components):
+    normalized_choice = str(choice or "").strip()
+    if not normalized_choice:
+        return None
+    upper_choice = normalized_choice.upper()
+    if upper_choice == "B":
+        return None
+
+    selected_components = []
+    model_server_selected = False
+    tokens = [
+        token.strip().upper()
+        for token in normalized_choice.replace(";", ",").replace(" ", ",").split(",")
+        if token.strip()
+    ]
+    for token in tokens:
+        if token in {"1", "ONTOLOGY", "ONTOLOGY-HUB"}:
+            _append_unique_components(selected_components, ["ontology-hub"])
+        elif token in {"2", "AI", "AI-MODEL-HUB"}:
+            _append_unique_components(selected_components, ["ai-model-hub"])
+        elif token in {"3", "SV", "SEMANTIC", "SEMANTIC-VIRTUALIZATION"}:
+            _append_unique_components(selected_components, ["semantic-virtualization"])
+        elif token in {"4", "MODEL-SERVER", "SERVER"}:
+            model_server_selected = True
+            _append_unique_components(selected_components, ["ai-model-hub"])
+        elif token in {"5", "CONFIGURED"}:
+            _append_unique_components(selected_components, configured_components)
+        elif token in {"6", "ALL"}:
+            _append_unique_components(selected_components, all_components)
+        else:
+            raise ValueError(f"Invalid component selection: {token}")
+
+    if not selected_components:
+        raise ValueError("Select at least one component.")
+    return {
+        "components": selected_components,
+        "model_server": model_server_selected,
+    }
+
+
+def _run_components_menu_interactive(
+    current_adapter="inesdata",
+    adapter_registry=None,
+    deployer_registry=None,
+    topology="local",
+    validation_engine_cls=ValidationEngine,
+    metrics_collector_cls=MetricsCollector,
+    experiment_storage=ExperimentStorage,
+):
+    selected_adapter = _interactive_require_adapter_selection(
+        current_adapter,
+        adapter_registry=adapter_registry,
+    )
+    if not selected_adapter:
+        return None
+
+    config = _load_effective_adapter_deployer_config(selected_adapter, topology=topology)
+    all_components = _ordered_deployable_components_for_adapter(selected_adapter)
+    configured_components = components_for_adapter(config, selected_adapter, deployable_only=True)
+    model_server_currently_enabled = ai_model_hub_model_server.model_server_enabled(config)
+    model_server_mode, raw_model_server_mode = ai_model_hub_model_server.model_server_mode(config)
+
+    print()
+    print("=" * 50)
+    print("COMPONENTS")
+    print("=" * 50)
+    print(f"Adapter: {selected_adapter}")
+    print(f"Topology: {normalize_topology(topology)}")
+    print(f"Cluster runtime: {_interactive_cluster_runtime_label(topology)}")
+    print(
+        "Configured components: "
+        + (", ".join(configured_components) if configured_components else "(none)")
+    )
+    print(
+        "Configured model server: "
+        + ("enabled" if model_server_currently_enabled else "disabled")
+        + f" (mode: {raw_model_server_mode or model_server_mode})"
+    )
+    print()
+    print("1 - Ontology Hub")
+    print("2 - AI Model Hub")
+    print("3 - Semantic Virtualization")
+    print("4 - Model Server (with AI Model Hub)")
+    print("5 - Configured components")
+    print("6 - All shared components")
+    print("B - Back")
+    print("=" * 50)
+    print("Use comma-separated selections, for example: 1,2 or 2,4.")
+
+    choice = _interactive_read("\nSelection: ")
+    selection = _parse_components_menu_selection(
+        choice,
+        configured_components=configured_components,
+        all_components=all_components,
+    )
+    if selection is None:
+        return {"status": "cancelled", "adapter": selected_adapter, "topology": topology}
+
+    components = selection["components"]
+    model_server_enabled = bool(selection["model_server"])
+    component_labels = ", ".join(_component_menu_label(component) for component in components)
+
+    print()
+    print(f"Selected components: {component_labels}")
+    print(f"Model server: {'enabled' if model_server_enabled else 'disabled for this run'}")
+    if model_server_enabled and model_server_mode in {"combined", "use-cases"}:
+        print(
+            "The selected model-server mode may build or reuse the real AI Model Hub use-case server image."
+        )
+
+    if not _interactive_confirm(
+        f"Run Level 5 for selected components ({_interactive_execution_context(topology, selected_adapter)})?",
+        default=False,
+    ):
+        print("Components deployment cancelled.")
+        return {"status": "cancelled", "adapter": selected_adapter, "topology": topology}
+
+    runtime_env = {
+        "PIONERA_COMPONENTS": ",".join(components),
+        "PIONERA_AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true" if model_server_enabled else "false",
+        "PIONERA_LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true" if model_server_enabled else "false",
+        "PIONERA_TOPOLOGY": normalize_topology(topology),
+        "INESDATA_TOPOLOGY": normalize_topology(topology),
+    }
+    with _temporary_environment(runtime_env):
+        result = run_levels(
+            selected_adapter,
+            levels=[5],
+            adapter_registry=adapter_registry,
+            deployer_registry=deployer_registry,
+            topology=topology,
+            validation_engine_cls=validation_engine_cls,
+            metrics_collector_cls=metrics_collector_cls,
+            experiment_storage=experiment_storage,
+        )
+    if isinstance(result, dict):
+        result["components"] = components
+        result["model_server"] = "enabled" if model_server_enabled else "disabled"
+    return result
+
+
 def _print_validation_target_menu(selected_target=None, validation_project="inesdata"):
     print()
     print("=" * 50)
@@ -22797,6 +23093,21 @@ def run_interactive_menu(
                         metrics_collector_cls=metrics_collector_cls,
                         experiment_storage=experiment_storage,
                         kafka_manager_cls=kafka_manager_cls,
+                    )
+                    if result is not None:
+                        current_adapter = result.get("adapter") or current_adapter
+                        _print_action_result(result)
+                    continue
+
+                if choice in {"CM", "COMPONENTS"}:
+                    result = _run_components_menu_interactive(
+                        current_adapter,
+                        adapter_registry=registry,
+                        deployer_registry=deployer_registry,
+                        topology=topology,
+                        validation_engine_cls=validation_engine_cls,
+                        metrics_collector_cls=metrics_collector_cls,
+                        experiment_storage=experiment_storage,
                     )
                     if result is not None:
                         current_adapter = result.get("adapter") or current_adapter
