@@ -5,10 +5,10 @@ from deployers.shared.lib.topology import LOCAL_TOPOLOGY, VM_DISTRIBUTED_TOPOLOG
 
 
 class LocalImagePolicyTests(unittest.TestCase):
-    def test_level4_default_mode_is_auto_for_local_and_vm_single(self):
+    def test_level4_default_mode_is_auto_for_managed_topologies(self):
         self.assertEqual(local_images.default_level4_mode(LOCAL_TOPOLOGY), "auto")
         self.assertEqual(local_images.default_level4_mode(VM_SINGLE_TOPOLOGY), "auto")
-        self.assertEqual(local_images.default_level4_mode(VM_DISTRIBUTED_TOPOLOGY), "disabled")
+        self.assertEqual(local_images.default_level4_mode(VM_DISTRIBUTED_TOPOLOGY), "auto")
 
     def test_level4_mode_normalization_keeps_existing_aliases(self):
         self.assertEqual(local_images.normalize_level4_mode("false"), "disabled")

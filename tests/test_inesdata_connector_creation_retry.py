@@ -3182,7 +3182,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
 
     def test_level4_local_images_default_for_vm_topologies(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            for topology, expected_mode in (("vm-single", "auto"), ("vm-distributed", "disabled")):
+            for topology, expected_mode in (("vm-single", "auto"), ("vm-distributed", "auto")):
                 config = ConnectorRetryConfig(tmpdir)
                 config_adapter = ConnectorRetryConfigAdapter(tmpdir)
                 config_adapter.topology = topology
