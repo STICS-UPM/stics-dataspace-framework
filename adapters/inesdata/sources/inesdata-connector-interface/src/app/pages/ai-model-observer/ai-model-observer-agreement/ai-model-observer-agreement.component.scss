@@ -1,5 +1,11 @@
 .observer-page {
   padding: 2rem;
+  min-width: 0;
+}
+
+.observer-page,
+.observer-page * {
+  box-sizing: border-box;
 }
 
 .observer-page__header {
@@ -37,7 +43,7 @@
 
 .observer-state {
   padding: 1rem 1.2rem;
-  border-radius: 12px;
+  border-radius: 8px;
   background: #f5f7fa;
 }
 
@@ -55,9 +61,11 @@
 
 .observer-filter-bar select,
 .observer-filter-bar input {
+  width: 100%;
+  min-width: 0;
   padding: 0.8rem 0.9rem;
   border: 1px solid #d6deea;
-  border-radius: 12px;
+  border-radius: 8px;
   background: #fff;
 }
 
@@ -65,10 +73,12 @@
   padding: 0.8rem 1rem;
   border: none;
   border-radius: 999px;
-  background: #673ab7;
+  background: var(--brand-500);
   color: #fff;
   cursor: pointer;
   font-weight: 600;
+  max-width: 100%;
+  white-space: normal;
 }
 
 .observer-filter-bar__action--secondary {
@@ -83,9 +93,11 @@
 
 .observer-card {
   padding: 1.15rem;
-  border-radius: 16px;
+  border-radius: 8px;
   background: #fff;
   box-shadow: 0 10px 28px rgba(18, 30, 52, 0.08);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .observer-card__top {
@@ -93,11 +105,13 @@
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 0.9rem;
+  min-width: 0;
 }
 
 .observer-card__top h2 {
   margin: 0;
   font-size: 1rem;
+  overflow-wrap: anywhere;
 }
 
 .observer-card__top p {
@@ -113,6 +127,8 @@
   color: #244a8f;
   font-size: 0.75rem;
   font-weight: 700;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .observer-meta {
@@ -121,6 +137,8 @@
   gap: 0.75rem;
   color: #334155;
   font-size: 0.92rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .observer-actions {
@@ -134,10 +152,12 @@
   padding: 0.65rem 0.9rem;
   border: none;
   border-radius: 999px;
-  background: #673ab7;
+  background: var(--brand-500);
   color: #fff;
   cursor: pointer;
   font-weight: 600;
+  max-width: 100%;
+  white-space: normal;
 }
 
 .observer-actions__button--secondary {
@@ -148,7 +168,7 @@
 .observer-details {
   margin: 0.9rem 0 0;
   padding: 0.85rem;
-  border-radius: 12px;
+  border-radius: 8px;
   background: #f8fafc;
   overflow: auto;
 }
@@ -156,5 +176,19 @@
 @media (max-width: 900px) {
   .observer-filter-bar {
     grid-template-columns: 1fr;
+  }
+
+  .observer-page {
+    padding: 1rem;
+  }
+
+  .observer-card__top {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .observer-actions__button,
+  .observer-filter-bar__action {
+    width: 100%;
   }
 }

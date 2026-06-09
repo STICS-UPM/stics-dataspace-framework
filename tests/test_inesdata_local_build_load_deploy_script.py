@@ -407,6 +407,77 @@ class INESDataLocalBuildLoadDeployScriptTests(unittest.TestCase):
         self.assertIn("fallback using batch sudo secret when sudo -n is not available", result.stdout)
         self.assertNotIn("do-not-print-this", result.stdout + result.stderr)
 
+    def test_connector_preserve_values_uses_dataspace_release_suffix_for_role_aligned_namespace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            script_path = root / SCRIPT_REL_PATH
+            script_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(PROJECT_ROOT / SCRIPT_REL_PATH, script_path)
+
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            fake_helm = fake_bin / "helm"
+            fake_helm.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == \"status\" && \"$2\" == \"conn-org2-pionera-pionera\" ]]; then exit 0; fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            fake_helm.chmod(0o755)
+
+            platform_dir = root / "deployers" / "inesdata"
+            connector_dir = platform_dir / "connector"
+            connector_dir.mkdir(parents=True, exist_ok=True)
+            (connector_dir / "values-conn-org2-pionera.yaml").write_text("connector: {}\n", encoding="utf-8")
+
+            manifest = root / "manifest.tsv"
+            manifest.write_text(
+                "\t".join(["component", "repo_dir", "image", "tag", "full_image", "build_cmd"])
+                + "\n"
+                + "\t".join(
+                    [
+                        "connector",
+                        ".",
+                        "local/inesdata-connector",
+                        "local",
+                        "local/inesdata-connector:local",
+                        "build",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            env = dict(os.environ)
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(script_path),
+                    "--skip-build",
+                    "--manifest",
+                    str(manifest),
+                    "--platform-dir",
+                    str(platform_dir),
+                    "--namespace",
+                    "provider",
+                    "--dataspace",
+                    "pionera",
+                    "--component",
+                    "connector",
+                    "--preserve-values",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=False,
+                env=env,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn('helm upgrade --install "conn-org2-pionera-pionera"', result.stdout)
+        self.assertNotIn("conn-org2-pionera-provider", result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,11 +12,6 @@ export interface ModelObserverEventView {
   modelName: string | null;
   httpStatus: number | null;
   latencyMs: number | null;
-  taskType: string | null;
-  datasetFingerprint: string | null;
-  datasetRowCount: number | null;
-  selectedMetrics: string[];
-  benchmarkSummary: Record<string, unknown> | null;
   details: Record<string, unknown> | null;
 }
 

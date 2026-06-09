@@ -12,11 +12,15 @@
 /* tslint:disable:no-unused-variable member-ordering */
 
 import { Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { Observable, from, lastValueFrom } from 'rxjs';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { Observable, from, lastValueFrom, throwError } from 'rxjs';
 import { TransferProcessInput, QuerySpec } from "../models/edc-connector-entities";
 import { environment } from 'src/environments/environment';
 import { expand, expandArray, IdResponse, JSON_LD_DEFAULT_CONTEXT, TransferProcess, TransferProcessState } from '@think-it-labs/edc-connector-client';
+
+export interface EndpointDataAddress {
+  [key: string]: any;
+}
 
 @Injectable({
   providedIn: 'root'
@@ -77,7 +81,7 @@ export class TransferProcessService {
    */
   public getTransferProcessState(id: string): Observable<any> {
     return from(lastValueFrom(this.http.get<TransferProcessState>(
-      `${this.BASE_URL}${id}${environment.runtime.service.transferProcess.state}`
+      `${this.BASE_URL}${environment.runtime.service.transferProcess.get}${id}${environment.runtime.service.transferProcess.state}`
     )).then(result => {
       return expand(result, () => new TransferProcessState());
     }));
@@ -120,6 +124,47 @@ export class TransferProcessService {
     }));
   }
 
+  public getTransferDataAddress(transferProcessId: string): Observable<EndpointDataAddress> {
+    return this.http.get<EndpointDataAddress>(
+      `${environment.runtime.managementApiUrl}/v3/edrs/${encodeURIComponent(transferProcessId)}/dataaddress`
+    );
+  }
+
+  public downloadEndpointData(dataAddress: EndpointDataAddress): Observable<Blob> {
+    const endpoint = this.firstText(
+      dataAddress?.endpoint,
+      dataAddress?.['edc:endpoint'],
+      dataAddress?.['https://w3id.org/edc/v0.0.1/ns/endpoint'],
+      dataAddress?.endpointUrl,
+      dataAddress?.['edc:endpointUrl']
+    );
+    const authorization = this.firstText(
+      dataAddress?.authorization,
+      dataAddress?.['edc:authorization'],
+      dataAddress?.['https://w3id.org/edc/v0.0.1/ns/authorization'],
+      dataAddress?.authCode,
+      dataAddress?.['edc:authCode']
+    );
+    const authHeader = this.firstText(
+      dataAddress?.authHeader,
+      dataAddress?.['edc:authHeader'],
+      dataAddress?.['https://w3id.org/edc/v0.0.1/ns/authHeader'],
+      dataAddress?.authKey,
+      dataAddress?.['edc:authKey']
+    ) || 'Authorization';
+
+    if (!endpoint) {
+      return throwError(() => new Error('Transfer EDR does not include a download endpoint.'));
+    }
+
+    let headers = new HttpHeaders({ Accept: 'application/octet-stream' });
+    if (authorization) {
+      headers = headers.set(authHeader, authorization);
+    }
+
+    return this.http.get(endpoint, { headers, responseType: 'blob' });
+  }
+
   /**
    * Returns all transfer process according to a query
    * @param querySpec
@@ -160,5 +205,57 @@ export class TransferProcessService {
     return from(lastValueFrom(this.http.post<number>(
       `${environment.runtime.managementApiUrl}${environment.runtime.service.transferProcess.count}`, body
     )));
+  }
+
+  private firstText(...values: unknown[]): string {
+    for (const value of values) {
+      const resolved = this.resolveTextValue(value);
+      if (resolved) {
+        return resolved;
+      }
+    }
+    return '';
+  }
+
+  private resolveTextValue(value: unknown): string {
+    if (value === undefined || value === null) {
+      return '';
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const resolved = this.resolveTextValue(item);
+        if (resolved) {
+          return resolved;
+        }
+      }
+      return '';
+    }
+
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return `${value}`.trim();
+    }
+
+    if (typeof value !== 'object') {
+      return '';
+    }
+
+    const record = value as Record<string, unknown>;
+    if (record['@value'] !== undefined) {
+      return this.resolveTextValue(record['@value']);
+    }
+
+    if (record['@id'] !== undefined && Object.keys(record).length === 1) {
+      return this.resolveTextValue(record['@id']);
+    }
+
+    for (const nestedValue of Object.values(record)) {
+      const resolved = this.resolveTextValue(nestedValue);
+      if (resolved) {
+        return resolved;
+      }
+    }
+
+    return '';
   }
 }

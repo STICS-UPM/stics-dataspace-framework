@@ -1,13 +1,11 @@
 <div class="benchmarking-page">
-  <!-- Hero Section -->
   <section class="hero">
     <div class="hero-top">
       <div class="hero-title">
         <p class="eyebrow">Benchmarking Studio</p>
         <h1>Model Benchmarking</h1>
         <p class="subtitle">
-          Execute multiple HTTP models in parallel, compare performance metrics,
-          and identify the best candidate for deployment.
+          Compare selected models on one benchmark dataset with sample-row checks and ranked results.
         </p>
       </div>
       <div class="hero-actions">
@@ -31,12 +29,12 @@
       <div class="stat-card">
         <div class="stat-label">Models selected</div>
         <div class="stat-value">{{ selectedCount }}</div>
-        <div class="stat-foot">HTTP models ready</div>
+        <div class="stat-foot">Ready for comparison</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Task type</div>
-        <div class="stat-value">{{ detectedTask || 'N/A' }}</div>
-        <div class="stat-foot">Auto-detected</div>
+        <div class="stat-label">Dataset rows</div>
+        <div class="stat-value">{{ validationDatasetRows.length }}</div>
+        <div class="stat-foot">{{ validationDatasetFileName || 'No dataset loaded' }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Metrics tracked</div>
@@ -50,17 +48,19 @@
       </div>
     </div>
 
+    <div class="status-banner hero-status" [class.info]="isRunning" [class.success]="!isRunning && rankingRows.length > 0">
+      <mat-icon>{{ isRunning ? 'pending' : (rankingRows.length > 0 ? 'check_circle' : 'info') }}</mat-icon>
+      <span>{{ statusMessage }}</span>
+    </div>
+
     <div class="progress-bar" *ngIf="isRunning">
       <div class="progress-fill" [style.width.%]="progress"></div>
     </div>
   </section>
 
-  <!-- Workspace Grid -->
   <section class="workspace-grid">
-    <!-- Left Stack: Model Pool + Inputs -->
     <div class="stack">
-      <!-- Model Pool -->
-      <div class="panel">
+      <div class="panel model-pool-panel">
         <div class="panel-header">
           <div>
             <h2>Model pool</h2>
@@ -78,7 +78,7 @@
           <mat-icon class="search-icon">search</mat-icon>
           <input
             type="text"
-            placeholder="Search models by name, keywords, or task..."
+            placeholder="Search models"
             [(ngModel)]="searchKeyword"
             (input)="filterModelPool()"
             class="search-input"
@@ -90,22 +90,26 @@
 
         <div class="model-filters">
           <button class="pill" [class.active]="activeFilter === 'all'" (click)="setFilter('all')">All Tasks</button>
-          <button class="pill" [class.active]="activeFilter === 'classification'" (click)="setFilter('classification')">Classification</button>
-          <button class="pill" [class.active]="activeFilter === 'regression'" (click)="setFilter('regression')">Regression</button>
-          <button class="pill" [class.active]="activeFilter === 'nlp'" (click)="setFilter('nlp')">NLP</button>
-          <button class="pill" [class.active]="activeFilter === 'vision'" (click)="setFilter('vision')">Vision</button>
+          <button
+            class="pill"
+            *ngFor="let task of getTaskFilters()"
+            [class.active]="activeFilter === task"
+            (click)="setFilter(task)"
+          >
+            {{ task }}
+          </button>
         </div>
 
         <div class="compatibility-banner" *ngIf="selectedAssetIds.length > 0">
           <mat-icon>filter_alt</mat-icon>
-          <span>The pool is automatically narrowed to models that share the same input format as the first selected model.</span>
+          <span>The pool is narrowed to models compatible with the first selected model.</span>
         </div>
 
         <div class="model-list">
           <div class="model-item loading" *ngIf="isLoadingAssets">
             <div class="model-select"><mat-spinner diameter="20"></mat-spinner></div>
             <div>
-              <div class="model-id">Loading HTTP models...</div>
+              <div class="model-id">Loading models...</div>
               <div class="model-meta">Fetching catalog</div>
             </div>
             <div class="model-status neutral">Hold</div>
@@ -113,31 +117,18 @@
 
           <div class="empty-state" *ngIf="!isLoadingAssets && filteredModelPoolAssets.length === 0">
             <mat-icon>inbox</mat-icon>
-            <p>{{ selectedAssetIds.length > 0 ? 'No compatible models match the current search or task filters' : (searchKeyword || activeFilter !== 'all' ? 'No models match your search criteria' : 'No HTTP models available for benchmarking') }}</p>
+            <p>{{ selectedAssetIds.length > 0 ? 'No compatible models match the current filters' : (searchKeyword || activeFilter !== 'all' ? 'No models match your search' : 'No HTTP models available for benchmarking') }}</p>
           </div>
 
           <div
             class="model-item selectable"
             *ngFor="let asset of filteredModelPoolAssets"
             [class.selected]="isAssetSelected(asset)"
-            [class.muted]="!canSelectAsset(asset)"
+            [class.muted]="!canSelectAsset(asset) || isRunning || isTestingRows"
             (click)="toggleAssetSelection(asset)"
           >
-            <div class="model-select">
-              <input type="checkbox" [checked]="isAssetSelected(asset)" [disabled]="!canSelectAsset(asset)" (click)="$event.stopPropagation()" />
-            </div>
             <div class="model-content">
-              <div class="model-id">
-                {{ asset.name }}
-                <span class="selected-badge" *ngIf="isAssetSelected(asset)">
-                  <mat-icon>check_circle</mat-icon>
-                  SELECTED
-                </span>
-                <span class="selected-badge" *ngIf="!asset.isLocal && !asset.hasAgreement">
-                  <mat-icon>link_off</mat-icon>
-                  AGREEMENT REQUIRED
-                </span>
-              </div>
+              <div class="model-id">{{ asset.name }}</div>
               <div class="model-meta">{{ getAssetMeta(asset) }}</div>
             </div>
             <div class="model-status" [class.success]="isAssetSelected(asset)" [class.ready]="!isAssetSelected(asset) && canSelectAsset(asset)" [class.neutral]="!canSelectAsset(asset)">
@@ -146,166 +137,131 @@
           </div>
         </div>
       </div>
-
-      <!-- Benchmark Inputs -->
-      <div class="panel">
-        <div class="panel-header">
-          <div>
-            <h2>Benchmark inputs</h2>
-            <p class="panel-subtitle">Provide test data for model execution</p>
-          </div>
-          <div class="benchmark-actions">
-            <div class="input-tabs">
-              <button class="pill" [class.active]="inputMode === 'single'" (click)="setInputMode('single')">Single input</button>
-              <button class="pill" [class.active]="inputMode === 'dataset'" (click)="setInputMode('dataset')">Dataset batch</button>
-            </div>
-            <button class="btn subtle" (click)="validateSchema()" [disabled]="isRunning || isObtainingOutputs">
-              <mat-icon>fact_check</mat-icon> Validate Input
-            </button>
-            <button class="btn primary" (click)="obtainOutputs()" [disabled]="!canObtainOutputs">
-              <mat-icon *ngIf="!isObtainingOutputs">bolt</mat-icon>
-              <mat-spinner *ngIf="isObtainingOutputs" diameter="20"></mat-spinner>
-              {{ isObtainingOutputs ? 'Obtaining...' : 'Obtain Outputs' }}
-            </button>
-          </div>
-        </div>
-
-        <div class="status-banner" [class.success]="!isRunning && rankingRows.length > 0" [class.info]="isRunning">
-          <mat-icon>{{ isRunning ? 'pending' : (rankingRows.length > 0 ? 'check_circle' : 'info') }}</mat-icon>
-          <span>{{ statusMessage }}</span>
-        </div>
-
-        <div class="input-grid">
-          <!-- Single Input -->
-          <div class="input-card" [class.muted]="inputMode !== 'single'">
-            <label class="field-label">Unified input schema</label>
-
-            <div class="single-schema-form" *ngIf="standardizedInputFields.length > 0; else noUnifiedSchema">
-              <div class="single-schema-grid">
-                <div class="schema-field-card" *ngFor="let field of standardizedInputFields">
-                  <label class="schema-field-label">
-                    {{ field.name }}
-                    <span class="required-indicator" *ngIf="field.required">*</span>
-                  </label>
-
-                  <ng-container [ngSwitch]="field.type">
-                    <select
-                      *ngSwitchCase="'boolean'"
-                      class="field-select"
-                      [ngModel]="standardizedInputValues[field.name]"
-                      (ngModelChange)="onSingleFieldValueChange(field, $event)"
-                      [disabled]="inputMode !== 'single' || isRunning || isObtainingOutputs"
-                    >
-                      <option [ngValue]="true">true</option>
-                      <option [ngValue]="false">false</option>
-                    </select>
-
-                    <input
-                      *ngSwitchDefault
-                      class="field-input"
-                      [type]="getSingleFieldInputType(field)"
-                      [min]="field.min"
-                      [max]="field.max"
-                      [step]="field.type === 'integer' ? 1 : 'any'"
-                      [ngModel]="standardizedInputValues[field.name]"
-                      (ngModelChange)="onSingleFieldValueChange(field, $event)"
-                      [disabled]="inputMode !== 'single' || isRunning || isObtainingOutputs"
-                    />
-                  </ng-container>
-
-                  <div class="schema-field-meta">{{ getFieldConstraintsText(field) }}</div>
-                </div>
-              </div>
-              <div class="field-foot">
-                <mat-icon>lightbulb</mat-icon>
-                One standardized input is shared across all selected models (schema matched). Example values are prefilled from the first selected model whenever possible.
-              </div>
-            </div>
-
-            <ng-template #noUnifiedSchema>
-              <div class="empty-state-small compact">
-                <mat-icon>rule</mat-icon>
-                <p>Select compatible models to build a unified input form</p>
-              </div>
-            </ng-template>
-          </div>
-
-          <!-- Dataset Input -->
-          <div class="input-card" [class.muted]="inputMode !== 'dataset'">
-            <label class="field-label" for="benchmark-file">Dataset upload</label>
-            <div class="upload-zone">
-              <input
-                id="benchmark-file"
-                class="file-input"
-                type="file"
-                accept=".csv,.jsonl,.json"
-                (change)="handleFileSelection($event)"
-                [disabled]="inputMode !== 'dataset' || isRunning || isObtainingOutputs"
-              />
-              <label class="upload-label" for="benchmark-file">
-                <mat-icon>cloud_upload</mat-icon>
-                Drop CSV/JSONL or browse files
-              </label>
-              <div class="upload-meta">Max 500MB · UTF-8</div>
-              <div class="upload-meta success" *ngIf="selectedFileName">
-                <mat-icon>check</mat-icon> Selected: {{ selectedFileName }}
-              </div>
-              <div class="upload-meta" *ngIf="datasetBatchInputs.length > 0">
-                <mat-icon>list_alt</mat-icon> Rows detected: {{ datasetBatchInputs.length }}
-              </div>
-            </div>
-            <div class="field-foot">
-              <mat-icon>lightbulb</mat-icon>
-              Upload data and run Obtain Outputs for each selected model
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
 
-    <!-- Right Stack: Validation, Metrics, Outputs -->
     <div class="right-stack">
-      <!-- Validation Datasets + Metrics -->
       <div class="panel recipe">
         <div class="panel-header">
           <div>
-            <h2>Validation datasets</h2>
+            <h2>Dataset</h2>
             <p class="panel-subtitle">{{ getValidationDatasetSubtitle() }}</p>
           </div>
           <span class="badge solid">{{ detectedTask || 'Auto' }}</span>
         </div>
 
         <div class="dataset-section">
-          <div class="suggested-datasets" *ngIf="suggestedValidationDatasets.length > 0">
-            <div class="suggested-datasets-header">
+          <div class="dataspace-datasets">
+            <div class="dataset-list-header">
               <div class="upload-meta">
-                <mat-icon>auto_awesome</mat-icon>
-                Suggested CSV datasets prepared for the first selected model.
+                <mat-icon>hub</mat-icon>
+                Agreed dataspace datasets
+              </div>
+              <button
+                class="btn subtle compact-btn"
+                type="button"
+                (click)="loadBenchmarkDatasets()"
+                [disabled]="isLoadingBenchmarkDatasets || isRunning || isTestingRows"
+              >
+                <mat-icon>refresh</mat-icon>
+                Refresh
+              </button>
+            </div>
+
+            <div class="pool-alert compact" *ngIf="benchmarkDatasetError">
+              <mat-icon>warning</mat-icon>
+              {{ benchmarkDatasetError }}
+            </div>
+
+            <div class="search-bar dataset-search-bar">
+              <mat-icon class="search-icon">search</mat-icon>
+              <input
+                type="text"
+                placeholder="Search datasets"
+                [(ngModel)]="benchmarkDatasetSearch"
+                class="search-input"
+              />
+              <button *ngIf="benchmarkDatasetSearch" (click)="clearBenchmarkDatasetSearch()" class="clear-btn" mat-icon-button>
+                <mat-icon>close</mat-icon>
+              </button>
+            </div>
+
+            <ng-template #loadingBenchmarkDatasets>
+              <div class="empty-state-small">
+                <mat-spinner diameter="24"></mat-spinner>
+                <p>Loading benchmark datasets...</p>
+              </div>
+            </ng-template>
+
+            <div class="dataspace-dataset-list" *ngIf="!isLoadingBenchmarkDatasets; else loadingBenchmarkDatasets">
+              <div class="empty-state-small" *ngIf="filteredBenchmarkDatasetAssets.length === 0">
+                <mat-icon>dataset</mat-icon>
+                <p>{{ benchmarkDatasetSearch ? 'No agreed datasets match the search' : 'No local or agreed federated benchmark datasets found' }}</p>
+              </div>
+
+              <button
+                class="dataspace-dataset-card"
+                type="button"
+                *ngFor="let dataset of filteredBenchmarkDatasetAssets"
+                [class.active]="selectedBenchmarkDatasetId === dataset.id"
+                (click)="selectBenchmarkDataset(dataset.id)"
+              >
+                <div class="dataset-card-top">
+                  <div>
+                    <div class="dataset-card-name">{{ dataset.name }}</div>
+                    <div class="dataset-card-description">{{ dataset.description || dataset.id }}</div>
+                  </div>
+                  <span class="badge outline">{{ dataset.source === 'own' ? 'Local' : 'Agreed' }}</span>
+                </div>
+
+                <div class="dataset-card-bottom">
+                  <span class="dataset-card-file">{{ datasetAssetMeta(dataset) }}</span>
+                  <span class="badge outline" *ngIf="dataset.fileName">{{ dataset.fileName }}</span>
+                </div>
+              </button>
+            </div>
+
+            <div class="dataset-mapping-controls">
+              <label class="dataset-mapping-field">
+                <span>Input columns</span>
+                <textarea
+                  class="dataset-mapping-textarea"
+                  rows="2"
+                  [(ngModel)]="benchmarkInputColumnsText"
+                  [placeholder]="getBenchmarkInputColumnsPlaceholder()"
+                  [disabled]="isRunning || isTestingRows || isLoadingSelectedBenchmarkDataset"
+                ></textarea>
+              </label>
+
+              <label class="dataset-mapping-field">
+                <span>Label column</span>
+                <input
+                  class="dataset-mapping-input"
+                  type="text"
+                  [(ngModel)]="benchmarkLabelColumnText"
+                  [placeholder]="getBenchmarkLabelColumnPlaceholder()"
+                  [disabled]="isRunning || isTestingRows || isLoadingSelectedBenchmarkDataset"
+                />
+              </label>
+
+              <div class="upload-meta" *ngIf="selectedBenchmarkDataset">
+                <mat-icon>table_chart</mat-icon>
+                {{ getBenchmarkDatasetMappingSummary() }}
               </div>
             </div>
 
-            <div class="suggested-dataset-list">
-              <div
-                class="suggested-dataset-card"
-                *ngFor="let dataset of suggestedValidationDatasets"
-                [class.active]="isSuggestedDatasetSelected(dataset)"
-                (click)="selectSuggestedDataset(dataset)"
+            <div class="dataspace-dataset-actions">
+              <button
+                class="btn primary compact-btn"
+                type="button"
+                (click)="loadSelectedBenchmarkDataset()"
+                [disabled]="!canLoadSelectedBenchmarkDataset"
               >
-                <div class="suggested-dataset-top">
-                  <div>
-                    <div class="suggested-dataset-name">{{ dataset.name }}</div>
-                    <div class="suggested-dataset-description">{{ dataset.description }}</div>
-                  </div>
-                  <span class="badge outline">{{ dataset.rows.length }} rows</span>
-                </div>
-
-                <div class="suggested-dataset-bottom">
-                  <span class="suggested-dataset-file">{{ dataset.fileName }}</span>
-                  <button class="btn subtle compact-btn" type="button" (click)="downloadSuggestedDataset(dataset, $event)">
-                    <mat-icon>download</mat-icon>
-                    CSV
-                  </button>
-                </div>
+                <mat-spinner *ngIf="isLoadingSelectedBenchmarkDataset" diameter="18"></mat-spinner>
+                <mat-icon *ngIf="!isLoadingSelectedBenchmarkDataset">playlist_add_check</mat-icon>
+                Load Dataset
+              </button>
+              <div class="upload-meta" *ngIf="selectedAssetIds.length === 0">
+                <mat-icon>info</mat-icon> Select at least one model first
               </div>
             </div>
           </div>
@@ -317,28 +273,115 @@
               type="file"
               accept=".csv,.jsonl,.json"
               (change)="handleValidationDatasetSelection($event)"
-              [disabled]="selectedAssetIds.length === 0 || isRunning || isObtainingOutputs"
+              [disabled]="selectedAssetIds.length === 0 || isRunning || isTestingRows"
             />
             <label class="upload-label" for="validation-dataset-file">
               <mat-icon>upload_file</mat-icon>
-              Upload validation dataset (CSV/JSON/JSONL)
+              Upload CSV/JSON/JSONL
             </label>
-            <div class="upload-meta" *ngIf="selectedAssetIds.length === 0">
-              <mat-icon>info</mat-icon> Select at least one model first
-            </div>
             <div class="upload-meta success" *ngIf="validationDatasetFileName">
               <mat-icon>check_circle</mat-icon> Dataset loaded: {{ validationDatasetFileName }}
             </div>
             <div class="upload-meta" *ngIf="validationDatasetRows.length > 0">
-              <mat-icon>list_alt</mat-icon> Rows validated: {{ validationDatasetRows.length }}
+              <mat-icon>list_alt</mat-icon> Rows: {{ validationDatasetRows.length }}
             </div>
           </div>
         </div>
 
-        <div class="panel-header" style="margin-top: 2rem;">
+        <div class="loaded-dataset" *ngIf="validationDatasetRows.length > 0">
+          <div class="loaded-dataset-header">
+            <div>
+              <h3>Loaded dataset</h3>
+              <p>{{ getLoadedDatasetColumns().length }} columns · {{ validationDatasetRows.length }} rows</p>
+            </div>
+            <span class="badge outline">{{ validationDatasetSource || 'dataset' }}</span>
+          </div>
+
+          <div class="column-chip-row">
+            <span class="column-chip" *ngFor="let column of getLoadedDatasetColumns().slice(0, 12)">{{ column }}</span>
+            <span class="column-chip muted" *ngIf="getLoadedDatasetColumns().length > 12">+{{ getLoadedDatasetColumns().length - 12 }}</span>
+          </div>
+
+          <div class="table-container" *ngIf="getLoadedDatasetColumns().length > 0">
+            <table class="compact-table">
+              <thead>
+                <tr>
+                  <th *ngFor="let column of getLoadedDatasetColumns().slice(0, 6)">{{ column }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of getDatasetPreviewRows()">
+                  <td *ngFor="let column of getLoadedDatasetColumns().slice(0, 6)">
+                    {{ formatDatasetPreviewValue(row[column]) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
           <div>
-            <h2>Metrics configuration</h2>
-            <p class="panel-subtitle">Select metrics for evaluation (task: {{ detectedTask || 'unknown' }})</p>
+            <h2>Test rows</h2>
+            <p class="panel-subtitle">Run a small sample before the full benchmark</p>
+          </div>
+          <div class="row-test-actions">
+            <label class="sample-size-control">
+              <span>Rows</span>
+              <select [(ngModel)]="rowTestSampleSize" [disabled]="isRunning || isTestingRows">
+                <option *ngFor="let size of rowTestSampleSizes" [ngValue]="size">{{ size }}</option>
+              </select>
+            </label>
+            <button class="btn primary compact-btn" type="button" (click)="testSampleRows()" [disabled]="!canTestRows">
+              <mat-spinner *ngIf="isTestingRows" diameter="18"></mat-spinner>
+              <mat-icon *ngIf="!isTestingRows">fact_check</mat-icon>
+              {{ isTestingRows ? 'Testing...' : 'Test Rows' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="status-banner" [class.info]="isTestingRows" [class.success]="!isTestingRows && rowTestResults.length > 0">
+          <mat-icon>{{ isTestingRows ? 'pending' : (rowTestResults.length > 0 ? 'check_circle' : 'info') }}</mat-icon>
+          <span>{{ rowTestStatusMessage }}</span>
+        </div>
+
+        <div class="table-container" *ngIf="rowTestResults.length > 0">
+          <table class="compact-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Rows</th>
+                <th>Latency</th>
+                <th>Preview</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let result of rowTestResults">
+                <td>{{ result.modelName }}</td>
+                <td>{{ formatBenchmarkModelType(result.modelType) }}</td>
+                <td>
+                  <span class="output-state" [class.success]="result.status === 'success'" [class.partial]="result.status === 'partial'" [class.error]="result.status === 'error'">
+                    {{ result.status }}
+                  </span>
+                </td>
+                <td>{{ result.successfulRows }}/{{ result.rowsTested }}</td>
+                <td>{{ formatLatency(result.latencyMs) }}</td>
+                <td>{{ result.errorMessage || result.outputPreview }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Metrics</h2>
+            <p class="panel-subtitle">Task: {{ detectedTask || 'unknown' }}</p>
           </div>
           <span class="badge outline">{{ selectedMetrics.length }}/{{ availableMetrics.length }}</span>
         </div>
@@ -350,20 +393,12 @@
               *ngFor="let metric of availableMetrics"
               [class.active]="selectedMetrics.includes(metric)"
               (click)="toggleMetricSelection(metric)"
-              [disabled]="isRunning"
+              [disabled]="isRunning || isTestingRows"
             >
               <mat-icon *ngIf="selectedMetrics.includes(metric)">check_circle</mat-icon>
               <mat-icon *ngIf="!selectedMetrics.includes(metric)">radio_button_unchecked</mat-icon>
               {{ metric }}
             </button>
-          </div>
-
-          <div class="metric-info">
-            <mat-icon>info</mat-icon>
-            <span *ngIf="detectedTask === 'classification'">Classification metrics: AUC, GINI, Precision, Recall, F1 Score</span>
-            <span *ngIf="detectedTask === 'regression'">Regression metrics: RMSE, MAE, MSE, R²</span>
-            <span *ngIf="detectedTask === 'nlp'">NLP metrics: Accuracy, F1, BLEU, Perplexity, ROUGE</span>
-            <span *ngIf="detectedTask === 'vision'">Vision metrics: Accuracy, Precision, Recall, mAP, IoU</span>
           </div>
         </div>
 
@@ -371,125 +406,19 @@
           <mat-icon>analytics</mat-icon>
           <p>Select models to configure metrics</p>
         </div>
-
-        <div class="cost-config">
-          <div class="config-item">
-            <mat-icon>attach_money</mat-icon>
-            <div>
-              <div class="config-label">Cost per second</div>
-              <div class="config-value">${{ costPerSecond }}</div>
-            </div>
-          </div>
-          <div class="config-item">
-            <mat-icon>speed</mat-icon>
-            <div>
-              <div class="config-label">Latency tracking</div>
-              <div class="config-value">Enabled</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Outputs Panel -->
-      <div class="panel outputs-panel">
-        <div class="panel-header">
-          <div>
-            <h2>Outputs</h2>
-            <p class="panel-subtitle">Results generated from Obtain Outputs</p>
-          </div>
-          <span class="badge outline">{{ modelInputOutputs.length }} model(s)</span>
-        </div>
-
-        <div class="status-banner" [class.info]="isObtainingOutputs" [class.success]="!isObtainingOutputs && modelInputOutputs.length > 0">
-          <mat-icon>{{ isObtainingOutputs ? 'pending' : (modelInputOutputs.length > 0 ? 'check_circle' : 'info') }}</mat-icon>
-          <span>{{ outputStatusMessage }}</span>
-        </div>
-
-        <div class="outputs-actions" *ngIf="isDatasetOutputMode() && modelInputOutputs.length > 0">
-          <label class="download-format-group">
-            <span>Global format</span>
-            <select class="download-format-select" [(ngModel)]="globalDatasetDownloadFormat">
-              <option value="json">JSON</option>
-              <option value="csv">CSV</option>
-            </select>
-          </label>
-          <button class="btn subtle" (click)="downloadAllDatasetOutputs()">
-            <mat-icon>download</mat-icon> Download all dataset outputs
-          </button>
-        </div>
-
-        <div *ngIf="modelInputOutputs.length > 0; else noOutputResults" class="outputs-table-container">
-          <!-- Single mode table -->
-          <table class="outputs-table" *ngIf="isSingleOutputMode(); else datasetOutputsTable">
-            <thead>
-              <tr>
-                <th>Model</th><th>Status</th><th>Primary result</th><th>Confidence</th><th>Latency</th><th>Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let output of modelInputOutputs">
-                <td>{{ output.modelName }}</td>
-                <td><span class="output-state" [class.success]="output.status === 'success'" [class.partial]="output.status === 'partial'" [class.error]="output.status === 'error'">{{ output.status }}</span></td>
-                <td>{{ getPrimaryOutputValue(output) }}</td>
-                <td>{{ getPrimaryOutputConfidence(output) }}</td>
-                <td>{{ formatLatency(output.latencyMs) }}</td>
-                <td>{{ output.errorMessage || '-' }}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <!-- Dataset mode table -->
-          <ng-template #datasetOutputsTable>
-            <table class="outputs-table">
-              <thead>
-                <tr>
-                  <th>Model</th><th>Status</th><th>Processed</th><th>OK</th><th>Fail</th><th>Latency</th><th>Summary</th><th>Download</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr *ngFor="let output of modelInputOutputs">
-                  <td>{{ output.modelName }}</td>
-                  <td><span class="output-state" [class.success]="output.status === 'success'" [class.partial]="output.status === 'partial'" [class.error]="output.status === 'error'">{{ output.status }}</span></td>
-                  <td>{{ output.processedInputs }}</td>
-                  <td>{{ output.successfulOutputs }}</td>
-                  <td>{{ output.failedOutputs }}</td>
-                  <td>{{ formatLatency(output.latencyMs) }}</td>
-                  <td>{{ getDatasetOutputSummary(output) }}</td>
-                  <td>
-                    <label class="download-format-group inline">
-                      <span>Format</span>
-                      <select class="download-format-select" [ngModel]="getDatasetDownloadFormat(output.modelId)" (ngModelChange)="setDatasetDownloadFormat(output.modelId, $event)">
-                        <option value="csv">CSV</option>
-                        <option value="json">JSON</option>
-                      </select>
-                    </label>
-                    <button class="table-download-btn" (click)="downloadDatasetModelOutput(output)">
-                      <mat-icon>download</mat-icon> Download
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </ng-template>
-        </div>
-
-        <ng-template #noOutputResults>
-          <div class="empty-state-small">
-            <mat-icon>preview</mat-icon>
-            <p>Use Validate Input and Obtain Outputs to display results here</p>
-          </div>
-        </ng-template>
       </div>
     </div>
   </section>
 
-  <!-- Ranking Results Section -->
   <section class="results-section" *ngIf="rankingRows.length > 0">
     <div class="panel results-panel">
       <div class="panel-header">
         <div>
           <h2>Ranking Results</h2>
-          <p class="panel-subtitle">Models ranked by composite score: 60% {{ recommendationMetric }}, 25% latency, 15% cost</p>
+          <p class="panel-subtitle">
+            Default score: 70% {{ recommendationMetric }}, 20% success, 10% latency. Current sort:
+            {{ getRankingSortLabel() }}.
+          </p>
         </div>
         <div class="header-actions">
           <span class="badge outline">{{ rankingRows.length }} models evaluated</span>
@@ -504,11 +433,42 @@
           <thead>
             <tr class="table-header">
               <th class="col-rank">Rank</th>
-              <th class="col-model">Model Name</th>
-              <th class="col-metric" *ngFor="let metric of selectedMetrics">{{ metric }}</th>
-              <th class="col-latency">Latency</th>
-              <th class="col-cost">Cost</th>
-              <th class="col-score">Score</th>
+              <th class="col-model sortable-header" [class.active-sort]="isRankingSortActive('modelName')" [attr.aria-sort]="getRankingAriaSort('modelName')">
+                <button class="sort-header" type="button" (click)="sortRanking('modelName')">
+                  <span>Model Name</span>
+                  <mat-icon class="sort-icon">{{ getRankingSortIcon('modelName') }}</mat-icon>
+                </button>
+              </th>
+              <th
+                class="col-metric sortable-header"
+                *ngFor="let metric of selectedMetrics"
+                [class.active-sort]="isRankingSortActive('metric:' + metric)"
+                [attr.aria-sort]="getRankingAriaSort('metric:' + metric)"
+              >
+                <button class="sort-header" type="button" (click)="sortRanking('metric:' + metric)">
+                  <span>{{ metric }}</span>
+                  <mat-icon class="sort-icon">{{ getRankingSortIcon('metric:' + metric) }}</mat-icon>
+                </button>
+              </th>
+              <th class="col-success sortable-header" [class.active-sort]="isRankingSortActive('success')" [attr.aria-sort]="getRankingAriaSort('success')">
+                <button class="sort-header" type="button" (click)="sortRanking('success')">
+                  <span>Success</span>
+                  <mat-icon class="sort-icon">{{ getRankingSortIcon('success') }}</mat-icon>
+                </button>
+              </th>
+              <th class="col-latency sortable-header" [class.active-sort]="isRankingSortActive('latency')" [attr.aria-sort]="getRankingAriaSort('latency')">
+                <button class="sort-header" type="button" (click)="sortRanking('latency')">
+                  <span>Latency</span>
+                  <mat-icon class="sort-icon">{{ getRankingSortIcon('latency') }}</mat-icon>
+                </button>
+              </th>
+              <th class="col-score sortable-header" [class.active-sort]="isRankingSortActive('score')" [attr.aria-sort]="getRankingAriaSort('score')">
+                <button class="sort-header" type="button" (click)="sortRanking('score')">
+                  <span>Score</span>
+                  <mat-icon class="sort-icon">{{ getRankingSortIcon('score') }}</mat-icon>
+                </button>
+              </th>
+              <th class="col-error">Error</th>
             </tr>
           </thead>
           <tbody>
@@ -533,16 +493,11 @@
               <td class="col-metric" *ngFor="let metric of selectedMetrics">
                 <span class="metric-value">{{ formatMetricValue(row.metrics[metric], metric) }}</span>
               </td>
+              <td class="col-success">{{ getRankingSuccessText(row) }}</td>
               <td class="col-latency">
                 <div class="latency-cell">
                   <mat-icon class="cell-icon">schedule</mat-icon>
                   <span>{{ formatLatency(row.latency) }}</span>
-                </div>
-              </td>
-              <td class="col-cost">
-                <div class="cost-cell">
-                  <mat-icon class="cell-icon">attach_money</mat-icon>
-                  <span>{{ formatCost(row.cost) }}</span>
                 </div>
               </td>
               <td class="col-score">
@@ -550,6 +505,7 @@
                   <span class="score-value">{{ row.compositeScore?.toFixed(3) || 'N/A' }}</span>
                 </div>
               </td>
+              <td class="col-error">{{ row.errorMessage || '-' }}</td>
             </tr>
           </tbody>
         </table>
@@ -564,95 +520,11 @@
         </button>
       </div>
     </div>
-
-    <!-- Recommendation Panel -->
-    <div class="panel recommendation-panel" *ngIf="getBestModelByMetric() as bestModel">
-      <div class="recommendation-header">
-        <div class="header-left">
-          <div class="trophy-icon-large">&#127942;</div>
-          <div>
-            <h2>Best Model by {{ recommendationMetric }}</h2>
-            <p class="panel-subtitle">Top performer based on selected metric</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="recommendation-body">
-        <div class="best-model-card">
-          <div class="model-info-section">
-            <div class="model-icon">&#129302;</div>
-            <div class="model-details">
-              <h3 class="model-name-large">{{ bestModel.modelName }}</h3>
-              <p class="model-id-text">{{ bestModel.modelId }}</p>
-              <div class="model-rank-badge">
-                <mat-icon>emoji_events</mat-icon>
-                <span>Rank #{{ bestModel.rank }} Overall</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="metrics-showcase">
-            <div class="showcase-title">Performance Metrics</div>
-            <div class="metrics-grid">
-              <div class="metric-card primary-metric">
-                <mat-icon class="metric-icon">star</mat-icon>
-                <div class="metric-info">
-                  <div class="metric-label">{{ recommendationMetric }}</div>
-                  <div class="metric-value-large">{{ formatMetricValue(bestModel.metrics[recommendationMetric], recommendationMetric) }}</div>
-                </div>
-              </div>
-              <div class="metric-card" *ngFor="let metric of selectedMetrics.slice(0, 4)">
-                <div class="metric-info">
-                  <div class="metric-label-small">{{ metric }}</div>
-                  <div class="metric-value-medium">{{ formatMetricValue(bestModel.metrics[metric], metric) }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="performance-indicators">
-            <div class="indicator-item">
-              <mat-icon class="indicator-icon latency">schedule</mat-icon>
-              <div class="indicator-content">
-                <div class="indicator-label">Latency</div>
-                <div class="indicator-value">{{ formatLatency(bestModel.latency) }}</div>
-              </div>
-            </div>
-            <div class="indicator-item">
-              <mat-icon class="indicator-icon cost">attach_money</mat-icon>
-              <div class="indicator-content">
-                <div class="indicator-label">Cost</div>
-                <div class="indicator-value">{{ formatCost(bestModel.cost) }}</div>
-              </div>
-            </div>
-            <div class="indicator-item">
-              <mat-icon class="indicator-icon score">workspace_premium</mat-icon>
-              <div class="indicator-content">
-                <div class="indicator-label">Composite Score</div>
-                <div class="indicator-value">{{ bestModel.compositeScore?.toFixed(3) || 'N/A' }}</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="recommendation-notes">
-            <div class="note-item">
-              <mat-icon>check_circle</mat-icon>
-              <span>Best {{ recommendationMetric }} performance in benchmark</span>
-            </div>
-            <div class="note-item">
-              <mat-icon>trending_up</mat-icon>
-              <span>Validated against {{ getSelectedDatasetName() }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
   </section>
 
-  <!-- Empty Results -->
   <section class="empty-results" *ngIf="rankingRows.length === 0 && !isRunning">
     <mat-icon>assessment</mat-icon>
     <h3>No benchmark results yet</h3>
-    <p>Select models, configure metrics, and run the benchmark to see results here</p>
+    <p>Select models, load a dataset, test rows, and run the benchmark.</p>
   </section>
 </div>

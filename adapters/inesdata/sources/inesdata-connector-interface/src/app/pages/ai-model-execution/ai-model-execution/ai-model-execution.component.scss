@@ -1,11 +1,17 @@
 .model-execution-container {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 2rem;
+  padding: 1rem;
+  min-width: 0;
+}
+
+.model-execution-container,
+.model-execution-container * {
+  box-sizing: border-box;
 }
 
 .page-header {
-  margin-bottom: 2rem;
+  margin-bottom: 1rem;
 }
 
 .btn-back {
@@ -14,15 +20,15 @@
   padding: 0.5rem 0;
   border: none;
   background: none;
-  color: #0066cc;
+  color: var(--secondary-600);
   cursor: pointer;
   font-size: 1rem;
 }
 
 .page-header h1 {
   margin: 0 0 0.5rem;
-  color: #1a1a1a;
-  font-size: 2rem;
+  color: var(--secondary-700);
+  font-size: 1.45rem;
 }
 
 .subtitle {
@@ -34,10 +40,11 @@
 .empty-state,
 .empty-output,
 .empty-history {
-  padding: 4rem 2rem;
+  padding: 2.5rem 1.5rem;
   border-radius: 8px;
   background: #fff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e4e8ee;
+  box-shadow: 0 2px 8px rgba(2, 91, 119, 0.1);
   text-align: center;
 }
 
@@ -46,7 +53,7 @@
   height: 50px;
   margin: 0 auto 1rem;
   border: 4px solid #f3f3f3;
-  border-top: 4px solid #0066cc;
+  border-top: 4px solid var(--brand-500);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -63,14 +70,17 @@
 
 .model-selector,
 .tab-content {
-  padding: 2rem;
+  padding: 1rem;
   border-radius: 8px;
   background: #fff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e4e8ee;
+  box-shadow: 0 2px 8px rgba(2, 91, 119, 0.1);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .model-selector {
-  margin-bottom: 2rem;
+  margin-bottom: 1rem;
 }
 
 .model-selector label {
@@ -100,8 +110,8 @@
 .form-input:focus,
 .json-input:focus {
   outline: none;
-  border-color: #0066cc;
-  box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.12);
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px rgba(0, 111, 127, 0.12);
 }
 
 .empty-icon {
@@ -110,12 +120,16 @@
 }
 
 .model-info-card {
-  margin-bottom: 2rem;
-  padding: 2rem;
+  margin-bottom: 1rem;
+  padding: 1rem 1.2rem;
   border-radius: 8px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: #fff;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  background: #ffffff;
+  color: var(--secondary-700);
+  border: 1px solid #e4e8ee;
+  border-top: 4px solid var(--brand-500);
+  box-shadow: 0 2px 8px rgba(2, 91, 119, 0.1);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .model-header {
@@ -123,11 +137,14 @@
   align-items: center;
   gap: 1rem;
   margin-bottom: 1rem;
+  min-width: 0;
 }
 
 .model-header h2 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.15rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .model-chip-row {
@@ -140,23 +157,24 @@
 .soft-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 34px;
-  padding: 0 0.9rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
-  font-size: 0.88rem;
+  min-height: 28px;
+  padding: 0 0.65rem;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 111, 127, 0.18);
+  background: var(--brand-soft);
+  color: var(--brand-700);
+  font-size: 0.82rem;
   font-weight: 500;
 }
 
 .model-description {
   margin-bottom: 1.25rem;
-  color: rgba(255, 255, 255, 0.92);
+  color: #5a7180;
 }
 
 .model-details {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 1rem;
 }
 
@@ -165,22 +183,23 @@
 }
 
 .observer-action {
-  padding: 0.75rem 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.45);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid rgba(0, 111, 127, 0.28);
+  border-radius: 4px;
+  background: #ffffff;
+  color: var(--brand-700);
   cursor: pointer;
   font-weight: 600;
 }
 
 .observer-action:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--brand-soft);
 }
 
 .detail-row {
   display: flex;
   gap: 0.5rem;
+  min-width: 0;
 }
 
 .detail-row .label {
@@ -192,6 +211,7 @@
   font-family: 'Courier New', monospace;
   opacity: 0.95;
   word-break: break-word;
+  min-width: 0;
 }
 
 .tabs {
@@ -212,12 +232,12 @@
 }
 
 .tab-button:hover {
-  color: #0066cc;
+  color: var(--brand-500);
 }
 
 .tab-button.active {
-  color: #0066cc;
-  border-bottom-color: #0066cc;
+  color: var(--brand-500);
+  border-bottom-color: var(--brand-500);
   font-weight: 600;
 }
 
@@ -256,12 +276,12 @@
 
 .btn-primary {
   padding: 0.75rem 1.5rem;
-  background: #0066cc;
+  background: var(--brand-500);
   color: #fff;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #0052a3;
+  background: var(--brand-700);
 }
 
 .btn-primary:disabled {
@@ -387,7 +407,7 @@
 
 .result-metadata {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: 1rem;
   margin-bottom: 1.5rem;
   padding: 1rem;
@@ -399,6 +419,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  min-width: 0;
 }
 
 .metadata-item .label {
@@ -410,6 +431,7 @@
 .metadata-item .value {
   color: #333;
   font-family: 'Courier New', monospace;
+  overflow-wrap: anywhere;
 }
 
 .json-output,
@@ -434,9 +456,9 @@
 .output-error .error-details {
   margin-bottom: 1rem;
   padding: 1rem;
-  border: 1px solid #ffc107;
+  border: 1px solid var(--pionera-icon);
   border-radius: 4px;
-  background: #fff3cd;
+  background: var(--brand-soft);
 }
 
 details {
@@ -445,7 +467,7 @@ details {
 
 details summary {
   padding: 0.5rem 0;
-  color: #0066cc;
+  color: var(--brand-500);
   cursor: pointer;
   font-weight: 600;
 }
@@ -465,10 +487,12 @@ details summary:hover {
   border: 1px solid #e0e0e0;
   border-radius: 4px;
   background: #fafafa;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .history-duration {
-  color: #0066cc;
+  color: var(--brand-500);
   font-size: 0.9rem;
   font-weight: 600;
 }
@@ -499,6 +523,8 @@ details summary:hover {
   font-size: 0.85rem;
   font-weight: 600;
   text-transform: uppercase;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .badge-success {
@@ -548,6 +574,13 @@ details summary:hover {
 
   .header-actions {
     width: 100%;
+  }
+
+  .header-actions .btn-primary,
+  .observer-action {
+    width: 100%;
+    max-width: 100%;
+    white-space: normal;
   }
 
   .model-details,

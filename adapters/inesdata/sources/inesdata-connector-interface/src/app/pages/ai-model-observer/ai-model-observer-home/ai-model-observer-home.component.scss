@@ -1,6 +1,11 @@
 .observer-home-page {
   padding: 2rem;
-  overflow-x: hidden;
+  min-width: 0;
+}
+
+.observer-home-page,
+.observer-home-page * {
+  box-sizing: border-box;
 }
 
 .observer-home-page__hero {
@@ -31,11 +36,12 @@
 }
 
 .observer-home-page__card {
-  min-width: 0;
   padding: 1.2rem;
-  border-radius: 16px;
+  border-radius: 8px;
   background: #fff;
   box-shadow: 0 12px 28px rgba(18, 30, 52, 0.08);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .observer-home-page__card h2 {
@@ -43,22 +49,28 @@
 }
 
 .observer-home-page__card input {
-  box-sizing: border-box;
-  display: block;
   width: 100%;
   max-width: 100%;
   margin: 0.5rem 0 0.85rem;
   padding: 0.8rem 0.9rem;
   border: 1px solid #d6deea;
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
 .observer-home-page__action {
   padding: 0.75rem 1rem;
   border: none;
   border-radius: 999px;
-  background: #673ab7;
+  background: var(--brand-500);
   color: #fff;
   cursor: pointer;
   font-weight: 600;
+  max-width: 100%;
+  white-space: normal;
+}
+
+@media (max-width: 720px) {
+  .observer-home-page {
+    padding: 1rem;
+  }
 }

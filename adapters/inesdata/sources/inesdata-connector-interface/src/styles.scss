@@ -41,6 +41,12 @@ body {
   height: 100%;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 html,
 div,
 p,
@@ -55,6 +61,15 @@ input {
 
 body {
   margin: 0;
+  overflow-x: hidden;
+}
+
+app-root,
+app-navigation,
+mat-sidenav-container,
+mat-sidenav-content,
+router-outlet + * {
+  min-width: 0;
 }
 
 /* scrollbar */
@@ -152,8 +167,110 @@ body {
 }
 
 mat-card:not(.dialog-card, .creation-card) {
-  width: 500px;
+  width: min(500px, 100%);
+  max-width: 100%;
+  min-width: 0;
   margin: 0.5em 0em;
+}
+
+.card,
+mat-card,
+.mat-mdc-card,
+.mdc-card {
+  max-width: 100%;
+  min-width: 0;
+}
+
+mat-card-header,
+.mat-mdc-card-header,
+.mat-mdc-card-header-text,
+mat-card-content,
+.mat-mdc-card-content,
+mat-card-title,
+.mat-mdc-card-title,
+mat-card-subtitle,
+.mat-mdc-card-subtitle {
+  min-width: 0;
+  max-width: 100%;
+}
+
+mat-card-title,
+.mat-mdc-card-title,
+mat-card-subtitle,
+.mat-mdc-card-subtitle {
+  overflow-wrap: anywhere;
+}
+
+mat-card-content,
+.mat-mdc-card-content {
+  overflow-wrap: anywhere;
+}
+
+mat-card-actions,
+.mat-mdc-card-actions,
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  max-width: 100%;
+  min-width: 0;
+}
+
+mat-card-actions button,
+.mat-mdc-card-actions button,
+.card-actions button {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.mat-mdc-form-field,
+.mat-mdc-select,
+.mat-mdc-input-element,
+input,
+select,
+textarea {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.mat-mdc-table,
+table {
+  max-width: 100%;
+}
+
+.mat-mdc-table:not(table) {
+  display: block;
+  overflow-x: auto;
+}
+
+table.mat-mdc-table,
+table.mat-table {
+  display: table;
+  width: 100%;
+}
+
+pre,
+code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+  mat-card-actions,
+  .mat-mdc-card-actions,
+  .card-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  mat-card-actions button,
+  .mat-mdc-card-actions button,
+  .card-actions button {
+    width: 100%;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
 }
 
 //CREATE POLICY STYLES

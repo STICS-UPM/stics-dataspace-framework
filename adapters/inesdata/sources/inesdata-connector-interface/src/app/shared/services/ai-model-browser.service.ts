@@ -338,7 +338,7 @@ export class AiModelBrowserService {
     }
 
     if (lower.includes('inesdatastore')) {
-      return 'InesDataStore';
+      return 'PIONERA Store';
     }
 
     return normalized;

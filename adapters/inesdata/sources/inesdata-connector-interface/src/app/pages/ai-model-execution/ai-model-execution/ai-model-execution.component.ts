@@ -193,7 +193,7 @@ export class AiModelExecutionComponent implements OnInit {
       return;
     }
 
-    const payload = this.buildPayload();
+    const payload = this.normalizePayloadForExecution(this.buildPayload());
     const startedAt = Date.now();
     const correlationId = this.modelObserverJournalService.createId('corr');
     this.lastExecutionCorrelationId = correlationId;
@@ -413,6 +413,14 @@ export class AiModelExecutionComponent implements OnInit {
     return this.buildPayloadFromFields();
   }
 
+  private normalizePayloadForExecution(payload: unknown): unknown {
+    if (this.selectedAsset?.requestShape === 'batch' && !Array.isArray(payload)) {
+      return [payload];
+    }
+
+    return payload;
+  }
+
   private buildPayloadFromFields(validateRequired = true): Record<string, unknown> {
     const payload: Record<string, unknown> = {};
 
@@ -526,6 +534,25 @@ export class AiModelExecutionComponent implements OnInit {
       return null;
     }
 
+    if (Array.isArray(payload)) {
+      if (this.selectedAsset?.requestShape !== 'batch') {
+        return 'The JSON payload must be an object that matches the model input schema.';
+      }
+
+      for (const [index, item] of payload.entries()) {
+        const error = this.validatePayloadRecordAgainstFields(item, strictTypes);
+        if (error) {
+          return `Row #${index + 1}: ${error}`;
+        }
+      }
+
+      return null;
+    }
+
+    return this.validatePayloadRecordAgainstFields(payload, strictTypes);
+  }
+
+  private validatePayloadRecordAgainstFields(payload: unknown, strictTypes: boolean): string | null {
     const payloadRecord = this.asRecord(payload);
     if (Object.keys(payloadRecord).length === 0 && !this.isRecord(payload)) {
       return 'The JSON payload must be an object that matches the model input schema.';

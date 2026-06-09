@@ -14,38 +14,29 @@
 
 package org.upm.inesdata.extendeddataplanepublic;
 
-import org.eclipse.edc.connector.dataplane.api.controller.DataPlanePublicApiV2Controller;
 import org.eclipse.edc.connector.dataplane.spi.Endpoint;
-import org.eclipse.edc.connector.dataplane.spi.iam.DataPlaneAuthorizationService;
 import org.eclipse.edc.connector.dataplane.spi.iam.PublicEndpointGeneratorService;
-import org.eclipse.edc.connector.dataplane.spi.pipeline.PipelineService;
 import org.eclipse.edc.runtime.metamodel.annotation.Configuration;
 import org.eclipse.edc.runtime.metamodel.annotation.Extension;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.runtime.metamodel.annotation.Setting;
 import org.eclipse.edc.runtime.metamodel.annotation.SettingContext;
 import org.eclipse.edc.runtime.metamodel.annotation.Settings;
-import org.eclipse.edc.spi.system.ExecutorInstrumentation;
 import org.eclipse.edc.spi.system.Hostname;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
-import org.eclipse.edc.web.spi.WebServer;
-import org.eclipse.edc.web.spi.WebService;
 import org.eclipse.edc.web.spi.configuration.ApiContext;
-import org.eclipse.edc.web.spi.configuration.PortMapping;
-import org.eclipse.edc.web.spi.configuration.PortMappingRegistry;
-import org.eclipse.edc.web.spi.configuration.WebServiceConfigurer;
-import org.eclipse.edc.web.spi.configuration.WebServiceSettings;
-
-import java.util.concurrent.Executors;
 
 /**
- * This extension provides generic endpoints which are open to public participants of the Dataspace to execute
- * requests on the actual data source.
+ * Adds the INESData HttpData public endpoint generator.
+ *
+ * The launcher already loads EDC's data-plane-public-api-v2 extension, so this extension must not register the
+ * public web context or controller again. It only contributes the HttpData endpoint mapping used to resolve EDRs
+ * for model execution assets.
  */
 @Extension(value = ExtendedDataPlanePublicApiExtension.NAME)
 public class ExtendedDataPlanePublicApiExtension implements ServiceExtension {
-    public static final String NAME = "Data Plane Public API";
+    public static final String NAME = "INESData HttpData public endpoint generator";
 
     private static final int DEFAULT_PUBLIC_PORT = 8185;
     private static final String DEFAULT_PUBLIC_PATH = "/api/v2/public";
@@ -54,31 +45,14 @@ public class ExtendedDataPlanePublicApiExtension implements ServiceExtension {
             "in '" + DEFAULT_PUBLIC_PORT + "' and '" + DEFAULT_PUBLIC_PATH + "'.", defaultValue = "http://<HOST>:" + DEFAULT_PUBLIC_PORT + DEFAULT_PUBLIC_PATH)
     private static final String PUBLIC_ENDPOINT = "edc.dataplane.api.public.baseurl";
 
-    private static final int DEFAULT_THREAD_POOL = 10;
-
     @Configuration
     private PublicApiConfiguration apiConfiguration;
-
-    @Inject
-    private PipelineService pipelineService;
-
-    @Inject
-    private WebService webService;
-
-    @Inject
-    private ExecutorInstrumentation executorInstrumentation;
-
-    @Inject
-    private DataPlaneAuthorizationService authorizationService;
 
     @Inject
     private PublicEndpointGeneratorService generatorService;
 
     @Inject
     private Hostname hostname;
-
-    @Inject
-    private PortMappingRegistry portMappingRegistry;
 
     @Override
     public String name() {
@@ -87,14 +61,6 @@ public class ExtendedDataPlanePublicApiExtension implements ServiceExtension {
 
     @Override
     public void initialize(ServiceExtensionContext context) {
-        var portMapping = new PortMapping(ApiContext.PUBLIC, apiConfiguration.port(), apiConfiguration.path());
-        portMappingRegistry.register(portMapping);
-
-        var executorService = executorInstrumentation.instrument(
-                Executors.newFixedThreadPool(DEFAULT_THREAD_POOL),
-                "Data plane proxy transfers"
-        );
-
         var publicEndpoint = context.getSetting(PUBLIC_ENDPOINT, null);
         if (publicEndpoint == null) {
             publicEndpoint = "http://%s:%d%s".formatted(hostname.get(), apiConfiguration.port(), apiConfiguration.path());
@@ -102,9 +68,6 @@ public class ExtendedDataPlanePublicApiExtension implements ServiceExtension {
         }
         var endpoint = Endpoint.url(publicEndpoint);
         generatorService.addGeneratorFunction("HttpData", dataAddress -> endpoint);
-
-        var publicApiController = new DataPlanePublicApiV2Controller(pipelineService, executorService, authorizationService);
-        webService.registerResource(ApiContext.PUBLIC, publicApiController);
     }
 
     @Settings

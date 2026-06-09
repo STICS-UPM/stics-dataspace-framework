@@ -58,7 +58,7 @@ describe('model observer runtime utilities', () => {
       protocol: 'https:',
       hostname: 'validation.example.org',
       origin: 'https://validation.example.org',
-      pathname: '/inesdata-connector-interface/ai-model-observer/participants/qa-ai-model-consumer'
+      pathname: '/c/consumer-a/inesdata-connector-interface/ai-model-observer/participants/qa-ai-model-consumer'
     };
 
     expect(resolveModelObserverApiBaseUrl(runtime, vmSingleLocation))

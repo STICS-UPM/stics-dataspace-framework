@@ -1,20 +1,24 @@
 .ai-browser-page {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  min-height: 0;
+  gap: 16px;
+  min-width: 0;
+}
+
+.ai-browser-page,
+.ai-browser-page * {
+  box-sizing: border-box;
 }
 
 .page-header h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 30px;
   line-height: 1.2;
 }
 
 .page-header p {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   color: #5f6368;
-  font-size: 14px;
 }
 
 .search-row,
@@ -24,28 +28,31 @@
 
 .content-layout {
   display: grid;
-  grid-template-columns: minmax(250px, 300px) 1fr;
-  gap: 14px;
-  min-height: 0;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 18px;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 .filters-panel {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #fafafa;
-  padding: 8px 0;
+  padding: 12px 0;
   height: fit-content;
-  max-height: calc(100vh - 210px);
   position: sticky;
-  top: 68px;
-  overflow-y: auto;
+  top: 78px;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .filters-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 12px 8px;
+  padding: 0 16px 12px;
   margin-bottom: 4px;
   border-bottom: 1px solid #eceff1;
 }
@@ -72,9 +79,7 @@
 }
 
 .filter-panel mat-expansion-panel-header {
-  min-height: 42px;
-  height: 42px;
-  padding: 0 12px;
+  padding: 14px 16px;
 }
 
 .filter-panel mat-panel-title {
@@ -86,15 +91,18 @@
 .filter-options {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 2px 12px 12px;
-  max-height: 180px;
+  gap: 10px;
+  padding: 4px 16px 16px;
+  max-height: 260px;
   overflow-y: auto;
 }
 
 .models-panel {
   min-height: 320px;
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .results-line {
@@ -106,32 +114,42 @@
 .loading-block,
 .empty-block {
   border: 1px dashed #cbd5e1;
-  border-radius: 12px;
+  border-radius: 8px;
   min-height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
   color: #4b5563;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .models-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
+  gap: 18px;
+  align-items: stretch;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 .model-card {
-  width: auto !important;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   max-width: 100%;
-  margin: 0 !important;
-  border-radius: 10px;
+  min-height: 360px;
+  border-radius: 8px;
   border: 1px solid #e5e7eb;
-  padding: 11px 11px 9px;
+  padding: 12px;
   box-shadow: 0 3px 10px rgba(15, 23, 42, 0.05);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  overflow: hidden;
+  container-type: inline-size;
 }
 
 .card-header {
@@ -140,6 +158,7 @@
 
 .title-block {
   min-width: 0;
+  width: 100%;
 }
 
 .title-row {
@@ -147,9 +166,12 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
 }
 
 .title-block h2 {
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
   font-size: 14px;
   line-height: 1.2;
@@ -177,12 +199,16 @@
   font-size: 11px;
   font-weight: 500;
   white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .badge-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
 }
 
 .badge-row.compact {
@@ -197,6 +223,8 @@
   border-radius: 999px;
   font-size: 10px;
   line-height: 1;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .source-badge {
@@ -208,15 +236,15 @@
 }
 
 .source-badge.external {
-  background: #fff4e8;
-  color: #b45309;
-  border-color: #f7d7b7;
+  background: var(--brand-soft);
+  color: var(--brand-700);
+  border-color: rgba(47, 160, 181, 0.28);
 }
 
 .contract-badge {
-  background: #fff7ed;
-  color: #c2410c;
-  border: 1px solid #fed7aa;
+  background: var(--brand-soft);
+  color: var(--brand-700);
+  border: 1px solid rgba(47, 160, 181, 0.28);
   font-weight: 500;
 }
 
@@ -264,6 +292,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
+  min-width: 0;
 }
 
 .metadata-chip {
@@ -322,6 +351,8 @@
   color: #374151;
   font-size: 10px;
   line-height: 1;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .keyword-chip.extra {
@@ -331,8 +362,9 @@
 
 .asset-facts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 8px;
+  min-width: 0;
 }
 
 .asset-fact,
@@ -367,18 +399,21 @@
 }
 
 .card-actions {
-  display: flex;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
   margin-top: auto;
-  padding-top: 6px;
+  padding-top: 8px;
   width: 100%;
+  min-width: 0;
 }
 
 .card-actions button {
-  flex: 0 0 calc(50% - 4px);
-  max-width: calc(50% - 4px);
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
-  min-height: 36px;
+  height: 38px;
+  min-height: 38px;
   border-radius: 8px;
   display: inline-flex;
   align-items: center;
@@ -387,14 +422,45 @@
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.01em;
-  padding: 0 8px;
+  padding: 0 10px;
   text-align: center;
 }
 
+.card-actions button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:host ::ng-deep .card-actions .mdc-button__label {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  overflow: hidden;
+}
+
+:host ::ng-deep .card-actions .mdc-button__label span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .card-actions button mat-icon {
+  flex: 0 0 auto;
   width: 16px;
   height: 16px;
   font-size: 16px;
+}
+
+@container (min-width: 460px) {
+  .card-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .details-action {
@@ -404,7 +470,7 @@
 }
 
 .primary-action {
-  background: #f97316;
+  background: var(--pionera-icon);
   color: #ffffff;
 }
 
@@ -442,10 +508,10 @@
 
   .card-actions {
     flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
   .card-actions button {
-    flex-basis: 100%;
     max-width: 100%;
   }
 }

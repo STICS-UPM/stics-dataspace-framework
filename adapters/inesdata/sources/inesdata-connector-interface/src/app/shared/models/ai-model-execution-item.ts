@@ -2,6 +2,9 @@ import { DataOffer } from './data-offer';
 import { Asset } from './edc-connector-entities';
 
 export type AiModelExecutionSource = 'own' | 'federated';
+export type AiModelRequestShape = 'single' | 'batch';
+export type AiModelBenchmarkModelType = 'output' | 'metric';
+export type AiModelMetricDirection = 'higher' | 'lower';
 
 export interface AiModelExecutionInputFeature {
   name: string;
@@ -24,11 +27,21 @@ export interface AiModelExecutionItem {
   executionPath: string;
   httpMethodDefault: string;
   tasks: string[];
+  subtasks?: string[];
   algorithms: string[];
   frameworks: string[];
   inputFeatures: AiModelExecutionInputFeature[];
+  inputColumns?: string[];
   inputSchema?: unknown;
   inputExample?: unknown;
+  requestShape?: AiModelRequestShape;
+  benchmarkModelType?: AiModelBenchmarkModelType;
+  targetFields?: string[];
+  predictionFields?: string[];
+  supportedMetrics?: string[];
+  metricDirections?: Record<string, AiModelMetricDirection>;
+  positiveLabel?: string;
+  scoreField?: string;
   rawAsset?: Asset;
   rawOffer?: DataOffer;
 }

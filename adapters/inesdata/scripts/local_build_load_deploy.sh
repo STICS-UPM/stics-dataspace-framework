@@ -1176,7 +1176,7 @@ if has_required_component "connector" || has_required_component "connector-inter
       connector_name="$(basename "$values_file")"
       connector_name="${connector_name#values-}"
       connector_name="${connector_name%.yaml}"
-      release_name="${connector_name}-${K8S_NAMESPACE}"
+      release_name="${connector_name}-${DATASPACE_NAME}"
       reuse_existing="no"
       if [[ "$TARGET" == "connector" || "$TARGET" == "connector-interface" ]]; then
         reuse_existing="yes"

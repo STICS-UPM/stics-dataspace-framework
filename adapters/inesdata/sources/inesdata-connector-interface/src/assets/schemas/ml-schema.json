@@ -1,5 +1,5 @@
 {
-  "title": "Inesdata ML schema",
+  "title": "PIONERA ML schema",
   "type": "object",
   "properties": {
       "description": {

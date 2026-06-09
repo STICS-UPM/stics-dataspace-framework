@@ -48,12 +48,15 @@ mat-list-item:hover .property-title,
   display: flex;
   flex-wrap: wrap;
   gap: 20px;
+  min-width: 0;
 }
 
 .detail-item {
   flex: 1 1 calc((100% / 2) - 20px);
   min-width: calc((100% / 2) - 20px);
   box-sizing: border-box;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 480px) {
@@ -118,6 +121,8 @@ mat-expansion-panel-header {
 .contract-offer {
   margin: 20px;
   background-color: white;
+  max-width: calc(100% - 40px);
+  min-width: 0;
 }
 
 .value-not-available {
@@ -175,4 +180,22 @@ mat-card-actions {
   padding-right: 10px !important;
   padding-bottom: 15px !important;
   text-align: end !important;
+}
+
+@media (max-width: 720px) {
+  .contract-offer {
+    margin: 10px 0;
+    max-width: 100%;
+  }
+
+  .detail-item {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
+  .mat-mdc-card-actions button,
+  mat-card-actions button {
+    width: 100%;
+    margin-right: 0 !important;
+  }
 }

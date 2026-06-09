@@ -1,13 +1,25 @@
+#wrapper,
+#wrapper > div {
+  width: 100%;
+  min-width: 0;
+}
+
+#wrapper > div {
+  overflow-x: auto;
+}
+
 table {
   margin-top: 20px;
 }
 
 .transfer-history-table {
-  width: 100%;
+  display: table !important;
+  width: 100% !important;
+  min-width: 760px;
 }
 
 .mat-table {
-  overflow-x: scroll;
+  overflow-x: visible;
 }
 
 .mat-cell,
@@ -57,6 +69,16 @@ table {
 
 :host ::ng-deep table tr {
   height: 56px !important;
+}
+
+:host ::ng-deep .transfer-history-table th,
+:host ::ng-deep .transfer-history-table td {
+  min-width: 110px;
+}
+
+:host ::ng-deep .transfer-history-table th:last-child,
+:host ::ng-deep .transfer-history-table td:last-child {
+  min-width: 150px;
 }
 
 :host ::ng-deep table button {
@@ -115,4 +137,16 @@ td.validation-na {
 :host ::ng-deep .validation-tooltip {
   white-space: pre-wrap;
   max-width: 720px;
+}
+
+@media (max-width: 900px) {
+  .table-header-container {
+    align-items: stretch !important;
+    flex-direction: column !important;
+    gap: 0.75rem;
+  }
+
+  .table-header-container button {
+    width: 100%;
+  }
 }
