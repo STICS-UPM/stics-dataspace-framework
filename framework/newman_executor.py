@@ -630,6 +630,26 @@ class NewmanExecutor:
 
         raise last_error or RuntimeError(f"{label} failed after authentication refresh")
 
+    def _refresh_connector_token_for_wait(self, environment_path, env_vars, role, token_key):
+        current_token = env_vars.get(token_key)
+        try:
+            _, refreshed_token = self._connector_login(
+                env_vars,
+                role,
+                self.TRANSIENT_AUTH_ATTEMPTS,
+                self.TRANSIENT_AUTH_RETRY_DELAY_SECONDS,
+            )
+        except RuntimeError as exc:
+            print(
+                f"[WARNING] Could not refresh {role} management token before Level 6 wait; "
+                f"using the current token. Detail: {exc}"
+            )
+            return current_token
+
+        env_vars[token_key] = refreshed_token
+        self._write_environment_values(environment_path, {token_key: refreshed_token})
+        return refreshed_token
+
     @staticmethod
     def _preflight_body_summary(body):
         if isinstance(body, list):
@@ -1025,6 +1045,19 @@ class NewmanExecutor:
                 "are missing: " + ", ".join(missing)
             )
 
+        provider_jwt = self._refresh_connector_token_for_wait(
+            environment_path,
+            env_vars,
+            "provider",
+            "provider_jwt",
+        )
+        consumer_jwt = self._refresh_connector_token_for_wait(
+            environment_path,
+            env_vars,
+            "consumer",
+            "consumer_jwt",
+        )
+
         deadline = time.time() + float(timeout)
         visible = set()
         last_errors = {}
@@ -1221,6 +1254,13 @@ class NewmanExecutor:
                 "Cannot wait for contractAgreementId because these environment variables are missing: "
                 + ", ".join(missing)
             )
+
+        consumer_jwt = self._refresh_connector_token_for_wait(
+            environment_path,
+            env_vars,
+            "consumer",
+            "consumer_jwt",
+        )
 
         direct_url = self._management_url_for_role(
             env_vars,

@@ -757,6 +757,42 @@ class NewmanMetricsTests(unittest.TestCase):
 
         self.assertEqual(value, 42)
 
+    def test_refresh_connector_token_for_wait_updates_environment_file(self):
+        executor = NewmanExecutor()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment_path = os.path.join(tmpdir, "environment.json")
+            executor._write_environment_file(
+                {
+                    "keycloakUrl": "http://auth.example.local",
+                    "dataspace": "demo",
+                    "keycloakClientId": "dataspace-users",
+                    "consumer_user": "user-consumer",
+                    "consumer_password": "secret",
+                    "consumer_jwt": "old-token",
+                },
+                environment_path,
+            )
+            _, env_vars = executor._read_environment_values(environment_path)
+
+            with mock.patch.object(
+                executor,
+                "_connector_login",
+                return_value=("http://auth.example.local/realms/demo/protocol/openid-connect/token", "new-token"),
+            ) as mocked_login:
+                token = executor._refresh_connector_token_for_wait(
+                    environment_path,
+                    env_vars,
+                    "consumer",
+                    "consumer_jwt",
+                )
+
+            _, updated_values = executor._read_environment_values(environment_path)
+
+        self.assertEqual(token, "new-token")
+        self.assertEqual(updated_values["consumer_jwt"], "new-token")
+        mocked_login.assert_called_once()
+
     def test_find_negotiation_does_not_fallback_to_stale_entry_when_id_is_missing(self):
         executor = NewmanExecutor()
         body = [
