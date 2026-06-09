@@ -852,6 +852,22 @@ class KafkaManager:
         except Exception:
             return False
 
+    def _kubernetes_external_service_exists(self, ids):
+        try:
+            self._run_command(
+                [
+                    "kubectl",
+                    "get",
+                    "service",
+                    ids["external_service_name"],
+                    "-n",
+                    ids["namespace"],
+                ]
+            )
+            return True
+        except Exception:
+            return False
+
     def _list_kubernetes_probe_pods(self, namespace, excluded_prefixes=None):
         excluded_prefixes = tuple(excluded_prefixes or ())
         result = self._run_command(["kubectl", "get", "pods", "-n", namespace, "--no-headers"])
@@ -1037,7 +1053,7 @@ class KafkaManager:
         config = self._load_manager_config()
         ids = self._kubernetes_identifiers(config)
         connector_bootstrap = self._kubernetes_connector_bootstrap(config, ids)
-        if not self._kubernetes_resources_exist(ids):
+        if not self._kubernetes_resources_exist(ids) and not self._kubernetes_external_service_exists(ids):
             return None
 
         self._wait_for_kubernetes_internal_bootstrap(ids)

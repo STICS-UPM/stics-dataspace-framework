@@ -797,6 +797,49 @@ class KafkaManagerTests(unittest.TestCase):
         mocked_recover.assert_called_once()
         mocked_start.assert_not_called()
 
+    def test_kubernetes_recovery_accepts_existing_external_service_without_all_expected_resources(self):
+        commands = []
+
+        def fake_runner(args, input_text=None):
+            commands.append(list(args))
+            if args[:2] == ["kubectl", "get"] and any(
+                str(part).startswith("deployment/") for part in args
+            ):
+                return _FakeCompletedProcess(returncode=1, stderr="missing controller")
+            return _FakeCompletedProcess(stdout="")
+
+        manager = KafkaManager(
+            runtime_config={
+                "provisioner": "kubernetes-split-kraft",
+                "k8s_namespace": "edc-control",
+                "k8s_service_name": "framework-kafka",
+                "k8s_external_service_type": "NodePort",
+                "k8s_nodeport": "32092",
+            },
+            command_runner=fake_runner,
+        )
+
+        with mock.patch.object(KafkaManager, "_wait_for_kubernetes_internal_bootstrap", return_value={"pod": "conn-a"}):
+            with mock.patch.object(KafkaManager, "_wait_for_kubernetes_external_service_bootstrap", return_value={"pod": "conn-a"}):
+                with mock.patch.object(KafkaManager, "_start_kubernetes_port_forward", return_value=object()):
+                    with mock.patch.object(KafkaManager, "is_kafka_available", return_value=True):
+                        bootstrap = manager._recover_existing_kubernetes_runtime()
+
+        self.assertEqual(bootstrap, "127.0.0.1:32092")
+        self.assertTrue(
+            any(
+                call == [
+                    "kubectl",
+                    "get",
+                    "service",
+                    "framework-kafka-external",
+                    "-n",
+                    "edc-control",
+                ]
+                for call in commands
+            )
+        )
+
     def test_ensure_kafka_running_falls_back_to_restart_after_recovery_failure(self):
         manager = KafkaManager(bootstrap_servers="127.0.0.1:32092")
         manager.cluster_bootstrap_servers = "framework-kafka.demo.svc.cluster.local:9092"

@@ -1823,7 +1823,30 @@ def create_client(keycloak_admin, dataspace, client_name, environment):
         keycloak_admin.connection.add_param_headers("Content-Type", "application/json")
 
     ensure_client_default_scopes(keycloak_admin, client_id, default_scopes)
-    ensure_client_service_account_roles(keycloak_admin, client_id, [client_name, "connector-user"])
+    ensure_client_service_account_roles(
+        keycloak_admin,
+        client_id,
+        connector_service_account_role_names(keycloak_admin, client_name),
+    )
+
+
+def connector_service_account_role_names(keycloak_admin, client_name):
+    role_names = [client_name, "connector-user"]
+    try:
+        realm_roles = keycloak_admin.get_realm_roles()
+    except Exception as exc:
+        click.echo(f"    - Could not inspect connector realm roles. Falling back to own role only: {exc}")
+        return role_names
+
+    for role in realm_roles or []:
+        name = role.get("name")
+        if not name or name in role_names:
+            continue
+        attributes = role.get("attributes") or {}
+        connector_attribute = attributes.get("connector")
+        if connector_attribute:
+            role_names.append(name)
+    return role_names
 
 
 def ensure_client_service_account_enabled(keycloak_admin, client_id, client):
