@@ -54,6 +54,15 @@ class AIModelHubModelServerConfigTests(unittest.TestCase):
 
         self.assertEqual(ingress["metadata"]["namespace"], "components")
         self.assertEqual(ingress["metadata"]["labels"]["app.kubernetes.io/part-of"], "vm-single")
+        self.assertEqual(
+            ingress["metadata"]["annotations"],
+            {
+                "nginx.ingress.kubernetes.io/ssl-redirect": "false",
+                "nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
+                "nginx.ingress.kubernetes.io/use-regex": "true",
+                "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+            },
+        )
         self.assertEqual(ingress["spec"]["rules"][0]["host"], "org1.example.test")
         self.assertEqual(
             ingress["spec"]["rules"][0]["http"]["paths"][0]["path"],

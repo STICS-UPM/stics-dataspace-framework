@@ -19647,6 +19647,19 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
     connector_k8s_namespaces = {}
     connector_kubeconfigs = {}
     connector_protocol_urls = {}
+    connector_protocol_path_prefix = ""
+    if normalized_adapter == "edc":
+        for key in (
+            "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "VM_DISTRIBUTED_EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+            "EDC_CONNECTOR_PUBLIC_PATH_PREFIX",
+        ):
+            raw_prefix = str(values.get(key) or "").strip()
+            if raw_prefix:
+                connector_protocol_path_prefix = "" if raw_prefix in {"/", ".", "root"} else f"/{raw_prefix.strip('/')}"
+                break
+        if not connector_protocol_path_prefix:
+            connector_protocol_path_prefix = "/edc"
     kubeconfig_by_role = {
         "provider": values.get("K3S_KUBECONFIG_PROVIDER"),
         "consumer": values.get("K3S_KUBECONFIG_CONSUMER"),
@@ -19680,7 +19693,10 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
                 ).strip().lower()
                 if connector_dsp_protocol not in {"http", "https"}:
                     connector_dsp_protocol = "http"
-                connector_protocol_urls[connector] = f"{connector_dsp_protocol}://{'.'.join(host_parts)}/protocol"
+                connector_protocol_urls[connector] = (
+                    f"{connector_dsp_protocol}://{'.'.join(host_parts)}"
+                    f"{connector_protocol_path_prefix}/protocol"
+                )
     model_server_url = str(
         values.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
         or values.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL")
@@ -19697,6 +19713,26 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
         "connector_kubeconfigs": connector_kubeconfigs,
         "connector_protocol_urls": connector_protocol_urls,
         "model_server_url": model_server_url,
+        "negotiation_timeout_seconds": str(
+            values.get("AI_MODEL_HUB_SEED_NEGOTIATION_TIMEOUT_SECONDS")
+            or values.get("SEED_NEGOTIATION_TIMEOUT_SECONDS")
+            or ""
+        ).strip(),
+        "negotiation_poll_interval_seconds": str(
+            values.get("AI_MODEL_HUB_SEED_NEGOTIATION_POLL_INTERVAL_SECONDS")
+            or values.get("SEED_NEGOTIATION_POLL_INTERVAL_SECONDS")
+            or ""
+        ).strip(),
+        "negotiation_state_request_timeout_seconds": str(
+            values.get("AI_MODEL_HUB_SEED_NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS")
+            or values.get("SEED_NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS")
+            or ""
+        ).strip(),
+        "negotiation_port_forward_delay_seconds": str(
+            values.get("AI_MODEL_HUB_SEED_NEGOTIATION_PORT_FORWARD_DELAY_SECONDS")
+            or values.get("SEED_NEGOTIATION_PORT_FORWARD_DELAY_SECONDS")
+            or ""
+        ).strip(),
     }
 
 
@@ -19712,6 +19748,8 @@ def _ai_model_hub_use_case_demo_seed_command(profile_values=None, adapter_name="
         runtime["components_namespace"],
         "--connectors",
         ",".join(runtime["connectors"]),
+        "--adapter",
+        str(adapter_name or "inesdata").strip().lower() or "inesdata",
         "--credentials-dir",
         runtime["credentials_dir"],
         "--strict",
@@ -19739,6 +19777,15 @@ def _ai_model_hub_use_case_demo_seed_command(profile_values=None, adapter_name="
                 ",".join(f"{key}={value}" for key, value in sorted(runtime["connector_protocol_urls"].items())),
             ]
         )
+    negotiation_arg_map = (
+        ("negotiation_timeout_seconds", "--negotiation-timeout-seconds"),
+        ("negotiation_poll_interval_seconds", "--negotiation-poll-interval-seconds"),
+        ("negotiation_state_request_timeout_seconds", "--negotiation-state-request-timeout-seconds"),
+        ("negotiation_port_forward_delay_seconds", "--negotiation-port-forward-delay-seconds"),
+    )
+    for runtime_key, option_name in negotiation_arg_map:
+        if runtime.get(runtime_key):
+            args.extend([option_name, runtime[runtime_key]])
     if step == "models":
         args.extend(
             [

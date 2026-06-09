@@ -1285,10 +1285,11 @@ import os
 import sys
 from typing import Any, Dict, Iterable, List
 
-from fastapi import Request
+from fastapi import HTTPException, Request
+from fastapi.responses import FileResponse
 
 
-DEFAULT_MOCK_HTTP_COUNT = 10
+DEFAULT_MOCK_HTTP_COUNT = 0
 MAX_MOCK_HTTP_COUNT = 15
 
 MOCK_MODELS: List[Dict[str, str]] = [
@@ -1321,7 +1322,7 @@ def _mock_http_count() -> int:
         count = int(raw_value)
     except ValueError:
         count = DEFAULT_MOCK_HTTP_COUNT
-    return max(1, min(count, MAX_MOCK_HTTP_COUNT))
+    return max(0, min(count, MAX_MOCK_HTTP_COUNT))
 
 
 def _load_use_case_app():
@@ -1339,6 +1340,36 @@ def _load_use_case_app():
 
 
 app = _load_use_case_app()
+
+
+def _dataset_file_map() -> Dict[str, str]:
+    server_dir = _use_case_server_dir()
+    candidates = {
+        "segments_test.csv": os.path.join(server_dir, "data", "mobility-datasets", "segments_test.csv"),
+        "5w1h_subtarea_1_test.json": os.path.join(server_dir, "data", "flares-datasets", "5w1h_subtarea_1_test.json"),
+        "5w1h_subtarea_2_test.json": os.path.join(server_dir, "data", "flares-datasets", "5w1h_subtarea_2_test.json"),
+    }
+    return {name: path for name, path in candidates.items() if os.path.isfile(path)}
+
+
+@app.get("/datasets")
+def datasets() -> Dict[str, Any]:
+    return {
+        "datasets": [
+            {"name": name, "url": f"/datasets/{name}"}
+            for name in sorted(_dataset_file_map())
+        ]
+    }
+
+
+@app.get("/datasets/{filename}")
+def dataset_file(filename: str):
+    files = _dataset_file_map()
+    path = files.get(filename)
+    if not path:
+        raise HTTPException(status_code=404, detail="dataset not found")
+    media_type = "text/csv" if filename.endswith(".csv") else "application/x-ndjson"
+    return FileResponse(path, media_type=media_type, filename=filename)
 
 
 def _records_from_payload(payload: Any) -> List[Dict[str, Any]]:
@@ -2016,7 +2047,7 @@ def combined_models() -> Dict[str, Any]:
         )
         return str(output or "").strip().strip("'").strip('"')
 
-    def _probe_component_public_url(self, url, *, expected_statuses, timeout_seconds=5):
+    def _probe_component_public_url(self, url, *, expected_statuses, timeout_seconds=5, follow_redirects=False):
         normalized_url = self._to_public_url(url)
         if not normalized_url:
             return False, "public URL is empty"
@@ -2025,7 +2056,7 @@ def combined_models() -> Dict[str, Any]:
             response = requests.get(
                 normalized_url,
                 timeout=timeout_seconds,
-                allow_redirects=False,
+                allow_redirects=bool(follow_redirects),
                 headers={"Cache-Control": "no-store"},
             )
         except Exception as exc:
@@ -2033,6 +2064,10 @@ def combined_models() -> Dict[str, Any]:
 
         status_code = int(getattr(response, "status_code", 0) or 0)
         detail = f"HTTP {status_code}"
+        raw_history = getattr(response, "history", []) or []
+        history = raw_history if isinstance(raw_history, (list, tuple)) else []
+        if follow_redirects and history:
+            detail = f"{detail} after {len(history)} redirect(s)"
         location = str(getattr(response, "headers", {}).get("Location") or "").strip()
         if location:
             detail = f"{detail} -> {location}"
@@ -2110,10 +2145,12 @@ def combined_models() -> Dict[str, Any]:
                 root_ready, root_detail = self._probe_component_public_url(
                     root_url,
                     expected_statuses={200},
+                    follow_redirects=True,
                 )
                 config_ready, config_detail = self._probe_component_public_url(
                     config_url,
                     expected_statuses={200},
+                    follow_redirects=True,
                 )
                 if root_ready and config_ready:
                     return {

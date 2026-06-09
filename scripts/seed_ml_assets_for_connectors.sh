@@ -7,6 +7,7 @@ NAMESPACE="${NAMESPACE:-demo}"
 COMPONENTS_NAMESPACE="${COMPONENTS_NAMESPACE:-components}"
 COUNT="${COUNT:-8}"
 CONNECTORS_CSV="${CONNECTORS_CSV:-conn-citycouncil-demo,conn-company-demo}"
+ADAPTER="${ADAPTER:-inesdata}"
 CREDENTIALS_DIR="${CREDENTIALS_DIR:-$ROOT_DIR/inesdata-testing/deployments/DEV/demo}"
 KEYCLOAK_TOKEN_URL="${KEYCLOAK_TOKEN_URL:-}"
 CONNECTOR_K8S_NAMESPACES="${CONNECTOR_K8S_NAMESPACES:-}"
@@ -35,6 +36,10 @@ SKIP_INESDATA_MODELS="${SKIP_INESDATA_MODELS:-0}"
 USE_CASE_MODEL_SERVER_BASE_URL="${USE_CASE_MODEL_SERVER_BASE_URL:-}"
 COMBINED_HTTP_COUNT="${COMBINED_HTTP_COUNT:-10}"
 COMBINED_INESDATA_COUNT="${COMBINED_INESDATA_COUNT:-$COUNT}"
+NEGOTIATION_TIMEOUT_SECONDS="${NEGOTIATION_TIMEOUT_SECONDS:-${AI_MODEL_HUB_SEED_NEGOTIATION_TIMEOUT_SECONDS:-180}}"
+NEGOTIATION_POLL_INTERVAL_SECONDS="${NEGOTIATION_POLL_INTERVAL_SECONDS:-${AI_MODEL_HUB_SEED_NEGOTIATION_POLL_INTERVAL_SECONDS:-3}}"
+NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS="${NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS:-${AI_MODEL_HUB_SEED_NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS:-20}}"
+NEGOTIATION_PORT_FORWARD_DELAY_SECONDS="${NEGOTIATION_PORT_FORWARD_DELAY_SECONDS:-${AI_MODEL_HUB_SEED_NEGOTIATION_PORT_FORWARD_DELAY_SECONDS:-3}}"
 
 usage() {
   cat <<'EOF'
@@ -43,6 +48,7 @@ Usage: seed_ml_assets_for_connectors.sh [options]
 Options:
   --namespace <ns>            Dataspace namespace/name used by legacy seed defaults (default: demo)
   --components-namespace <ns> Namespace where component fixtures run, including model-server (default: components)
+  --adapter <name>            Dataspace adapter API mode: inesdata or edc (default: inesdata)
   --count <n>                 Number of InesDataStore assets per connector (default: 8)
   --connectors <csv>          Connectors list (default: conn-citycouncil-demo,conn-company-demo)
   --credentials-dir <path>    Folder containing credentials-connector-<name>.json
@@ -67,13 +73,22 @@ Options:
   --combined-http-count <n>   Mock HttpData assets kept in combined mode (default: 10)
   --combined-inesdata-count <n>
                               InesDataStore assets kept in combined mode (default: --count)
+  --negotiation-timeout-seconds <n>
+                              Max seconds to wait for each negotiation state (default: 180)
+  --negotiation-poll-interval-seconds <n>
+                              Seconds between negotiation state polls (default: 3)
+  --negotiation-state-request-timeout-seconds <n>
+                              Max seconds for each negotiation state request (default: 20)
+  --negotiation-port-forward-delay-seconds <n>
+                              Seconds to wait after opening each negotiation port-forward (default: 3)
   --strict                    Fail if any connector fails (default: disabled)
   -h, --help                  Show this help
 
 Notes:
   - Connector passwords are always read from credentials files at runtime.
   - The vocabulary is created/updated first in each connector.
-  - Asset insertion uses Management API upload-chunk + finalize-upload with retries.
+  - INESData file assets use Management API upload-chunk + finalize-upload.
+  - EDC mode only creates standard EDC HttpData assets and policies/contracts.
 EOF
 }
 
@@ -85,6 +100,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --components-namespace)
       COMPONENTS_NAMESPACE="${2:-}"
+      shift 2
+      ;;
+    --adapter)
+      ADAPTER="${2:-}"
       shift 2
       ;;
     --count)
@@ -163,6 +182,22 @@ while [[ $# -gt 0 ]]; do
       COMBINED_INESDATA_COUNT="${2:-}"
       shift 2
       ;;
+    --negotiation-timeout-seconds)
+      NEGOTIATION_TIMEOUT_SECONDS="${2:-}"
+      shift 2
+      ;;
+    --negotiation-poll-interval-seconds)
+      NEGOTIATION_POLL_INTERVAL_SECONDS="${2:-}"
+      shift 2
+      ;;
+    --negotiation-state-request-timeout-seconds)
+      NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS="${2:-}"
+      shift 2
+      ;;
+    --negotiation-port-forward-delay-seconds)
+      NEGOTIATION_PORT_FORWARD_DELAY_SECONDS="${2:-}"
+      shift 2
+      ;;
     --strict)
       STRICT_MODE=1
       shift
@@ -186,7 +221,34 @@ if ! [[ "$COUNT" =~ ^[0-9]+$ ]] || [[ "$COUNT" -lt 1 ]]; then
   exit 1
 fi
 
+positive_integer_or_default() {
+  local value="$1"
+  local default="$2"
+  if [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s' "$value"
+  else
+    printf '%s' "$default"
+  fi
+}
+
+NEGOTIATION_TIMEOUT_SECONDS="$(positive_integer_or_default "$NEGOTIATION_TIMEOUT_SECONDS" 180)"
+NEGOTIATION_POLL_INTERVAL_SECONDS="$(positive_integer_or_default "$NEGOTIATION_POLL_INTERVAL_SECONDS" 3)"
+NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS="$(positive_integer_or_default "$NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS" 20)"
+NEGOTIATION_PORT_FORWARD_DELAY_SECONDS="$(positive_integer_or_default "$NEGOTIATION_PORT_FORWARD_DELAY_SECONDS" 3)"
+
 MODEL_SET="$(echo "$MODEL_SET" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+ADAPTER="$(echo "$ADAPTER" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+case "$ADAPTER" in
+  ""|"inesdata") ADAPTER="inesdata" ;;
+  "edc") ;;
+  *)
+    echo "Invalid --adapter value: $ADAPTER. Expected inesdata or edc." >&2
+    exit 1
+    ;;
+esac
+if [[ "$ADAPTER" == "edc" ]]; then
+  SKIP_INESDATA_MODELS=1
+fi
 case "$MODEL_SET" in
   ""|"fixture"|"deterministic") MODEL_SET="mock" ;;
   "real"|"usecases") MODEL_SET="use-cases" ;;
@@ -1231,14 +1293,17 @@ create_policy_and_contract() {
   local policy_file="$WORK_DIR/${connector}_policy.json"
   cat > "$policy_file" <<PEOF
 {
-  "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "odrl": "http://www.w3.org/ns/odrl/2/"
+  },
   "@id": "${policy_id}",
   "policy": {
     "@context": "http://www.w3.org/ns/odrl.jsonld",
-    "@type": "odrl:Set",
-    "odrl:permission": [{"odrl:action": "USE"}],
-    "odrl:prohibition": [],
-    "odrl:obligation": []
+    "@type": "Set",
+    "permission": [],
+    "prohibition": [],
+    "obligation": []
   }
 }
 PEOF
@@ -1502,6 +1567,98 @@ DATASET_EOF
   return 0
 }
 
+seed_use_case_dataset_http_data_assets() {
+  local connector="$1" token="$2" mgmt_url="$3"
+  local tag created=0
+  tag="$(connector_tag "$connector")"
+
+  local dataset_ids=("$MOBILITY_SEGMENTS_DATASET_ID" "$FLARES_5W1H_DATASET_ID" "$FLARES_RELIABILITY_DATASET_ID")
+  local titles=(
+    "Mobility segments test dataset"
+    "FLARES 5W1H test dataset"
+    "FLARES reliability test dataset"
+  )
+  local filenames=(
+    "$(basename "$MOBILITY_SEGMENTS_DATASET_FILE")"
+    "$(basename "$FLARES_5W1H_DATASET_FILE")"
+    "$(basename "$FLARES_RELIABILITY_DATASET_FILE")"
+  )
+  local content_types=(
+    "text/csv"
+    "application/x-ndjson"
+    "application/x-ndjson"
+  )
+
+  for idx in "${!dataset_ids[@]}"; do
+    local asset_id="${dataset_ids[$idx]}"
+    local title="${titles[$idx]} - ${tag}"
+    local filename="${filenames[$idx]}"
+    local content_type="${content_types[$idx]}"
+    local endpoint="${USE_CASE_MODEL_SERVER_BASE_URL}/datasets/${filename}"
+    local json_file="$WORK_DIR/${connector}_${asset_id}.json"
+    local escaped_title
+    escaped_title="$(json_escape "$title")"
+
+    cat > "$json_file" <<ASSET_EOF
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "daimo": "https://w3id.org/daimo/ns#"
+  },
+  "@id": "${asset_id}",
+  "properties": {
+    "name": "${escaped_title}",
+    "version": "1.0.0",
+    "contenttype": "${content_type}",
+    "assetType": "dataset",
+    "dct:description": "Use-case benchmark dataset referenced as standard EDC HttpData.",
+    "dcterms:description": "Use-case benchmark dataset referenced as standard EDC HttpData.",
+    "dcat:keyword": ["dataset","benchmark","use-case","${tag}"],
+    "assetData": {
+      "${VOCABULARY_ID}": {
+        "dct:title": "${escaped_title}",
+        "dcterms:title": "${escaped_title}",
+        "daimo:asset_type": "dataset",
+        "daimo:benchmark_dataset_source": "${filename}"
+      }
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "name": "${asset_id}",
+    "baseUrl": "${endpoint}",
+    "proxyMethod": "true",
+    "method": "GET",
+    "contentType": "${content_type}"
+  }
+}
+ASSET_EOF
+
+    local out_file="$WORK_DIR/${connector}_${asset_id}.create.out"
+    local code
+    code="$(curl -s --max-time 30 -o "$out_file" -w '%{http_code}' \
+      -X POST "$mgmt_url/v3/assets" \
+      -H "Authorization: Bearer $token" \
+      -H 'Content-Type: application/json' \
+      --data-binary "@$json_file")" || true
+
+    if [[ "$code" == "200" || "$code" == "204" || "$code" == "409" ]]; then
+      created=$((created + 1))
+      echo "[$connector] EDC HttpData dataset $asset_id created (HTTP $code)"
+    else
+      echo "[$connector] EDC HttpData dataset $asset_id FAILED (HTTP ${code:-NA})" >&2
+      cat "$out_file" >&2 2>/dev/null || true
+      return 1
+    fi
+  done
+
+  echo "[$connector] EDC HttpData datasets created: $created/${#dataset_ids[@]}"
+  return 0
+}
+
 create_company_dataset_policies_and_contracts() {
   local connector="$1" token="$2" mgmt_url="$3"
   local tag
@@ -1523,14 +1680,17 @@ create_company_dataset_policies_and_contracts() {
 
     cat > "$policy_file" <<PEOF
 {
-  "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "odrl": "http://www.w3.org/ns/odrl/2/"
+  },
   "@id": "${policy_id}",
   "policy": {
     "@context": "http://www.w3.org/ns/odrl.jsonld",
-    "@type": "odrl:Set",
-    "odrl:permission": [{"odrl:action": "USE"}],
-    "odrl:prohibition": [],
-    "odrl:obligation": []
+    "@type": "Set",
+    "permission": [],
+    "prohibition": [],
+    "obligation": []
   }
 }
 PEOF
@@ -1674,36 +1834,40 @@ seed_connector() {
     return 1
   fi
 
-  # Vocabulary API differs by runtime
-  vocab_base=""
-  local vocab_probe_code
-  vocab_probe_code="$(curl -s -o "$WORK_DIR/${connector}.vocab_probe.out" -w '%{http_code}' \
-    -X POST "$mgmt_url/vocabularies/request" \
-    -H "Authorization: Bearer $token" \
-    -H 'Content-Type: application/json' \
-    -d '{"@context":{"@vocab":"https://w3id.org/edc/v0.0.1/ns/"},"offset":0,"limit":1,"filterExpression":[]}')"
-  if [[ "$vocab_probe_code" == "200" || "$vocab_probe_code" == "400" || "$vocab_probe_code" == "401" || "$vocab_probe_code" == "403" ]]; then
-    vocab_base="vocabularies"
-  else
-    vocab_probe_code="$(curl -s -o "$WORK_DIR/${connector}.vocab_probe_v3.out" -w '%{http_code}' \
-      -X POST "$mgmt_url/v3/vocabularies/request" \
+  if [[ "$ADAPTER" == "inesdata" ]]; then
+    # Vocabulary API differs by runtime
+    vocab_base=""
+    local vocab_probe_code
+    vocab_probe_code="$(curl -s -o "$WORK_DIR/${connector}.vocab_probe.out" -w '%{http_code}' \
+      -X POST "$mgmt_url/vocabularies/request" \
       -H "Authorization: Bearer $token" \
       -H 'Content-Type: application/json' \
       -d '{"@context":{"@vocab":"https://w3id.org/edc/v0.0.1/ns/"},"offset":0,"limit":1,"filterExpression":[]}')"
     if [[ "$vocab_probe_code" == "200" || "$vocab_probe_code" == "400" || "$vocab_probe_code" == "401" || "$vocab_probe_code" == "403" ]]; then
-      vocab_base="v3/vocabularies"
+      vocab_base="vocabularies"
+    else
+      vocab_probe_code="$(curl -s -o "$WORK_DIR/${connector}.vocab_probe_v3.out" -w '%{http_code}' \
+        -X POST "$mgmt_url/v3/vocabularies/request" \
+        -H "Authorization: Bearer $token" \
+        -H 'Content-Type: application/json' \
+        -d '{"@context":{"@vocab":"https://w3id.org/edc/v0.0.1/ns/"},"offset":0,"limit":1,"filterExpression":[]}')"
+      if [[ "$vocab_probe_code" == "200" || "$vocab_probe_code" == "400" || "$vocab_probe_code" == "401" || "$vocab_probe_code" == "403" ]]; then
+        vocab_base="v3/vocabularies"
+      fi
     fi
-  fi
 
-  if [[ -z "$vocab_base" ]]; then
-    cleanup_pf
-    echo "Could not resolve vocabulary API endpoint for $connector" >&2
-    return 1
-  fi
+    if [[ -z "$vocab_base" ]]; then
+      cleanup_pf
+      echo "Could not resolve vocabulary API endpoint for $connector" >&2
+      return 1
+    fi
 
-  if ! ensure_vocabulary "$connector" "$token" "$mgmt_url" "$vocab_base"; then
-    cleanup_pf
-    return 1
+    if ! ensure_vocabulary "$connector" "$token" "$mgmt_url" "$vocab_base"; then
+      cleanup_pf
+      return 1
+    fi
+  else
+    echo "[$connector] skipping INESData vocabulary API setup for adapter '$ADAPTER'"
   fi
 
   local http_assets_label="none"
@@ -1774,14 +1938,21 @@ seed_connector() {
   fi
 
   if [[ "$SEED_SCOPE" == "datasets" || "$SEED_SCOPE" == "all" ]]; then
-    if ! seed_mobility_segments_dataset_asset "$connector" "$token" "$mgmt_url"; then
-      cleanup_pf
-      return 1
-    fi
+    if [[ "$ADAPTER" == "edc" ]]; then
+      if ! seed_use_case_dataset_http_data_assets "$connector" "$token" "$mgmt_url"; then
+        cleanup_pf
+        return 1
+      fi
+    else
+      if ! seed_mobility_segments_dataset_asset "$connector" "$token" "$mgmt_url"; then
+        cleanup_pf
+        return 1
+      fi
 
-    if ! seed_flares_test_dataset_assets "$connector" "$token" "$mgmt_url"; then
-      cleanup_pf
-      return 1
+      if ! seed_flares_test_dataset_assets "$connector" "$token" "$mgmt_url"; then
+        cleanup_pf
+        return 1
+      fi
     fi
 
     if ! create_company_dataset_policies_and_contracts "$connector" "$token" "$mgmt_url"; then
@@ -1912,7 +2083,7 @@ negotiate_one() {
   fi
   "${kubectl_cmd[@]}" -n "$consumer_namespace" port-forward "svc/$consumer" 19193:19193 >"$WORK_DIR/pf_neg_$consumer.log" 2>&1 &
   pf_pid=$!
-  sleep 2
+  sleep "$NEGOTIATION_PORT_FORWARD_DELAY_SECONDS"
 
   neg_cleanup() {
     if [[ -n "$pf_pid" ]] && kill -0 "$pf_pid" 2>/dev/null; then
@@ -1956,33 +2127,42 @@ CAT_EOF
     return 1
   fi
 
-  # Step 2: Extract offer_id from catalog using Python (JSON-LD structure)
+  # Step 2: Extract the exact offer policy from the catalog. EDC expects the
+  # negotiation request to reuse the selected offer policy, not a reconstructed
+  # allow-all policy with a guessed action.
   local offer_id participant_id
-  read -r offer_id participant_id < <(python3 -c "
+  local offer_policy_file="$WORK_DIR/neg_offer_policy_${asset_id}.json"
+  read -r offer_id participant_id < <(python3 - "$catalog_out" "$asset_id" "$offer_policy_file" <<'PY'
 import json, sys
 try:
-    cat = json.load(open('$catalog_out'))
+    cat = json.load(open(sys.argv[1]))
 except Exception:
     print(' ')
     sys.exit(0)
+asset_id = sys.argv[2]
+offer_policy_file = sys.argv[3]
 datasets = cat.get('dcat:dataset', [])
 if isinstance(datasets, dict):
     datasets = [datasets]
 pid = cat.get('dspace:participantId', cat.get('participantId', ''))
 offer = ''
 for ds in datasets:
-    if ds.get('@id') == '$asset_id':
+    if ds.get('@id') == asset_id:
         pol = ds.get('odrl:hasPolicy', {})
         if isinstance(pol, list):
             pol = pol[0] if pol else {}
         offer = pol.get('@id', '')
+        if offer:
+            with open(offer_policy_file, 'w', encoding='utf-8') as handle:
+                json.dump(pol, handle)
         break
 print(offer + ' ' + pid)
-" 2>/dev/null) || true
+PY
+  ) || true
 
   [[ -z "$participant_id" ]] && participant_id="$provider"
 
-  if [[ -z "$offer_id" ]]; then
+  if [[ -z "$offer_id" || ! -s "$offer_policy_file" ]]; then
     neg_cleanup
     echo "[negotiate] could not extract offer_id for $asset_id from catalog" >&2
     echo "[negotiate] catalog response:" >&2
@@ -1994,25 +2174,38 @@ print(offer + ' ' + pid)
 
   # Step 3: Initiate contract negotiation
   local neg_payload="$WORK_DIR/neg_request_${asset_id}.json"
-  cat > "$neg_payload" <<NEG_EOF
-{
-  "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
-  "@type": "ContractRequest",
-  "counterPartyAddress": "${protocol_addr}",
-  "protocol": "dataspace-protocol-http",
-  "policy": {
-    "@context": "http://www.w3.org/ns/odrl.jsonld",
-    "@type": "odrl:Offer",
-    "@id": "${offer_id}",
-    "assigner": "${participant_id}",
-    "target": "${asset_id}",
-    "odrl:permission": [{"odrl:action": {"@id": "USE"}}],
-    "odrl:prohibition": [],
-    "odrl:obligation": []
-  }
-}
-NEG_EOF
+  python3 - "$neg_payload" "$protocol_addr" "$offer_policy_file" "$participant_id" "$asset_id" <<'PY'
+import json
+import sys
 
+out_file, counter_party_address, offer_policy_file = sys.argv[1:4]
+with open(offer_policy_file, encoding="utf-8") as handle:
+    policy = json.load(handle)
+
+offer_id = str(policy.get("@id") or "")
+normalized_policy = {
+    "@context": "http://www.w3.org/ns/odrl.jsonld",
+    "@id": offer_id,
+    "@type": "Offer",
+    "assigner": str(sys.argv[4]),
+    "target": str(sys.argv[5]),
+}
+
+payload = {
+    "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
+    "@type": "ContractRequest",
+    "counterPartyAddress": counter_party_address,
+    "protocol": "dataspace-protocol-http",
+    "policy": normalized_policy,
+}
+with open(out_file, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+PY
+  if [[ ! -s "$neg_payload" ]]; then
+    neg_cleanup
+    echo "[negotiate] could not build negotiation request for $asset_id" >&2
+    return 1
+  fi
   local neg_out="$WORK_DIR/neg_result_${asset_id}.out"
   local neg_code
   neg_code="$(curl -s --max-time 30 -o "$neg_out" -w '%{http_code}' \
@@ -2036,13 +2229,13 @@ NEG_EOF
 
   echo "[negotiate] negotiation started: id=$neg_id for asset=$asset_id"
 
-  # Step 4: Wait for FINALIZED (up to 60 seconds)
-  local deadline=$((SECONDS + 60))
+  # Step 4: Wait for the consumer-side negotiation to reach a terminal success state.
+  local deadline=$((SECONDS + NEGOTIATION_TIMEOUT_SECONDS))
   local state=""
   while [[ $SECONDS -lt $deadline ]]; do
-    sleep 3
+    sleep "$NEGOTIATION_POLL_INTERVAL_SECONDS"
     local state_out="$WORK_DIR/neg_state_${asset_id}.out"
-    curl -s --max-time 15 -o "$state_out" \
+    curl -s --max-time "$NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS" -o "$state_out" \
       "$mgmt_url/v3/contractnegotiations/$neg_id" \
       -H "@$auth_header_file" 2>/dev/null || true
 
@@ -2061,7 +2254,7 @@ NEG_EOF
     fi
   done
 
-  echo "[negotiate] $asset_id: timeout waiting for negotiation (last state: ${state:-unknown})" >&2
+  echo "[negotiate] $asset_id: timeout after ${NEGOTIATION_TIMEOUT_SECONDS}s waiting for negotiation (last state: ${state:-unknown})" >&2
   neg_cleanup
   return 1
 }

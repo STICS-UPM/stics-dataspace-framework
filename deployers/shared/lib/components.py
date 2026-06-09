@@ -110,6 +110,21 @@ def strip_url_scheme(host_or_url: str | None) -> str:
     return value
 
 
+def public_path_ingress_annotations(*, rewrite_enabled: bool = True) -> dict[str, str]:
+    annotations = {
+        "nginx.ingress.kubernetes.io/ssl-redirect": "false",
+        "nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
+    }
+    if rewrite_enabled:
+        annotations.update(
+            {
+                "nginx.ingress.kubernetes.io/use-regex": "true",
+                "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+            }
+        )
+    return annotations
+
+
 def _component_env_key(component: str | None) -> str:
     return normalize_component_key(component).upper().replace("-", "_")
 

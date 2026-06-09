@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 
+from deployers.shared.lib.components import public_path_ingress_annotations
+
 
 DEFAULT_USE_CASES_SOURCE_REPOSITORY = "https://github.com/ProyectoPIONERA/AIModelHub-Use-Cases.git"
 
@@ -246,10 +248,7 @@ def public_ingress(namespace, config: dict | None, *, topology: str = "vm-distri
                 "app.kubernetes.io/part-of": str(topology or "vm-distributed").strip() or "vm-distributed",
                 "app.kubernetes.io/component": "model-server",
             },
-            "annotations": {
-                "nginx.ingress.kubernetes.io/use-regex": "true",
-                "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
-            },
+            "annotations": public_path_ingress_annotations(rewrite_enabled=True),
         },
         "spec": {
             "ingressClassName": "nginx",

@@ -161,6 +161,10 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
             "K3S_KUBECONFIG_PROVIDER": "~/provider.yaml",
             "K3S_KUBECONFIG_CONSUMER": "~/consumer.yaml",
             "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL": "http://model-server.components.svc.cluster.local:8080",
+            "AI_MODEL_HUB_SEED_NEGOTIATION_TIMEOUT_SECONDS": "240",
+            "AI_MODEL_HUB_SEED_NEGOTIATION_POLL_INTERVAL_SECONDS": "5",
+            "AI_MODEL_HUB_SEED_NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS": "25",
+            "AI_MODEL_HUB_SEED_NEGOTIATION_PORT_FORWARD_DELAY_SECONDS": "4",
         }
 
         datasets_cmd = main._ai_model_hub_use_case_demo_seed_command(values, step="datasets")
@@ -170,6 +174,8 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
         self.assertIn("datasets", datasets_cmd)
         self.assertIn("--model-set", models_cmd)
         self.assertIn("use-cases", models_cmd)
+        self.assertIn("--adapter", models_cmd)
+        self.assertIn("inesdata", models_cmd)
         self.assertIn("--skip-inesdata-models", models_cmd)
         self.assertIn("--use-case-model-server-base-url", models_cmd)
         self.assertIn("conn-org2-pionera,conn-org3-pionera", models_cmd)
@@ -197,6 +203,54 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
         self.assertTrue(
             any("conn-org3-pionera=http://org3.example.test/protocol" in arg for arg in datasets_cmd)
         )
+        self.assertIn("--negotiation-timeout-seconds", datasets_cmd)
+        self.assertIn("240", datasets_cmd)
+        self.assertIn("--negotiation-poll-interval-seconds", datasets_cmd)
+        self.assertIn("5", datasets_cmd)
+        self.assertIn("--negotiation-state-request-timeout-seconds", datasets_cmd)
+        self.assertIn("25", datasets_cmd)
+        self.assertIn("--negotiation-port-forward-delay-seconds", datasets_cmd)
+        self.assertIn("4", datasets_cmd)
+
+    def test_use_case_demo_seed_commands_are_adapter_aware_for_edc(self):
+        values = {
+            "DS_1_NAME": "pionera-edc",
+            "DS_1_CONNECTORS": "conn-org2-pionera-edc,conn-org3-pionera-edc",
+            "PROFILE_TOPOLOGY": "vm-distributed",
+            "KEYCLOAK_PUBLIC_URL": "https://org1.example.test/auth",
+            "DS_1_CONNECTOR_NAMESPACES": "org2:provider,org3:consumer",
+            "K3S_KUBECONFIG_PROVIDER": "~/provider.yaml",
+            "K3S_KUBECONFIG_CONSUMER": "~/consumer.yaml",
+            "EDC_VM_DISTRIBUTED_CONNECTOR_PUBLIC_PATH_PREFIX": "/edc",
+        }
+
+        datasets_cmd = main._ai_model_hub_use_case_demo_seed_command(
+            values,
+            adapter_name="edc",
+            step="datasets",
+        )
+        models_cmd = main._ai_model_hub_use_case_demo_seed_command(
+            values,
+            adapter_name="edc",
+            step="models",
+        )
+
+        self.assertIn("--adapter", datasets_cmd)
+        self.assertIn("edc", datasets_cmd)
+        self.assertTrue(
+            any(
+                os.path.join("deployers", "edc", "deployments", "DEV", "vm-distributed", "pionera-edc")
+                in arg
+                for arg in datasets_cmd
+            )
+        )
+        self.assertTrue(
+            any("conn-org2-pionera-edc=http://org2.example.test/edc/protocol" in arg for arg in datasets_cmd)
+        )
+        self.assertTrue(
+            any("conn-org3-pionera-edc=http://org3.example.test/edc/protocol" in arg for arg in datasets_cmd)
+        )
+        self.assertIn("--skip-inesdata-models", models_cmd)
 
     def test_use_case_demo_flow_runs_profile_level5_and_seed_steps(self):
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as tmpdir:
