@@ -20,7 +20,7 @@ documentación estable de `docs/`.
 | Ejecutar validación | [Validación](./37_validation.md) |
 | Revisar resultados | [Visor de reportes](./40_report_viewer.md) |
 | Resolver errores | [Troubleshooting](./39_troubleshooting.md) |
-| Auditar el framework | [Entregable E5.2](./47_entregable_e52_validacion_componentes.md), [estado de integración UI de componentes](./48_estado_integracion_ui_componentes.md) y [Guía de navegación para auditoría](./44_audit_navigation_guide.md) |
+| Auditar el framework | [Guía de navegación para auditoría](./44_audit_navigation_guide.md), [estado actual](./30_framework_current_state.md), [validación](./37_validation.md) y artefactos tabulares A5.2/E5.2 |
 
 ## Estructura Pública del Repositorio Software
 
@@ -62,8 +62,7 @@ uso y auditoría.
 3. [Validación UI core](./10_ui_validation_core.md)
 4. [Ontology Hub](./11_ontology_hub_validation.md)
 5. [AI Model Hub](./15_ai_model_hub_validation_plan.md)
-6. [Estado de integración UI de componentes](./48_estado_integracion_ui_componentes.md)
-7. [Visor de reportes](./40_report_viewer.md)
+6. [Visor de reportes](./40_report_viewer.md)
 
 ### Despliegues con VM
 
@@ -89,8 +88,7 @@ uso y auditoría.
 5. [Validación](./37_validation.md)
 6. [Colecciones Newman y Postman](./31_postman_newman_collections.md)
 7. [Visor de reportes](./40_report_viewer.md)
-8. [Estado de integración UI de componentes](./48_estado_integracion_ui_componentes.md)
-9. [Entregable E5.2](./47_entregable_e52_validacion_componentes.md)
+8. [Resultados tabulares A5.2/E5.2](./E5.2_Resultados_Validacion_Componentes.xlsx)
 
 ## Entrada Principal
 
@@ -102,11 +100,17 @@ python3 main.py inesdata deploy --topology local
 python3 main.py inesdata validate --topology local
 python3 main.py edc validate --topology vm-distributed
 python3 main.py edc hosts --topology vm-distributed --dry-run
+python3 main.py batch --plan .profiles/runs/full-validation.yaml --secrets .secrets/pionera.env
 ```
 
 El menú guiado es la entrada recomendada para uso interactivo. El CLI directo
 es la entrada recomendada para automatización y ejecuciones reproducibles.
+El modo `batch` ejecuta perfiles locales versionables de operación, pero los
+secretos asociados deben permanecer en ficheros ignorados por Git.
 Para EDC, la ruta oficial de cierre documentada es `vm-distributed`.
+Las topologías `local` y `vm-single` de EDC permanecen implementadas y son útiles
+para desarrollo o revalidación, pero no sustituyen la evidencia de cierre
+distribuida.
 
 ## Documentación Vigente
 
@@ -123,11 +127,12 @@ Para EDC, la ruta oficial de cierre documentada es `vm-distributed`.
 | [38 Desarrollo y testing](./38_development_and_testing.md) | Pruebas, convenciones de desarrollo y mantenimiento |
 | [39 Troubleshooting](./39_troubleshooting.md) | Diagnóstico de fallos frecuentes |
 | [40 Visor de reportes](./40_report_viewer.md) | Revisión local de experimentos generados |
+| [41 Acceso externo de conectores PIONERA](./41_pionera_connector_external_access.md) | Referencia de URLs públicas, accesos de conectores y criterios de publicación |
+| [42 Model Clearing House](./42_model_clearing_house_plan.md) | Plan técnico de evolución para gobierno y clearing de modelos |
+| [43 Model Observer](./43_model_observer_additive_backlog.md) | Backlog técnico aditivo del observador de modelos |
 | [44 Guía de auditoría](./44_audit_navigation_guide.md) | Orden de lectura, alcance, evidencias y límites de seguridad |
 | [45 Conectores externos](./45_external_connector_readiness.md) | Checklist para conectores y entornos externos |
 | [46 vm-distributed](./46_vm_distributed_runbook.md) | Procedimiento operativo de topología distribuida |
-| [47 E5.2 validación de componentes](./47_entregable_e52_validacion_componentes.md) | Entregable consolidado: reporte de validación, manual técnico, manual de usuario, pruebas, resultados y checklist UNE |
-| [48 Integración UI de componentes](./48_estado_integracion_ui_componentes.md) | Estado de cierre de las interfaces de componentes en INESData y EDC |
 
 ## Trazabilidad Histórica
 
@@ -151,7 +156,6 @@ solo como referencia de trazabilidad.
 - [Entorno distribuido de validación](<./pionera_distributed_validation_environment.png>)
 - [Arquitectura del entorno de pruebas](<./test_environment_architecture.png>)
 - [Inventario del entorno de pruebas](./test_environment_inventory.pdf)
-- [Entregable E5.2 consolidado](./47_entregable_e52_validacion_componentes.md)
 - [Resultados de validación de componentes](./E5.2_Resultados_Validacion_Componentes.xlsx)
 - [Casos de prueba](./A5.2_Casos_Prueba_.xlsx)
 

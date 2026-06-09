@@ -220,6 +220,34 @@ AI_MODEL_HUB_PUBLIC_URL=https://modelos.<dominio-componentes>
 SEMANTIC_VIRTUALIZATION_PUBLIC_URL=https://virtualizacion.<dominio-componentes>
 ```
 
+## TLS de Ingress y Truststores
+
+En topologías VM, el framework reconcilia TLS de Ingress para los hostnames
+públicos configurados. La reconciliación crea o actualiza el secreto TLS
+compartido usado por Ingress y, cuando el adapter lo requiere, prepara un
+truststore de conectores en el secreto `common-tls-cacerts`.
+
+Este ajuste es necesario porque los conectores ejecutan llamadas DSP y llamadas
+HTTP internas hacia URLs públicas o semipúblicas del propio entorno. Si el
+truststore de Java se reemplaza por uno que solo contiene la CA interna, el
+conector puede dejar de confiar en certificados públicos, por ejemplo
+certificados emitidos por una CA reconocida del sistema. Por esa razón, el
+truststore generado por el framework parte del `cacerts` base de Java y añade
+la CA interna del Ingress, en lugar de sustituir completamente el conjunto de
+CAs.
+
+La regla operativa es:
+
+- `local` usa la ruta de desarrollo local y no activa por defecto esta
+  reconciliación de TLS de VM;
+- `vm-single` y `vm-distributed` la activan por defecto, salvo que la
+  configuración local indique lo contrario;
+- los secretos, certificados y truststores generados son artefactos de entorno
+  y no deben versionarse;
+- si los conectores muestran errores `PKIX`, `certificate_unknown` o timeouts
+  durante DSP sobre HTTPS, se debe revisar primero la conciliación de Ingress
+  TLS y el secreto `common-tls-cacerts`.
+
 ## Acceso SSH e Idempotencia
 
 La topología distribuida debe usar una llave dedicada del entorno de validación,

@@ -37,8 +37,8 @@ Hoy existen estas carpetas:
 Estado actual:
 
 - `ontology_hub/` es una implementación activa de referencia con validación API y UI.
-- `ai_model_hub/` ya existe como base de Fase 3 con `README.md`, `test_cases.yaml` y trazabilidad PT5, pero aún no tiene runners activos.
-- `semantic_virtualization/` sigue siendo estructura reservada.
+- `ai_model_hub/` contiene runners activos para bootstrap, UI, suite lingüística, benchmarking, movilidad, ejecución de modelos, gobierno de conectores, Observer API y casos de uso servidos por `model-server`.
+- `semantic_virtualization/` contiene runners activos para API, mappings, fuentes GTFS-Bench, materialización, UI y trazabilidad con AI Model Hub y Ontology Hub.
 - `Level 6` puede ejecutar automáticamente validaciones de componente cuando el componente está configurado y existe runner registrado.
 
 ### `validation/shared/`
@@ -110,9 +110,10 @@ Archivos importantes para nuevos desarrolladores de validación:
 
 Aquí vive la lógica específica del ecosistema soportado.
 
-En este proyecto, el adapter activo es:
+En este proyecto, los adapters soportados son:
 
 - `adapters/inesdata/`
+- `adapters/edc/`
 
 ### `adapters/inesdata/sources/`
 
@@ -127,6 +128,18 @@ Subdirectorios destacados:
 - `inesdata-connector-interface/`
 - `inesdata-public-portal-frontend/`
 - `inesdata-public-portal-backend/`
+
+### `adapters/edc/sources/`
+
+Contiene las fuentes locales del conector EDC y del dashboard cuando se usan
+recetas de build local o sincronización de fuentes. El dashboard se gestiona
+como submódulo para conservar la autoría del repositorio de origen y evitar
+copias divergentes.
+
+Subdirectorios destacados:
+
+- `connector/`
+- `dashboard/`
 
 ## `deployers/`
 

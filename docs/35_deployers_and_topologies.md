@@ -127,7 +127,7 @@ componentes y flags propias de cada adapter.
 
 ## Namespaces Canónicos
 
-El estado actual de `main` usa el perfil `role-aligned` para INESData. Todas las
+El estado actual del framework usa el perfil `role-aligned` para INESData. Todas las
 topologías deben resolver los mismos roles de namespace:
 
 ```ini
@@ -214,6 +214,19 @@ deployers/inesdata/deployer.config.example
 La topología distribuida debe cambiar placement, direcciones y routing, pero no
 debe cambiar estos nombres funcionales salvo que se introduzca una migración
 explícita y compatible en el resolvedor común de namespaces.
+
+## TLS en Topologías VM
+
+En `vm-single` y `vm-distributed`, el framework activa por defecto una
+reconciliación de TLS de Ingress para los hostnames públicos del entorno. La
+misma operación prepara, cuando es necesario, el truststore `common-tls-cacerts`
+que montan los conectores para confiar tanto en la CA interna del Ingress como
+en las CAs públicas incluidas en el `cacerts` base de Java.
+
+Este comportamiento es compartido por adapters y evita que el uso de HTTPS real
+en rutas internas o públicas rompa las llamadas DSP entre conectores. Si se
+desactiva la reconciliación, el operador debe garantizar manualmente que los
+certificados del Ingress y los truststores de los conectores son coherentes.
 
 ## Arranque en Frío y Readiness
 

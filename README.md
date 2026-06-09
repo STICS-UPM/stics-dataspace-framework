@@ -27,7 +27,7 @@ depuración documentada para estaciones de trabajo es WSL sobre Windows.
 
 ## Estado Consolidado del Proyecto
 
-La rama `main` consolida el framework como herramienta de despliegue, validación
+El repositorio consolida el framework como herramienta de despliegue, validación
 y generación de evidencias. Incluye:
 
 - ejecución por niveles `1-6`;
@@ -930,9 +930,9 @@ Orden recomendado:
 - [Desarrollo y testing](./docs/38_development_and_testing.md)
 - [Troubleshooting](./docs/39_troubleshooting.md)
 - [Acceso externo a conectores](./docs/41_pionera_connector_external_access.md)
+- [Guía de navegación para auditoría](./docs/44_audit_navigation_guide.md)
 - [Guía operativa de vm-distributed](./docs/46_vm_distributed_runbook.md)
-- [Entregable E5.2 de validación de componentes](./docs/47_entregable_e52_validacion_componentes.md)
-- [Estado de integración UI de componentes](./docs/48_estado_integracion_ui_componentes.md)
+- [Resultados tabulares E5.2](./docs/E5.2_Resultados_Validacion_Componentes.xlsx)
 
 ## Imágenes, Diagramas y Vídeos Explicativos
 
@@ -941,7 +941,7 @@ Diagramas disponibles:
 - [Entorno local de validación](./docs/pionera_local_validation_environment.png)
 - [Entorno distribuido de validación](./docs/pionera_distributed_validation_environment.png)
 - [Arquitectura del entorno de pruebas](./docs/test_environment_architecture.png)
-- [Entregable E5.2 consolidado](./docs/47_entregable_e52_validacion_componentes.md)
+- [Resultados de validación de componentes](./docs/E5.2_Resultados_Validacion_Componentes.xlsx)
 
 Los vídeos explicativos se enlazan desde `docs/README.md` cuando estén
 publicados. La estructura recomendada es:

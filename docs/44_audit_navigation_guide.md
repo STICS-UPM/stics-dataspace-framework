@@ -42,24 +42,21 @@ cada experimento y no forman parte del contenido estable de `docs/`.
 ## Orden de Lectura Sugerido
 
 1. [README](./README.md): índice principal de la documentación.
-2. [47 Entregable E5.2](./47_entregable_e52_validacion_componentes.md):
-   reporte consolidado de validación, manual técnico, manual de usuario,
-   pruebas, resultados, limitaciones y checklist UNE.
-3. [30 Estado actual del framework](./30_framework_current_state.md): resumen
+2. [30 Estado actual del framework](./30_framework_current_state.md): resumen
    vigente de niveles, topologías, adapters y namespaces.
-4. [34 Arquitectura](./34_architecture.md): componentes del repositorio y
+3. [34 Arquitectura](./34_architecture.md): componentes del repositorio y
    responsabilidades.
-5. [35 Deployers y topologías](./35_deployers_and_topologies.md): reglas de
+4. [35 Deployers y topologías](./35_deployers_and_topologies.md): reglas de
    despliegue, overlays, namespaces y alineamiento de `vm-distributed`.
-6. [46 Guía operativa de vm-distributed](./46_vm_distributed_runbook.md):
+5. [46 Guía operativa de vm-distributed](./46_vm_distributed_runbook.md):
    procedimiento de operación, preflight, niveles, conectores adicionales y
    evidencia para auditoría.
-7. [37 Validación](./37_validation.md): alcance de `Level 6`, validaciones,
+6. [37 Validación](./37_validation.md): alcance de `Level 6`, validaciones,
    reportes y salida de consola.
-8. [31 Colecciones Newman y Postman](./31_postman_newman_collections.md):
+7. [31 Colecciones Newman y Postman](./31_postman_newman_collections.md):
    colecciones ejecutables e importables.
-9. [40 Visor de reportes](./40_report_viewer.md): revisión local de resultados.
-10. [39 Troubleshooting](./39_troubleshooting.md): diagnóstico de fallos
+8. [40 Visor de reportes](./40_report_viewer.md): revisión local de resultados.
+9. [39 Troubleshooting](./39_troubleshooting.md): diagnóstico de fallos
    frecuentes.
 
 ## Mapa de Evidencia
@@ -70,11 +67,10 @@ cada experimento y no forman parte del contenido estable de `docs/`.
 | Colecciones Newman | `validation/core/collections/` | Base ejecutada por la validación automatizada |
 | Colecciones Postman | `validation/core/collections/postman/` | Archivos importables para revisión manual |
 | Resultados de ejecución | `experiments/<experimento>/` | Evidencia generada localmente por cada ejecución |
-| Reportes visuales | `main.py report-viewer` | Interfaz local para consultar experimentos |
+| Reportes visuales | `python3 main.py report <experiment_id>` y visor del menú | Interfaz local para consultar experimentos |
 | Pruebas automatizadas | `tests/` | Cobertura técnica del framework |
 | Diagramas públicos | `docs/*.png` | Vista local y distribuida del entorno |
 | Guía operativa distribuida | `docs/46_vm_distributed_runbook.md` | Procedimiento estable para operar y auditar `vm-distributed` |
-| Entregable E5.2 consolidado | `docs/47_entregable_e52_validacion_componentes.md` | Estructura oficial adaptada a validación A5.2: reporte, manual técnico, manual de usuario, pruebas, resultados y limitaciones |
 | Reporte consolidado A5.2/E5.2 | `docs/E5.2_Resultados_Validacion_Componentes.xlsx` | Matriz de resultados, evidencias y checklist de apoyo UNE 0087 |
 | Alineación UNE 0087 | `experiments/<experimento>/une_0087_alignment.*` | Artefacto de apoyo no certificante generado desde evidencias del experimento |
 

@@ -1,9 +1,10 @@
 # Estado Actual del Framework
 
-Este documento resume el estado operativo actual del Validation Environment en
-la rama `main`. Está orientado a revisión pública, auditoría técnica y
-onboarding de personas que necesitan entender qué está implementado, qué se
-valida y qué queda fuera del alcance de cierre.
+Este documento resume el estado operativo actual del Validation Environment
+según el código versionado en esta copia del repositorio. Está orientado a
+revisión pública, auditoría técnica y onboarding de personas que necesitan
+entender qué está implementado, qué se valida y qué queda fuera del alcance de
+cierre.
 
 ## Entrada Principal
 
@@ -32,7 +33,7 @@ El menú y los comandos comparten el mismo modelo de ejecución por niveles.
 | `2` | Desplegar servicios comunes | Operativo |
 | `3` | Desplegar dataspace/control plane | Operativo |
 | `4` | Desplegar conectores | Operativo para `inesdata` y `edc` |
-| `5` | Desplegar componentes opcionales | Operativo para componentes INESData configurados |
+| `5` | Desplegar componentes opcionales | Operativo para componentes compartidos configurados en `inesdata` y `edc` |
 | `6` | Ejecutar validación | Operativo con Newman, Kafka, Playwright y validación de componentes según adapter |
 
 ## Topologías
@@ -67,7 +68,7 @@ implementadas, pero las evidencias oficiales de `edc` deben generarse en
 
 ## Namespaces Actuales
 
-La rama `main` usa un perfil `role-aligned` para INESData. Las topologías deben
+El framework usa un perfil `role-aligned` para INESData. Las topologías deben
 respetar estos nombres para evitar divergencias entre diagramas, despliegue y
 validación:
 
@@ -127,6 +128,30 @@ no se despliega como servicio runtime en la baseline actual.
 Los artefactos se escriben bajo `experiments/`, que es salida generada y no debe
 versionarse.
 
+## AI Model Hub y Casos de Uso
+
+El estado actual del framework incluye automatización específica para preparar
+los casos de uso de AI Model Hub en `vm-distributed`. Esta automatización no
+sustituye al despliegue normal por niveles, sino que lo complementa con un
+asistente operativo dentro del asistente de `vm-distributed`.
+
+El flujo implementado prepara un perfil de demostración con `model-server`
+combinado, ejecuta `Level 5` y permite sembrar en los conectores los datasets y
+modelos asociados a los casos de uso:
+
+- `Step 9`: registro de datasets de benchmark como assets del dataspace;
+- `Step 10`: registro de modelos FLARES y Mobility descubiertos desde el
+  endpoint `/models` del `model-server`;
+- para EDC, creación de assets `HttpData`, políticas, contratos y pruebas de
+  negociación DSP entre conectores configurados;
+- para INESData, conservación del flujo específico basado en las APIs del
+  adapter.
+
+El `model-server` soporta modos `mock`, `use-cases`, `combined` y `external`.
+El modo `combined` integra los endpoints de modelos y datasets de los casos de
+uso sin eliminar la compatibilidad con fixtures controlados del framework.
+Los artefactos operativos y logs de este flujo se guardan fuera de `docs/`.
+
 ## Colecciones Newman/Postman
 
 Las colecciones ejecutadas por `Level 6` viven en:
@@ -149,12 +174,12 @@ La guía específica está en
 Para entender el framework actual, la ruta recomendada es:
 
 1. [README de documentación](./README.md)
-2. [Entregable E5.2](./47_entregable_e52_validacion_componentes.md)
-3. [Inicio rápido](./32_getting_started.md)
-4. [Arquitectura](./34_architecture.md)
-5. [Deployers y topologías](./35_deployers_and_topologies.md)
-6. [Validación](./37_validation.md)
-7. [Colecciones Newman/Postman](./31_postman_newman_collections.md)
+2. [Inicio rápido](./32_getting_started.md)
+3. [Arquitectura](./34_architecture.md)
+4. [Deployers y topologías](./35_deployers_and_topologies.md)
+5. [Validación](./37_validation.md)
+6. [Colecciones Newman/Postman](./31_postman_newman_collections.md)
+7. [Guía operativa de vm-distributed](./46_vm_distributed_runbook.md)
 
 Los documentos numerados históricos siguen disponibles como trazabilidad de
 diseño, pero este documento y el índice público deben considerarse la referencia

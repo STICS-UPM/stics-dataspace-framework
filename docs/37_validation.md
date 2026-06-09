@@ -17,6 +17,12 @@ Actualmente se registran estas fuentes:
 | `FLARES` | `ai-model-hub` | `https://github.com/rsepulveda911112/Flares-dataset` |
 | `GTFS-Madrid-Bench` | `ai-model-hub`, `semantic-virtualization` | `https://github.com/oeg-upm/gtfs-bench` |
 
+Para los casos de uso de AI Model Hub, el framework puede preparar además un
+`model-server` asociado al repositorio `ProyectoPIONERA/AIModelHub-Use-Cases`.
+Ese servidor se configura desde `Level 5` cuando el perfil lo habilita y expone
+endpoints de descubrimiento de modelos y datasets usados por el sembrado de
+assets.
+
 Si el entorno no tiene acceso a GitHub, `Level 5` deja warning por defecto y no
 rompe despliegues existentes. Para exigir que la sincronización falle de forma
 estricta, usa:
@@ -79,23 +85,32 @@ validación después de las suites del dataspace. En el estado actual:
   materialización, UI funcional y trazabilidad cruzada con AI Model Hub y
   Ontology Hub antes de sus comprobaciones de integración.
 
-En `ai-model-hub`, la ejecución de modelos se cierra para A5.2 con una línea
-base controlada basada en el `model-server` determinista del framework. Esto
-valida el contrato de ejecución, la ruta de conector, la UI de INESData y la
-evidencia generada. La integración de modelos reales queda registrada como
-evolución del componente, sin bloquear la evidencia automatizada de la línea
-base actual.
+En `ai-model-hub`, la ejecución de modelos se valida mediante un contrato
+controlado de entrada y salida. El framework conserva un modo `mock` para
+validaciones deterministas y dispone de modos `use-cases` y `combined` para
+exponer modelos y datasets de los casos de uso reales. El modo `combined` es el
+modo operativo usado para preparar demos reproducibles: mantiene fixtures
+controlados cuando son necesarios y, al mismo tiempo, publica los endpoints
+`/models` y `/datasets` consumidos por el sembrado de assets.
 
-Para los casos de uso `FLARES` y `GTFS-Madrid-Bench`, el criterio de cierre es
-validar el flujo completo del caso de uso dentro del espacio de datos con
-muestras reproducibles derivadas de las fuentes sincronizadas. La validación no
-pretende demostrar que los mejores modelos posibles han sido seleccionados ni
-medir calidad predictiva con datasets completos.
+Para los casos de uso `FLARES` y movilidad, el criterio de cierre del framework
+es validar el flujo completo dentro del espacio de datos con fuentes
+sincronizadas, assets registrados, contratos disponibles y negociaciones DSP
+cuando el adapter es EDC. La validación no pretende demostrar que los mejores
+modelos posibles han sido seleccionados ni medir calidad predictiva con datasets
+completos.
 
-El `model-server` del adaptador `inesdata` expone líneas base controladas para
-`FLARES` y `GTFS-Madrid-Bench`. Esas rutas estabilizan el contrato de entrada y
-salida que deberán conservar los modelos reales cuando se sustituyan las líneas
-base.
+El script `scripts/seed_ml_assets_for_connectors.sh` es adapter-aware. En
+`inesdata` usa las APIs específicas del adapter para datasets y modelos. En
+`edc` crea assets estándar `HttpData`, políticas y contratos, y puede ejecutar
+negociaciones entre los pares configurados en `DS_1_VALIDATION_PAIRS`.
+
+La validación API de estos casos de uso se ejecuta dentro de `Level 6` como
+suite `AI Model Hub use cases`. En modo `mock` queda registrada como `skipped`.
+En modos `use-cases` o `combined`, valida que el `model-server` expone modelos
+y datasets descubiertos mediante `/models` y `/datasets`. Los endpoints de
+inferencia solo se invocan cuando el perfil define rutas explícitas para esa
+validación.
 
 Kafka/streaming transfer es la única suite A5.2 que permanece desactivada por
 defecto por coste temporal. Se activa de forma explícita con

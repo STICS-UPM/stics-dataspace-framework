@@ -228,9 +228,23 @@ El dashboard EDC se mantiene como submódulo Git en
 configuración y overlays en rutas separadas para no mezclar autoría ni generar
 copias divergentes del dashboard oficial.
 
+Cuando `EDC_DASHBOARD_PROXY_AUTH_MODE=oidc-bff`, el acceso público al dashboard
+debe pasar por Keycloak antes de mostrar páginas internas del portal. Si una
+ventana privada puede acceder directamente a rutas como `/edc-dashboard/home`
+sin autenticación previa, se considera una desviación de configuración del
+proxy o del Ingress y debe corregirse antes de usar la ejecución como evidencia
+de validación UI.
+
 La preparación local puede activarse con `PIONERA_EDC_LOCAL_IMAGES_MODE=auto` o hacerse estricta con `PIONERA_EDC_LOCAL_IMAGES_MODE=required`. El valor por defecto es `auto` en topología `local` y `disabled` en topologías VM. En `vm-single` y `vm-distributed`, la vía recomendada es definir overrides explícitos de imagen del conector EDC antes de desplegar.
 
 El dashboard EDC es opcional y sirve como apoyo visual para validación UI. Las validaciones API con Newman siguen siendo el mecanismo principal de validación end-to-end.
+
+`Level 5` de EDC reutiliza los componentes compartidos registrados en
+`deployers/shared/components/`, incluidos `ontology-hub`, `ai-model-hub` y
+`semantic-virtualization` cuando están habilitados. Para AI Model Hub, el mismo
+flujo de `model-server` y sembrado de assets usado por INESData está
+parametrizado para EDC; en ese caso se crean assets estándar `HttpData`,
+políticas y contratos, y se validan negociaciones DSP entre pares configurados.
 
 En el menú interactivo, el adapter EDC incluye una comprobación previa de
 hostnames antes de ejecutar niveles `3-6` en topología `local`. Si faltan

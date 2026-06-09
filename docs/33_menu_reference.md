@@ -122,6 +122,14 @@ solo en ficheros `.config` locales ignorados por Git. Para `vm-distributed`, el
 wizard también actualiza hostnames comunes derivados de `DOMAIN_BASE` cuando
 detecta valores vacíos o defaults generados, sin pisar valores personalizados.
 
+Dentro de este asistente existe la opción
+`10 - AI Model Hub use-case demo preparation`. Esta opción prepara el perfil de
+casos de uso con `model-server` combinado, muestra los comandos de `Level 5` y
+sembrado, ejecuta el registro de datasets de benchmark (`Step 9`) y registra
+modelos FLARES/Mobility (`Step 10`). El flujo es adapter-aware: en `inesdata`
+usa las APIs propias del adapter, y en `edc` crea assets `HttpData`, políticas,
+contratos y negociaciones DSP entre los pares configurados.
+
 `P - Preview deployment plan`
 
 Muestra un plan de despliegue sin modificar el entorno. Úsalo antes de ejecutar cambios destructivos o cuando quieras revisar dataspace, conectores, componentes, namespaces y hosts esperados. Si la operación necesita adapter y aún no se ha elegido uno, el menú lo pide en ese momento.
