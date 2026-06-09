@@ -75,6 +75,8 @@ metadata:
   name: {{ .Values.connector.name }}-ingress
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: {{ default "800m" .Values.connector.ingress.proxyBodySize | quote }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
     nginx.org/client-max-body-size: {{ default "800m" .Values.connector.ingress.proxyBodySize | quote }}
 spec:
   rules:
