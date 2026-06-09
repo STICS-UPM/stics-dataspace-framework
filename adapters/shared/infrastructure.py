@@ -13,8 +13,11 @@ from deployers.shared.lib.components import (
     configured_component_host,
     configured_component_public_path,
     configured_optional_components,
+    public_path_ingress_annotations,
     resolve_component_release_name,
 )
+from deployers.shared.lib.cluster_runtime import build_cluster_runtime
+from deployers.shared.lib.ingress_tls import VMIngressTLSReconciler
 from deployers.shared.lib.topology import (
     LOCAL_TOPOLOGY,
     VM_DISTRIBUTED_TOPOLOGY,
@@ -289,10 +292,11 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
         routing = self.sync_vm_distributed_routing()
         common_paths = self._sync_vm_distributed_common_public_path_ingresses()
         component_paths = self._sync_vm_distributed_component_public_path_ingresses()
+        ingress_tls = self._sync_vm_ingress_tls(normalized_topology)
         status = "synced"
         if any(
             isinstance(item, dict) and item.get("status") == "failed"
-            for item in (common_paths, component_paths)
+            for item in (common_paths, component_paths, ingress_tls)
         ):
             status = "failed"
         return {
@@ -302,6 +306,7 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
             "routing": routing,
             "common_public_paths": common_paths,
             "component_public_paths": component_paths,
+            "ingress_tls": ingress_tls,
         }
 
     def _sync_vm_single_public_access(self):
@@ -319,15 +324,16 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
 
         common_paths = self._sync_vm_distributed_common_public_path_ingresses()
         nginx_http = self._sync_nginx_http_proxy_vm_single(deployer_config)
+        ingress_tls = self._sync_vm_ingress_tls(VM_SINGLE_TOPOLOGY, deployer_config=deployer_config)
         status = "synced"
         if any(
             isinstance(item, dict) and item.get("status") == "failed"
-            for item in (common_paths, nginx_http)
+            for item in (common_paths, nginx_http, ingress_tls)
         ):
             status = "failed"
         elif any(
             isinstance(item, dict) and item.get("status") == "skipped"
-            for item in (common_paths, nginx_http)
+            for item in (common_paths, nginx_http, ingress_tls)
         ):
             status = "partial"
         return {
@@ -336,7 +342,43 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
             "ingress_service_type": ingress_service_type,
             "common_public_paths": common_paths,
             "nginx_http": nginx_http,
+            "ingress_tls": ingress_tls,
         }
+
+    def _sync_vm_ingress_tls(self, topology, deployer_config=None):
+        """Reconcile public VM ingress TLS for common, component and connector routes."""
+        normalized_topology = normalize_topology(topology)
+        try:
+            config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        except Exception as exc:
+            print(f"Warning: VM ingress TLS sync skipped: could not load configuration: {exc}")
+            return {"status": "skipped", "reason": "missing-config"}
+
+        try:
+            artifact_dir = os.path.join(self.config.script_dir(), ".local", "artifacts")
+        except Exception:
+            artifact_dir = os.path.abspath(os.path.join(os.getcwd(), ".local", "artifacts"))
+
+        try:
+            result = VMIngressTLSReconciler(
+                config=config,
+                topology=normalized_topology,
+                cluster_runtime=build_cluster_runtime(config, topology=normalized_topology),
+                run=self.run,
+                run_silent=self.run_silent,
+                artifact_dir=artifact_dir,
+            ).reconcile()
+        except Exception as exc:
+            print(f"Warning: VM ingress TLS sync failed: {exc}")
+            return {"status": "failed", "reason": str(exc)}
+
+        if result.get("status") == "synced":
+            print(
+                "VM ingress TLS synchronized: "
+                f"{result.get('ingresses', 0)} ingresses, "
+                f"{len(result.get('namespaces') or [])} namespaces"
+            )
+        return result
 
     def _vm_single_public_http_url(self, deployer_config):
         values = {**dict(deployer_config or {}), "TOPOLOGY": VM_SINGLE_TOPOLOGY}
@@ -538,12 +580,11 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
         path = public_path
         path_type = "Prefix"
         if rewrite_enabled:
-            annotations = {
-                "nginx.ingress.kubernetes.io/use-regex": "true",
-                "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
-            }
+            annotations = public_path_ingress_annotations(rewrite_enabled=True)
             path = f"{public_path}(/|$)(.*)"
             path_type = "ImplementationSpecific"
+        else:
+            annotations = public_path_ingress_annotations(rewrite_enabled=False)
 
         metadata = {
             "name": self._k8s_name_with_suffix(service_name, "public-path"),

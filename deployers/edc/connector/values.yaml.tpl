@@ -9,7 +9,11 @@ connector:
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1
-  jvmArgs: "{% if keys.environment == 'PRO' %}-Djavax.net.ssl.trustStore=/opt/connector/tls-cacerts/cacerts.jks -Djavax.net.ssl.trustStorePassword=dataspaceunit{% endif %}"
+  tlsCacerts:
+    enabled: {{ keys.connector_tls_cacerts_enabled | default((keys.environment == 'PRO'), true) | tojson }}
+    secretName: {{ (keys.connector_tls_cacerts_secret_name | default('common-tls-cacerts', true)) | tojson }}
+    mountPath: {{ (keys.connector_tls_cacerts_mount_path | default('/opt/connector/tls-cacerts', true)) | tojson }}
+  jvmArgs: "{% if keys.connector_tls_cacerts_enabled | default((keys.environment == 'PRO'), true) %}-Djavax.net.ssl.trustStore={{ keys.connector_tls_cacerts_mount_path | default('/opt/connector/tls-cacerts', true) }}/cacerts.jks -Djavax.net.ssl.trustStorePassword={{ keys.connector_tls_cacerts_password | default('dataspaceunit', true) }}{% endif %}"
   configuration:
     configFilePath: /opt/connector/config/connector-configuration.properties
   sql:

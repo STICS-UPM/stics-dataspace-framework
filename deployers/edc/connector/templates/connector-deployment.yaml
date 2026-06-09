@@ -132,17 +132,17 @@ spec:
             - name: config
               mountPath: /opt/connector/config
               readOnly: true
-{{- if eq .Values.connector.environment "pro" }}
+{{- if (index (.Values.connector.tlsCacerts | default dict) "enabled") }}
             - name: tls-cacerts
-              mountPath: /opt/connector/tls-cacerts
+              mountPath: {{ (index (.Values.connector.tlsCacerts | default dict) "mountPath") | default "/opt/connector/tls-cacerts" }}
 {{- end }}
       volumes:
         - name: config
           configMap:
             name: {{ .Values.connector.name }}-config
-{{- if eq .Values.connector.environment "pro" }}
+{{- if (index (.Values.connector.tlsCacerts | default dict) "enabled") }}
         - name: tls-cacerts
           secret:
-            secretName: common-tls-cacerts
+            secretName: {{ (index (.Values.connector.tlsCacerts | default dict) "secretName") | default "common-tls-cacerts" }}
 {{- end }}
       restartPolicy: Always

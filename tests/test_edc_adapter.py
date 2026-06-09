@@ -1440,6 +1440,32 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         adapter.config_adapter = self.RoleAlignedEdcConnectorConfigAdapter(root)
         return adapter
 
+    def test_vm_topology_connector_values_mount_common_tls_truststore(self):
+        with tempfile.TemporaryDirectory() as root:
+            adapter = self._make_adapter(root)
+            adapter.topology = "vm-distributed"
+            base_config = adapter.config_adapter.load_deployer_config()
+            adapter.config_adapter.load_deployer_config = lambda: {
+                **base_config,
+                "VM_INGRESS_TLS_TRUSTSTORE_SECRET_NAME": "shared-vm-cacerts",
+                "VM_INGRESS_TLS_TRUSTSTORE_PASSWORD": "changeit",
+            }
+
+            payload = adapter._connector_values_payload(
+                "conn-citycounciledc-demoedc",
+                "demoedc",
+                ["conn-citycounciledc-demoedc"],
+                connector_namespace="demoedc-provider",
+            )
+
+        self.assertTrue(payload["connector"]["tlsCacerts"]["enabled"])
+        self.assertEqual(payload["connector"]["tlsCacerts"]["secretName"], "shared-vm-cacerts")
+        self.assertIn(
+            "-Djavax.net.ssl.trustStore=/opt/connector/tls-cacerts/cacerts.jks",
+            payload["connector"]["jvmArgs"],
+        )
+        self.assertIn("-Djavax.net.ssl.trustStorePassword=changeit", payload["connector"]["jvmArgs"])
+
     def test_dashboard_runtime_config_infers_edc_ontology_hub_url_from_dataspace(self):
         with tempfile.TemporaryDirectory() as root:
             adapter = self._make_adapter(root)

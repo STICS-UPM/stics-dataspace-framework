@@ -3335,6 +3335,20 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             else:
                 registration_service_hostname = f"{ds_name}-registration-service:8080"
 
+        tls_cacerts_enabled = environment == "pro" or self._normalized_topology() in {
+            VM_SINGLE_TOPOLOGY,
+            VM_DISTRIBUTED_TOPOLOGY,
+        }
+        tls_cacerts_mount_path = "/opt/connector/tls-cacerts"
+        tls_cacerts_password = str(
+            deployer_config.get("VM_INGRESS_TLS_TRUSTSTORE_PASSWORD") or "dataspaceunit"
+        ).strip() or "dataspaceunit"
+        tls_cacerts_secret_name = str(
+            deployer_config.get("VM_INGRESS_TLS_TRUSTSTORE_SECRET_NAME")
+            or deployer_config.get("CONNECTOR_TLS_CACERTS_SECRET_NAME")
+            or "common-tls-cacerts"
+        ).strip() or "common-tls-cacerts"
+
         return {
             "connector": {
                 "name": connector_name,
@@ -3351,10 +3365,15 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                     "pullPolicy": self.config_adapter.edc_connector_image_pull_policy(),
                 },
                 "replicas": 1,
+                "tlsCacerts": {
+                    "enabled": tls_cacerts_enabled,
+                    "secretName": tls_cacerts_secret_name,
+                    "mountPath": tls_cacerts_mount_path,
+                },
                 "jvmArgs": (
-                    "-Djavax.net.ssl.trustStore=/opt/connector/tls-cacerts/cacerts.jks "
-                    "-Djavax.net.ssl.trustStorePassword=dataspaceunit"
-                    if environment == "pro"
+                    f"-Djavax.net.ssl.trustStore={tls_cacerts_mount_path}/cacerts.jks "
+                    f"-Djavax.net.ssl.trustStorePassword={tls_cacerts_password}"
+                    if tls_cacerts_enabled
                     else ""
                 ),
                 "configuration": {
