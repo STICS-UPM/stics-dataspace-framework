@@ -2705,10 +2705,11 @@ class INESDataConnectorsAdapter:
         return configured if configured in {"http", "https"} else "http"
 
     @staticmethod
-    def _vm_distributed_connector_dsp_protocol(deployer_config):
+    def _vm_distributed_connector_dsp_protocol(deployer_config, fallback="http"):
         configured = str(
             (deployer_config or {}).get("VM_DISTRIBUTED_CONNECTOR_DSP_PROTOCOL")
             or (deployer_config or {}).get("INESDATA_CONNECTOR_DSP_PROTOCOL")
+            or fallback
             or "http"
         ).strip().lower()
         return configured if configured in {"http", "https"} else "http"
@@ -2862,7 +2863,10 @@ class INESDataConnectorsAdapter:
             ingress["publicProtocol"] = public_protocol
             ingress["publicHostname"] = public_external
             if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
-                ingress["callbackProtocol"] = self._vm_distributed_connector_dsp_protocol(deployer_config)
+                ingress["callbackProtocol"] = self._vm_distributed_connector_dsp_protocol(
+                    deployer_config,
+                    fallback=public_protocol,
+                )
                 ingress["callbackHostname"] = public_external
             with open(values_file, "w") as f:
                 yaml.dump(values, f, sort_keys=False)
@@ -2871,7 +2875,10 @@ class INESDataConnectorsAdapter:
         ingress["publicProtocol"] = public_protocol
         ingress["publicHostname"] = public_external
         if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
-            ingress["callbackProtocol"] = self._vm_distributed_connector_dsp_protocol(deployer_config)
+            ingress["callbackProtocol"] = self._vm_distributed_connector_dsp_protocol(
+                deployer_config,
+                fallback=public_protocol,
+            )
             ingress["callbackHostname"] = public_external
 
         if self._normalized_topology() == VM_SINGLE_TOPOLOGY:

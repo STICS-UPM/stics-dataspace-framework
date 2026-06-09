@@ -358,6 +358,14 @@ request_retry() {
   return 1
 }
 
+allocate_local_port() {
+  python3 -c 'import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()' 2>/dev/null || printf '%s\n' "19193"
+}
+
 schema_as_json_string() {
   local schema_file="$1"
   tr -d '\n' < "$schema_file" | sed 's/\\/\\\\/g; s/"/\\"/g'
@@ -1769,7 +1777,9 @@ seed_connector() {
   local creds_file
   creds_file="$(connector_credentials_file "$connector")"
   local fallback_creds_file="$CREDENTIALS_DIR/credentials-connector-$connector.json"
-  local mgmt_url="http://127.0.0.1:19193/management"
+  local mgmt_port
+  mgmt_port="$(allocate_local_port)"
+  local mgmt_url="http://127.0.0.1:${mgmt_port}/management"
   local k8s_namespace kubeconfig
   local pf_pid=""
 
@@ -1815,13 +1825,19 @@ seed_connector() {
 
   k8s_namespace="$(lookup_connector_map "$CONNECTOR_K8S_NAMESPACES" "$connector" "$NAMESPACE")"
   kubeconfig="$(lookup_connector_map "$CONNECTOR_KUBECONFIGS" "$connector" "")"
+  echo "[$connector] opening management port-forward on 127.0.0.1:${mgmt_port} -> ${connector}:19193"
   if [[ -n "$kubeconfig" ]]; then
-    KUBECONFIG="$kubeconfig" kubectl -n "$k8s_namespace" port-forward "svc/$connector" 19193:19193 >"$WORK_DIR/port_forward_$connector.log" 2>&1 &
+    KUBECONFIG="$kubeconfig" kubectl -n "$k8s_namespace" port-forward "svc/$connector" "${mgmt_port}:19193" >"$WORK_DIR/port_forward_$connector.log" 2>&1 &
   else
-    kubectl -n "$k8s_namespace" port-forward "svc/$connector" 19193:19193 >"$WORK_DIR/port_forward_$connector.log" 2>&1 &
+    kubectl -n "$k8s_namespace" port-forward "svc/$connector" "${mgmt_port}:19193" >"$WORK_DIR/port_forward_$connector.log" 2>&1 &
   fi
   pf_pid=$!
   sleep 2
+  if ! kill -0 "$pf_pid" 2>/dev/null; then
+    echo "Management API port-forward failed for $connector" >&2
+    cat "$WORK_DIR/port_forward_$connector.log" >&2 || true
+    return 1
+  fi
 
   local probe
   probe="$(curl -s -o "$WORK_DIR/${connector}.probe.out" -w '%{http_code}' "$mgmt_url/v3/assets/request" \
@@ -2044,7 +2060,9 @@ negotiate_one() {
   local creds_file
   creds_file="$(connector_credentials_file "$consumer")"
   local fallback_creds_file="$CREDENTIALS_DIR/credentials-connector-$consumer.json"
-  local mgmt_url="http://127.0.0.1:19193/management"
+  local mgmt_port
+  mgmt_port="$(allocate_local_port)"
+  local mgmt_url="http://127.0.0.1:${mgmt_port}/management"
   local pf_pid=""
 
   echo "[negotiate] $label: $consumer -> $provider for asset '$asset_id'"
@@ -2081,9 +2099,16 @@ negotiate_one() {
   if [[ -n "$consumer_kubeconfig" ]]; then
     kubectl_cmd+=(--kubeconfig "$consumer_kubeconfig")
   fi
-  "${kubectl_cmd[@]}" -n "$consumer_namespace" port-forward "svc/$consumer" 19193:19193 >"$WORK_DIR/pf_neg_$consumer.log" 2>&1 &
+  echo "[negotiate] opening consumer management port-forward on 127.0.0.1:${mgmt_port} -> ${consumer}:19193"
+  "${kubectl_cmd[@]}" -n "$consumer_namespace" port-forward "svc/$consumer" "${mgmt_port}:19193" >"$WORK_DIR/pf_neg_$consumer.log" 2>&1 &
   pf_pid=$!
   sleep "$NEGOTIATION_PORT_FORWARD_DELAY_SECONDS"
+  if ! kill -0 "$pf_pid" 2>/dev/null; then
+    echo "[negotiate] consumer management port-forward failed for $consumer" >&2
+    cat "$WORK_DIR/pf_neg_$consumer.log" >&2 || true
+    rm -f "$auth_header_file"
+    return 1
+  fi
 
   neg_cleanup() {
     if [[ -n "$pf_pid" ]] && kill -0 "$pf_pid" 2>/dev/null; then
