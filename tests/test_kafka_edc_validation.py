@@ -376,13 +376,19 @@ class _FakeKafkaManager:
 
 
 class _FakeKubernetesKafkaManager(_FakeKafkaManager):
-    def __init__(self):
+    def __init__(self, command_env=None):
         super().__init__()
         self.cluster_bootstrap_servers = "framework-kafka.demoedc.svc.cluster.local:9092"
         self.commands = []
+        self.command_env = command_env
+        self.command_envs = []
 
-    def command_runner(self, command, input_text=None):
-        self.commands.append({"command": list(command), "input_text": input_text})
+    def _command_environment(self):
+        return self.command_env
+
+    def command_runner(self, command, input_text=None, timeout=None, env=None):
+        self.commands.append({"command": list(command), "input_text": input_text, "timeout": timeout, "env": env})
+        self.command_envs.append(env)
         if "kafka-topics" in command:
             if "--list" in command:
                 return mock.Mock(returncode=0, stdout="\n".join(sorted(_FakeBrokerState.topics)) + "\n", stderr="")
@@ -627,7 +633,12 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
     def test_run_pair_uses_kubernetes_exec_backend_for_framework_kubernetes_broker(self):
         counter = itertools.count(2000, 5)
         session = _FakeSession()
-        kafka_manager = _FakeKubernetesKafkaManager()
+        kafka_manager = _FakeKubernetesKafkaManager(
+            command_env={
+                "KUBECONFIG": "/tmp/pionera40.yaml",
+                "PIONERA_KUBECONFIG_ROLE": "common",
+            }
+        )
         credentials = {
             "conn-provider": {"connector_user": {"user": "provider-user", "passwd": "provider-pass"}},
             "conn-consumer": {"connector_user": {"user": "consumer-user", "passwd": "consumer-pass"}},
@@ -693,6 +704,8 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
                 for command in kafka_manager.commands
             )
         )
+        self.assertTrue(kafka_manager.command_envs)
+        self.assertTrue(all(env == kafka_manager.command_env for env in kafka_manager.command_envs))
         self.assertFalse(
             any(
                 "--offset" in command["command"] and "kafka-console-consumer" in command["command"]

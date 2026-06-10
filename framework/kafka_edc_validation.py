@@ -839,12 +839,20 @@ class KafkaEdcValidationSuite:
         runner = getattr(kafka_manager, "command_runner", None) if kafka_manager is not None else None
         if timeout_seconds is None:
             timeout_seconds = int((runtime or {}).get("kubernetes_exec_timeout_seconds", 30))
+        command_env = None
+        if kafka_manager is not None:
+            env_loader = getattr(kafka_manager, "_command_environment", None)
+            if callable(env_loader):
+                command_env = env_loader()
         result = None
         if callable(runner):
             try:
-                result = runner(command, input_text=input_text, timeout=timeout_seconds)
+                result = runner(command, input_text=input_text, timeout=timeout_seconds, env=command_env)
             except TypeError:
-                result = runner(command, input_text=input_text)
+                try:
+                    result = runner(command, input_text=input_text, timeout=timeout_seconds)
+                except TypeError:
+                    result = runner(command, input_text=input_text)
             except subprocess.TimeoutExpired as exc:
                 result = subprocess.CompletedProcess(command, 124, stdout=exc.stdout or "", stderr=exc.stderr or "Command timed out")
             try:
@@ -860,6 +868,7 @@ class KafkaEdcValidationSuite:
                 capture_output=True,
                 check=False,
                 timeout=timeout_seconds,
+                env=command_env,
             )
         except subprocess.TimeoutExpired as exc:
             result = subprocess.CompletedProcess(command, 124, stdout=exc.stdout or "", stderr=exc.stderr or "Command timed out")
