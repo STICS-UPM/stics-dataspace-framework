@@ -65,6 +65,17 @@ public class BaseSqlDialectStatements implements SqlFederatedCatalogStatements {
     /**
      * {@inheritDoc}
      *
+     * @see SqlFederatedCatalogStatements#getDeleteCatalogByIdTemplate()
+     */
+    @Override
+    public String getDeleteCatalogByIdTemplate() {
+        return executeStatement()
+            .delete(getCatalogTable(), getCatalogIdColumn());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * @see SqlFederatedCatalogStatements#getInsertDataServiceTemplate()
      */
     @Override

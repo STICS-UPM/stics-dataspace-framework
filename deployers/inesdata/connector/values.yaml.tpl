@@ -1,5 +1,7 @@
 # This chart deploys a new connector in the Dataspaceunit platform.
 #
+{% set topology = keys.topology | default(keys.pionera_topology | default(keys.inesdata_topology | default('local', true), true), true) %}
+{% set is_vm_topology = topology in ['vm-single', 'vm-distributed'] %}
 connector:
   name: {{ keys.connector_name }}
   dataspace: {{ keys.dataspace_name }}
@@ -16,6 +18,11 @@ connector:
   modelExecution:
     edrAttempts: {{ keys.connector_model_execution_edr_attempts | default(90, true) }}
     edrDelayMs: {{ keys.connector_model_execution_edr_delay_ms | default(1000, true) }}
+  catalogCache:
+    executionPeriodSeconds: {{ keys.connector_catalog_cache_execution_period_seconds | default((60 if keys.environment == 'PRO' or is_vm_topology else 15), true) }}
+    participantsPeriodSeconds: {{ keys.connector_participants_cache_execution_period_seconds | default((1800 if keys.environment == 'PRO' or is_vm_topology else 30), true) }}
+    partitionNumCrawlers: {{ keys.connector_catalog_cache_partition_num_crawlers | default((1 if is_vm_topology else 2), true) }}
+    executionDelaySeconds: {{ keys.connector_catalog_cache_execution_delay_seconds | default((30 if is_vm_topology else 5), true) }}
   configuration:
     configFilePath: /opt/connector/config/connector-configuration.properties
   ingress:

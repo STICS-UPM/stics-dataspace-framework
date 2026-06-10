@@ -84,6 +84,13 @@ public interface SqlFederatedCatalogStatements extends SqlStatements {
   String getDeleteCatalogByParticipantIdTemplate();
 
   /**
+   * Retrieves the SQL template for deleting catalogs by catalog ID.
+   *
+   * @return the SQL template for deleting catalogs by catalog ID.
+   */
+  String getDeleteCatalogByIdTemplate();
+
+  /**
    * Retrieves the name of the data service table.
    *
    * @return the name of the data service table.

@@ -75,7 +75,7 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
     Objects.requireNonNull(catalog);
     transactionContext.execute(() -> {
       try (var connection = getConnection()) {
-        deleteRelatedCatalogData(connection, catalog);
+        deleteRelatedCatalogDataForParticipant(connection, catalog.getParticipantId());
         insertCatalog(catalog, connection);
         insertDataServices(catalog, connection);
         insertDatasets(catalog, connection);
@@ -170,24 +170,27 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
   }
 
   private void deleteRelatedCatalogData(Connection connection, Catalog catalog) {
-    Catalog catalogByParticipantId = getCatalogByParticipantId(connection, catalog.getParticipantId());
-
-    if (catalogByParticipantId != null && catalogByParticipantId.getId() != null) {
+    if (catalog != null && catalog.getId() != null) {
       String deleteDistributionsSql = databaseStatements.getDeleteDistributionsForCatalogTemplate();
-      queryExecutor.execute(connection, deleteDistributionsSql, catalogByParticipantId.getId());
+      queryExecutor.execute(connection, deleteDistributionsSql, catalog.getId());
 
       String deleteCatalogDataServicesSql = databaseStatements.getDeleteCatalogDataServicesTemplate();
-      queryExecutor.execute(connection, deleteCatalogDataServicesSql, catalogByParticipantId.getId());
+      queryExecutor.execute(connection, deleteCatalogDataServicesSql, catalog.getId());
 
       String deleteOrphanDataServicesSql = databaseStatements.getDeleteOrphanDataServicesTemplate();
       queryExecutor.execute(connection, deleteOrphanDataServicesSql);
 
       String deleteDatasetsSql = databaseStatements.getDeleteDatasetsForCatalogTemplate();
-      queryExecutor.execute(connection, deleteDatasetsSql, catalogByParticipantId.getId());
+      queryExecutor.execute(connection, deleteDatasetsSql, catalog.getId());
 
-      String deleteCatalogSql = databaseStatements.getDeleteCatalogByParticipantIdTemplate();
-      queryExecutor.execute(connection, deleteCatalogSql, catalog.getParticipantId());
+      String deleteCatalogSql = databaseStatements.getDeleteCatalogByIdTemplate();
+      queryExecutor.execute(connection, deleteCatalogSql, catalog.getId());
     }
+  }
+
+  private void deleteRelatedCatalogDataForParticipant(Connection connection, String participantId) {
+    getCatalogsByParticipantId(connection, participantId)
+        .forEach(catalog -> deleteRelatedCatalogData(connection, catalog));
   }
 
   private boolean dataServiceExists(Connection connection, String dataServiceId) throws SQLException {
@@ -279,10 +282,10 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
         .orElse(null);
   }
 
-  private Catalog getCatalogByParticipantId(Connection connection, String participantId) {
+  private List<Catalog> getCatalogsByParticipantId(Connection connection, String participantId) {
     String selectCatalog = databaseStatements.getSelectCatalogForParticipantIdTemplate();
     return queryExecutor.query(connection, false, this::mapResultSetToCatalogSimple, selectCatalog, participantId)
-        .findFirst().orElse(null);
+        .collect(Collectors.toList());
   }
 
   private Catalog mapResultSetToCatalogSimple(ResultSet resultSet) throws SQLException {
