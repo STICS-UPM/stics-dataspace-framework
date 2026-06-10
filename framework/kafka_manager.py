@@ -41,7 +41,7 @@ class KafkaManager:
         self.provisioning_mode = None
 
     @staticmethod
-    def _default_command_runner(args, input_text=None, timeout=None):
+    def _default_command_runner(args, input_text=None, timeout=None, env=None):
         return subprocess.run(
             args,
             text=True,
@@ -49,6 +49,7 @@ class KafkaManager:
             capture_output=True,
             check=False,
             timeout=timeout,
+            env=env,
         )
 
     def _load_adapter_config(self):
@@ -134,6 +135,15 @@ class KafkaManager:
             return False
         return True
 
+    def _requires_configured_kubernetes_external_service(self, config):
+        topology = str(config.get("topology") or "").strip().lower()
+        if topology != "vm-distributed":
+            return False
+        if not self._is_kubernetes_provisioner(config.get("provisioner")):
+            return False
+        external_service_type = str(config.get("k8s_external_service_type") or "").strip().lower()
+        return external_service_type in {"nodeport", "loadbalancer"}
+
     @staticmethod
     def _normalize_bootstrap_servers(bootstrap_servers):
         if bootstrap_servers is None:
@@ -180,8 +190,29 @@ class KafkaManager:
                 f"testcontainers Kafka support is not available: {exc}"
             ) from exc
 
-    def _run_command(self, args, input_text=None):
-        result = self.command_runner(args, input_text=input_text)
+    def _command_environment(self):
+        kubeconfig = str((self._load_manager_config() or {}).get("k8s_kubeconfig") or "").strip()
+        if not kubeconfig:
+            return None
+        env = os.environ.copy()
+        env["KUBECONFIG"] = os.path.abspath(os.path.expanduser(kubeconfig))
+        role = str((self._load_manager_config() or {}).get("k8s_kubeconfig_role") or "common").strip()
+        if role:
+            env["PIONERA_KUBECONFIG_ROLE"] = role
+        return env
+
+    def _call_command_runner(self, args, input_text=None, timeout=None):
+        env = self._command_environment()
+        try:
+            return self.command_runner(args, input_text=input_text, timeout=timeout, env=env)
+        except TypeError:
+            try:
+                return self.command_runner(args, input_text=input_text, timeout=timeout)
+            except TypeError:
+                return self.command_runner(args, input_text=input_text)
+
+    def _run_command(self, args, input_text=None, timeout=None):
+        result = self._call_command_runner(args, input_text=input_text, timeout=timeout)
         if getattr(result, "returncode", 1) != 0:
             stdout = (getattr(result, "stdout", "") or "").strip()
             stderr = (getattr(result, "stderr", "") or "").strip()
@@ -401,6 +432,53 @@ class KafkaManager:
             return self._build_kubernetes_split_kraft_manifest(config, ids)
         return self._build_kubernetes_combined_manifest(config, ids)
 
+    @staticmethod
+    def _config_value(config, key, default):
+        value = (config or {}).get(key)
+        if value in (None, ""):
+            return default
+        return str(value)
+
+    def _kubernetes_resources_yaml(self, config, indent="                    "):
+        cpu_request = self._config_value(config, "k8s_cpu_request", "500m")
+        memory_request = self._config_value(config, "k8s_memory_request", "1Gi")
+        cpu_limit = self._config_value(config, "k8s_cpu_limit", "")
+        memory_limit = self._config_value(config, "k8s_memory_limit", "")
+        lines = [
+            f"{indent}resources:",
+            f"{indent}  requests:",
+            f"{indent}    cpu: \"{cpu_request}\"",
+            f"{indent}    memory: \"{memory_request}\"",
+        ]
+        if cpu_limit or memory_limit:
+            lines.append(f"{indent}  limits:")
+            if cpu_limit:
+                lines.append(f"{indent}    cpu: \"{cpu_limit}\"")
+            if memory_limit:
+                lines.append(f"{indent}    memory: \"{memory_limit}\"")
+        return "\n".join(lines)
+
+    def _kafka_heap_env_yaml(self, config, indent="                    "):
+        heap_opts = self._config_value(config, "kafka_heap_opts", "")
+        if not heap_opts:
+            return ""
+        return f'{indent}- name: KAFKA_HEAP_OPTS\n{indent}  value: "{heap_opts}"\n'
+
+    def _kafka_broker_heartbeat_interval_ms(self, config):
+        return self._config_value(config, "kafka_broker_heartbeat_interval_ms", "3000")
+
+    def _kafka_broker_session_timeout_ms(self, config):
+        return self._config_value(config, "kafka_broker_session_timeout_ms", "60000")
+
+    def _kafka_controller_quorum_request_timeout_ms(self, config):
+        return self._config_value(config, "kafka_controller_quorum_request_timeout_ms", "30000")
+
+    def _kafka_initial_broker_registration_timeout_ms(self, config):
+        return self._config_value(config, "kafka_initial_broker_registration_timeout_ms", "120000")
+
+    def _kafka_group_initial_rebalance_delay_ms(self, config):
+        return self._config_value(config, "kafka_group_initial_rebalance_delay_ms", "0")
+
     def _build_kubernetes_combined_manifest(self, config, ids=None):
         ids = ids or self._kubernetes_identifiers(config)
         image = str(config.get("container_image") or self.image)
@@ -413,6 +491,13 @@ class KafkaManager:
         external_service_type = self._kubernetes_external_service_type(ids)
         external_service_nodeport = self._kubernetes_external_service_nodeport_yaml(ids)
         cluster_id = self._kubernetes_cluster_id()
+        resources_yaml = self._kubernetes_resources_yaml(config)
+        heap_env_yaml = self._kafka_heap_env_yaml(config)
+        heartbeat_interval_ms = self._kafka_broker_heartbeat_interval_ms(config)
+        session_timeout_ms = self._kafka_broker_session_timeout_ms(config)
+        quorum_request_timeout_ms = self._kafka_controller_quorum_request_timeout_ms(config)
+        broker_registration_timeout_ms = self._kafka_initial_broker_registration_timeout_ms(config)
+        rebalance_delay_ms = self._kafka_group_initial_rebalance_delay_ms(config)
         return dedent(
             f"""
             apiVersion: apps/v1
@@ -425,6 +510,8 @@ class KafkaManager:
                 managed-by: inesdata-framework
             spec:
               replicas: 1
+              strategy:
+                type: Recreate
               selector:
                 matchLabels:
                   app: {service_name}
@@ -448,7 +535,7 @@ class KafkaManager:
                     env:
                     - name: CLUSTER_ID
                       value: "{cluster_id}"
-                    - name: KAFKA_NODE_ID
+{heap_env_yaml}                    - name: KAFKA_NODE_ID
                       value: "1"
                     - name: KAFKA_PROCESS_ROLES
                       value: "broker,controller"
@@ -475,23 +562,20 @@ class KafkaManager:
                     - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
                       value: "1"
                     - name: KAFKA_BROKER_HEARTBEAT_INTERVAL_MS
-                      value: "3000"
+                      value: "{heartbeat_interval_ms}"
                     - name: KAFKA_BROKER_SESSION_TIMEOUT_MS
-                      value: "60000"
+                      value: "{session_timeout_ms}"
                     - name: KAFKA_CONTROLLER_QUORUM_REQUEST_TIMEOUT_MS
-                      value: "30000"
+                      value: "{quorum_request_timeout_ms}"
                     - name: KAFKA_INITIAL_BROKER_REGISTRATION_TIMEOUT_MS
-                      value: "120000"
+                      value: "{broker_registration_timeout_ms}"
                     - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
-                      value: "0"
+                      value: "{rebalance_delay_ms}"
                     - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
                       value: "true"
                     - name: KAFKA_LOG_DIRS
                       value: "/var/lib/kafka/data/kraft-combined-logs"
-                    resources:
-                      requests:
-                        cpu: "100m"
-                        memory: "256Mi"
+{resources_yaml}
                     startupProbe:
                       tcpSocket:
                         port: 9092
@@ -568,6 +652,13 @@ class KafkaManager:
         external_service_type = self._kubernetes_external_service_type(ids)
         external_service_nodeport = self._kubernetes_external_service_nodeport_yaml(ids)
         cluster_id = self._kubernetes_cluster_id()
+        resources_yaml = self._kubernetes_resources_yaml(config)
+        heap_env_yaml = self._kafka_heap_env_yaml(config)
+        heartbeat_interval_ms = self._kafka_broker_heartbeat_interval_ms(config)
+        session_timeout_ms = self._kafka_broker_session_timeout_ms(config)
+        quorum_request_timeout_ms = self._kafka_controller_quorum_request_timeout_ms(config)
+        broker_registration_timeout_ms = self._kafka_initial_broker_registration_timeout_ms(config)
+        rebalance_delay_ms = self._kafka_group_initial_rebalance_delay_ms(config)
         return dedent(
             f"""
             apiVersion: apps/v1
@@ -581,6 +672,8 @@ class KafkaManager:
                 kafka-role: controller
             spec:
               replicas: 1
+              strategy:
+                type: Recreate
               selector:
                 matchLabels:
                   app: {controller_service_name}
@@ -601,7 +694,7 @@ class KafkaManager:
                     env:
                     - name: CLUSTER_ID
                       value: "{cluster_id}"
-                    - name: KAFKA_NODE_ID
+{heap_env_yaml}                    - name: KAFKA_NODE_ID
                       value: "{controller_node_id}"
                     - name: KAFKA_PROCESS_ROLES
                       value: "controller"
@@ -614,13 +707,10 @@ class KafkaManager:
                     - name: KAFKA_CONTROLLER_QUORUM_VOTERS
                       value: "{controller_node_id}@{controller_bootstrap}"
                     - name: KAFKA_CONTROLLER_QUORUM_REQUEST_TIMEOUT_MS
-                      value: "30000"
+                      value: "{quorum_request_timeout_ms}"
                     - name: KAFKA_LOG_DIRS
                       value: "/var/lib/kafka/data/kraft-controller-logs"
-                    resources:
-                      requests:
-                        cpu: "100m"
-                        memory: "256Mi"
+{resources_yaml}
                     startupProbe:
                       tcpSocket:
                         port: 9093
@@ -673,6 +763,8 @@ class KafkaManager:
                 kafka-role: broker
             spec:
               replicas: 1
+              strategy:
+                type: Recreate
               selector:
                 matchLabels:
                   app: {service_name}
@@ -695,7 +787,7 @@ class KafkaManager:
                     env:
                     - name: CLUSTER_ID
                       value: "{cluster_id}"
-                    - name: KAFKA_NODE_ID
+{heap_env_yaml}                    - name: KAFKA_NODE_ID
                       value: "{broker_node_id}"
                     - name: KAFKA_PROCESS_ROLES
                       value: "broker"
@@ -722,23 +814,20 @@ class KafkaManager:
                     - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
                       value: "1"
                     - name: KAFKA_BROKER_HEARTBEAT_INTERVAL_MS
-                      value: "3000"
+                      value: "{heartbeat_interval_ms}"
                     - name: KAFKA_BROKER_SESSION_TIMEOUT_MS
-                      value: "60000"
+                      value: "{session_timeout_ms}"
                     - name: KAFKA_CONTROLLER_QUORUM_REQUEST_TIMEOUT_MS
-                      value: "30000"
+                      value: "{quorum_request_timeout_ms}"
                     - name: KAFKA_INITIAL_BROKER_REGISTRATION_TIMEOUT_MS
-                      value: "120000"
+                      value: "{broker_registration_timeout_ms}"
                     - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
-                      value: "0"
+                      value: "{rebalance_delay_ms}"
                     - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
                       value: "true"
                     - name: KAFKA_LOG_DIRS
                       value: "/var/lib/kafka/data/kraft-broker-logs"
-                    resources:
-                      requests:
-                        cpu: "100m"
-                        memory: "256Mi"
+{resources_yaml}
                     startupProbe:
                       tcpSocket:
                         port: 9092
@@ -833,6 +922,7 @@ class KafkaManager:
             # stream is piped but never drained, the forward can block mid-run.
             stderr=subprocess.DEVNULL,
             text=True,
+            env=self._command_environment(),
         )
 
         deadline = time.time() + self.wait_timeout_seconds
@@ -954,7 +1044,7 @@ class KafkaManager:
 
                 for pod_name in candidate_pods:
                     probe_command = self._kubernetes_listener_probe_script(host, port)
-                    result = self.command_runner(
+                    result = self._call_command_runner(
                         [
                             "kubectl",
                             "exec",
@@ -1130,16 +1220,26 @@ class KafkaManager:
 
     def ensure_kafka_running(self):
         """Return reachable bootstrap servers or try to auto-start Kafka."""
+        config = self._load_manager_config()
+        requires_kubernetes_external_service = self._requires_configured_kubernetes_external_service(config)
+        kubernetes_external_service_verified = None
         previous_bootstrap_servers = self.bootstrap_servers
         previous_cluster_bootstrap_servers = self.cluster_bootstrap_servers
         previous_started_by_framework = self.started_by_framework
         previous_provisioning_mode = self.provisioning_mode
         for candidate in self._candidate_bootstrap_servers():
             if self.is_kafka_available(candidate):
+                if requires_kubernetes_external_service:
+                    if kubernetes_external_service_verified is None:
+                        kubernetes_external_service_verified = self._kubernetes_external_service_exists(
+                            self._kubernetes_identifiers(config)
+                        )
+                    if not kubernetes_external_service_verified:
+                        continue
                 self.bootstrap_servers = candidate
                 explicit_cluster_bootstrap_servers = (
                     os.getenv("KAFKA_CLUSTER_BOOTSTRAP_SERVERS")
-                    or self._load_manager_config().get("cluster_bootstrap_servers")
+                    or config.get("cluster_bootstrap_servers")
                 )
                 if explicit_cluster_bootstrap_servers:
                     self.cluster_bootstrap_servers = explicit_cluster_bootstrap_servers
@@ -1163,7 +1263,6 @@ class KafkaManager:
                 self.last_error = None
                 return candidate
 
-        config = self._load_manager_config()
         if self._skips_vm_distributed_internal_autoprovision(config):
             if self._has_connector_visible_bootstrap(config):
                 self.last_error = (

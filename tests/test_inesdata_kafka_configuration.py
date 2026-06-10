@@ -37,6 +37,16 @@ class InesdataKafkaConfigurationTests(unittest.TestCase):
                     "KAFKA_K8S_PROBE_NAMESPACES=provider,consumer",
                     "KAFKA_K8S_SERVICE_NAME=kafka-validation",
                     "KAFKA_K8S_LOCAL_PORT=39093",
+                    "KAFKA_K8S_CPU_REQUEST=750m",
+                    "KAFKA_K8S_MEMORY_REQUEST=1536Mi",
+                    "KAFKA_K8S_CPU_LIMIT=2",
+                    "KAFKA_K8S_MEMORY_LIMIT=2Gi",
+                    "KAFKA_HEAP_OPTS=-Xms512m -Xmx1024m",
+                    "KAFKA_BROKER_HEARTBEAT_INTERVAL_MS=5000",
+                    "KAFKA_BROKER_SESSION_TIMEOUT_MS=120000",
+                    "KAFKA_CONTROLLER_QUORUM_REQUEST_TIMEOUT_MS=60000",
+                    "KAFKA_INITIAL_BROKER_REGISTRATION_TIMEOUT_MS=180000",
+                    "KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=3000",
                     "KAFKA_MINIKUBE_PROFILE=pionera",
                     "KAFKA_TOPIC_NAME=edc-kafka-benchmark",
                     "KAFKA_TOPIC_STRATEGY=STATIC_TOPIC",
@@ -66,6 +76,16 @@ class InesdataKafkaConfigurationTests(unittest.TestCase):
         self.assertEqual(config["k8s_probe_namespaces"], "provider,consumer")
         self.assertEqual(config["k8s_service_name"], "kafka-validation")
         self.assertEqual(config["k8s_local_port"], "39093")
+        self.assertEqual(config["k8s_cpu_request"], "750m")
+        self.assertEqual(config["k8s_memory_request"], "1536Mi")
+        self.assertEqual(config["k8s_cpu_limit"], "2")
+        self.assertEqual(config["k8s_memory_limit"], "2Gi")
+        self.assertEqual(config["kafka_heap_opts"], "-Xms512m -Xmx1024m")
+        self.assertEqual(config["kafka_broker_heartbeat_interval_ms"], "5000")
+        self.assertEqual(config["kafka_broker_session_timeout_ms"], "120000")
+        self.assertEqual(config["kafka_controller_quorum_request_timeout_ms"], "60000")
+        self.assertEqual(config["kafka_initial_broker_registration_timeout_ms"], "180000")
+        self.assertEqual(config["kafka_group_initial_rebalance_delay_ms"], "3000")
         self.assertEqual(config["minikube_profile"], "pionera")
         self.assertEqual(config["topic_name"], "edc-kafka-benchmark")
         self.assertEqual(config["topic_strategy"], "STATIC_TOPIC")
@@ -239,9 +259,12 @@ class InesdataKafkaConfigurationTests(unittest.TestCase):
                 config = adapter.get_kafka_config()
 
         self.assertEqual(config["k8s_namespace"], "core-control")
+        self.assertEqual(config["provisioner"], "kubernetes-split-kraft")
         self.assertEqual(config["k8s_external_service_type"], "NodePort")
-        self.assertEqual(config["k8s_nodeport"], "32092")
-        self.assertEqual(config["cluster_bootstrap_servers"], "192.0.2.10:32092")
+        self.assertEqual(config["k8s_nodeport"], "32093")
+        self.assertEqual(config["cluster_bootstrap_servers"], "192.0.2.10:32093")
+        self.assertEqual(config["k8s_kubeconfig"], "/etc/rancher/k3s/k3s.yaml")
+        self.assertEqual(config["k8s_kubeconfig_role"], "common")
         self.assertEqual(config["agreement_visibility_timeout_seconds"], "90")
 
     def test_is_kafka_available_uses_configured_container_name(self):

@@ -3491,6 +3491,7 @@ def _start_level6_kafka_preparation(
     *,
     validation_profile=None,
     deployer_name=None,
+    deployer_context=None,
     kafka_manager_cls=KafkaManager,
     background=True,
     kafka_enabled=None,
@@ -3509,7 +3510,11 @@ def _start_level6_kafka_preparation(
         return None
 
     runtime_config = _load_level6_kafka_runtime_config(adapter)
-    preflight = _run_level6_kafka_preflight(adapter, persist=False)
+    preflight = _run_level6_kafka_preflight(
+        adapter,
+        deployer_context=deployer_context,
+        persist=False,
+    )
     if str(preflight.get("status") or "").lower() == "failed":
         print(
             "Kafka runtime preparation skipped because preflight failed; "
@@ -3518,8 +3523,13 @@ def _start_level6_kafka_preparation(
         return None
 
     topology = str(runtime_config.get("topology") or getattr(adapter, "topology", "") or "").strip().lower()
+    provisioner = str(runtime_config.get("provisioner") or "").strip().lower()
     connector_bootstrap_servers = preflight.get("connector_bootstrap_servers") or []
-    if topology == "vm-distributed" and connector_bootstrap_servers:
+    if (
+        topology == "vm-distributed"
+        and connector_bootstrap_servers
+        and not KafkaManager._is_kubernetes_provisioner(provisioner)
+    ):
         cluster_bootstrap_servers = ",".join(connector_bootstrap_servers)
         local_bootstrap_servers = runtime_config.get("bootstrap_servers") or cluster_bootstrap_servers
         kafka_manager = build_kafka_manager(
@@ -4203,6 +4213,8 @@ def run_level6_kafka_edc_after_newman(
         include_results=not progress_state["heading_printed"],
         include_summary=True,
     )
+    if kafka_preparation is not None:
+        kafka_preparation.stop_runtime()
     return list(results or [])
 
 
@@ -4822,28 +4834,34 @@ def run_interoperability_kafka_tests(
                 baseline=False,
             ),
         )
-        kafka_preparation = _start_level6_kafka_preparation(
-            adapter,
-            connectors,
-            validation_profile=validation_profile,
-            deployer_name=resolved_deployer_name,
-            kafka_manager_cls=kafka_manager_cls,
-            background=False,
-            kafka_enabled=True,
-        )
-        kafka_edc_results = run_level6_kafka_edc_after_newman(
-            adapter,
-            connectors,
-            experiment_dir,
-            validation_profile=validation_profile,
-            deployer_name=resolved_deployer_name,
-            experiment_storage=experiment_storage,
-            suite_cls=kafka_edc_validation_suite_cls,
-            kafka_manager_cls=kafka_manager_cls,
-            kafka_preparation=kafka_preparation,
-            kafka_enabled=True,
-            deployer_context=deployer_context,
-        )
+        kafka_preparation = None
+        try:
+            kafka_preparation = _start_level6_kafka_preparation(
+                adapter,
+                connectors,
+                validation_profile=validation_profile,
+                deployer_name=resolved_deployer_name,
+                deployer_context=deployer_context,
+                kafka_manager_cls=kafka_manager_cls,
+                background=False,
+                kafka_enabled=True,
+            )
+            kafka_edc_results = run_level6_kafka_edc_after_newman(
+                adapter,
+                connectors,
+                experiment_dir,
+                validation_profile=validation_profile,
+                deployer_name=resolved_deployer_name,
+                experiment_storage=experiment_storage,
+                suite_cls=kafka_edc_validation_suite_cls,
+                kafka_manager_cls=kafka_manager_cls,
+                kafka_preparation=kafka_preparation,
+                kafka_enabled=True,
+                deployer_context=deployer_context,
+            )
+        finally:
+            if kafka_preparation is not None:
+                kafka_preparation.stop_runtime()
 
     return {
         "status": _status_from_kafka_results(kafka_edc_results),
@@ -9710,6 +9728,7 @@ def run_validate(
             connectors,
             validation_profile=validation_profile,
             deployer_name=resolved_deployer_name,
+            deployer_context=deployer_context,
             kafka_manager_cls=kafka_manager_cls,
             background=not validation_mode_info["local_stable"],
             kafka_enabled=kafka_level6_enabled,

@@ -495,6 +495,28 @@ class KafkaManagerTests(unittest.TestCase):
         self.assertIn("nodePort: 32092", manifest)
         self.assertIn("type: NodePort", manifest)
 
+    def test_kubernetes_commands_use_configured_kubeconfig_environment(self):
+        calls = []
+
+        def fake_runner(args, input_text=None, timeout=None, env=None):
+            calls.append({"args": list(args), "env": dict(env or {})})
+            return _FakeCompletedProcess(stdout="")
+
+        manager = KafkaManager(
+            runtime_config={
+                "topology": "vm-distributed",
+                "provisioner": "kubernetes",
+                "k8s_kubeconfig": "/tmp/pionera-common-k3s.yaml",
+                "k8s_kubeconfig_role": "common",
+            },
+            command_runner=fake_runner,
+        )
+
+        manager._run_command(["kubectl", "get", "pods"])
+
+        self.assertEqual(calls[0]["env"]["KUBECONFIG"], "/tmp/pionera-common-k3s.yaml")
+        self.assertEqual(calls[0]["env"]["PIONERA_KUBECONFIG_ROLE"], "common")
+
     def test_vm_distributed_does_not_autoprovision_when_explicit_bootstrap_is_unreachable(self):
         manager = KafkaManager(
             runtime_config={
@@ -531,6 +553,28 @@ class KafkaManagerTests(unittest.TestCase):
         with mock.patch.object(KafkaManager, "is_kafka_available", return_value=False):
             with mock.patch.object(manager, "start_kafka", return_value="127.0.0.1:39092") as mocked_start:
                 bootstrap = manager.ensure_kafka_running()
+
+        self.assertEqual(bootstrap, "127.0.0.1:39092")
+        mocked_start.assert_called_once()
+
+    def test_vm_distributed_nodeport_does_not_trust_tcp_without_configured_k3s_service(self):
+        manager = KafkaManager(
+            runtime_config={
+                "topology": "vm-distributed",
+                "provisioner": "kubernetes-split-kraft",
+                "k8s_external_service_type": "NodePort",
+                "cluster_bootstrap_servers": "192.0.2.10:32092",
+                "k8s_kubeconfig": "/tmp/pionera40.yaml",
+            },
+            command_runner=mock.Mock(),
+            wait_timeout_seconds=1,
+            poll_interval_seconds=0.01,
+        )
+
+        with mock.patch.object(KafkaManager, "is_kafka_available", return_value=True):
+            with mock.patch.object(KafkaManager, "_kubernetes_external_service_exists", return_value=False):
+                with mock.patch.object(manager, "start_kafka", return_value="127.0.0.1:39092") as mocked_start:
+                    bootstrap = manager.ensure_kafka_running()
 
         self.assertEqual(bootstrap, "127.0.0.1:39092")
         mocked_start.assert_called_once()
@@ -692,6 +736,7 @@ class KafkaManagerTests(unittest.TestCase):
         manifest = manager._build_kubernetes_manifest(manager._load_manager_config())
 
         self.assertIn("startupProbe:", manifest)
+        self.assertIn("strategy:\n    type: Recreate", manifest)
         self.assertIn("failureThreshold: 24", manifest)
         self.assertIn("readinessProbe:", manifest)
         self.assertIn("initialDelaySeconds: 5", manifest)
@@ -710,8 +755,47 @@ class KafkaManagerTests(unittest.TestCase):
         self.assertIn("KAFKA_INITIAL_BROKER_REGISTRATION_TIMEOUT_MS", manifest)
         self.assertIn('value: "120000"', manifest)
         self.assertIn("resources:", manifest)
-        self.assertIn('cpu: "100m"', manifest)
-        self.assertIn('memory: "256Mi"', manifest)
+        self.assertIn('cpu: "500m"', manifest)
+        self.assertIn('memory: "1Gi"', manifest)
+
+    def test_kubernetes_manifest_allows_resource_and_timeout_overrides(self):
+        manager = KafkaManager(
+            runtime_config={
+                "provisioner": "kubernetes",
+                "k8s_namespace": "demo",
+                "k8s_service_name": "framework-kafka",
+                "k8s_cpu_request": "750m",
+                "k8s_memory_request": "1536Mi",
+                "k8s_cpu_limit": "2",
+                "k8s_memory_limit": "2Gi",
+                "kafka_heap_opts": "-Xms512m -Xmx1024m",
+                "kafka_broker_heartbeat_interval_ms": "5000",
+                "kafka_broker_session_timeout_ms": "120000",
+                "kafka_controller_quorum_request_timeout_ms": "60000",
+                "kafka_initial_broker_registration_timeout_ms": "180000",
+                "kafka_group_initial_rebalance_delay_ms": "3000",
+            }
+        )
+
+        manifest = manager._build_kubernetes_manifest(manager._load_manager_config())
+
+        self.assertIn("KAFKA_HEAP_OPTS", manifest)
+        self.assertIn('value: "-Xms512m -Xmx1024m"', manifest)
+        self.assertIn('cpu: "750m"', manifest)
+        self.assertIn('memory: "1536Mi"', manifest)
+        self.assertIn("limits:", manifest)
+        self.assertIn('cpu: "2"', manifest)
+        self.assertIn('memory: "2Gi"', manifest)
+        self.assertIn("KAFKA_BROKER_HEARTBEAT_INTERVAL_MS", manifest)
+        self.assertIn('value: "5000"', manifest)
+        self.assertIn("KAFKA_BROKER_SESSION_TIMEOUT_MS", manifest)
+        self.assertIn('value: "120000"', manifest)
+        self.assertIn("KAFKA_CONTROLLER_QUORUM_REQUEST_TIMEOUT_MS", manifest)
+        self.assertIn('value: "60000"', manifest)
+        self.assertIn("KAFKA_INITIAL_BROKER_REGISTRATION_TIMEOUT_MS", manifest)
+        self.assertIn('value: "180000"', manifest)
+        self.assertIn("KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS", manifest)
+        self.assertIn('value: "3000"', manifest)
 
     def test_split_kraft_manifest_uses_separate_controller_and_broker_workloads(self):
         manager = KafkaManager(
@@ -726,6 +810,7 @@ class KafkaManagerTests(unittest.TestCase):
         manifest = manager._build_kubernetes_manifest(manager._load_manager_config())
 
         self.assertGreaterEqual(manifest.count("kind: Deployment"), 2)
+        self.assertGreaterEqual(manifest.count("type: Recreate"), 2)
         self.assertIn("name: framework-kafka-controller", manifest)
         self.assertIn("name: framework-kafka-external", manifest)
         self.assertIn('value: "controller"', manifest)

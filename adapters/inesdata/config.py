@@ -559,13 +559,15 @@ class INESDataConfigAdapter:
             if namespace
         )
 
-        kafka_provisioner = config.get("KAFKA_PROVISIONER", "kubernetes")
+        default_kafka_provisioner = "kubernetes-split-kraft" if topology == "vm-distributed" else "kubernetes"
+        kafka_provisioner = config.get("KAFKA_PROVISIONER", default_kafka_provisioner)
         default_validation_backend = (
             "kubernetes-exec"
             if str(kafka_provisioner or "").strip().lower().startswith("kubernetes")
             else "python-client"
         )
-        default_nodeport = str(config.get("KAFKA_K8S_NODEPORT") or "32092").strip() or "32092"
+        fallback_nodeport = "32093" if topology == "vm-distributed" else "32092"
+        default_nodeport = str(config.get("KAFKA_K8S_NODEPORT") or fallback_nodeport).strip() or fallback_nodeport
         default_cluster_bootstrap_servers = ""
         if topology == "vm-distributed":
             default_cluster_host = (
@@ -606,6 +608,14 @@ class INESDataConfigAdapter:
                 default_cluster_bootstrap_servers,
             )
         if topology == "vm-distributed":
+            cluster_runtime = self.cluster_runtime()
+            runtime["k8s_kubeconfig"] = (
+                config.get("KAFKA_K8S_KUBECONFIG")
+                or cluster_runtime.get("k3s_kubeconfig_common")
+                or cluster_runtime.get("k3s_kubeconfig")
+                or ""
+            )
+            runtime["k8s_kubeconfig_role"] = config.get("KAFKA_K8S_KUBECONFIG_ROLE", "common")
             runtime["agreement_visibility_timeout_seconds"] = config.get(
                 "KAFKA_EDC_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS",
                 "90",
@@ -619,6 +629,18 @@ class INESDataConfigAdapter:
             "cluster_advertised_host": "KAFKA_CLUSTER_ADVERTISED_HOST",
             "k8s_nodeport": "KAFKA_K8S_NODEPORT",
             "k8s_external_service_type": "KAFKA_K8S_EXTERNAL_SERVICE_TYPE",
+            "k8s_kubeconfig": "KAFKA_K8S_KUBECONFIG",
+            "k8s_kubeconfig_role": "KAFKA_K8S_KUBECONFIG_ROLE",
+            "k8s_cpu_request": "KAFKA_K8S_CPU_REQUEST",
+            "k8s_memory_request": "KAFKA_K8S_MEMORY_REQUEST",
+            "k8s_cpu_limit": "KAFKA_K8S_CPU_LIMIT",
+            "k8s_memory_limit": "KAFKA_K8S_MEMORY_LIMIT",
+            "kafka_heap_opts": "KAFKA_HEAP_OPTS",
+            "kafka_broker_heartbeat_interval_ms": "KAFKA_BROKER_HEARTBEAT_INTERVAL_MS",
+            "kafka_broker_session_timeout_ms": "KAFKA_BROKER_SESSION_TIMEOUT_MS",
+            "kafka_controller_quorum_request_timeout_ms": "KAFKA_CONTROLLER_QUORUM_REQUEST_TIMEOUT_MS",
+            "kafka_initial_broker_registration_timeout_ms": "KAFKA_INITIAL_BROKER_REGISTRATION_TIMEOUT_MS",
+            "kafka_group_initial_rebalance_delay_ms": "KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS",
             "message_count": "KAFKA_MESSAGE_COUNT",
             "message_size_bytes": "KAFKA_MESSAGE_SIZE_BYTES",
             "poll_timeout_seconds": "KAFKA_POLL_TIMEOUT_SECONDS",

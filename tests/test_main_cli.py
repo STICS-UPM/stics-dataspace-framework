@@ -356,6 +356,7 @@ class KafkaTransferConsoleOutputTests(unittest.TestCase):
                     "topology": "vm-distributed",
                     "bootstrap_servers": "127.0.0.1:39092",
                     "cluster_bootstrap_servers": "192.0.2.10:32092",
+                    "provisioner": "external",
                     "k8s_external_service_type": "NodePort",
                     "k8s_nodeport": "32092",
                 }
@@ -387,6 +388,52 @@ class KafkaTransferConsoleOutputTests(unittest.TestCase):
         self.assertFalse(result["started_by_framework"])
         self.assertEqual(result["provisioning_mode"], "external")
         self.assertIn("configured vm-distributed connector-visible bootstrap", stdout.getvalue())
+
+    def test_vm_distributed_kubernetes_kafka_preparation_does_not_bypass_k3s(self):
+        class VmDistributedKafkaAdapter(FakeAdapter):
+            topology = "vm-distributed"
+
+            def get_kafka_config(self):
+                return {
+                    "topology": "vm-distributed",
+                    "bootstrap_servers": "192.0.2.10:32092",
+                    "cluster_bootstrap_servers": "192.0.2.10:32092",
+                    "provisioner": "kubernetes-split-kraft",
+                    "k8s_external_service_type": "NodePort",
+                    "k8s_nodeport": "32092",
+                    "k8s_kubeconfig": "/tmp/pionera40.yaml",
+                }
+
+        class RecordingKafkaManager:
+            def __init__(self, *args, **kwargs):
+                self.bootstrap_servers = None
+                self.cluster_bootstrap_servers = None
+                self.started_by_framework = False
+                self.provisioning_mode = None
+                self.last_error = None
+                self.ensure_calls = 0
+
+            def ensure_kafka_running(self):
+                self.ensure_calls += 1
+                self.bootstrap_servers = "127.0.0.1:39092"
+                self.cluster_bootstrap_servers = "192.0.2.10:32092"
+                self.started_by_framework = True
+                self.provisioning_mode = "kubernetes-split-kraft"
+                return self.bootstrap_servers
+
+            def stop_kafka(self):
+                return None
+
+        preparation = main._start_level6_kafka_preparation(
+            VmDistributedKafkaAdapter(),
+            ["conn-a", "conn-b"],
+            deployer_name="inesdata",
+            kafka_manager_cls=RecordingKafkaManager,
+            background=False,
+            kafka_enabled=True,
+        )
+
+        self.assertIsNone(preparation)
 
     def test_level6_kafka_prompt_enables_suite_when_user_confirms(self):
         class KafkaReadyAdapter(FakeAdapter):
