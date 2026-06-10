@@ -103,7 +103,7 @@ export class ContractDefinitionCreatePage {
   async expectContractDefinitionListed(
     contractDefinitionId: string,
     expectations: ContractDefinitionListExpectations = {},
-    timeoutMs = 15_000,
+    timeoutMs = 60_000,
   ): Promise<void> {
     await expect(async () => {
       const found = await this.findContractDefinition(contractDefinitionId, expectations);

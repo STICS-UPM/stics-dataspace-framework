@@ -8,6 +8,7 @@ import { ConnectorShellPage } from "../components/shell/connector-shell.page";
 import { AssetCreatePage } from "../components/provider/asset-create.page";
 import { PolicyCreatePage } from "../components/provider/policy-create.page";
 import { ContractDefinitionCreatePage } from "../components/provider/contract-definition-create.page";
+import { cleanupProviderValidationArtifacts } from "../../../shared/utils/provider-bootstrap";
 
 test.setTimeout(180_000);
 
@@ -101,6 +102,7 @@ function createSmallUploadFile(): UploadFileHandle {
 
 test("03c provider setup: contract definition creation from the UI", async ({
   page,
+  request,
   dataspaceRuntime,
   captureStep,
   attachJson,
@@ -153,6 +155,15 @@ test("03c provider setup: contract definition creation from the UI", async ({
   });
 
   try {
+    await attachJson(
+      "provider-contract-definition-cleanup",
+      await cleanupProviderValidationArtifacts(request, dataspaceRuntime, {
+        contractdefinitions: ["qa-ui-contract-definition-", "contract-ui-", "contract-e2e-"],
+        policydefinitions: ["qa-ui-policy-", "qa-ui-contract-policy-", "policy-ui-", "policy-e2e-"],
+        assets: ["qa-ui-contract-asset-", "asset-ui-", "asset-e2e-"],
+      }),
+    );
+
     await loginPage.open(portalBaseUrl);
     await loginPage.loginIfNeeded();
     await shellPage.expectReady();

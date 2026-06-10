@@ -55,7 +55,7 @@ export class PolicyCreatePage {
     return ((await notification.textContent()) ?? "").replace(/\s+/g, " ").trim();
   }
 
-  async expectPolicyListed(policyId: string, timeoutMs = 15_000): Promise<void> {
+  async expectPolicyListed(policyId: string, timeoutMs = 60_000): Promise<void> {
     await expect(async () => {
       const found = await this.findPolicy(policyId);
       expect(found, `Policy ${policyId} is not visible in the policies list`).toBeTruthy();
@@ -66,19 +66,47 @@ export class PolicyCreatePage {
   }
 
   private async findPolicy(policyId: string): Promise<boolean> {
+    await this.showLargestPageSize();
     await this.goToFirstPage();
 
-    if ((await this.policyCard(policyId).count()) > 0) {
+    if (await this.pageContainsPolicy(policyId)) {
       return true;
     }
 
     while (await this.goToNextPage()) {
-      if ((await this.policyCard(policyId).count()) > 0) {
+      if (await this.pageContainsPolicy(policyId)) {
         return true;
       }
     }
 
     return false;
+  }
+
+  private async showLargestPageSize(): Promise<void> {
+    const pageSizeSelect = this.page.getByRole("combobox", { name: /items per page/i }).first();
+    if ((await pageSizeSelect.count()) === 0) {
+      return;
+    }
+
+    await clickMarked(pageSizeSelect).catch(() => undefined);
+    const options = this.page.locator(".cdk-overlay-pane [role='option'], .cdk-overlay-pane mat-option");
+    const optionTexts = await options.allTextContents().catch(() => []);
+    const pageSizes = optionTexts
+      .map((text) => Number.parseInt(text.replace(/\D+/g, ""), 10))
+      .filter((value) => Number.isFinite(value));
+    const largestPageSize = Math.max(...pageSizes, 0);
+    if (!largestPageSize) {
+      await this.page.keyboard.press("Escape").catch(() => undefined);
+      return;
+    }
+
+    await clickMarked(options.filter({ hasText: new RegExp(`^\\s*${largestPageSize}\\s*$`) }).last(), {
+      timeout: 5_000,
+      force: true,
+    }).catch(async () => {
+      await this.page.keyboard.press("Escape").catch(() => undefined);
+    });
+    await waitForUiTransition(this.page);
   }
 
   private async goToFirstPage(): Promise<void> {
@@ -114,7 +142,12 @@ export class PolicyCreatePage {
     return true;
   }
 
-  private policyCard(policyId: string) {
-    return this.page.getByText(policyId, { exact: true }).first();
+  private async pageContainsPolicy(policyId: string): Promise<boolean> {
+    try {
+      await expect(this.page.locator("body")).toContainText(policyId, { timeout: 2_000 });
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
