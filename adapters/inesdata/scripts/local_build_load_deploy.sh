@@ -35,6 +35,10 @@ K3S_REMOTE_PRUNE_IMPORTED_IMAGES="${K3S_REMOTE_PRUNE_IMPORTED_IMAGES:-false}"
 K3S_REMOTE_PRUNE_KEEP="${K3S_REMOTE_PRUNE_KEEP:-2}"
 LOCAL_REGISTRY_HOST="${LOCAL_REGISTRY_HOST:-local}"
 LOCAL_NAMESPACE="${LOCAL_NAMESPACE:-inesdata}"
+CONNECTOR_CATALOG_CACHE_EXECUTION_PERIOD_SECONDS="${CONNECTOR_CATALOG_CACHE_EXECUTION_PERIOD_SECONDS:-${PIONERA_CONNECTOR_CATALOG_CACHE_EXECUTION_PERIOD_SECONDS:-}}"
+CONNECTOR_PARTICIPANTS_CACHE_EXECUTION_PERIOD_SECONDS="${CONNECTOR_PARTICIPANTS_CACHE_EXECUTION_PERIOD_SECONDS:-${PIONERA_CONNECTOR_PARTICIPANTS_CACHE_EXECUTION_PERIOD_SECONDS:-}}"
+CONNECTOR_CATALOG_CACHE_PARTITION_NUM_CRAWLERS="${CONNECTOR_CATALOG_CACHE_PARTITION_NUM_CRAWLERS:-${PIONERA_CONNECTOR_CATALOG_CACHE_PARTITION_NUM_CRAWLERS:-}}"
+CONNECTOR_CATALOG_CACHE_EXECUTION_DELAY_SECONDS="${CONNECTOR_CATALOG_CACHE_EXECUTION_DELAY_SECONDS:-${PIONERA_CONNECTOR_CATALOG_CACHE_EXECUTION_DELAY_SECONDS:-}}"
 
 DRY_RUN=1
 RUN_DEPLOY=1
@@ -219,6 +223,32 @@ normalize_cluster_runtime() {
       exit 1
       ;;
   esac
+}
+
+default_connector_catalog_cache_execution_period_seconds() {
+  [[ "$CLUSTER_RUNTIME" == "k3s" ]] && echo "60" || echo "15"
+}
+
+default_connector_participants_cache_execution_period_seconds() {
+  [[ "$CLUSTER_RUNTIME" == "k3s" ]] && echo "1800" || echo "30"
+}
+
+default_connector_catalog_cache_partition_num_crawlers() {
+  [[ "$CLUSTER_RUNTIME" == "k3s" ]] && echo "1" || echo "2"
+}
+
+default_connector_catalog_cache_execution_delay_seconds() {
+  [[ "$CLUSTER_RUNTIME" == "k3s" ]] && echo "30" || echo "5"
+}
+
+connector_cache_value() {
+  local configured="$1"
+  local default_value="$2"
+  if [[ -n "$configured" ]]; then
+    printf '%s\n' "$configured"
+  else
+    printf '%s\n' "$default_value"
+  fi
 }
 
 resolve_docker_cmd() {
@@ -1074,6 +1104,11 @@ connector:
   image:
     name: ${IMAGE_BY_COMPONENT[connector]%:*}
     tag: ${IMAGE_BY_COMPONENT[connector]##*:}
+  catalogCache:
+    executionPeriodSeconds: $(connector_cache_value "$CONNECTOR_CATALOG_CACHE_EXECUTION_PERIOD_SECONDS" "$(default_connector_catalog_cache_execution_period_seconds)")
+    participantsPeriodSeconds: $(connector_cache_value "$CONNECTOR_PARTICIPANTS_CACHE_EXECUTION_PERIOD_SECONDS" "$(default_connector_participants_cache_execution_period_seconds)")
+    partitionNumCrawlers: $(connector_cache_value "$CONNECTOR_CATALOG_CACHE_PARTITION_NUM_CRAWLERS" "$(default_connector_catalog_cache_partition_num_crawlers)")
+    executionDelaySeconds: $(connector_cache_value "$CONNECTOR_CATALOG_CACHE_EXECUTION_DELAY_SECONDS" "$(default_connector_catalog_cache_execution_delay_seconds)")
 EOF
   fi
 

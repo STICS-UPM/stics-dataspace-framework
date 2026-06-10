@@ -478,6 +478,91 @@ class INESDataLocalBuildLoadDeployScriptTests(unittest.TestCase):
         self.assertIn('helm upgrade --install "conn-org2-pionera-pionera"', result.stdout)
         self.assertNotIn("conn-org2-pionera-provider", result.stdout + result.stderr)
 
+    def test_connector_local_override_adds_vm_catalog_cache_defaults_for_k3s(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            script_path = root / SCRIPT_REL_PATH
+            script_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(PROJECT_ROOT / SCRIPT_REL_PATH, script_path)
+
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            fake_helm = fake_bin / "helm"
+            fake_helm.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == \"status\" && \"$2\" == \"conn-org2-pionera-pionera\" ]]; then exit 0; fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            fake_helm.chmod(0o755)
+
+            platform_dir = root / "deployers" / "inesdata"
+            connector_dir = platform_dir / "connector"
+            connector_dir.mkdir(parents=True, exist_ok=True)
+            (connector_dir / "values-conn-org2-pionera.yaml").write_text("connector: {}\n", encoding="utf-8")
+
+            manifest = root / "manifest.tsv"
+            manifest.write_text(
+                "\t".join(["component", "repo_dir", "image", "tag", "full_image", "build_cmd"])
+                + "\n"
+                + "\t".join(
+                    [
+                        "connector",
+                        ".",
+                        "local/inesdata-connector",
+                        "local",
+                        "local/inesdata-connector:local",
+                        "build",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            env = dict(os.environ)
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(script_path),
+                    "--skip-build",
+                    "--manifest",
+                    str(manifest),
+                    "--platform-dir",
+                    str(platform_dir),
+                    "--namespace",
+                    "provider",
+                    "--dataspace",
+                    "pionera",
+                    "--component",
+                    "connector",
+                    "--cluster-runtime",
+                    "k3s",
+                    "--preserve-values",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=False,
+                env=env,
+            )
+
+            override = (
+                root
+                / "adapters"
+                / "inesdata"
+                / "build"
+                / "local-overrides"
+                / "connector-local-overrides.yaml"
+            ).read_text(encoding="utf-8")
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("catalogCache:", override)
+        self.assertIn("executionPeriodSeconds: 60", override)
+        self.assertIn("participantsPeriodSeconds: 1800", override)
+        self.assertIn("partitionNumCrawlers: 1", override)
+        self.assertIn("executionDelaySeconds: 30", override)
+
 
 if __name__ == "__main__":
     unittest.main()
