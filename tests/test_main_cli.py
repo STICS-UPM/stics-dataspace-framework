@@ -9991,6 +9991,23 @@ class MainCliTests(unittest.TestCase):
             "https://org4.pionera.oeg.fi.upm.es/auth",
         )
 
+    def test_build_kafka_edc_validation_suite_reuses_prepared_kafka_runtime(self):
+        adapter = FakeAdapter()
+        adapter.get_kafka_config = lambda: {
+            "topology": "vm-distributed",
+            "cluster_bootstrap_servers": "198.51.100.10:32092",
+        }
+        kafka_manager = mock.Mock()
+        kafka_manager.bootstrap_servers = "192.0.2.10:32092"
+        kafka_manager.cluster_bootstrap_servers = "192.0.2.10:32092"
+
+        suite = main.build_kafka_edc_validation_suite(adapter, kafka_manager=kafka_manager)
+
+        runtime = suite.kafka_runtime_loader()
+        self.assertEqual(runtime["bootstrap_servers"], "192.0.2.10:32092")
+        self.assertEqual(runtime["cluster_bootstrap_servers"], "192.0.2.10:32092")
+        self.assertEqual(runtime["topology"], "vm-distributed")
+
     def test_build_adapter_passes_dry_run_when_supported(self):
         registry = {"fake": "fake_adapter_module:DryRunAwareAdapter"}
         adapter = main.build_adapter("fake", adapter_registry=registry, dry_run=True)

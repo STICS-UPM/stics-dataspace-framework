@@ -3731,6 +3731,21 @@ def build_kafka_edc_validation_suite(
         "get_kafka_config",
         default=lambda: {},
     )
+    if kafka_manager is not None:
+        base_kafka_runtime_loader = kafka_runtime_loader
+
+        def kafka_runtime_loader():
+            runtime = {}
+            if callable(base_kafka_runtime_loader):
+                loaded = base_kafka_runtime_loader()
+                runtime.update(dict(loaded or {}) if isinstance(loaded, dict) else {})
+            bootstrap_servers = getattr(kafka_manager, "bootstrap_servers", None)
+            cluster_bootstrap_servers = getattr(kafka_manager, "cluster_bootstrap_servers", None)
+            if bootstrap_servers:
+                runtime["bootstrap_servers"] = bootstrap_servers
+            if cluster_bootstrap_servers:
+                runtime["cluster_bootstrap_servers"] = cluster_bootstrap_servers
+            return runtime
     ensure_kafka_topic = _resolve_adapter_callable(
         adapter,
         "ensure_kafka_topic",
