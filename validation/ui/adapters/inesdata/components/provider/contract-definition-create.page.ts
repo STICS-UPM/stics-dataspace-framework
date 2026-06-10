@@ -156,7 +156,9 @@ export class ContractDefinitionCreatePage {
     contractDefinitionId: string,
     expectations: ContractDefinitionListExpectations,
   ) {
-    let card = this.page.locator(".card mat-card").filter({ hasText: contractDefinitionId });
+    let card = this.page
+      .locator(".mat-mdc-card, mat-card, .card, app-contract-definition-card, li, tr")
+      .filter({ hasText: contractDefinitionId });
 
     if (expectations.policyId) {
       card = card.filter({ hasText: expectations.policyId });
@@ -166,7 +168,7 @@ export class ContractDefinitionCreatePage {
       card = card.filter({ hasText: expectations.assetId });
     }
 
-    return card.first();
+    return card.or(this.page.getByText(contractDefinitionId, { exact: true })).first();
   }
 
   private async trySelectPolicyOption(

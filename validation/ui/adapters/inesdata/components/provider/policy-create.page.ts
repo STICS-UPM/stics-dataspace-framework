@@ -115,6 +115,6 @@ export class PolicyCreatePage {
   }
 
   private policyCard(policyId: string) {
-    return this.page.locator(".card mat-card").filter({ hasText: policyId }).first();
+    return this.page.getByText(policyId, { exact: true }).first();
   }
 }
