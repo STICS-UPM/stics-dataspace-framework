@@ -1430,6 +1430,63 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         )
         adapter._close_temporary_port_forward.assert_called_once()
 
+    def test_wait_for_management_api_ready_refreshes_failed_internal_port_forward(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        port_forwards = [
+            (
+                "http://127.0.0.1:45555/management/v3/assets/request",
+                {"namespace": "demoedc", "pod_name": "conn-citycounciledc-demoedc-0", "local_port": 45555},
+            ),
+            (
+                "http://127.0.0.1:45556/management/v3/assets/request",
+                {"namespace": "demoedc", "pod_name": "conn-citycounciledc-demoedc-0", "local_port": 45556},
+            ),
+        ]
+        adapter._start_connector_management_api_fallback = mock.Mock(side_effect=port_forwards)
+        adapter._close_temporary_port_forward = mock.Mock()
+        adapter.get_management_api_headers = lambda connector: {"Authorization": "Bearer token"}
+        adapter.invalidate_management_api_token = mock.Mock()
+        adapter.connector_base_url = mock.Mock(side_effect=AssertionError("public URL should not be used"))
+        response = mock.Mock(status_code=200)
+
+        with mock.patch(
+            "adapters.edc.connectors.requests.post",
+            side_effect=[requests.ConnectionError("Connection refused"), response],
+        ) as post_mock:
+            ready = adapter.wait_for_management_api_ready("conn-citycounciledc-demoedc", timeout=5, poll_interval=0)
+
+        self.assertTrue(ready)
+        self.assertEqual(adapter._start_connector_management_api_fallback.call_count, 2)
+        self.assertEqual(
+            [call.args[0] for call in post_mock.call_args_list],
+            [
+                "http://127.0.0.1:45555/management/v3/assets/request",
+                "http://127.0.0.1:45556/management/v3/assets/request",
+            ],
+        )
+        adapter._close_temporary_port_forward.assert_has_calls(
+            [
+                mock.call(port_forwards[0][1]),
+                mock.call(port_forwards[1][1]),
+            ]
+        )
+
+    def test_wait_for_all_connectors_uses_edc_management_timeout_config(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        adapter.config_adapter = mock.Mock()
+        adapter.config_adapter.load_deployer_config.return_value = {
+            "EDC_MANAGEMENT_API_TIMEOUT_SECONDS": "420",
+        }
+        adapter.config = mock.Mock()
+        adapter.config.TIMEOUT_POD_WAIT = 120
+        adapter.wait_for_management_api_ready = mock.Mock(return_value=True)
+
+        self.assertTrue(adapter.wait_for_all_connectors(["conn-citycounciledc-demoedc"]))
+        adapter.wait_for_management_api_ready.assert_called_once_with(
+            "conn-citycounciledc-demoedc",
+            timeout=420,
+        )
+
     def _make_oidc_adapter(self, root):
         adapter = self._make_adapter(root)
         adapter.config_adapter = self.OidcEdcConnectorConfigAdapter(root)

@@ -91,6 +91,31 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
     def wait_for_connector_ready(self, connector_name, timeout=300):
         return self.wait_for_management_api_ready(connector_name, timeout=timeout)
 
+    def _edc_management_api_ready_timeout(self):
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception:
+            deployer_config = {}
+        raw_value = (
+            os.environ.get("PIONERA_EDC_MANAGEMENT_API_TIMEOUT_SECONDS")
+            or os.environ.get("EDC_MANAGEMENT_API_TIMEOUT_SECONDS")
+            or deployer_config.get("EDC_MANAGEMENT_API_TIMEOUT_SECONDS")
+            or deployer_config.get("MANAGEMENT_API_TIMEOUT_SECONDS")
+            or getattr(self.config, "TIMEOUT_POD_WAIT", None)
+            or 300
+        )
+        try:
+            return max(int(float(raw_value)), 1)
+        except (TypeError, ValueError):
+            return 300
+
+    def _refresh_connector_management_api_fallback(self, connector_name, port_forward):
+        self._close_temporary_port_forward(port_forward)
+        local_url, local_fallback = self._start_connector_management_api_fallback(connector_name)
+        if local_url:
+            print(f"Refreshing temporary local EDC management API port-forward for {connector_name}.")
+        return local_url, local_fallback
+
     def wait_for_management_api_ready(self, connector_name, timeout=180, poll_interval=3):
         print(f"Waiting for EDC management API to be ready: {connector_name}")
         payload = {
@@ -130,6 +155,15 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                     last_issue = f"HTTP {response.status_code}"
                 except requests.RequestException as exc:
                     last_issue = str(exc)
+                    if local_fallback and self._should_attempt_local_fallback(exc):
+                        local_url, local_fallback = self._refresh_connector_management_api_fallback(
+                            connector_name,
+                            local_fallback,
+                        )
+                        if local_url:
+                            url = local_url
+                            time.sleep(poll_interval)
+                            continue
 
                 time.sleep(poll_interval)
         finally:
@@ -143,8 +177,9 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
 
     def wait_for_all_connectors(self, connectors):
         print("\nWaiting for all EDC connectors to expose their management API...\n")
+        timeout = self._edc_management_api_ready_timeout()
         for connector in connectors:
-            if not self.wait_for_management_api_ready(connector):
+            if not self.wait_for_management_api_ready(connector, timeout=timeout):
                 print(f"Connector management API not ready: {connector}")
                 return False
         return True
