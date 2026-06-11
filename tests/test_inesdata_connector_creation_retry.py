@@ -4666,6 +4666,7 @@ class ConnectorCreationRetryTests(unittest.TestCase):
             adapter.connector_is_healthy = lambda *_args, **_kwargs: True
             adapter.connector_database_credentials_valid = lambda *_args, **_kwargs: True
             adapter.create_connector = mock.Mock()
+            adapter.wait_for_keycloak_admin_ready = lambda *_args, **_kwargs: True
             adapter.wait_for_all_connectors = mock.Mock(return_value=True)
             adapter.validate_connectors_with_stabilization = mock.Mock(return_value=True)
 
