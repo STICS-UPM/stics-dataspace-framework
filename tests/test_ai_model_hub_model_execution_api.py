@@ -93,7 +93,8 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         self.assertEqual(result["created_entities"]["asset_id"], "a52-model-exec-fixed-uuid")
         self.assertEqual(result["executed_cases"][0]["test_case_id"], "PT5-MH-10")
         self.assertEqual(result["executed_cases"][0]["mapping_status"], "mapped")
-        self.assertEqual(result["executed_cases"][0]["coverage_status"], "automated")
+        self.assertEqual(result["executed_cases"][0]["coverage_status"], "automated_real_model_server")
+        self.assertEqual(result["executed_cases"][0]["model_server_mode"], "external")
         self.assertEqual(result["executed_cases"][0]["evaluation"]["status"], "passed")
         self.assertNotIn("token-provider", report_text)
         self.assertNotIn("provider-pass", report_text)
@@ -102,6 +103,7 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         self.assertEqual(len(asset_requests), 1)
         self.assertEqual(asset_requests[0]["json"]["dataAddress"]["type"], "HttpData")
         self.assertEqual(asset_requests[0]["json"]["dataAddress"]["method"], "POST")
+        self.assertNotIn("proxyPath", asset_requests[0]["json"]["dataAddress"])
 
         execution_requests = [
             entry for entry in session.posts if entry["url"].endswith("/management/v3/modelexecutions/execute")
@@ -122,6 +124,29 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(len(session.deletes), 1)
         self.assertIn("Expected HTTP 2xx", result["executed_cases"][0]["evaluation"]["assertions"][0])
+
+    def test_run_marks_mock_model_server_evidence_when_configured(self):
+        session = FakeSession()
+        suite = self._suite(session)
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true",
+                "AI_MODEL_HUB_MODEL_SERVER_MODE": "mock",
+            },
+            clear=False,
+        ):
+            result = suite.run(
+                provider="conn-provider",
+                model_url="http://model-server.components.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
+                payload={"text": "great"},
+            )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["model_server"]["mode"], "mock")
+        self.assertEqual(result["executed_cases"][0]["execution_mode"], "api_mock_model_server")
+        self.assertEqual(result["executed_cases"][0]["coverage_status"], "automated_mock_model_server")
 
     def test_run_with_flares_context_adds_functional_case_and_artifact(self):
         session = FakeSession()
@@ -296,6 +321,8 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "passed")
+        asset_requests = [entry for entry in session.posts if entry["url"].endswith("/management/v3/assets")]
+        self.assertEqual(asset_requests[0]["json"]["dataAddress"]["proxyPath"], "true")
         execution_requests = [entry for entry in session.posts if entry["url"].endswith("/api/infer")]
         self.assertEqual(len(execution_requests), 1)
         self.assertEqual(execution_requests[0]["url"], "https://org2.example.test/api/infer")

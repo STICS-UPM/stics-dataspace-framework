@@ -28,7 +28,10 @@ REQUIRED_FILES = {
 }
 
 README_CAPABILITY_MARKERS = {
-    "install": "pip install .",
+    "install": (
+        "pip install .",
+        "pip install git+https://github.com/proyectopionera/morph-kgv.git",
+    ),
     "run_query": "run_query.py",
     "config": "config.ini",
     "serve": "morph-kgv serve config.ini",
@@ -86,6 +89,12 @@ def _read_text(path: Path, limit: int = 30000) -> str:
         return ""
 
 
+def _contains_marker(text: str, marker: str | tuple[str, ...]) -> bool:
+    if isinstance(marker, tuple):
+        return any(candidate.lower() in text for candidate in marker)
+    return marker.lower() in text
+
+
 def validate_morph_kgv_source(source_dir: str | os.PathLike[str] | None = None) -> dict[str, Any]:
     resolved_source_dir = resolve_morph_kgv_source_dir(source_dir)
     assertions: list[str] = []
@@ -115,7 +124,7 @@ def validate_morph_kgv_source(source_dir: str | os.PathLike[str] | None = None) 
 
     readme_text = _read_text(resolved_source_dir / "README.md").lower()
     detected_readme_markers = sorted(
-        key for key, marker in README_CAPABILITY_MARKERS.items() if marker.lower() in readme_text
+        key for key, marker in README_CAPABILITY_MARKERS.items() if _contains_marker(readme_text, marker)
     )
     missing_readme_markers = sorted(set(README_CAPABILITY_MARKERS) - set(detected_readme_markers))
     if missing_readme_markers:

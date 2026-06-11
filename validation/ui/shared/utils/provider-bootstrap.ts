@@ -41,6 +41,18 @@ type ConsumerNegotiationArtifacts = {
   state?: string;
 };
 
+type ConsumerNegotiationOutcomeStatus = "agreement" | "terminated" | "timeout";
+
+type ConsumerNegotiationOutcome = {
+  negotiationId: string;
+  agreementId: string;
+  state: string;
+  attempts: number;
+  status: ConsumerNegotiationOutcomeStatus;
+  errorDetail?: string;
+  negotiation?: unknown;
+};
+
 type ConsumerAgreementArtifacts = {
   agreementId: string | null;
   assetId: string;
@@ -1167,6 +1179,54 @@ async function lookupNegotiation(
     (await lookupNegotiationById(request, runtime, negotiationId)).negotiation ||
     (await lookupNegotiationFromList(request, runtime, negotiationId)).negotiation
   );
+}
+
+export async function waitForConsumerNegotiationOutcome(
+  request: APIRequestContext,
+  runtime: DataspacePortalRuntime,
+  negotiationId: string,
+  attempts = 30,
+  delayMs = 1_000,
+): Promise<ConsumerNegotiationOutcome> {
+  let lastNegotiation: any | undefined;
+  let lastState = "UNKNOWN";
+  let lastAgreementId = "";
+  let lastErrorDetail = "";
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const negotiation = await lookupNegotiation(request, runtime, negotiationId);
+
+    if (negotiation) {
+      lastNegotiation = negotiation;
+      lastState = negotiationState(negotiation) || lastState;
+      lastAgreementId = negotiationAgreementId(negotiation) || lastAgreementId;
+      lastErrorDetail = negotiationErrorDetail(negotiation) || lastErrorDetail;
+
+      if (lastAgreementId || lastState === "TERMINATED") {
+        return {
+          negotiationId,
+          agreementId: lastAgreementId,
+          state: lastState,
+          attempts: attempt,
+          status: lastAgreementId ? "agreement" : "terminated",
+          errorDetail: lastErrorDetail || undefined,
+          negotiation,
+        };
+      }
+    }
+
+    await sleep(delayMs);
+  }
+
+  return {
+    negotiationId,
+    agreementId: lastAgreementId,
+    state: lastState,
+    attempts,
+    status: lastAgreementId ? "agreement" : lastState === "TERMINATED" ? "terminated" : "timeout",
+    errorDetail: lastErrorDetail || undefined,
+    negotiation: lastNegotiation,
+  };
 }
 
 export async function bootstrapConsumerNegotiation(

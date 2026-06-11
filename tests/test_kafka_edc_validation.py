@@ -698,6 +698,21 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
                 for command in kafka_manager.commands
             )
         )
+        kubernetes_kafka_commands = [
+            command["command"]
+            for command in kafka_manager.commands
+            if any(str(item).startswith("kafka-") for item in command["command"])
+        ]
+        self.assertTrue(kubernetes_kafka_commands)
+        self.assertTrue(
+            all(
+                "framework-kafka.demoedc.svc.cluster.local:9092" in command
+                for command in kubernetes_kafka_commands
+            )
+        )
+        self.assertFalse(
+            any("localhost:9092" in command for command in kubernetes_kafka_commands)
+        )
         self.assertTrue(
             any(
                 "--from-beginning" in command["command"] and "kafka-console-consumer" in command["command"]
@@ -712,6 +727,23 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
                 for command in kafka_manager.commands
             )
         )
+
+    def test_kubernetes_exec_bootstrap_can_be_overridden_independently(self):
+        suite = KafkaEdcValidationSuite()
+        runtime = {
+            "cluster_bootstrap_servers": "framework-kafka.demoedc.svc.cluster.local:9092",
+            "kubernetes_exec_bootstrap_servers": "framework-kafka.demoedc.svc:9092",
+        }
+
+        self.assertEqual(
+            suite._kubernetes_exec_bootstrap_servers(runtime),
+            "framework-kafka.demoedc.svc:9092",
+        )
+
+    def test_kubernetes_exec_bootstrap_keeps_legacy_localhost_fallback(self):
+        suite = KafkaEdcValidationSuite()
+
+        self.assertEqual(suite._kubernetes_exec_bootstrap_servers({}), "localhost:9092")
 
     def test_run_pair_waits_for_contract_agreement_visibility_before_transfer(self):
         session = _DelayedAgreementSession()

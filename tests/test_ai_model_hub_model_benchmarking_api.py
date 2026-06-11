@@ -46,6 +46,7 @@ class AIModelHubModelBenchmarkingApiTests(unittest.TestCase):
             all(case["coverage_status"] == "automated_real_model_server" for case in result["executed_cases"])
         )
         self.assertEqual(result["model_server_base_url"], "https://models.example.test/model-server")
+        self.assertEqual(result["model_server"]["mode"], "external")
         self.assertEqual(len(result["visualization_data"]["table_rows"]), 3)
         self.assertEqual(post_mock.call_count, len(DEFAULT_MODELS) * 3)
         self.assertNotIn("access_token", report_text)
@@ -88,17 +89,44 @@ class AIModelHubModelBenchmarkingApiTests(unittest.TestCase):
         self.assertEqual(selection_case["evaluation"]["status"], "failed")
         self.assertIn("At least two models", selection_case["evaluation"]["assertions"][0])
 
-    def test_real_model_server_url_is_required_for_execution_case(self):
+    def test_mock_model_server_url_is_reported_as_mock_evidence(self):
+        response = mock.Mock(status_code=200, text="")
+        response.json.return_value = [{"Reliability_Label": "confiable"}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = create_flares_source(tmpdir)
+            with mock.patch(
+                "validation.components.ai_model_hub.model_benchmarking_api.requests.post",
+                return_value=response,
+            ):
+                result = run_ai_model_hub_model_benchmarking_validation(
+                    source_dir=str(source_dir),
+                    model_server_base_url="http://model-server.components.svc.cluster.local:8080",
+                    model_server_mode="mock",
+                )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["model_server"]["mode"], "mock")
+        self.assertTrue(
+            all(case["coverage_status"] == "automated_mock_model_server" for case in result["executed_cases"])
+        )
+        self.assertTrue(any("mock mode" in limitation for limitation in result["limitations"]))
+
+    def test_missing_model_server_url_uses_fixture_fallback_for_execution_case(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             source_dir = create_flares_source(tmpdir)
             result = run_ai_model_hub_model_benchmarking_validation(source_dir=str(source_dir))
 
         execution_case = result["executed_cases"][1]
 
-        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["summary"], {"total": 4, "passed": 4, "failed": 0, "skipped": 0})
         self.assertEqual(execution_case["test_case_id"], "PT5-MH-13")
-        self.assertEqual(execution_case["evaluation"]["status"], "failed")
-        self.assertIn("model-server URL is required", execution_case["evaluation"]["assertions"][0])
+        self.assertEqual(execution_case["execution_mode"], "api_fixture")
+        self.assertEqual(execution_case["coverage_status"], "automated_fixture_fallback")
+        self.assertEqual(execution_case["evaluation"]["status"], "passed")
+        self.assertEqual(execution_case["evaluation"]["assertions"], [])
+        self.assertEqual(result["model_server"]["mode"], "disabled")
+        self.assertTrue(result["limitations"])
 
 
 if __name__ == "__main__":

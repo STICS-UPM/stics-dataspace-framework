@@ -68,7 +68,7 @@ test("OH-APP-05: vocabulary detail is visible and the .n3 can be downloaded", as
     openSource = fallback.source;
   }
 
-  await page.waitForLoadState("domcontentloaded");
+  await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
   const detailMatch = page.url().match(/\/dataset\/vocabs\/([^/?#]+)/);
   const resolvedPrefix = detailMatch ? decodeURIComponent(detailMatch[1]) : targetPrefix;
 

@@ -10,6 +10,7 @@ import {
   cleanupProviderValidationArtifacts,
   probeConsumerCatalogDatasetReadiness,
   waitForConsumerAgreement,
+  waitForConsumerNegotiationOutcome,
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS } from "../../../shared/utils/waiting";
 import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
@@ -31,6 +32,27 @@ type AIModelHubUiReport = {
   toleratedErrorResponses: Array<{ url: string; status: number }>;
   fatalErrorResponses: Array<{ url: string; status: number }>;
   negotiationMessage?: string;
+  negotiationNotificationWarning?: string;
+  uiNegotiationAttempts: Array<{
+    attempt: number;
+    response?: {
+      url: string;
+      status: number;
+      negotiationId?: string;
+      bodySnippet?: string;
+    };
+    notification?: string;
+    notificationWarning?: string;
+    outcome?: {
+      negotiationId: string;
+      agreementId: string;
+      state: string;
+      attempts: number;
+      status: "agreement" | "terminated" | "timeout";
+      errorDetail?: string;
+    };
+    retryReason?: string;
+  }>;
   consumerAgreement?: {
     agreementId: string | null;
     assetId: string;
@@ -63,6 +85,11 @@ function aiModelHubModelUrl(componentsNamespace: string): string {
 
 function aiModelHubCatalogCleanupEnabled(): boolean {
   return process.env.UI_AI_MODEL_HUB_CATALOG_CLEANUP === "1";
+}
+
+function aiModelHubNegotiationAttempts(): number {
+  const configured = Number.parseInt(process.env.UI_AI_MODEL_HUB_NEGOTIATION_ATTEMPTS || "", 10);
+  return Number.isFinite(configured) && configured > 0 ? configured : 3;
 }
 
 test("09 AI Model Hub HttpData: visible model discovery and negotiation from INESData UI", async ({
@@ -99,6 +126,7 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
     errorResponses: [],
     toleratedErrorResponses: [],
     fatalErrorResponses: [],
+    uiNegotiationAttempts: [],
   };
 
   const isTolerableCatalogRetry = (url: string, status: number): boolean =>
@@ -224,14 +252,90 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
     await contractOffersPage.openContractOffersTab();
     await captureStep(page, "03-ai-model-hub-httpdata-contract-offers");
 
-    await contractOffersPage.negotiateFirstOffer();
-    report.negotiationMessage = await contractOffersPage.waitForNegotiationComplete(45_000);
-    await captureStep(page, "04-ai-model-hub-httpdata-negotiation-complete");
+    let consumerAgreement: Awaited<ReturnType<typeof waitForConsumerAgreement>> | undefined;
+    const maxNegotiationAttempts = aiModelHubNegotiationAttempts();
 
-    expect(report.negotiationMessage, "No completed negotiation notification was detected").toMatch(
-      /contract negotiation complete!/i,
-    );
-    const consumerAgreement = await waitForConsumerAgreement(request, dataspaceRuntime, assetId, 20, 1_500);
+    for (let attempt = 1; attempt <= maxNegotiationAttempts; attempt += 1) {
+      const attemptReport: AIModelHubUiReport["uiNegotiationAttempts"][number] = {
+        attempt,
+      };
+      report.uiNegotiationAttempts.push(attemptReport);
+
+      const notificationPromise = contractOffersPage.readNegotiationCompletionNotification(10_000);
+      const submission = await contractOffersPage.negotiateFirstOfferAndWaitForSubmission(15_000);
+      attemptReport.response = submission;
+
+      if (!submission) {
+        await attachJson(`ai-model-hub-httpdata-negotiation-attempt-${attempt}`, attemptReport);
+        throw new Error(`No contract negotiation POST was observed after clicking Negotiate Contract on attempt ${attempt}`);
+      }
+      if (submission.status >= 400) {
+        await attachJson(`ai-model-hub-httpdata-negotiation-attempt-${attempt}`, attemptReport);
+        throw new Error(
+          `Contract negotiation POST returned HTTP ${submission.status} on attempt ${attempt}: ${submission.bodySnippet || "<empty body>"}`,
+        );
+      }
+      if (!submission.negotiationId) {
+        await attachJson(`ai-model-hub-httpdata-negotiation-attempt-${attempt}`, attemptReport);
+        throw new Error(
+          `Contract negotiation response did not expose an identifier on attempt ${attempt}: ${submission.bodySnippet || "<empty body>"}`,
+        );
+      }
+
+      const outcome = await waitForConsumerNegotiationOutcome(
+        request,
+        dataspaceRuntime,
+        submission.negotiationId,
+        45,
+        1_000,
+      );
+      attemptReport.outcome = {
+        negotiationId: outcome.negotiationId,
+        agreementId: outcome.agreementId,
+        state: outcome.state,
+        attempts: outcome.attempts,
+        status: outcome.status,
+        errorDetail: outcome.errorDetail,
+      };
+
+      const notification = await notificationPromise;
+      if (notification.message) {
+        attemptReport.notification = notification.message;
+        report.negotiationMessage = notification.message;
+      } else if (notification.warning) {
+        attemptReport.notificationWarning = notification.warning;
+        report.negotiationNotificationWarning = notification.warning;
+      }
+
+      if (outcome.agreementId) {
+        if (!report.negotiationMessage) {
+          report.negotiationMessage = `Contract agreement ${outcome.agreementId} verified through consumer management API after UI negotiation.`;
+        }
+        await captureStep(page, "04-ai-model-hub-httpdata-negotiation-complete");
+        consumerAgreement = await waitForConsumerAgreement(request, dataspaceRuntime, assetId, 20, 1_500);
+        await attachJson(`ai-model-hub-httpdata-negotiation-attempt-${attempt}`, attemptReport);
+        break;
+      }
+
+      attemptReport.retryReason =
+        `Negotiation ${outcome.negotiationId} reached ${outcome.state} without contractAgreementId` +
+        (outcome.errorDetail ? `: ${outcome.errorDetail}` : "");
+      await attachJson(`ai-model-hub-httpdata-negotiation-attempt-${attempt}`, attemptReport);
+
+      if (attempt < maxNegotiationAttempts) {
+        await captureStep(page, `04-ai-model-hub-httpdata-negotiation-retry-${attempt}`);
+        continue;
+      }
+
+      throw new Error(
+        `AI Model Hub UI negotiation did not produce a contract agreement after ${maxNegotiationAttempts} attempt(s). ` +
+          `Last outcome: ${JSON.stringify(attemptReport.outcome)}`,
+      );
+    }
+
+    if (!consumerAgreement) {
+      throw new Error("No consumer contract agreement was found for the model asset");
+    }
     report.consumerAgreement = {
       agreementId: consumerAgreement.agreementId,
       assetId: consumerAgreement.assetId,

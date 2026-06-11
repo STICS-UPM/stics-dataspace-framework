@@ -26,6 +26,7 @@ from deployers.shared.lib.components import (
 from deployers.shared.lib.cluster_runtime import build_cluster_runtime
 from deployers.shared.lib import image_runtime
 from deployers.shared.lib import local_images
+from deployers.shared.lib.public_hostnames import resolved_common_service_hostnames
 from deployers.shared.lib.remote_k3s_images import remote_k3s_image_import_target, shell_join
 from deployers.shared.lib.topology import VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY, normalize_topology
 from deployers.infrastructure.lib.paths import shared_artifact_roots
@@ -404,6 +405,15 @@ class INESDataComponentsAdapter:
         except (TypeError, ValueError):
             return None
         return parsed if parsed > 0 else None
+
+    def _ontology_hub_versions_persistence_expected(self, deployer_config: dict) -> bool:
+        config = dict(deployer_config or {})
+        persistence_enabled = config.get("ONTOLOGY_HUB_VERSIONS_PERSISTENCE_ENABLED")
+        if persistence_enabled is None:
+            persistence_enabled = config.get("COMPONENTS_VERSIONS_PERSISTENCE_ENABLED")
+        if persistence_enabled is None and (self._is_vm_single_topology() or self._is_vm_distributed_topology()):
+            persistence_enabled = True
+        return self._parse_bool(persistence_enabled, default=False)
 
     @staticmethod
     def _strip_url_scheme(host_or_url: str) -> str:
@@ -1494,7 +1504,9 @@ class INESDataComponentsAdapter:
             "AI Model Hub source directory is not usable",
             root_cause=(
                 "Expected the AI Model Hub dashboard Dockerfile at "
-                "DataDashboard/Dockerfile inside the configured AIModelHub checkout. "
+                "DataDashboard/Dockerfile or "
+                "adapters/inesdata/sources/inesdata-connector-interface/docker/Dockerfile "
+                "inside the configured AIModelHub checkout. "
                 "Level 5 expects the canonical checkout at adapters/inesdata/sources/AIModelHub."
             ),
         )
@@ -1508,11 +1520,23 @@ class INESDataComponentsAdapter:
     @staticmethod
     def _ai_model_hub_dashboard_source_candidates(ai_model_hub_dir: str):
         return (
+            (
+                os.path.join(
+                    ai_model_hub_dir,
+                    "adapters",
+                    "inesdata",
+                    "sources",
+                    "inesdata-connector-interface",
+                ),
+                os.path.join("docker", "Dockerfile"),
+            ),
             (os.path.join(ai_model_hub_dir, "DataDashboard"), "Dockerfile"),
         )
 
     @staticmethod
     def _ai_model_hub_dashboard_dockerfile(dashboard_dir: str) -> str:
+        if os.path.isfile(os.path.join(dashboard_dir, "docker", "Dockerfile")):
+            return os.path.join("docker", "Dockerfile")
         return "Dockerfile"
 
     def _resolve_morph_kgv_source_dir(self, deployer_config: dict) -> str:
@@ -2771,6 +2795,198 @@ class INESDataComponentsAdapter:
             return self._connector_public_base_url(connector_id, config)
         return self._connector_external_base_url(connector_id, config, role=role)
 
+    @staticmethod
+    def _strip_url_suffix(url: str, suffix: str) -> str:
+        value = str(url or "").strip().rstrip("/")
+        normalized_suffix = str(suffix or "").strip().rstrip("/")
+        if normalized_suffix and value.endswith(normalized_suffix):
+            return value[: -len(normalized_suffix)].rstrip("/")
+        return value
+
+    @staticmethod
+    def _first_config_value(config: dict, *keys: str) -> str:
+        for key in keys:
+            value = str((config or {}).get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _ai_model_hub_keycloak_issuer(self, deployer_config: dict, ds_name: str) -> str:
+        config = dict(deployer_config or {})
+        explicit = self._first_config_value(
+            config,
+            "AI_MODEL_HUB_OAUTH2_ISSUER",
+            "AI_MODEL_HUB_KEYCLOAK_ISSUER",
+            "AI_MODEL_HUB_KEYCLOAK_URL",
+            "KEYCLOAK_FRONTEND_URL",
+            "KEYCLOAK_PUBLIC_URL",
+        )
+        if explicit:
+            base = self._to_public_url(explicit).rstrip("/")
+        else:
+            common_config = dict(config)
+            if not str(common_config.get("DOMAIN_BASE") or "").strip():
+                ds_domain = str(common_config.get("DS_DOMAIN_BASE") or "").strip()
+                if ds_domain:
+                    common_config["DOMAIN_BASE"] = ds_domain
+            hostnames = resolved_common_service_hostnames(common_config)
+            base = self._to_public_url(hostnames.get("keycloak_hostname") or "").rstrip("/")
+
+        if not base:
+            return ""
+        realm_path = f"/realms/{ds_name}"
+        if base.endswith(realm_path):
+            return base
+        return f"{base}{realm_path}"
+
+    def _ai_model_hub_portal_backend_url(self, deployer_config: dict) -> str:
+        config = dict(deployer_config or {})
+        return self._first_config_value(
+            config,
+            "AI_MODEL_HUB_STRAPI_URL",
+            "AI_MODEL_HUB_PORTAL_BACKEND_URL",
+            "PUBLIC_PORTAL_BACKEND_PUBLIC_URL",
+            "PUBLIC_PORTAL_BACKEND_URL",
+            "PUBLIC_PORTAL_PUBLIC_URL",
+        ).rstrip("/")
+
+    def _ai_model_hub_model_observer_proxy_target(
+        self,
+        deployer_config: dict,
+        *,
+        ds_name: str,
+        strapi_url: str = "",
+    ) -> str:
+        config = dict(deployer_config or {})
+        explicit = self._first_config_value(
+            config,
+            "AI_MODEL_HUB_MODEL_OBSERVER_PROXY_TARGET",
+            "MODEL_OBSERVER_PROXY_TARGET",
+        )
+        if explicit:
+            return explicit.rstrip("/")
+        if strapi_url:
+            return strapi_url.rstrip("/")
+
+        resolved_ds_name = str(ds_name or self._dataspace_name() or "").strip() or self._dataspace_name()
+        resolved_index = self._resolve_dataspace_index(
+            ds_name=resolved_ds_name,
+            deployer_config=config,
+        )
+        registration_namespace = str(
+            config.get(f"DS_{resolved_index}_REGISTRATION_NAMESPACE")
+            or config.get("REGISTRATION_NAMESPACE")
+            or config.get(f"DS_{resolved_index}_NAMESPACE")
+            or self._resolve_legacy_components_namespace(
+                ds_name=resolved_ds_name,
+                deployer_config=config,
+            )
+            or resolved_ds_name
+        ).strip()
+        service_name = f"{resolved_ds_name}-public-portal-backend" if resolved_ds_name else "public-portal-backend"
+        if registration_namespace:
+            return f"http://{service_name}.{registration_namespace}.svc:1337"
+        return f"http://{service_name}:1337"
+
+    def _ai_model_hub_inesdata_ui_env(self, *, ds_name=None, deployer_config=None) -> dict:
+        resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
+        resolved_ds_name = str(ds_name or self._dataspace_name() or "").strip() or self._dataspace_name()
+        connector_ids = self._resolve_dataspace_connector_ids(
+            ds_name=resolved_ds_name,
+            deployer_config=resolved_config,
+        )
+        connector_config = self._ai_model_hub_connector_config(
+            ds_name=resolved_ds_name,
+            deployer_config=resolved_config,
+        )
+
+        selected = next(
+            (entry for entry in connector_config if entry.get("connectorName") == "Provider"),
+            connector_config[0] if connector_config else {},
+        )
+        provider_id = connector_ids[0] if connector_ids else ""
+        management_url = str(selected.get("managementUrl") or "").rstrip("/")
+        default_url = str(selected.get("defaultUrl") or "").rstrip("/")
+        connector_base = self._strip_url_suffix(management_url, "/management")
+        if not connector_base:
+            connector_base = self._strip_url_suffix(default_url, "/api")
+
+        catalog_url = str(selected.get("catalogUrl") or "").rstrip("/")
+        if not catalog_url and management_url:
+            catalog_url = f"{management_url}/federatedcatalog"
+
+        shared_url = str(resolved_config.get("AI_MODEL_HUB_SHARED_URL") or "").strip().rstrip("/")
+        if not shared_url and connector_base:
+            shared_url = f"{connector_base}/shared"
+
+        strapi_url = self._ai_model_hub_portal_backend_url(resolved_config)
+        model_observer_proxy_target = self._ai_model_hub_model_observer_proxy_target(
+            resolved_config,
+            ds_name=resolved_ds_name,
+            strapi_url=strapi_url,
+        )
+        keycloak_issuer = self._ai_model_hub_keycloak_issuer(resolved_config, resolved_ds_name)
+        storage_account = str(
+            resolved_config.get("AI_MODEL_HUB_STORAGE_ACCOUNT")
+            or resolved_config.get("STORAGE_ACCOUNT")
+            or ""
+        ).strip()
+        if not storage_account and provider_id:
+            storage_account = f"{self._connector_short_name(provider_id, resolved_ds_name)}assets"
+
+        allowed_urls = []
+        for value in (
+            connector_base,
+            management_url,
+            default_url,
+            catalog_url,
+            shared_url,
+            strapi_url,
+            self._configured_component_public_url("ai-model-hub", resolved_config),
+        ):
+            normalized = str(value or "").strip().rstrip("/")
+            if normalized and normalized not in allowed_urls:
+                allowed_urls.append(normalized)
+
+        env = {
+            "MANAGEMENT_API_URL": management_url,
+            "STRAPI_URL": strapi_url,
+            "CATALOG_URL": catalog_url,
+            "SHARED_URL": shared_url,
+            "PARTICIPANT_ID": provider_id,
+            "STORAGE_ACCOUNT": storage_account,
+            "STORAGE_LINK_TEMPLATE": str(
+                resolved_config.get("AI_MODEL_HUB_STORAGE_LINK_TEMPLATE")
+                or resolved_config.get("STORAGE_LINK_TEMPLATE")
+                or "storageexplorer://v=1"
+            ),
+            "OAUTH2_ISSUER": keycloak_issuer,
+            "OAUTH2_REDIRECT_PATH": str(
+                resolved_config.get("AI_MODEL_HUB_OAUTH2_REDIRECT_PATH")
+                or "/inesdata-connector-interface"
+            ),
+            "OAUTH2_CLIENT_ID": str(
+                resolved_config.get("AI_MODEL_HUB_OAUTH2_CLIENT_ID")
+                or "dataspace-users"
+            ),
+            "OAUTH2_SCOPE": str(
+                resolved_config.get("AI_MODEL_HUB_OAUTH2_SCOPE")
+                or "openid profile email"
+            ),
+            "OAUTH2_RESPONSE_TYPE": str(
+                resolved_config.get("AI_MODEL_HUB_OAUTH2_RESPONSE_TYPE")
+                or "code"
+            ),
+            "OAUTH2_SHOW_DEBUG_INFO": str(
+                resolved_config.get("AI_MODEL_HUB_OAUTH2_SHOW_DEBUG_INFO")
+                or "true"
+            ).lower(),
+            "OAUTH2_ALLOWED_URLS": ",".join(allowed_urls),
+            "MODEL_OBSERVER_PROXY_TARGET": model_observer_proxy_target,
+        }
+
+        return {key: value for key, value in env.items() if value is not None}
+
     def _ai_model_hub_connector_config(self, *, ds_name=None, deployer_config=None) -> list[dict]:
         resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
         connector_ids = self._resolve_dataspace_connector_ids(
@@ -2864,7 +3080,7 @@ class INESDataComponentsAdapter:
             if persistence_enabled is not None:
                 versions = overrides.setdefault("versions", {})
                 persistence = versions.setdefault("persistence", {})
-                persistence["enabled"] = self._parse_bool(persistence_enabled, default=True)
+                persistence["enabled"] = self._ontology_hub_versions_persistence_expected(deployer_config)
                 persistence_size = str(
                     deployer_config.get("ONTOLOGY_HUB_VERSIONS_PERSISTENCE_SIZE")
                     or deployer_config.get("COMPONENTS_VERSIONS_PERSISTENCE_SIZE")
@@ -2918,6 +3134,12 @@ class INESDataComponentsAdapter:
             )
             if connector_config:
                 overrides.setdefault("config", {})["edcConnectorConfig"] = connector_config
+            overrides.setdefault("env", {}).update(
+                self._ai_model_hub_inesdata_ui_env(
+                    ds_name=self._dataspace_name(),
+                    deployer_config=deployer_config,
+                )
+            )
 
         if normalized == "semantic-virtualization":
             host = self._configured_component_host(normalized, deployer_config)

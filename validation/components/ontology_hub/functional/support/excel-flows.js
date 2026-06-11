@@ -233,9 +233,49 @@ function runtimeFromCreatedVocabulary(runtime, created = {}, overrides = {}) {
 }
 
 async function expectHealthyPage(page, label) {
+  const bodyReady = await waitForPageBodyOrTransientFailure(page, label);
+  if (!bodyReady) {
+    throw new Error(`${label} page is temporarily unavailable.`);
+  }
+
   const heading = normalizeText(await safeTextContent(page.locator("h1").first()));
   if (/404|500|oops!/i.test(heading)) {
     throw new Error(`${label} page failed to load: ${heading}`);
+  }
+}
+
+async function waitForDomContentLoaded(page, timeoutMs = navigationTimeoutMs) {
+  await page.waitForLoadState("domcontentloaded", { timeout: timeoutMs }).catch(() => {});
+}
+
+async function stopPageLoad(page) {
+  await page.evaluate(() => window.stop()).catch(() => {});
+}
+
+async function waitForPageBodyOrTransientFailure(page, label = "Ontology Hub page", timeoutMs = readyTimeoutMs) {
+  const body = page.locator("body").first();
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (await body.isVisible().catch(() => false)) {
+      return true;
+    }
+    if (await pageShowsTransientAvailabilityFailure(page)) {
+      return false;
+    }
+    await page.waitForTimeout(500);
+  }
+
+  return false;
+}
+
+async function gotoWithDomReady(page, url, options = {}) {
+  const timeoutMs = options.timeout || navigationTimeoutMs;
+  await page.goto(url, { waitUntil: "commit", timeout: timeoutMs });
+  await waitForDomContentLoaded(page, Math.min(timeoutMs, 5000));
+  const bodyReady = await waitForPageBodyOrTransientFailure(page, url);
+  if (!bodyReady) {
+    throw new Error(`${url} is temporarily unavailable.`);
   }
 }
 
@@ -259,6 +299,29 @@ async function waitForEditionShellOrTransientFailure(page) {
   return true;
 }
 
+async function waitForLoginFormOrTransientFailure(page, email) {
+  const emailInput = page.locator("input[name='email'], input[type='email'], input[placeholder='Email']").first();
+  const passwordInput = page.locator("input[name='password'], input[type='password'], input[placeholder='Password']").first();
+  const submitButton = page.getByRole("button", { name: /log in it!?/i }).first();
+  const deadline = Date.now() + readyTimeoutMs;
+
+  while (Date.now() < deadline) {
+    const formReady =
+      (await emailInput.isVisible().catch(() => false)) &&
+      (await passwordInput.isVisible().catch(() => false)) &&
+      (await submitButton.isVisible().catch(() => false));
+    if (formReady) {
+      return { emailInput, passwordInput, submitButton };
+    }
+    if (await pageShowsTransientAvailabilityFailure(page)) {
+      return null;
+    }
+    await page.waitForTimeout(500);
+  }
+
+  return null;
+}
+
 async function signInToEdition(page, runtime, credentials = {}) {
   const email = normalizeText(credentials.email || runtime.adminEmail);
   const password = normalizeText(credentials.password || runtime.adminPassword);
@@ -278,10 +341,28 @@ async function signInToEdition(page, runtime, credentials = {}) {
         waitUntil: "commit",
         timeout: navigationTimeoutMs,
       });
-      await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
+      await waitForDomContentLoaded(page, Math.min(navigationTimeoutMs, 5000));
+      const bodyReady = await waitForPageBodyOrTransientFailure(
+        page,
+        "Ontology Hub edition",
+        Math.min(readyTimeoutMs, 5000),
+      );
+      if (!bodyReady) {
+        lastError = new Error(`Ontology Hub edition is temporarily unavailable for '${email}'.`);
+        await stopPageLoad(page);
+        await page.waitForTimeout(1000);
+        continue;
+      }
       if (/\/edition\/login\/?$/i.test(page.url())) {
-        await fillMarked(page.getByPlaceholder("Email"), email);
-        await fillMarked(page.getByPlaceholder("Password"), password);
+        const loginForm = await waitForLoginFormOrTransientFailure(page, email);
+        if (!loginForm) {
+          lastError = new Error(`Ontology Hub login is temporarily unavailable for '${email}'.`);
+          await stopPageLoad(page);
+          await page.waitForTimeout(1000);
+          continue;
+        }
+        await fillMarked(loginForm.emailInput, email);
+        await fillMarked(loginForm.passwordInput, password);
         const sessionResponse = page.waitForResponse(
           (response) => {
             const request = response.request();
@@ -293,9 +374,8 @@ async function signInToEdition(page, runtime, credentials = {}) {
           },
           { timeout: navigationTimeoutMs },
         );
-        const submitButton = page.getByRole("button", { name: /log in it!?/i });
-        await highlightMarked(submitButton);
-        await submitButton.evaluate((button) => button.click());
+        await highlightMarked(loginForm.submitButton);
+        await loginForm.submitButton.evaluate((button) => button.click());
         const response = await sessionResponse;
         if (![200, 302, 303].includes(response.status())) {
           throw new Error(`Ontology Hub login returned HTTP ${response.status()} for '${email}'.`);
@@ -304,7 +384,18 @@ async function signInToEdition(page, runtime, credentials = {}) {
           waitUntil: "commit",
           timeout: navigationTimeoutMs,
         });
-        await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
+        await waitForDomContentLoaded(page, Math.min(navigationTimeoutMs, 5000));
+        const editionBodyReady = await waitForPageBodyOrTransientFailure(
+          page,
+          "Ontology Hub edition",
+          Math.min(readyTimeoutMs, 5000),
+        );
+        if (!editionBodyReady) {
+          lastError = new Error(`Ontology Hub edition is temporarily unavailable for '${email}'.`);
+          await stopPageLoad(page);
+          await page.waitForTimeout(1000);
+          continue;
+        }
       }
 
       const invalidCredentials = normalizeText(await safeTextContent(page.locator("#formErrors")));
@@ -327,6 +418,7 @@ async function signInToEdition(page, runtime, credentials = {}) {
       if ((!pageLooksTransient && !errorLooksTransient) || Date.now() >= deadline) {
         throw error;
       }
+      await stopPageLoad(page);
       await page.waitForTimeout(5000);
     }
   }
@@ -833,17 +925,17 @@ async function reuseExistingPublicVocabulary(page, runtime, method) {
 
 async function createAgent(page, runtime, agent) {
   await gotoEdition(page, runtime);
-  await page.goto(`${runtime.baseUrl}/edition/agents/new`, { waitUntil: "domcontentloaded" });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/agents/new`);
   await expectHealthyPage(page, "Create agent");
 
   await fillMarked(page.locator("input[name='name']"), agent.name);
   await selectOptionMarked(page.locator("select[name='type']"), agent.type || "person");
   await fillMarked(page.locator("input[name='prefUri']"), agent.prefUri);
   await clickMarked(page.locator("input[type='submit'][value='Save']"));
-  await page.waitForLoadState("domcontentloaded");
+  await waitForDomContentLoaded(page);
 
   const agentDetailUrl = `${runtime.baseUrl}/dataset/agents/${encodeURIComponent(agent.name)}`;
-  await page.goto(agentDetailUrl, { waitUntil: "domcontentloaded" });
+  await gotoWithDomReady(page, agentDetailUrl);
   await expectHealthyPage(page, "Agent detail");
   await page.getByRole("heading", { level: 1, name: new RegExp(escapeRegExp(agent.name), "i") }).waitFor({
     state: "visible",
@@ -858,7 +950,7 @@ async function createAgent(page, runtime, agent) {
 
 async function createUserForAgent(page, runtime, user) {
   await gotoEdition(page, runtime);
-  await page.goto(`${runtime.baseUrl}/edition/signup`, { waitUntil: "domcontentloaded" });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/signup`);
   await expectHealthyPage(page, "Signup");
 
   await fillMarked(page.locator("#userNameAgent"), user.agentName);
@@ -871,14 +963,14 @@ async function createUserForAgent(page, runtime, user) {
   await fillMarked(page.locator("input[name='password']"), user.password);
   await fillMarked(page.locator("input[name='password_confirm']"), user.password);
   await clickMarked(page.locator("input[type='submit'][value='Submit']"));
-  await page.waitForLoadState("domcontentloaded");
+  await waitForDomContentLoaded(page);
 
   const formErrors = normalizeText(await safeTextContent(page.locator("#formErrors")));
   if (formErrors) {
     throw new Error(`Ontology Hub rejected the user signup flow: ${formErrors}`);
   }
 
-  await page.goto(`${runtime.baseUrl}/edition/users`, { waitUntil: "domcontentloaded" });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/users`);
   const usersRow = page.locator(".SearchBoxperson").filter({ hasText: user.email }).first();
   if (await usersRow.isVisible().catch(() => false)) {
     return user;
@@ -889,7 +981,7 @@ async function createUserForAgent(page, runtime, user) {
     return user;
   }
 
-  await page.goto(`${runtime.baseUrl}/edition`, { waitUntil: "domcontentloaded" });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition`);
   await page.getByText(user.email, { exact: false }).first().waitFor({ state: "visible", timeout: 5000 });
 
   return user;
@@ -919,7 +1011,7 @@ async function reviewPendingUser(page, runtime, user) {
 
 async function promoteUserToAdmin(page, runtime, user) {
   await gotoEdition(page, runtime);
-  await page.goto(`${runtime.baseUrl}/edition/users`, { waitUntil: "domcontentloaded" });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/users`);
   try {
     await expectHealthyPage(page, "Users administration");
   } catch (error) {
@@ -941,7 +1033,7 @@ async function promoteUserToAdmin(page, runtime, user) {
     throw new Error(`Could not find the Admin promotion control for '${user.email}'.`);
   }
   await clickMarked(promoteButton);
-  await page.waitForLoadState("domcontentloaded");
+  await waitForDomContentLoaded(page);
   const deadline = Date.now() + Math.max(readyTimeoutMs * 2, 30000);
 
   while (Date.now() < deadline) {
@@ -955,7 +1047,7 @@ async function promoteUserToAdmin(page, runtime, user) {
 
     await page.waitForTimeout(3000);
     await signInToEdition(page, runtime);
-    await page.goto(`${runtime.baseUrl}/edition/users`, { waitUntil: "domcontentloaded" });
+    await gotoWithDomReady(page, `${runtime.baseUrl}/edition/users`);
   }
 
   await page
@@ -979,7 +1071,7 @@ async function assertCreateUserControl(page, visible) {
 
 async function deleteUserByEmail(page, runtime, email) {
   await signInToEdition(page, runtime);
-  await page.goto(`${runtime.baseUrl}/edition/users`, { waitUntil: "domcontentloaded" });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/users`);
   await expectHealthyPage(page, "Users administration");
 
   const row = page
@@ -992,8 +1084,8 @@ async function deleteUserByEmail(page, runtime, email) {
 
   await clickMarked(row.locator("img.removeUser, .removeUser").first());
   await clickMarked(page.getByRole("button", { name: "Confirm Deletion", exact: true }));
-  await page.waitForLoadState("domcontentloaded");
-  await page.goto(`${runtime.baseUrl}/edition/users`, { waitUntil: "domcontentloaded" });
+  await waitForDomContentLoaded(page);
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/users`);
   await expectHealthyPage(page, "Users administration after user deletion");
 
   const remaining = page
@@ -1009,18 +1101,14 @@ async function deleteUserByEmail(page, runtime, email) {
 
 async function editAgentFromPublicDetail(page, runtime, agentName, newAgentName) {
   await signInToEdition(page, runtime);
-  await page.goto(`${runtime.baseUrl}/dataset/agents/${encodeURIComponent(agentName)}`, {
-    waitUntil: "domcontentloaded",
-  });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/dataset/agents/${encodeURIComponent(agentName)}`);
   await expectHealthyPage(page, "Agent detail");
   await clickMarked(page.locator("a[href*='/edition/agents/'] img[src*='edit_grey']"));
-  await page.waitForLoadState("domcontentloaded");
+  await waitForDomContentLoaded(page);
   await fillMarked(page.locator("input[name='name']"), newAgentName);
   await clickMarked(page.locator("input[type='submit'][value='Save']"));
-  await page.waitForLoadState("domcontentloaded");
-  await page.goto(`${runtime.baseUrl}/dataset/agents/${encodeURIComponent(newAgentName)}`, {
-    waitUntil: "domcontentloaded",
-  });
+  await waitForDomContentLoaded(page);
+  await gotoWithDomReady(page, `${runtime.baseUrl}/dataset/agents/${encodeURIComponent(newAgentName)}`);
   await page.getByRole("heading", { level: 1, name: new RegExp(escapeRegExp(newAgentName), "i") }).waitFor({
     state: "visible",
     timeout: 5000,
@@ -1029,14 +1117,12 @@ async function editAgentFromPublicDetail(page, runtime, agentName, newAgentName)
 
 async function deleteAgentFromPublicDetail(page, runtime, agentName) {
   await signInToEdition(page, runtime);
-  await page.goto(`${runtime.baseUrl}/dataset/agents/${encodeURIComponent(agentName)}`, {
-    waitUntil: "domcontentloaded",
-  });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/dataset/agents/${encodeURIComponent(agentName)}`);
   await expectHealthyPage(page, "Agent detail");
   await clickMarked(page.locator("#agentDelete"));
   await clickMarked(page.getByRole("button", { name: "Confirm Deletion", exact: true }));
-  await page.waitForLoadState("domcontentloaded");
-  await page.goto(`${runtime.baseUrl}/dataset/agents`, { waitUntil: "domcontentloaded" });
+  await waitForDomContentLoaded(page);
+  await gotoWithDomReady(page, `${runtime.baseUrl}/dataset/agents`);
   await fillMarked(page.locator("#searchInput"), agentName);
   await page.waitForTimeout(1000);
   const suggestions = page.locator("ul.ui-autocomplete li").filter({ hasText: new RegExp(escapeRegExp(agentName), "i") });
@@ -1047,12 +1133,12 @@ async function deleteAgentFromPublicDetail(page, runtime, agentName) {
 
 async function createTag(page, runtime, label) {
   await signInToEdition(page, runtime);
-  await page.goto(`${runtime.baseUrl}/edition/tags/new`, { waitUntil: "domcontentloaded" });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/tags/new`);
   await expectHealthyPage(page, "Create tag");
   await fillMarked(page.locator("input[name='label']"), label);
   await clickMarked(page.locator("input[type='submit'][value='Save']"));
-  await page.waitForLoadState("domcontentloaded");
-  await page.goto(`${runtime.baseUrl}/edition/tags`, { waitUntil: "domcontentloaded" });
+  await waitForDomContentLoaded(page);
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/tags`);
   await page.locator("#SearchGrid .SearchBoxtag").filter({ hasText: label }).first().waitFor({
     state: "visible",
     timeout: 5000,
@@ -1061,15 +1147,15 @@ async function createTag(page, runtime, label) {
 
 async function editTag(page, runtime, currentLabel, newLabel) {
   await signInToEdition(page, runtime);
-  await page.goto(`${runtime.baseUrl}/edition/tags`, { waitUntil: "domcontentloaded" });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/tags`);
   const row = page.locator("#SearchGrid .SearchBoxtag").filter({ hasText: currentLabel }).first();
   await row.waitFor({ state: "visible", timeout: 5000 });
   await clickMarked(row.locator("form[name='formEdit'] img"));
-  await page.waitForLoadState("domcontentloaded");
+  await waitForDomContentLoaded(page);
   await fillMarked(page.locator("input[name='label']"), newLabel);
   await clickMarked(page.locator("input[type='submit'][value='Save']"));
-  await page.waitForLoadState("domcontentloaded");
-  await page.goto(`${runtime.baseUrl}/edition/tags`, { waitUntil: "domcontentloaded" });
+  await waitForDomContentLoaded(page);
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/tags`);
   await page.locator("#SearchGrid .SearchBoxtag").filter({ hasText: newLabel }).first().waitFor({
     state: "visible",
     timeout: 5000,
@@ -1078,13 +1164,13 @@ async function editTag(page, runtime, currentLabel, newLabel) {
 
 async function deleteTag(page, runtime, label) {
   await signInToEdition(page, runtime);
-  await page.goto(`${runtime.baseUrl}/edition/tags`, { waitUntil: "domcontentloaded" });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/tags`);
   const row = page.locator("#SearchGrid .SearchBoxtag").filter({ hasText: label }).first();
   await row.waitFor({ state: "visible", timeout: 5000 });
   await clickMarked(row.locator(".removeTag"));
   await clickMarked(page.getByRole("button", { name: "Confirm Deletion", exact: true }));
-  await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
-  await page.goto(`${runtime.baseUrl}/edition/tags`, { waitUntil: "domcontentloaded" });
+  await waitForDomContentLoaded(page);
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/tags`);
   const remaining = page.locator("#SearchGrid .SearchBoxtag").filter({ hasText: label });
   if ((await remaining.count()) > 0 && (await remaining.first().isVisible().catch(() => false))) {
     throw new Error(`Tag '${label}' is still visible after deletion.`);
@@ -1186,9 +1272,7 @@ async function openVocabularyDetail(page, runtime, prefix, title = "") {
 
 async function openVersionsPage(page, runtime, prefix) {
   await gotoEdition(page, runtime);
-  await page.goto(`${runtime.baseUrl}/edition/vocabs/${encodeURIComponent(prefix)}/versions`, {
-    waitUntil: "domcontentloaded",
-  });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/edition/vocabs/${encodeURIComponent(prefix)}/versions`);
   await expectHealthyPage(page, "Vocabulary versions");
   await page
     .locator(".editionIndexBoxHeader .title")
@@ -1205,7 +1289,7 @@ async function createVersion(page, version, filePath, options = {}) {
   await fillMarked(dialog.locator("tr").filter({ hasText: /Version Label/i }).locator("input, textarea").first(), version.name);
   await setInputFilesMarked(dialog.locator("input[type='file'], input[name='file']").first(), filePath);
   await dialog.locator("form#dialogNewVersionForm").evaluate((form) => form.submit());
-  await page.waitForLoadState("domcontentloaded");
+  await waitForDomContentLoaded(page);
 
   const versionRow = page.locator(".editionBoxSugg").filter({
     hasText: new RegExp(`${escapeRegExp(version.issued)}|${escapeRegExp(version.name)}`, "i"),
@@ -1263,10 +1347,7 @@ async function waitForRecoveredVersionRow(page, runtime, prefix, updatedVersion,
       lastSignal = error && error.message ? error.message : String(error);
     });
     try {
-      await page.goto(versionsUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: navigationTimeoutMs,
-      });
+      await gotoWithDomReady(page, versionsUrl);
     } catch (error) {
       lastSignal = error && error.message ? error.message : String(error);
       continue;
@@ -1319,7 +1400,7 @@ async function editVersion(page, runtime, prefix, currentVersionName, updatedVer
     updatedVersion.name,
   );
   await dialog.locator("form#dialogEditVersionForm").evaluate((form) => form.submit());
-  await page.waitForLoadState("domcontentloaded");
+  await waitForDomContentLoaded(page);
 
   const updatedRow = page.locator(".editionBoxSugg").filter({
     hasText: versionRowPattern(updatedVersion),
@@ -1374,7 +1455,7 @@ async function deleteVersion(page, versionName) {
   await versionRow.waitFor({ state: "visible", timeout: 5000 });
   await clickMarked(versionRow.locator(".imageVersionActionRemove"));
   await clickMarked(page.getByRole("button", { name: "Confirm Deletion", exact: true }));
-  await page.waitForLoadState("domcontentloaded");
+  await waitForDomContentLoaded(page);
   const remaining = page.locator(".editionBoxSugg").filter({ hasText: versionName });
   if ((await remaining.count()) > 0 && (await remaining.first().isVisible().catch(() => false))) {
     throw new Error(`Version '${versionName}' is still visible after deletion.`);
@@ -1385,18 +1466,14 @@ async function deleteVocabulary(page, runtime, prefix, options = {}) {
   await signInToEdition(page, runtime, {
     recoveryTimeoutMs: options.recoveryTimeoutMs,
   });
-  await page.goto(`${runtime.baseUrl}/dataset/vocabs/${encodeURIComponent(prefix)}`, {
-    waitUntil: "domcontentloaded",
-  });
+  await gotoWithDomReady(page, `${runtime.baseUrl}/dataset/vocabs/${encodeURIComponent(prefix)}`);
   await expectHealthyPage(page, "Vocabulary detail");
   await clickMarked(page.locator("#vocabDelete"));
   await clickMarked(page.getByRole("button", { name: "Confirm Deletion", exact: true }));
-  await page.waitForLoadState("domcontentloaded");
+  await waitForDomContentLoaded(page);
   const deadline = Date.now() + 60000;
   while (true) {
-    await page.goto(`${runtime.baseUrl}/dataset/vocabs?q=${encodeURIComponent(prefix)}`, {
-      waitUntil: "domcontentloaded",
-    });
+    await gotoWithDomReady(page, `${runtime.baseUrl}/dataset/vocabs?q=${encodeURIComponent(prefix)}`);
     const remaining = page.locator("#SearchGrid").getByText(prefix, { exact: false });
     const stillVisible = (await remaining.count()) > 0 && (await remaining.first().isVisible().catch(() => false));
     if (!stillVisible) {

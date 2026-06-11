@@ -26,6 +26,13 @@ from deployers.shared.lib import image_runtime
 from deployers.shared.lib.topology import VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY, normalize_topology
 
 
+AI_MODEL_HUB_PUBLIC_CONFIG_PATHS = (
+    "inesdata-connector-interface/assets/config/app.config.json",
+    "assets/config/app.config.json",
+    "config/app-config.json",
+)
+
+
 class SharedComponentsAdapter(INESDataComponentsAdapter):
     """Neutral facade for Level 5 component workflows.
 
@@ -747,19 +754,24 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             resolved_release_name,
             resolved_config,
         )
+        prepared_local_image_refs = []
 
         if normalized == "ai-model-hub" and not built_local_image:
-            built_local_image = self._ensure_vm_single_ai_model_hub_image_before_rollout(
+            prepared_image_ref = self._ensure_vm_single_ai_model_hub_image_before_rollout(
                 resolved_release_name,
                 resolved_namespace,
                 resolved_config,
             )
+            if prepared_image_ref:
+                prepared_local_image_refs.append(prepared_image_ref)
+            built_local_image = bool(prepared_image_ref)
 
         if normalized in {"ontology-hub", "ai-model-hub", "semantic-virtualization"}:
             rendered_images_imported = self._ensure_vm_single_local_images_before_rollout(
                 rollout_targets,
                 resolved_namespace,
                 resolved_config,
+                prepared_image_refs=prepared_local_image_refs,
             )
             built_local_image = bool(built_local_image or rendered_images_imported)
 
@@ -813,6 +825,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             "waited_for_rollout": waited_for_rollout,
         }
         public_root_aliases = []
+        versions_persistence = None
         if normalized == "ontology-hub":
             if deployer_config is not None:
                 resolved_config = dict(deployer_config or {})
@@ -826,13 +839,85 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 resolved_namespace,
                 resolved_config,
             )
+            versions_persistence = self._verify_ontology_hub_versions_persistence(
+                resolved_release_name,
+                resolved_namespace,
+                resolved_config,
+            )
         if public_root_aliases:
             result["public_root_aliases"] = public_root_aliases
+        if versions_persistence:
+            result["versions_persistence"] = versions_persistence
         if model_server:
             result["model_server"] = model_server
         return result
 
-    def _ensure_vm_single_local_images_before_rollout(self, rollout_targets, namespace, deployer_config):
+    def _verify_ontology_hub_versions_persistence(self, release_name, namespace, deployer_config):
+        if not self._ontology_hub_versions_persistence_expected(deployer_config):
+            return {
+                "expected": False,
+                "verified": False,
+                "reason": "disabled-by-configuration",
+            }
+
+        resolved_release_name = str(release_name or "").strip()
+        resolved_namespace = str(namespace or "").strip()
+        if not resolved_release_name or not resolved_namespace:
+            self._fail(
+                "Ontology Hub versions persistence verification failed",
+                root_cause="release name or namespace is empty",
+            )
+
+        release_q = shlex.quote(resolved_release_name)
+        namespace_q = shlex.quote(resolved_namespace)
+        claim_name = (
+            self.run_silent(
+                f"kubectl get deployment {release_q} -n {namespace_q} "
+                "-o jsonpath='{.spec.template.spec.volumes[?(@.name==\"versions\")].persistentVolumeClaim.claimName}'"
+            )
+            or ""
+        ).strip()
+        if not claim_name:
+            self._fail(
+                "Ontology Hub versions persistence is required but the deployment does not mount a PVC",
+                root_cause=(
+                    f"deployment/{resolved_release_name} in namespace {resolved_namespace} "
+                    "has no persistentVolumeClaim for volume 'versions'"
+                ),
+            )
+
+        claim_q = shlex.quote(claim_name)
+        phase = (
+            self.run_silent(
+                f"kubectl get pvc {claim_q} -n {namespace_q} -o jsonpath='{{.status.phase}}'"
+            )
+            or ""
+        ).strip()
+        if phase != "Bound":
+            self._fail(
+                "Ontology Hub versions PVC is not ready",
+                root_cause=(
+                    f"pvc/{claim_name} in namespace {resolved_namespace} has phase "
+                    f"'{phase or 'not-found'}'"
+                ),
+            )
+
+        print(f"Verified Ontology Hub versions persistence: pvc/{claim_name} is Bound.")
+        return {
+            "expected": True,
+            "verified": True,
+            "claim_name": claim_name,
+            "phase": phase,
+        }
+
+    def _ensure_vm_single_local_images_before_rollout(
+        self,
+        rollout_targets,
+        namespace,
+        deployer_config,
+        *,
+        prepared_image_refs=None,
+    ):
         if not self._is_vm_single_topology():
             return False
 
@@ -869,6 +954,11 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             return False
 
         auto_build_enabled = self._level5_auto_build_local_images(resolved_config)
+        prepared_images = {
+            str(image_ref or "").strip()
+            for image_ref in list(prepared_image_refs or [])
+            if str(image_ref or "").strip()
+        }
         print(
             "Ensuring vm-single local component image(s) are available in k3s before rollout: "
             f"{', '.join(images_to_import)}"
@@ -880,11 +970,12 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             )
             for image_ref in images_to_import:
                 self._ensure_k3s_local_image_import_supported(image_ref, resolved_config)
-                self._build_component_local_image_for_rollout(
-                    image_labels.get(image_ref, ""),
-                    image_ref,
-                    resolved_config,
-                )
+                if image_ref not in prepared_images:
+                    self._build_component_local_image_for_rollout(
+                        image_labels.get(image_ref, ""),
+                        image_ref,
+                        resolved_config,
+                    )
             profile = (
                 resolved_config.get("MINIKUBE_PROFILE")
                 or getattr(self.config, "MINIKUBE_PROFILE", "minikube")
@@ -990,7 +1081,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         self._ensure_k3s_local_image_import_supported(image_ref, resolved_config)
         self._build_ai_model_hub_image_on_host(image_ref, resolved_config)
         self._load_image_into_cluster_runtime(cluster_type, profile, image_ref, resolved_config)
-        return True
+        return image_ref
 
     def _component_runtime_rollout_targets(self, normalized_component, release_name, deployer_config=None):
         normalized = self._normalize_component_key(normalized_component)
@@ -2170,6 +2261,37 @@ def combined_models() -> Dict[str, Any]:
             detail = f"{detail} -> {location}"
         return status_code in set(expected_statuses), detail
 
+    def _join_public_url(self, public_base_url, relative_path):
+        normalized_base_url = self._to_public_url(public_base_url).rstrip("/")
+        normalized_relative_path = str(relative_path or "").strip().lstrip("/")
+        if not normalized_relative_path:
+            return normalized_base_url
+        return f"{normalized_base_url}/{normalized_relative_path}"
+
+    def _probe_ai_model_hub_public_config(self, public_base_url):
+        attempts = []
+        for config_path in AI_MODEL_HUB_PUBLIC_CONFIG_PATHS:
+            config_url = self._join_public_url(public_base_url, config_path)
+            ready, detail = self._probe_component_public_url(
+                config_url,
+                expected_statuses={200},
+                follow_redirects=True,
+            )
+            attempts.append(
+                {
+                    "path": f"/{config_path}",
+                    "url": config_url,
+                    "detail": detail,
+                }
+            )
+            if ready:
+                return True, detail, config_url, attempts
+
+        attempt_details = "; ".join(
+            f"{attempt['path']}={attempt['detail']}" for attempt in attempts
+        )
+        return False, attempt_details or "not probed", "", attempts
+
     def verify_component_publication(
         self,
         component,
@@ -2215,9 +2337,10 @@ def combined_models() -> Dict[str, Any]:
             edition_detail = "not probed"
         else:
             root_url = public_base_url
-            config_url = f"{public_base_url}/config/app-config.json"
+            config_url = ""
             root_detail = "not probed"
             config_detail = "not probed"
+            config_attempts = []
         while True:
             if normalized == "ontology-hub":
                 dataset_ready, dataset_detail = self._probe_component_public_url(
@@ -2244,11 +2367,12 @@ def combined_models() -> Dict[str, Any]:
                     expected_statuses={200},
                     follow_redirects=True,
                 )
-                config_ready, config_detail = self._probe_component_public_url(
+                (
+                    config_ready,
+                    config_detail,
                     config_url,
-                    expected_statuses={200},
-                    follow_redirects=True,
-                )
+                    config_attempts,
+                ) = self._probe_ai_model_hub_public_config(public_base_url)
                 if root_ready and config_ready:
                     return {
                         "component": normalized,
@@ -2258,6 +2382,7 @@ def combined_models() -> Dict[str, Any]:
                         "config_url": config_url,
                         "root_detail": root_detail,
                         "config_detail": config_detail,
+                        "config_attempts": config_attempts,
                     }
             if time.monotonic() >= deadline:
                 break
@@ -2271,7 +2396,7 @@ def combined_models() -> Dict[str, Any]:
 
         self._fail(
             "AI Model Hub publication gate failed: public routes are not ready after deployment",
-            root_cause=f"/={root_detail}; /config/app-config.json={config_detail}",
+            root_cause=f"/={root_detail}; config={config_detail}",
         )
 
     def deploy_shared_component_runtime(

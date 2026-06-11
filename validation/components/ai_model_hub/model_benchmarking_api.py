@@ -15,6 +15,10 @@ from validation.components.ai_model_hub.model_execution_api import (
     FLARES_DATASET_DIR,
     load_flares_dataset,
 )
+from validation.components.ai_model_hub.model_server_policy import (
+    model_server_execution_labels,
+    model_server_validation_state,
+)
 
 
 COMPONENT_KEY = "ai-model-hub"
@@ -360,14 +364,24 @@ def run_ai_model_hub_model_benchmarking_validation(
     experiment_dir: str | None = None,
     models: list[dict[str, Any]] | None = None,
     model_server_base_url: str | None = None,
+    model_server_mode: str | None = None,
 ) -> dict[str, Any]:
     started_at = datetime.now().isoformat()
     dataset = load_flares_dataset(source_dir or FLARES_DATASET_DIR)
     benchmark_rows = build_flares_benchmark_rows(dataset)
     selected_models = [dict(model) for model in (models or DEFAULT_MODELS)]
     resolved_model_server_base_url = _model_server_base_url(model_server_base_url)
-    execution_mode = "api_model_server" if resolved_model_server_base_url else "api_fixture"
-    coverage_status = "automated_real_model_server" if resolved_model_server_base_url else "automated_fixture_fallback"
+    policy_config: dict[str, Any] = {}
+    if resolved_model_server_base_url:
+        policy_config["AI_MODEL_HUB_MODEL_SERVER_BASE_URL"] = resolved_model_server_base_url
+    if model_server_mode:
+        policy_config["AI_MODEL_HUB_MODEL_SERVER_MODE"] = model_server_mode
+    model_server_state = model_server_validation_state(policy_config)
+    if resolved_model_server_base_url:
+        execution_mode, coverage_status = model_server_execution_labels(str(model_server_state.get("mode") or ""))
+    else:
+        execution_mode = "api_fixture"
+        coverage_status = "automated_fixture_fallback"
     executions_by_model = {
         str(model["asset_id"]): [
             _execute_model(model, row, row_index, model_server_base_url=resolved_model_server_base_url)
@@ -387,6 +401,7 @@ def run_ai_model_hub_model_benchmarking_validation(
         "row_count": len(benchmark_rows),
         "mapping": BENCHMARK_MAPPING,
         "model_server_base_url": resolved_model_server_base_url,
+        "model_server_mode": model_server_state.get("mode"),
         "expected_outputs_source": dataset.get("expected_outputs_source"),
         "class_distribution": ((dataset.get("expected_outputs") or {}).get("subtask2_trial_sample") or {}).get(
             "classDistribution"
@@ -407,8 +422,6 @@ def run_ai_model_hub_model_benchmarking_validation(
         selection_assertions.append("Selected model asset identifiers must be unique")
 
     execution_assertions: list[str] = []
-    if not resolved_model_server_base_url:
-        execution_assertions.append("AI Model Hub model-server URL is required to execute real FLARES models")
     expected_execution_count = len(selected_models) * len(benchmark_rows)
     actual_execution_count = sum(len(executions) for executions in executions_by_model.values())
     if actual_execution_count != expected_execution_count:
@@ -519,20 +532,29 @@ def run_ai_model_hub_model_benchmarking_validation(
         "dataset": dataset_summary,
         "selected_models": selected_models,
         "model_server_base_url": resolved_model_server_base_url,
+        "model_server": {
+            "enabled": bool(model_server_state.get("enabled")) if resolved_model_server_base_url else False,
+            "mode": model_server_state.get("mode"),
+            "configured_mode": model_server_state.get("configured_mode"),
+            "coverage_status": coverage_status,
+            "execution_mode": execution_mode,
+        },
         "executions_by_model": executions_by_model,
         "metrics": ranked_metrics,
         "visualization_data": visualization_data,
         "executed_cases": executed_cases,
         "evidence_index": [],
         "artifacts": {},
-        "limitations": (
-            [
-                "This run did not receive an AI Model Hub model-server URL; the suite kept fixture evidence explicit and failed the real-execution case.",
-            ]
-            if not resolved_model_server_base_url
-            else []
-        ),
+        "limitations": [],
     }
+    if not resolved_model_server_base_url:
+        result["limitations"].append(
+            "This run did not receive an AI Model Hub model-server URL; the suite used deterministic fixture fallback evidence instead of real FLARES model-server calls."
+        )
+    elif model_server_state.get("mode") == "mock":
+        result["limitations"].append(
+            "The AI Model Hub model-server endpoint was configured in mock mode; evidence covers framework integration with deterministic responses, not production model quality."
+        )
 
     component_dir = _component_dir(experiment_dir)
     if component_dir:

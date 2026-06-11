@@ -136,6 +136,7 @@ class KafkaEdcValidationSuite:
             "stabilization_group_wait_seconds": "KAFKA_EDC_STABILIZATION_GROUP_WAIT_SECONDS",
             "stabilization_probe_timeout_seconds": "KAFKA_EDC_STABILIZATION_PROBE_TIMEOUT_SECONDS",
             "kubernetes_exec_timeout_seconds": "KAFKA_EDC_KUBERNETES_EXEC_TIMEOUT_SECONDS",
+            "kubernetes_exec_bootstrap_servers": "KAFKA_EDC_KUBERNETES_EXEC_BOOTSTRAP_SERVERS",
             "kubernetes_exec_use_topic_offsets": "KAFKA_EDC_KUBERNETES_EXEC_USE_TOPIC_OFFSETS",
             "kubernetes_exec_scan_max_messages": "KAFKA_EDC_KUBERNETES_EXEC_SCAN_MAX_MESSAGES",
             "pair_attempts": "KAFKA_EDC_PAIR_ATTEMPTS",
@@ -820,6 +821,15 @@ class KafkaEdcValidationSuite:
         service_name = str((runtime or {}).get("k8s_service_name") or "framework-kafka").strip() or "framework-kafka"
         return namespace, service_name
 
+    @staticmethod
+    def _kubernetes_exec_bootstrap_servers(runtime):
+        runtime = runtime if isinstance(runtime, dict) else {}
+        return str(
+            runtime.get("kubernetes_exec_bootstrap_servers")
+            or runtime.get("cluster_bootstrap_servers")
+            or "localhost:9092"
+        ).strip()
+
     def _run_kubernetes_kafka_command(self, runtime, kafka_args, input_text=None, timeout_seconds=None):
         namespace, deployment_name = self._kubernetes_exec_ids(runtime)
         command = [
@@ -879,9 +889,10 @@ class KafkaEdcValidationSuite:
         return result
 
     def _ensure_topic_with_kubernetes_exec(self, runtime, topic_name):
+        bootstrap_servers = self._kubernetes_exec_bootstrap_servers(runtime)
         list_result = self._run_kubernetes_kafka_command(
             runtime,
-            ["kafka-topics", "--bootstrap-server", "localhost:9092", "--list"],
+            ["kafka-topics", "--bootstrap-server", bootstrap_servers, "--list"],
         )
         if getattr(list_result, "returncode", 1) != 0:
             raise RuntimeError(self._kubernetes_command_failure_message(list_result, "Kafka topic list"))
@@ -892,7 +903,7 @@ class KafkaEdcValidationSuite:
                 [
                     "kafka-topics",
                     "--bootstrap-server",
-                    "localhost:9092",
+                    bootstrap_servers,
                     "--create",
                     "--if-not-exists",
                     "--topic",
@@ -908,7 +919,7 @@ class KafkaEdcValidationSuite:
 
         verify_result = self._run_kubernetes_kafka_command(
             runtime,
-            ["kafka-topics", "--bootstrap-server", "localhost:9092", "--list"],
+            ["kafka-topics", "--bootstrap-server", bootstrap_servers, "--list"],
         )
         if getattr(verify_result, "returncode", 1) != 0:
             raise RuntimeError(self._kubernetes_command_failure_message(verify_result, "Kafka topic verify"))
@@ -919,13 +930,14 @@ class KafkaEdcValidationSuite:
         return True
 
     def _kubernetes_topic_end_offset(self, runtime, topic_name):
+        bootstrap_servers = self._kubernetes_exec_bootstrap_servers(runtime)
         result = self._run_kubernetes_kafka_command(
             runtime,
             [
                 "kafka-run-class",
                 "kafka.tools.GetOffsetShell",
                 "--broker-list",
-                "localhost:9092",
+                bootstrap_servers,
                 "--topic",
                 topic_name,
                 "--time",
@@ -2116,6 +2128,7 @@ class KafkaEdcValidationSuite:
 
     def _produce_kubernetes_exec_message(self, runtime, topic, payload):
         timeout_seconds = int(runtime.get("kubernetes_exec_timeout_seconds", 30))
+        bootstrap_servers = self._kubernetes_exec_bootstrap_servers(runtime)
         result = self._run_kubernetes_kafka_command(
             runtime,
             [
@@ -2123,7 +2136,7 @@ class KafkaEdcValidationSuite:
                 str(timeout_seconds),
                 "kafka-console-producer",
                 "--bootstrap-server",
-                "localhost:9092",
+                bootstrap_servers,
                 "--topic",
                 topic,
             ],
@@ -2135,12 +2148,13 @@ class KafkaEdcValidationSuite:
 
     def _consume_kubernetes_exec_messages(self, runtime, topic, timeout_ms=2000, max_messages=50, offset=None):
         timeout_seconds = int(runtime.get("kubernetes_exec_timeout_seconds", 30))
+        bootstrap_servers = self._kubernetes_exec_bootstrap_servers(runtime)
         kafka_args = [
             "timeout",
             str(timeout_seconds),
             "kafka-console-consumer",
             "--bootstrap-server",
-            "localhost:9092",
+            bootstrap_servers,
             "--topic",
             topic,
         ]
@@ -2176,9 +2190,10 @@ class KafkaEdcValidationSuite:
         return messages
 
     def _list_kubernetes_exec_consumer_groups(self, runtime):
+        bootstrap_servers = self._kubernetes_exec_bootstrap_servers(runtime)
         result = self._run_kubernetes_kafka_command(
             runtime,
-            ["kafka-consumer-groups", "--bootstrap-server", "localhost:9092", "--list"],
+            ["kafka-consumer-groups", "--bootstrap-server", bootstrap_servers, "--list"],
         )
         if getattr(result, "returncode", 1) != 0:
             raise RuntimeError(self._kubernetes_command_failure_message(result, "Kafka consumer group list"))
@@ -2190,12 +2205,13 @@ class KafkaEdcValidationSuite:
         return groups
 
     def _describe_kubernetes_exec_consumer_group(self, runtime, group_id, source_topic=None):
+        bootstrap_servers = self._kubernetes_exec_bootstrap_servers(runtime)
         result = self._run_kubernetes_kafka_command(
             runtime,
             [
                 "kafka-consumer-groups",
                 "--bootstrap-server",
-                "localhost:9092",
+                bootstrap_servers,
                 "--describe",
                 "--group",
                 group_id,

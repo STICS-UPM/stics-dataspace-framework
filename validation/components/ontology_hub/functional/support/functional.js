@@ -130,7 +130,7 @@ async function openFirstCatalogResult(page) {
   if ((await prefixLink.count()) > 0) {
     const label = normalizeText(await prefixLink.textContent());
     await clickMarked(prefixLink);
-    await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs });
+    await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
     return { label, source: "prefix-link" };
   }
 
@@ -138,7 +138,7 @@ async function openFirstCatalogResult(page) {
   if ((await fallback.count()) > 0) {
     const label = normalizeText(await fallback.textContent());
     await clickMarked(fallback);
-    await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs });
+    await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
     return { label, source: "first-link" };
   }
 

@@ -54,8 +54,12 @@ support_checks:
       runner_case: mh_bootstrap_02_runtime_config
       real_flow:
         method: GET
-        path: /config/app-config.json
-      notes: Bootstrap support check used to confirm that runtime configuration is wired before UI flows are automated.
+        path: /inesdata-connector-interface/assets/config/app.config.json
+      notes: >-
+        Bootstrap support check used to confirm that runtime configuration is
+        wired before UI flows are automated. The runner also accepts
+        /assets/config/app.config.json and the legacy /config/app-config.json
+        route.
 
   - id: MH-MODEL-SERVER-01
     component: ai_model_hub

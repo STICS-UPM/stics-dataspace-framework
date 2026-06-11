@@ -11,6 +11,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
+from validation.components.ai_model_hub.model_server_policy import (
+    model_server_execution_labels,
+    model_server_validation_state,
+)
 from validation.datasets.manager import dataset_source_dir
 
 
@@ -135,8 +139,19 @@ class AIModelHubModelExecutionApiSuite:
                 or config.get("ADAPTER_NAME")
                 or "inesdata"
             ).strip().lower(),
+            "topology": str(
+                _env_first(
+                    "AI_MODEL_HUB_MODEL_EXECUTION_TOPOLOGY",
+                    "PIONERA_TOPOLOGY",
+                    "INESDATA_TOPOLOGY",
+                    "TOPOLOGY",
+                )
+                or config.get("TOPOLOGY")
+                or "local"
+            ).strip().lower(),
             "inference_api_path": str(config.get("AI_MODEL_HUB_INFERENCE_API_PATH") or "/api/infer"),
         }
+        runtime["model_server"] = model_server_validation_state(config, topology=runtime["topology"])
         runtime["inference_api_path"] = (
             _env_first("AI_MODEL_HUB_INFERENCE_API_PATH", "AI_MODEL_HUB_EDC_INFERENCE_API_PATH")
             or runtime["inference_api_path"]
@@ -303,9 +318,24 @@ class AIModelHubModelExecutionApiSuite:
             return response.status_code, None
         return response.status_code, self._response_json_or_text(response)
 
-    def _create_asset(self, provider: str, provider_jwt: str, model_url: str, suffix: str):
+    def _create_asset(
+        self,
+        provider: str,
+        provider_jwt: str,
+        model_url: str,
+        suffix: str,
+        runtime: dict[str, Any],
+    ):
         asset_id = f"a52-model-exec-{suffix}"
         keywords = ["validation", "ai-model-hub", "model-execution", "A5.2"]
+        data_address = {
+            "type": "HttpData",
+            "baseUrl": model_url,
+            "method": "POST",
+            "name": f"ai-model-hub-model-execution-{suffix}",
+        }
+        if runtime.get("adapter") == "edc":
+            data_address["proxyPath"] = "true"
         payload = {
             "@context": {
                 "@vocab": EDC_NAMESPACE,
@@ -374,13 +404,7 @@ class AIModelHubModelExecutionApiSuite:
                 "inputExample": DEFAULT_PAYLOAD,
                 "format": "json",
             },
-            "dataAddress": {
-                "type": "HttpData",
-                "baseUrl": model_url,
-                "method": "POST",
-                "name": f"ai-model-hub-model-execution-{suffix}",
-                "proxyPath": "true",
-            },
+            "dataAddress": data_address,
         }
         status_code, body = self._post_json(
             self._management_url(provider, "/management/v3/assets"),
@@ -491,6 +515,9 @@ class AIModelHubModelExecutionApiSuite:
         assertions: list[str],
         request_payload: dict[str, Any],
         response_payload: dict[str, Any],
+        execution_mode: str = "api",
+        coverage_status: str = "automated",
+        model_server_mode: str = "",
     ) -> dict[str, Any]:
         return {
             "test_case_id": TEST_CASE_ID,
@@ -501,8 +528,9 @@ class AIModelHubModelExecutionApiSuite:
             "dataspace_dimension": "execution",
             "mapping_status": "mapped",
             "automation_mode": "api",
-            "execution_mode": "api",
-            "coverage_status": "automated",
+            "execution_mode": execution_mode,
+            "coverage_status": coverage_status,
+            "model_server_mode": model_server_mode,
             "request": request_payload,
             "response": response_payload,
             "evaluation": {
@@ -525,6 +553,7 @@ class AIModelHubModelExecutionApiSuite:
         response_payload: dict[str, Any],
         functional_context: dict[str, Any],
         semantic_evaluation: dict[str, Any] | None = None,
+        model_server_mode: str = "",
     ) -> dict[str, Any]:
         expected_output = dict(functional_context.get("expected_output") or {})
         semantic_evaluation = semantic_evaluation or {
@@ -537,6 +566,9 @@ class AIModelHubModelExecutionApiSuite:
         pending_semantic_comparison = (
             semantic_evaluation.get("semantic_comparison_status") == "pending_flares_model_endpoint"
         )
+        coverage_status = semantic_evaluation.get("coverage_status") or "partial_api_execution"
+        if model_server_mode == "mock" and coverage_status == "automated":
+            coverage_status = "automated_mock_model_server"
         return {
             "test_case_id": FUNCTIONAL_CASE_ID,
             "description": "Execute a FLARES linguistic record through the connector-side model execution API",
@@ -547,7 +579,8 @@ class AIModelHubModelExecutionApiSuite:
             "mapping_status": "phase_3",
             "automation_mode": "api",
             "execution_mode": "api",
-            "coverage_status": semantic_evaluation.get("coverage_status") or "partial_api_execution",
+            "coverage_status": coverage_status,
+            "model_server_mode": model_server_mode,
             "request": request_payload,
             "response": response_payload,
             "evaluation": {
@@ -614,9 +647,26 @@ class AIModelHubModelExecutionApiSuite:
         expected_model: str | None = DEFAULT_EXPECTED_MODEL,
         functional_context: dict[str, Any] | None = None,
         experiment_dir: str | None = None,
+        model_server_mode: str | None = None,
     ) -> dict[str, Any]:
         started_at = datetime.now().isoformat()
         runtime = self._runtime()
+        resolved_model_server_mode = str(model_server_mode or (runtime.get("model_server") or {}).get("mode") or "")
+        if model_url and resolved_model_server_mode in {"", "disabled"}:
+            resolved_model_server_mode = "external"
+        execution_mode, coverage_status = model_server_execution_labels(resolved_model_server_mode)
+        model_server_metadata = dict(runtime.get("model_server") or {})
+        if model_url and not model_server_metadata.get("enabled"):
+            model_server_metadata["enabled"] = True
+            model_server_metadata["has_explicit_url"] = True
+            model_server_metadata["skip_reason"] = ""
+        model_server_metadata.update(
+            {
+                "mode": resolved_model_server_mode,
+                "execution_mode": execution_mode,
+                "coverage_status": coverage_status,
+            }
+        )
         component_dir = self._component_dir(experiment_dir)
         suffix = self._safe_suffix(self.uuid_factory())
         if payload is None:
@@ -644,6 +694,7 @@ class AIModelHubModelExecutionApiSuite:
                 provider_jwt,
                 model_url,
                 suffix,
+                runtime,
             )
             step("create_httpdata_asset", http_status=asset_status, asset_id=created_asset_id)
 
@@ -681,6 +732,9 @@ class AIModelHubModelExecutionApiSuite:
                     assertions=list(evaluation["assertions"]),
                     request_payload=execution_request,
                     response_payload=execution_response,
+                    execution_mode=execution_mode,
+                    coverage_status=coverage_status,
+                    model_server_mode=resolved_model_server_mode,
                 )
             )
             if functional_context:
@@ -695,6 +749,7 @@ class AIModelHubModelExecutionApiSuite:
                         response_payload=execution_response,
                         functional_context=functional_context,
                         semantic_evaluation=semantic_evaluation,
+                        model_server_mode=resolved_model_server_mode,
                     )
                 )
         except Exception as exc:
@@ -713,6 +768,9 @@ class AIModelHubModelExecutionApiSuite:
                     assertions=[message],
                     request_payload=failed_request,
                     response_payload=failed_response,
+                    execution_mode=execution_mode,
+                    coverage_status=coverage_status,
+                    model_server_mode=resolved_model_server_mode,
                 )
             )
             if functional_context:
@@ -723,6 +781,7 @@ class AIModelHubModelExecutionApiSuite:
                         request_payload=failed_request,
                         response_payload=failed_response,
                         functional_context=functional_context,
+                        model_server_mode=resolved_model_server_mode,
                     )
                 )
 
@@ -762,7 +821,9 @@ class AIModelHubModelExecutionApiSuite:
                 "dataspace": runtime.get("dataspace"),
                 "ds_domain": runtime.get("ds_domain"),
                 "adapter": runtime.get("adapter"),
+                "topology": runtime.get("topology"),
             },
+            "model_server": model_server_metadata,
             "created_entities": {
                 "asset_id": asset_id,
             },

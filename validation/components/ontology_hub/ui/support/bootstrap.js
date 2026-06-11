@@ -104,6 +104,27 @@ async function pageShowsTransientAvailabilityFailure(page) {
   return textShowsTransientAvailabilityFailure(signalText);
 }
 
+async function stopPageLoad(page) {
+  await page.evaluate(() => window.stop()).catch(() => {});
+}
+
+async function waitForPageBodyOrTransientFailure(page, timeoutMs = readyTimeoutMs) {
+  const body = page.locator("body").first();
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (await body.isVisible().catch(() => false)) {
+      return true;
+    }
+    if (await pageShowsTransientAvailabilityFailure(page)) {
+      return false;
+    }
+    await page.waitForTimeout(500);
+  }
+
+  return false;
+}
+
 async function waitForEditionShellOrTransientFailure(page) {
   const editionShell = page.locator(
     ".createVocab, a[href='/edition/logout'], a[href='/edition/'], a[href^='/edition/users/']",
@@ -129,6 +150,29 @@ function loginErrorHint(runtime) {
     `Revisa ONTOLOGY_HUB_ADMIN_EMAIL y ONTOLOGY_HUB_ADMIN_PASSWORD. ` +
     `Usuario actual: ${runtime.adminEmail}`
   );
+}
+
+async function waitForLoginFormOrTransientFailure(page) {
+  const emailInput = page.locator("input[name='email'], input[type='email'], input[placeholder='Email']").first();
+  const passwordInput = page.locator("input[name='password'], input[type='password'], input[placeholder='Password']").first();
+  const submitButton = page.getByRole("button", { name: /log in it!?/i }).first();
+  const deadline = Date.now() + readyTimeoutMs;
+
+  while (Date.now() < deadline) {
+    const formReady =
+      (await emailInput.isVisible().catch(() => false)) &&
+      (await passwordInput.isVisible().catch(() => false)) &&
+      (await submitButton.isVisible().catch(() => false));
+    if (formReady) {
+      return { emailInput, passwordInput, submitButton };
+    }
+    if (await pageShowsTransientAvailabilityFailure(page)) {
+      return null;
+    }
+    await page.waitForTimeout(500);
+  }
+
+  return null;
 }
 
 function stateFilePath() {
@@ -432,11 +476,25 @@ async function gotoEdition(page, runtime) {
         waitUntil: "commit",
         timeout: navigationTimeoutMs,
       });
-      await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
+      await page.waitForLoadState("domcontentloaded", { timeout: Math.min(navigationTimeoutMs, 5000) }).catch(() => {});
+      const bodyReady = await waitForPageBodyOrTransientFailure(page, Math.min(readyTimeoutMs, 5000));
+      if (!bodyReady) {
+        lastError = new Error("Ontology Hub edition is temporarily unavailable.");
+        await stopPageLoad(page);
+        await page.waitForTimeout(1000);
+        continue;
+      }
 
       if (isEditionLoginUrl(page.url())) {
-        await fillMarked(page.getByPlaceholder("Email"), runtime.adminEmail);
-        await fillMarked(page.getByPlaceholder("Password"), runtime.adminPassword);
+        const loginForm = await waitForLoginFormOrTransientFailure(page);
+        if (!loginForm) {
+          lastError = new Error("Ontology Hub login is temporarily unavailable.");
+          await stopPageLoad(page);
+          await page.waitForTimeout(1000);
+          continue;
+        }
+        await fillMarked(loginForm.emailInput, runtime.adminEmail);
+        await fillMarked(loginForm.passwordInput, runtime.adminPassword);
         const sessionResponse = page.waitForResponse(
           (response) => {
             const request = response.request();
@@ -448,9 +506,8 @@ async function gotoEdition(page, runtime) {
           },
           { timeout: navigationTimeoutMs },
         );
-        const submitButton = page.getByRole("button", { name: /log in it!?/i });
-        await highlightMarked(submitButton);
-        await submitButton.evaluate((button) => button.click());
+        await highlightMarked(loginForm.submitButton);
+        await loginForm.submitButton.evaluate((button) => button.click());
         const response = await sessionResponse;
         if (![200, 302, 303].includes(response.status())) {
           throw new Error(`Ontology Hub login returned HTTP ${response.status()}. ${loginErrorHint(runtime)}`);
@@ -459,7 +516,14 @@ async function gotoEdition(page, runtime) {
           waitUntil: "commit",
           timeout: navigationTimeoutMs,
         });
-        await page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
+        await page.waitForLoadState("domcontentloaded", { timeout: Math.min(navigationTimeoutMs, 5000) }).catch(() => {});
+        const editionBodyReady = await waitForPageBodyOrTransientFailure(page, Math.min(readyTimeoutMs, 5000));
+        if (!editionBodyReady) {
+          lastError = new Error("Ontology Hub edition is temporarily unavailable.");
+          await stopPageLoad(page);
+          await page.waitForTimeout(1000);
+          continue;
+        }
 
         const invalidCredentials = page.getByText("Invalid email or password.", { exact: true });
         const invalidCredentialsVisible = await invalidCredentials
@@ -491,13 +555,17 @@ async function gotoEdition(page, runtime) {
       const formErrors = await page.locator("#formErrors").first().textContent({ timeout: 1000 }).catch(() => "");
       const pageSignal = await readPageSignalText(page);
       const transientFailure = await pageShowsTransientAvailabilityFailure(page);
+      const errorLooksTransient = /temporarily unavailable|service temporarily unavailable|bad gateway|\b50[23]\b/i.test(
+        String(error?.message || ""),
+      );
       const retryableLoginPage = isEditionLoginUrl(page.url()) && !/invalid email or password/i.test(formErrors || "");
-      if ((!transientFailure && !retryableLoginPage) || attempt >= 3) {
+      if ((!transientFailure && !retryableLoginPage && !errorLooksTransient) || attempt >= 3) {
         throw new Error(
           `Could not access the Ontology Hub edition area from ${page.url()}. ` +
             `${String(formErrors || "").trim() || pageSignal || "No visible errors were detected."}`,
         );
       }
+      await stopPageLoad(page);
       await page.waitForTimeout(2000);
     }
   }
