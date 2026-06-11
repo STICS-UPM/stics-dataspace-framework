@@ -282,6 +282,79 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertEqual(connector_config[1]["connectorName"], "Consumer")
         self.assertEqual(connector_config[2]["connectorName"], "Provider")
 
+    def test_edc_ai_model_hub_override_strips_inesdata_ui_env(self):
+        def run_silent(command):
+            if command.startswith("helm get values pionera-ai-model-hub"):
+                return json.dumps(
+                    {
+                        "env": {
+                            "MODEL_OBSERVER_PROXY_TARGET": "http://pionera-public-portal-backend.core.svc:1337",
+                            "OAUTH2_ISSUER": "http://auth.example.test/realms/demo",
+                            "CUSTOM_DASHBOARD_FLAG": "enabled",
+                        }
+                    }
+                )
+            return ""
+
+        adapter = SharedComponentsAdapter(
+            run=mock.Mock(return_value="ok"),
+            run_silent=mock.Mock(side_effect=run_silent),
+            auto_mode_getter=lambda: True,
+            infrastructure_adapter=FakeInfrastructure(),
+            config_cls=FakeConfig,
+            active_adapter="edc",
+        )
+        payload = adapter._component_values_override_payload(
+            "ai-model-hub",
+            {
+                "DS_1_NAME": "pionera-edc",
+                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+                "DS_1_CONNECTORS": "org2,org3",
+            },
+        )
+
+        env = payload.get("env") or {}
+        self.assertNotIn("MODEL_OBSERVER_PROXY_TARGET", env)
+        self.assertNotIn("OAUTH2_ISSUER", env)
+        self.assertNotIn("MANAGEMENT_API_URL", env)
+        self.assertEqual(env, {"CUSTOM_DASHBOARD_FLAG": "enabled"})
+        self.assertEqual(payload["containerPort"], 80)
+        self.assertCountEqual(
+            [entry["connectorName"] for entry in payload["config"]["edcConnectorConfig"]],
+            ["Provider", "Consumer"],
+        )
+
+    def test_edc_vm_ai_model_hub_override_keeps_chart_container_port(self):
+        adapter = self._make_shared_adapter(active_adapter="edc")
+        adapter.config_adapter.topology = "vm-single"
+
+        payload = adapter._component_values_override_payload(
+            "ai-model-hub",
+            {
+                "TOPOLOGY": "vm-single",
+                "DS_1_NAME": "pionera-edc",
+                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+                "DS_1_CONNECTORS": "org2,org3",
+                "VM_SINGLE_PUBLIC_URL": "https://org1.pionera.oeg.fi.upm.es",
+            },
+        )
+
+        self.assertNotIn("containerPort", payload)
+
+    def test_inesdata_ai_model_hub_override_keeps_inesdata_ui_env(self):
+        adapter = self._make_shared_adapter(active_adapter="inesdata")
+
+        payload = adapter._component_values_override_payload(
+            "ai-model-hub",
+            {
+                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
+                "DS_1_CONNECTORS": "org2,org3",
+            },
+        )
+
+        self.assertIn("MODEL_OBSERVER_PROXY_TARGET", payload["env"])
+        self.assertIn("OAUTH2_ISSUER", payload["env"])
+
     def test_edc_shared_runtime_metadata_uses_common_component_dataspace_name(self):
         adapter = self._make_shared_adapter(active_adapter="edc")
         adapter.config_adapter.load_deployer_config = mock.Mock(
@@ -2984,6 +3057,28 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         build_mock.assert_called_once_with("eclipse-edc/data-dashboard:local", deployer_config)
         load_mock.assert_called_once_with("minikube", "eclipse-edc/data-dashboard:local")
 
+    def test_edc_local_ai_model_hub_build_uses_edc_dashboard_script(self):
+        adapter = self._make_shared_adapter(active_adapter="edc")
+        deployer_config = {
+            "MINIKUBE_PROFILE": "demo-profile",
+            "EDC_DASHBOARD_REPO_REF": "abc123",
+        }
+
+        with mock.patch.object(adapter, "_cluster_runtime", return_value={"cluster_type": "minikube"}):
+            adapter._build_ai_model_hub_image_on_host(
+                "eclipse-edc/data-dashboard:local",
+                deployer_config,
+            )
+
+        command = adapter.run.call_args.args[0]
+        self.assertIn("adapters/edc/scripts/build_dashboard_image.sh", command)
+        self.assertIn("PIONERA_EDC_DASHBOARD_IMAGE_NAME=eclipse-edc/data-dashboard", command)
+        self.assertIn("PIONERA_EDC_DASHBOARD_IMAGE_TAG=local", command)
+        self.assertIn("PIONERA_EDC_DASHBOARD_REPO_REF=abc123", command)
+        self.assertIn("--minikube-profile demo-profile", command)
+        self.assertIn("--cluster-runtime minikube", command)
+        self.assertNotIn("adapters/inesdata/sources/AIModelHub", command)
+
     def test_prepare_level6_local_image_rebuilds_semantic_virtualization_even_when_cached_in_minikube(self):
         adapter = self._make_adapter()
         deployer_config = {"LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true"}
@@ -3626,6 +3721,117 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             "kubectl get ingress demo-ontology-hub -n components -o jsonpath='{.spec.rules[0].host}'"
         )
 
+    def test_verify_component_publication_accepts_local_ontology_hub_in_cluster_fallback(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "local"
+
+        def run_silent(command):
+            if command.startswith("kubectl get ingress demo-ontology-hub"):
+                return "ontology-hub-demo.dev.ds.dataspaceunit.upm"
+            if "kubectl exec" in command and "/dataset" in command:
+                return "200"
+            if "kubectl exec" in command and "/edition" in command:
+                return "302"
+            return ""
+
+        adapter.run_silent = mock.Mock(side_effect=run_silent)
+        adapter._probe_component_public_url = mock.Mock(
+            side_effect=[
+                (False, "HTTP 503"),
+                (False, "HTTP 503"),
+            ]
+        )
+
+        with mock.patch("adapters.shared.components.time.monotonic", side_effect=[0, 2]):
+            result = adapter.verify_component_publication(
+                "ontology-hub",
+                deployment_plan={
+                    "release_name": "demo-ontology-hub",
+                    "host": "ontology-hub-demo.dev.ds.dataspaceunit.upm",
+                },
+                namespace="components",
+                timeout_seconds=1,
+                poll_interval_seconds=1,
+            )
+
+        self.assertTrue(result["verified"])
+        self.assertTrue(result["public_probe_degraded"])
+        self.assertEqual(result["verification_mode"], "local-in-cluster-fallback")
+        self.assertEqual(result["dataset_detail"], "HTTP 503")
+        self.assertEqual(result["edition_detail"], "HTTP 503")
+        self.assertEqual(result["local_dataset_detail"], "in-cluster HTTP 200")
+        self.assertEqual(result["local_edition_detail"], "in-cluster HTTP 302")
+        exec_commands = [
+            call.args[0]
+            for call in adapter.run_silent.call_args_list
+            if "kubectl exec" in call.args[0]
+        ]
+        self.assertEqual(len(exec_commands), 2)
+        self.assertIn("deployment/demo-ontology-hub", exec_commands[0])
+        self.assertIn("http://127.0.0.1:3333/dataset", exec_commands[0])
+        self.assertIn("http://127.0.0.1:3333/edition", exec_commands[1])
+
+    def test_verify_component_publication_keeps_vm_ontology_hub_public_gate_strict(self):
+        for topology in ("vm-single", "vm-distributed"):
+            with self.subTest(topology=topology):
+                adapter = self._make_shared_adapter()
+                adapter.config_adapter.topology = topology
+                adapter.run_silent = mock.Mock(return_value="org1.pionera.oeg.fi.upm.es")
+                adapter._probe_component_public_url = mock.Mock(
+                    side_effect=[
+                        (False, "HTTP 503"),
+                        (False, "HTTP 503"),
+                    ]
+                )
+
+                with mock.patch("adapters.shared.components.time.monotonic", side_effect=[0, 2]):
+                    with self.assertRaisesRegex(RuntimeError, "public routes are not ready"):
+                        adapter.verify_component_publication(
+                            "ontology-hub",
+                            deployment_plan={
+                                "release_name": "pionera-ontology-hub",
+                                "host": "org1.pionera.oeg.fi.upm.es",
+                                "public_url": "https://org1.pionera.oeg.fi.upm.es/ontology-hub",
+                            },
+                            namespace="components",
+                            timeout_seconds=1,
+                            poll_interval_seconds=1,
+                        )
+
+                self.assertEqual(adapter.run_silent.call_count, 1)
+
+    def test_verify_component_publication_fails_when_local_ontology_hub_fallback_is_unhealthy(self):
+        adapter = self._make_shared_adapter()
+        adapter.config_adapter.topology = "local"
+
+        def run_silent(command):
+            if command.startswith("kubectl get ingress demo-ontology-hub"):
+                return "ontology-hub-demo.dev.ds.dataspaceunit.upm"
+            if "kubectl exec" in command:
+                return "503"
+            return ""
+
+        adapter.run_silent = mock.Mock(side_effect=run_silent)
+        adapter._probe_component_public_url = mock.Mock(
+            side_effect=[
+                (False, "HTTP 503"),
+                (False, "HTTP 503"),
+            ]
+        )
+
+        with mock.patch("adapters.shared.components.time.monotonic", side_effect=[0, 2]):
+            with self.assertRaisesRegex(RuntimeError, "local fallback /dataset=in-cluster HTTP 503"):
+                adapter.verify_component_publication(
+                    "ontology-hub",
+                    deployment_plan={
+                        "release_name": "demo-ontology-hub",
+                        "host": "ontology-hub-demo.dev.ds.dataspaceunit.upm",
+                    },
+                    namespace="components",
+                    timeout_seconds=1,
+                    poll_interval_seconds=1,
+                )
+
     def test_verify_component_publication_uses_path_public_url_when_configured(self):
         adapter = self._make_shared_adapter()
         adapter.run_silent = mock.Mock(return_value="org1.pionera.oeg.fi.upm.es")
@@ -3743,6 +3949,50 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                 "/inesdata-connector-interface/assets/config/app.config.json",
                 "/assets/config/app.config.json",
                 "/config/app-config.json",
+            ],
+        )
+
+    def test_verify_component_publication_accepts_ai_model_hub_edc_dashboard_config_route(self):
+        adapter = self._make_shared_adapter(active_adapter="edc")
+        adapter.run_silent = mock.Mock(return_value="ai-model-hub-demo.dev.ds.dataspaceunit.upm")
+
+        root_response = mock.Mock(status_code=200, headers={})
+        missing_response = mock.Mock(status_code=404, headers={})
+        config_response = mock.Mock(status_code=200, headers={})
+
+        with mock.patch(
+            "adapters.shared.components.requests.get",
+            side_effect=[
+                root_response,
+                missing_response,
+                missing_response,
+                missing_response,
+                config_response,
+            ],
+        ):
+            result = adapter.verify_component_publication(
+                "ai-model-hub",
+                deployment_plan={
+                    "release_name": "demo-ai-model-hub",
+                    "host": "ai-model-hub-demo.dev.ds.dataspaceunit.upm",
+                },
+                namespace="components",
+                timeout_seconds=1,
+                poll_interval_seconds=1,
+            )
+
+        self.assertTrue(result["verified"])
+        self.assertEqual(
+            result["config_url"],
+            "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm/edc-dashboard/config/app-config.json",
+        )
+        self.assertEqual(
+            [attempt["path"] for attempt in result["config_attempts"]],
+            [
+                "/inesdata-connector-interface/assets/config/app.config.json",
+                "/assets/config/app.config.json",
+                "/config/app-config.json",
+                "/edc-dashboard/config/app-config.json",
             ],
         )
 
