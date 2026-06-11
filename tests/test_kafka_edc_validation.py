@@ -7,7 +7,7 @@ import requests
 from unittest import mock
 from unittest.mock import patch
 
-from framework.kafka_edc_validation import KafkaEdcValidationSuite
+from framework.kafka_edc_validation import KafkaEdcValidationSuite, KafkaTransferStateTimeout
 
 
 class _FakeResponse:
@@ -495,6 +495,62 @@ class _DelayedAgreementSession(_FakeSession):
             return _FakeResponse(404, None)
         return super().get(url, headers=headers, timeout=timeout)
 
+
+class _InitialTransferSession(_FakeSession):
+    def post(self, url, headers=None, data=None, json=None, timeout=None):
+        if url.endswith("/management/v3/transferprocesses"):
+            self.destination_topic = ((json or {}).get("dataDestination") or {}).get("topic")
+            self.destination_bootstrap_servers = ((json or {}).get("dataDestination") or {}).get("kafka.bootstrap.servers")
+            self.transfers["transfer-1"] = {
+                "@id": "transfer-1",
+                "state": "INITIAL",
+                "assetId": (json or {}).get("assetId") or self.asset_id,
+                "contractId": (json or {}).get("contractId"),
+                "correlationId": "corr-stuck",
+                "type": "CONSUMER",
+                "dataDestination": (json or {}).get("dataDestination"),
+            }
+            return _FakeResponse(200, {"@id": "transfer-1"})
+        return super().post(url, headers=headers, data=data, json=json, timeout=timeout)
+
+
+class _DiagnosticKubernetesKafkaManager(_FakeKubernetesKafkaManager):
+    def command_runner(self, command, input_text=None, timeout=None, env=None):
+        self.commands.append({"command": list(command), "input_text": input_text, "timeout": timeout, "env": env})
+        self.command_envs.append(env)
+        if list(command[:3]) == ["kubectl", "get", "pods"]:
+            namespace = command[command.index("-n") + 1]
+            payload = {
+                "items": [
+                    {
+                        "metadata": {
+                            "name": f"conn-provider-{namespace}-connector-0",
+                            "labels": {
+                                "app.kubernetes.io/name": "edc-connector",
+                            },
+                        },
+                        "status": {
+                            "phase": "Running",
+                            "containerStatuses": [
+                                {
+                                    "name": "connector",
+                                    "ready": True,
+                                    "restartCount": 0,
+                                    "state": {"running": {}},
+                                }
+                            ],
+                        },
+                    }
+                ]
+            }
+            return mock.Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+        if list(command[:2]) == ["kubectl", "logs"]:
+            return mock.Mock(
+                returncode=0,
+                stdout="Authorization: Bearer secret-token\npassword=real-secret\nTransfer remained INITIAL\n",
+                stderr="",
+            )
+        return super().command_runner(command, input_text=input_text, timeout=timeout, env=env)
 
 class KafkaEdcValidationSuiteTests(unittest.TestCase):
     def setUp(self):
@@ -1388,6 +1444,111 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
                         },
                     )
 
+    def test_wait_for_transfer_started_timeout_includes_last_transfer_diagnostics(self):
+        session = _FakeSession()
+        session.transfers["transfer-1"] = {
+            "@id": "transfer-1",
+            "state": "INITIAL",
+            "assetId": "kafka-edc-asset-diag",
+            "correlationId": "corr-stuck",
+        }
+        suite = KafkaEdcValidationSuite(
+            load_connector_credentials=lambda connector: {
+                "connector_user": {"user": "user", "passwd": "pass"}
+            },
+            load_deployer_config=lambda: {"KC_URL": "http://keycloak.local"},
+            kafka_runtime_loader=lambda: {},
+            ds_domain_resolver=lambda: "example.local",
+            ds_name_loader=lambda: "dataspace",
+            session=session,
+        )
+
+        with patch("framework.kafka_edc_validation.time.time", side_effect=[0, 0, 2]):
+            with patch("framework.kafka_edc_validation.time.sleep", return_value=None):
+                with self.assertRaises(KafkaTransferStateTimeout) as raised:
+                    suite._wait_for_transfer_started(
+                        "conn-consumer",
+                        "jwt",
+                        "transfer-1",
+                        {
+                            "transfer_timeout_seconds": 1,
+                            "poll_interval_seconds": 1,
+                        },
+                    )
+
+        self.assertEqual(raised.exception.diagnostics["last_state"], "INITIAL")
+        self.assertEqual(raised.exception.diagnostics["last_transfer"]["assetId"], "kafka-edc-asset-diag")
+        self.assertEqual(raised.exception.diagnostics["last_transfer"]["correlationId"], "corr-stuck")
+
+    def test_run_pair_collects_diagnostics_when_transfer_stays_initial(self):
+        session = _InitialTransferSession()
+        kafka_manager = _DiagnosticKubernetesKafkaManager()
+        credentials = {
+            "conn-org2-pionera": {"connector_user": {"user": "provider-user", "passwd": "provider-pass"}},
+            "conn-org3-pionera": {"connector_user": {"user": "consumer-user", "passwd": "consumer-pass"}},
+        }
+        suite = KafkaEdcValidationSuite(
+            load_connector_credentials=lambda connector: credentials[connector],
+            load_deployer_config=lambda: {
+                "KC_URL": "http://keycloak.local",
+                "DS_1_NAME": "pionera",
+                "DS_1_NAMESPACE": "core-control",
+                "DS_1_PROVIDER_NAMESPACE": "provider",
+                "DS_1_CONSUMER_NAMESPACE": "consumer",
+                "DS_1_CONNECTOR_NAMESPACES": "org2:provider,org3:consumer",
+                "COMMON_SERVICES_NAMESPACE": "common-srvs",
+            },
+            kafka_runtime_loader=lambda: {
+                "bootstrap_servers": "127.0.0.1:39092",
+                "cluster_bootstrap_servers": "framework-kafka.core-control.svc.cluster.local:9092",
+                "provisioner": "kubernetes",
+                "validation_backend": "kubernetes-exec",
+                "k8s_namespace": "core-control",
+                "k8s_probe_namespaces": "provider,consumer,core-control",
+                "k8s_service_name": "framework-kafka",
+                "topic_name": "edc-kafka-suite",
+                "message_count": 1,
+                "security_protocol": "PLAINTEXT",
+                "transfer_timeout_seconds": 1,
+                "consumer_poll_timeout_seconds": 1,
+                "startup_grace_seconds": 0,
+                "poll_interval_seconds": 1,
+                "pre_run_settle_seconds": 0,
+                "diagnostic_log_tail_lines": 20,
+                "diagnostic_max_pods": 2,
+            },
+            ds_domain_resolver=lambda: "example.local",
+            ds_name_loader=lambda: "pionera",
+            kafka_manager=kafka_manager,
+            session=session,
+            time_provider=lambda: 1000.0,
+            uuid_factory=lambda: "diagcase",
+        )
+
+        fake_time = itertools.chain([0, 0, 2], itertools.count(3))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("framework.kafka_edc_validation.time.time", side_effect=lambda: float(next(fake_time))):
+                with patch("framework.kafka_edc_validation.time.sleep", return_value=None):
+                    result = suite.run_pair("conn-org2-pionera", "conn-org3-pionera", experiment_dir=tmpdir)
+            artifact_exists = os.path.exists(result["artifact_path"])
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["type"], "KafkaTransferStateTimeout")
+        self.assertIn("diagnostics", result)
+        timeout_diag = result["diagnostics"]["transfer_state_timeout"]
+        self.assertEqual(timeout_diag["reason"], "transfer_state_timeout")
+        self.assertEqual(timeout_diag["transfer_processes"]["consumer"]["direct"]["state"], "INITIAL")
+        self.assertGreaterEqual(timeout_diag["transfer_processes"]["consumer"]["matching_count"], 1)
+        self.assertEqual(timeout_diag["kubernetes"]["status"], "collected")
+        self.assertGreaterEqual(len(timeout_diag["kubernetes"]["pods"]), 1)
+        logs = timeout_diag["kubernetes"]["pods"][0]["logs"]
+        self.assertIn("<redacted>", logs)
+        self.assertNotIn("secret-token", logs)
+        self.assertNotIn("real-secret", logs)
+        step_names = [step["name"] for step in result["steps"]]
+        self.assertIn("collect_transfer_failure_diagnostics", step_names)
+        self.assertTrue(artifact_exists)
+
     def test_post_json_retries_transient_bad_gateway_response(self):
         session = _RetryGatewaySession()
         suite = KafkaEdcValidationSuite(
@@ -1747,6 +1908,53 @@ class KafkaEdcValidationSuiteTests(unittest.TestCase):
         self.assertTrue(results[0]["retry_attempted"])
         self.assertEqual(results[0]["attempt_count"], 2)
         self.assertIn("did not produce contractAgreementId", results[0]["retry_reason"])
+        sleep_mock.assert_called_once_with(5)
+
+    def test_run_all_retries_transfer_state_timeout_without_resetting_kafka(self):
+        kafka_manager = _FakeKafkaManager()
+        suite = KafkaEdcValidationSuite(
+            load_connector_credentials=lambda connector: {
+                "connector_user": {"user": "user", "passwd": "pass"}
+            },
+            load_deployer_config=lambda: {"KC_URL": "http://keycloak.local"},
+            kafka_runtime_loader=lambda: {},
+            ds_domain_resolver=lambda: "example.local",
+            ds_name_loader=lambda: "dataspace",
+            kafka_manager=kafka_manager,
+            session=_FakeSession(),
+        )
+
+        run_pair_results = [
+            {
+                "provider": "conn-a",
+                "consumer": "conn-b",
+                "status": "failed",
+                "error": {
+                    "type": "KafkaTransferStateTimeout",
+                    "message": (
+                        "Transfer transfer-1 did not reach a started/finalized state in time "
+                        "(last_state=INITIAL, detail=None)"
+                    ),
+                },
+                "steps": [
+                    {"name": "start_transfer", "status": "passed"},
+                    {"name": "suite_error", "status": "failed"},
+                ],
+            },
+            {"provider": "conn-a", "consumer": "conn-b", "status": "passed", "steps": []},
+            {"provider": "conn-b", "consumer": "conn-a", "status": "passed", "steps": []},
+        ]
+
+        with patch.object(suite, "run_pair", side_effect=run_pair_results) as run_pair_mock:
+            with patch("framework.kafka_edc_validation.time.sleep", return_value=None) as sleep_mock:
+                results = suite.run_all(["conn-a", "conn-b"], experiment_dir=None)
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(run_pair_mock.call_count, 3)
+        self.assertEqual(kafka_manager.stop_calls, 0)
+        self.assertTrue(results[0]["retry_attempted"])
+        self.assertEqual(results[0]["attempt_count"], 2)
+        self.assertIn("did not reach a started/finalized state", results[0]["retry_reason"])
         sleep_mock.assert_called_once_with(5)
 
     def test_run_all_retries_when_first_attempt_consumes_no_messages(self):

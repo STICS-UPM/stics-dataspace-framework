@@ -433,6 +433,8 @@ class ReportViewerTests(unittest.TestCase):
             )
 
             inspected = reports.inspect_experiment(experiment)
+            dashboard = reports.build_experiment_dashboard(inspected)
+            content = dashboard.read_text(encoding="utf-8")
 
         suite = next(item for item in inspected["suites"] if item["kind"] == "playwright-json")
         self.assertEqual(suite["audit_suite"], "INESData integration")
@@ -445,6 +447,8 @@ class ReportViewerTests(unittest.TestCase):
         self.assertEqual(groups["Ontology Hub"]["passed"], 1)
         self.assertEqual(groups["AI Model Hub"]["failed"], 1)
         self.assertEqual(groups["Semantic Virtualization"]["skipped"], 1)
+        self.assertIn("<td>INESData integration</td><td>AI Model Hub</td><td>ui / inesdata / AI Model Hub</td>", content)
+        self.assertIn("Official UI evidence in ui / inesdata Playwright report.", content)
 
     def test_edc_playwright_results_are_grouped_for_audit(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -677,9 +681,9 @@ class ReportViewerTests(unittest.TestCase):
             content = dashboard.read_text(encoding="utf-8")
 
         suite = next(item for item in inspected["suites"] if item["kind"] == "playwright-json")
-        self.assertEqual(suite["status"], "skipped")
+        self.assertEqual(suite["status"], "partial")
         self.assertEqual(inspected["result"], "Partial")
-        self.assertIn('<span class="badge neutral">skipped</span>', content)
+        self.assertIn('<span class="badge warn">partial</span>', content)
 
     def test_component_summary_with_skipped_tests_is_not_reported_as_passed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -690,6 +694,24 @@ class ReportViewerTests(unittest.TestCase):
                     "component": "ai-model-hub",
                     "status": "passed",
                     "summary": {"total": 3, "passed": 2, "failed": 0, "skipped": 1},
+                },
+            )
+
+            inspected = reports.inspect_experiment(experiment)
+
+        suite = next(item for item in inspected["suites"] if item["kind"] == "component")
+        self.assertEqual(suite["status"], "partial")
+        self.assertEqual(inspected["result"], "Partial")
+
+    def test_component_summary_with_only_skipped_tests_stays_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_15-00-00"
+            self._write_json(
+                experiment / "components" / "ai-model-hub" / "ai_model_hub_component_validation.json",
+                {
+                    "component": "ai-model-hub",
+                    "status": "skipped",
+                    "summary": {"total": 3, "passed": 0, "failed": 0, "skipped": 3},
                 },
             )
 

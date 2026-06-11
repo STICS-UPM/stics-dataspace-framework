@@ -216,16 +216,17 @@ def _summary_status(summary: dict[str, Any], fallback: Any = None) -> str:
         return "failed"
 
     failed = _summary_count(summary, "failed")
+    passed = _summary_count(summary, "passed")
     skipped = _summary_count(summary, "skipped")
     other = _summary_count(summary, "other")
     total = _summary_count(summary, "total")
 
     if failed:
         return "failed"
-    if skipped:
-        return "skipped"
     if other:
         return "partial"
+    if skipped:
+        return "skipped" if skipped == total and not passed else "partial"
     if total:
         return "passed"
     return normalized_fallback or "unknown"
@@ -1312,7 +1313,7 @@ def _render_suite_summaries(experiment: dict[str, Any]) -> str:
     if not suites:
         return "<p>No suite summaries were detected. Raw artifacts may still be available below.</p>"
     rows = []
-    for suite in sorted(suites, key=suite_sort_key):
+    for suite in sorted(_suite_summary_rows(suites), key=suite_sort_key):
         audit_suite = html.escape(str(suite.get("audit_suite") or "Unclassified"))
         audit_group = html.escape(str(suite.get("audit_group") or "Review"))
         title = html.escape(str(suite.get("title") or suite.get("kind") or "suite"))
@@ -1332,6 +1333,31 @@ def _render_suite_summaries(experiment: dict[str, Any]) -> str:
         + "\n".join(rows)
         + "</tbody></table>"
     )
+
+
+def _suite_summary_rows(suites: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for suite in suites:
+        rows.append(suite)
+        if suite.get("kind") != "playwright-json":
+            continue
+        parent_title = str(suite.get("title") or "Playwright")
+        for group in (suite.get("summary") or {}).get("groups") or []:
+            if not isinstance(group, dict):
+                continue
+            rows.append(
+                {
+                    "kind": "playwright-group",
+                    "title": f"{parent_title} / {group.get('audit_group') or 'Group'}",
+                    "status": _summary_status(group),
+                    "summary": group,
+                    "artifacts": list(suite.get("artifacts") or []),
+                    "audit_suite": group.get("audit_suite") or suite.get("audit_suite"),
+                    "audit_group": group.get("audit_group") or suite.get("audit_group"),
+                    "parent_suite": parent_title,
+                }
+            )
+    return rows
 
 
 def _format_execution_channels(value: Any) -> str:
@@ -1388,12 +1414,17 @@ def _suite_details(suite: dict[str, Any]) -> str:
             f"missing {suite.get('messages_missing', 0)}. "
             f"Incomplete transfers: {suite.get('incomplete_transfers', 0)}{suffix}."
         )
-    if kind in {"component", "component-report", "playwright-json"}:
+    if kind in {"component", "component-report", "playwright-json", "playwright-group"}:
         summary = suite.get("summary") or {}
         details = (
             f"Total: {summary.get('total', 0)}, passed: {summary.get('passed', 0)}, "
             f"failed: {summary.get('failed', 0)}, skipped: {summary.get('skipped', 0)}."
         )
+        if kind == "playwright-group":
+            parent_suite = suite.get("parent_suite")
+            if parent_suite:
+                details += f" Official UI evidence in {parent_suite} Playwright report."
+            return details
         channel_details = _format_execution_channels(suite.get("phase_execution_channels"))
         if channel_details:
             details += f" Channels: {channel_details}."
