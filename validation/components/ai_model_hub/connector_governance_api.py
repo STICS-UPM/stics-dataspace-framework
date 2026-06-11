@@ -100,7 +100,9 @@ def _join_management_url(base_url: str, path: str) -> str:
     suffix = str(path or "").strip()
     if not base:
         return ""
-    if base.endswith("/management") and suffix.startswith("/management/"):
+    if base.endswith("/management/v3") and suffix.startswith("/management/v3/"):
+        suffix = suffix[len("/management/v3") :]
+    elif base.endswith("/management") and suffix.startswith("/management/"):
         suffix = suffix[len("/management"):]
     if not suffix.startswith("/"):
         suffix = f"/{suffix}"
@@ -561,14 +563,97 @@ class AIModelHubConnectorGovernanceApiSuite:
             None,
         )
 
-    def _wait_for_agreement(self, consumer: str, consumer_jwt: str, negotiation_id: str, runtime: dict[str, Any]):
+    @staticmethod
+    def _first_string_field(payload: Any, field_names: tuple[str, ...]) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        containers = [payload]
+        properties = payload.get("properties")
+        if isinstance(properties, dict):
+            containers.append(properties)
+        for container in containers:
+            for name in field_names:
+                value = container.get(name)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return ""
+
+    @staticmethod
+    def _negotiation_agreement_id(negotiation: Any) -> str:
+        return AIModelHubConnectorGovernanceApiSuite._first_string_field(
+            negotiation,
+            (
+                "contractAgreementId",
+                "agreementId",
+                "edc:contractAgreementId",
+                "edc:agreementId",
+                f"{EDC_NAMESPACE}contractAgreementId",
+                f"{EDC_NAMESPACE}agreementId",
+            ),
+        )
+
+    @staticmethod
+    def _agreement_id(agreement: Any) -> str:
+        return AIModelHubConnectorGovernanceApiSuite._first_string_field(
+            agreement,
+            ("@id", "id", "contractAgreementId", "agreementId", "edc:id", f"{EDC_NAMESPACE}id"),
+        )
+
+    @staticmethod
+    def _agreement_asset_id(agreement: Any) -> str:
+        direct = AIModelHubConnectorGovernanceApiSuite._first_string_field(
+            agreement,
+            (
+                "assetId",
+                "target",
+                "edc:assetId",
+                "edc:target",
+                f"{EDC_NAMESPACE}assetId",
+                f"{EDC_NAMESPACE}target",
+            ),
+        )
+        if direct:
+            return direct
+        if not isinstance(agreement, dict):
+            return ""
+        for key in ("asset", "edc:asset", f"{EDC_NAMESPACE}asset"):
+            asset_node = agreement.get(key)
+            if isinstance(asset_node, str) and asset_node.strip():
+                return asset_node.strip()
+            nested = AIModelHubConnectorGovernanceApiSuite._first_string_field(
+                asset_node,
+                ("@id", "id", "assetId", "edc:assetId", f"{EDC_NAMESPACE}assetId"),
+            )
+            if nested:
+                return nested
+        return ""
+
+    @staticmethod
+    def _agreement_references_asset(agreement: Any, asset_id: str) -> bool:
+        if not asset_id or not isinstance(agreement, dict):
+            return False
+        direct_asset_id = AIModelHubConnectorGovernanceApiSuite._agreement_asset_id(agreement)
+        if direct_asset_id == asset_id:
+            return True
+        return asset_id in json.dumps(agreement)
+
+    def _wait_for_agreement(
+        self,
+        consumer: str,
+        consumer_jwt: str,
+        negotiation_id: str,
+        runtime: dict[str, Any],
+        asset_id: str | None = None,
+    ):
         deadline = self.time_provider() + int(runtime["negotiation_timeout_seconds"])
         last_state = None
+        last_agreement_count = 0
+        last_agreement_error = None
         while self.time_provider() <= deadline:
             negotiation = self._query_negotiation(consumer, consumer_jwt, negotiation_id)
             if negotiation:
                 last_state = negotiation.get("state")
-                agreement_id = negotiation.get("contractAgreementId") or negotiation.get("agreementId")
+                agreement_id = self._negotiation_agreement_id(negotiation)
                 if agreement_id:
                     return {"state": last_state, "agreement_id": agreement_id, "raw": negotiation}
                 if str(last_state or "").upper() in {"TERMINATED", "ERROR", "DECLINED"}:
@@ -576,8 +661,39 @@ class AIModelHubConnectorGovernanceApiSuite:
                         "Negotiation reached terminal state"
                         + (f": {negotiation.get('errorDetail')}" if negotiation.get("errorDetail") else "")
                     )
+            if asset_id:
+                try:
+                    agreements, _ = self._list_agreements(consumer, consumer_jwt)
+                    last_agreement_count = len(agreements)
+                    matching_agreement = next(
+                        (
+                            item
+                            for item in agreements
+                            if self._agreement_references_asset(item, asset_id)
+                        ),
+                        None,
+                    )
+                    if matching_agreement is not None:
+                        agreement_id = self._agreement_id(matching_agreement)
+                        if agreement_id:
+                            return {
+                                "state": "RECOVERED_FROM_AGREEMENTS",
+                                "negotiation_state": last_state,
+                                "agreement_id": agreement_id,
+                                "raw": {
+                                    "negotiation": negotiation,
+                                    "agreement": matching_agreement,
+                                    "recovered_from": "contractagreements/request",
+                                },
+                            }
+                        last_agreement_error = "matching contract agreement did not expose an id"
+                except Exception as exc:
+                    last_agreement_error = str(exc)
             time.sleep(max(1, int(runtime["poll_interval_seconds"])))
-        raise RuntimeError(f"Negotiation {negotiation_id} did not produce contractAgreementId (last_state={last_state})")
+        details = f"last_state={last_state}, last_agreements={last_agreement_count}"
+        if last_agreement_error:
+            details += f", agreement_lookup_error={last_agreement_error}"
+        raise RuntimeError(f"Negotiation {negotiation_id} did not produce contractAgreementId ({details})")
 
     def _list_agreements(self, consumer: str, consumer_jwt: str, agreement_id: str | None = None):
         payload = {"@context": {"@vocab": EDC_NAMESPACE}, "offset": 0, "limit": 100}
@@ -645,7 +761,10 @@ class AIModelHubConnectorGovernanceApiSuite:
         if not isinstance(agreement, dict):
             return False
         serialized = json.dumps(agreement)
-        return agreement_id in serialized and asset_id in serialized
+        extracted_id = AIModelHubConnectorGovernanceApiSuite._agreement_id(agreement)
+        id_matches = extracted_id == agreement_id or agreement_id in serialized
+        asset_matches = AIModelHubConnectorGovernanceApiSuite._agreement_references_asset(agreement, asset_id)
+        return id_matches and asset_matches
 
     def _start_model_access_transfer(
         self,
@@ -954,9 +1073,12 @@ class AIModelHubConnectorGovernanceApiSuite:
             created_entities["negotiation_id"] = negotiation_id
             step("start_negotiation", http_status=negotiation_status, negotiation_id=negotiation_id)
 
-            agreement = self._wait_for_agreement(consumer, consumer_jwt, negotiation_id, runtime)
+            agreement = self._wait_for_agreement(consumer, consumer_jwt, negotiation_id, runtime, asset_id=asset_id)
             created_entities["agreement_id"] = agreement["agreement_id"]
-            step("wait_for_contract_agreement", state=agreement["state"], agreement_id=agreement["agreement_id"])
+            step_payload = {"state": agreement["state"], "agreement_id": agreement["agreement_id"]}
+            if agreement.get("negotiation_state"):
+                step_payload["negotiation_state"] = agreement["negotiation_state"]
+            step("wait_for_contract_agreement", **step_payload)
 
             agreements, agreements_status, matching_agreement = self._wait_for_listed_agreement(
                 consumer,
@@ -1162,12 +1284,46 @@ def _build_adapter(adapter_name: str, topology: str):
 
 
 def _adapter_management_url_resolver(adapter):
-    builder = getattr(getattr(adapter, "connectors", None), "build_connector_url", None)
-    if not callable(builder):
+    connectors = getattr(adapter, "connectors", None)
+    credentials_loader = getattr(adapter, "load_connector_credentials", None)
+    base_builder = getattr(connectors, "connector_base_url", None)
+    interface_builder = getattr(connectors, "build_connector_url", None)
+    if not any(callable(candidate) for candidate in (credentials_loader, base_builder, interface_builder)):
         return None
 
+    def management_base_url(connector: str) -> str:
+        if callable(credentials_loader):
+            credentials = credentials_loader(connector) or {}
+            public_urls = credentials.get("public_access_urls") if isinstance(credentials, dict) else {}
+            if isinstance(public_urls, dict):
+                management_v3 = str(public_urls.get("connector_management_api_v3") or "").strip().rstrip("/")
+                if management_v3:
+                    return management_v3
+                management = str(public_urls.get("connector_management_api") or "").strip().rstrip("/")
+                if management:
+                    return _join_management_url(management, "/management/v3")
+
+        if callable(base_builder):
+            base = str(base_builder(connector) or "").strip().rstrip("/")
+            if base:
+                return _join_management_url(base, "/management/v3")
+
+        if callable(interface_builder):
+            base = str(interface_builder(connector) or "").strip().rstrip("/")
+            if not base:
+                return ""
+            if base.endswith("/management/v3") or base.endswith("/management"):
+                return _join_management_url(base, "/management/v3")
+            for suffix in ("/inesdata-connector-interface", "/inesdata-connector-interface/"):
+                if base.endswith(suffix):
+                    base = base[: -len(suffix)].rstrip("/")
+                    break
+            if base:
+                return _join_management_url(base, "/management/v3")
+        return ""
+
     def resolver(connector: str, path: str) -> str:
-        base = str(builder(connector) or "").strip().rstrip("/")
+        base = management_base_url(connector)
         suffix = str(path or "").strip()
         if not base:
             return ""

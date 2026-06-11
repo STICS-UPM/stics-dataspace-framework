@@ -12,6 +12,9 @@ const {
 
 const bootstrapCache = new Map();
 const { readyTimeoutMs, navigationTimeoutMs } = resolveOntologyHubTimeouts();
+const OPTIONAL_THIRD_PARTY_RESOURCE_PATTERNS = [
+  /^https?:\/\/lov\.linkeddata\.es\/js\/timeline\//i,
+];
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -106,6 +109,18 @@ async function pageShowsTransientAvailabilityFailure(page) {
 
 async function stopPageLoad(page) {
   await page.evaluate(() => window.stop()).catch(() => {});
+}
+
+async function installOptionalThirdPartyResourceGuards(page) {
+  if (page.__ontologyHubOptionalThirdPartyResourceGuardsInstalled) {
+    return;
+  }
+  page.__ontologyHubOptionalThirdPartyResourceGuardsInstalled = true;
+  for (const pattern of OPTIONAL_THIRD_PARTY_RESOURCE_PATTERNS) {
+    await page.route(pattern, async (route) => {
+      await route.abort("blockedbyclient");
+    });
+  }
 }
 
 async function waitForPageBodyOrTransientFailure(page, timeoutMs = readyTimeoutMs) {
@@ -1214,6 +1229,7 @@ function updateOntologyHubBootstrapState(runtime, patch) {
 module.exports = {
   ensureOntologyHubBootstrap,
   gotoEdition,
+  installOptionalThirdPartyResourceGuards,
   pageShowsTransientAvailabilityFailure,
   textShowsTransientAvailabilityFailure,
   updateOntologyHubBootstrapState,

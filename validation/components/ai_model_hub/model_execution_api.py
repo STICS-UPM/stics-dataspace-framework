@@ -54,7 +54,9 @@ def _join_management_url(base_url: str, path: str) -> str:
     suffix = str(path or "").strip()
     if not base:
         return ""
-    if base.endswith("/management") and suffix.startswith("/management/"):
+    if base.endswith("/management/v3") and suffix.startswith("/management/v3/"):
+        suffix = suffix[len("/management/v3") :]
+    elif base.endswith("/management") and suffix.startswith("/management/"):
         suffix = suffix[len("/management"):]
     if not suffix.startswith("/"):
         suffix = f"/{suffix}"
@@ -919,12 +921,46 @@ def _build_adapter(adapter_name: str, topology: str):
 
 
 def _adapter_management_url_resolver(adapter):
-    builder = getattr(getattr(adapter, "connectors", None), "build_connector_url", None)
-    if not callable(builder):
+    connectors = getattr(adapter, "connectors", None)
+    credentials_loader = getattr(adapter, "load_connector_credentials", None)
+    base_builder = getattr(connectors, "connector_base_url", None)
+    interface_builder = getattr(connectors, "build_connector_url", None)
+    if not any(callable(candidate) for candidate in (credentials_loader, base_builder, interface_builder)):
         return None
 
+    def management_base_url(connector: str) -> str:
+        if callable(credentials_loader):
+            credentials = credentials_loader(connector) or {}
+            public_urls = credentials.get("public_access_urls") if isinstance(credentials, dict) else {}
+            if isinstance(public_urls, dict):
+                management_v3 = str(public_urls.get("connector_management_api_v3") or "").strip().rstrip("/")
+                if management_v3:
+                    return management_v3
+                management = str(public_urls.get("connector_management_api") or "").strip().rstrip("/")
+                if management:
+                    return _join_management_url(management, "/management/v3")
+
+        if callable(base_builder):
+            base = str(base_builder(connector) or "").strip().rstrip("/")
+            if base:
+                return _join_management_url(base, "/management/v3")
+
+        if callable(interface_builder):
+            base = str(interface_builder(connector) or "").strip().rstrip("/")
+            if not base:
+                return ""
+            if base.endswith("/management/v3") or base.endswith("/management"):
+                return _join_management_url(base, "/management/v3")
+            for suffix in ("/inesdata-connector-interface", "/inesdata-connector-interface/"):
+                if base.endswith(suffix):
+                    base = base[: -len(suffix)].rstrip("/")
+                    break
+            if base:
+                return _join_management_url(base, "/management/v3")
+        return ""
+
     def resolver(connector: str, path: str) -> str:
-        base = str(builder(connector) or "").strip().rstrip("/")
+        base = management_base_url(connector)
         suffix = str(path or "").strip()
         if not base:
             return ""

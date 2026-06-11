@@ -12,6 +12,7 @@ from validation.components.ai_model_hub.model_execution_api import (
     FLARES_EXPECTED_MODEL,
     FLARES_MODEL_PATH,
     FUNCTIONAL_CASE_ID,
+    _adapter_management_url_resolver,
     build_flares_execution_context,
     default_model_url,
 )
@@ -298,6 +299,27 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
                 suite._management_url("conn-provider", "/management/v3/modelexecutions/execute"),
                 "https://org2.example.test/management/v3/modelexecutions/execute",
             )
+
+    def test_adapter_management_resolver_prefers_management_api_over_connector_interface(self):
+        class FakeAdapter:
+            def load_connector_credentials(self, connector):
+                return {"connector_user": {"user": "user", "passwd": "example-pass"}}
+
+            class connectors:
+                @staticmethod
+                def connector_base_url(connector):
+                    return f"http://{connector}.example.test"
+
+                @staticmethod
+                def build_connector_url(connector):
+                    return f"http://{connector}.example.test/inesdata-connector-interface/"
+
+        resolver = _adapter_management_url_resolver(FakeAdapter())
+
+        self.assertEqual(
+            resolver("conn-provider", "/management/v3/modelexecutions/execute"),
+            "http://conn-provider.example.test/management/v3/modelexecutions/execute",
+        )
 
     def test_edc_execution_uses_default_api_inference_endpoint_not_management(self):
         session = FakeSession()

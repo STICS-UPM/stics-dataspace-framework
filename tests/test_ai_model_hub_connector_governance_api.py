@@ -9,6 +9,7 @@ from validation.components.ai_model_hub.connector_governance_api import (
     CASE_IDS,
     COMPONENT_KEY,
     SUITE_NAME,
+    _adapter_management_url_resolver,
 )
 
 
@@ -164,6 +165,30 @@ class AIModelHubConnectorGovernanceApiTests(unittest.TestCase):
         cleanup_asset_steps = [step for step in result["steps"] if step["name"] == "cleanup_asset"]
         self.assertEqual(cleanup_asset_steps[0]["status"], "skipped")
 
+    def test_run_recovers_agreement_from_agreements_list_when_negotiation_omits_contract_id(self):
+        class AgreementRecoverySession(FakeSession):
+            def get(self, url, timeout=30, headers=None):
+                if url.endswith("/management/v3/contractnegotiations/neg-1"):
+                    self.gets.append({"url": url, "headers": headers or {}})
+                    return FakeResponse(200, {"@id": "neg-1", "state": "INITIAL"})
+                return super().get(url, timeout=timeout, headers=headers)
+
+        session = AgreementRecoverySession()
+        result = self._suite(session).run(
+            provider="conn-provider",
+            consumer="conn-consumer",
+            model_url="http://model-server.demo.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
+        )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["created_entities"]["agreement_id"], "agreement-1")
+        agreement_steps = [step for step in result["steps"] if step["name"] == "wait_for_contract_agreement"]
+        self.assertEqual(agreement_steps[0]["state"], "RECOVERED_FROM_AGREEMENTS")
+        self.assertEqual(agreement_steps[0]["negotiation_state"], "INITIAL")
+        self.assertTrue(
+            any(entry["url"].endswith("/management/v3/contractagreements/request") for entry in session.posts)
+        )
+
     def test_run_waits_until_negotiated_agreement_is_listed(self):
         class DelayedAgreementSession(FakeSession):
             def __init__(self):
@@ -285,6 +310,45 @@ class AIModelHubConnectorGovernanceApiTests(unittest.TestCase):
                 suite._protocol_address("conn-provider"),
                 "http://conn-provider.example.test/protocol",
             )
+
+    def test_adapter_management_resolver_prefers_generated_public_management_urls(self):
+        class FakeAdapter:
+            def load_connector_credentials(self, connector):
+                return {
+                    "connector_user": {"user": "user", "passwd": "example-pass"},
+                    "public_access_urls": {
+                        "connector_management_api_v3": f"https://{connector}.example.test/edc/management/v3",
+                    },
+                }
+
+            class connectors:
+                @staticmethod
+                def build_connector_url(connector):
+                    return f"https://{connector}.example.test/inesdata-connector-interface/"
+
+        resolver = _adapter_management_url_resolver(FakeAdapter())
+
+        self.assertEqual(
+            resolver("conn-provider", "/management/v3/assets"),
+            "https://conn-provider.example.test/edc/management/v3/assets",
+        )
+
+    def test_adapter_management_resolver_converts_inesdata_interface_url_to_management_url(self):
+        class FakeAdapter:
+            def load_connector_credentials(self, connector):
+                return {"connector_user": {"user": "user", "passwd": "example-pass"}}
+
+            class connectors:
+                @staticmethod
+                def build_connector_url(connector):
+                    return f"http://{connector}.example.test/inesdata-connector-interface/"
+
+        resolver = _adapter_management_url_resolver(FakeAdapter())
+
+        self.assertEqual(
+            resolver("conn-provider", "/management/v3/assets"),
+            "http://conn-provider.example.test/management/v3/assets",
+        )
 
 
 if __name__ == "__main__":
