@@ -11,10 +11,23 @@ const jsonReportFile =
   process.env.PLAYWRIGHT_JSON_REPORT_FILE || path.join(outputDir, "results.json");
 const consoleReporter = path.join(__dirname, "reporters", "console-test-name-reporter.cjs");
 const headedGpuFix = process.env.PLAYWRIGHT_HEADED_GPU_FIX === "1";
+const aiModelHubHttpDataDemo = process.env.UI_AI_MODEL_HUB_HTTPDATA_DEMO === "1";
+const aiModelHubModelServerDemo = process.env.UI_AI_MODEL_HUB_MODEL_SERVER_DEMO !== "0";
 
 export default defineConfig({
   testDir: ".",
   testMatch: ["adapters/edc/specs/**/*.spec.ts"],
+  testIgnore: [
+    ...(aiModelHubHttpDataDemo && aiModelHubModelServerDemo
+      ? []
+      : ["adapters/edc/specs/12-ai-model-execution.spec.ts"]),
+    ...(aiModelHubHttpDataDemo && aiModelHubModelServerDemo
+      ? []
+      : ["adapters/edc/specs/13-ai-model-benchmarking.spec.ts"]),
+    ...(aiModelHubHttpDataDemo && aiModelHubModelServerDemo
+      ? []
+      : ["adapters/edc/specs/15-ai-model-external-execution.spec.ts"]),
+  ],
   timeout: 4 * 60 * 1000,
   expect: {
     timeout: 15 * 1000,

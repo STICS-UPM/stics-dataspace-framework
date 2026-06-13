@@ -131,6 +131,10 @@ def _uses_inesdata_connector_interface(bootstrap_result: Dict[str, Any]) -> bool
     return _bootstrap_config_shape(bootstrap_result) == "inesdata-connector-interface"
 
 
+def _uses_edc_dashboard_adapter() -> bool:
+    return _component_adapter_name() == "edc"
+
+
 def _skipped_playwright_suite_result(
     *,
     suite: str,
@@ -896,7 +900,30 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
     functional_suite_results: List[tuple[str, Dict[str, Any]]] = []
     if not api_only:
         print_suite_header("AI Model Hub functional", "playwright")
-        if _uses_inesdata_connector_interface(bootstrap_result):
+        if _uses_edc_dashboard_adapter():
+            skip_reason = (
+                "Legacy AI Model Hub dashboard Playwright specs are not applicable to the "
+                "EDC dashboard layout exposed by this deployment. AI Model Hub UI evidence "
+                "for EDC is collected by the EDC integration Playwright suite."
+            )
+            print(f"AI Model Hub Playwright suites skipped: {skip_reason}")
+            ui_result = _skipped_playwright_suite_result(
+                suite="ui",
+                base_url=normalized_base_url,
+                reason=skip_reason,
+                experiment_dir=experiment_dir,
+                artifact_subdir="ui",
+                report_filename="ai_model_hub_ui_validation.json",
+            )
+            functional_result = _skipped_playwright_suite_result(
+                suite="linguistic-functional",
+                base_url=normalized_base_url,
+                reason=skip_reason,
+                experiment_dir=experiment_dir,
+                artifact_subdir="functional",
+                report_filename="ai_model_hub_functional_validation.json",
+            )
+        elif _uses_inesdata_connector_interface(bootstrap_result):
             skip_reason = (
                 "Legacy AI Model Hub dashboard Playwright specs are not applicable to the "
                 "INESData connector interface layout exposed by this deployment."

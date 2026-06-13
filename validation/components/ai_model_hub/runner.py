@@ -11,6 +11,7 @@ DEFAULT_APP_CONFIG_PATHS = (
     "inesdata-connector-interface/assets/config/app.config.json",
     "assets/config/app.config.json",
     "config/app-config.json",
+    "edc-dashboard/config/app-config.json",
 )
 APP_CONFIG_PATH = os.environ.get("AI_MODEL_HUB_APP_CONFIG_PATH", ",".join(DEFAULT_APP_CONFIG_PATHS))
 

@@ -265,6 +265,24 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         self.assertIn('"daimo:base_model": "controlled-httpdata"', edc_fixtures)
         self.assertIn('proxyPath: "true"', edc_fixtures)
 
+    def test_edc_ai_model_execution_specs_skip_when_model_server_is_disabled(self):
+        edc_config = _read_ui_file("playwright.edc.config.ts")
+        self.assertIn("UI_AI_MODEL_HUB_MODEL_SERVER_DEMO", edc_config)
+        self.assertIn("adapters/edc/specs/12-ai-model-execution.spec.ts", edc_config)
+        self.assertIn("adapters/edc/specs/13-ai-model-benchmarking.spec.ts", edc_config)
+        self.assertIn("adapters/edc/specs/15-ai-model-external-execution.spec.ts", edc_config)
+
+        expected_specs = [
+            ("adapters", "edc", "specs", "12-ai-model-execution.spec.ts"),
+            ("adapters", "edc", "specs", "13-ai-model-benchmarking.spec.ts"),
+            ("adapters", "edc", "specs", "15-ai-model-external-execution.spec.ts"),
+        ]
+        for parts in expected_specs:
+            source = _read_ui_file(*parts)
+            self.assertIn("UI_AI_MODEL_HUB_MODEL_SERVER_DEMO", source, "/".join(parts))
+            self.assertIn("UI_AI_MODEL_HUB_MODEL_SERVER_COVERAGE_STATUS", source, "/".join(parts))
+            self.assertIn("UI_AI_MODEL_HUB_MODEL_SERVER_SKIP_REASON", source, "/".join(parts))
+
     def test_edc_asset_filter_searches_jsonld_dataset_ids(self):
         connector_filter = os.path.join(
             VALIDATION_ROOT,

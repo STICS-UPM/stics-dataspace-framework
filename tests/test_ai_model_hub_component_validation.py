@@ -176,6 +176,56 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                 ],
             )
 
+    def test_run_ai_model_hub_validation_falls_back_to_edc_dashboard_config_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            requested_urls = []
+
+            def fake_http_get(url, timeout=20):
+                requested_urls.append(url)
+                if url == "http://ai-model-hub.example.local":
+                    return 200, "text/html", "<!doctype html><html><body><app-root></app-root></body></html>"
+                if url.endswith("/edc-dashboard/config/app-config.json"):
+                    payload = {
+                        "menuItems": [
+                            {"label": "ML Assets", "path": "/assets/ml"},
+                        ],
+                        "healthCheckIntervalSeconds": 30,
+                        "enableUserConfig": False,
+                    }
+                    return 200, "application/json", json.dumps(payload)
+                if url.endswith("/inesdata-connector-interface/assets/config/app.config.json"):
+                    return 404, "text/html", "not found"
+                if url.endswith("/assets/config/app.config.json"):
+                    return 404, "text/html", "not found"
+                if url.endswith("/config/app-config.json"):
+                    return 404, "text/html", "not found"
+                raise AssertionError(f"Unexpected URL: {url}")
+
+            with mock.patch("validation.components.ai_model_hub.runner._http_get", side_effect=fake_http_get):
+                result = run_ai_model_hub_validation(
+                    "http://ai-model-hub.example.local",
+                    experiment_dir=tmpdir,
+                )
+
+            self.assertEqual(result["status"], "passed")
+            config_case = result["executed_cases"][1]
+            self.assertEqual(
+                config_case["request"]["url"],
+                "http://ai-model-hub.example.local/edc-dashboard/config/app-config.json",
+            )
+            self.assertEqual(config_case["response"]["config_shape"], "data-dashboard")
+            self.assertEqual(len(config_case["response"]["attempts"]), 4)
+            self.assertEqual(
+                requested_urls,
+                [
+                    "http://ai-model-hub.example.local",
+                    "http://ai-model-hub.example.local/inesdata-connector-interface/assets/config/app.config.json",
+                    "http://ai-model-hub.example.local/assets/config/app.config.json",
+                    "http://ai-model-hub.example.local/config/app-config.json",
+                    "http://ai-model-hub.example.local/edc-dashboard/config/app-config.json",
+                ],
+            )
+
     def test_run_ai_model_hub_component_validation_builds_catalog_alignment(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             def fake_http_get(url, timeout=20):
@@ -386,6 +436,86 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["suites"]["ui"]["status"], "skipped")
         self.assertIn("INESData connector interface", result["suites"]["ui"]["skip_reason"])
+        self.assertEqual(result["suites"]["linguistic_functional"]["status"], "skipped")
+
+    def test_run_ai_model_hub_component_validation_skips_legacy_playwright_for_edc_dashboard(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_result = {
+                "component": "ai-model-hub",
+                "suite": "bootstrap",
+                "status": "passed",
+                "summary": {"total": 2, "passed": 2, "failed": 0, "skipped": 0},
+                "executed_cases": [
+                    {
+                        "test_case_id": "MH-BOOTSTRAP-01",
+                        "type": "api",
+                        "case_group": "support",
+                        "validation_type": "support",
+                        "dataspace_dimension": "support",
+                        "mapping_status": "supporting",
+                        "coverage_status": "automated",
+                        "execution_mode": "api_support",
+                        "evaluation": {"status": "passed", "assertions": []},
+                    },
+                    {
+                        "test_case_id": "MH-BOOTSTRAP-02",
+                        "type": "api",
+                        "case_group": "support",
+                        "validation_type": "support",
+                        "dataspace_dimension": "support",
+                        "mapping_status": "supporting",
+                        "coverage_status": "automated",
+                        "execution_mode": "api_support",
+                        "response": {"config_shape": "data-dashboard"},
+                        "evaluation": {"status": "passed", "assertions": []},
+                    },
+                ],
+                "evidence_index": [],
+                "artifacts": {"report_json": os.path.join(tmpdir, "bootstrap.json")},
+            }
+            skipped_api_result = {
+                "component": "ai-model-hub",
+                "suite": "model-server-use-cases-api",
+                "status": "skipped",
+                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
+                "executed_cases": [],
+                "evidence_index": [],
+                "artifacts": {},
+            }
+
+            with (
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_validation",
+                    return_value=bootstrap_result,
+                ),
+                mock.patch("validation.components.ai_model_hub.component_runner.run_ai_model_hub_ui_validation") as ui,
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_functional_validation"
+                ) as functional,
+                mock.patch(
+                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_model_server_use_cases_validation",
+                    return_value=skipped_api_result,
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        **AI_MODEL_HUB_A52_SUITES_DISABLED,
+                        "PIONERA_ADAPTER": "edc",
+                    },
+                    clear=False,
+                ),
+            ):
+                result = run_ai_model_hub_component_validation(
+                    "http://ai-model-hub.example.local",
+                    experiment_dir=tmpdir,
+                )
+
+        ui.assert_not_called()
+        functional.assert_not_called()
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["suites"]["ui"]["status"], "skipped")
+        self.assertIn("EDC dashboard layout", result["suites"]["ui"]["skip_reason"])
+        self.assertIn("EDC integration Playwright suite", result["suites"]["ui"]["skip_reason"])
         self.assertEqual(result["suites"]["linguistic_functional"]["status"], "skipped")
 
     def test_run_ai_model_hub_component_validation_runs_a52_suites_by_default(self):
