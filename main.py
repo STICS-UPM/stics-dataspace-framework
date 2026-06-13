@@ -3,6 +3,7 @@ import atexit
 import builtins
 import contextlib
 import getpass
+import http.client
 import ipaddress
 import importlib
 import inspect
@@ -14,6 +15,7 @@ import signal
 import shlex
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -18262,6 +18264,22 @@ def _vm_single_mapping_editor_health_url(url):
     return f"{str(url or '').rstrip('/')}/_stcore/health"
 
 
+def _vm_single_mapping_editor_websocket_url(url):
+    normalized_url = str(url or "").strip()
+    if not normalized_url:
+        return ""
+    base_url = normalized_url if normalized_url.endswith("/") else f"{normalized_url}/"
+    try:
+        stream_url = urllib.parse.urljoin(base_url, "_stcore/stream")
+        parsed = urllib.parse.urlparse(stream_url)
+    except Exception:
+        return ""
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    scheme = "wss" if parsed.scheme.lower() == "https" else "ws"
+    return urllib.parse.urlunparse((scheme, parsed.netloc, parsed.path or "/", "", parsed.query, ""))
+
+
 def _vm_single_mapping_editor_http_ready(url, timeout_seconds=2):
     if not url:
         return False
@@ -18273,6 +18291,48 @@ def _vm_single_mapping_editor_http_ready(url, timeout_seconds=2):
     except requests.RequestException:
         return False
     return int(getattr(response, "status_code", 0) or 0) == 200
+
+
+def _vm_single_mapping_editor_websocket_ready(url, timeout_seconds=2):
+    stream_url = _vm_single_mapping_editor_websocket_url(url)
+    if not stream_url:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(stream_url)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        timeout = max(float(timeout_seconds), 0.5)
+        if parsed.scheme == "wss":
+            connection = http.client.HTTPSConnection(
+                parsed.hostname,
+                parsed.port or 443,
+                timeout=timeout,
+                context=ssl._create_unverified_context(),
+            )
+        else:
+            connection = http.client.HTTPConnection(
+                parsed.hostname,
+                parsed.port or 80,
+                timeout=timeout,
+            )
+        try:
+            connection.request(
+                "GET",
+                path,
+                headers={
+                    "Connection": "Upgrade",
+                    "Upgrade": "websocket",
+                    "Sec-WebSocket-Key": "cGlvbmVyYS13cy1wcm9iZQ==",
+                    "Sec-WebSocket-Version": "13",
+                },
+            )
+            response = connection.getresponse()
+            return int(getattr(response, "status", 0) or 0) == 101
+        finally:
+            connection.close()
+    except Exception:
+        return False
 
 
 def _vm_single_mapping_editor_port_forward_command(topology_config, local_port):
@@ -18446,16 +18506,15 @@ def _vm_single_mapping_editor_has_dedicated_public_url(topology_config):
 def _vm_single_mapping_editor_dedicated_public_url_ready(topology_config):
     if not _vm_single_mapping_editor_has_dedicated_public_url(topology_config):
         return False
-    return _vm_single_mapping_editor_http_ready(
-        _vm_single_mapping_editor_public_url(topology_config),
+    url = _vm_single_mapping_editor_public_url(topology_config)
+    return _vm_single_mapping_editor_http_ready(url, timeout_seconds=2) and _vm_single_mapping_editor_websocket_ready(
+        url,
         timeout_seconds=2,
     )
 
 
 def _vm_single_mapping_editor_should_use_tunnel(plan, topology_config):
     if os.environ.get("PIONERA_VM_SINGLE_REMOTE_LEVEL_ACTIVE") == "true":
-        return False
-    if os.environ.get("PIONERA_LEVEL_RUNTIME_ENV_ACTIVE") == "true":
         return False
     if _vm_single_running_on_target(plan):
         return False
@@ -18777,7 +18836,21 @@ def _ensure_vm_single_k3s_api_access(adapter_name=None, command_runner=None):
     }
 
 
-def _vm_single_k3s_remote_prepare_shell(topology_config):
+def _vm_single_remote_sudo_password(env=None):
+    source = os.environ if env is None else dict(env or {})
+    for key in (
+        "K3S_REMOTE_IMPORT_SUDO_PASSWORD",
+        "PIONERA_REMOTE_SUDO_PASSWORD",
+        "PIONERA_SUDO_PASSWORD",
+        "SUDO_PASSWORD",
+    ):
+        value = source.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _vm_single_k3s_remote_prepare_shell(topology_config, *, sudo_stdin=False):
     remote_kubeconfig = _vm_single_remote_kubeconfig_path(topology_config)
     service_name = _vm_distributed_config_value(topology_config, "K3S_SERVICE_NAME", default="k3s") or "k3s"
     install_exec = _vm_distributed_config_value(
@@ -18794,25 +18867,56 @@ def _vm_single_k3s_remote_prepare_shell(topology_config):
     remote_kubeconfig_q = shlex.quote(remote_kubeconfig)
     service_name_q = shlex.quote(service_name)
     kubeconfig_mode_q = shlex.quote(kubeconfig_mode)
+    install_command = f"curl -sfL https://get.k3s.io | sh -s - {install_exec_args}"
+    sudo_prelude = []
+    if sudo_stdin:
+        sudo_prelude = [
+            "__pionera_sudo_password=''",
+            "if [ -t 0 ]; then",
+            "  __pionera_stty_state=\"$(stty -g 2>/dev/null || true)\"",
+            "  stty -echo 2>/dev/null || true",
+            "  IFS= read -r __pionera_sudo_password || __pionera_sudo_password=''",
+            "  if [ -n \"$__pionera_stty_state\" ]; then",
+            "    stty \"$__pionera_stty_state\" 2>/dev/null || true",
+            "  else",
+            "    stty echo 2>/dev/null || true",
+            "  fi",
+            "else",
+            "  IFS= read -r __pionera_sudo_password || __pionera_sudo_password=''",
+            "fi",
+            "pionera_sudo() {",
+            "  printf '%s\\n' \"$__pionera_sudo_password\" | sudo -S -p '' \"$@\"",
+            "}",
+            "pionera_sudo_sh_c() {",
+            "  printf '%s\\n' \"$__pionera_sudo_password\" | sudo -S -p '' sh -c \"$1\"",
+            "}",
+        ]
+    else:
+        sudo_prelude = [
+            "pionera_sudo() { sudo \"$@\"; }",
+            "pionera_sudo_sh_c() { sudo sh -c \"$1\"; }",
+        ]
+
     return "\n".join(
         [
             "set -eu",
+            *sudo_prelude,
             "needs_install=0",
             "command -v k3s >/dev/null 2>&1 || needs_install=1",
             f"systemctl is-active --quiet {service_name_q} || needs_install=1",
             f"test -f {remote_kubeconfig_q} || needs_install=1",
             'if [ "$needs_install" = "1" ]; then',
             "  echo 'Installing or repairing k3s on vm-single...'",
-            f"  curl -sfL https://get.k3s.io | sudo sh -s - {install_exec_args}",
+            f"  pionera_sudo_sh_c {shlex.quote(install_command)}",
             "else",
             "  echo 'k3s already installed on vm-single.'",
             "fi",
             "if systemctl list-unit-files k3s-agent.service --no-pager >/dev/null 2>&1; then",
-            "  sudo systemctl stop k3s-agent >/dev/null 2>&1 || true",
-            "  sudo systemctl disable k3s-agent >/dev/null 2>&1 || true",
+            "  pionera_sudo systemctl stop k3s-agent >/dev/null 2>&1 || true",
+            "  pionera_sudo systemctl disable k3s-agent >/dev/null 2>&1 || true",
             "fi",
-            f"sudo systemctl start {service_name_q}",
-            f"sudo chmod {kubeconfig_mode_q} {remote_kubeconfig_q}",
+            f"pionera_sudo systemctl start {service_name_q}",
+            f"pionera_sudo chmod {kubeconfig_mode_q} {remote_kubeconfig_q}",
             f"systemctl is-active {service_name_q}",
             f"test -r {remote_kubeconfig_q}",
         ]
@@ -18976,11 +19080,19 @@ def _run_vm_single_level1_via_ssh_tunnel(adapter, adapter_name):
 
     print("vm-single Level 1 will prepare k3s on the VM over SSH.")
     print("The framework stays on this machine; Kubernetes access will use an SSH tunnel.")
-    remote_shell = _vm_single_k3s_remote_prepare_shell(bundle["topology"])
-    command = _vm_single_remote_ssh_command(plan, remote_shell)
+    sudo_password = _vm_single_remote_sudo_password()
+    remote_shell = _vm_single_k3s_remote_prepare_shell(
+        bundle["topology"],
+        sudo_stdin=bool(sudo_password),
+    )
+    command = _vm_single_remote_ssh_command(plan, remote_shell, allocate_tty=not bool(sudo_password))
     if not command:
         raise RuntimeError("Cannot prepare vm-single Level 1 because the target SSH command could not be built.")
-    completed = subprocess.run(command, check=False)
+    run_kwargs = {"check": False}
+    if sudo_password:
+        print("Using configured local sudo secret for vm-single remote k3s preparation.")
+        run_kwargs.update({"input": f"{sudo_password}\n", "text": True})
+    completed = subprocess.run(command, **run_kwargs)
     if int(getattr(completed, "returncode", 1) or 0) != 0:
         raise RuntimeError("Remote vm-single k3s preparation failed. Check the SSH output above before retrying.")
 
@@ -19114,12 +19226,12 @@ def _vm_single_remote_level_shell(topology_config, adapter_name, level_id):
     )
 
 
-def _vm_single_remote_ssh_command(plan, remote_shell):
+def _vm_single_remote_ssh_command(plan, remote_shell, *, allocate_tty=True):
     payload = dict(plan or {})
     vms = [item for item in list(payload.get("vms") or []) if isinstance(item, dict)]
     vm = vms[0] if vms else {}
     command = _vm_distributed_build_ssh_command(payload, vm, remote_command=remote_shell)
-    if command and command[0] == "ssh" and "-tt" not in command:
+    if allocate_tty and command and command[0] == "ssh" and "-tt" not in command:
         command.insert(1, "-tt")
     return command
 

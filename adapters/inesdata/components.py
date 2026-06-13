@@ -1961,18 +1961,19 @@ class INESDataComponentsAdapter:
             "VM_SINGLE_REMOTE_IMAGE_IMPORT_TTY",
             "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY",
         )
-        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE"] = self._config_value(
+        remote_image_prune = self._config_value(
             config,
             "VM_SINGLE_REMOTE_IMAGE_PRUNE",
             "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE",
         )
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE"] = remote_image_prune or "true"
         remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP"] = (
             self._config_value(
                 config,
                 "VM_SINGLE_REMOTE_IMAGE_PRUNE_KEEP",
                 "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP",
             )
-            or "2"
+            or "1"
         )
 
         return remote_k3s_image_import_target(remote_config, role="common")
@@ -2095,6 +2096,100 @@ class INESDataComponentsAdapter:
     def _remote_k3s_interactive_fallback_allowed() -> bool:
         return bool(sys.stdin.isatty() and sys.stdout.isatty())
 
+    @staticmethod
+    def _image_repository(image_ref: str) -> str:
+        ref = str(image_ref or "").strip().split("@", 1)[0]
+        if not ref:
+            return ""
+        last_segment = ref.rsplit("/", 1)[-1]
+        if ":" in last_segment:
+            return ref.rsplit(":", 1)[0]
+        return ref
+
+    def _remote_k3s_prune_imported_images_command(self, image_refs, *, prune_keep: str = "1", sudo_stdin=False):
+        repos = []
+        for image_ref in self._dedupe_image_refs(image_refs):
+            for candidate in self._k3s_image_save_refs(image_ref):
+                repo = self._image_repository(candidate)
+                if repo and repo not in repos:
+                    repos.append(repo)
+        if not repos:
+            return ""
+
+        keep_q = shlex.quote(str(prune_keep or "1"))
+        repos_q = " ".join(shlex.quote(repo) for repo in repos)
+        jsonpath_q = shlex.quote(
+            '{range .items[*]}'
+            '{range .spec.initContainers[*]}{.image}{"\\n"}{end}'
+            '{range .spec.containers[*]}{.image}{"\\n"}{end}'
+            '{end}'
+        )
+        if sudo_stdin:
+            sudo_prelude = [
+                "__pionera_sudo_password=''",
+                "IFS= read -r __pionera_sudo_password || __pionera_sudo_password=''",
+                "pionera_sudo() {",
+                "  printf '%s\\n' \"$__pionera_sudo_password\" | sudo -S -p '' \"$@\"",
+                "}",
+            ]
+        else:
+            sudo_prelude = ["pionera_sudo() { sudo -n \"$@\"; }"]
+
+        return "\n".join(
+            [
+                "set -eu",
+                *sudo_prelude,
+                f"keep={keep_q}",
+                "case \"$keep\" in ''|*[!0-9]*) keep=1;; esac",
+                f"set -- {repos_q}",
+                "in_use=\"$(pionera_sudo k3s kubectl get pods -A "
+                f"-o jsonpath={jsonpath_q} 2>/dev/null || true)\"",
+                "for repo do",
+                "  count=0",
+                "  pionera_sudo k3s ctr -n k8s.io images ls -q 2>/dev/null | "
+                "while IFS= read -r image; do",
+                "    case \"$image\" in \"$repo\":*|docker.io/\"$repo\":*|*/\"$repo\":*) "
+                "printf '%s\\n' \"$image\";; esac",
+                "  done | sort -r | while IFS= read -r image; do",
+                "    short=\"${image#docker.io/}\"",
+                "    library_short=\"${image#docker.io/library/}\"",
+                "    if printf '%s\\n' \"$in_use\" | grep -Fxq \"$image\" || "
+                "printf '%s\\n' \"$in_use\" | grep -Fxq \"$short\" || "
+                "printf '%s\\n' \"$in_use\" | grep -Fxq \"$library_short\"; then",
+                "      continue",
+                "    fi",
+                "    count=$((count + 1))",
+                "    if [ \"$count\" -le \"$keep\" ]; then",
+                "      continue",
+                "    fi",
+                "    echo \"Pruning old k3s image: $image\"",
+                "    pionera_sudo k3s ctr -n k8s.io images rm \"$image\" >/dev/null 2>&1 || true",
+                "  done",
+                "done",
+                "pionera_sudo k3s crictl rmi --prune >/dev/null 2>&1 || true",
+                "pionera_sudo k3s ctr -n k8s.io content prune >/dev/null 2>&1 || true",
+            ]
+        )
+
+    def _prune_remote_k3s_imported_images(self, remote_target, image_refs):
+        if not remote_target or not getattr(remote_target, "prune_imported_images", False):
+            return
+        password_env = self._remote_k3s_sudo_password_env_name()
+        prune_command = self._remote_k3s_prune_imported_images_command(
+            image_refs,
+            prune_keep=getattr(remote_target, "prune_keep", "1"),
+            sudo_stdin=bool(password_env),
+        )
+        if not prune_command:
+            return
+
+        print("Pruning old remote k3s images for imported local image repositories...")
+        ssh_command = shell_join(remote_target.ssh_command_args(prune_command))
+        if password_env:
+            ssh_command = self._pipe_env_secret_command(password_env, ssh_command)
+        if self.run(ssh_command, check=False) is None:
+            print("Warning: remote k3s image prune failed; continuing.")
+
     def _load_images_into_k3s(self, image_refs, deployer_config: dict | None = None):
         image_refs = self._dedupe_image_refs(image_refs)
         if not image_refs:
@@ -2151,6 +2246,7 @@ class INESDataComponentsAdapter:
                                     "Failed to import image(s) into remote k3s containerd",
                                     root_cause=refs_label,
                                 )
+                            self._prune_remote_k3s_imported_images(remote_target, image_refs)
                             return
                         if self._remote_k3s_interactive_fallback_allowed():
                             print(
@@ -2170,6 +2266,7 @@ class INESDataComponentsAdapter:
                 )
                 if self.run(ssh_command, check=False) is None:
                     self._fail("Failed to import image(s) into remote k3s containerd", root_cause=refs_label)
+                self._prune_remote_k3s_imported_images(remote_target, image_refs)
                 return
             if self.run(f"sudo k3s ctr -n k8s.io images import {archive_q}", check=False) is None:
                 self._fail("Failed to import image(s) into k3s containerd", root_cause=refs_label)

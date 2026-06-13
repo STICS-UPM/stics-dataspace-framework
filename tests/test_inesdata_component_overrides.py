@@ -2942,7 +2942,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
     def test_load_image_into_k3s_auto_uses_batch_sudo_secret_before_interactive_prompt(self):
         adapter = self._make_adapter()
         adapter.config_adapter.topology = "vm-single"
-        adapter.run = mock.Mock(side_effect=["tagged", "saved", "copied", None, "imported"])
+        adapter.run = mock.Mock(side_effect=["tagged", "saved", "copied", None, "imported", "pruned"])
         deployer_config = {
             "CLUSTER_TYPE": "k3s",
             "VM_SINGLE_REMOTE_IMAGE_IMPORT": "auto",
@@ -2965,6 +2965,9 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertIn("sudo -S -p", commands[4])
         self.assertIn("k3s ctr -n k8s.io images import", commands[4])
         self.assertNotIn("ssh -tt", commands[4])
+        self.assertIn("printf '%s\\n' \"${K3S_REMOTE_IMPORT_SUDO_PASSWORD}\" | ssh", commands[5])
+        self.assertIn("k3s ctr -n k8s.io content prune", commands[5])
+        self.assertIn("ontology-hub", commands[5])
 
     def test_load_images_into_k3s_batches_semantic_virtualization_images_for_remote_import(self):
         adapter = self._make_adapter()
@@ -3004,6 +3007,9 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertIn("scp -P 22", commands[3])
         self.assertIn("sudo -n k3s ctr -n k8s.io images ls -q", commands[4])
         self.assertIn("sudo -n k3s ctr -n k8s.io images import", commands[5])
+        self.assertIn("k3s ctr -n k8s.io content prune", commands[6])
+        self.assertIn("morph-kgv", commands[6])
+        self.assertIn("mapping-editor", commands[6])
 
     def test_prepare_level6_local_image_rebuilds_ontology_hub_without_consulting_host_cache(self):
         adapter = self._make_adapter()

@@ -5317,6 +5317,91 @@ class MainCliTests(unittest.TestCase):
         ):
             self.assertTrue(main._vm_single_should_prepare_k3s_tunnel(6, plan, topology_config))
 
+    def test_vm_single_k3s_remote_prepare_shell_can_use_sudo_stdin(self):
+        shell = main._vm_single_k3s_remote_prepare_shell(
+            {
+                "K3S_SERVICE_NAME": "k3s",
+                "K3S_KUBECONFIG": "/etc/rancher/k3s/k3s.yaml",
+            },
+            sudo_stdin=True,
+        )
+
+        self.assertIn("IFS= read -r __pionera_sudo_password", shell)
+        self.assertIn("sudo -S -p ''", shell)
+        self.assertIn("pionera_sudo systemctl start k3s", shell)
+        self.assertIn("pionera_sudo_sh_c", shell)
+
+    def test_vm_single_level1_passes_remote_sudo_secret_via_stdin_only(self):
+        adapter = types.SimpleNamespace(
+            infrastructure=types.SimpleNamespace(complete_level=mock.Mock())
+        )
+        topology_config = {
+            "VM_EXTERNAL_IP": "192.0.2.52",
+            "VM_SINGLE_SSH_HOST": "192.0.2.52",
+            "VM_SINGLE_SSH_USER": "pionera",
+            "SSH_IDENTITY_FILE": "/home/operator/.ssh/vm-single",
+            "SSH_ACCESS_MODE": "direct",
+        }
+        bundle = {
+            "infrastructure": {},
+            "topology": topology_config,
+            "adapter": {"DS_1_NAME": "pionera"},
+        }
+        plan = main._build_vm_single_topology_plan(
+            bundle["infrastructure"],
+            bundle["topology"],
+            bundle["adapter"],
+        )
+        observed = {}
+
+        def fake_run(command, **kwargs):
+            observed["command"] = command
+            observed["input"] = kwargs.get("input")
+            observed["text"] = kwargs.get("text")
+            return types.SimpleNamespace(returncode=0)
+
+        with mock.patch.object(
+            main,
+            "_load_vm_single_configuration_bundle",
+            return_value=bundle,
+        ), mock.patch.object(
+            main,
+            "_build_vm_single_topology_plan",
+            return_value=plan,
+        ), mock.patch.object(
+            main.subprocess,
+            "run",
+            side_effect=fake_run,
+        ), mock.patch.object(
+            main,
+            "_ensure_vm_single_k3s_api_access",
+            return_value={
+                "status": "ready",
+                "kubeconfig": "/home/operator/.kube/vm-single-k3s.yaml",
+                "tunnel": {"status": "ready"},
+            },
+        ), mock.patch.object(
+            main,
+            "_install_vm_single_ingress_nginx",
+        ), mock.patch.object(
+            main,
+            "_vm_single_k3s_preflight_checks",
+            return_value=("vm-single", []),
+        ), mock.patch.dict(
+            os.environ,
+            {"PIONERA_SUDO_PASSWORD": "secret-value"},
+            clear=True,
+        ):
+            result = main._run_vm_single_level1_via_ssh_tunnel(adapter, "inesdata")
+
+        rendered_command = " ".join(str(part) for part in observed["command"])
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(observed["input"], "secret-value\n")
+        self.assertTrue(observed["text"])
+        self.assertNotIn("-tt", observed["command"])
+        self.assertNotIn("secret-value", rendered_command)
+        self.assertIn("sudo -S -p", rendered_command)
+
     def test_interactive_runtime_environment_applies_vm_single_kubeconfig(self):
         with mock.patch.object(
             main,
@@ -8091,9 +8176,9 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["url"], "http://127.0.0.1:5678")
 
     def test_vm_single_mapping_editor_reachable_public_url_disables_auto_tunnel(self):
-        with mock.patch.object(
+        with mock.patch.object(main, "_vm_single_mapping_editor_http_ready", return_value=True), mock.patch.object(
             main,
-            "_vm_single_mapping_editor_http_ready",
+            "_vm_single_mapping_editor_websocket_ready",
             return_value=True,
         ):
             should_tunnel = main._vm_single_mapping_editor_should_use_tunnel(
@@ -8108,6 +8193,48 @@ class MainCliTests(unittest.TestCase):
             )
 
         self.assertFalse(should_tunnel)
+
+    def test_vm_single_mapping_editor_public_url_without_websocket_falls_back_to_k3s_tunnel(self):
+        with mock.patch.object(main, "_vm_single_mapping_editor_http_ready", return_value=True), mock.patch.object(
+            main,
+            "_vm_single_mapping_editor_websocket_ready",
+            return_value=False,
+        ):
+            should_tunnel = main._vm_single_mapping_editor_should_use_tunnel(
+                {"vms": [{"address": "192.168.122.52"}]},
+                {
+                    "CLUSTER_TYPE": "k3s",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL": "https://streamlit-org4.example.test",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE": "host-port",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT": "5678",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_MODE": "auto",
+                },
+            )
+
+        self.assertTrue(should_tunnel)
+
+    def test_vm_single_mapping_editor_tunnel_allowed_inside_level_runtime_env(self):
+        with mock.patch.dict(os.environ, {"PIONERA_LEVEL_RUNTIME_ENV_ACTIVE": "true"}), mock.patch.object(
+            main,
+            "_vm_single_mapping_editor_http_ready",
+            return_value=True,
+        ), mock.patch.object(
+            main,
+            "_vm_single_mapping_editor_websocket_ready",
+            return_value=False,
+        ):
+            should_tunnel = main._vm_single_mapping_editor_should_use_tunnel(
+                {"vms": [{"address": "192.168.122.52"}]},
+                {
+                    "CLUSTER_TYPE": "k3s",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL": "https://streamlit-org4.example.test",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE": "host-port",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT": "5678",
+                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_MODE": "auto",
+                },
+            )
+
+        self.assertTrue(should_tunnel)
 
     def test_vm_single_mapping_editor_unreachable_public_url_falls_back_to_k3s_tunnel(self):
         with mock.patch.object(

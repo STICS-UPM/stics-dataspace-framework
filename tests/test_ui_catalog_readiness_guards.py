@@ -283,6 +283,16 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
             self.assertIn("UI_AI_MODEL_HUB_MODEL_SERVER_COVERAGE_STATUS", source, "/".join(parts))
             self.assertIn("UI_AI_MODEL_HUB_MODEL_SERVER_SKIP_REASON", source, "/".join(parts))
 
+    def test_inesdata_ai_model_benchmarking_ui_is_explicit_demo(self):
+        config = _read_ui_file("playwright.inesdata.config.ts")
+
+        self.assertIn("UI_AI_MODEL_HUB_BENCHMARKING_DEMO", config)
+        self.assertIn("aiModelHubBenchmarkingDemo", config)
+        self.assertIn(
+            "aiModelHubHttpDataDemo && aiModelHubModelServerDemo && aiModelHubBenchmarkingDemo",
+            config,
+        )
+
     def test_edc_asset_filter_searches_jsonld_dataset_ids(self):
         connector_filter = os.path.join(
             VALIDATION_ROOT,
