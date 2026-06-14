@@ -1661,6 +1661,44 @@ class EdcDashboardReadinessTests(unittest.TestCase):
         self.assertTrue(route_gate["ready"])
         self.assertIn("auth redirect accepted", route_gate["detail"])
 
+    def test_probe_edc_dashboard_readiness_accepts_prefixed_keycloak_login_redirect(self):
+        context = self._context()
+
+        def fake_http_get(url, **kwargs):
+            if url.endswith("/.well-known/openid-configuration"):
+                return types.SimpleNamespace(status_code=200, headers={})
+            if url.endswith("/edc-dashboard/"):
+                return types.SimpleNamespace(
+                    status_code=302,
+                    headers={
+                        "Location": (
+                            "https://org4.example.test/c/citycounciledc/edc-dashboard-api/auth/login"
+                            "?returnTo=%2Fc%2Fcitycounciledc%2Fedc-dashboard%2F"
+                        )
+                    },
+                )
+            if url.endswith("/edc-dashboard-api/auth/me"):
+                return types.SimpleNamespace(status_code=401, headers={})
+            if url.endswith("/management/v3/assets/request"):
+                return types.SimpleNamespace(status_code=405, headers={})
+            raise AssertionError(f"Unexpected URL probed: {url}")
+
+        with mock.patch.object(
+            main,
+            "_kubectl_endpoint_ready",
+            return_value=(True, "1 endpoint address(es)"),
+        ), mock.patch.object(main.requests, "get", side_effect=fake_http_get):
+            readiness = main._probe_edc_dashboard_readiness(context)
+
+        self.assertEqual(readiness["status"], "passed")
+        route_gate = next(
+            gate
+            for gate in readiness["gates"]
+            if gate["gate"] == "dashboard-route:conn-citycounciledc-demoedc"
+        )
+        self.assertTrue(route_gate["ready"])
+        self.assertIn("auth redirect accepted", route_gate["detail"])
+
 
 class InesdataPortalReadinessTests(unittest.TestCase):
     def _context(self):
@@ -8147,6 +8185,82 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(env["ONTOLOGY_HUB_SELF_HOST_SERVICE_NAME"], "pionera-ontology-hub")
         self.assertEqual(env["ONTOLOGY_HUB_SELF_HOST_NAMESPACE"], "components")
         self.assertEqual(env["ONTOLOGY_HUB_SELF_HOST_SERVICE_PORT"], "3333")
+
+    def test_level6_component_validation_environment_uses_edc_vm_single_public_api_urls_from_credentials(self):
+        with tempfile.TemporaryDirectory() as runtime_dir:
+            for connector, short_name in (
+                ("conn-org2-pionera-edc", "org2"),
+                ("conn-org3-pionera-edc", "org3"),
+            ):
+                connector_dir = os.path.join(runtime_dir, "connectors", connector)
+                os.makedirs(connector_dir, exist_ok=True)
+                with open(os.path.join(connector_dir, "credentials.json"), "w", encoding="utf-8") as handle:
+                    json.dump(
+                        {
+                            "public_access_urls": {
+                                "connector_ingress": f"https://org4.example.test/c/{short_name}",
+                                "connector_management_api": (
+                                    f"https://org4.example.test/edc/c/{short_name}/management"
+                                ),
+                                "connector_management_api_v3": (
+                                    f"https://org4.example.test/edc/c/{short_name}/management/v3"
+                                ),
+                                "connector_protocol_api": (
+                                    f"https://org4.example.test/edc/c/{short_name}/protocol"
+                                ),
+                                "connector_default_api": f"https://org4.example.test/edc/c/{short_name}/api",
+                                "edc_dashboard_login": (
+                                    f"https://org4.example.test/c/{short_name}/edc-dashboard/"
+                                ),
+                            }
+                        },
+                        handle,
+                    )
+
+            context = DeploymentContext.from_mapping(
+                {
+                    "deployer": "edc",
+                    "topology": "vm-single",
+                    "environment": "DEV",
+                    "dataspace_name": "pionera-edc",
+                    "ds_domain_base": "pionera.oeg.fi.upm.es",
+                    "runtime_dir": runtime_dir,
+                    "connectors": [
+                        "conn-org2-pionera-edc",
+                        "conn-org3-pionera-edc",
+                    ],
+                    "config": {
+                        "TOPOLOGY": "vm-single",
+                        "VM_SINGLE_PUBLIC_URL": "https://org4.example.test",
+                        "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX": "/c",
+                        "KEYCLOAK_FRONTEND_URL": "https://org4.example.test/auth",
+                    },
+                }
+            )
+
+            env = main._level6_component_validation_environment(context, "edc")
+
+        self.assertEqual(
+            env["AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL"],
+            "https://org4.example.test/edc/c/org2/management/v3",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL"],
+            "https://org4.example.test/edc/c/org3/management/v3",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_PROVIDER_PROTOCOL_URL"],
+            "https://org4.example.test/edc/c/org2/protocol",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_PROVIDER_DEFAULT_URL"],
+            "https://org4.example.test/edc/c/org2/api",
+        )
+        self.assertEqual(
+            env["AI_MODEL_HUB_CONSUMER_DEFAULT_URL"],
+            "https://org4.example.test/edc/c/org3/api",
+        )
+        self.assertEqual(env["AI_MODEL_HUB_DASHBOARD_PATH"], "edc-dashboard/")
 
     def test_vm_single_mapping_editor_k3s_prefers_kubectl_port_forward(self):
         with mock.patch.object(main, "_vm_single_mapping_editor_is_k3s", return_value=True), mock.patch.object(

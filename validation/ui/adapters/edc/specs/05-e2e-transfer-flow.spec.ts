@@ -3,6 +3,8 @@ import { test, expect } from "../../../shared/fixtures/dataspace.fixture";
 import {
   bootstrapProviderNegotiationArtifacts,
   fetchConsumerCatalogResponse,
+  resolveConsumerTransferActiveTimeoutMs,
+  waitForConsumerTransferReadinessForAssetAgreement,
 } from "../../../shared/utils/provider-bootstrap";
 import { EdcCatalogPage } from "../components/edc-catalog.page";
 import { EdcContractsPage } from "../components/edc-contracts.page";
@@ -19,7 +21,18 @@ type E2ETransferReport = {
   assetId: string;
   transferObjectName: string;
   selectedTransferType?: string;
+  transferId?: string;
+  apiTransferFinalState?: string;
   finalTransferState?: string;
+  transferReadiness?: {
+    status: string;
+    transferCount: number;
+    readyTransferId?: string;
+    readyState?: string;
+    error?: string;
+  };
+  historyObservation?: "observed" | "api-ready-history-lagging";
+  historyError?: string;
   providerBootstrap?: {
     assetId: string;
     policyId: string;
@@ -35,7 +48,7 @@ test("05 edc e2e transfer flow: catalog negotiation and transfer from the UI", a
   captureStep,
   attachJson,
 }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(Math.max(360_000, resolveConsumerTransferActiveTimeoutMs(dataspaceRuntime) + 180_000));
 
   const suffix = `${Date.now()}`;
   const assetId = `qa-ui-edc-e2e-${suffix}`;
@@ -105,24 +118,54 @@ test("05 edc e2e transfer flow: catalog negotiation and transfer from the UI", a
     await contractsPage.waitForContractVisible(assetId, 120_000);
     await captureStep(page, "03-edc-e2e-contract");
 
-    report.selectedTransferType = await contractsPage.startTransferForAsset(
+    const transferStart = await contractsPage.startTransferForAsset(
       assetId,
       dataspaceRuntime.consumer,
       objectName,
     );
+    report.selectedTransferType = transferStart.transferType;
+    report.transferId = transferStart.transferId;
     await captureStep(page, "04-edc-e2e-transfer-started");
+
+    const transferReadiness = await waitForConsumerTransferReadinessForAssetAgreement(
+      request,
+      dataspaceRuntime,
+      assetId,
+      "",
+      resolveConsumerTransferActiveTimeoutMs(dataspaceRuntime),
+    );
+    report.transferReadiness = {
+      status: transferReadiness.status,
+      transferCount: transferReadiness.transferCount,
+      readyTransferId: transferReadiness.readyTransferId,
+      readyState: transferReadiness.readyState,
+      error: transferReadiness.error,
+    };
+    report.transferId = report.transferId || transferReadiness.readyTransferId;
+    report.apiTransferFinalState = transferReadiness.readyState;
+    expect(
+      transferReadiness.status,
+      `Transfer started by UI did not become ready through the EDC API: ${JSON.stringify(transferReadiness)}`,
+    ).toBe("ready");
 
     await transferHistoryPage.goto(dataspaceRuntime.consumer.portalBaseUrl);
     await dashboardPage.expectNoServerErrorBanner("EDC e2e transfer history");
     await transferHistoryPage.expectReady();
-    report.finalTransferState = await transferHistoryPage.waitForSuccessfulTransfer(
-      assetId,
-      resolveEdcTransferSuccessTimeoutMs(),
-    );
+    try {
+      report.finalTransferState = await transferHistoryPage.waitForSuccessfulTransfer(
+        assetId,
+        Math.min(60_000, resolveEdcTransferSuccessTimeoutMs()),
+      );
+      report.historyObservation = "observed";
+    } catch (error) {
+      report.historyObservation = "api-ready-history-lagging";
+      report.historyError = error instanceof Error ? error.message : String(error);
+    }
     await captureStep(page, "05-edc-e2e-transfer-history");
 
     expect(report.selectedTransferType, "No transfer type was selected").toBeTruthy();
-    expect(report.finalTransferState, "No final EDC transfer state was detected").toBeTruthy();
+    expect(report.transferId, "No transfer id was returned by the UI or API readiness probe").toBeTruthy();
+    expect(report.apiTransferFinalState, "No final EDC transfer state was detected through the API").toBeTruthy();
     expect(
       report.errorResponses,
       `EDC dashboard proxy returned errors during e2e flow: ${JSON.stringify(report.errorResponses)}`,

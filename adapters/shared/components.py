@@ -552,13 +552,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         if not isinstance(payload, dict):
             return payload
 
-        topology = normalize_topology(
-            (deployer_config or {}).get("TOPOLOGY")
-            or (deployer_config or {}).get("PIONERA_TOPOLOGY")
-            or self._normalized_topology()
-        )
-        if topology == LOCAL_TOPOLOGY:
-            payload["containerPort"] = 80
+        payload["containerPort"] = 80
         return payload
 
     def _strip_edc_ai_model_hub_inesdata_env(self, payload):
@@ -579,7 +573,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         return payload
 
     def _build_ai_model_hub_image_on_host(self, image_ref: str, deployer_config: dict):
-        if self.active_adapter == "edc" and self._normalized_topology() == LOCAL_TOPOLOGY:
+        if self.active_adapter == "edc":
             self._build_edc_ai_model_hub_dashboard_image_on_host(image_ref, deployer_config)
             return
         super()._build_ai_model_hub_image_on_host(image_ref, deployer_config)
@@ -617,6 +611,10 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             "PIONERA_EDC_DASHBOARD_IMAGE_NAME": image["repository"],
             "PIONERA_EDC_DASHBOARD_IMAGE_TAG": image["tag"],
         }
+        if cluster_type == "k3s":
+            remote_target = self._remote_k3s_image_import_target(deployer_config)
+            if remote_target:
+                env_values.update(remote_target.shell_env())
         for target_key, source_keys in (
             ("PIONERA_EDC_DASHBOARD_REPO_URL", ("PIONERA_EDC_DASHBOARD_REPO_URL", "EDC_DASHBOARD_REPO_URL")),
             ("PIONERA_EDC_DASHBOARD_REPO_REF", ("PIONERA_EDC_DASHBOARD_REPO_REF", "EDC_DASHBOARD_REPO_REF")),
@@ -2384,9 +2382,58 @@ def combined_models() -> Dict[str, Any]:
             return normalized_base_url
         return f"{normalized_base_url}/{normalized_relative_path}"
 
+    def _ai_model_hub_public_base_uses_edc_dashboard(self, public_base_url):
+        parsed = urlsplit(self._to_public_url(public_base_url))
+        return parsed.path.rstrip("/").endswith("/edc-dashboard")
+
+    def _ai_model_hub_public_root_paths(self, public_base_url):
+        if self.active_adapter != "edc":
+            return ("",)
+        if self._ai_model_hub_public_base_uses_edc_dashboard(public_base_url):
+            return ("",)
+        return ("edc-dashboard/",)
+
+    def _ai_model_hub_public_config_paths(self, public_base_url):
+        if self.active_adapter != "edc":
+            return AI_MODEL_HUB_PUBLIC_CONFIG_PATHS
+
+        preferred_path = (
+            "config/app-config.json"
+            if self._ai_model_hub_public_base_uses_edc_dashboard(public_base_url)
+            else "edc-dashboard/config/app-config.json"
+        )
+        ordered_paths = [preferred_path]
+        ordered_paths.extend(AI_MODEL_HUB_PUBLIC_CONFIG_PATHS)
+        return tuple(dict.fromkeys(ordered_paths))
+
+    def _probe_ai_model_hub_public_root(self, public_base_url):
+        attempts = []
+        for root_path in self._ai_model_hub_public_root_paths(public_base_url):
+            root_url = self._join_public_url(public_base_url, root_path)
+            ready, detail = self._probe_component_public_url(
+                root_url,
+                expected_statuses={200},
+                follow_redirects=True,
+            )
+            display_path = f"/{str(root_path or '').strip('/')}" if root_path else "/"
+            attempts.append(
+                {
+                    "path": display_path,
+                    "url": root_url,
+                    "detail": detail,
+                }
+            )
+            if ready:
+                return True, detail, root_url, attempts
+
+        attempt_details = "; ".join(
+            f"{attempt['path']}={attempt['detail']}" for attempt in attempts
+        )
+        return False, attempt_details or "not probed", "", attempts
+
     def _probe_ai_model_hub_public_config(self, public_base_url):
         attempts = []
-        for config_path in AI_MODEL_HUB_PUBLIC_CONFIG_PATHS:
+        for config_path in self._ai_model_hub_public_config_paths(public_base_url):
             config_url = self._join_public_url(public_base_url, config_path)
             ready, detail = self._probe_component_public_url(
                 config_url,
@@ -2538,6 +2585,7 @@ def combined_models() -> Dict[str, Any]:
             config_url = ""
             root_detail = "not probed"
             config_detail = "not probed"
+            root_attempts = []
             config_attempts = []
         while True:
             if normalized == "ontology-hub":
@@ -2560,10 +2608,8 @@ def combined_models() -> Dict[str, Any]:
                         "edition_detail": edition_detail,
                     }
             else:
-                root_ready, root_detail = self._probe_component_public_url(
-                    root_url,
-                    expected_statuses={200},
-                    follow_redirects=True,
+                root_ready, root_detail, root_url, root_attempts = self._probe_ai_model_hub_public_root(
+                    public_base_url
                 )
                 (
                     config_ready,
@@ -2580,6 +2626,7 @@ def combined_models() -> Dict[str, Any]:
                         "config_url": config_url,
                         "root_detail": root_detail,
                         "config_detail": config_detail,
+                        "root_attempts": root_attempts,
                         "config_attempts": config_attempts,
                     }
             if time.monotonic() >= deadline:
@@ -2621,7 +2668,7 @@ def combined_models() -> Dict[str, Any]:
 
         self._fail(
             "AI Model Hub publication gate failed: public routes are not ready after deployment",
-            root_cause=f"/={root_detail}; config={config_detail}",
+            root_cause=f"root={root_detail}; config={config_detail}",
         )
 
     def deploy_shared_component_runtime(

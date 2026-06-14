@@ -1557,6 +1557,9 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             return []
 
         escaped_prefix = re.escape(path_prefix)
+        public_api_url = self._edc_connector_public_api_base_url(connector_name) or public_url
+        api_host, api_path_prefix = self._public_hostname_and_path(public_api_url)
+        api_escaped_prefix = re.escape(api_path_prefix) if api_host == host and api_path_prefix else ""
         proxy_body_size = str(ingress.get("proxyBodySize") or "800m")
         common_annotations = {
             "nginx.ingress.kubernetes.io/proxy-body-size": proxy_body_size,
@@ -1599,6 +1602,24 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             }
 
         route_specs = []
+        if api_escaped_prefix:
+            route_specs.extend(
+                (
+                    api_escaped_prefix,
+                    segment,
+                    connector_name,
+                    port,
+                )
+                for segment, port in (
+                    ("api", 19191),
+                    ("control", 19192),
+                    ("management", 19193),
+                    ("protocol", 19194),
+                    ("version", 19195),
+                    ("shared", 19196),
+                    ("public", 19291),
+                )
+            )
         dashboard = (values or {}).get("dashboard") or {}
         dashboard_proxy = {}
         if dashboard.get("enabled"):
@@ -1606,6 +1627,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             if dashboard_proxy.get("enabled"):
                 route_specs.append(
                     (
+                        escaped_prefix,
                         "edc-dashboard-api",
                         f"{connector_name}-dashboard-proxy",
                         int(dashboard_proxy.get("port") or 8080),
@@ -1634,10 +1656,10 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                             "paths": [
                                 {
                                     "pathType": "ImplementationSpecific",
-                                    "path": f"{escaped_prefix}(/|$)({segment}.*)",
+                                    "path": f"{route_prefix}(/|$)({segment}.*)",
                                     "backend": backend(service_name, port),
                                 }
-                                for segment, service_name, port in route_specs
+                                for route_prefix, segment, service_name, port in route_specs
                             ]
                         },
                     }

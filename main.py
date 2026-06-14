@@ -2151,7 +2151,10 @@ def _edc_dashboard_route_readiness_gate(label, url, timeout_seconds):
         return gate
 
     parsed = urllib.parse.urlparse(location)
-    if parsed.path.rstrip("/") == "/edc-dashboard-api/auth/login":
+    redirect_path = parsed.path.rstrip("/")
+    if redirect_path == "/edc-dashboard-api/auth/login" or redirect_path.endswith(
+        "/edc-dashboard-api/auth/login"
+    ):
         gate["ready"] = True
         gate["detail"] = f"{gate.get('detail')} (auth redirect accepted)"
     return gate
@@ -5743,6 +5746,23 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
     environment = str(getattr(deployer_context, "environment", "") or config.get("ENVIRONMENT") or "DEV").strip()
     runtime_dir = str(getattr(deployer_context, "runtime_dir", "") or "").strip()
 
+    def _connector_public_access_url(connector, *keys):
+        payload, _error = _load_inesdata_connector_credentials_payload(
+            deployer_context,
+            connector,
+        )
+        if not isinstance(payload, dict):
+            return ""
+        for url_group_name in ("public_access_urls", "access_urls"):
+            url_group = payload.get(url_group_name)
+            if not isinstance(url_group, dict):
+                continue
+            for key in keys:
+                value = str(url_group.get(key) or "").strip().rstrip("/")
+                if value:
+                    return value
+        return ""
+
     def _connector_base_url(connector, role):
         configured = _configured_public_connector_base_url(connector, deployer_context)
         if configured:
@@ -5790,6 +5810,8 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
             "AI_MODEL_HUB_KEYCLOAK_URL": keycloak_url,
         }
     )
+    if adapter_name == "edc":
+        env.setdefault("AI_MODEL_HUB_DASHBOARD_PATH", "edc-dashboard/")
     if runtime_dir:
         env["UI_RUNTIME_DIR"] = runtime_dir
     component_validation_mode = str(
@@ -5855,37 +5877,53 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
     if provider:
         provider_base_url = _connector_base_url(provider, "provider")
         provider_protocol_base_url = _connector_protocol_base_url(provider, "provider", provider_base_url)
+        provider_management_url = _connector_public_access_url(
+            provider,
+            "connector_management_api_v3",
+            "connector_management_api",
+        )
+        provider_protocol_url = _connector_public_access_url(provider, "connector_protocol_api")
+        provider_default_url = _connector_public_access_url(provider, "connector_default_api")
         env.update(
             {
                 "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID": provider,
                 "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER": provider,
                 "AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER": provider,
                 "AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL": (
-                    f"{provider_base_url}/management" if provider_base_url else ""
+                    provider_management_url or (f"{provider_base_url}/management" if provider_base_url else "")
                 ),
                 "AI_MODEL_HUB_PROVIDER_PROTOCOL_URL": (
-                    f"{provider_protocol_base_url}/protocol" if provider_protocol_base_url else ""
+                    provider_protocol_url
+                    or (f"{provider_protocol_base_url}/protocol" if provider_protocol_base_url else "")
                 ),
                 "AI_MODEL_HUB_PROVIDER_DEFAULT_URL": (
-                    f"{provider_base_url}/api" if provider_base_url else ""
+                    provider_default_url or (f"{provider_base_url}/api" if provider_base_url else "")
                 ),
             }
         )
     if consumer:
         consumer_base_url = _connector_base_url(consumer, "consumer")
         consumer_protocol_base_url = _connector_protocol_base_url(consumer, "consumer", consumer_base_url)
+        consumer_management_url = _connector_public_access_url(
+            consumer,
+            "connector_management_api_v3",
+            "connector_management_api",
+        )
+        consumer_protocol_url = _connector_public_access_url(consumer, "connector_protocol_api")
+        consumer_default_url = _connector_public_access_url(consumer, "connector_default_api")
         env.update(
             {
                 "AI_MODEL_HUB_CONSUMER_CONNECTOR_ID": consumer,
                 "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER": consumer,
                 "AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL": (
-                    f"{consumer_base_url}/management" if consumer_base_url else ""
+                    consumer_management_url or (f"{consumer_base_url}/management" if consumer_base_url else "")
                 ),
                 "AI_MODEL_HUB_CONSUMER_PROTOCOL_URL": (
-                    f"{consumer_protocol_base_url}/protocol" if consumer_protocol_base_url else ""
+                    consumer_protocol_url
+                    or (f"{consumer_protocol_base_url}/protocol" if consumer_protocol_base_url else "")
                 ),
                 "AI_MODEL_HUB_CONSUMER_DEFAULT_URL": (
-                    f"{consumer_base_url}/api" if consumer_base_url else ""
+                    consumer_default_url or (f"{consumer_base_url}/api" if consumer_base_url else "")
                 ),
             }
         )
@@ -7382,6 +7420,135 @@ def _run_edc_local_image_script(script_path, minikube_profile, env, cluster_runt
         )
 
 
+def _resolve_edc_connector_namespace_from_config(target, *, default_namespace, provider_namespace, consumer_namespace):
+    raw_target = str(target or "").strip()
+    normalized = raw_target.lower().replace("-", "_")
+    aliases = {
+        "provider": provider_namespace,
+        "provider_namespace": provider_namespace,
+        "consumer": consumer_namespace,
+        "consumer_namespace": consumer_namespace,
+        "dataspace": default_namespace,
+        "default": default_namespace,
+        "registration": default_namespace,
+        "registration_service": default_namespace,
+        "core": default_namespace,
+    }
+    return aliases.get(normalized, raw_target) or default_namespace
+
+
+def _edc_dashboard_deployment_targets_from_config(adapter, config):
+    config_adapter = getattr(adapter, "config_adapter", None)
+    dataspace_getter = getattr(config_adapter, "primary_dataspace_name", None)
+    dataspace_name = str(dataspace_getter() or "").strip() if callable(dataspace_getter) else ""
+    if not dataspace_name:
+        dataspace_name = str(config.get("DS_1_NAME") or "").strip()
+
+    connectors = parse_connector_list(config.get("DS_1_CONNECTORS"), dataspace_name)
+    if not connectors:
+        return []
+
+    default_namespace = str(
+        config.get("DS_1_NAMESPACE")
+        or config.get("NAMESPACE")
+        or dataspace_name
+        or "default"
+    ).strip()
+    provider_namespace = str(config.get("DS_1_PROVIDER_NAMESPACE") or default_namespace).strip()
+    consumer_namespace = str(config.get("DS_1_CONSUMER_NAMESPACE") or provider_namespace).strip()
+    explicit_mapping = parse_connector_mapping(config.get("DS_1_CONNECTOR_NAMESPACES"), dataspace_name)
+
+    targets = []
+    for index, connector in enumerate(connectors):
+        if connector in explicit_mapping:
+            namespace = _resolve_edc_connector_namespace_from_config(
+                explicit_mapping[connector],
+                default_namespace=default_namespace,
+                provider_namespace=provider_namespace,
+                consumer_namespace=consumer_namespace,
+            )
+        elif index == 0:
+            namespace = provider_namespace
+        elif index == 1:
+            namespace = consumer_namespace
+        else:
+            namespace = default_namespace
+        targets.append({"connector": connector, "namespace": namespace, "deployment": f"{connector}-dashboard"})
+    return targets
+
+
+def _restart_edc_dashboard_deployments_after_local_image_build(adapter, config, images):
+    if not _env_flag("PIONERA_EDC_DASHBOARD_ROLLOUT_RESTART", default=True):
+        return {"status": "skipped", "reason": "disabled-by-env"}
+
+    if not shutil.which("kubectl"):
+        return {"status": "skipped", "reason": "kubectl-not-found"}
+
+    expected_image = f"{images['dashboard_name']}:{images['dashboard_tag']}"
+    targets = _edc_dashboard_deployment_targets_from_config(adapter, config)
+    restarted = []
+    missing = []
+
+    for target in targets:
+        namespace = target["namespace"]
+        deployment = target["deployment"]
+        get_result = subprocess.run(
+            ["kubectl", "get", "deployment", deployment, "-n", namespace, "-o", "json"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if get_result.returncode != 0:
+            missing.append(f"{namespace}/{deployment}")
+            continue
+
+        try:
+            payload = json.loads(get_result.stdout or "{}")
+        except json.JSONDecodeError:
+            raise RuntimeError(f"kubectl returned invalid JSON for deployment {namespace}/{deployment}")
+
+        containers = (
+            payload.get("spec", {})
+            .get("template", {})
+            .get("spec", {})
+            .get("containers", [])
+        )
+        images_in_deployment = {
+            str(container.get("image") or "").strip()
+            for container in containers
+            if isinstance(container, dict)
+        }
+        if expected_image not in images_in_deployment:
+            missing.append(f"{namespace}/{deployment}:image-mismatch")
+            continue
+
+        restart_result = subprocess.run(
+            ["kubectl", "rollout", "restart", f"deployment/{deployment}", "-n", namespace],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if restart_result.returncode != 0:
+            detail = (restart_result.stderr or restart_result.stdout or "").strip()
+            raise RuntimeError(f"Could not restart EDC dashboard deployment {namespace}/{deployment}: {detail}")
+
+        status_result = subprocess.run(
+            ["kubectl", "rollout", "status", f"deployment/{deployment}", "-n", namespace, "--timeout=180s"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if status_result.returncode != 0:
+            detail = (status_result.stderr or status_result.stdout or "").strip()
+            raise RuntimeError(f"EDC dashboard deployment {namespace}/{deployment} did not finish rollout: {detail}")
+        restarted.append(f"{namespace}/{deployment}")
+
+    if restarted:
+        print("Restarted EDC dashboard deployments after local image refresh: " + ", ".join(restarted))
+        return {"status": "restarted", "deployments": restarted, "missing": missing}
+    return {"status": "skipped", "reason": "no-matching-deployments", "missing": missing}
+
+
 def _prepare_edc_local_dashboard_images(adapter, config):
     if not _mapping_flag(config, "EDC_DASHBOARD_ENABLED", default=False):
         return {"status": "skipped", "reason": "dashboard-disabled"}
@@ -7429,12 +7596,14 @@ def _prepare_edc_local_dashboard_images(adapter, config):
     os.environ.setdefault("PIONERA_EDC_DASHBOARD_IMAGE_PULL_POLICY", "IfNotPresent")
     os.environ.setdefault("PIONERA_EDC_DASHBOARD_PROXY_IMAGE_PULL_POLICY", "IfNotPresent")
     os.environ["PIONERA_EDC_LOCAL_DASHBOARD_IMAGES_PREPARED"] = "true"
+    rollout = _restart_edc_dashboard_deployments_after_local_image_build(adapter, config, images)
     return {
         "status": "prepared",
         "dashboard_image": f"{images['dashboard_name']}:{images['dashboard_tag']}",
         "dashboard_proxy_image": f"{images['proxy_name']}:{images['proxy_tag']}",
         "minikube_profile": minikube_profile,
         "cluster_runtime": cluster_runtime,
+        "rollout": rollout,
     }
 
 

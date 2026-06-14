@@ -26,6 +26,13 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         self.assertIn('status: "timeout"', source)
         self.assertIn("error instanceof Error ? error.message : String(error)", source)
 
+    def test_edc_vm_single_catalog_readiness_uses_longer_default_timeout(self):
+        source = _read_ui_file("shared", "utils", "provider-bootstrap.ts")
+
+        self.assertIn("DEFAULT_EDC_VM_SINGLE_CATALOG_READINESS_TIMEOUT_MS = 360_000", source)
+        self.assertIn("process.env.UI_CATALOG_READINESS_TIMEOUT_MS", source)
+        self.assertIn('adapter === "edc" && topology === "vm-single"', source)
+
     def test_core_ui_specs_use_catalog_probe_instead_of_failing_before_ui_retries(self):
         expected_specs = [
             ("adapters", "inesdata", "specs", "04-consumer-catalog.spec.ts"),
@@ -103,13 +110,40 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         self.assertIn("accessKeyId: destination.accessKeyId", source)
         self.assertIn("secretAccessKey: destination.secretAccessKey", source)
 
+    def test_edc_api_transfer_wait_uses_topology_aware_timeout(self):
+        source = _read_ui_file("shared", "utils", "provider-bootstrap.ts")
+        transfer_spec = _read_ui_file("adapters", "edc", "specs", "04-consumer-transfer.spec.ts")
+        e2e_spec = _read_ui_file("adapters", "edc", "specs", "05-e2e-transfer-flow.spec.ts")
+        transfer_history_page = _read_ui_file("adapters", "edc", "components", "edc-transfer-history.page.ts")
+
+        self.assertIn("export function resolveConsumerTransferActiveTimeoutMs", source)
+        self.assertIn('topology === "vm-single"', source)
+        self.assertIn("return 300_000", source)
+        self.assertIn('topology === "vm-distributed"', source)
+        self.assertIn("return 420_000", source)
+        self.assertIn("UI_CONSUMER_TRANSFER_ACTIVE_TIMEOUT_MS", source)
+        self.assertIn("PIONERA_CONSUMER_TRANSFER_ACTIVE_TIMEOUT_MS", source)
+        self.assertIn("Last observed state", source)
+        self.assertIn("resolveConsumerTransferActiveTimeoutMs(dataspaceRuntime) + 120_000", transfer_spec)
+        self.assertIn("waitForConsumerTransferReadinessForAssetAgreement", e2e_spec)
+        self.assertIn("api-ready-history-lagging", e2e_spec)
+        self.assertIn("No transfer id was returned by the UI or API readiness probe", e2e_spec)
+        self.assertIn("Math.min(remainingMs, 1_000)", transfer_history_page)
+
+    def test_edc_ui_transfer_start_returns_transfer_identifier(self):
+        source = _read_ui_file("adapters", "edc", "components", "edc-contracts.page.ts")
+
+        self.assertIn("export type EdcTransferStartResult", source)
+        self.assertIn("transferId?: string", source)
+        self.assertIn('responseBody?.["@id"]', source)
+        self.assertIn("transferType: selectedTransferType", source)
+
     def test_edc_dashboard_transfer_history_handles_async_pagination_state(self):
         transfer_view = _read_validation_file(
             "adapters",
             "edc",
-            "sources",
+            "overlays",
             "dashboard",
-            "DataDashboard",
             "projects",
             "dashboard-core",
             "transfer",
@@ -120,9 +154,8 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         pagination = _read_validation_file(
             "adapters",
             "edc",
-            "sources",
+            "overlays",
             "dashboard",
-            "DataDashboard",
             "projects",
             "dashboard-core",
             "src",
@@ -138,6 +171,40 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
         self.assertIn("this.pageTransferProcessesSubject.next(pageItems ?? [])", transfer_view)
         self.assertIn("const items = this.items ?? []", pagination)
         self.assertNotIn("this.items!.slice", pagination)
+
+    def test_edc_dashboard_ontology_services_use_proxy_api_and_public_links(self):
+        service_paths = [
+            (
+                "adapters",
+                "edc",
+                "overlays",
+                "dashboard",
+                "src",
+                "app",
+                "services",
+                "ontology.service.ts",
+            ),
+            (
+                "adapters",
+                "edc",
+                "overlays",
+                "dashboard",
+                "projects",
+                "dashboard-core",
+                "assets",
+                "src",
+                "services",
+                "ontology.service.ts",
+            ),
+        ]
+
+        for parts in service_paths:
+            source = _read_validation_file(*parts)
+            self.assertIn("ontologyPublicUrl", source)
+            self.assertIn("ontologyApiBaseUrl", source)
+            self.assertIn("this.runtime.ontologyPublicUrl || this.runtime.ontologyUrl", source)
+            self.assertIn("this.runtime.ontologyUrl || this.runtime.ontologyPublicUrl", source)
+            self.assertIn("`${this.ontologyApiBaseUrl}/dataset/api/v2/vocabulary/list`", source)
 
     def test_minio_runtime_prefers_topology_scoped_connector_credentials(self):
         source = _read_ui_file("shared", "utils", "minio-console-runtime.ts")

@@ -69,6 +69,10 @@ def _configured_app_config_paths() -> List[str]:
     return paths or list(DEFAULT_APP_CONFIG_PATHS)
 
 
+def _configured_dashboard_path() -> str:
+    return str(os.environ.get("AI_MODEL_HUB_DASHBOARD_PATH", DASHBOARD_PATH) or "").strip()
+
+
 def _http_get(url: str, timeout: int = 20) -> Tuple[int, str, str]:
     req = request.Request(url, method="GET")
     try:
@@ -311,7 +315,7 @@ def run_ai_model_hub_validation(base_url: str, experiment_dir: str | None = None
     started_at = datetime.now().isoformat()
     normalized_base_url = (base_url or "").rstrip("/")
 
-    shell_url = _build_url(normalized_base_url, DASHBOARD_PATH)
+    shell_url = _build_url(normalized_base_url, _configured_dashboard_path())
     shell_status, shell_content_type, shell_body = _http_get(shell_url)
     shell_evaluation = evaluate_html_shell_response(
         shell_status,

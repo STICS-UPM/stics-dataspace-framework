@@ -20,7 +20,7 @@ export async function waitForUiTransition(
 
 export async function waitForEventualConsistencyPoll(
   page: Page,
-  intervalMs = UI_WAIT_BUDGETS.pollIntervalMs,
+  intervalMs: number = UI_WAIT_BUDGETS.pollIntervalMs,
 ): Promise<void> {
   if (intervalMs > 0) {
     await page.waitForTimeout(intervalMs);

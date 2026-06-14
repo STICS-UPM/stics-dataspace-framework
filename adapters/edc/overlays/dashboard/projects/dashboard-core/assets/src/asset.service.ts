@@ -15,7 +15,7 @@
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { DashboardStateService, EdcClientService, EdcConfig } from '@eclipse-edc/dashboard-core';
-import { Asset, AssetInput, IdResponse } from '@think-it-labs/edc-connector-client';
+import { Asset, AssetInput, IdResponse, QuerySpec } from '@think-it-labs/edc-connector-client';
 import { filter, firstValueFrom, timeout } from 'rxjs';
 
 /**
@@ -28,13 +28,20 @@ export class AssetService {
   private readonly edc = inject(EdcClientService);
   private readonly http = inject(HttpClient);
   private readonly state = inject(DashboardStateService);
+  private readonly queryPageSize = 1000;
+  private readonly maxQueryPages = 10;
+  private readonly configTimeoutMs = 10_000;
 
   /**
    * Retrieves all assets from the management API.
    * @returns A promise that resolves to an array of assets.
    */
   public async getAllAssets(): Promise<Asset[]> {
-    return (await this.edc.getClient()).management.assets.queryAll();
+    try {
+      return await this.queryAssetsWithExplicitPagination();
+    } catch {
+      return this.queryAssetsThroughClient();
+    }
   }
 
   /**
@@ -71,7 +78,7 @@ export class AssetService {
     const config = await firstValueFrom(
       this.state.currentEdcConfig$.pipe(
         filter((value): value is EdcConfig => !!value),
-        timeout(1000),
+        timeout(this.configTimeoutMs),
       ),
     );
     const formData = new FormData();
@@ -91,5 +98,86 @@ export class AssetService {
 
   private trimTrailingSlash(value: string): string {
     return (value || '').replace(/\/+$/, '');
+  }
+
+  private async queryAssetsWithExplicitPagination(): Promise<Asset[]> {
+    const config = await firstValueFrom(
+      this.state.currentEdcConfig$.pipe(
+        filter((value): value is EdcConfig => !!value),
+        timeout(this.configTimeoutMs),
+      ),
+    );
+    const headers = config.apiToken
+      ? new HttpHeaders({
+          'content-type': 'application/json',
+          accept: 'application/json',
+          'x-api-key': config.apiToken,
+        })
+      : new HttpHeaders({
+          'content-type': 'application/json',
+          accept: 'application/json',
+        });
+    const endpoint = `${this.trimTrailingSlash(config.managementUrl)}/v3/assets/request`;
+    const allAssets: Asset[] = [];
+
+    for (let page = 0; page < this.maxQueryPages; page += 1) {
+      const body: QuerySpec & { '@context': { '@vocab': string } } = {
+        '@context': { '@vocab': 'https://w3id.org/edc/v0.0.1/ns/' },
+        offset: page * this.queryPageSize,
+        limit: this.queryPageSize,
+        filterExpression: [],
+      };
+      const response = await firstValueFrom(this.http.post<unknown>(endpoint, body, { headers }));
+      const assets = this.normalizeAssetArray(response);
+      allAssets.push(...assets);
+      if (assets.length < this.queryPageSize) {
+        break;
+      }
+    }
+
+    return allAssets;
+  }
+
+  private async queryAssetsThroughClient(): Promise<Asset[]> {
+    const assetsClient = (await this.edc.getClient()).management.assets;
+    const queryAll = assetsClient.queryAll as (querySpec?: QuerySpec) => Promise<Asset[]>;
+    const allAssets: Asset[] = [];
+
+    for (let page = 0; page < this.maxQueryPages; page += 1) {
+      const querySpec: QuerySpec = {
+        offset: page * this.queryPageSize,
+        limit: this.queryPageSize,
+        filterExpression: [],
+      };
+      const assets = await queryAll.call(assetsClient, querySpec);
+      allAssets.push(...assets);
+      if (assets.length < this.queryPageSize) {
+        break;
+      }
+    }
+
+    return allAssets;
+  }
+
+  private normalizeAssetArray(value: unknown): Asset[] {
+    if (!value) {
+      return [];
+    }
+    if (Array.isArray(value)) {
+      return value as Asset[];
+    }
+    if (typeof value !== 'object') {
+      return [];
+    }
+
+    const record = value as Record<string, unknown>;
+    for (const key of ['results', 'items', '@graph']) {
+      const nested = record[key];
+      if (Array.isArray(nested)) {
+        return nested as Asset[];
+      }
+    }
+
+    return [value as Asset];
   }
 }

@@ -15,6 +15,7 @@ import adapters.inesdata.components as components_module
 from adapters.inesdata.components import INESDataComponentsAdapter
 from adapters.inesdata.infrastructure import INESDataInfrastructureAdapter
 from adapters.shared.components import SharedComponentsAdapter
+from deployers.shared.lib.remote_k3s_images import RemoteK3sImageImportTarget
 
 
 class FakeConfig:
@@ -324,7 +325,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             ["Provider", "Consumer"],
         )
 
-    def test_edc_vm_ai_model_hub_override_keeps_chart_container_port(self):
+    def test_edc_vm_ai_model_hub_override_uses_edc_dashboard_container_port(self):
         adapter = self._make_shared_adapter(active_adapter="edc")
         adapter.config_adapter.topology = "vm-single"
 
@@ -339,7 +340,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             },
         )
 
-        self.assertNotIn("containerPort", payload)
+        self.assertEqual(payload["containerPort"], 80)
 
     def test_inesdata_ai_model_hub_override_keeps_inesdata_ui_env(self):
         adapter = self._make_shared_adapter(active_adapter="inesdata")
@@ -3085,6 +3086,45 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertIn("--cluster-runtime minikube", command)
         self.assertNotIn("adapters/inesdata/sources/AIModelHub", command)
 
+    def test_edc_vm_single_ai_model_hub_build_uses_edc_dashboard_script(self):
+        adapter = self._make_shared_adapter(active_adapter="edc")
+        deployer_config = {
+            "CLUSTER_TYPE": "k3s",
+            "K3S_KUBECONFIG": "/clusters/pionera4.yaml",
+            "PIONERA_EDC_DASHBOARD_REPO_REF": "def456",
+        }
+        remote_target = RemoteK3sImageImportTarget(
+            role="common",
+            host="192.168.122.52",
+            user="pionera",
+            bastion_host="orion.example.test",
+            bastion_user="jump",
+            import_command="sudo -n k3s ctr -n k8s.io images import",
+            interactive_mode="auto",
+        )
+
+        with (
+            mock.patch.object(adapter, "_cluster_runtime", return_value={"cluster_type": "k3s"}),
+            mock.patch.object(adapter, "_remote_k3s_image_import_target", return_value=remote_target),
+        ):
+            adapter._build_ai_model_hub_image_on_host(
+                "eclipse-edc/data-dashboard:local",
+                deployer_config,
+            )
+
+        command = adapter.run.call_args.args[0]
+        self.assertIn("adapters/edc/scripts/build_dashboard_image.sh", command)
+        self.assertIn("PIONERA_EDC_DASHBOARD_IMAGE_NAME=eclipse-edc/data-dashboard", command)
+        self.assertIn("PIONERA_EDC_DASHBOARD_IMAGE_TAG=local", command)
+        self.assertIn("PIONERA_EDC_DASHBOARD_REPO_REF=def456", command)
+        self.assertIn("K3S_REMOTE_IMPORT_HOST=192.168.122.52", command)
+        self.assertIn("K3S_REMOTE_IMPORT_USER=pionera", command)
+        self.assertIn("K3S_REMOTE_IMPORT_BASTION_HOST=orion.example.test", command)
+        self.assertIn("K3S_IMAGE_IMPORT_COMMAND='sudo -n k3s ctr -n k8s.io images import'", command)
+        self.assertIn("K3S_REMOTE_IMPORT_INTERACTIVE=auto", command)
+        self.assertIn("--cluster-runtime k3s", command)
+        self.assertNotIn("adapters/inesdata/sources/AIModelHub", command)
+
     def test_prepare_level6_local_image_rebuilds_semantic_virtualization_even_when_cached_in_minikube(self):
         adapter = self._make_adapter()
         deployer_config = {"LEVEL5_AUTO_BUILD_LOCAL_IMAGES": "true"}
@@ -3958,24 +3998,17 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             ],
         )
 
-    def test_verify_component_publication_accepts_ai_model_hub_edc_dashboard_config_route(self):
+    def test_verify_component_publication_accepts_ai_model_hub_edc_dashboard_root_and_config_route(self):
         adapter = self._make_shared_adapter(active_adapter="edc")
         adapter.run_silent = mock.Mock(return_value="ai-model-hub-demo.dev.ds.dataspaceunit.upm")
 
         root_response = mock.Mock(status_code=200, headers={})
-        missing_response = mock.Mock(status_code=404, headers={})
         config_response = mock.Mock(status_code=200, headers={})
 
         with mock.patch(
             "adapters.shared.components.requests.get",
-            side_effect=[
-                root_response,
-                missing_response,
-                missing_response,
-                missing_response,
-                config_response,
-            ],
-        ):
+            side_effect=[root_response, config_response],
+        ) as get_mock:
             result = adapter.verify_component_publication(
                 "ai-model-hub",
                 deployment_plan={
@@ -3989,16 +4022,66 @@ class InesdataComponentOverridesTests(unittest.TestCase):
 
         self.assertTrue(result["verified"])
         self.assertEqual(
+            result["root_url"],
+            "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm/edc-dashboard/",
+        )
+        self.assertEqual(
             result["config_url"],
             "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm/edc-dashboard/config/app-config.json",
         )
         self.assertEqual(
+            [attempt["path"] for attempt in result["root_attempts"]],
+            ["/edc-dashboard"],
+        )
+        self.assertEqual(
             [attempt["path"] for attempt in result["config_attempts"]],
+            ["/edc-dashboard/config/app-config.json"],
+        )
+        self.assertEqual(
+            [call.args[0] for call in get_mock.call_args_list],
             [
-                "/inesdata-connector-interface/assets/config/app.config.json",
-                "/assets/config/app.config.json",
-                "/config/app-config.json",
-                "/edc-dashboard/config/app-config.json",
+                "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm/edc-dashboard/",
+                "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm/edc-dashboard/config/app-config.json",
+            ],
+        )
+
+    def test_verify_component_publication_keeps_explicit_ai_model_hub_edc_dashboard_public_url(self):
+        adapter = self._make_shared_adapter(active_adapter="edc")
+        adapter.run_silent = mock.Mock(return_value="org4.pionera.oeg.fi.upm.es")
+
+        root_response = mock.Mock(status_code=200, headers={})
+        config_response = mock.Mock(status_code=200, headers={})
+
+        with mock.patch(
+            "adapters.shared.components.requests.get",
+            side_effect=[root_response, config_response],
+        ) as get_mock:
+            result = adapter.verify_component_publication(
+                "ai-model-hub",
+                deployment_plan={
+                    "release_name": "pionera-ai-model-hub",
+                    "host": "org4.pionera.oeg.fi.upm.es",
+                    "public_url": "https://org4.pionera.oeg.fi.upm.es/ai-model-hub/edc-dashboard/",
+                },
+                namespace="components",
+                timeout_seconds=1,
+                poll_interval_seconds=1,
+            )
+
+        self.assertTrue(result["verified"])
+        self.assertEqual(
+            result["root_url"],
+            "https://org4.pionera.oeg.fi.upm.es/ai-model-hub/edc-dashboard",
+        )
+        self.assertEqual(
+            result["config_url"],
+            "https://org4.pionera.oeg.fi.upm.es/ai-model-hub/edc-dashboard/config/app-config.json",
+        )
+        self.assertEqual(
+            [call.args[0] for call in get_mock.call_args_list],
+            [
+                "https://org4.pionera.oeg.fi.upm.es/ai-model-hub/edc-dashboard",
+                "https://org4.pionera.oeg.fi.upm.es/ai-model-hub/edc-dashboard/config/app-config.json",
             ],
         )
 

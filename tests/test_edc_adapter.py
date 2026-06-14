@@ -2126,8 +2126,24 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         routed = manifests[0]
         self.assertEqual(routed["spec"]["rules"][0]["host"], "org4.example.test")
         paths = routed["spec"]["rules"][0]["http"]["paths"]
-        self.assertFalse(any("(management.*)" in path["path"] for path in paths))
+        management_path = next(path for path in paths if "(management.*)" in path["path"])
+        self.assertEqual(
+            management_path["path"],
+            "/edc/c/citycounciledc(/|$)(management.*)",
+        )
+        self.assertEqual(
+            management_path["backend"]["service"],
+            {
+                "name": "conn-citycounciledc-pionera-edc",
+                "port": {"number": 19193},
+            },
+        )
+        self.assertFalse(any(path["path"] == "/c/citycounciledc(/|$)(management.*)" for path in paths))
         dashboard_proxy_path = next(path for path in paths if "(edc-dashboard-api.*)" in path["path"])
+        self.assertEqual(
+            dashboard_proxy_path["path"],
+            "/c/citycounciledc(/|$)(edc-dashboard-api.*)",
+        )
         self.assertEqual(
             dashboard_proxy_path["backend"]["service"],
             {

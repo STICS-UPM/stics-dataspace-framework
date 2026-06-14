@@ -126,7 +126,10 @@ test("15 edc AI Model External Execution: negotiated model is executable by cons
     await dashboardPage.expectShellReady();
     await captureStep(page, "01-edc-ai-model-external-after-login");
 
-    await executionPage.goto(dataspaceRuntime.consumer.portalBaseUrl);
+    await executionPage.goto(dataspaceRuntime.consumer.portalBaseUrl, {
+      externalCatalogCounterPartyAddress: dataspaceRuntime.provider.protocolBaseUrl,
+      externalCatalogCounterPartyId: dataspaceRuntime.provider.connectorName,
+    });
     await dashboardPage.expectNoServerErrorBanner("EDC external AI Model Execution");
     await executionPage.expectReady();
     await executionPage.waitForExecutableAsset(assetId, 120_000);

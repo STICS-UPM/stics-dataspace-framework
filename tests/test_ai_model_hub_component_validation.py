@@ -226,6 +226,48 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                 ],
             )
 
+    def test_run_ai_model_hub_validation_uses_runtime_dashboard_path_env(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            requested_urls = []
+
+            def fake_http_get(url, timeout=20):
+                requested_urls.append(url)
+                if url == "http://ai-model-hub.example.local/edc-dashboard/":
+                    return 200, "text/html", "<!doctype html><html><body><app-root></app-root></body></html>"
+                if url.endswith("/edc-dashboard/config/app-config.json"):
+                    payload = {
+                        "menuItems": [
+                            {"label": "ML Assets", "path": "/assets/ml"},
+                        ],
+                        "healthCheckIntervalSeconds": 30,
+                        "enableUserConfig": False,
+                    }
+                    return 200, "application/json", json.dumps(payload)
+                if url.endswith("/inesdata-connector-interface/assets/config/app.config.json"):
+                    return 404, "text/html", "not found"
+                if url.endswith("/assets/config/app.config.json"):
+                    return 404, "text/html", "not found"
+                if url.endswith("/config/app-config.json"):
+                    return 404, "text/html", "not found"
+                raise AssertionError(f"Unexpected URL: {url}")
+
+            with (
+                mock.patch("validation.components.ai_model_hub.runner._http_get", side_effect=fake_http_get),
+                mock.patch.dict(os.environ, {"AI_MODEL_HUB_DASHBOARD_PATH": "edc-dashboard/"}, clear=False),
+            ):
+                result = run_ai_model_hub_validation(
+                    "http://ai-model-hub.example.local",
+                    experiment_dir=tmpdir,
+                )
+
+            self.assertEqual(result["status"], "passed")
+            shell_case = result["executed_cases"][0]
+            self.assertEqual(
+                shell_case["request"]["url"],
+                "http://ai-model-hub.example.local/edc-dashboard/",
+            )
+            self.assertEqual(requested_urls[0], "http://ai-model-hub.example.local/edc-dashboard/")
+
     def test_run_ai_model_hub_component_validation_builds_catalog_alignment(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             def fake_http_get(url, timeout=20):

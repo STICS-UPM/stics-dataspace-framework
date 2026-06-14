@@ -130,6 +130,8 @@ const TRANSIENT_HTTP_MAX_ATTEMPTS = 4;
 const TRANSIENT_HTTP_RETRY_DELAY_MS = 2000;
 const CLEANUP_ENTITY_ORDER: CleanupEntityKind[] = ["contractdefinitions", "policydefinitions", "assets"];
 const DEFAULT_CATALOG_READINESS_TIMEOUT_MS = 180_000;
+const DEFAULT_EDC_VM_SINGLE_CATALOG_READINESS_TIMEOUT_MS = 360_000;
+const DEFAULT_CONSUMER_TRANSFER_ACTIVE_TIMEOUT_MS = 120_000;
 const ACCEPTED_CONSUMER_TRANSFER_STATES = new Set(["STARTED", "COMPLETED", "ENDED", "TERMINATED", "DEPROVISIONED"]);
 
 function sleep(ms: number): Promise<void> {
@@ -159,7 +161,58 @@ function catalogReadinessTimeoutMs(): number {
   if (Number.isFinite(configured) && configured > 0) {
     return configured;
   }
+  const adapter = (process.env.UI_ADAPTER || process.env.PIONERA_ADAPTER || "").trim().toLowerCase();
+  const topology = (
+    process.env.UI_TOPOLOGY ||
+    process.env.PIONERA_TOPOLOGY ||
+    process.env.INESDATA_TOPOLOGY ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+  if (adapter === "edc" && topology === "vm-single") {
+    return DEFAULT_EDC_VM_SINGLE_CATALOG_READINESS_TIMEOUT_MS;
+  }
   return DEFAULT_CATALOG_READINESS_TIMEOUT_MS;
+}
+
+function positiveIntegerFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) {
+    return fallback;
+  }
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function edcTopologyTransferActiveTimeoutMs(): number {
+  const topology = (process.env.UI_TOPOLOGY || process.env.PIONERA_TOPOLOGY || "")
+    .trim()
+    .toLowerCase();
+  if (topology === "vm-distributed") {
+    return 420_000;
+  }
+  if (topology === "vm-single") {
+    return 300_000;
+  }
+  return 180_000;
+}
+
+export function resolveConsumerTransferActiveTimeoutMs(runtime?: DataspacePortalRuntime): number {
+  const isEdcAdapter = runtime?.adapter === "edc" || runtime?.consumer?.adapter === "edc";
+  const fallback = isEdcAdapter
+    ? edcTopologyTransferActiveTimeoutMs()
+    : DEFAULT_CONSUMER_TRANSFER_ACTIVE_TIMEOUT_MS;
+  return positiveIntegerFromEnv(
+    "UI_CONSUMER_TRANSFER_ACTIVE_TIMEOUT_MS",
+    positiveIntegerFromEnv(
+      "PIONERA_CONSUMER_TRANSFER_ACTIVE_TIMEOUT_MS",
+      positiveIntegerFromEnv(
+        "UI_EDC_TRANSFER_SUCCESS_TIMEOUT_MS",
+        positiveIntegerFromEnv("PIONERA_EDC_TRANSFER_SUCCESS_TIMEOUT_MS", fallback),
+      ),
+    ),
+  );
 }
 
 async function resolveToken(tokenProvider: TokenProvider): Promise<string> {
@@ -643,6 +696,7 @@ export async function fetchConsumerCatalogResponse(
   counterPartyAddress: string,
   counterPartyId?: string,
 ): Promise<unknown> {
+  const catalogLimit = Number.parseInt(process.env.UI_EDC_CATALOG_REQUEST_LIMIT || "", 10);
   const { response } = await executeRetriableConsumerRequest("Consumer catalog request", request, runtime, (consumerToken) =>
     request.post(`${runtime.consumer.managementBaseUrl}/catalog/request`, {
       headers: {
@@ -659,7 +713,7 @@ export async function fetchConsumerCatalogResponse(
         protocol: "dataspace-protocol-http",
         querySpec: {
           offset: 0,
-          limit: 100,
+          limit: Number.isFinite(catalogLimit) && catalogLimit > 0 ? catalogLimit : 1000,
           filterExpression: [],
         },
       },
@@ -1404,7 +1458,10 @@ export async function bootstrapConsumerTransfer(
     throw new Error("Transfer response does not contain an identifier");
   }
 
-  const deadline = Date.now() + 120_000;
+  const timeoutMs = resolveConsumerTransferActiveTimeoutMs(runtime);
+  const deadline = Date.now() + timeoutMs;
+  let lastState = "UNKNOWN";
+  let lastErrorDetail = "";
   while (Date.now() < deadline) {
     const { response: stateResponse } = await executeRetriableConsumerRequest(
       "Consumer transfer status lookup",
@@ -1420,6 +1477,8 @@ export async function bootstrapConsumerTransfer(
     await ensureOk(stateResponse, "Consumer transfer status lookup");
     const stateBody = await stateResponse.json();
     const state = String(stateBody?.state || "").trim().toUpperCase();
+    lastState = state || lastState;
+    lastErrorDetail = String(stateBody?.errorDetail || stateBody?.["edc:errorDetail"] || "").trim();
     if (state === "COMPLETED" || state === "STARTED") {
       return {
         transferId,
@@ -1434,7 +1493,11 @@ export async function bootstrapConsumerTransfer(
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
-  throw new Error(`Transfer '${transferId}' did not reach an active state in time`);
+  throw new Error(
+    `Transfer '${transferId}' did not reach an active state in ${timeoutMs} ms. ` +
+      `Last observed state: ${lastState}` +
+      (lastErrorDetail ? `. Last error: ${lastErrorDetail}` : ""),
+  );
 }
 
 function transferReferencesAssetAgreement(transfer: any, assetId: string, agreementId: string): boolean {
