@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -1435,15 +1436,27 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         port_forwards = [
             (
                 "http://127.0.0.1:45555/management/v3/assets/request",
-                {"namespace": "demoedc", "pod_name": "conn-citycounciledc-demoedc-0", "local_port": 45555},
+                {
+                    "namespace": "demoedc",
+                    "pod_name": "conn-citycounciledc-demoedc-0",
+                    "local_port": 45555,
+                    "opened_at": 0,
+                },
             ),
             (
                 "http://127.0.0.1:45556/management/v3/assets/request",
-                {"namespace": "demoedc", "pod_name": "conn-citycounciledc-demoedc-0", "local_port": 45556},
+                {
+                    "namespace": "demoedc",
+                    "pod_name": "conn-citycounciledc-demoedc-0",
+                    "local_port": 45556,
+                    "opened_at": time.time(),
+                },
             ),
         ]
         adapter._start_connector_management_api_fallback = mock.Mock(side_effect=port_forwards)
         adapter._close_temporary_port_forward = mock.Mock()
+        adapter._edc_management_port_forward_refresh_delay = lambda: 0
+        adapter._edc_management_port_forward_refresh_failures = lambda: 1
         adapter.get_management_api_headers = lambda connector: {"Authorization": "Bearer token"}
         adapter.invalidate_management_api_token = mock.Mock()
         adapter.connector_base_url = mock.Mock(side_effect=AssertionError("public URL should not be used"))
@@ -1470,6 +1483,43 @@ class EdcConnectorAdapterTests(unittest.TestCase):
                 mock.call(port_forwards[1][1]),
             ]
         )
+
+    def test_wait_for_management_api_ready_keeps_fresh_internal_port_forward_on_transient_refusal(self):
+        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
+        port_forward = {
+            "namespace": "demoedc",
+            "pod_name": "conn-citycounciledc-demoedc-0",
+            "local_port": 45555,
+            "opened_at": time.time(),
+        }
+        adapter._start_connector_management_api_fallback = mock.Mock(
+            return_value=(
+                "http://127.0.0.1:45555/management/v3/assets/request",
+                port_forward,
+            )
+        )
+        adapter._close_temporary_port_forward = mock.Mock()
+        adapter.get_management_api_headers = lambda connector: {"Authorization": "Bearer token"}
+        adapter.invalidate_management_api_token = mock.Mock()
+        adapter.connector_base_url = mock.Mock(side_effect=AssertionError("public URL should not be used"))
+        response = mock.Mock(status_code=200)
+
+        with mock.patch(
+            "adapters.edc.connectors.requests.post",
+            side_effect=[requests.ConnectionError("Connection refused"), response],
+        ) as post_mock:
+            ready = adapter.wait_for_management_api_ready("conn-citycounciledc-demoedc", timeout=5, poll_interval=0)
+
+        self.assertTrue(ready)
+        adapter._start_connector_management_api_fallback.assert_called_once()
+        self.assertEqual(
+            [call.args[0] for call in post_mock.call_args_list],
+            [
+                "http://127.0.0.1:45555/management/v3/assets/request",
+                "http://127.0.0.1:45555/management/v3/assets/request",
+            ],
+        )
+        adapter._close_temporary_port_forward.assert_called_once_with(port_forward)
 
     def test_wait_for_all_connectors_uses_edc_management_timeout_config(self):
         adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)

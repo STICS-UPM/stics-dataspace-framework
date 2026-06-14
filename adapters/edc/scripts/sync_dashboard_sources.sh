@@ -7,7 +7,7 @@ ADAPTER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SOURCES_DIR="$ADAPTER_DIR/sources"
 TARGET_DIR="$SOURCES_DIR/dashboard"
 DEFAULT_REPO_URL="https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
-DEFAULT_REPO_REF="a4cb3e659e1fd3abfa9516a036c261b19432ec13"
+DEFAULT_REPO_REF="3a36d8d3282edb95e5caf361ad76d3535354e541"
 
 APPLY=false
 SOURCE_URL="$DEFAULT_REPO_URL"
@@ -44,7 +44,7 @@ if [[ "$APPLY" != true ]]; then
   exit 0
 fi
 
-if [[ -d "$TARGET_DIR/.git" ]] && [[ "$(git -C "$TARGET_DIR" rev-parse --show-toplevel 2>/dev/null || true)" == "$(cd "$TARGET_DIR" && pwd)" ]]; then
+if [[ -d "$TARGET_DIR" ]] && git -C "$TARGET_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 && [[ "$(git -C "$TARGET_DIR" rev-parse --show-toplevel 2>/dev/null || true)" == "$(cd "$TARGET_DIR" && pwd)" ]]; then
   git -C "$TARGET_DIR" remote set-url origin "$SOURCE_URL"
   git -C "$TARGET_DIR" fetch origin
 else

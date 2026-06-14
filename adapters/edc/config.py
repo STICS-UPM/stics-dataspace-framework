@@ -23,7 +23,7 @@ class EdcConfig(InesdataConfig):
     EDC_REFERENCE_REPO_URL = "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
     EDC_REFERENCE_REPO_SUBDIR = "asset-filter-template"
     EDC_DASHBOARD_REPO_URL = "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
-    EDC_DASHBOARD_REPO_REF = "a4cb3e659e1fd3abfa9516a036c261b19432ec13"
+    EDC_DASHBOARD_REPO_REF = "3a36d8d3282edb95e5caf361ad76d3535354e541"
     EDC_MANAGEMENT_PORT = 19193
     EDC_PROTOCOL_PORT = 19194
     EDC_MANAGEMENT_PATH = "/management"

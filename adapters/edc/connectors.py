@@ -109,6 +109,54 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         except (TypeError, ValueError):
             return 300
 
+    def _edc_management_port_forward_refresh_delay(self):
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception:
+            deployer_config = {}
+        raw_value = (
+            os.environ.get("PIONERA_EDC_MANAGEMENT_PORT_FORWARD_REFRESH_DELAY_SECONDS")
+            or os.environ.get("EDC_MANAGEMENT_PORT_FORWARD_REFRESH_DELAY_SECONDS")
+            or deployer_config.get("EDC_MANAGEMENT_PORT_FORWARD_REFRESH_DELAY_SECONDS")
+            or deployer_config.get("MANAGEMENT_PORT_FORWARD_REFRESH_DELAY_SECONDS")
+            or 15
+        )
+        try:
+            return max(float(raw_value), 0.0)
+        except (TypeError, ValueError):
+            return 15.0
+
+    def _edc_management_port_forward_refresh_failures(self):
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception:
+            deployer_config = {}
+        raw_value = (
+            os.environ.get("PIONERA_EDC_MANAGEMENT_PORT_FORWARD_REFRESH_FAILURES")
+            or os.environ.get("EDC_MANAGEMENT_PORT_FORWARD_REFRESH_FAILURES")
+            or deployer_config.get("EDC_MANAGEMENT_PORT_FORWARD_REFRESH_FAILURES")
+            or deployer_config.get("MANAGEMENT_PORT_FORWARD_REFRESH_FAILURES")
+            or 3
+        )
+        try:
+            return max(int(float(raw_value)), 1)
+        except (TypeError, ValueError):
+            return 3
+
+    def _should_refresh_connector_management_api_fallback(self, port_forward, consecutive_failures):
+        if not port_forward:
+            return True
+        opened_at = port_forward.get("opened_at")
+        if opened_at is None:
+            return True
+        if consecutive_failures < self._edc_management_port_forward_refresh_failures():
+            return False
+        try:
+            age_seconds = time.time() - float(opened_at)
+        except (TypeError, ValueError):
+            return True
+        return age_seconds >= self._edc_management_port_forward_refresh_delay()
+
     def _refresh_connector_management_api_fallback(self, connector_name, port_forward):
         self._close_temporary_port_forward(port_forward)
         local_url, local_fallback = self._start_connector_management_api_fallback(connector_name)
@@ -134,6 +182,7 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
 
         start = time.time()
         last_issue = None
+        local_fallback_failures = 0
         try:
             while time.time() - start <= timeout:
                 headers = self.get_management_api_headers(connector_name)
@@ -144,6 +193,7 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
 
                 try:
                     response = requests.post(url, headers=headers, json=payload, timeout=5)
+                    local_fallback_failures = 0
                     if response.status_code == 200:
                         print(f"EDC management API ready: {connector_name}")
                         return True
@@ -156,10 +206,18 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                 except requests.RequestException as exc:
                     last_issue = str(exc)
                     if local_fallback and self._should_attempt_local_fallback(exc):
+                        local_fallback_failures += 1
+                        if not self._should_refresh_connector_management_api_fallback(
+                            local_fallback,
+                            local_fallback_failures,
+                        ):
+                            time.sleep(poll_interval)
+                            continue
                         local_url, local_fallback = self._refresh_connector_management_api_fallback(
                             connector_name,
                             local_fallback,
                         )
+                        local_fallback_failures = 0
                         if local_url:
                             url = local_url
                             time.sleep(poll_interval)

@@ -1396,6 +1396,7 @@ class INESDataConnectorsAdapter:
             "pod_name": pod_name,
             "local_port": local_port,
             "kubeconfig_role": os.environ.get("PIONERA_KUBECONFIG_ROLE"),
+            "opened_at": time.time(),
         }
 
     def _close_temporary_port_forward(self, port_forward_info):
