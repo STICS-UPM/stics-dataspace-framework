@@ -7945,6 +7945,50 @@ class MainCliTests(unittest.TestCase):
         )
         self.assertIn("conn-org2-pionera-pionera", provider_action["expected_releases"])
 
+    def test_local_adapter_switch_plan_removes_old_adapter_and_components_for_inesdata(self):
+        payload = {
+            "workloads": {
+                "active_adapters": ["edc"],
+                "active_component_namespaces": ["components"],
+                "adapter_namespaces": {
+                    "inesdata": ["core-control", "provider", "consumer"],
+                    "edc": ["edc-control", "edc-provider", "edc-consumer"],
+                },
+            }
+        }
+
+        plan = main._build_local_adapter_switch_plan(payload, "inesdata")
+
+        self.assertEqual(plan["target_adapter"], "inesdata")
+        self.assertEqual(plan["adapters_to_remove"], ["edc"])
+        self.assertEqual(plan["namespaces_to_delete"], ["edc-control", "edc-provider", "edc-consumer", "components"])
+        self.assertEqual(plan["confirmation_token"], "SWITCH TO INESDATA")
+        component_action = next(
+            action for action in plan["namespace_actions"] if action["namespace"] == "components"
+        )
+        self.assertIn("pionera-ai-model-hub", component_action["expected_releases"])
+
+    def test_local_adapter_switch_plan_cleans_stale_components_after_partial_switch_to_inesdata(self):
+        payload = {
+            "workloads": {
+                "active_adapters": [],
+                "active_component_namespaces": ["components"],
+                "adapter_namespaces": {
+                    "inesdata": ["core-control", "provider", "consumer"],
+                    "edc": ["edc-control", "edc-provider", "edc-consumer"],
+                },
+            }
+        }
+
+        plan = main._build_local_adapter_switch_plan(payload, "inesdata")
+
+        self.assertEqual(plan["target_adapter"], "inesdata")
+        self.assertEqual(plan["adapters_to_remove"], [])
+        self.assertEqual(plan["namespaces_to_delete"], ["components"])
+        component_action = plan["namespace_actions"][0]
+        self.assertEqual(component_action["namespace"], "components")
+        self.assertIn("pionera-ai-model-hub", component_action["expected_releases"])
+
     def test_local_adapter_switch_cleanup_readiness_requires_matching_helm_release(self):
         def fake_switch_command(command):
             if command[:3] == ["kubectl", "get", "namespace"]:
@@ -7986,6 +8030,34 @@ class MainCliTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ready")
         self.assertEqual(result["matching_releases"], ["conn-org2-pionera-pionera"])
+
+    def test_local_adapter_switch_aborts_before_deleting_when_cleanup_is_not_safe(self):
+        plan = {
+            "namespace_actions": [
+                {"namespace": "edc-control"},
+                {"namespace": "components"},
+            ],
+            "runtime_dirs": [],
+        }
+        readiness = [
+            {"status": "ready", "namespace": "edc-control", "matching_releases": ["pionera-edc-dataspace-rs"]},
+            {
+                "status": "skipped",
+                "namespace": "components",
+                "reason": "no-matching-helm-releases",
+                "helm_releases": ["foreign-release"],
+            },
+        ]
+
+        with mock.patch.object(
+            main,
+            "_local_switch_namespace_cleanup_readiness",
+            side_effect=readiness,
+        ), mock.patch.object(main, "_run_switch_command") as command_mock:
+            with self.assertRaisesRegex(RuntimeError, "no namespaces were deleted"):
+                main._execute_local_adapter_switch_plan(plan)
+
+        command_mock.assert_not_called()
 
     def test_level6_component_validation_environment_uses_edc_context(self):
         context = DeploymentContext.from_mapping(

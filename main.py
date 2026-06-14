@@ -111,7 +111,11 @@ from deployers.shared.lib.config_loader import (
     TOPOLOGY_OVERLAY_KEYS,
     VM_SERVICE_TOPOLOGY_KEYS,
 )
-from deployers.shared.lib.components import COMPONENT_CONTRACTS, components_for_adapter
+from deployers.shared.lib.components import (
+    COMPONENT_CONTRACTS,
+    components_for_adapter,
+    resolve_component_release_name,
+)
 from deployers.shared.lib.connectors import (
     parse_connector_list,
     parse_connector_mapping,
@@ -668,6 +672,7 @@ def _local_adapter_connector_full_names(adapter_name):
 
 
 def _local_adapter_component_release_names(adapter_name):
+    normalized = str(adapter_name or "").strip().lower()
     dataspace = _local_adapter_dataspace_name(adapter_name)
     if not dataspace:
         return []
@@ -677,7 +682,53 @@ def _local_adapter_component_release_names(adapter_name):
         for component in str(config.get("COMPONENTS") or "").split(",")
         if component.strip()
     ]
-    return _unique_non_empty([f"{dataspace}-{component}" for component in components])
+    release_names = []
+    for component in components:
+        release_dataspace = _local_adapter_component_release_dataspace_name(
+            normalized,
+            config,
+            dataspace,
+            component,
+        )
+        release_names.append(
+            resolve_component_release_name(component, dataspace_name=release_dataspace)
+        )
+    return _unique_non_empty(release_names)
+
+
+def _local_adapter_component_release_dataspace_name(adapter_name, config, dataspace, component):
+    config = dict(config or {})
+    explicit = str(
+        config.get("COMPONENTS_RELEASE_DATASPACE_NAME")
+        or config.get("COMPONENTS_HELM_RELEASE_DATASPACE_NAME")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit
+
+    scope = str(config.get("COMPONENTS_RELEASE_SCOPE") or "auto").strip().lower()
+    if scope in {"dataspace", "adapter", "per-adapter", "adapter-dataspace"}:
+        return dataspace
+    if scope in {"shared", "base", "common", "common-dataspace"}:
+        return _base_dataspace_name_for_shared_components(dataspace)
+    if str(adapter_name or "").strip().lower() != "edc":
+        return dataspace
+
+    shared_components_raw = str(
+        config.get("COMPONENTS_SHARED_RELEASE_COMPONENTS")
+        or "ontology-hub,ai-model-hub,semantic-virtualization"
+    ).strip()
+    lowered = shared_components_raw.lower()
+    if lowered in {"*", "all"}:
+        return _base_dataspace_name_for_shared_components(dataspace)
+    if lowered in {"", "none", "false", "no", "0"}:
+        return dataspace
+
+    shared_components = _normalized_component_tokens(shared_components_raw)
+    normalized_component = str(component or "").strip().lower().replace("_", "-")
+    if normalized_component in shared_components:
+        return _base_dataspace_name_for_shared_components(dataspace)
+    return dataspace
 
 
 def _local_adapter_expected_release_names(adapter_name, *, include_components=False):
@@ -840,9 +891,13 @@ def _build_local_adapter_switch_plan(payload, target_adapter):
     active_component_namespaces = _unique_non_empty(workloads.get("active_component_namespaces") or [])
 
     adapters_to_remove = set(active_adapters - {target})
-    if target == "edc" and active_component_namespaces:
-        adapters_to_remove.add("inesdata")
     adapters_to_remove = sorted(adapter for adapter in adapters_to_remove if adapter in {"inesdata", "edc"})
+    component_cleanup_adapters = set(adapters_to_remove)
+    if active_component_namespaces and not active_adapters and target in {"inesdata", "edc"}:
+        component_cleanup_adapters.add("edc" if target == "inesdata" else "inesdata")
+    component_cleanup_adapters = sorted(
+        adapter for adapter in component_cleanup_adapters if adapter in {"inesdata", "edc"}
+    )
 
     namespace_actions = []
     for adapter_name in adapters_to_remove:
@@ -863,13 +918,13 @@ def _build_local_adapter_switch_plan(payload, target_adapter):
                 }
             )
 
-    if "inesdata" in adapters_to_remove or target == "edc":
+    if component_cleanup_adapters:
         component_namespaces = active_component_namespaces
         if not component_namespaces:
-            for adapter_name in adapters_to_remove or [target]:
+            for adapter_name in component_cleanup_adapters:
                 component_namespaces.extend(_local_adapter_component_namespaces(adapter_name))
         component_expected_releases = []
-        for adapter_name in adapters_to_remove:
+        for adapter_name in component_cleanup_adapters:
             component_expected_releases.extend(
                 _local_adapter_expected_release_names(adapter_name, include_components=True)
             )
@@ -1038,10 +1093,32 @@ def _execute_local_adapter_switch_plan(plan):
 
     print()
     print("Switching local adapter resources...")
-    namespace_results = []
+    readiness_results = []
+    readiness_blockers = []
     for action in plan.get("namespace_actions") or []:
-        namespace = action["namespace"]
         readiness = _local_switch_namespace_cleanup_readiness(action)
+        readiness_results.append((action, readiness))
+        if readiness.get("status") == "ready":
+            continue
+        if readiness.get("reason") == "namespace-not-found":
+            continue
+        readiness_blockers.append((action, readiness))
+    if readiness_blockers:
+        details = []
+        for action, readiness in readiness_blockers[:5]:
+            namespace = action.get("namespace")
+            reason = readiness.get("reason", "not-ready")
+            releases = readiness.get("helm_releases") or []
+            release_suffix = f"; helm releases: {', '.join(releases)}" if releases else ""
+            details.append(f"{namespace} ({reason}{release_suffix})")
+        raise RuntimeError(
+            "Local adapter switch cleanup is not safe; no namespaces were deleted. "
+            f"Root cause: {'; '.join(details)}"
+        )
+
+    namespace_results = []
+    for action, readiness in readiness_results:
+        namespace = action["namespace"]
         if readiness.get("status") != "ready":
             reason = readiness.get("reason", "not-ready")
             print(f"- Skipping namespace {namespace} ({reason})")
