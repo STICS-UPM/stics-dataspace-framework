@@ -84,6 +84,29 @@ console.log(JSON.stringify(Object.keys(helper).sort()));
         self.assertNotIn("labelInput.press", source)
         self.assertNotIn('getByRole("tab", { name: /Save Mapping/i }).click', source)
 
+    def test_semantic_virtualization_sidebar_navigation_handles_streamlit_reconnects(self):
+        spec_path = (
+            PROJECT_ROOT
+            / "validation"
+            / "components"
+            / "semantic_virtualization"
+            / "ui"
+            / "specs"
+            / "sv_ui_02_mapping_editor.spec.js"
+        )
+        source = spec_path.read_text(encoding="utf-8")
+
+        self.assertIn("streamlitConnectionState", source)
+        self.assertIn("dismissStreamlitConnectionDialog", source)
+        self.assertIn("Connection error|Connection timed out", source)
+        self.assertIn(r"\bCONNECTING\b", source)
+        self.assertIn("waitForSidebarNavigationWindow", source)
+        self.assertIn("sidebarLinkState", source)
+        self.assertIn("intercepts pointer events", source)
+        self.assertIn("navigateSidebarLinkByHref", source)
+        self.assertIn("stayed disabled", source)
+        self.assertIn("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SIDEBAR_CLICK_TIMEOUT_MS", source)
+
 
 if __name__ == "__main__":
     unittest.main()

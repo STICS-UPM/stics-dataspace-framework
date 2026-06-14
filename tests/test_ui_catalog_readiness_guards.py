@@ -49,6 +49,17 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
             self.assertIn("probeConsumerCatalogDatasetReadiness", source, "/".join(parts))
             self.assertNotIn("await waitForConsumerCatalogDatasetReadiness(", source, "/".join(parts))
 
+    def test_inesdata_ai_model_hub_httpdata_uses_stable_model_catalog_metadata(self):
+        source = _read_ui_file("adapters", "inesdata", "specs", "09-ai-model-hub-httpdata.spec.ts")
+
+        self.assertIn("test.setTimeout(aiModelHubHttpDataTimeoutMs())", source)
+        self.assertIn("UI_AI_MODEL_HUB_HTTPDATA_TIMEOUT_MS", source)
+        self.assertIn('assetType: "machineLearning"', source)
+        self.assertIn("...aiModelMetadataAliases(modelPath)", source)
+        self.assertIn('contenttype: "application/json"', source)
+        self.assertIn('format: "json"', source)
+        self.assertIn('proxyBody: "true"', source)
+
     def test_dataspace_runtime_uses_shared_infrastructure_config_as_fallback(self):
         source = _read_ui_file("shared", "utils", "dataspace-runtime.ts")
 

@@ -61,6 +61,27 @@ type AIModelHubUiReport = {
 };
 
 const DEFAULT_MODEL_PATH = "/api/v1/nlp/ecommerce-sentiment";
+const TEXT_MODEL_INPUT_FEATURES = [
+  {
+    name: "text",
+    type: "string",
+    required: true,
+    description: "Text to analyze",
+  },
+];
+const TEXT_MODEL_INPUT_SCHEMA = {
+  type: "object",
+  required: ["text"],
+  properties: {
+    text: {
+      type: "string",
+      description: "Text to analyze",
+    },
+  },
+};
+const TEXT_MODEL_INPUT_EXAMPLE = {
+  text: "This product is excellent and very useful",
+};
 
 test.skip(
   process.env.UI_AI_MODEL_HUB_HTTPDATA_DEMO !== "1",
@@ -92,6 +113,65 @@ function aiModelHubNegotiationAttempts(): number {
   return Number.isFinite(configured) && configured > 0 ? configured : 3;
 }
 
+function aiModelHubHttpDataTimeoutMs(): number {
+  const configured = Number.parseInt(process.env.UI_AI_MODEL_HUB_HTTPDATA_TIMEOUT_MS || "", 10);
+  return Number.isFinite(configured) && configured > 0 ? configured : 540_000;
+}
+
+function aiModelMetadataAliases(inferencePath: string): Record<string, unknown> {
+  const inputFeatures = JSON.stringify(TEXT_MODEL_INPUT_FEATURES);
+  const inputSchema = JSON.stringify(TEXT_MODEL_INPUT_SCHEMA);
+  const inputExample = JSON.stringify(TEXT_MODEL_INPUT_EXAMPLE);
+
+  return {
+    "daimo:asset_kind": "model",
+    "daimo:task": "text-classification",
+    "https://w3id.org/daimo/ns#task": "text-classification",
+    "https://pionera.ai/edc/daimo#task": "text-classification",
+    "daimo:subtask": "sentiment-analysis",
+    "https://w3id.org/daimo/ns#subtask": "sentiment-analysis",
+    "https://pionera.ai/edc/daimo#subtask": "sentiment-analysis",
+    "daimo:algorithm": "controlled-baseline",
+    "https://w3id.org/daimo/ns#algorithm": "controlled-baseline",
+    "https://pionera.ai/edc/daimo#algorithm": "controlled-baseline",
+    "daimo:library": "validation-fixture",
+    "https://w3id.org/daimo/ns#library": "validation-fixture",
+    "https://pionera.ai/edc/daimo#library": "validation-fixture",
+    "daimo:framework": "controlled-httpdata",
+    "https://w3id.org/daimo/ns#framework": "controlled-httpdata",
+    "https://pionera.ai/edc/daimo#framework": "controlled-httpdata",
+    "daimo:software": "pionera-validation-framework",
+    "https://w3id.org/daimo/ns#software": "pionera-validation-framework",
+    "https://pionera.ai/edc/daimo#software": "pionera-validation-framework",
+    "daimo:inference_path": inferencePath,
+    "https://w3id.org/daimo/ns#inference_path": inferencePath,
+    "https://pionera.ai/edc/daimo#inference_path": inferencePath,
+    "daimo:input_features": inputFeatures,
+    "https://w3id.org/daimo/ns#input_features": inputFeatures,
+    "https://pionera.ai/edc/daimo#input_features": inputFeatures,
+    "daimo:input_schema": inputSchema,
+    "https://w3id.org/daimo/ns#input_schema": inputSchema,
+    "https://pionera.ai/edc/daimo#input_schema": inputSchema,
+    "daimo:input_example": inputExample,
+    "https://w3id.org/daimo/ns#input_example": inputExample,
+    "https://pionera.ai/edc/daimo#input_example": inputExample,
+    task: "text-classification",
+    subtask: "sentiment-analysis",
+    algorithm: "controlled-baseline",
+    library: "validation-fixture",
+    framework: "controlled-httpdata",
+    software: "pionera-validation-framework",
+    inference_path: inferencePath,
+    inferencePath,
+    input_features: inputFeatures,
+    inputFeatures: TEXT_MODEL_INPUT_FEATURES,
+    input_schema: inputSchema,
+    inputSchema: TEXT_MODEL_INPUT_SCHEMA,
+    input_example: inputExample,
+    inputExample: TEXT_MODEL_INPUT_EXAMPLE,
+  };
+}
+
 test("09 AI Model Hub HttpData: visible model discovery and negotiation from INESData UI", async ({
   page,
   request,
@@ -100,6 +180,7 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
   attachJson,
 }) => {
   test.skip(dataspaceRuntime.adapter !== "inesdata", "This demo validates the INESData connector UI path.");
+  test.setTimeout(aiModelHubHttpDataTimeoutMs());
 
   const suffix = `amh-${Date.now()}`;
   const assetId = `qa-ui-amh-httpdata-${suffix}`;
@@ -178,18 +259,20 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
         shortDescription: "AI Model Hub model endpoint exposed as HttpData for UI demo validation",
         description:
           "Machine-learning model endpoint governed through INESData as a contractual HttpData asset.",
-        assetType: "ai-model-execution-endpoint",
+        assetType: "machineLearning",
         keywords: ["validation", "ai-model-hub", "machine-learning", "HttpData", "A5.2"],
         properties: {
-          "daimo:asset_kind": "model",
-          "daimo:task": "text-classification",
-          "daimo:framework": "controlled-httpdata",
-          "daimo:inference_path": modelPath,
+          ...aiModelMetadataAliases(modelPath),
+          contenttype: "application/json",
+          format: "json",
+          method: "POST",
+          path: modelPath,
         },
         dataAddress: {
           type: "HttpData",
           baseUrl: modelUrl,
           method: "POST",
+          proxyBody: "true",
           name: `ai-model-hub-model-${suffix}.json`,
         },
       },
