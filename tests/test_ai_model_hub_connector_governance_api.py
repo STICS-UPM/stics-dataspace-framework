@@ -159,6 +159,11 @@ class AIModelHubConnectorGovernanceApiTests(unittest.TestCase):
         self.assertNotIn("edr-secret", report_text)
 
         self.assertTrue(any(entry["url"].endswith("/management/v3/assets") for entry in session.posts))
+        asset_request = next(entry for entry in session.posts if entry["url"].endswith("/management/v3/assets"))
+        model_metadata = asset_request["json"]["properties"]["assetData"]["JS_DAIMO_Model"]
+        self.assertEqual(model_metadata["daimo:taskType"], "classification")
+        self.assertEqual(model_metadata["daimo:taskCategory"], "Natural Language Processing")
+        self.assertEqual(model_metadata["daimo:subtask"], "text-classification")
         self.assertTrue(any(entry["url"].endswith("/management/v3/contractagreements/agreement-1") for entry in session.gets))
         self.assertTrue(any(entry["url"].endswith("/management/v3/transferprocesses") for entry in session.posts))
         self.assertEqual(len(session.deletes), 2)

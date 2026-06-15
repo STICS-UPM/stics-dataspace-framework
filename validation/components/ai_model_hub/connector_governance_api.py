@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 import requests
 
+from validation.components.ai_model_hub.daimo_metadata import model_asset_data
 from validation.components.ai_model_hub.model_execution_api import DEFAULT_MODEL_PATH, DEFAULT_PAYLOAD, default_model_url
 
 
@@ -391,7 +392,27 @@ class AIModelHubConnectorGovernanceApiSuite:
                 "version": "1.0.0",
                 "shortDescription": "Temporary executable model endpoint for A5.2 connector governance validation",
                 "assetType": "ai-model-execution-endpoint",
-                "assetData": {},
+                "assetData": model_asset_data(
+                    task="text-classification",
+                    subtask="text-classification",
+                    subtask_description="Controlled model access endpoint",
+                    description="HttpData model endpoint negotiated and accessed through connector APIs",
+                    library_name="Custom",
+                    language=["English", "Spanish"],
+                    input_features=[
+                        {
+                            "name": "text",
+                            "type": "string",
+                            "description": "Text to analyze",
+                        }
+                    ],
+                    input_schema={
+                        "type": "object",
+                        "required": ["text"],
+                        "properties": {"text": {"type": "string", "description": "Text to analyze"}},
+                    },
+                    input_example=DEFAULT_PAYLOAD,
+                ),
                 "asset:prop:type": "machineLearning",
                 "contenttype": "application/json",
                 "storageType": "HttpData",

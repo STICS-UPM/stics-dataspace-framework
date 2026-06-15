@@ -13,6 +13,7 @@ import {
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS, waitForUiTransition } from "../../../shared/utils/waiting";
 import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
+import { aiModelHubDaimoModelAssetData } from "../../../shared/utils/ai-model-hub-daimo";
 
 type BenchmarkModelFixture = {
   assetId: string;
@@ -489,6 +490,19 @@ test("13 AI Model Benchmarking: compare two local model-server endpoints from IN
           assetType: "machineLearning",
           keywords: ["validation", "ai-model-benchmarking", "model-server", "flares", "reliability", "machine-learning", "HttpData", "A5.2"],
           properties: {
+            assetData: aiModelHubDaimoModelAssetData({
+              task: "classification",
+              subtask: "text-classification",
+              subtaskDescription: "FLARES reliability classification model-server endpoint",
+              requestShape: "batch",
+              description:
+                "AIModelHub-Use-Cases FLARES reliability model-server endpoint used to validate model comparison from the INESData connector interface.",
+              libraryName: "Transformers",
+              language: ["Spanish"],
+              inputFeatures: FLARES_MODEL_INPUT_FEATURES,
+              inputSchema: FLARES_MODEL_INPUT_SCHEMA,
+              inputExample: FLARES_MODEL_INPUT_EXAMPLE,
+            }),
             ...aiModelMetadataAliases({
               task: "classification",
               subtask: "flares-reliability",

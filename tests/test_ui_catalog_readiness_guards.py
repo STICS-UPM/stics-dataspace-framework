@@ -331,10 +331,15 @@ class ConsumerCatalogReadinessGuardsTests(unittest.TestCase):
 
     def test_edc_ai_model_assets_keep_model_base_url_separate_from_inference_path(self):
         helper = _read_ui_file("shared", "utils", "model-server-url.ts")
+        daimo_helper = _read_ui_file("shared", "utils", "ai-model-hub-daimo.ts")
         edc_fixtures = _read_ui_file("adapters", "edc", "utils", "edc-component-fixtures.ts")
 
         self.assertIn("modelServerBaseUrlFromUrl", helper)
         self.assertIn("parsed.pathname.endsWith(normalizedPath)", helper)
+        self.assertIn('AI_MODEL_HUB_MODEL_VOCABULARY_ID = "JS_DAIMO_Model"', daimo_helper)
+        self.assertIn('AI_MODEL_HUB_DATASET_VOCABULARY_ID = "JS_DAIMO_Dataset"', daimo_helper)
+        self.assertIn("aiModelHubDaimoModelAssetData", edc_fixtures)
+        self.assertIn("aiModelHubDaimoDatasetAssetData", edc_fixtures)
         self.assertIn("modelServerBaseUrlFromUrl(modelUrl, modelPath)", edc_fixtures)
         self.assertIn('"daimo:inference_path": inferencePath', edc_fixtures)
         self.assertIn('"daimo:license": "Apache-2.0"', edc_fixtures)

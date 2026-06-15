@@ -17,6 +17,8 @@ const FLARES_TEST_FILE = "5w1h_subtarea_2_test.json";
 const EDC_NAMESPACE = "https://w3id.org/edc/v0.0.1/ns/";
 const DAIMO_NAMESPACE = "https://w3id.org/daimo/0.0.1/ns#";
 const LEGACY_DAIMO_NAMESPACE = "https://pionera.ai/edc/daimo#";
+const MODEL_VOCABULARY_ID = "JS_DAIMO_Model";
+const DATASET_VOCABULARY_ID = "JS_DAIMO_Dataset";
 const FLARES_REAL_RELIABILITY_MODELS = [
   {
     assetId: "model-flares-reliability-albert",
@@ -85,6 +87,60 @@ function edcStorageMetadata(dataAddressType = "HttpData") {
     storageType: dataAddressType,
     "edc:dataAddressType": dataAddressType,
     [`${EDC_NAMESPACE}dataAddressType`]: dataAddressType,
+  };
+}
+
+function daimoInputDefinition(inputFeatures = [], inputSchema = undefined) {
+  return {
+    fields: inputFeatures.map((field) => ({
+      name: field.name,
+      type: ["string", "integer", "number", "boolean", "array", "object"].includes(field.type) ? field.type : "string",
+      ...(field.description ? { description: field.description } : {}),
+    })),
+    ...(inputSchema ? { jsonSchema: JSON.stringify(inputSchema) } : {}),
+  };
+}
+
+function flaresDatasetAssetData(fixture, keywords) {
+  return {
+    [DATASET_VOCABULARY_ID]: {
+      "daimo:modality": ["text"],
+      "daimo:taskType": "classification",
+      "daimo:taskCategory": "Natural Language Processing",
+      "daimo:subtask": "text-classification",
+      "daimo:subtaskDescription": "FLARES reliability classification benchmark dataset",
+      "daimo:input": ["Id", "Text", "5W1H_Label", "Tag_Text", "Tag_Start", "Tag_End"],
+      "daimo:label": "Reliability_Label",
+      "daimo:labelType": "categorical",
+      "dct:language": ["Spanish"],
+      "dct:license": "apache-2.0",
+      "dct:format": "jsonl",
+      "dcat:keyword": keywords,
+      "daimo:datasetVersion": fixture.metadata.version || "1.0.0",
+      "daimo:datasetRole": "test",
+      "daimo:protocol": "holdout-test-set",
+    },
+  };
+}
+
+function flaresModelAssetData({ description, library, inputFeatures, inputSchema, inputExample }) {
+  return {
+    [MODEL_VOCABULARY_ID]: {
+      "daimo:modality": ["text"],
+      "daimo:taskType": "classification",
+      "daimo:taskCategory": "Natural Language Processing",
+      "daimo:subtask": "text-classification",
+      "daimo:subtaskDescription": "FLARES reliability classification model endpoint",
+      "daimo:endpointBehavior": "prediction",
+      "daimo:requestShape": "batch",
+      "dct:description": description,
+      "daimo:libraryName": library || "Transformers",
+      "dct:language": ["Spanish"],
+      "dct:license": "apache-2.0",
+      "daimo:inputSchema": daimoInputDefinition(inputFeatures, inputSchema),
+      "daimo:inputExample": JSON.stringify(inputExample || {}),
+      "daimo:metrics": ["Accuracy", "Precision", "Recall", "F1"],
+    },
   };
 }
 
@@ -353,7 +409,7 @@ function buildFlaresDatasetAssetDocument(fixture, runtime, overrides = {}) {
       version: fixture.metadata.version,
       shortDescription: description,
       assetType: "dataset",
-      assetData: {},
+      assetData: flaresDatasetAssetData(fixture, keywords),
       "asset:prop:type": "dataset",
       contenttype: publication.uploadMediaType || runtime.modelContentType || "application/json",
       "dct:description": description,
@@ -567,6 +623,7 @@ function buildLocalFlaresBenchmarkDatasetDocument(fixture, runtime) {
     keywords,
     extraProperties: {
       assetType: "dataset",
+      assetData: flaresDatasetAssetData(fixture, keywords),
       "daimo:tags": keywords,
       "daimo:task": fixture.metadata.task,
       "daimo:subtask": ["5w1h-reliability-classification"],
@@ -643,6 +700,13 @@ function buildFlaresLinguisticModelPayload(fixture, runtime, spec) {
       spec.variant,
     ],
     extraProperties: {
+      assetData: flaresModelAssetData({
+        description: spec.description,
+        library: spec.library,
+        inputFeatures,
+        inputSchema,
+        inputExample,
+      }),
       "daimo:task": ["nlp", "text-classification", "reliability-classification"],
       "daimo:subtask": ["5w1h-reliability-classification"],
       "daimo:language": ["es"],

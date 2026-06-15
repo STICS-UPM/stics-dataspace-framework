@@ -16,6 +16,7 @@ import {
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS, waitForUiTransition } from "../../../shared/utils/waiting";
 import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
+import { aiModelHubDaimoModelAssetData } from "../../../shared/utils/ai-model-hub-daimo";
 
 type AIModelExternalExecutionUiReport = {
   startedAt: string;
@@ -499,6 +500,18 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
         assetType: "machineLearning",
         keywords: ["validation", "ai-model-execution", "external-model", "contract-agreement", "HttpData", "A5.2"],
         properties: {
+          assetData: aiModelHubDaimoModelAssetData({
+            task: "text-classification",
+            subtask: "text-classification",
+            subtaskDescription: "Controlled social-media sentiment execution endpoint",
+            description:
+              "Controlled provider-side HttpData model used to validate consumer execution after contract negotiation from the INESData connector interface.",
+            libraryName: "Custom",
+            language: ["English", "Spanish"],
+            inputFeatures,
+            inputSchema,
+            inputExample: modelPayload,
+          }),
           ...aiModelMetadataAliases({
             task: "text-classification",
             subtask: "social-media-sentiment",

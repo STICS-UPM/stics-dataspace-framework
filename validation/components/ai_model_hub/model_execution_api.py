@@ -15,6 +15,7 @@ from validation.components.ai_model_hub.model_server_policy import (
     model_server_execution_labels,
     model_server_validation_state,
 )
+from validation.components.ai_model_hub.daimo_metadata import model_asset_data
 from validation.datasets.manager import dataset_source_dir
 
 
@@ -353,7 +354,27 @@ class AIModelHubModelExecutionApiSuite:
                 "version": "1.0.0",
                 "shortDescription": "Temporary model endpoint for the A5.2 controlled execution baseline",
                 "assetType": "machineLearning",
-                "assetData": {},
+                "assetData": model_asset_data(
+                    task="text-classification",
+                    subtask="text-classification",
+                    subtask_description="Controlled sentiment-analysis execution endpoint",
+                    description="HttpData endpoint consumed through the connector-side model execution API",
+                    library_name="Custom",
+                    language=["English", "Spanish"],
+                    input_features=[
+                        {
+                            "name": "text",
+                            "type": "string",
+                            "description": "Text to analyze",
+                        }
+                    ],
+                    input_schema={
+                        "type": "object",
+                        "required": ["text"],
+                        "properties": {"text": {"type": "string", "description": "Text to analyze"}},
+                    },
+                    input_example=DEFAULT_PAYLOAD,
+                ),
                 "asset:prop:type": "machineLearning",
                 "storageType": "HttpData",
                 "edc:dataAddressType": "HttpData",

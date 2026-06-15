@@ -105,6 +105,11 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         self.assertEqual(asset_requests[0]["json"]["dataAddress"]["type"], "HttpData")
         self.assertEqual(asset_requests[0]["json"]["dataAddress"]["method"], "POST")
         self.assertNotIn("proxyPath", asset_requests[0]["json"]["dataAddress"])
+        model_metadata = asset_requests[0]["json"]["properties"]["assetData"]["JS_DAIMO_Model"]
+        self.assertEqual(model_metadata["daimo:taskType"], "classification")
+        self.assertEqual(model_metadata["daimo:taskCategory"], "Natural Language Processing")
+        self.assertEqual(model_metadata["daimo:subtask"], "text-classification")
+        self.assertEqual(model_metadata["daimo:inputSchema"]["fields"][0]["name"], "text")
 
         execution_requests = [
             entry for entry in session.posts if entry["url"].endswith("/management/v3/modelexecutions/execute")

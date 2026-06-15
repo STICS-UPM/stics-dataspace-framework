@@ -14,6 +14,7 @@ import {
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS } from "../../../shared/utils/waiting";
 import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
+import { aiModelHubDaimoModelAssetData } from "../../../shared/utils/ai-model-hub-daimo";
 
 type AIModelHubUiReport = {
   startedAt: string;
@@ -262,6 +263,18 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
         assetType: "machineLearning",
         keywords: ["validation", "ai-model-hub", "machine-learning", "HttpData", "A5.2"],
         properties: {
+          assetData: aiModelHubDaimoModelAssetData({
+            task: "text-classification",
+            subtask: "text-classification",
+            subtaskDescription: "Controlled sentiment-analysis HttpData endpoint",
+            description:
+              "Machine-learning model endpoint governed through INESData as a contractual HttpData asset.",
+            libraryName: "Custom",
+            language: ["English", "Spanish"],
+            inputFeatures: TEXT_MODEL_INPUT_FEATURES,
+            inputSchema: TEXT_MODEL_INPUT_SCHEMA,
+            inputExample: TEXT_MODEL_INPUT_EXAMPLE,
+          }),
           ...aiModelMetadataAliases(modelPath),
           contenttype: "application/json",
           format: "json",

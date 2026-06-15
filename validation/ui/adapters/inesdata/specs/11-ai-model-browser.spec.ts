@@ -13,6 +13,7 @@ import {
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS, waitForUiTransition } from "../../../shared/utils/waiting";
 import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
+import { aiModelHubDaimoModelAssetData } from "../../../shared/utils/ai-model-hub-daimo";
 
 type AIModelBrowserUiReport = {
   startedAt: string;
@@ -471,6 +472,17 @@ test("11 AI Model Browser: controlled model discovery, filtering and detail from
             assetType: "machineLearning",
             keywords: model.keywords,
             properties: {
+              assetData: aiModelHubDaimoModelAssetData({
+                task: model.task,
+                subtask: model.subtask,
+                subtaskDescription: model.subtask,
+                description: model.description,
+                libraryName: model.library,
+                language: ["English", "Spanish"],
+                inputFeatures: TEXT_MODEL_INPUT_FEATURES,
+                inputSchema: TEXT_MODEL_INPUT_SCHEMA,
+                inputExample: TEXT_MODEL_INPUT_EXAMPLE,
+              }),
               ...aiModelMetadataAliases({
                 task: model.task,
                 subtask: model.subtask,
