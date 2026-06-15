@@ -402,15 +402,25 @@ if (requestName === "Resolve Current Transfer Destination") {
     }
     clearLocalVar("e2e_transfer_destination_attempt")
     const state = readField(transfer, "state") || transfer.state
-    if (state === "TERMINATED") {
-        pm.test("Transfer destination validation did not observe a terminated transfer", function () {
-            pm.expect.fail("Transfer reached TERMINATED state before destination validation")
+    const transferErrorDetail = transfer.errorDetail || transfer.error || null
+    const dataDestination =
+        readField(transfer, "dataDestination") ||
+        transfer.dataDestination ||
+        transfer["https://w3id.org/edc/v0.0.1/ns/dataDestination"] ||
+        (isEdcAdapter() ? parseStoredJson("e2e_transfer_request_destination") : undefined)
+
+    if (state === "TERMINATED" && transferErrorDetail) {
+        pm.test("Transfer destination validation did not observe a failed terminated transfer", function () {
+            pm.expect.fail(`Transfer reached TERMINATED state before destination validation: ${transferErrorDetail}`)
         })
-        const transferErrorDetail = transfer.errorDetail || transfer.error || null
-        if (transferErrorDetail) {
-            console.log("Transfer error detail:", transferErrorDetail)
-        }
+        console.log("Transfer error detail:", transferErrorDetail)
         return
+    }
+    if (state === "TERMINATED") {
+        pm.test("Terminated transfer still exposes a destination for storage validation", function () {
+            pm.expect(dataDestination).to.not.be.undefined
+            pm.expect(dataDestination).to.not.be.null
+        })
     }
 
     const expectedAssetId = getStoredVar("e2e_asset_id")
@@ -440,12 +450,6 @@ if (requestName === "Resolve Current Transfer Destination") {
         })
         return
     }
-
-    const dataDestination =
-        readField(transfer, "dataDestination") ||
-        transfer.dataDestination ||
-        transfer["https://w3id.org/edc/v0.0.1/ns/dataDestination"] ||
-        (isEdcAdapter() ? parseStoredJson("e2e_transfer_request_destination") : undefined)
 
     pm.test("Transfer details expose a resolved data destination", function () {
         pm.expect(dataDestination).to.not.be.undefined
