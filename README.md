@@ -48,13 +48,21 @@ implementada y validación oficial reproducida:
 
 | Adapter | `local` | `vm-single` | `vm-distributed` |
 | --- | --- | --- | --- |
-| `inesdata` | Implementado y usado como ruta local de desarrollo/validación | Implementado y validado como entorno VM de referencia | Implementado y validado como entorno distribuido de referencia |
-| `edc` | Implementado; pasó validaciones antes de la conciliación reciente de topologías y debe revalidarse antes de usarlo como evidencia actual | Implementado; no se ha validado oficialmente después de la conciliación reciente | Implementado y probado oficialmente como ruta de cierre para EDC |
+| `inesdata` | Implementado y usado como ruta local de desarrollo/validación | Implementado y validado como entorno VM de referencia | Disponible en la rama especializada `refactoring-vm-distributed-inesdata-ai` |
+| `edc` | Implementado; pasó validaciones antes de la conciliación reciente de topologías y debe revalidarse antes de usarlo como evidencia actual | Implementado; no se ha validado oficialmente después de la conciliación reciente | Estará disponible en la rama especializada `refactoring-vm-distributed-edc-ai` |
 
-Por tanto, para evidencias de cierre del adapter `edc`, usa
-`vm-distributed`. Las rutas `local` y `vm-single` de EDC permanecen disponibles
-para desarrollo y futuras revalidaciones, pero no se presentan como resultado
-oficial actualizado en esta versión de cierre.
+Actualmente, la rama `main` se encuentra alineada con la línea estable
+`refactoring-local-vm-single`, que consolida la ejecución local y `vm-single`.
+La validación del adapter INESData en topología `vm-distributed` se mantiene en
+una rama especializada, `refactoring-vm-distributed-inesdata-ai`, ya que aún no
+ha sido conciliada con la línea base `refactoring-local-vm-single`. De forma
+análoga, la validación del adapter EDC en topología `vm-distributed` quedará
+disponible en la rama `refactoring-vm-distributed-edc-ai`.
+
+Por tanto, las rutas `vm-distributed` deben tomarse desde sus ramas
+especializadas mientras se completa la conciliación con `main`. Las rutas
+`local` y `vm-single` permanecen disponibles en `main` como línea estable de
+desarrollo y validación.
 
 ## Índice
 
