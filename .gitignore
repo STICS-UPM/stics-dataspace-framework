@@ -58,6 +58,7 @@ blob-report/
 validation/ui/ops-test-results/
 validation/ui/ops-playwright-report/
 validation/ui/ops-blob-report/
+validation/ui/playwright-report*/
 validation/ui/manual-runs/
 
 # =========================
