@@ -9,6 +9,10 @@ from collections.abc import Mapping
 API_ONLY_VALUES = {"api", "api-only", "api_only", "apis", "rest"}
 
 
+def _component_env_prefix(component: str | None) -> str:
+    return str(component or "").strip().upper().replace("-", "_")
+
+
 def component_adapter_name(env: Mapping[str, str] | None = None) -> str:
     values = env if env is not None else os.environ
     return str(
@@ -19,9 +23,22 @@ def component_adapter_name(env: Mapping[str, str] | None = None) -> str:
     ).strip().lower()
 
 
-def component_api_only_enabled(env: Mapping[str, str] | None = None) -> bool:
+def component_api_only_enabled(
+    env: Mapping[str, str] | None = None,
+    *,
+    component: str | None = None,
+) -> bool:
     values = env if env is not None else os.environ
+    component_prefix = _component_env_prefix(component)
+    component_env_names = ()
+    if component_prefix:
+        component_env_names = (
+            f"PIONERA_{component_prefix}_COMPONENT_VALIDATION_MODE",
+            f"{component_prefix}_COMPONENT_VALIDATION_MODE",
+            f"{component_prefix}_VALIDATION_MODE",
+        )
     for name in (
+        *component_env_names,
         "PIONERA_COMPONENT_VALIDATION_MODE",
         "LEVEL6_COMPONENT_VALIDATION_MODE",
         "COMPONENT_VALIDATION_MODE",

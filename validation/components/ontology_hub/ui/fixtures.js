@@ -2,7 +2,7 @@ const fs = require("fs");
 
 const { test: base, expect } = require("./playwright-runtime");
 const { resolveOntologyHubRuntime, resolveOntologyHubTimeouts } = require("./runtime");
-const { ensureOntologyHubBootstrap, installOptionalThirdPartyResourceGuards } = require("./support/bootstrap");
+const { ensureOntologyHubBootstrap } = require("./support/bootstrap");
 const timeouts = resolveOntologyHubTimeouts();
 
 async function attachCaptureWarning(testInfo, name, error) {
@@ -19,7 +19,6 @@ const test = base.extend({
   page: async ({ page }, use) => {
     page.setDefaultTimeout(timeouts.readyTimeoutMs);
     page.setDefaultNavigationTimeout(timeouts.navigationTimeoutMs);
-    await installOptionalThirdPartyResourceGuards(page);
     await use(page);
   },
 

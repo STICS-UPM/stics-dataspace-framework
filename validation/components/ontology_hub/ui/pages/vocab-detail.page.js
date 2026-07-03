@@ -9,16 +9,6 @@ const {
   readyTimeoutMs,
   navigationTimeoutMs,
 } = resolveOntologyHubTimeouts();
-const optionalMarkerTimeoutMs = Math.min(readyTimeoutMs, 5000);
-
-async function visibleText(locator, timeout = readyTimeoutMs) {
-  try {
-    await locator.waitFor({ state: "visible", timeout });
-    return ((await locator.textContent().catch(() => "")) || "").trim();
-  } catch (error) {
-    return "";
-  }
-}
 
 class OntologyHubVocabDetailPage {
   constructor(page) {
@@ -34,26 +24,41 @@ class OntologyHubVocabDetailPage {
   }
 
   async expectReady(prefix, titleText = "") {
-    const roleHeading = this.page.getByRole("heading", { level: 1 }).first();
-    const domHeading = this.page.locator("section#title h1, h1[itemprop='name'], h1").first();
-    const headingText =
-      (await visibleText(roleHeading, optionalMarkerTimeoutMs)) ||
-      (await visibleText(domHeading));
-    const bodyText = ((await this.page.locator("body").evaluate((node) => node.textContent || "").catch(() => "")) || "")
-      .replace(/\s+/g, " ")
-      .trim();
+    const headingLocator = this.page.getByRole("heading", { level: 1 }).first();
+    let headingText = "";
+    try {
+      await headingLocator.waitFor({ state: "visible", timeout: readyTimeoutMs });
+      headingText = ((await headingLocator.textContent().catch(() => "")) || "").trim();
 
-    const expectedMarkers = [prefix, titleText].filter(Boolean);
-    if (expectedMarkers.length > 0) {
-      const combinedText = `${headingText} ${bodyText}`.toLowerCase();
-      const hasMarker = expectedMarkers.some((marker) =>
-        combinedText.includes(String(marker).toLowerCase()),
-      );
+      const expectedMarkers = [prefix, titleText].filter(Boolean);
+      if (expectedMarkers.length > 0) {
+        const headingLower = headingText.toLowerCase();
+        const hasHeadingMarker = expectedMarkers.some((marker) =>
+          headingLower.includes(String(marker).toLowerCase()),
+        );
 
-      if (!hasMarker) {
-        const detail = headingText || bodyText.slice(0, 320) || "No additional diagnostics could be collected.";
-        throw new Error(`Vocabulary detail page is not ready for '${prefix}': ${detail}`);
+        if (!hasHeadingMarker) {
+          const bodyText = ((await this.page.locator("body").evaluate((node) => node.textContent || "").catch(() => "")) || "")
+            .replace(/\s+/g, " ")
+            .trim();
+          const bodyLower = bodyText.toLowerCase();
+          const hasBodyMarker = expectedMarkers.some((marker) =>
+            bodyLower.includes(String(marker).toLowerCase()),
+          );
+
+          if (!hasBodyMarker) {
+            const detail = headingText || bodyText.slice(0, 320) || "No additional diagnostics could be collected.";
+            throw new Error(`Vocabulary detail page is not ready for '${prefix}': ${detail}`);
+          }
+        }
       }
+    } catch (error) {
+      const bodySnippet = ((await this.page.locator("body").evaluate((node) => node.textContent || "").catch(() => "")) || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 320);
+      const detail = headingText || bodySnippet || "No additional diagnostics could be collected.";
+      throw new Error(`Vocabulary detail page is not ready for '${prefix}': ${detail}`);
     }
 
     await this.page
@@ -80,10 +85,7 @@ class OntologyHubVocabDetailPage {
   async expectMetadataMarkers() {
     await this.page.getByText("URI", { exact: true }).waitFor({ state: "visible" });
     await this.page.getByText("Description", { exact: true }).waitFor({ state: "visible" });
-    await this.page
-      .getByRole("heading", { name: "Tags", exact: true })
-      .waitFor({ state: "visible", timeout: optionalMarkerTimeoutMs })
-      .catch(() => {});
+    await this.page.getByRole("heading", { name: "Tags", exact: true }).waitFor({ state: "visible" });
   }
 
   async expectStatisticsMarkers() {

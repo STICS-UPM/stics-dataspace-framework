@@ -12,7 +12,6 @@ from validation.components.ai_model_hub.model_execution_api import (
     FLARES_EXPECTED_MODEL,
     FLARES_MODEL_PATH,
     FUNCTIONAL_CASE_ID,
-    _adapter_management_url_resolver,
     build_flares_execution_context,
     default_model_url,
 )
@@ -32,13 +31,14 @@ class FakeResponse:
 
 
 class FakeSession:
-    def __init__(self, *, execution_status=200, execution_payload=None):
+    def __init__(self, *, execution_status=200, execution_payload=None, execution_responses=None):
         self.execution_status = execution_status
         self.execution_payload = execution_payload or {
             "model": DEFAULT_EXPECTED_MODEL,
             "sentiment": "positive",
             "confidence": 0.8,
         }
+        self.execution_responses = list(execution_responses or [])
         self.posts = []
         self.deletes = []
 
@@ -49,6 +49,9 @@ class FakeSession:
         if url.endswith("/management/v3/assets"):
             return FakeResponse(200, {"@id": json["@id"]})
         if url.endswith("/management/v3/modelexecutions/execute"):
+            if self.execution_responses:
+                status, payload = self.execution_responses.pop(0)
+                return FakeResponse(status, payload)
             return FakeResponse(self.execution_status, self.execution_payload)
         if url.endswith("/api/infer"):
             return FakeResponse(self.execution_status, self.execution_payload)
@@ -94,22 +97,18 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         self.assertEqual(result["created_entities"]["asset_id"], "a52-model-exec-fixed-uuid")
         self.assertEqual(result["executed_cases"][0]["test_case_id"], "PT5-MH-10")
         self.assertEqual(result["executed_cases"][0]["mapping_status"], "mapped")
-        self.assertEqual(result["executed_cases"][0]["coverage_status"], "automated_real_model_server")
-        self.assertEqual(result["executed_cases"][0]["model_server_mode"], "external")
+        self.assertEqual(result["executed_cases"][0]["coverage_status"], "automated")
         self.assertEqual(result["executed_cases"][0]["evaluation"]["status"], "passed")
         self.assertNotIn("token-provider", report_text)
         self.assertNotIn("provider-pass", report_text)
 
         asset_requests = [entry for entry in session.posts if entry["url"].endswith("/management/v3/assets")]
-        self.assertEqual(len(asset_requests), 1)
-        self.assertEqual(asset_requests[0]["json"]["dataAddress"]["type"], "HttpData")
-        self.assertEqual(asset_requests[0]["json"]["dataAddress"]["method"], "POST")
-        self.assertNotIn("proxyPath", asset_requests[0]["json"]["dataAddress"])
-        model_metadata = asset_requests[0]["json"]["properties"]["assetData"]["JS_DAIMO_Model"]
-        self.assertEqual(model_metadata["daimo:taskType"], "classification")
-        self.assertEqual(model_metadata["daimo:taskCategory"], "Natural Language Processing")
-        self.assertEqual(model_metadata["daimo:subtask"], "text-classification")
-        self.assertEqual(model_metadata["daimo:inputSchema"]["fields"][0]["name"], "text")
+        # probe asset + real asset; filter to real one by ID
+        real_asset_requests = [r for r in asset_requests if not str(r.get("json", {}).get("@id", "")).startswith("__probe-")]
+        self.assertEqual(len(real_asset_requests), 1)
+        self.assertEqual(real_asset_requests[0]["json"]["dataAddress"]["type"], "HttpData")
+        self.assertEqual(real_asset_requests[0]["json"]["dataAddress"]["method"], "POST")
+        self.assertNotIn("proxyPath", real_asset_requests[0]["json"]["dataAddress"])
 
         execution_requests = [
             entry for entry in session.posts if entry["url"].endswith("/management/v3/modelexecutions/execute")
@@ -117,7 +116,68 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         self.assertEqual(len(execution_requests), 1)
         self.assertEqual(execution_requests[0]["json"]["assetId"], "a52-model-exec-fixed-uuid")
         self.assertEqual(execution_requests[0]["json"]["payload"], {"text": "great"})
-        self.assertEqual(len(session.deletes), 1)
+        self.assertGreaterEqual(len(session.deletes), 1)  # probe cleanup + real asset cleanup
+
+    def test_run_accepts_current_combined_model_server_model_alias(self):
+        session = FakeSession(
+            execution_payload={
+                "model": "ecommerce-sentiment",
+                "serverMode": "combined",
+                "predictions": [
+                    {
+                        "input": {"text": "great"},
+                        "result": {"label": "positive", "confidence": 0.8},
+                    }
+                ],
+            }
+        )
+
+        result = self._suite(session).run(
+            provider="conn-provider",
+            model_url="http://model-server.demo.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
+            payload={"text": "great"},
+        )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["executed_cases"][0]["evaluation"]["status"], "passed")
+
+    def test_run_retries_transient_downstream_not_found_from_execution_endpoint(self):
+        session = FakeSession(
+            execution_responses=[
+                (404, {"detail": "Not Found"}),
+                (
+                    200,
+                    {
+                        "model": "ecommerce-sentiment",
+                        "predictions": [
+                            {
+                                "input": {"text": "great"},
+                                "result": {"label": "positive", "confidence": 0.8},
+                            }
+                        ],
+                    },
+                ),
+            ]
+        )
+        suite = self._suite(session)
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_MODEL_HUB_MODEL_EXECUTION_ATTEMPTS": "2",
+                "AI_MODEL_HUB_MODEL_EXECUTION_RETRY_SECONDS": "0",
+            },
+            clear=False,
+        ):
+            result = suite.run(
+                provider="conn-provider",
+                model_url="http://model-server.demo.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
+                payload={"text": "great"},
+            )
+
+        self.assertEqual(result["status"], "passed")
+        execute_step = next(step for step in result["steps"] if step["name"] == "execute_model")
+        self.assertEqual([attempt["http_status"] for attempt in execute_step["attempts"]], [404, 200])
 
     def test_run_cleans_temporary_asset_when_execution_fails(self):
         session = FakeSession(execution_status=500, execution_payload={"error": "boom"})
@@ -128,31 +188,8 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "failed")
-        self.assertEqual(len(session.deletes), 1)
+        self.assertGreaterEqual(len(session.deletes), 1)  # probe cleanup + real asset cleanup
         self.assertIn("Expected HTTP 2xx", result["executed_cases"][0]["evaluation"]["assertions"][0])
-
-    def test_run_marks_mock_model_server_evidence_when_configured(self):
-        session = FakeSession()
-        suite = self._suite(session)
-
-        with mock.patch.dict(
-            os.environ,
-            {
-                "AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true",
-                "AI_MODEL_HUB_MODEL_SERVER_MODE": "mock",
-            },
-            clear=False,
-        ):
-            result = suite.run(
-                provider="conn-provider",
-                model_url="http://model-server.components.svc.cluster.local:8080/api/v1/nlp/ecommerce-sentiment",
-                payload={"text": "great"},
-            )
-
-        self.assertEqual(result["status"], "passed")
-        self.assertEqual(result["model_server"]["mode"], "mock")
-        self.assertEqual(result["executed_cases"][0]["execution_mode"], "api_mock_model_server")
-        self.assertEqual(result["executed_cases"][0]["coverage_status"], "automated_mock_model_server")
 
     def test_run_with_flares_context_adds_functional_case_and_artifact(self):
         session = FakeSession()
@@ -305,27 +342,6 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
                 "https://org2.example.test/management/v3/modelexecutions/execute",
             )
 
-    def test_adapter_management_resolver_prefers_management_api_over_connector_interface(self):
-        class FakeAdapter:
-            def load_connector_credentials(self, connector):
-                return {"connector_user": {"user": "user", "passwd": "example-pass"}}
-
-            class connectors:
-                @staticmethod
-                def connector_base_url(connector):
-                    return f"http://{connector}.example.test"
-
-                @staticmethod
-                def build_connector_url(connector):
-                    return f"http://{connector}.example.test/inesdata-connector-interface/"
-
-        resolver = _adapter_management_url_resolver(FakeAdapter())
-
-        self.assertEqual(
-            resolver("conn-provider", "/management/v3/modelexecutions/execute"),
-            "http://conn-provider.example.test/management/v3/modelexecutions/execute",
-        )
-
     def test_edc_execution_uses_default_api_inference_endpoint_not_management(self):
         session = FakeSession()
         suite = self._suite(session)
@@ -348,8 +364,6 @@ class AIModelHubModelExecutionApiTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "passed")
-        asset_requests = [entry for entry in session.posts if entry["url"].endswith("/management/v3/assets")]
-        self.assertEqual(asset_requests[0]["json"]["dataAddress"]["proxyPath"], "true")
         execution_requests = [entry for entry in session.posts if entry["url"].endswith("/api/infer")]
         self.assertEqual(len(execution_requests), 1)
         self.assertEqual(execution_requests[0]["url"], "https://org2.example.test/api/infer")

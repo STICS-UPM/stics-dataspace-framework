@@ -50,6 +50,8 @@ def classify_playwright_spec(spec_file: Any, *, source_path: Any = "") -> dict[s
     ):
         if "08-ontology-hub-edc-readonly.spec" in blob:
             return _taxonomy("EDC integration", "Ontology Hub")
+        if "17-ai-model-official-use-cases.spec" in blob:
+            return _taxonomy("EDC integration", "AI Model Hub Official Use Cases")
         if (
             "09-ai-model-hub-httpdata.spec" in blob
             or "10-ai-model-observer.spec" in blob
@@ -69,6 +71,8 @@ def classify_playwright_spec(spec_file: Any, *, source_path: Any = "") -> dict[s
 
     if "08-ontology-hub-inesdata-readonly.spec" in blob:
         return _taxonomy(INTEGRATION_SUITE, "Ontology Hub")
+    if "17-ai-model-official-use-cases.spec" in blob:
+        return _taxonomy(INTEGRATION_SUITE, "AI Model Hub Official Use Cases")
     if (
         "09-ai-model-hub-httpdata.spec" in blob
         or "10-ai-model-observer.spec" in blob

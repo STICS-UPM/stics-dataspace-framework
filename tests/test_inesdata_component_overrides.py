@@ -15,7 +15,6 @@ import adapters.inesdata.components as components_module
 from adapters.inesdata.components import INESDataComponentsAdapter
 from adapters.inesdata.infrastructure import INESDataInfrastructureAdapter
 from adapters.shared.components import SharedComponentsAdapter
-from deployers.shared.lib.remote_k3s_images import RemoteK3sImageImportTarget
 
 
 class FakeConfig:
@@ -283,79 +282,6 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertEqual(connector_config[1]["connectorName"], "Consumer")
         self.assertEqual(connector_config[2]["connectorName"], "Provider")
 
-    def test_edc_ai_model_hub_override_strips_inesdata_ui_env(self):
-        def run_silent(command):
-            if command.startswith("helm get values pionera-ai-model-hub"):
-                return json.dumps(
-                    {
-                        "env": {
-                            "MODEL_OBSERVER_PROXY_TARGET": "http://pionera-public-portal-backend.core.svc:1337",
-                            "OAUTH2_ISSUER": "http://auth.example.test/realms/demo",
-                            "CUSTOM_DASHBOARD_FLAG": "enabled",
-                        }
-                    }
-                )
-            return ""
-
-        adapter = SharedComponentsAdapter(
-            run=mock.Mock(return_value="ok"),
-            run_silent=mock.Mock(side_effect=run_silent),
-            auto_mode_getter=lambda: True,
-            infrastructure_adapter=FakeInfrastructure(),
-            config_cls=FakeConfig,
-            active_adapter="edc",
-        )
-        payload = adapter._component_values_override_payload(
-            "ai-model-hub",
-            {
-                "DS_1_NAME": "pionera-edc",
-                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
-                "DS_1_CONNECTORS": "org2,org3",
-            },
-        )
-
-        env = payload.get("env") or {}
-        self.assertNotIn("MODEL_OBSERVER_PROXY_TARGET", env)
-        self.assertNotIn("OAUTH2_ISSUER", env)
-        self.assertNotIn("MANAGEMENT_API_URL", env)
-        self.assertEqual(env, {"CUSTOM_DASHBOARD_FLAG": "enabled"})
-        self.assertEqual(payload["containerPort"], 80)
-        self.assertCountEqual(
-            [entry["connectorName"] for entry in payload["config"]["edcConnectorConfig"]],
-            ["Provider", "Consumer"],
-        )
-
-    def test_edc_vm_ai_model_hub_override_uses_edc_dashboard_container_port(self):
-        adapter = self._make_shared_adapter(active_adapter="edc")
-        adapter.config_adapter.topology = "vm-single"
-
-        payload = adapter._component_values_override_payload(
-            "ai-model-hub",
-            {
-                "TOPOLOGY": "vm-single",
-                "DS_1_NAME": "pionera-edc",
-                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
-                "DS_1_CONNECTORS": "org2,org3",
-                "VM_SINGLE_PUBLIC_URL": "https://org1.pionera.oeg.fi.upm.es",
-            },
-        )
-
-        self.assertEqual(payload["containerPort"], 80)
-
-    def test_inesdata_ai_model_hub_override_keeps_inesdata_ui_env(self):
-        adapter = self._make_shared_adapter(active_adapter="inesdata")
-
-        payload = adapter._component_values_override_payload(
-            "ai-model-hub",
-            {
-                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
-                "DS_1_CONNECTORS": "org2,org3",
-            },
-        )
-
-        self.assertIn("MODEL_OBSERVER_PROXY_TARGET", payload["env"])
-        self.assertIn("OAUTH2_ISSUER", payload["env"])
-
     def test_edc_shared_runtime_metadata_uses_common_component_dataspace_name(self):
         adapter = self._make_shared_adapter(active_adapter="edc")
         adapter.config_adapter.load_deployer_config = mock.Mock(
@@ -601,26 +527,6 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             },
         )
 
-    def test_ontology_hub_versions_persistence_is_enabled_by_default_for_vm_distributed(self):
-        adapter = self._make_adapter()
-        adapter.config_adapter.topology = "vm-distributed"
-
-        payload = adapter._component_values_override_payload(
-            "ontology-hub",
-            {
-                "COMPONENTS_PUBLIC_BASE_URL": "https://org1.pionera.oeg.fi.upm.es",
-            },
-        )
-
-        self.assertEqual(
-            payload["versions"],
-            {
-                "persistence": {
-                    "enabled": True,
-                },
-            },
-        )
-
     def test_ontology_hub_disables_elasticsearch_disk_threshold_by_default_for_vm_single_k3s(self):
         adapter = self._make_adapter()
         adapter.config_adapter.topology = "vm-single"
@@ -705,6 +611,26 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertIsNotNone(ingress)
         self.assertEqual(ingress["metadata"]["name"], "pionera-ontology-hub-public-root-aliases")
         self.assertEqual(ingress["metadata"]["namespace"], "components")
+        self.assertEqual(
+            ingress["metadata"]["annotations"]["nginx.ingress.kubernetes.io/proxy-body-size"],
+            "800m",
+        )
+        self.assertEqual(
+            ingress["metadata"]["annotations"]["nginx.org/client-max-body-size"],
+            "800m",
+        )
+        self.assertEqual(
+            ingress["metadata"]["annotations"]["nginx.ingress.kubernetes.io/proxy-read-timeout"],
+            "300",
+        )
+        self.assertEqual(
+            ingress["metadata"]["annotations"]["nginx.ingress.kubernetes.io/proxy-send-timeout"],
+            "300",
+        )
+        self.assertEqual(
+            ingress["metadata"]["annotations"]["nginx.ingress.kubernetes.io/proxy-connect-timeout"],
+            "30",
+        )
         self.assertEqual(ingress["spec"]["rules"][0]["host"], "org1.pionera.oeg.fi.upm.es")
         paths = ingress["spec"]["rules"][0]["http"]["paths"]
         self.assertEqual(
@@ -934,48 +860,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                         },
                     ]
                 },
-                "env": {
-                    "MANAGEMENT_API_URL": "http://conn-citycouncil-demo.custom.ds.example.org/management",
-                    "STRAPI_URL": "",
-                    "CATALOG_URL": "http://conn-citycouncil-demo.custom.ds.example.org/management/federatedcatalog",
-                    "SHARED_URL": "http://conn-citycouncil-demo.custom.ds.example.org/shared",
-                    "PARTICIPANT_ID": "conn-citycouncil-demo",
-                    "STORAGE_ACCOUNT": "citycouncilassets",
-                    "STORAGE_LINK_TEMPLATE": "storageexplorer://v=1",
-                    "OAUTH2_ISSUER": "http://auth.custom.ds.example.org/realms/demo",
-                    "OAUTH2_REDIRECT_PATH": "/inesdata-connector-interface",
-                    "OAUTH2_CLIENT_ID": "dataspace-users",
-                    "OAUTH2_SCOPE": "openid profile email",
-                    "OAUTH2_RESPONSE_TYPE": "code",
-                    "OAUTH2_SHOW_DEBUG_INFO": "true",
-                    "OAUTH2_ALLOWED_URLS": (
-                        "http://conn-citycouncil-demo.custom.ds.example.org,"
-                        "http://conn-citycouncil-demo.custom.ds.example.org/management,"
-                        "http://conn-citycouncil-demo.custom.ds.example.org/api,"
-                        "http://conn-citycouncil-demo.custom.ds.example.org/management/federatedcatalog,"
-                        "http://conn-citycouncil-demo.custom.ds.example.org/shared"
-                    ),
-                    "MODEL_OBSERVER_PROXY_TARGET": "http://demo-public-portal-backend.demo.svc:1337",
-                },
             },
-        )
-
-    def test_ai_model_hub_runtime_env_uses_internal_portal_backend_as_model_observer_proxy_target(self):
-        adapter = self._make_adapter()
-
-        env = adapter._ai_model_hub_inesdata_ui_env(
-            ds_name="pionera",
-            deployer_config={
-                "DS_1_NAME": "pionera",
-                "DS_1_REGISTRATION_NAMESPACE": "core-control",
-                "DS_DOMAIN_BASE": "dev.ds.dataspaceunit.upm",
-                "DS_1_CONNECTORS": "org2,org3",
-            },
-        )
-
-        self.assertEqual(
-            env["MODEL_OBSERVER_PROXY_TARGET"],
-            "http://pionera-public-portal-backend.core-control.svc:1337",
         )
 
     def test_ai_model_hub_override_payload_uses_public_management_and_internal_protocol_urls(self):
@@ -1788,6 +1673,30 @@ class InesdataComponentOverridesTests(unittest.TestCase):
                         "ONTOLOGY_HUB_SOURCE_REFRESH": "true",
                     }
                 )
+
+    def test_resolve_ontology_hub_source_dir_can_use_local_checkout_with_tracked_changes(self):
+        adapter = self._make_adapter()
+        ontology_hub_dir = os.path.join(
+            os.path.dirname(os.path.abspath(components_module.__file__)),
+            "sources",
+            "Ontology-Hub",
+        )
+        dockerfile_path = os.path.join(ontology_hub_dir, "Dockerfile")
+
+        with (
+            mock.patch("adapters.inesdata.components.os.path.isfile", side_effect=lambda path: path == dockerfile_path),
+            mock.patch("subprocess.run") as run_mock,
+            mock.patch.dict(os.environ, {"ONTOLOGY_HUB_SOURCE_REF": "local"}, clear=False),
+        ):
+            resolved = adapter._resolve_ontology_hub_source_dir(
+                {
+                    "ONTOLOGY_HUB_SOURCE_REF": "main",
+                    "ONTOLOGY_HUB_SOURCE_REFRESH": "true",
+                }
+            )
+
+        self.assertEqual(resolved, ontology_hub_dir)
+        run_mock.assert_not_called()
 
     def test_resolve_morph_kgv_source_dir_clones_when_sources_dir_exists_but_is_empty(self):
         adapter = self._make_adapter()
@@ -2708,26 +2617,6 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             self.assertEqual(adapter._ai_model_hub_dashboard_source_dir(repo_dir), dashboard_dir)
             self.assertEqual(adapter._ai_model_hub_dashboard_dockerfile(dashboard_dir), "Dockerfile")
 
-    def test_ai_model_hub_dashboard_source_dir_accepts_latest_pionera_workspace_layout(self):
-        adapter = self._make_adapter()
-
-        with tempfile.TemporaryDirectory() as repo_dir:
-            dashboard_dir = os.path.join(
-                repo_dir,
-                "adapters",
-                "inesdata",
-                "sources",
-                "inesdata-connector-interface",
-            )
-            os.makedirs(os.path.join(dashboard_dir, "docker"), exist_ok=True)
-            with open(os.path.join(dashboard_dir, "docker", "Dockerfile"), "w", encoding="utf-8") as handle:
-                handle.write("FROM nginx:alpine\n")
-            with open(os.path.join(dashboard_dir, "Dockerfile"), "w", encoding="utf-8") as handle:
-                handle.write("FROM node:lts\n")
-
-            self.assertEqual(adapter._ai_model_hub_dashboard_source_dir(repo_dir), dashboard_dir)
-            self.assertEqual(adapter._ai_model_hub_dashboard_dockerfile(dashboard_dir), os.path.join("docker", "Dockerfile"))
-
     def test_ai_model_hub_dashboard_checkout_restores_compatible_ref(self):
         adapter = self._make_adapter()
         with tempfile.TemporaryDirectory() as repo_dir:
@@ -2943,7 +2832,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
     def test_load_image_into_k3s_auto_uses_batch_sudo_secret_before_interactive_prompt(self):
         adapter = self._make_adapter()
         adapter.config_adapter.topology = "vm-single"
-        adapter.run = mock.Mock(side_effect=["tagged", "saved", "copied", None, "imported", "pruned"])
+        adapter.run = mock.Mock(side_effect=["tagged", "saved", "copied", None, "imported"])
         deployer_config = {
             "CLUSTER_TYPE": "k3s",
             "VM_SINGLE_REMOTE_IMAGE_IMPORT": "auto",
@@ -2966,9 +2855,6 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertIn("sudo -S -p", commands[4])
         self.assertIn("k3s ctr -n k8s.io images import", commands[4])
         self.assertNotIn("ssh -tt", commands[4])
-        self.assertIn("printf '%s\\n' \"${K3S_REMOTE_IMPORT_SUDO_PASSWORD}\" | ssh", commands[5])
-        self.assertIn("k3s ctr -n k8s.io content prune", commands[5])
-        self.assertIn("ontology-hub", commands[5])
 
     def test_load_images_into_k3s_batches_semantic_virtualization_images_for_remote_import(self):
         adapter = self._make_adapter()
@@ -3008,9 +2894,6 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertIn("scp -P 22", commands[3])
         self.assertIn("sudo -n k3s ctr -n k8s.io images ls -q", commands[4])
         self.assertIn("sudo -n k3s ctr -n k8s.io images import", commands[5])
-        self.assertIn("k3s ctr -n k8s.io content prune", commands[6])
-        self.assertIn("morph-kgv", commands[6])
-        self.assertIn("mapping-editor", commands[6])
 
     def test_prepare_level6_local_image_rebuilds_ontology_hub_without_consulting_host_cache(self):
         adapter = self._make_adapter()
@@ -3063,67 +2946,6 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         has_image_mock.assert_not_called()
         build_mock.assert_called_once_with("eclipse-edc/data-dashboard:local", deployer_config)
         load_mock.assert_called_once_with("minikube", "eclipse-edc/data-dashboard:local")
-
-    def test_edc_local_ai_model_hub_build_uses_edc_dashboard_script(self):
-        adapter = self._make_shared_adapter(active_adapter="edc")
-        deployer_config = {
-            "MINIKUBE_PROFILE": "demo-profile",
-            "EDC_DASHBOARD_REPO_REF": "abc123",
-        }
-
-        with mock.patch.object(adapter, "_cluster_runtime", return_value={"cluster_type": "minikube"}):
-            adapter._build_ai_model_hub_image_on_host(
-                "eclipse-edc/data-dashboard:local",
-                deployer_config,
-            )
-
-        command = adapter.run.call_args.args[0]
-        self.assertIn("adapters/edc/scripts/build_dashboard_image.sh", command)
-        self.assertIn("PIONERA_EDC_DASHBOARD_IMAGE_NAME=eclipse-edc/data-dashboard", command)
-        self.assertIn("PIONERA_EDC_DASHBOARD_IMAGE_TAG=local", command)
-        self.assertIn("PIONERA_EDC_DASHBOARD_REPO_REF=abc123", command)
-        self.assertIn("--minikube-profile demo-profile", command)
-        self.assertIn("--cluster-runtime minikube", command)
-        self.assertNotIn("adapters/inesdata/sources/AIModelHub", command)
-
-    def test_edc_vm_single_ai_model_hub_build_uses_edc_dashboard_script(self):
-        adapter = self._make_shared_adapter(active_adapter="edc")
-        deployer_config = {
-            "CLUSTER_TYPE": "k3s",
-            "K3S_KUBECONFIG": "/clusters/pionera4.yaml",
-            "PIONERA_EDC_DASHBOARD_REPO_REF": "def456",
-        }
-        remote_target = RemoteK3sImageImportTarget(
-            role="common",
-            host="192.168.122.52",
-            user="pionera",
-            bastion_host="orion.example.test",
-            bastion_user="jump",
-            import_command="sudo -n k3s ctr -n k8s.io images import",
-            interactive_mode="auto",
-        )
-
-        with (
-            mock.patch.object(adapter, "_cluster_runtime", return_value={"cluster_type": "k3s"}),
-            mock.patch.object(adapter, "_remote_k3s_image_import_target", return_value=remote_target),
-        ):
-            adapter._build_ai_model_hub_image_on_host(
-                "eclipse-edc/data-dashboard:local",
-                deployer_config,
-            )
-
-        command = adapter.run.call_args.args[0]
-        self.assertIn("adapters/edc/scripts/build_dashboard_image.sh", command)
-        self.assertIn("PIONERA_EDC_DASHBOARD_IMAGE_NAME=eclipse-edc/data-dashboard", command)
-        self.assertIn("PIONERA_EDC_DASHBOARD_IMAGE_TAG=local", command)
-        self.assertIn("PIONERA_EDC_DASHBOARD_REPO_REF=def456", command)
-        self.assertIn("K3S_REMOTE_IMPORT_HOST=192.168.122.52", command)
-        self.assertIn("K3S_REMOTE_IMPORT_USER=pionera", command)
-        self.assertIn("K3S_REMOTE_IMPORT_BASTION_HOST=orion.example.test", command)
-        self.assertIn("K3S_IMAGE_IMPORT_COMMAND='sudo -n k3s ctr -n k8s.io images import'", command)
-        self.assertIn("K3S_REMOTE_IMPORT_INTERACTIVE=auto", command)
-        self.assertIn("--cluster-runtime k3s", command)
-        self.assertNotIn("adapters/inesdata/sources/AIModelHub", command)
 
     def test_prepare_level6_local_image_rebuilds_semantic_virtualization_even_when_cached_in_minikube(self):
         adapter = self._make_adapter()
@@ -3767,117 +3589,6 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             "kubectl get ingress demo-ontology-hub -n components -o jsonpath='{.spec.rules[0].host}'"
         )
 
-    def test_verify_component_publication_accepts_local_ontology_hub_in_cluster_fallback(self):
-        adapter = self._make_shared_adapter()
-        adapter.config_adapter.topology = "local"
-
-        def run_silent(command):
-            if command.startswith("kubectl get ingress demo-ontology-hub"):
-                return "ontology-hub-demo.dev.ds.dataspaceunit.upm"
-            if "kubectl exec" in command and "/dataset" in command:
-                return "200"
-            if "kubectl exec" in command and "/edition" in command:
-                return "302"
-            return ""
-
-        adapter.run_silent = mock.Mock(side_effect=run_silent)
-        adapter._probe_component_public_url = mock.Mock(
-            side_effect=[
-                (False, "HTTP 503"),
-                (False, "HTTP 503"),
-            ]
-        )
-
-        with mock.patch("adapters.shared.components.time.monotonic", side_effect=[0, 2]):
-            result = adapter.verify_component_publication(
-                "ontology-hub",
-                deployment_plan={
-                    "release_name": "demo-ontology-hub",
-                    "host": "ontology-hub-demo.dev.ds.dataspaceunit.upm",
-                },
-                namespace="components",
-                timeout_seconds=1,
-                poll_interval_seconds=1,
-            )
-
-        self.assertTrue(result["verified"])
-        self.assertTrue(result["public_probe_degraded"])
-        self.assertEqual(result["verification_mode"], "local-in-cluster-fallback")
-        self.assertEqual(result["dataset_detail"], "HTTP 503")
-        self.assertEqual(result["edition_detail"], "HTTP 503")
-        self.assertEqual(result["local_dataset_detail"], "in-cluster HTTP 200")
-        self.assertEqual(result["local_edition_detail"], "in-cluster HTTP 302")
-        exec_commands = [
-            call.args[0]
-            for call in adapter.run_silent.call_args_list
-            if "kubectl exec" in call.args[0]
-        ]
-        self.assertEqual(len(exec_commands), 2)
-        self.assertIn("deployment/demo-ontology-hub", exec_commands[0])
-        self.assertIn("http://127.0.0.1:3333/dataset", exec_commands[0])
-        self.assertIn("http://127.0.0.1:3333/edition", exec_commands[1])
-
-    def test_verify_component_publication_keeps_vm_ontology_hub_public_gate_strict(self):
-        for topology in ("vm-single", "vm-distributed"):
-            with self.subTest(topology=topology):
-                adapter = self._make_shared_adapter()
-                adapter.config_adapter.topology = topology
-                adapter.run_silent = mock.Mock(return_value="org1.pionera.oeg.fi.upm.es")
-                adapter._probe_component_public_url = mock.Mock(
-                    side_effect=[
-                        (False, "HTTP 503"),
-                        (False, "HTTP 503"),
-                    ]
-                )
-
-                with mock.patch("adapters.shared.components.time.monotonic", side_effect=[0, 2]):
-                    with self.assertRaisesRegex(RuntimeError, "public routes are not ready"):
-                        adapter.verify_component_publication(
-                            "ontology-hub",
-                            deployment_plan={
-                                "release_name": "pionera-ontology-hub",
-                                "host": "org1.pionera.oeg.fi.upm.es",
-                                "public_url": "https://org1.pionera.oeg.fi.upm.es/ontology-hub",
-                            },
-                            namespace="components",
-                            timeout_seconds=1,
-                            poll_interval_seconds=1,
-                        )
-
-                self.assertEqual(adapter.run_silent.call_count, 1)
-
-    def test_verify_component_publication_fails_when_local_ontology_hub_fallback_is_unhealthy(self):
-        adapter = self._make_shared_adapter()
-        adapter.config_adapter.topology = "local"
-
-        def run_silent(command):
-            if command.startswith("kubectl get ingress demo-ontology-hub"):
-                return "ontology-hub-demo.dev.ds.dataspaceunit.upm"
-            if "kubectl exec" in command:
-                return "503"
-            return ""
-
-        adapter.run_silent = mock.Mock(side_effect=run_silent)
-        adapter._probe_component_public_url = mock.Mock(
-            side_effect=[
-                (False, "HTTP 503"),
-                (False, "HTTP 503"),
-            ]
-        )
-
-        with mock.patch("adapters.shared.components.time.monotonic", side_effect=[0, 2]):
-            with self.assertRaisesRegex(RuntimeError, "local fallback /dataset=in-cluster HTTP 503"):
-                adapter.verify_component_publication(
-                    "ontology-hub",
-                    deployment_plan={
-                        "release_name": "demo-ontology-hub",
-                        "host": "ontology-hub-demo.dev.ds.dataspaceunit.upm",
-                    },
-                    namespace="components",
-                    timeout_seconds=1,
-                    poll_interval_seconds=1,
-                )
-
     def test_verify_component_publication_uses_path_public_url_when_configured(self):
         adapter = self._make_shared_adapter()
         adapter.run_silent = mock.Mock(return_value="org1.pionera.oeg.fi.upm.es")
@@ -3955,208 +3666,11 @@ class InesdataComponentOverridesTests(unittest.TestCase):
         self.assertEqual(result["root_url"], "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm")
         self.assertEqual(
             result["config_url"],
-            "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm/inesdata-connector-interface/assets/config/app.config.json",
+            "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm/config/app-config.json",
         )
         adapter.run_silent.assert_called_once_with(
             "kubectl get ingress demo-ai-model-hub -n components -o jsonpath='{.spec.rules[0].host}'"
         )
-
-    def test_verify_component_publication_accepts_ai_model_hub_legacy_config_route(self):
-        adapter = self._make_shared_adapter()
-        adapter.run_silent = mock.Mock(return_value="ai-model-hub-demo.dev.ds.dataspaceunit.upm")
-
-        root_response = mock.Mock(status_code=200, headers={})
-        missing_response = mock.Mock(status_code=404, headers={})
-        config_response = mock.Mock(status_code=200, headers={})
-
-        with mock.patch(
-            "adapters.shared.components.requests.get",
-            side_effect=[root_response, missing_response, missing_response, config_response],
-        ):
-            result = adapter.verify_component_publication(
-                "ai-model-hub",
-                deployment_plan={
-                    "release_name": "demo-ai-model-hub",
-                    "host": "ai-model-hub-demo.dev.ds.dataspaceunit.upm",
-                },
-                namespace="components",
-                timeout_seconds=1,
-                poll_interval_seconds=1,
-            )
-
-        self.assertTrue(result["verified"])
-        self.assertEqual(
-            result["config_url"],
-            "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm/config/app-config.json",
-        )
-        self.assertEqual(
-            [attempt["path"] for attempt in result["config_attempts"]],
-            [
-                "/inesdata-connector-interface/assets/config/app.config.json",
-                "/assets/config/app.config.json",
-                "/config/app-config.json",
-            ],
-        )
-
-    def test_verify_component_publication_accepts_ai_model_hub_edc_dashboard_root_and_config_route(self):
-        adapter = self._make_shared_adapter(active_adapter="edc")
-        adapter.run_silent = mock.Mock(return_value="ai-model-hub-demo.dev.ds.dataspaceunit.upm")
-
-        root_response = mock.Mock(status_code=200, headers={})
-        config_response = mock.Mock(status_code=200, headers={})
-
-        with mock.patch(
-            "adapters.shared.components.requests.get",
-            side_effect=[root_response, config_response],
-        ) as get_mock:
-            result = adapter.verify_component_publication(
-                "ai-model-hub",
-                deployment_plan={
-                    "release_name": "demo-ai-model-hub",
-                    "host": "ai-model-hub-demo.dev.ds.dataspaceunit.upm",
-                },
-                namespace="components",
-                timeout_seconds=1,
-                poll_interval_seconds=1,
-            )
-
-        self.assertTrue(result["verified"])
-        self.assertEqual(
-            result["root_url"],
-            "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm/edc-dashboard/",
-        )
-        self.assertEqual(
-            result["config_url"],
-            "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm/edc-dashboard/config/app-config.json",
-        )
-        self.assertEqual(
-            [attempt["path"] for attempt in result["root_attempts"]],
-            ["/edc-dashboard"],
-        )
-        self.assertEqual(
-            [attempt["path"] for attempt in result["config_attempts"]],
-            ["/edc-dashboard/config/app-config.json"],
-        )
-        self.assertEqual(
-            [call.args[0] for call in get_mock.call_args_list],
-            [
-                "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm/edc-dashboard/",
-                "http://ai-model-hub-demo.dev.ds.dataspaceunit.upm/edc-dashboard/config/app-config.json",
-            ],
-        )
-
-    def test_verify_component_publication_keeps_explicit_ai_model_hub_edc_dashboard_public_url(self):
-        adapter = self._make_shared_adapter(active_adapter="edc")
-        adapter.run_silent = mock.Mock(return_value="org4.pionera.oeg.fi.upm.es")
-
-        root_response = mock.Mock(status_code=200, headers={})
-        config_response = mock.Mock(status_code=200, headers={})
-
-        with mock.patch(
-            "adapters.shared.components.requests.get",
-            side_effect=[root_response, config_response],
-        ) as get_mock:
-            result = adapter.verify_component_publication(
-                "ai-model-hub",
-                deployment_plan={
-                    "release_name": "pionera-ai-model-hub",
-                    "host": "org4.pionera.oeg.fi.upm.es",
-                    "public_url": "https://org4.pionera.oeg.fi.upm.es/ai-model-hub/edc-dashboard/",
-                },
-                namespace="components",
-                timeout_seconds=1,
-                poll_interval_seconds=1,
-            )
-
-        self.assertTrue(result["verified"])
-        self.assertEqual(
-            result["root_url"],
-            "https://org4.pionera.oeg.fi.upm.es/ai-model-hub/edc-dashboard",
-        )
-        self.assertEqual(
-            result["config_url"],
-            "https://org4.pionera.oeg.fi.upm.es/ai-model-hub/edc-dashboard/config/app-config.json",
-        )
-        self.assertEqual(
-            [call.args[0] for call in get_mock.call_args_list],
-            [
-                "https://org4.pionera.oeg.fi.upm.es/ai-model-hub/edc-dashboard",
-                "https://org4.pionera.oeg.fi.upm.es/ai-model-hub/edc-dashboard/config/app-config.json",
-            ],
-        )
-
-    def test_verify_component_publication_preserves_ai_model_hub_public_shapes_by_topology(self):
-        cases = [
-            {
-                "topology": "local",
-                "ingress_host": "ai-model-hub-pionera.dev.ds.dataspaceunit.upm",
-                "deployment_plan": {
-                    "release_name": "pionera-ai-model-hub",
-                    "host": "ai-model-hub-pionera.dev.ds.dataspaceunit.upm",
-                },
-                "expected_root_url": "http://ai-model-hub-pionera.dev.ds.dataspaceunit.upm",
-                "expected_config_url": (
-                    "http://ai-model-hub-pionera.dev.ds.dataspaceunit.upm/"
-                    "inesdata-connector-interface/assets/config/app.config.json"
-                ),
-            },
-            {
-                "topology": "vm-single",
-                "ingress_host": "org4.pionera.oeg.fi.upm.es",
-                "deployment_plan": {
-                    "release_name": "pionera-ai-model-hub",
-                    "host": "org4.pionera.oeg.fi.upm.es",
-                    "public_url": "https://org4.pionera.oeg.fi.upm.es/ai-model-hub",
-                },
-                "expected_root_url": "https://org4.pionera.oeg.fi.upm.es/ai-model-hub",
-                "expected_config_url": (
-                    "https://org4.pionera.oeg.fi.upm.es/ai-model-hub/"
-                    "inesdata-connector-interface/assets/config/app.config.json"
-                ),
-            },
-            {
-                "topology": "vm-distributed",
-                "ingress_host": "org1.pionera.oeg.fi.upm.es",
-                "deployment_plan": {
-                    "release_name": "pionera-ai-model-hub",
-                    "host": "org1.pionera.oeg.fi.upm.es",
-                    "public_url": "https://org1.pionera.oeg.fi.upm.es/ai-model-hub",
-                },
-                "expected_root_url": "https://org1.pionera.oeg.fi.upm.es/ai-model-hub",
-                "expected_config_url": (
-                    "https://org1.pionera.oeg.fi.upm.es/ai-model-hub/"
-                    "inesdata-connector-interface/assets/config/app.config.json"
-                ),
-            },
-        ]
-
-        for case in cases:
-            with self.subTest(topology=case["topology"]):
-                adapter = self._make_shared_adapter()
-                adapter.config_adapter.topology = case["topology"]
-                adapter.run_silent = mock.Mock(return_value=case["ingress_host"])
-                root_response = mock.Mock(status_code=200, headers={})
-                config_response = mock.Mock(status_code=200, headers={})
-
-                with mock.patch(
-                    "adapters.shared.components.requests.get",
-                    side_effect=[root_response, config_response],
-                ) as get_mock:
-                    result = adapter.verify_component_publication(
-                        "ai-model-hub",
-                        deployment_plan=case["deployment_plan"],
-                        namespace="components",
-                        timeout_seconds=1,
-                        poll_interval_seconds=1,
-                    )
-
-                self.assertTrue(result["verified"])
-                self.assertEqual(result["root_url"], case["expected_root_url"])
-                self.assertEqual(result["config_url"], case["expected_config_url"])
-                self.assertEqual(
-                    [call.args[0] for call in get_mock.call_args_list],
-                    [case["expected_root_url"], case["expected_config_url"]],
-                )
 
     def test_verify_component_publication_follows_ai_model_hub_https_redirects(self):
         adapter = self._make_shared_adapter()
@@ -4187,7 +3701,7 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             [call.args[0] for call in get_mock.call_args_list],
             [
                 "http://org1.pionera.oeg.fi.upm.es/ai-model-hub",
-                "http://org1.pionera.oeg.fi.upm.es/ai-model-hub/inesdata-connector-interface/assets/config/app.config.json",
+                "http://org1.pionera.oeg.fi.upm.es/ai-model-hub/config/app-config.json",
             ],
         )
         self.assertIn("redirect", result["root_detail"])
@@ -4328,51 +3842,6 @@ class InesdataComponentOverridesTests(unittest.TestCase):
             timeout_seconds=1800,
             label="ontology-hub",
         )
-
-    def test_shared_components_adapter_verifies_ontology_hub_versions_persistence_when_expected(self):
-        adapter = self._make_shared_adapter()
-        adapter.config_adapter.topology = "vm-distributed"
-        adapter.run_silent = mock.Mock(side_effect=["demo-ontology-hub-versions", "Bound"])
-
-        result = adapter._verify_ontology_hub_versions_persistence(
-            "demo-ontology-hub",
-            "components",
-            {"TOPOLOGY": "vm-distributed"},
-        )
-
-        self.assertEqual(
-            result,
-            {
-                "expected": True,
-                "verified": True,
-                "claim_name": "demo-ontology-hub-versions",
-                "phase": "Bound",
-            },
-        )
-        self.assertEqual(
-            adapter.run_silent.mock_calls,
-            [
-                mock.call(
-                    "kubectl get deployment demo-ontology-hub -n components "
-                    "-o jsonpath='{.spec.template.spec.volumes[?(@.name==\"versions\")].persistentVolumeClaim.claimName}'"
-                ),
-                mock.call(
-                    "kubectl get pvc demo-ontology-hub-versions -n components -o jsonpath='{.status.phase}'"
-                ),
-            ],
-        )
-
-    def test_shared_components_adapter_fails_when_ontology_hub_versions_pvc_is_missing(self):
-        adapter = self._make_shared_adapter()
-        adapter.config_adapter.topology = "vm-distributed"
-        adapter.run_silent = mock.Mock(return_value="")
-
-        with self.assertRaisesRegex(RuntimeError, "does not mount a PVC"):
-            adapter._verify_ontology_hub_versions_persistence(
-                "demo-ontology-hub",
-                "components",
-                {"TOPOLOGY": "vm-distributed"},
-            )
 
     def test_shared_components_adapter_finalize_component_runtime_restarts_and_waits_for_semantic_virtualization(self):
         adapter = self._make_shared_adapter()

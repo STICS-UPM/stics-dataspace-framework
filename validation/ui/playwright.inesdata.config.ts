@@ -16,11 +16,21 @@ const semanticVirtualizationHttpDataDemo =
   process.env.UI_SEMANTIC_VIRTUALIZATION_HTTPDATA_DEMO === "1";
 const ontologyHubInesdataDemo = process.env.UI_ONTOLOGY_HUB_INESDATA_DEMO === "1";
 const aiModelHubHttpDataDemo = process.env.UI_AI_MODEL_HUB_HTTPDATA_DEMO === "1";
-const aiModelHubModelServerDemo = process.env.UI_AI_MODEL_HUB_MODEL_SERVER_DEMO !== "0";
-const aiModelHubBenchmarkingDemo = process.env.UI_AI_MODEL_HUB_BENCHMARKING_DEMO === "1";
 const aiModelObserverDemo = process.env.UI_AI_MODEL_OBSERVER_DEMO === "1";
+const aiModelHubUseCasesDemo = process.env.UI_AI_MODEL_HUB_USE_CASES_DEMO === "1" ||
+  (
+    process.env.UI_AI_MODEL_HUB_USE_CASES_DEMO !== "0" &&
+    aiModelHubHttpDataDemo &&
+    (
+      process.env.AI_MODEL_HUB_MODEL_SERVER_MODE === "use-cases" ||
+      process.env.AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES === "true" ||
+      process.env.AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE === "split"
+    )
+  );
 const minioOpsDemo = process.env.UI_MINIO_OPS_DEMO !== "0";
 const launchArgs = [
+  "--ignore-certificate-errors",
+  "--disable-web-security",
   ...(headedGpuFix ? ["--disable-gpu"] : []),
   ...(hostResolverRules ? [`--host-resolver-rules=${hostResolverRules}`] : []),
 ];
@@ -48,11 +58,12 @@ export default defineConfig({
     ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/09-ai-model-hub-httpdata.spec.ts"]),
     ...(aiModelObserverDemo ? [] : ["adapters/inesdata/specs/10-ai-model-observer.spec.ts"]),
     ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/11-ai-model-browser.spec.ts"]),
-    ...(aiModelHubHttpDataDemo && aiModelHubModelServerDemo ? [] : ["adapters/inesdata/specs/12-ai-model-execution.spec.ts"]),
-    ...(aiModelHubHttpDataDemo && aiModelHubModelServerDemo && aiModelHubBenchmarkingDemo ? [] : ["adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts"]),
+    ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/12-ai-model-execution.spec.ts"]),
+    ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/13-ai-model-benchmarking.spec.ts"]),
     ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/14-ai-model-daimo-vocabulary.spec.ts"]),
-    ...(aiModelHubHttpDataDemo && aiModelHubModelServerDemo ? [] : ["adapters/inesdata/specs/15-ai-model-external-execution.spec.ts"]),
+    ...(aiModelHubHttpDataDemo ? [] : ["adapters/inesdata/specs/15-ai-model-external-execution.spec.ts"]),
     ...(aiModelObserverDemo ? [] : ["adapters/inesdata/specs/16-ai-model-observer-participant-summary.spec.ts"]),
+    ...(aiModelHubUseCasesDemo ? [] : ["adapters/inesdata/specs/17-ai-model-official-use-cases.spec.ts"]),
   ],
   timeout: 4 * 60 * 1000,
   expect: {

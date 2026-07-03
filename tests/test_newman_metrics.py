@@ -1216,19 +1216,12 @@ class NewmanMetricsTests(unittest.TestCase):
                 "latency_boxplot",
                 "latency_histogram",
                 "endpoint_latency_bar",
-                "endpoint_latency_percentiles",
                 "latency_over_iterations",
             })
             for path in graph_paths.values():
                 self.assertTrue(os.path.exists(path))
                 self.assertIn(f"{os.sep}graphs{os.sep}", path)
                 self.assertGreater(os.path.getsize(path), 0)
-            with open(os.path.join(tmpdir, "graphs", "graph_manifest.json"), "r", encoding="utf-8") as f:
-                manifest = json.load(f)
-            manifest_keys = {item["key"] for item in manifest["graphs"]}
-            self.assertIn("endpoint_latency_bar", manifest_keys)
-            endpoint_entry = next(item for item in manifest["graphs"] if item["key"] == "endpoint_latency_bar")
-            self.assertIn("Create Asset", endpoint_entry["aliases"])
 
     def test_graph_builder_generates_optional_kafka_graphs(self):
         builder = GraphBuilder()

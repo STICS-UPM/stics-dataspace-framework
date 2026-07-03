@@ -71,11 +71,18 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
    * @throws NullPointerException if the catalog is null.
    */
   @Override
-  public synchronized void save(Catalog catalog) {
+  public void save(Catalog catalog) {
     Objects.requireNonNull(catalog);
     transactionContext.execute(() -> {
       try (var connection = getConnection()) {
-        deleteRelatedCatalogDataForParticipant(connection, catalog.getParticipantId());
+        deleteRelatedCatalogData(connection, catalog);
+        return StoreResult.success();
+      } catch (Exception e) {
+        throw new EdcPersistenceException(e);
+      }
+    });
+    transactionContext.execute(() -> {
+      try (var connection = getConnection()) {
         insertCatalog(catalog, connection);
         insertDataServices(catalog, connection);
         insertDatasets(catalog, connection);
@@ -170,31 +177,28 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
   }
 
   private void deleteRelatedCatalogData(Connection connection, Catalog catalog) {
-    if (catalog != null && catalog.getId() != null) {
+    Catalog catalogByParticipantId = getCatalogByParticipantId(catalog.getParticipantId());
+
+    if (catalogByParticipantId != null && catalogByParticipantId.getId() != null) {
       String deleteDistributionsSql = databaseStatements.getDeleteDistributionsForCatalogTemplate();
-      queryExecutor.execute(connection, deleteDistributionsSql, catalog.getId());
+      queryExecutor.execute(connection, deleteDistributionsSql, catalogByParticipantId.getId());
 
       String deleteCatalogDataServicesSql = databaseStatements.getDeleteCatalogDataServicesTemplate();
-      queryExecutor.execute(connection, deleteCatalogDataServicesSql, catalog.getId());
+      queryExecutor.execute(connection, deleteCatalogDataServicesSql, catalogByParticipantId.getId());
 
       String deleteOrphanDataServicesSql = databaseStatements.getDeleteOrphanDataServicesTemplate();
       queryExecutor.execute(connection, deleteOrphanDataServicesSql);
 
       String deleteDatasetsSql = databaseStatements.getDeleteDatasetsForCatalogTemplate();
-      queryExecutor.execute(connection, deleteDatasetsSql, catalog.getId());
+      queryExecutor.execute(connection, deleteDatasetsSql, catalogByParticipantId.getId());
 
-      String deleteCatalogSql = databaseStatements.getDeleteCatalogByIdTemplate();
-      queryExecutor.execute(connection, deleteCatalogSql, catalog.getId());
+      String deleteCatalogSql = databaseStatements.getDeleteCatalogByParticipantIdTemplate();
+      queryExecutor.execute(connection, deleteCatalogSql, catalog.getParticipantId());
     }
   }
 
-  private void deleteRelatedCatalogDataForParticipant(Connection connection, String participantId) {
-    getCatalogsByParticipantId(connection, participantId)
-        .forEach(catalog -> deleteRelatedCatalogData(connection, catalog));
-  }
-
-  private boolean dataServiceExists(Connection connection, String dataServiceId) throws SQLException {
-    return getDataServiceById(connection, dataServiceId) != null;
+  private boolean dataServiceExists(String dataServiceId) throws SQLException {
+    return getDataServiceById(dataServiceId) != null;
   }
 
   private Catalog mapResultSetToCatalog(ResultSet resultSet) throws SQLException {
@@ -224,11 +228,10 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
     Map<String, Policy> offers = fromJson(resultSet.getString("offers"), new TypeReference<Map<String, Policy>>() {
     });
 
-    String catalogId = resultSet.getString("catalog_id");
-    List<Distribution> distributions = getDistributionsForDataset(id, catalogId);
+    List<Distribution> distributions = getDistributionsForDataset(id);
 
     if (withCatalogId) {
-      properties.put(INTERNAL_CATALOG_ID, catalogId);
+      properties.put(INTERNAL_CATALOG_ID, resultSet.getString("catalog_id"));
     }
     Dataset.Builder datasetBuilder = Dataset.Builder.newInstance().id(id).properties(properties)
             .distributions(distributions);
@@ -240,11 +243,10 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
     return datasetBuilder.build();
   }
 
-  private List<Distribution> getDistributionsForDataset(String datasetId, String catalogId) {
+  private List<Distribution> getDistributionsForDataset(String datasetId) {
     try (var connection = getConnection()) {
       String sql = databaseStatements.getSelectDistributionsForDatasetTemplate();
-      return queryExecutor.query(connection, false, this::mapResultSetToDistribution, sql, datasetId, catalogId)
-          .filter(Objects::nonNull)
+      return queryExecutor.query(connection, false, this::mapResultSetToDistribution, sql, datasetId)
           .collect(Collectors.toList());
     } catch (SQLException e) {
       throw new EdcPersistenceException(e);
@@ -254,14 +256,8 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
   private Distribution mapResultSetToDistribution(ResultSet resultSet) throws SQLException {
     String format = resultSet.getString("format");
     String dataServiceId = resultSet.getString("data_service_id");
-    if (dataServiceId == null || dataServiceId.isBlank()) {
-      return null;
-    }
 
     DataService dataService = getDataServiceById(dataServiceId);
-    if (dataService == null) {
-      return null;
-    }
 
     return Distribution.Builder.newInstance().format(format).dataService(dataService).build();
   }
@@ -276,16 +272,14 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
     }
   }
 
-  private DataService getDataServiceById(Connection connection, String dataServiceId) throws SQLException {
-    String sql = databaseStatements.getSelectDataServicesForIdTemplate();
-    return queryExecutor.query(connection, false, this::mapResultSetToDataService, sql, dataServiceId).findFirst()
-        .orElse(null);
-  }
-
-  private List<Catalog> getCatalogsByParticipantId(Connection connection, String participantId) {
-    String selectCatalog = databaseStatements.getSelectCatalogForParticipantIdTemplate();
-    return queryExecutor.query(connection, false, this::mapResultSetToCatalogSimple, selectCatalog, participantId)
-        .collect(Collectors.toList());
+  private Catalog getCatalogByParticipantId(String participantId) {
+    try (var connection = getConnection()) {
+      String selectCatalog = databaseStatements.getSelectCatalogForParticipantIdTemplate();
+      return queryExecutor.query(connection, false, this::mapResultSetToCatalogSimple, selectCatalog, participantId)
+          .findFirst().orElse(null);
+    } catch (SQLException e) {
+      throw new EdcPersistenceException(e);
+    }
   }
 
   private Catalog mapResultSetToCatalogSimple(ResultSet resultSet) throws SQLException {
@@ -324,14 +318,12 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
         catalog.getParticipantId(), toJson(catalog.getProperties()), false);
   }
 
-  private void insertDataServices(Catalog catalog, Connection connection) throws SQLException {
+  private void insertDataServices(Catalog catalog, Connection connection) {
     if (catalog.getDataServices() != null) {
       Set<DataService> dataServicesToSave = new HashSet<>(catalog.getDataServices());
       for (DataService dataService : dataServicesToSave) {
-        if (!dataServiceExists(connection, dataService.getId())) {
-          queryExecutor.execute(connection, databaseStatements.getInsertDataServiceTemplate(), dataService.getId(),
-              dataService.getEndpointDescription(), dataService.getEndpointUrl());
-        }
+        queryExecutor.execute(connection, databaseStatements.getInsertDataServiceTemplate(), dataService.getId(),
+            dataService.getEndpointDescription(), dataService.getEndpointUrl());
         queryExecutor.execute(connection, databaseStatements.getInsertCatalogDataServiceTemplate(), catalog.getId(),
             dataService.getId());
       }
@@ -354,10 +346,7 @@ public class SqlFederatedCacheStore extends AbstractSqlStore implements Paginate
     if (dataset.getDistributions() != null) {
       for (Distribution distribution : dataset.getDistributions()) {
         DataService dataService = distribution.getDataService();
-        if (dataService == null) {
-          continue;
-        }
-        if (!dataServiceExists(connection, dataService.getId())) {
+        if (!dataServiceExists(dataService.getId())) {
           queryExecutor.execute(connection, databaseStatements.getInsertDataServiceTemplate(), dataService.getId(),
               dataService.getEndpointDescription(), dataService.getEndpointUrl());
         }

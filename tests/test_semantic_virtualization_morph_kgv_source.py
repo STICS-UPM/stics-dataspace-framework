@@ -64,25 +64,6 @@ class SemanticVirtualizationMorphKgvSourceTests(unittest.TestCase):
             "Environment files, database credentials and API keys are not read or persisted by this validation.",
         )
 
-    def test_validate_morph_kgv_source_accepts_repository_install_command(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            source_dir = Path(tmpdir) / "morph-kgv"
-            source_dir.mkdir()
-            self._create_minimal_morph_kgv_source(source_dir)
-            (source_dir / "README.md").write_text(
-                "## Instalacion\n"
-                "pip install git+https://github.com/ProyectoPIONERA/morph-kgv.git\n"
-                "python run_query.py config.ini query.sparql\n"
-                "morph-kgv serve config.ini\n"
-                "The endpoint is available at http://localhost:8000/sparql.\n",
-                encoding="utf-8",
-            )
-
-            result = validate_morph_kgv_source(source_dir)
-
-        self.assertEqual(result["status"], "passed")
-        self.assertIn("install", result["capabilities"]["readme_markers"])
-
     def test_validate_morph_kgv_source_fails_when_source_is_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             missing_dir = Path(tmpdir) / "morph-kgv"

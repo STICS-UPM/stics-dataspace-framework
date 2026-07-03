@@ -102,11 +102,11 @@ export function jwtOptionsFactory(authService: AuthService) {
     },
     {
       provide: 'STORAGE_TYPES',
-      useFactory: () => [{id: DATA_ADDRESS_TYPES.httpData, name: DATA_ADDRESS_TYPES.httpData}, {id: DATA_ADDRESS_TYPES.amazonS3, name: 'ExternalStoreS3'}, {id: DATA_ADDRESS_TYPES.inesDataStore, name: DATA_ADDRESS_TYPES.inesDataStore}],
+      useFactory: () => [{id: DATA_ADDRESS_TYPES.httpData, name: DATA_ADDRESS_TYPES.httpData}, {id: DATA_ADDRESS_TYPES.amazonS3, name: 'ExternalStoreS3'}, {id: DATA_ADDRESS_TYPES.inesDataStore, name: 'PIONERA Store'}],
     },
     {
       provide: 'TRANSFER_TYPES',
-      useFactory: () => [{id: DATA_ADDRESS_TYPES.amazonS3, name: 'ExternalStoreS3'}, {id: DATA_ADDRESS_TYPES.inesDataStore, name: DATA_ADDRESS_TYPES.inesDataStore}],
+      useFactory: () => [{id: DATA_ADDRESS_TYPES.amazonS3, name: 'ExternalStoreS3'}, {id: DATA_ADDRESS_TYPES.inesDataStore, name: 'PIONERA Store'}],
     },
     { provide: HTTP_INTERCEPTORS, useClass: Oauth2Interceptor, multi: true },
     {

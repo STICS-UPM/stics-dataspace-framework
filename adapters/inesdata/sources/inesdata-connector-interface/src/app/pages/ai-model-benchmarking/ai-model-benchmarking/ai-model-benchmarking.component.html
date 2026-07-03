@@ -178,6 +178,7 @@
                 type="text"
                 placeholder="Search datasets"
                 [(ngModel)]="benchmarkDatasetSearch"
+                (ngModelChange)="onBenchmarkDatasetSearchChange()"
                 class="search-input"
               />
               <button *ngIf="benchmarkDatasetSearch" (click)="clearBenchmarkDatasetSearch()" class="clear-btn" mat-icon-button>

@@ -76,7 +76,7 @@ class EdcBuildImageScriptTests(unittest.TestCase):
             script = handle.read()
 
         self.assertIn("PIONERA_EDC_DASHBOARD_REPO_REF", script)
-        self.assertIn("3a36d8d3282edb95e5caf361ad76d3535354e541", script)
+        self.assertIn("a4cb3e659e1fd3abfa9516a036c261b19432ec13", script)
 
     def test_sync_dashboard_sources_supports_pinned_reference_without_overwriting_local_changes(self):
         with open(SYNC_DASHBOARD_SCRIPT_PATH, "r", encoding="utf-8") as handle:

@@ -86,7 +86,7 @@ export class ContractOffersViewerComponent {
 
     if (this.data.dataAddress) {
       if (this.data.privateProperties) {
-        this.dataAddressType = DATA_ADDRESS_TYPES.inesDataStore;
+        this.dataAddressType = this.getDataAddressName(DATA_ADDRESS_TYPES.inesDataStore);
       } else {
         this.dataAddressType = this.getDataAddressName(this.data.dataAddress.type);
         delete this.data.dataAddress['@type'];
@@ -128,7 +128,7 @@ export class ContractOffersViewerComponent {
   getDataAddressName(dataAddressTypeId: string) {
     const normalizedId = this.normalizeDataAddressTypeId(dataAddressTypeId);
     const foundObject = this.storageTypes.find(item => item.id === normalizedId);
-    return foundObject ? foundObject.name : null;
+    return foundObject ? foundObject.name : normalizedId;
 }
 
   private normalizeDataAddressTypeId(dataAddressTypeId: string): string {

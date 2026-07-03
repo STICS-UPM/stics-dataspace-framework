@@ -1396,7 +1396,6 @@ class INESDataConnectorsAdapter:
             "pod_name": pod_name,
             "local_port": local_port,
             "kubeconfig_role": os.environ.get("PIONERA_KUBECONFIG_ROLE"),
-            "opened_at": time.time(),
         }
 
     def _close_temporary_port_forward(self, port_forward_info):
@@ -1670,10 +1669,7 @@ class INESDataConnectorsAdapter:
         if len(name) > 20:
             raise ValueError(f"Invalid connector name '{name}'. Maximum length is 20 characters.")
 
-        if not re.match(r"^[A-Za-z][A-Za-z0-9]*$", name):
-            raise ValueError(
-                f"Invalid connector name '{name}'. Connector names must start with a letter and contain only alphanumeric characters."
-            )
+        
 
     @staticmethod
     def _connector_role_summary(connectors, validation_pairs=None):
@@ -2561,6 +2557,11 @@ class INESDataConnectorsAdapter:
             or ""
         ).strip()
         if explicit_url:
+            if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
+                return self._url_with_forced_scheme(
+                    self._strip_model_observer_api_path(explicit_url),
+                    "http",
+                )
             return self._strip_model_observer_api_path(explicit_url)
 
         if self._normalized_topology() != VM_DISTRIBUTED_TOPOLOGY:
@@ -2928,10 +2929,11 @@ class INESDataConnectorsAdapter:
             ingress["publicProtocol"] = public_protocol
             ingress["publicHostname"] = public_external
             if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
-                ingress["callbackProtocol"] = self._vm_distributed_connector_dsp_protocol(
+                dsp_protocol = self._vm_distributed_connector_dsp_protocol(
                     deployer_config,
-                    fallback=public_protocol,
+                    fallback="http",
                 )
+                ingress["callbackProtocol"] = dsp_protocol
                 ingress["callbackHostname"] = public_external
                 ingress["dataplanePublicBaseUrl"] = f"{public_protocol}://{public_external}/public"
             with open(values_file, "w") as f:
@@ -2941,10 +2943,11 @@ class INESDataConnectorsAdapter:
         ingress["publicProtocol"] = public_protocol
         ingress["publicHostname"] = public_external
         if self._normalized_topology() == VM_DISTRIBUTED_TOPOLOGY:
-            ingress["callbackProtocol"] = self._vm_distributed_connector_dsp_protocol(
+            dsp_protocol = self._vm_distributed_connector_dsp_protocol(
                 deployer_config,
-                fallback=public_protocol,
+                fallback="http",
             )
+            ingress["callbackProtocol"] = dsp_protocol
             ingress["callbackHostname"] = public_external
             ingress["dataplanePublicBaseUrl"] = f"{public_protocol}://{public_external}/public"
 
@@ -3311,6 +3314,46 @@ class INESDataConnectorsAdapter:
             raw_value,
             default=self._default_level4_local_images_mode(),
         )
+
+    def _level4_local_connector_image_target(self):
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception:
+            deployer_config = {}
+
+        raw_value = None
+        for candidate in (
+            os.environ.get("PIONERA_INESDATA_LOCAL_IMAGE_TARGET"),
+            os.environ.get("INESDATA_LOCAL_IMAGE_TARGET"),
+            deployer_config.get("INESDATA_LOCAL_IMAGE_TARGET"),
+            deployer_config.get("LEVEL4_INESDATA_LOCAL_IMAGE_TARGET"),
+        ):
+            if candidate is not None and str(candidate).strip():
+                raw_value = candidate
+                break
+
+        if raw_value is None:
+            return None
+
+        target = str(raw_value or "").strip()
+        if target in {"connectors", "all-connectors"}:
+            return None
+
+        allowed_targets = {
+            "TODO",
+            "CHANGED",
+            "changed",
+            "connector",
+            "connector-interface",
+            "registration-service",
+            "public-portal-backend",
+            "public-portal-frontend",
+        }
+        if target in allowed_targets:
+            return target
+
+        print(f"Unknown INESData local image target '{raw_value}'. Falling back to connector images.")
+        return None
 
     def _local_minikube_profile(self):
         env_profile = os.getenv("PIONERA_MINIKUBE_PROFILE") or os.getenv("MINIKUBE_PROFILE")
@@ -3887,6 +3930,7 @@ class INESDataConnectorsAdapter:
         cluster_runtime = self._cluster_runtime()
         cluster_type = str(cluster_runtime.get("cluster_type") or "minikube").strip().lower() or "minikube"
         env_prefix = self._remote_image_import_env_prefix_for_namespace(namespace)
+        local_image_target = self._level4_local_connector_image_target()
         command_parts = [
             "bash",
             script_path,
@@ -3899,10 +3943,12 @@ class INESDataConnectorsAdapter:
             self._local_minikube_profile(),
             "--cluster-runtime",
             cluster_type,
-            "--deploy-target",
-            "connectors",
             "--skip-deploy",
         ]
+        if local_image_target:
+            command_parts.extend(["--target", local_image_target])
+        else:
+            command_parts.extend(["--deploy-target", "connectors"])
         if manifest_file:
             command_parts.extend(["--manifest", manifest_file])
         if skip_build:
@@ -3914,6 +3960,8 @@ class INESDataConnectorsAdapter:
         print(f"Cluster runtime: {cluster_type}")
         if skip_build:
             print("This reuses the existing Level 4 image manifest and imports the same images before Helm deploy.")
+        elif local_image_target:
+            print(f"This builds and loads the INESData {local_image_target} image before Helm deploy.")
         else:
             print("This builds and loads inesdata-connector and inesdata-connector-interface before Helm deploy.")
         try:

@@ -48,49 +48,13 @@ implementada y validación oficial reproducida:
 
 | Adapter | `local` | `vm-single` | `vm-distributed` |
 | --- | --- | --- | --- |
-| `inesdata` | Implementado y usado como ruta local de desarrollo/validación | Implementado y validado como entorno VM de referencia | Disponible en la rama especializada `refactoring-vm-distributed-inesdata-ai` |
-| `edc` | Implementado; pasó validaciones antes de la conciliación reciente de topologías y debe revalidarse antes de usarlo como evidencia actual | Implementado; no se ha validado oficialmente después de la conciliación reciente | Estará disponible en la rama especializada `refactoring-vm-distributed-edc-ai` |
+| `inesdata` | Implementado y usado como ruta local de desarrollo/validación | Implementado y validado como entorno VM de referencia | Implementado y validado como entorno distribuido de referencia |
+| `edc` | Implementado; pasó validaciones antes de la conciliación reciente de topologías y debe revalidarse antes de usarlo como evidencia actual | Implementado; no se ha validado oficialmente después de la conciliación reciente | Implementado y probado oficialmente como ruta de cierre para EDC |
 
-Actualmente, la rama `main` se encuentra alineada con la línea estable
-`refactoring-local-vm-single`, que consolida la ejecución local y `vm-single`.
-La validación del adapter INESData en topología `vm-distributed` se mantiene en
-una rama especializada, `refactoring-vm-distributed-inesdata-ai`, ya que aún no
-ha sido conciliada con la línea base `refactoring-local-vm-single`. De forma
-análoga, la validación del adapter EDC en topología `vm-distributed` quedará
-disponible en la rama `refactoring-vm-distributed-edc-ai`.
-
-Por tanto, las rutas `vm-distributed` deben tomarse desde sus ramas
-especializadas mientras se completa la conciliación con `main`. Las rutas
-`local` y `vm-single` permanecen disponibles en `main` como línea estable de
-desarrollo y validación.
-
-### Referencias de Reproducibilidad
-
-Las siguientes referencias pueden usarse como punto de restauración si las ramas
-o repositorios externos cambian después de esta entrega. La rama `main` incluye
-esta nota documental; la línea funcional estable que consolida `local` y
-`vm-single` corresponde a `refactoring-local-vm-single`.
-
-| Alcance | Referencia | Commit |
-| --- | --- | --- |
-| Línea estable `local` y `vm-single` | `refactoring-local-vm-single` | `532926e16a9f8845f65d328a8c6107d86f576c7d` |
-| INESData `vm-distributed` | `refactoring-vm-distributed-inesdata-ai` | `f2f2cdc1f115a6f02ab05cdfbd2d08f5738e6e51` |
-| EDC `vm-distributed` | `refactoring-vm-distributed-edc-ai` | Pendiente de publicación |
-| EDC `vm-distributed`, referencia previa disponible | `refactoring-vm-distributed-edc` | `9487093803bf11c7f8e06ee875e38785001fa4db` |
-
-Cuando sea necesario reconstruir el entorno frente a cambios posteriores en los
-repositorios fuente, estos commits locales sirvieron como referencia durante la
-validación de la línea estable:
-
-| Repositorio fuente | Commit de referencia |
-| --- | --- |
-| `ProyectoPIONERA/AIModelHub` | `91ef338c4203` |
-| `ProyectoPIONERA/AIModelHub-Use-Cases` | `371d349c924c` |
-| `ProyectoPIONERA/Ontology-Hub` | `23455014e676` |
-| `ProyectoPIONERA/mapping-editor` | `eba85129e05c` |
-| `ProyectoPIONERA/morph-kgv` | `19c9bcbd791e` |
-| `ProyectoPIONERA/automap` | `f6debd99f104` |
-| `ProyectoPIONERA/EDC-asset-filter-dashboard` | `3a36d8d3282e` |
+Por tanto, para evidencias de cierre del adapter `edc`, usa
+`vm-distributed`. Las rutas `local` y `vm-single` de EDC permanecen disponibles
+para desarrollo y futuras revalidaciones, pero no se presentan como resultado
+oficial actualizado en esta versión de cierre.
 
 ## Índice
 

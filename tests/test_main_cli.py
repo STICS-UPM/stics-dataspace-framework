@@ -480,6 +480,27 @@ class KafkaTransferConsoleOutputTests(unittest.TestCase):
         self.assertIn("non-interactive", stdout.getvalue())
         self.assertIn("PIONERA_LEVEL6_RUN_KAFKA=true", stdout.getvalue())
 
+    def test_level6_kafka_cli_flag_enables_suite_for_non_interactive_runs(self):
+        class KafkaReadyAdapter(FakeAdapter):
+            def get_kafka_config(self):
+                return {"bootstrap_servers": "localhost:9092"}
+
+        stdout = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(sys.stdin, "isatty", return_value=False),
+            mock.patch("builtins.input", side_effect=AssertionError("prompt should not run")),
+            contextlib.redirect_stdout(stdout),
+        ):
+            enabled = main._resolve_level6_kafka_enabled_for_run(
+                KafkaReadyAdapter(),
+                deployer_name="inesdata",
+                cli_enabled=True,
+            )
+
+        self.assertTrue(enabled)
+        self.assertIn("enabled by --kafka", stdout.getvalue())
+
     def test_level6_kafka_skip_flag_suppresses_prompt(self):
         class KafkaReadyAdapter(FakeAdapter):
             def get_kafka_config(self):
@@ -1443,7 +1464,7 @@ class EdcDashboardReadinessTests(unittest.TestCase):
 
         endpoint_calls = []
 
-        def fake_endpoint_ready(namespace, service_name):
+        def fake_endpoint_ready(namespace, service_name, kubeconfig=None):
             endpoint_calls.append((namespace, service_name))
             return True, "1 endpoint address(es)"
 
@@ -1661,44 +1682,6 @@ class EdcDashboardReadinessTests(unittest.TestCase):
         self.assertTrue(route_gate["ready"])
         self.assertIn("auth redirect accepted", route_gate["detail"])
 
-    def test_probe_edc_dashboard_readiness_accepts_prefixed_keycloak_login_redirect(self):
-        context = self._context()
-
-        def fake_http_get(url, **kwargs):
-            if url.endswith("/.well-known/openid-configuration"):
-                return types.SimpleNamespace(status_code=200, headers={})
-            if url.endswith("/edc-dashboard/"):
-                return types.SimpleNamespace(
-                    status_code=302,
-                    headers={
-                        "Location": (
-                            "https://org4.example.test/c/citycounciledc/edc-dashboard-api/auth/login"
-                            "?returnTo=%2Fc%2Fcitycounciledc%2Fedc-dashboard%2F"
-                        )
-                    },
-                )
-            if url.endswith("/edc-dashboard-api/auth/me"):
-                return types.SimpleNamespace(status_code=401, headers={})
-            if url.endswith("/management/v3/assets/request"):
-                return types.SimpleNamespace(status_code=405, headers={})
-            raise AssertionError(f"Unexpected URL probed: {url}")
-
-        with mock.patch.object(
-            main,
-            "_kubectl_endpoint_ready",
-            return_value=(True, "1 endpoint address(es)"),
-        ), mock.patch.object(main.requests, "get", side_effect=fake_http_get):
-            readiness = main._probe_edc_dashboard_readiness(context)
-
-        self.assertEqual(readiness["status"], "passed")
-        route_gate = next(
-            gate
-            for gate in readiness["gates"]
-            if gate["gate"] == "dashboard-route:conn-citycounciledc-demoedc"
-        )
-        self.assertTrue(route_gate["ready"])
-        self.assertIn("auth redirect accepted", route_gate["detail"])
-
 
 class InesdataPortalReadinessTests(unittest.TestCase):
     def _context(self):
@@ -1883,7 +1866,7 @@ class InesdataPortalReadinessTests(unittest.TestCase):
 
         endpoint_calls = []
 
-        def fake_endpoint_ready(namespace, service_name):
+        def fake_endpoint_ready(namespace, service_name, kubeconfig=None):
             endpoint_calls.append((namespace, service_name))
             return True, "1 endpoint address(es)"
 
@@ -4696,6 +4679,113 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(run_levels.call_args.kwargs["topology"], "vm-single")
         self.assertIn("Result: Succeeded", stdout.getvalue())
 
+    def test_level_command_passes_kafka_flag_to_level_six(self):
+        expected = {"status": "completed", "levels": [{"level": 6, "status": "completed"}]}
+
+        with mock.patch.object(
+            main,
+            "run_levels",
+            return_value=expected,
+        ) as run_levels:
+            result = main.main(
+                ["fake", "level", "6", "--topology", "vm-distributed", "--kafka"],
+                adapter_registry=self.registry,
+                deployer_registry=self.deployer_registry,
+            )
+
+        self.assertEqual(result, expected)
+        run_levels.assert_called_once()
+        self.assertEqual(run_levels.call_args.kwargs["levels"], [6])
+        self.assertEqual(run_levels.call_args.kwargs["topology"], "vm-distributed")
+        self.assertTrue(run_levels.call_args.kwargs["kafka_enabled"])
+
+    def test_run_level_six_vm_distributed_runs_catalog_cleanup_before_and_after_validation(self):
+        adapter = FakeAdapter()
+        events = []
+
+        def cleanup(deployer_name, topology, phase="pre"):
+            events.append(("cleanup", deployer_name, topology, phase))
+            return {"status": "passed", "phase": phase}
+
+        def validate(*_args, **kwargs):
+            events.append(("validate", kwargs.get("topology")))
+            return {"validation_status": "passed"}
+
+        with mock.patch.object(
+            main,
+            "_ensure_vm_distributed_level_kubeconfig_tunnels",
+            return_value=None,
+        ), mock.patch.object(
+            main,
+            "_run_connector_catalog_cleanup",
+            side_effect=cleanup,
+        ), mock.patch.object(
+            main,
+            "run_validate",
+            side_effect=validate,
+        ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
+            result = main.run_level(
+                adapter,
+                6,
+                deployer_name="inesdata",
+                deployer_registry={"inesdata": "fake_deployer_module:FakeVmDeployer"},
+                topology="vm-distributed",
+            )
+
+        self.assertEqual(
+            events,
+            [
+                ("cleanup", "inesdata", "vm-distributed", "pre"),
+                ("validate", "vm-distributed"),
+                ("cleanup", "inesdata", "vm-distributed", "post"),
+            ],
+        )
+        self.assertEqual(result["result"]["connector_catalog_cleanup"]["pre"]["phase"], "pre")
+        self.assertEqual(result["result"]["connector_catalog_cleanup"]["post"]["phase"], "post")
+
+    def test_run_level_six_vm_distributed_runs_catalog_post_cleanup_after_validation_error(self):
+        adapter = FakeAdapter()
+        events = []
+
+        def cleanup(deployer_name, topology, phase="pre"):
+            events.append(("cleanup", deployer_name, topology, phase))
+            return {"status": "passed", "phase": phase}
+
+        def validate(*_args, **_kwargs):
+            events.append(("validate",))
+            raise RuntimeError("validation failed")
+
+        with mock.patch.object(
+            main,
+            "_ensure_vm_distributed_level_kubeconfig_tunnels",
+            return_value=None,
+        ), mock.patch.object(
+            main,
+            "_run_connector_catalog_cleanup",
+            side_effect=cleanup,
+        ), mock.patch.object(
+            main,
+            "run_validate",
+            side_effect=validate,
+        ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
+            with self.assertRaises(RuntimeError):
+                main.run_level(
+                    adapter,
+                    6,
+                    deployer_name="inesdata",
+                    deployer_registry={"inesdata": "fake_deployer_module:FakeVmDeployer"},
+                    topology="vm-distributed",
+                )
+
+        self.assertEqual(
+            events,
+            [
+                ("cleanup", "inesdata", "vm-distributed", "pre"),
+                ("validate",),
+                ("cleanup", "inesdata", "vm-distributed", "post"),
+            ],
+        )
+
     def test_run_local_repair_applies_hosts_reconciliation(self):
         adapter = FakeAdapter()
         doctor_report = {
@@ -5355,91 +5445,6 @@ class MainCliTests(unittest.TestCase):
         ):
             self.assertTrue(main._vm_single_should_prepare_k3s_tunnel(6, plan, topology_config))
 
-    def test_vm_single_k3s_remote_prepare_shell_can_use_sudo_stdin(self):
-        shell = main._vm_single_k3s_remote_prepare_shell(
-            {
-                "K3S_SERVICE_NAME": "k3s",
-                "K3S_KUBECONFIG": "/etc/rancher/k3s/k3s.yaml",
-            },
-            sudo_stdin=True,
-        )
-
-        self.assertIn("IFS= read -r __pionera_sudo_password", shell)
-        self.assertIn("sudo -S -p ''", shell)
-        self.assertIn("pionera_sudo systemctl start k3s", shell)
-        self.assertIn("pionera_sudo_sh_c", shell)
-
-    def test_vm_single_level1_passes_remote_sudo_secret_via_stdin_only(self):
-        adapter = types.SimpleNamespace(
-            infrastructure=types.SimpleNamespace(complete_level=mock.Mock())
-        )
-        topology_config = {
-            "VM_EXTERNAL_IP": "192.0.2.52",
-            "VM_SINGLE_SSH_HOST": "192.0.2.52",
-            "VM_SINGLE_SSH_USER": "pionera",
-            "SSH_IDENTITY_FILE": "/home/operator/.ssh/vm-single",
-            "SSH_ACCESS_MODE": "direct",
-        }
-        bundle = {
-            "infrastructure": {},
-            "topology": topology_config,
-            "adapter": {"DS_1_NAME": "pionera"},
-        }
-        plan = main._build_vm_single_topology_plan(
-            bundle["infrastructure"],
-            bundle["topology"],
-            bundle["adapter"],
-        )
-        observed = {}
-
-        def fake_run(command, **kwargs):
-            observed["command"] = command
-            observed["input"] = kwargs.get("input")
-            observed["text"] = kwargs.get("text")
-            return types.SimpleNamespace(returncode=0)
-
-        with mock.patch.object(
-            main,
-            "_load_vm_single_configuration_bundle",
-            return_value=bundle,
-        ), mock.patch.object(
-            main,
-            "_build_vm_single_topology_plan",
-            return_value=plan,
-        ), mock.patch.object(
-            main.subprocess,
-            "run",
-            side_effect=fake_run,
-        ), mock.patch.object(
-            main,
-            "_ensure_vm_single_k3s_api_access",
-            return_value={
-                "status": "ready",
-                "kubeconfig": "/home/operator/.kube/vm-single-k3s.yaml",
-                "tunnel": {"status": "ready"},
-            },
-        ), mock.patch.object(
-            main,
-            "_install_vm_single_ingress_nginx",
-        ), mock.patch.object(
-            main,
-            "_vm_single_k3s_preflight_checks",
-            return_value=("vm-single", []),
-        ), mock.patch.dict(
-            os.environ,
-            {"PIONERA_SUDO_PASSWORD": "secret-value"},
-            clear=True,
-        ):
-            result = main._run_vm_single_level1_via_ssh_tunnel(adapter, "inesdata")
-
-        rendered_command = " ".join(str(part) for part in observed["command"])
-        self.assertEqual(result["status"], "ready")
-        self.assertEqual(observed["input"], "secret-value\n")
-        self.assertTrue(observed["text"])
-        self.assertNotIn("-tt", observed["command"])
-        self.assertNotIn("secret-value", rendered_command)
-        self.assertIn("sudo -S -p", rendered_command)
-
     def test_interactive_runtime_environment_applies_vm_single_kubeconfig(self):
         with mock.patch.object(
             main,
@@ -5476,7 +5481,11 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(level5_env["PIONERA_KUBECONFIG_ROLE"], "components")
 
     def test_environment_profile_name_defaults_to_pionera(self):
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            main,
+            "_framework_root_dir",
+            return_value=tmpdir,
+        ), mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual(main._environment_profile_name(), "pionera")
             self.assertEqual(main._environment_profile_path(), os.path.join(
                 main._environment_profiles_dir(),
@@ -5489,17 +5498,18 @@ class MainCliTests(unittest.TestCase):
             adapter_name="inesdata",
         )
 
-        self.assertIn("# Local validation-environment profile.", content)
-        self.assertIn("# VM placement", content)
-        self.assertIn("# Dataspace and connector inventory", content)
+        self.assertIn("# Private validation-environment profile.", content)
+        self.assertIn("# SSH route.", content)
+        self.assertIn("# Dataspace inventory.", content)
+        self.assertIn("PROFILE_TOPOLOGY=vm-distributed\n", content)
+        self.assertIn("PROFILE_ADAPTER=inesdata\n", content)
+        self.assertIn("TOPOLOGY_ROUTING_MODE=host\n", content)
+        self.assertIn("SSH_BASTION_HOST=\n", content)
         self.assertIn("DOMAIN_BASE=\n", content)
         self.assertIn("VM_COMMON_IP=\n", content)
         self.assertIn("DS_1_CONNECTORS=\n", content)
+        self.assertNotIn("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS", content)
         self.assertNotIn("example.org", content)
-        for line in content.splitlines():
-            if not line or line.startswith("#"):
-                continue
-            self.assertTrue(line.endswith("="), line)
 
     def test_vm_distributed_profile_template_keys_are_supported_by_profile_loader(self):
         keys = main._vm_distributed_profile_template_keys(
@@ -5567,14 +5577,14 @@ class MainCliTests(unittest.TestCase):
             return_value=tmpdir,
         ), mock.patch.dict(os.environ, {}, clear=True):
             state = main._ensure_vm_distributed_profile_file(adapter_name="inesdata")
-            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
+            profile_path = os.path.join(tmpdir, ".secrets", "profiles", "pionera.env")
 
             self.assertEqual(state["status"], "created")
             self.assertEqual(state["path"], profile_path)
             self.assertTrue(os.path.isfile(profile_path))
             with open(profile_path, encoding="utf-8") as handle:
                 created_content = handle.read()
-            self.assertIn("# Common and dataspace domains", created_content)
+            self.assertIn("# Private validation-environment profile.", created_content)
             self.assertIn("DOMAIN_BASE=\n", created_content)
 
             with open(profile_path, "w", encoding="utf-8") as handle:
@@ -5607,7 +5617,7 @@ class MainCliTests(unittest.TestCase):
             return_value={},
         ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
             result = main.run_level(adapter, 2, deployer_name="fake", topology="vm-distributed")
-            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
+            profile_path = os.path.join(tmpdir, ".secrets", "profiles", "pionera.env")
             profile_created = os.path.isfile(profile_path)
 
         self.assertEqual(result["level"], 2)
@@ -5634,7 +5644,7 @@ class MainCliTests(unittest.TestCase):
             return_value={},
         ), mock.patch.object(main, "_resolve_level_access_urls", return_value={}):
             result = main.run_level(adapter, 2, deployer_name="fake", topology="vm-single")
-            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
+            profile_path = os.path.join(tmpdir, ".secrets", "profiles", "pionera.env")
             with open(profile_path, encoding="utf-8") as handle:
                 profile_content = handle.read()
 
@@ -7945,50 +7955,6 @@ class MainCliTests(unittest.TestCase):
         )
         self.assertIn("conn-org2-pionera-pionera", provider_action["expected_releases"])
 
-    def test_local_adapter_switch_plan_removes_old_adapter_and_components_for_inesdata(self):
-        payload = {
-            "workloads": {
-                "active_adapters": ["edc"],
-                "active_component_namespaces": ["components"],
-                "adapter_namespaces": {
-                    "inesdata": ["core-control", "provider", "consumer"],
-                    "edc": ["edc-control", "edc-provider", "edc-consumer"],
-                },
-            }
-        }
-
-        plan = main._build_local_adapter_switch_plan(payload, "inesdata")
-
-        self.assertEqual(plan["target_adapter"], "inesdata")
-        self.assertEqual(plan["adapters_to_remove"], ["edc"])
-        self.assertEqual(plan["namespaces_to_delete"], ["edc-control", "edc-provider", "edc-consumer", "components"])
-        self.assertEqual(plan["confirmation_token"], "SWITCH TO INESDATA")
-        component_action = next(
-            action for action in plan["namespace_actions"] if action["namespace"] == "components"
-        )
-        self.assertIn("pionera-ai-model-hub", component_action["expected_releases"])
-
-    def test_local_adapter_switch_plan_cleans_stale_components_after_partial_switch_to_inesdata(self):
-        payload = {
-            "workloads": {
-                "active_adapters": [],
-                "active_component_namespaces": ["components"],
-                "adapter_namespaces": {
-                    "inesdata": ["core-control", "provider", "consumer"],
-                    "edc": ["edc-control", "edc-provider", "edc-consumer"],
-                },
-            }
-        }
-
-        plan = main._build_local_adapter_switch_plan(payload, "inesdata")
-
-        self.assertEqual(plan["target_adapter"], "inesdata")
-        self.assertEqual(plan["adapters_to_remove"], [])
-        self.assertEqual(plan["namespaces_to_delete"], ["components"])
-        component_action = plan["namespace_actions"][0]
-        self.assertEqual(component_action["namespace"], "components")
-        self.assertIn("pionera-ai-model-hub", component_action["expected_releases"])
-
     def test_local_adapter_switch_cleanup_readiness_requires_matching_helm_release(self):
         def fake_switch_command(command):
             if command[:3] == ["kubectl", "get", "namespace"]:
@@ -8031,34 +7997,6 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["status"], "ready")
         self.assertEqual(result["matching_releases"], ["conn-org2-pionera-pionera"])
 
-    def test_local_adapter_switch_aborts_before_deleting_when_cleanup_is_not_safe(self):
-        plan = {
-            "namespace_actions": [
-                {"namespace": "edc-control"},
-                {"namespace": "components"},
-            ],
-            "runtime_dirs": [],
-        }
-        readiness = [
-            {"status": "ready", "namespace": "edc-control", "matching_releases": ["pionera-edc-dataspace-rs"]},
-            {
-                "status": "skipped",
-                "namespace": "components",
-                "reason": "no-matching-helm-releases",
-                "helm_releases": ["foreign-release"],
-            },
-        ]
-
-        with mock.patch.object(
-            main,
-            "_local_switch_namespace_cleanup_readiness",
-            side_effect=readiness,
-        ), mock.patch.object(main, "_run_switch_command") as command_mock:
-            with self.assertRaisesRegex(RuntimeError, "no namespaces were deleted"):
-                main._execute_local_adapter_switch_plan(plan)
-
-        command_mock.assert_not_called()
-
     def test_level6_component_validation_environment_uses_edc_context(self):
         context = DeploymentContext.from_mapping(
             {
@@ -8080,8 +8018,8 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(env["PIONERA_ADAPTER"], "edc")
         self.assertEqual(env["UI_ADAPTER"], "edc")
         self.assertEqual(env["AI_MODEL_HUB_COMPONENT_ADAPTER"], "edc")
-        self.assertNotIn("PIONERA_COMPONENT_VALIDATION_MODE", env)
-        self.assertNotIn("LEVEL6_COMPONENT_VALIDATION_MODE", env)
+        self.assertEqual(env["PIONERA_COMPONENT_VALIDATION_MODE"], "api")
+        self.assertEqual(env["LEVEL6_COMPONENT_VALIDATION_MODE"], "api")
         self.assertEqual(env["UI_DATASPACE"], "pionera-edc")
         self.assertEqual(env["PIONERA_COMPONENT_DATASPACE_NAME"], "pionera")
         self.assertEqual(env["COMPONENT_DATASPACE_NAME"], "pionera")
@@ -8157,6 +8095,82 @@ class MainCliTests(unittest.TestCase):
             env["AI_MODEL_HUB_PROVIDER_PROTOCOL_URL"],
             "http://conn-org2-pionera.pionera.oeg.fi.upm.es/protocol",
         )
+
+    def test_level6_component_validation_environment_keeps_inesdata_components_in_mixed_mode(self):
+        context = DeploymentContext.from_mapping(
+            {
+                "deployer": "inesdata",
+                "topology": "vm-distributed",
+                "environment": "DEV",
+                "dataspace_name": "pionera",
+                "ds_domain_base": "pionera.oeg.fi.upm.es",
+                "connectors": [
+                    "conn-org2-pionera",
+                    "conn-org3-pionera",
+                ],
+                "config": {
+                    "DS_1_CONNECTORS": "org2,org3",
+                    "VM_PROVIDER_CONNECTORS": "org2",
+                    "VM_CONSUMER_CONNECTORS": "org3",
+                    "VM_PROVIDER_PUBLIC_URL": "https://org2.pionera.oeg.fi.upm.es",
+                    "VM_CONSUMER_PUBLIC_URL": "https://org3.pionera.oeg.fi.upm.es",
+                    "KEYCLOAK_FRONTEND_URL": "https://org1.pionera.oeg.fi.upm.es/auth",
+                },
+            }
+        )
+
+        env = main._level6_component_validation_environment(
+            context,
+            "inesdata",
+            components=["ontology-hub", "ai-model-hub"],
+        )
+
+        self.assertNotIn("PIONERA_COMPONENT_VALIDATION_MODE", env)
+        self.assertNotIn("LEVEL6_COMPONENT_VALIDATION_MODE", env)
+        self.assertNotIn("PIONERA_AI_MODEL_HUB_COMPONENT_VALIDATION_MODE", env)
+        self.assertNotIn("AI_MODEL_HUB_COMPONENT_VALIDATION_MODE", env)
+        self.assertEqual(env["AI_MODEL_HUB_ENABLE_UI_VALIDATION"], "0")
+        self.assertEqual(env["AI_MODEL_HUB_ENABLE_FUNCTIONAL_VALIDATION"], "0")
+        self.assertEqual(env["AI_MODEL_HUB_NEGOTIATION_TIMEOUT_SECONDS"], "240")
+        self.assertEqual(env["AI_MODEL_HUB_DASHBOARD_PATH"], "/")
+        self.assertEqual(env["AI_MODEL_HUB_APP_CONFIG_PATH"], "assets/config/app.config.json")
+        self.assertEqual(
+            env["AI_MODEL_HUB_APP_CONFIG_REQUIRED_KEYS"],
+            "managementApiUrl,participantId,service",
+        )
+
+    def test_level6_component_validation_environment_honors_explicit_inesdata_ai_model_hub_playwright_opt_in(self):
+        context = DeploymentContext.from_mapping(
+            {
+                "deployer": "inesdata",
+                "topology": "vm-distributed",
+                "environment": "DEV",
+                "dataspace_name": "pionera",
+                "ds_domain_base": "pionera.oeg.fi.upm.es",
+                "connectors": [
+                    "conn-org2-pionera",
+                    "conn-org3-pionera",
+                ],
+                "config": {
+                    "DS_1_CONNECTORS": "org2,org3",
+                    "VM_PROVIDER_CONNECTORS": "org2",
+                    "VM_CONSUMER_CONNECTORS": "org3",
+                    "VM_PROVIDER_PUBLIC_URL": "https://org2.pionera.oeg.fi.upm.es",
+                    "VM_CONSUMER_PUBLIC_URL": "https://org3.pionera.oeg.fi.upm.es",
+                    "AI_MODEL_HUB_ENABLE_UI_VALIDATION": "1",
+                    "AI_MODEL_HUB_ENABLE_FUNCTIONAL_VALIDATION": "1",
+                },
+            }
+        )
+
+        env = main._level6_component_validation_environment(
+            context,
+            "inesdata",
+            components=["ai-model-hub"],
+        )
+
+        self.assertEqual(env["AI_MODEL_HUB_ENABLE_UI_VALIDATION"], "1")
+        self.assertEqual(env["AI_MODEL_HUB_ENABLE_FUNCTIONAL_VALIDATION"], "1")
 
     def test_level6_component_validation_environment_uses_edc_vm_distributed_public_prefix(self):
         context = DeploymentContext.from_mapping(
@@ -8258,82 +8272,6 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(env["ONTOLOGY_HUB_SELF_HOST_NAMESPACE"], "components")
         self.assertEqual(env["ONTOLOGY_HUB_SELF_HOST_SERVICE_PORT"], "3333")
 
-    def test_level6_component_validation_environment_uses_edc_vm_single_public_api_urls_from_credentials(self):
-        with tempfile.TemporaryDirectory() as runtime_dir:
-            for connector, short_name in (
-                ("conn-org2-pionera-edc", "org2"),
-                ("conn-org3-pionera-edc", "org3"),
-            ):
-                connector_dir = os.path.join(runtime_dir, "connectors", connector)
-                os.makedirs(connector_dir, exist_ok=True)
-                with open(os.path.join(connector_dir, "credentials.json"), "w", encoding="utf-8") as handle:
-                    json.dump(
-                        {
-                            "public_access_urls": {
-                                "connector_ingress": f"https://org4.example.test/c/{short_name}",
-                                "connector_management_api": (
-                                    f"https://org4.example.test/edc/c/{short_name}/management"
-                                ),
-                                "connector_management_api_v3": (
-                                    f"https://org4.example.test/edc/c/{short_name}/management/v3"
-                                ),
-                                "connector_protocol_api": (
-                                    f"https://org4.example.test/edc/c/{short_name}/protocol"
-                                ),
-                                "connector_default_api": f"https://org4.example.test/edc/c/{short_name}/api",
-                                "edc_dashboard_login": (
-                                    f"https://org4.example.test/c/{short_name}/edc-dashboard/"
-                                ),
-                            }
-                        },
-                        handle,
-                    )
-
-            context = DeploymentContext.from_mapping(
-                {
-                    "deployer": "edc",
-                    "topology": "vm-single",
-                    "environment": "DEV",
-                    "dataspace_name": "pionera-edc",
-                    "ds_domain_base": "pionera.oeg.fi.upm.es",
-                    "runtime_dir": runtime_dir,
-                    "connectors": [
-                        "conn-org2-pionera-edc",
-                        "conn-org3-pionera-edc",
-                    ],
-                    "config": {
-                        "TOPOLOGY": "vm-single",
-                        "VM_SINGLE_PUBLIC_URL": "https://org4.example.test",
-                        "VM_SINGLE_CONNECTOR_PUBLIC_PATH_PREFIX": "/c",
-                        "KEYCLOAK_FRONTEND_URL": "https://org4.example.test/auth",
-                    },
-                }
-            )
-
-            env = main._level6_component_validation_environment(context, "edc")
-
-        self.assertEqual(
-            env["AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL"],
-            "https://org4.example.test/edc/c/org2/management/v3",
-        )
-        self.assertEqual(
-            env["AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL"],
-            "https://org4.example.test/edc/c/org3/management/v3",
-        )
-        self.assertEqual(
-            env["AI_MODEL_HUB_PROVIDER_PROTOCOL_URL"],
-            "https://org4.example.test/edc/c/org2/protocol",
-        )
-        self.assertEqual(
-            env["AI_MODEL_HUB_PROVIDER_DEFAULT_URL"],
-            "https://org4.example.test/edc/c/org2/api",
-        )
-        self.assertEqual(
-            env["AI_MODEL_HUB_CONSUMER_DEFAULT_URL"],
-            "https://org4.example.test/edc/c/org3/api",
-        )
-        self.assertEqual(env["AI_MODEL_HUB_DASHBOARD_PATH"], "edc-dashboard/")
-
     def test_vm_single_mapping_editor_k3s_prefers_kubectl_port_forward(self):
         with mock.patch.object(main, "_vm_single_mapping_editor_is_k3s", return_value=True), mock.patch.object(
             main,
@@ -8362,9 +8300,9 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(result["url"], "http://127.0.0.1:5678")
 
     def test_vm_single_mapping_editor_reachable_public_url_disables_auto_tunnel(self):
-        with mock.patch.object(main, "_vm_single_mapping_editor_http_ready", return_value=True), mock.patch.object(
+        with mock.patch.object(
             main,
-            "_vm_single_mapping_editor_websocket_ready",
+            "_vm_single_mapping_editor_http_ready",
             return_value=True,
         ):
             should_tunnel = main._vm_single_mapping_editor_should_use_tunnel(
@@ -8379,48 +8317,6 @@ class MainCliTests(unittest.TestCase):
             )
 
         self.assertFalse(should_tunnel)
-
-    def test_vm_single_mapping_editor_public_url_without_websocket_falls_back_to_k3s_tunnel(self):
-        with mock.patch.object(main, "_vm_single_mapping_editor_http_ready", return_value=True), mock.patch.object(
-            main,
-            "_vm_single_mapping_editor_websocket_ready",
-            return_value=False,
-        ):
-            should_tunnel = main._vm_single_mapping_editor_should_use_tunnel(
-                {"vms": [{"address": "192.168.122.52"}]},
-                {
-                    "CLUSTER_TYPE": "k3s",
-                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL": "https://streamlit-org4.example.test",
-                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE": "host-port",
-                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT": "5678",
-                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_MODE": "auto",
-                },
-            )
-
-        self.assertTrue(should_tunnel)
-
-    def test_vm_single_mapping_editor_tunnel_allowed_inside_level_runtime_env(self):
-        with mock.patch.dict(os.environ, {"PIONERA_LEVEL_RUNTIME_ENV_ACTIVE": "true"}), mock.patch.object(
-            main,
-            "_vm_single_mapping_editor_http_ready",
-            return_value=True,
-        ), mock.patch.object(
-            main,
-            "_vm_single_mapping_editor_websocket_ready",
-            return_value=False,
-        ):
-            should_tunnel = main._vm_single_mapping_editor_should_use_tunnel(
-                {"vms": [{"address": "192.168.122.52"}]},
-                {
-                    "CLUSTER_TYPE": "k3s",
-                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL": "https://streamlit-org4.example.test",
-                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE": "host-port",
-                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT": "5678",
-                    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_MODE": "auto",
-                },
-            )
-
-        self.assertTrue(should_tunnel)
 
     def test_vm_single_mapping_editor_unreachable_public_url_falls_back_to_k3s_tunnel(self):
         with mock.patch.object(

@@ -8,7 +8,6 @@ const DEFAULT_ONTOLOGY_URL = 'http://ontology-hub-demo.dev.ds.dataspaceunit.upm'
 
 type OntologyRuntimeConfig = {
   ontologyUrl?: string;
-  ontologyPublicUrl?: string;
   ontologyAdminUser?: string;
   ontologyAdminPassword?: string;
 };
@@ -32,17 +31,12 @@ export class OntologyService {
   }
 
   get ontologyBaseUrl(): string {
-    const url = this.runtime.ontologyPublicUrl || this.runtime.ontologyUrl || DEFAULT_ONTOLOGY_URL;
-    return url.replace(/\/$/, '');
-  }
-
-  get ontologyApiBaseUrl(): string {
-    const url = this.runtime.ontologyUrl || this.runtime.ontologyPublicUrl || DEFAULT_ONTOLOGY_URL;
+    const url = this.runtime.ontologyUrl || DEFAULT_ONTOLOGY_URL;
     return url.replace(/\/$/, '');
   }
 
   getOntologyLists(): Observable<Ontology[]> {
-    const url = `${this.ontologyApiBaseUrl}/dataset/api/v2/vocabulary/list`;
+    const url = `${this.ontologyBaseUrl}/dataset/api/v2/vocabulary/list`;
     return this.http.get<Ontology[]>(url);
   }
 
@@ -61,7 +55,7 @@ export class OntologyService {
       formData.append('password', adminPassword);
     }
 
-    const url = `${this.ontologyApiBaseUrl}/dataset/api/v2/vocabulary/artifacts/shapes`;
+    const url = `${this.ontologyBaseUrl}/dataset/api/v2/vocabulary/artifacts/shapes`;
     return this.http.post(url, formData);
   }
 

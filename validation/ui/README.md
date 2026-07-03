@@ -335,11 +335,8 @@ en el namespace `components`. En Level 6, el runner traduce
 `AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS` y
 `AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD` a estas variables de Playwright
 para que los flujos de ejecución apunten al contrato real del servidor de
-modelos. Cuando el payload configurado es un array, el runner desactiva
-`AI Model Benchmarking` UI mediante `UI_AI_MODEL_HUB_BENCHMARKING_DEMO=0`,
-porque el componente de benchmarking actual ejecuta filas individuales del CSV;
-la validación real de esos endpoints queda cubierta por la suite API del
-model-server.
+modelos. `AI Model Benchmarking` UI se ejecuta por defecto en Level 6; solo se
+desactiva si se define explícitamente `UI_AI_MODEL_HUB_BENCHMARKING_DEMO=0`.
 
 `UI_AI_MODEL_OBSERVER_DEMO=1` habilita `DS-UI-AMH-OBS-01` / `MH-OBS-01`: abre
 `AI Model Observer` desde INESData y valida la navegación visual hacia

@@ -70,11 +70,7 @@ export class EdcTransferHistoryPage {
       }
 
       await this.page.reload({ waitUntil: "domcontentloaded" });
-      const remainingMs = timeoutMs - (Date.now() - startedAt);
-      if (remainingMs <= 0) {
-        break;
-      }
-      await waitForEventualConsistencyPoll(this.page, Math.min(remainingMs, 1_000));
+      await waitForEventualConsistencyPoll(this.page);
     }
 
     throw new Error(

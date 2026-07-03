@@ -216,17 +216,16 @@ def _summary_status(summary: dict[str, Any], fallback: Any = None) -> str:
         return "failed"
 
     failed = _summary_count(summary, "failed")
-    passed = _summary_count(summary, "passed")
     skipped = _summary_count(summary, "skipped")
     other = _summary_count(summary, "other")
     total = _summary_count(summary, "total")
 
     if failed:
         return "failed"
+    if skipped:
+        return "skipped"
     if other:
         return "partial"
-    if skipped:
-        return "skipped" if skipped == total and not passed else "partial"
     if total:
         return "passed"
     return normalized_fallback or "unknown"
@@ -500,6 +499,340 @@ def _summarize_component_report_json(experiment_path: Path) -> list[dict[str, An
             }
         )
     return summaries
+
+
+def _normal_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"pass", "passed", "ok", "success", "succeeded", "completed", "expected"}:
+        return "passed"
+    if normalized in {"fail", "failed", "error", "terminated", "unexpected", "timedout", "interrupted"}:
+        return "failed"
+    if normalized in {"skip", "skipped"}:
+        return "skipped"
+    return normalized or "not_recorded"
+
+
+def _ai_model_hub_case_statuses(component_payload: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if not isinstance(component_payload, dict):
+        return {}
+    cases: dict[str, dict[str, Any]] = {}
+    for case in component_payload.get("executed_cases") or []:
+        if not isinstance(case, dict):
+            continue
+        case_id = str(case.get("test_case_id") or case.get("id") or "").strip()
+        if not case_id:
+            continue
+        evaluation = case.get("evaluation") if isinstance(case.get("evaluation"), dict) else {}
+        cases[case_id] = {
+            "status": _normal_status(evaluation.get("status") or case.get("status")),
+            "description": str(case.get("description") or case.get("expected_result") or case_id),
+            "source_suite": str(case.get("source_suite") or case.get("suite") or ""),
+        }
+    return cases
+
+
+def _ai_model_hub_playwright_specs(experiment_path: Path) -> list[dict[str, Any]]:
+    specs: list[dict[str, Any]] = []
+    for path in sorted(experiment_path.glob("**/playwright_validation.json")):
+        if "node_modules" in path.parts:
+            continue
+        payload = _read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        for spec in summary.get("spec_results") or []:
+            if not isinstance(spec, dict):
+                continue
+            title = str(spec.get("title") or spec.get("file") or "").strip()
+            if not title:
+                continue
+            specs.append(
+                {
+                    "title": title,
+                    "status": _normal_status(spec.get("status")),
+                    "artifact": _relative(path, experiment_path),
+                }
+            )
+    return specs
+
+
+def _ai_model_hub_spec_evidence(specs: list[dict[str, Any]], label: str, *needles: str) -> dict[str, Any]:
+    lowered_needles = [needle.lower() for needle in needles if needle]
+    for spec in specs:
+        title = str(spec.get("title") or "")
+        lowered_title = title.lower()
+        if all(needle in lowered_title for needle in lowered_needles):
+            return {
+                "label": label,
+                "status": spec.get("status") or "not_recorded",
+                "detail": title,
+                "artifact": spec.get("artifact"),
+            }
+    return {
+        "label": label,
+        "status": "not_recorded",
+        "detail": "No matching Playwright evidence was recorded in this experiment.",
+    }
+
+
+def _ai_model_hub_case_evidence(cases: dict[str, dict[str, Any]], case_id: str, label: str | None = None) -> dict[str, Any]:
+    case = cases.get(case_id)
+    if not case:
+        return {
+            "label": label or case_id,
+            "status": "not_recorded",
+            "detail": f"{case_id} was not recorded in the AI Model Hub component result.",
+        }
+    detail = case.get("description") or case_id
+    if case.get("source_suite"):
+        detail = f"{detail} ({case.get('source_suite')})"
+    return {
+        "label": label or case_id,
+        "status": case.get("status") or "not_recorded",
+        "detail": detail,
+        "artifact": "components/ai-model-hub/ai_model_hub_component_validation.json",
+    }
+
+
+def _ai_model_hub_catalog_audit(experiment_path: Path) -> dict[str, Any] | None:
+    candidates = [
+        experiment_path / "components" / "ai-model-hub" / "ai_model_hub_use_case_catalog_audit.json",
+        experiment_path / "components" / "ai-model-hub" / "ai_model_hub_catalog_audit.json",
+    ]
+    for path in candidates:
+        payload = _read_json(path)
+        if isinstance(payload, dict):
+            payload = dict(payload)
+            payload["_artifact"] = _relative(path, experiment_path)
+            return payload
+    return None
+
+
+def _ai_model_hub_catalog_evidence(audit: dict[str, Any] | None, label: str, *summary_keys: str) -> dict[str, Any]:
+    if not isinstance(audit, dict):
+        return {
+            "label": label,
+            "status": "not_recorded",
+            "detail": "No catalog audit artifact was recorded for this experiment.",
+        }
+    summary = audit.get("summary") if isinstance(audit.get("summary"), dict) else {}
+    failing = {key: int(summary.get(key) or 0) for key in summary_keys}
+    total_findings = sum(failing.values())
+    return {
+        "label": label,
+        "status": "passed" if total_findings == 0 else "failed",
+        "detail": "No findings." if total_findings == 0 else ", ".join(f"{key}={value}" for key, value in failing.items()),
+        "artifact": audit.get("_artifact"),
+    }
+
+
+def _ai_model_hub_catalog_evidence_items(
+    audit: dict[str, Any] | None,
+    label: str,
+    *summary_keys: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(audit, dict):
+        return []
+    return [_ai_model_hub_catalog_evidence(audit, label, *summary_keys)]
+
+
+def _row_status(evidence: list[dict[str, Any]], *, required_labels: set[str] | None = None) -> str:
+    selected = [
+        item
+        for item in evidence
+        if not required_labels or str(item.get("label") or "") in required_labels
+    ]
+    if required_labels:
+        selected.extend(
+            item
+            for item in evidence
+            if str(item.get("label") or "") not in required_labels
+            and _normal_status(item.get("status")) == "failed"
+        )
+    if not selected:
+        return "not_recorded"
+    statuses = [_normal_status(item.get("status")) for item in selected]
+    if any(status == "failed" for status in statuses):
+        return "failed"
+    if all(status == "passed" for status in statuses):
+        return "passed"
+    if any(status == "passed" for status in statuses):
+        return "partial"
+    if any(status == "skipped" for status in statuses):
+        return "skipped"
+    return "not_recorded"
+
+
+def _summarize_ai_model_hub_use_cases(experiment_path: Path) -> dict[str, Any] | None:
+    component_path = experiment_path / "components" / "ai-model-hub" / "ai_model_hub_component_validation.json"
+    component_payload = _read_json(component_path)
+    specs = _ai_model_hub_playwright_specs(experiment_path)
+    audit = _ai_model_hub_catalog_audit(experiment_path)
+    if not isinstance(component_payload, dict) and not specs and not audit:
+        return None
+
+    cases = _ai_model_hub_case_statuses(component_payload)
+    rows = [
+        {
+            "id": "step8-daimo-vocabularies",
+            "use_case": "DAIMO metadata vocabularies",
+            "contract_source": "AI Model Hub Step 8",
+            "validated_scope": "JS_DAIMO_Model and JS_DAIMO_Dataset metadata vocabularies are available to describe models and benchmark datasets.",
+            "evidence": [
+                _ai_model_hub_spec_evidence(specs, "UI 14", "14 ai model hub daimo vocabulary"),
+            ]
+            + _ai_model_hub_catalog_evidence_items(
+                audit,
+                "Catalog vocabularies",
+                "unexpected_vocabularies",
+                "duplicated_vocabularies",
+            ),
+            "required_labels": {"UI 14"},
+        },
+        {
+            "id": "step9-benchmark-datasets",
+            "use_case": "Benchmark datasets",
+            "contract_source": "AI Model Hub Step 9",
+            "validated_scope": "FLARES and Mobility benchmark datasets are present and usable by component-level benchmarking checks.",
+            "evidence": [
+                _ai_model_hub_case_evidence(cases, "PT5-MH-13", "FLARES benchmark inputs"),
+                _ai_model_hub_case_evidence(cases, "MH-MOB-01", "Mobility benchmark dataset"),
+            ]
+            + _ai_model_hub_catalog_evidence_items(
+                audit,
+                "Catalog datasets",
+                "missing_expected_datasets",
+                "missing_expected_dataset_contracts",
+            ),
+            "required_labels": {"FLARES benchmark inputs", "Mobility benchmark dataset"},
+        },
+        {
+            "id": "step10-model-assets",
+            "use_case": "AI model publication and access",
+            "contract_source": "AI Model Hub Step 10",
+            "validated_scope": "Use-case model assets are discoverable, governed by contracts, and backed by executable model-server endpoints.",
+            "evidence": [
+                _ai_model_hub_case_evidence(cases, "MH-MODEL-SERVER-01", "Model discovery endpoint"),
+                _ai_model_hub_case_evidence(cases, "MH-MODEL-SERVER-03", "Inference endpoints"),
+                _ai_model_hub_case_evidence(cases, "PT5-MH-09", "Authorized model access"),
+                _ai_model_hub_case_evidence(cases, "PT5-MH-11", "Active agreements"),
+                _ai_model_hub_spec_evidence(specs, "UI 09", "09 ai model hub httpdata"),
+                _ai_model_hub_spec_evidence(specs, "UI 11", "11 ai model browser"),
+            ]
+            + _ai_model_hub_catalog_evidence_items(
+                audit,
+                "Catalog models",
+                "missing_expected_assets",
+                "missing_expected_contracts",
+                "wrong_owner_model_assets",
+                "missing_input_schema_model_assets",
+            ),
+            "required_labels": {"Model discovery endpoint", "Inference endpoints", "Authorized model access", "Active agreements"},
+        },
+        {
+            "id": "flares-linguistic-use-case",
+            "use_case": "FLARES linguistic use case",
+            "contract_source": "AIModelHub-Use-Cases / FLARES",
+            "validated_scope": "FLARES models are benchmarked with coherent metrics and can be executed with the expected input schema.",
+            "evidence": [
+                _ai_model_hub_case_evidence(cases, "PT5-MH-12", "Comparable FLARES models"),
+                _ai_model_hub_case_evidence(cases, "PT5-MH-13", "Shared FLARES inputs"),
+                _ai_model_hub_case_evidence(cases, "PT5-MH-14", "FLARES metrics"),
+                _ai_model_hub_case_evidence(cases, "PT5-MH-15", "Benchmark table data"),
+                _ai_model_hub_case_evidence(cases, "PT5-MH-10", "Connector-side execution"),
+                _ai_model_hub_spec_evidence(specs, "UI 12", "12 ai model execution"),
+                _ai_model_hub_spec_evidence(specs, "UI 15", "15 ai model execution", "external"),
+            ],
+            "required_labels": {
+                "Comparable FLARES models",
+                "Shared FLARES inputs",
+                "FLARES metrics",
+                "Benchmark table data",
+                "Connector-side execution",
+            },
+        },
+        {
+            "id": "mobility-use-case",
+            "use_case": "Mobility prediction use case",
+            "contract_source": "AIModelHub-Use-Cases / Mobility",
+            "validated_scope": "Mobility models and GTFS-derived benchmark data are present as executable benchmarking sources.",
+            "evidence": [
+                _ai_model_hub_case_evidence(cases, "MH-MOB-01", "Mobility benchmark source"),
+                _ai_model_hub_case_evidence(cases, "MH-MODEL-SERVER-03", "Mobility inference endpoints"),
+            ],
+            "required_labels": {"Mobility benchmark source", "Mobility inference endpoints"},
+        },
+        {
+            "id": "model-observer-evidence",
+            "use_case": "Model Observer evidence",
+            "contract_source": "AI Model Hub observer flow",
+            "validated_scope": "Execution and benchmarking evidence is visible through the observer API and participant-oriented UI.",
+            "evidence": [
+                _ai_model_hub_case_evidence(cases, "MH-OBS-02", "Observer journal API"),
+                _ai_model_hub_spec_evidence(specs, "UI 10", "10 ai model observer"),
+                _ai_model_hub_spec_evidence(specs, "UI 16", "16 ai model observer"),
+            ],
+            "required_labels": {"Observer journal API"},
+        },
+    ]
+    if isinstance(audit, dict):
+        rows.append(
+            {
+                "id": "catalog-hygiene",
+                "use_case": "Catalog hygiene",
+                "contract_source": "Deployment cleanup requirement",
+                "validated_scope": "Legacy sentiment/test artifacts are absent from model assets, contracts, policies and vocabularies.",
+                "optional": True,
+                "evidence": [
+                    _ai_model_hub_catalog_evidence(
+                        audit,
+                        "Catalog cleanup audit",
+                        "legacy_artifacts",
+                        "legacy_model_assets_missing_input_schema",
+                        "unexpected_vocabularies",
+                        "duplicated_vocabularies",
+                    ),
+                ],
+            }
+        )
+
+    for row in rows:
+        row["status"] = _row_status(row.get("evidence") or [], required_labels=row.get("required_labels"))
+        row.pop("required_labels", None)
+
+    summary_rows = [
+        row
+        for row in rows
+        if not row.get("optional") or _normal_status(row.get("status")) != "not_recorded"
+    ]
+    summary = _summarize_status_items(summary_rows)
+    if summary["failed"]:
+        status = "failed"
+    elif summary["skipped"] or summary["other"]:
+        status = "partial"
+    elif summary["total"] and summary["passed"] == summary["total"]:
+        status = "passed"
+    else:
+        status = "partial"
+
+    artifacts = []
+    if component_path.exists():
+        artifacts.append(_relative(component_path, experiment_path))
+    for spec in specs:
+        artifact = spec.get("artifact")
+        if artifact and artifact not in artifacts:
+            artifacts.append(str(artifact))
+    if isinstance(audit, dict) and audit.get("_artifact"):
+        artifacts.append(str(audit["_artifact"]))
+
+    return {
+        "kind": "ai-model-hub-use-cases",
+        "title": "AI Model Hub use-case validation",
+        "status": status,
+        "summary": summary,
+        "rows": rows,
+        "artifacts": artifacts,
+    }
 
 
 def _summarize_playwright_json(experiment_path: Path) -> list[dict[str, Any]]:
@@ -1036,6 +1369,7 @@ def inspect_experiment(path: str | Path) -> dict[str, Any]:
     suites = [_with_suite_taxonomy(suite) for suite in suites]
 
     playwright_reports = _discover_playwright_reports(experiment_path)
+    ai_model_hub_use_case_validation = _summarize_ai_model_hub_use_cases(experiment_path)
     report_kinds = []
     if playwright_reports:
         report_kinds.append("Playwright")
@@ -1049,18 +1383,21 @@ def inspect_experiment(path: str | Path) -> dict[str, Any]:
         report_kinds.append("Stability")
     if any(suite.get("kind") == "une-0087" for suite in suites):
         report_kinds.append("UNE 0087")
+    if ai_model_hub_use_case_validation:
+        report_kinds.append("Use cases")
     console_logs = _console_log_summaries(experiment_path)
     if console_logs:
         report_kinds.append("Console")
 
+    validation_suites = [suite for suite in suites if suite.get("kind") != "une-0087"]
     result = "No failed suites detected"
-    if any(str(suite.get("status")).lower() in {"failed", "error"} for suite in suites):
+    if any(str(suite.get("status")).lower() in {"failed", "error"} for suite in validation_suites):
         result = "Issues detected"
-    elif any(str(suite.get("status")).lower() in {"warning", "warning-existing"} for suite in suites):
+    elif any(str(suite.get("status")).lower() in {"warning", "warning-existing"} for suite in validation_suites):
         result = "Warnings detected"
-    elif any(str(suite.get("status")).lower() in {"skipped", "partial"} for suite in suites):
+    elif any(str(suite.get("status")).lower() in {"skipped", "partial"} for suite in validation_suites):
         result = "Partial"
-    elif not suites and not playwright_reports:
+    elif not validation_suites and not playwright_reports:
         result = "Partial"
 
     return {
@@ -1074,6 +1411,7 @@ def inspect_experiment(path: str | Path) -> dict[str, Any]:
         "result": result,
         "reports": report_kinds,
         "playwright_reports": playwright_reports,
+        "ai_model_hub_use_case_validation": ai_model_hub_use_case_validation,
         "suites": suites,
         "console_log": console_logs[0] if console_logs else None,
         "console_logs": console_logs,
@@ -1110,6 +1448,12 @@ def build_experiment_dashboard(experiment: dict[str, Any]) -> Path:
     report_dir = experiment_path / FRAMEWORK_REPORT_DIR
     report_dir.mkdir(parents=True, exist_ok=True)
     index_path = report_dir / "index.html"
+    use_case_validation = experiment.get("ai_model_hub_use_case_validation")
+    if isinstance(use_case_validation, dict):
+        (report_dir / "ai_model_hub_use_case_validation.json").write_text(
+            json.dumps(use_case_validation, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
     index_path.write_text(_render_dashboard_html(experiment), encoding="utf-8")
     return index_path
 
@@ -1142,6 +1486,7 @@ def _render_dashboard_html(experiment: dict[str, Any]) -> str:
         for label, value in cards
     )
     playwright_html = _render_playwright_links(experiment)
+    use_case_validation_html = _render_ai_model_hub_use_case_validation(experiment)
     suites_html = _render_suite_summaries(experiment)
     console_log_html = _render_console_log(experiment)
     artifacts_html = _render_artifact_links(experiment)
@@ -1201,6 +1546,8 @@ def _render_dashboard_html(experiment: dict[str, Any]) -> str:
     .neutral {{ background: #eef2f6; color: var(--neutral); }}
     .links {{ display: grid; gap: 10px; }}
     .link-card {{ background: #ffffffb8; border: 1px solid var(--line); border-radius: 8px; padding: 13px 14px; }}
+    .evidence-list {{ margin: 0; padding-left: 1.1rem; }}
+    .evidence-list li + li {{ margin-top: 6px; }}
     .small {{ color: var(--muted); font-size: 0.87rem; }}
     code {{ background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 2px 6px; }}
     .console-meta {{ align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; margin-bottom: 12px; }}
@@ -1279,11 +1626,75 @@ def _render_dashboard_html(experiment: dict[str, Any]) -> str:
     <h2>Raw artifacts</h2>
     {artifacts_html}
   </section>
-  <p class="small">Security note: this dashboard is generated from local artifacts and must be served on <code>127.0.0.1</code>.</p>
+  {use_case_validation_html}
+  <p class="small">This dashboard is generated from local artifacts. The built-in report server is restricted to loopback access.</p>
 </main>
 </body>
 </html>
 """
+
+
+def _render_ai_model_hub_use_case_validation(experiment: dict[str, Any]) -> str:
+    validation = experiment.get("ai_model_hub_use_case_validation")
+    if not isinstance(validation, dict):
+        return ""
+    rows = validation.get("rows") if isinstance(validation.get("rows"), list) else []
+    if not rows:
+        return ""
+
+    artifact_link = (
+        "<a href='ai_model_hub_use_case_validation.json'>Open structured use-case evidence JSON</a>"
+    )
+    table_rows = []
+    for row in rows:
+        evidence_items = []
+        for item in row.get("evidence") or []:
+            if not isinstance(item, dict):
+                continue
+            label = html.escape(str(item.get("label") or "Evidence"))
+            detail = html.escape(str(item.get("detail") or ""))
+            status = _badge(item.get("status"))
+            artifact = str(item.get("artifact") or "").strip()
+            artifact_link_html = ""
+            if artifact:
+                artifact_link_html = f" <a href='../{_safe_link(artifact)}'>artifact</a>"
+            evidence_items.append(
+                f"<li><strong>{label}</strong>: {status} <span class='small'>{detail}</span>{artifact_link_html}</li>"
+            )
+        evidence_html = "<ul class='evidence-list'>" + "\n".join(evidence_items) + "</ul>" if evidence_items else ""
+        use_case_label = str(row.get("use_case") or row.get("id") or "Use case")
+        if row.get("optional"):
+            use_case_label = f"{use_case_label} (optional control)"
+        table_rows.append(
+            "<tr>"
+            f"<td>{html.escape(use_case_label)}</td>"
+            f"<td>{html.escape(str(row.get('contract_source') or ''))}</td>"
+            f"<td>{_badge(row.get('status'))}</td>"
+            f"<td>{html.escape(str(row.get('validated_scope') or ''))}</td>"
+            f"<td>{evidence_html}</td>"
+            "</tr>"
+        )
+
+    summary = validation.get("summary") if isinstance(validation.get("summary"), dict) else {}
+    summary_text = (
+        f"{summary.get('passed', 0)} passed, {summary.get('failed', 0)} failed, "
+        f"{summary.get('skipped', 0)} skipped, {summary.get('other', 0)} not fully recorded."
+    )
+    return (
+        "<section class='section'>"
+        "<h2>AI Model Hub Use-Case Validation</h2>"
+        "<p>This section links the deployed AI Model Hub evidence with the use-case contract "
+        "implemented through Steps 8, 9 and 10 of the AIModelHub workflow.</p>"
+        "<div class='console-meta'>"
+        f"<span class='small'>Overall status: {_badge(validation.get('status'))} · {html.escape(summary_text)}</span>"
+        f"{artifact_link}"
+        "</div>"
+        "<table><thead><tr><th>Use case</th><th>Contract source</th><th>Status</th>"
+        "<th>Validated scope</th><th>Evidence</th></tr></thead><tbody>"
+        + "\n".join(table_rows)
+        + "</tbody></table>"
+        "</section>"
+    )
 
 
 def _render_playwright_links(experiment: dict[str, Any]) -> str:
@@ -1313,7 +1724,7 @@ def _render_suite_summaries(experiment: dict[str, Any]) -> str:
     if not suites:
         return "<p>No suite summaries were detected. Raw artifacts may still be available below.</p>"
     rows = []
-    for suite in sorted(_suite_summary_rows(suites), key=suite_sort_key):
+    for suite in sorted(suites, key=suite_sort_key):
         audit_suite = html.escape(str(suite.get("audit_suite") or "Unclassified"))
         audit_group = html.escape(str(suite.get("audit_group") or "Review"))
         title = html.escape(str(suite.get("title") or suite.get("kind") or "suite"))
@@ -1333,31 +1744,6 @@ def _render_suite_summaries(experiment: dict[str, Any]) -> str:
         + "\n".join(rows)
         + "</tbody></table>"
     )
-
-
-def _suite_summary_rows(suites: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for suite in suites:
-        rows.append(suite)
-        if suite.get("kind") != "playwright-json":
-            continue
-        parent_title = str(suite.get("title") or "Playwright")
-        for group in (suite.get("summary") or {}).get("groups") or []:
-            if not isinstance(group, dict):
-                continue
-            rows.append(
-                {
-                    "kind": "playwright-group",
-                    "title": f"{parent_title} / {group.get('audit_group') or 'Group'}",
-                    "status": _summary_status(group),
-                    "summary": group,
-                    "artifacts": list(suite.get("artifacts") or []),
-                    "audit_suite": group.get("audit_suite") or suite.get("audit_suite"),
-                    "audit_group": group.get("audit_group") or suite.get("audit_group"),
-                    "parent_suite": parent_title,
-                }
-            )
-    return rows
 
 
 def _format_execution_channels(value: Any) -> str:
@@ -1414,17 +1800,12 @@ def _suite_details(suite: dict[str, Any]) -> str:
             f"missing {suite.get('messages_missing', 0)}. "
             f"Incomplete transfers: {suite.get('incomplete_transfers', 0)}{suffix}."
         )
-    if kind in {"component", "component-report", "playwright-json", "playwright-group"}:
+    if kind in {"component", "component-report", "playwright-json"}:
         summary = suite.get("summary") or {}
         details = (
             f"Total: {summary.get('total', 0)}, passed: {summary.get('passed', 0)}, "
             f"failed: {summary.get('failed', 0)}, skipped: {summary.get('skipped', 0)}."
         )
-        if kind == "playwright-group":
-            parent_suite = suite.get("parent_suite")
-            if parent_suite:
-                details += f" Official UI evidence in {parent_suite} Playwright report."
-            return details
         channel_details = _format_execution_channels(suite.get("phase_execution_channels"))
         if channel_details:
             details += f" Channels: {channel_details}."
@@ -1502,12 +1883,64 @@ def _render_artifact_links(experiment: dict[str, Any]) -> str:
     return "<table><thead><tr><th>Artifact</th><th>Path</th></tr></thead><tbody>" + "\n".join(rows) + "</tbody></table>"
 
 
+def _local_ip_address() -> str:
+    """Return a best-effort LAN IP so dashboard URLs work across the network."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def _validate_report_host(host: str) -> str:
+    normalized = str(host or "").strip()
+    if normalized not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError("Report servers must bind to a loopback host such as 127.0.0.1.")
+    return normalized
+
+
 def find_free_local_port(host: str = LOCAL_REPORT_HOST) -> int:
-    if host != LOCAL_REPORT_HOST:
-        raise ValueError("Report servers must bind to 127.0.0.1.")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((host, 0))
         return int(sock.getsockname()[1])
+
+
+def _local_port_is_free(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind((host, int(port)))
+            return True
+        except OSError:
+            return False
+
+
+def _configured_report_port(env_var: str, host: str = LOCAL_REPORT_HOST) -> int | None:
+    """Resolve a fixed report-server port from the environment.
+
+    Returns a usable fixed port (so it can be forwarded once in a remote IDE and
+    reused across runs), or None to fall back to an ephemeral free port. If the
+    configured port is currently busy (e.g. a stale report server still holds
+    it), fall back to a free port rather than failing to bind."""
+    raw_value = str(os.environ.get(env_var) or "").strip()
+    if not raw_value:
+        return None
+    try:
+        candidate = int(raw_value)
+    except ValueError:
+        print(f"Ignoring {env_var}={raw_value!r}: not an integer port.")
+        return None
+    if not (1 <= candidate <= 65535):
+        print(f"Ignoring {env_var}={candidate}: port out of range 1-65535.")
+        return None
+    if not _local_port_is_free(host, candidate):
+        print(
+            f"{env_var}={candidate} is busy; using an ephemeral port for this run. "
+            "Stop the stale report server (or forward the new port) to reuse the fixed one."
+        )
+        return None
+    return candidate
 
 
 def wait_for_local_server(host: str, port: int, *, timeout_seconds: float = 5.0) -> bool:
@@ -1535,6 +1968,48 @@ def _cleanup_report_processes() -> None:
 atexit.register(_cleanup_report_processes)
 
 
+_REPORT_ROOT_REDIRECT_MARKER = "<!-- pionera-report-root-redirect -->"
+
+
+def _ensure_report_root_redirect(directory_path: Path) -> None:
+    """Drop a root index.html that redirects to framework-report/index.html.
+
+    Remote editors (VS Code / antigravity) discard the path when opening a
+    forwarded localhost URL, so the browser hits "/" instead of the dashboard
+    path. Serving a redirect at "/" makes the dashboard open regardless."""
+    try:
+        target = directory_path / "framework-report" / "index.html"
+        if not target.is_file():
+            return
+        root_index = directory_path / "index.html"
+        if root_index.exists():
+            # Only overwrite a redirect we created ourselves; never clobber a
+            # real index.html.
+            try:
+                existing = root_index.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                return
+            if _REPORT_ROOT_REDIRECT_MARKER not in existing:
+                return
+        dest = "framework-report/index.html"
+        root_index.write_text(
+            f"""<!doctype html>{_REPORT_ROOT_REDIRECT_MARKER}
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="0; url={dest}">
+<title>Framework report</title>
+<script>location.replace({dest!r});</script>
+</head><body>
+<p>Opening the framework report… if it does not load, click
+<a href="{dest}">{dest}</a>.</p>
+</body></html>
+""",
+            encoding="utf-8",
+        )
+    except OSError:
+        # Redirect is a convenience; never block the server on it.
+        return
+
+
 def launch_static_report_server(
     directory: str | Path,
     *,
@@ -1544,12 +2019,22 @@ def launch_static_report_server(
     python_executable: str | None = None,
     wait_for_server=wait_for_local_server,
 ) -> dict[str, Any]:
-    if host != LOCAL_REPORT_HOST:
-        raise ValueError("Report servers must bind to 127.0.0.1.")
+    host = _validate_report_host(host)
     directory_path = Path(directory)
     if not directory_path.is_dir():
         raise FileNotFoundError(f"Report directory not found: {directory_path}")
-    selected_port = port or find_free_local_port(host)
+    # Work around a VS Code / remote-editor behaviour where opening a forwarded
+    # localhost URL DISCARDS the path (microsoft/vscode-remote-release#10318):
+    # the browser lands on "/" instead of "/framework-report/index.html". Drop a
+    # root index.html that redirects to the dashboard so "/" still shows the
+    # report. Only added when an experiment dir exposes framework-report and has
+    # no index.html of its own.
+    _ensure_report_root_redirect(directory_path)
+    selected_port = (
+        port
+        or _configured_report_port("PIONERA_REPORT_PORT", host)
+        or find_free_local_port(host)
+    )
     command = [
         python_executable or sys.executable,
         "-m",
@@ -1584,12 +2069,15 @@ def launch_playwright_report(
     subprocess_module=subprocess,
     wait_for_server=wait_for_local_server,
 ) -> dict[str, Any]:
-    if host != LOCAL_REPORT_HOST:
-        raise ValueError("Playwright reports must bind to 127.0.0.1.")
+    host = _validate_report_host(host)
     report_path = Path(report_dir)
     if not report_path.is_dir() or not (report_path / "index.html").exists():
         raise FileNotFoundError(f"Playwright report not found: {report_path}")
-    selected_port = port or find_free_local_port(host)
+    selected_port = (
+        port
+        or _configured_report_port("PIONERA_PLAYWRIGHT_REPORT_PORT", host)
+        or find_free_local_port(host)
+    )
     cwd = Path(root or project_root()) / "validation" / "ui"
     command = [
         "npx",
@@ -1657,12 +2145,27 @@ def report_access_urls(
 ) -> list[dict[str, str]]:
     urls: list[dict[str, str]] = []
     if server_url:
+        base = str(server_url).rstrip("/")
         urls.append(
             {
                 "label": "Local server URL",
-                "url": f"{str(server_url).rstrip('/')}/framework-report/index.html",
+                "url": f"{base}/framework-report/index.html",
             }
         )
+        # If the URL already uses a LAN IP, also show localhost for local access
+        lan_ip = _local_ip_address()
+        if lan_ip in base and lan_ip != "127.0.0.1":
+            # Extract port from the server_url
+            try:
+                port_part = base.rsplit(":", 1)[1]
+                urls.append(
+                    {
+                        "label": "Localhost URL",
+                        "url": f"http://127.0.0.1:{port_part}/framework-report/index.html",
+                    }
+                )
+            except (IndexError, ValueError):
+                pass
 
     wsl_url = wsl_file_url_for_path(dashboard_path)
     if wsl_url:

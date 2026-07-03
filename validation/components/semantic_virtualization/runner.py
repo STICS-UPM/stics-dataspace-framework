@@ -169,11 +169,15 @@ def _build_url(base_url: str, relative_path: str) -> str:
 
 
 def _http_get(url: str, timeout: int = 20, headers: Dict[str, str] | None = None) -> Tuple[int, str, str]:
+    import ssl as _ssl
+    _ctx = _ssl.create_default_context()
+    _ctx.check_hostname = False
+    _ctx.verify_mode = _ssl.CERT_NONE
     request_headers = {"Cache-Control": "no-store"}
     request_headers.update(headers or {})
     req = request.Request(url, method="GET", headers=request_headers)
     try:
-        with request.urlopen(req, timeout=timeout) as response:
+        with request.urlopen(req, timeout=timeout, context=_ctx) as response:
             body = response.read().decode("utf-8", errors="replace")
             return response.getcode(), response.headers.get("Content-Type", ""), body
     except error.HTTPError as exc:
@@ -203,6 +207,29 @@ def _http_get_json_with_retry(
                 return last_response
             except json.JSONDecodeError:
                 pass
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return last_response
+
+
+def _http_get_success_with_retry(
+    url: str,
+    *,
+    timeout: int = 20,
+    headers: Dict[str, str] | None = None,
+    attempts: int = 8,
+    delay_seconds: float = 0.75,
+) -> Tuple[int, str, str]:
+    # morph-kgv serves a transient 404 (and occasionally 5xx) while it
+    # reprocesses its mappings. Retry success checks so they land on a healthy
+    # 200 window, mirroring the JSON capabilities check (SV-API-02).
+    transient = {0, 404, 502, 503, 504}
+    last_response = 0, "", ""
+    for attempt in range(max(1, attempts)):
+        last_response = _http_get(url, timeout=timeout, headers=headers)
+        http_status = last_response[0]
+        if http_status == 200 or http_status not in transient:
+            return last_response
         if attempt < attempts - 1:
             time.sleep(delay_seconds)
     return last_response
@@ -480,7 +507,10 @@ def run_semantic_virtualization_api_checks_validation(
                 headers=request_headers,
             )
         else:
-            http_status, content_type, body_text = _http_get(url, headers=request_headers)
+            http_status, content_type, body_text = _http_get_success_with_retry(
+                url,
+                headers=request_headers,
+            )
         if expectation == "controlled_error":
             evaluation = evaluate_controlled_error_response(
                 http_status,
@@ -561,7 +591,7 @@ def run_semantic_virtualization_validation(
 ) -> Dict[str, Any]:
     started_at = datetime.now().isoformat()
     normalized_base_url = (base_url or "").rstrip("/")
-    api_only = component_api_only_enabled()
+    api_only = component_api_only_enabled(component="semantic-virtualization")
     checks = _api_checks()
 
     component_dir = _component_dir(experiment_dir)

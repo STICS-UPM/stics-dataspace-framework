@@ -65,7 +65,7 @@ export const routes: Routes = [
   },
   {
     path: 'ai-model-observer',
-    data: {title: 'AI Model Observer', icon: 'desktop_windows'},
+    data: {title: 'AI Model Observer', icon: 'visibility'},
     canActivate: [AuthUserGuard],
     loadChildren: () => import('./pages/ai-model-observer/ai-model-observer.module').then(m => m.AiModelObserverModule)
   },

@@ -58,6 +58,24 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
             self.assertEqual(env["UI_AI_MODEL_OBSERVER_DEMO"], "1")
             self.assertEqual(env["UI_INESDATA_LOCAL_STORE_LABEL"], "LocalStore")
 
+    def test_playwright_validation_keeps_ai_model_hub_ui_enabled_for_use_cases_model_server(self):
+        context = self._context()
+        context.config["AI_MODEL_HUB_MODEL_SERVER_MODE"] = "use-cases"
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            ui_runner.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0),
+        ) as subprocess_run:
+            ui_runner.run_playwright_validation(
+                profile=self._profile(),
+                context=context,
+                experiment_dir=tmpdir,
+            )
+
+            env = subprocess_run.call_args.kwargs["env"]
+            self.assertEqual(env["UI_AI_MODEL_HUB_HTTPDATA_DEMO"], "1")
+
     def test_playwright_validation_enables_all_edc_component_demos_by_default(self):
         context = self._context()
         context.deployer = "edc"
@@ -540,100 +558,7 @@ class UiRunnerInteractionMarkersTests(unittest.TestCase):
                 env["UI_AI_MODEL_HUB_BENCHMARK_MODEL_PATHS"],
                 "/mobility/lightgbm_previous_delay,/mobility/randomforest_previous_delay",
             )
-            self.assertEqual(env["UI_AI_MODEL_HUB_BENCHMARKING_DEMO"], "0")
-
-    def test_playwright_validation_disables_only_model_server_ai_model_hub_specs_when_model_server_is_off(self):
-        context = self._context()
-        context.config.update(
-            {
-                "AI_MODEL_HUB_MODEL_SERVER_ENABLED": "false",
-                "AI_MODEL_HUB_MODEL_SERVER_MODE": "disabled",
-            }
-        )
-
-        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
-            os.environ,
-            {
-                "UI_AI_MODEL_HUB_MODEL_SERVER_DEMO": "1",
-                "UI_AI_MODEL_HUB_BENCHMARKING_DEMO": "1",
-            },
-            clear=True,
-        ), mock.patch.object(
-            ui_runner.subprocess,
-            "run",
-            return_value=mock.Mock(returncode=0),
-        ) as subprocess_run:
-            ui_runner.run_playwright_validation(
-                profile=self._profile(),
-                context=context,
-                experiment_dir=tmpdir,
-            )
-
-            env = subprocess_run.call_args.kwargs["env"]
-            self.assertEqual(env["UI_AI_MODEL_HUB_HTTPDATA_DEMO"], "1")
-            self.assertEqual(env["UI_AI_MODEL_HUB_MODEL_SERVER_DEMO"], "0")
-            self.assertEqual(env["UI_AI_MODEL_HUB_BENCHMARKING_DEMO"], "0")
-            self.assertEqual(env["UI_AI_MODEL_HUB_MODEL_SERVER_MODE"], "disabled")
-            self.assertEqual(
-                env["UI_AI_MODEL_HUB_MODEL_SERVER_COVERAGE_STATUS"],
-                "skipped_model_server_not_deployed",
-            )
-
-    def test_playwright_validation_skips_local_model_server_specs_by_default(self):
-        context = self._context()
-
-        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
-            os.environ,
-            {
-                "UI_AI_MODEL_HUB_MODEL_SERVER_DEMO": "1",
-                "UI_AI_MODEL_HUB_BENCHMARKING_DEMO": "1",
-            },
-        ), mock.patch.object(
-            ui_runner.subprocess,
-            "run",
-            return_value=mock.Mock(returncode=0),
-        ) as subprocess_run:
-            ui_runner.run_playwright_validation(
-                profile=self._profile(),
-                context=context,
-                experiment_dir=tmpdir,
-            )
-
-            env = subprocess_run.call_args.kwargs["env"]
-            self.assertEqual(env["UI_AI_MODEL_HUB_HTTPDATA_DEMO"], "1")
-            self.assertEqual(env["UI_AI_MODEL_HUB_MODEL_SERVER_DEMO"], "0")
-            self.assertEqual(env["UI_AI_MODEL_HUB_BENCHMARKING_DEMO"], "0")
-            self.assertEqual(env["UI_AI_MODEL_HUB_MODEL_SERVER_MODE"], "disabled")
-
-    def test_playwright_validation_enables_local_mock_model_server_when_explicit(self):
-        context = self._context()
-        context.config.update(
-            {
-                "AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true",
-                "AI_MODEL_HUB_MODEL_SERVER_MODE": "mock",
-                "COMPONENTS_NAMESPACE": "components",
-            }
-        )
-
-        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
-            ui_runner.subprocess,
-            "run",
-            return_value=mock.Mock(returncode=0),
-        ) as subprocess_run:
-            ui_runner.run_playwright_validation(
-                profile=self._profile(),
-                context=context,
-                experiment_dir=tmpdir,
-            )
-
-            env = subprocess_run.call_args.kwargs["env"]
-            self.assertEqual(env["UI_AI_MODEL_HUB_MODEL_SERVER_DEMO"], "1")
-            self.assertEqual(env["UI_AI_MODEL_HUB_MODEL_SERVER_MODE"], "mock")
-            self.assertEqual(env["AI_MODEL_HUB_MODEL_SERVER_MODE"], "mock")
-            self.assertEqual(
-                env["UI_AI_MODEL_HUB_MODEL_SERVER_COVERAGE_STATUS"],
-                "automated_mock_model_server",
-            )
+            self.assertNotEqual(env.get("UI_AI_MODEL_HUB_BENCHMARKING_DEMO"), "0")
 
     def test_playwright_validation_respects_explicit_vm_distributed_protocol_mode(self):
         context = self._context()

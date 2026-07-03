@@ -41,7 +41,6 @@ dependencies {
     }
     implementation(libs.edc.data.plane.kafka)
     implementation(libs.edc.data.plane.iam)
-    implementation(project(":extensions:extended-data-plane-public-api"))
 
     // Audit
     implementation(project(":extensions:audit-configuration"))

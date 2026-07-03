@@ -25,3 +25,17 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- printf "%s-secrets" (include "ontology-hub.fullname" .) -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "ontology-hub.elasticsearchPassword" -}}
+{{- $configured := .Values.elasticsearch.auth.password | default "" -}}
+{{- if $configured -}}
+{{- $configured -}}
+{{- else -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace (include "ontology-hub.secretName" .) -}}
+{{- if and $existing (hasKey $existing.data "ELASTIC_SEARCH_PASSWORD") -}}
+{{- index $existing.data "ELASTIC_SEARCH_PASSWORD" | b64dec -}}
+{{- else -}}
+{{- randAlphaNum 32 -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

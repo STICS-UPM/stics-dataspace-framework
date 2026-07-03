@@ -28,6 +28,10 @@ class Level6SuiteTaxonomyTests(unittest.TestCase):
                     {"audit_suite": "INESData integration", "audit_group": "AI Model Hub"},
                 )
         self.assertEqual(
+            classify_playwright_spec("adapters/inesdata/specs/17-ai-model-official-use-cases.spec.ts"),
+            {"audit_suite": "INESData integration", "audit_group": "AI Model Hub Official Use Cases"},
+        )
+        self.assertEqual(
             classify_playwright_spec("adapters/inesdata/specs/07-semantic-virtualization-httpdata.spec.ts"),
             {"audit_suite": "INESData integration", "audit_group": "Semantic Virtualization"},
         )
@@ -64,6 +68,10 @@ class Level6SuiteTaxonomyTests(unittest.TestCase):
                     classify_playwright_spec(spec),
                     {"audit_suite": "EDC integration", "audit_group": "AI Model Hub"},
                 )
+        self.assertEqual(
+            classify_playwright_spec("adapters/edc/specs/17-ai-model-official-use-cases.spec.ts"),
+            {"audit_suite": "EDC integration", "audit_group": "AI Model Hub Official Use Cases"},
+        )
         self.assertEqual(
             classify_playwright_spec("adapters/edc/specs/07-semantic-virtualization-httpdata.spec.ts"),
             {"audit_suite": "EDC integration", "audit_group": "Semantic Virtualization"},

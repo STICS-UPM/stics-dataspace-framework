@@ -4,7 +4,6 @@ import {
   bootstrapConsumerNegotiation,
   bootstrapConsumerTransfer,
   fetchConsumerCatalogResponse,
-  resolveConsumerTransferActiveTimeoutMs,
 } from "../../../shared/utils/provider-bootstrap";
 import { test, expect } from "../../../shared/fixtures/dataspace.fixture";
 import { EdcCatalogPage } from "../components/edc-catalog.page";
@@ -39,8 +38,6 @@ test("04 edc transfer: consumer starts a transfer and sees it in history", async
   captureStep,
   attachJson,
 }) => {
-  test.setTimeout(Math.max(240_000, resolveConsumerTransferActiveTimeoutMs(dataspaceRuntime) + 120_000));
-
   const suffix = `${Date.now()}`;
   const assetId = `qa-ui-edc-transfer-${suffix}`;
   const objectName = `playwright-edc-${suffix}.json`;

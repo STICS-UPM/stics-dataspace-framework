@@ -237,6 +237,16 @@ export class AiModelExecutionComponent implements OnInit {
     this.router.navigate(['/ai-model-browser']);
   }
 
+  changeModel(): void {
+    this.clearSelection();
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { assetId: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true
+    });
+  }
+
   openSelectedAssetObserverTimeline(): void {
     if (!this.selectedAsset?.id) {
       return;
@@ -299,7 +309,7 @@ export class AiModelExecutionComponent implements OnInit {
   }
 
   getSelectorLabel(asset: AiModelExecutionItem): string {
-    const detail = asset.algorithms[0] || asset.tasks[0] || 'ML Model';
+    const detail = asset.libraries[0] || asset.taskTypes[0] || asset.tasks[0] || 'ML Model';
     return `${asset.name} (${detail})`;
   }
 
@@ -320,8 +330,13 @@ export class AiModelExecutionComponent implements OnInit {
     return this.inputFields.length > 0;
   }
 
+  get hasDaimoInputSchema(): boolean {
+    return this.selectedAsset?.inputSchema !== undefined && this.selectedAsset?.inputSchema !== null;
+  }
+
   private clearSelection(): void {
     this.selectedAsset = undefined;
+    this.selectedAssetId = '';
     this.lastExecutionCorrelationId = '';
     this.inputFields = [];
     this.inputJson = '{}';

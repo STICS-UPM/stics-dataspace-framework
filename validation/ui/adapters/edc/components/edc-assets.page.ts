@@ -9,12 +9,9 @@ import {
 import { gotoEdcDashboardRoute } from "./edc-dashboard.page";
 
 export class EdcAssetsPage {
-  private managementPaginationRouteInstalled = false;
-
   constructor(private readonly page: Page) {}
 
   async goto(baseUrl: string): Promise<void> {
-    await this.installManagementPaginationRoute();
     await gotoEdcDashboardRoute(this.page, baseUrl, "assets", "Assets");
   }
 
@@ -25,7 +22,6 @@ export class EdcAssetsPage {
     await expect(this.createButton()).toBeVisible({
       timeout: 30_000,
     });
-    await this.preferLargestPageSize();
   }
 
   async createHttpAsset(assetId: string, sourceUrl: string): Promise<void> {
@@ -70,15 +66,9 @@ export class EdcAssetsPage {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       await this.filterById(assetId);
-      if (await this.scanRenderedPagesForAsset(assetId)) {
+      if ((await this.assetCard(assetId).count().catch(() => 0)) > 0) {
+        await expect(this.assetCard(assetId)).toBeVisible({ timeout: 15_000 });
         return;
-      }
-      const remainingMs = Math.max(timeoutMs - (Date.now() - startedAt), 1_000);
-      try {
-        await expect(this.assetCard(assetId)).toBeVisible({ timeout: Math.min(10_000, remainingMs) });
-        return;
-      } catch {
-        // The dashboard asset list is eventually consistent and paginated; reload and poll again.
       }
       await this.page.reload({ waitUntil: "domcontentloaded" });
       await this.expectReady();
@@ -95,136 +85,10 @@ export class EdcAssetsPage {
     }
     await fillMarked(filterInput, assetId);
     await waitForInputValue(filterInput, assetId);
-    await waitForUiTransition(this.page);
   }
 
   private assetCard(assetId: string) {
-    return this.page.locator("lib-asset-card, article").filter({ hasText: assetId }).first();
-  }
-
-  private assetText(assetId: string) {
-    return this.page.getByText(assetId).first();
-  }
-
-  private itemsPerPageSelect() {
-    return this.page.getByRole("combobox", { name: /^Items$/i }).first();
-  }
-
-  private nextPageButton() {
-    return this.page.getByRole("button", { name: /^»$/ }).first();
-  }
-
-  private currentPageLabel() {
-    return this.page.getByRole("button", { name: /^Page \d+ of \d+$/ }).first();
-  }
-
-  private async preferLargestPageSize(): Promise<void> {
-    const preferredSize = (process.env.UI_EDC_ASSETS_PAGE_SIZE || "100").trim();
-    if (!preferredSize) {
-      return;
-    }
-
-    const select = this.itemsPerPageSelect();
-    if (!(await select.isVisible().catch(() => false))) {
-      return;
-    }
-
-    const currentValue = await select.inputValue().catch(() => "");
-    if (currentValue === preferredSize) {
-      return;
-    }
-
-    await selectOptionMarked(select, { value: preferredSize }).catch(async () => {
-      await selectOptionMarked(select, { label: preferredSize }).catch(() => undefined);
-    });
-    await waitForUiTransition(this.page);
-  }
-
-  private async scanRenderedPagesForAsset(assetId: string): Promise<boolean> {
-    const visitedPages = new Set<string>();
-
-    while (true) {
-      if (
-        (await this.assetCard(assetId).isVisible().catch(() => false)) ||
-        (await this.assetText(assetId).isVisible().catch(() => false))
-      ) {
-        return true;
-      }
-
-      const pageLabel = (await this.currentPageLabel().textContent().catch(() => ""))?.trim() || "single-page";
-      if (visitedPages.has(pageLabel)) {
-        return false;
-      }
-      visitedPages.add(pageLabel);
-
-      const next = this.nextPageButton();
-      if (!(await next.isVisible().catch(() => false)) || await next.isDisabled().catch(() => true)) {
-        return false;
-      }
-
-      await clickMarked(next);
-      await waitForUiTransition(this.page);
-    }
-  }
-
-  private async installManagementPaginationRoute(): Promise<void> {
-    if (this.managementPaginationRouteInstalled) {
-      return;
-    }
-    this.managementPaginationRouteInstalled = true;
-
-    await this.page.route("**/management/v3/assets/request*", async (route) => {
-      const request = route.request();
-      if (request.method() !== "POST") {
-        await route.continue();
-        return;
-      }
-
-      const currentBody = this.parsePostBody(request.postData());
-      const body = {
-        "@context": currentBody["@context"] || { "@vocab": "https://w3id.org/edc/v0.0.1/ns/" },
-        ...currentBody,
-        offset: typeof currentBody["offset"] === "number" ? currentBody["offset"] : 0,
-        limit: Math.max(this.asNumber(currentBody["limit"]) || 0, 1000),
-        filterExpression: Array.isArray(currentBody["filterExpression"]) ? currentBody["filterExpression"] : [],
-      };
-
-      await route.continue({
-        postData: JSON.stringify(body),
-        headers: {
-          ...request.headers(),
-          "content-type": "application/json",
-          accept: request.headers()["accept"] || "application/json",
-        },
-      });
-    });
-  }
-
-  private parsePostBody(postData: string | null): Record<string, unknown> {
-    if (!postData) {
-      return {};
-    }
-    try {
-      const parsed = JSON.parse(postData);
-      return this.isRecord(parsed) ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
-
-  private asNumber(value: unknown): number | null {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-    if (typeof value === "string" && value.trim().length > 0) {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
-  }
-
-  private isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+    return this.page.locator("lib-asset-card").filter({ hasText: assetId }).first();
   }
 
   private createButton() {

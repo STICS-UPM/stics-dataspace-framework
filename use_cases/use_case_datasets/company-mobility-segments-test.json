@@ -1,0 +1,85 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "daimo": "https://w3id.org/pionera/daimo#",
+    "input": "daimo:input",
+    "label": "daimo:label",
+    "datasetVersion": "daimo:datasetVersion",
+    "protocol": "daimo:protocol",
+    "randomSeed": "daimo:randomSeed"
+  },
+  "@id": "company-mobility-segments-test",
+  "properties": {
+    "name": "Mobility Segments Test Dataset",
+    "version": "1.0.0",
+    "contenttype": "text/csv",
+    "assetType": "dataset",
+    "shortDescription": "Mobility benchmark validation dataset.",
+    "dct:description": "CSV validation dataset for Mobility benchmark models.",
+    "dcterms:description": "CSV validation dataset for Mobility benchmark models.",
+    "dcterms:format": "csv",
+    "dcat:keyword": [
+      "dataset",
+      "benchmark",
+      "validation",
+      "mobility",
+      "csv"
+    ],
+    "assetData": {
+      "JS_DAIMO_Dataset": {
+        "daimo:modality": [
+          "tabular"
+        ],
+        "daimo:taskType": "regression",
+        "daimo:taskCategory": "Tabular",
+        "daimo:subtask": "tabular-regression",
+        "daimo:subtaskDescription": "Public transport segment delay benchmark dataset",
+        "daimo:input": [
+          "trip_id",
+          "journey_id",
+          "from_stop_id",
+          "to_stop_id",
+          "departure_time",
+          "arrival_time",
+          "actual_travel_time",
+          "scheduled_travel_time",
+          "delay",
+          "shape_distance",
+          "route_id",
+          "direction_id",
+          "service_id",
+          "hour",
+          "weekday",
+          "is_peak",
+          "hour_sin",
+          "hour_cos",
+          "weekday_sin",
+          "weekday_cos",
+          "previous_delay",
+          "previous_delay_ratio"
+        ],
+        "daimo:label": "previous_delay_delta",
+        "daimo:labelType": "continuous",
+        "dct:license": "apache-2.0",
+        "dct:format": "csv",
+        "dcat:keyword": [
+          "benchmark",
+          "validation",
+          "mobility",
+          "public-transport",
+          "regression",
+          "csv"
+        ],
+        "daimo:datasetVersion": "1.0.0",
+        "daimo:datasetRole": "test",
+        "daimo:protocol": "holdout-test-set"
+      }
+    }
+  },
+  "dataAddress": {
+    "type": "InesDataStore"
+  }
+}

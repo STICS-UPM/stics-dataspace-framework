@@ -5,6 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="${WORK_DIR:-/tmp/inesdata_seed}"
 NAMESPACE="${NAMESPACE:-demo}"
 COMPONENTS_NAMESPACE="${COMPONENTS_NAMESPACE:-components}"
+COMMON_SERVICES_NAMESPACE="${COMMON_SERVICES_NAMESPACE:-common-srvs}"
+COMMON_KUBECONFIG="${COMMON_KUBECONFIG:-${AI_MODEL_HUB_COMMON_KUBECONFIG:-${K3S_KUBECONFIG_COMMON:-${KUBECONFIG:-}}}}"
+COMMON_POSTGRES_POD="${COMMON_POSTGRES_POD:-common-srvs-postgresql-0}"
 COUNT="${COUNT:-8}"
 CONNECTORS_CSV="${CONNECTORS_CSV:-conn-citycouncil-demo,conn-company-demo}"
 ADAPTER="${ADAPTER:-inesdata}"
@@ -14,25 +17,55 @@ CONNECTOR_K8S_NAMESPACES="${CONNECTOR_K8S_NAMESPACES:-}"
 CONNECTOR_KUBECONFIGS="${CONNECTOR_KUBECONFIGS:-}"
 CONNECTOR_PROTOCOL_URLS="${CONNECTOR_PROTOCOL_URLS:-}"
 DEPLOYER_CONFIG_FILE="${DEPLOYER_CONFIG_FILE:-$ROOT_DIR/deployers/inesdata/deployer.config}"
-VOCABULARY_ID="${VOCABULARY_ID:-JS_Pionera_Daimo}"
-VOCABULARY_NAME="${VOCABULARY_NAME:-JS Metadata Daimo}"
-VOCABULARY_CATEGORY="${VOCABULARY_CATEGORY:-machineLearning}"
-VOCABULARY_SCHEMA_FILE="${VOCABULARY_SCHEMA_FILE:-}"
+MODEL_VOCABULARY_ID="${MODEL_VOCABULARY_ID:-JS_DAIMO_Model}"
+MODEL_VOCABULARY_NAME="${MODEL_VOCABULARY_NAME:-DAIMO Model Metadata}"
+MODEL_VOCABULARY_CATEGORY="${MODEL_VOCABULARY_CATEGORY:-machineLearning}"
+MODEL_VOCABULARY_SCHEMA_FILE="${MODEL_VOCABULARY_SCHEMA_FILE:-}"
+DATASET_VOCABULARY_ID="${DATASET_VOCABULARY_ID:-JS_DAIMO_Dataset}"
+DATASET_VOCABULARY_NAME="${DATASET_VOCABULARY_NAME:-DAIMO Dataset Metadata}"
+DATASET_VOCABULARY_CATEGORY="${DATASET_VOCABULARY_CATEGORY:-dataset}"
+DATASET_VOCABULARY_SCHEMA_FILE="${DATASET_VOCABULARY_SCHEMA_FILE:-}"
+DAIMO_NS="https://w3id.org/pionera/daimo#"
+DCT_NS="http://purl.org/dc/terms/"
+DCAT_NS="http://www.w3.org/ns/dcat#"
 MODEL_FILE="$WORK_DIR/LGBM_Classifier_1.pkl"
 SEED_SCOPE="${SEED_SCOPE:-models}"
 USE_CASES_SOURCE_DIR="${USE_CASES_SOURCE_DIR:-${AI_MODEL_HUB_USE_CASE_MODEL_SERVER_SOURCE_DIR:-${AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR:-$ROOT_DIR/adapters/inesdata/sources/AIModelHub-Use-Cases}}}"
+USE_CASE_MODEL_ASSET_JSON_DIR="${USE_CASE_MODEL_ASSET_JSON_DIR:-$ROOT_DIR/use_cases/use_case_models}"
+USE_CASE_DATASET_ASSET_JSON_DIR="${USE_CASE_DATASET_ASSET_JSON_DIR:-$ROOT_DIR/use_cases/use_case_datasets}"
 MOBILITY_SEGMENTS_DATASET_FILE="${MOBILITY_SEGMENTS_DATASET_FILE:-$USE_CASES_SOURCE_DIR/data/mobility-datasets/segments_test.csv}"
-MOBILITY_SEGMENTS_DATASET_ID="${MOBILITY_SEGMENTS_DATASET_ID:-company-mobility-segments-test}"
+MOBILITY_ACTUAL_TRAVEL_TIME_DATASET_ID="${MOBILITY_ACTUAL_TRAVEL_TIME_DATASET_ID:-company-mobility-actual-travel-time-test}"
+MOBILITY_DELAY_DATASET_ID="${MOBILITY_DELAY_DATASET_ID:-company-mobility-delay-test}"
+MOBILITY_PREVIOUS_DELAY_DATASET_ID="${MOBILITY_PREVIOUS_DELAY_DATASET_ID:-company-mobility-previous-delay-test}"
+MOBILITY_BENCHMARK_SAMPLE_ROWS="${MOBILITY_BENCHMARK_SAMPLE_ROWS:-30}"
+MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME="${MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME:-segments_test_sample.csv}"
+MOBILITY_ACTUAL_TRAVEL_TIME_SAMPLE_DATASET_ID="${MOBILITY_ACTUAL_TRAVEL_TIME_SAMPLE_DATASET_ID:-company-mobility-actual-travel-time-sample-test}"
+MOBILITY_DELAY_SAMPLE_DATASET_ID="${MOBILITY_DELAY_SAMPLE_DATASET_ID:-company-mobility-delay-sample-test}"
+MOBILITY_PREVIOUS_DELAY_SAMPLE_DATASET_ID="${MOBILITY_PREVIOUS_DELAY_SAMPLE_DATASET_ID:-company-mobility-previous-delay-sample-test}"
+MOBILITY_SEGMENTS_DATASET_ID="${MOBILITY_SEGMENTS_DATASET_ID:-$MOBILITY_DELAY_DATASET_ID}"
+LEGACY_MOBILITY_SEGMENTS_DATASET_ID="${LEGACY_MOBILITY_SEGMENTS_DATASET_ID:-company-mobility-segments-test}"
 FLARES_5W1H_DATASET_FILE="${FLARES_5W1H_DATASET_FILE:-$USE_CASES_SOURCE_DIR/data/flares-datasets/5w1h_subtarea_1_test.json}"
 FLARES_5W1H_DATASET_ID="${FLARES_5W1H_DATASET_ID:-company-flares-5w1h-test}"
 FLARES_RELIABILITY_DATASET_FILE="${FLARES_RELIABILITY_DATASET_FILE:-$USE_CASES_SOURCE_DIR/data/flares-datasets/5w1h_subtarea_2_test.json}"
 FLARES_RELIABILITY_DATASET_ID="${FLARES_RELIABILITY_DATASET_ID:-company-flares-reliability-test}"
-USE_CASE_DATASET_IDS=("$MOBILITY_SEGMENTS_DATASET_ID" "$FLARES_5W1H_DATASET_ID" "$FLARES_RELIABILITY_DATASET_ID")
+USE_CASE_DATASET_IDS=(
+  "$MOBILITY_ACTUAL_TRAVEL_TIME_DATASET_ID"
+  "$MOBILITY_DELAY_DATASET_ID"
+  "$MOBILITY_PREVIOUS_DELAY_DATASET_ID"
+  "$MOBILITY_ACTUAL_TRAVEL_TIME_SAMPLE_DATASET_ID"
+  "$MOBILITY_DELAY_SAMPLE_DATASET_ID"
+  "$MOBILITY_PREVIOUS_DELAY_SAMPLE_DATASET_ID"
+  "$FLARES_5W1H_DATASET_ID"
+  "$FLARES_RELIABILITY_DATASET_ID"
+)
 STRICT_MODE="${STRICT_MODE:-0}"
 MODEL_SET="${MODEL_SET:-mock}"
 INCLUDE_USE_CASE_MODELS="${INCLUDE_USE_CASE_MODELS:-0}"
 SKIP_USE_CASE_MODELS="${SKIP_USE_CASE_MODELS:-0}"
 SKIP_INESDATA_MODELS="${SKIP_INESDATA_MODELS:-0}"
+INCLUDE_FLARES_METRIC_MODELS="${INCLUDE_FLARES_METRIC_MODELS:-${AI_MODEL_HUB_INCLUDE_FLARES_METRIC_MODELS:-0}}"
+USE_CASE_PUBLICATION_MODE="${USE_CASE_PUBLICATION_MODE:-${AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE:-split}}"
+CHECK_USE_CASE_MODEL_SERVER_CONTRACT="${CHECK_USE_CASE_MODEL_SERVER_CONTRACT:-${AI_MODEL_HUB_CHECK_USE_CASE_MODEL_SERVER_CONTRACT:-1}}"
 USE_CASE_MODEL_SERVER_BASE_URL="${USE_CASE_MODEL_SERVER_BASE_URL:-}"
 COMBINED_HTTP_COUNT="${COMBINED_HTTP_COUNT:-10}"
 COMBINED_INESDATA_COUNT="${COMBINED_INESDATA_COUNT:-$COUNT}"
@@ -40,6 +73,8 @@ NEGOTIATION_TIMEOUT_SECONDS="${NEGOTIATION_TIMEOUT_SECONDS:-${AI_MODEL_HUB_SEED_
 NEGOTIATION_POLL_INTERVAL_SECONDS="${NEGOTIATION_POLL_INTERVAL_SECONDS:-${AI_MODEL_HUB_SEED_NEGOTIATION_POLL_INTERVAL_SECONDS:-3}}"
 NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS="${NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS:-${AI_MODEL_HUB_SEED_NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS:-20}}"
 NEGOTIATION_PORT_FORWARD_DELAY_SECONDS="${NEGOTIATION_PORT_FORWARD_DELAY_SECONDS:-${AI_MODEL_HUB_SEED_NEGOTIATION_PORT_FORWARD_DELAY_SECONDS:-3}}"
+RECONCILE_DATASET_STORAGE="${RECONCILE_DATASET_STORAGE:-${AI_MODEL_HUB_RECONCILE_DATASET_STORAGE:-1}}"
+DATASET_STORAGE_REGION="${DATASET_STORAGE_REGION:-${AI_MODEL_HUB_DATASET_STORAGE_REGION:-eu-central-1}}"
 
 usage() {
   cat <<'EOF'
@@ -48,6 +83,9 @@ Usage: seed_ml_assets_for_connectors.sh [options]
 Options:
   --namespace <ns>            Dataspace namespace/name used by legacy seed defaults (default: demo)
   --components-namespace <ns> Namespace where component fixtures run, including model-server (default: components)
+  --common-services-namespace <ns>
+                              Namespace where PostgreSQL is deployed (default: common-srvs)
+  --common-kubeconfig <path>  Kubeconfig for common services in vm-distributed
   --adapter <name>            Dataspace adapter API mode: inesdata or edc (default: inesdata)
   --count <n>                 Number of InesDataStore assets per connector (default: 8)
   --connectors <csv>          Connectors list (default: conn-citycouncil-demo,conn-company-demo)
@@ -59,15 +97,34 @@ Options:
                               CSV map connector=kubeconfig for vm-distributed port-forwards
   --connector-protocol-urls <map>
                               CSV map connector=protocol-url for cross-connector negotiations
-  --vocabulary-id <id>        Vocabulary ID used in assetData (default: JS_Pionera_Daimo)
-  --vocabulary-name <name>    Vocabulary display name (default: JS Metadata Daimo)
-  --vocabulary-category <cat> Vocabulary category (default: machineLearning)
-  --vocabulary-schema <path>  JSON schema file. Default auto-detect from project root
-  --seed-scope <scope>        What to seed: models, datasets or all (default: models)
+  --model-vocabulary-id <id>  Model vocabulary ID used in assetData (default: JS_DAIMO_Model)
+  --model-vocabulary-name <n> Model vocabulary display name
+  --model-vocabulary-category <cat>
+                              Model vocabulary category (default: machineLearning)
+  --model-vocabulary-schema <path>
+                              Model JSON schema file. Default auto-detects daimo_model.schema.json
+  --dataset-vocabulary-id <id>
+                              Dataset vocabulary ID used in assetData (default: JS_DAIMO_Dataset)
+  --dataset-vocabulary-name <n>
+                              Dataset vocabulary display name
+  --dataset-vocabulary-category <cat>
+                              Dataset vocabulary category (default: dataset)
+  --dataset-vocabulary-schema <path>
+                              Dataset JSON schema file. Default auto-detects daimo_dataset.schema.json
+  --vocabulary-id/name/category/schema
+                              Legacy aliases applied to both DAIMO vocabularies
+  --seed-scope <scope>        What to seed: vocabularies, models, datasets or all (default: models)
   --model-set <mode>          mock, use-cases or combined (default: mock)
   --include-use-case-models   Also seed FLARES/Mobility HttpData assets
   --skip-use-case-models      Skip FLARES/Mobility HttpData assets in use-cases/combined modes
   --skip-inesdata-models      Skip stored InesDataStore model placeholder assets
+  --include-flares-metric-models
+                              Also seed FLARES /metrics endpoints as separate model assets
+  --skip-use-case-model-server-contract-check
+                              Do not verify expected use-case routes before Step 10 seeding
+  --use-case-publication-mode <mode>
+                              How to place use-case models: mirrored, split or provider-only
+                              (default: split, matching AIModelHub)
   --use-case-model-server-base-url <url>
                               Base URL for the real use-case model server
   --combined-http-count <n>   Mock HttpData assets kept in combined mode (default: 10)
@@ -81,12 +138,14 @@ Options:
                               Max seconds for each negotiation state request (default: 20)
   --negotiation-port-forward-delay-seconds <n>
                               Seconds to wait after opening each negotiation port-forward (default: 3)
+  --skip-dataset-storage-reconcile
+                              Skip post-Step 9 reconciliation of official uploaded benchmark datasets
   --strict                    Fail if any connector fails (default: disabled)
   -h, --help                  Show this help
 
 Notes:
   - Connector passwords are always read from credentials files at runtime.
-  - The vocabulary is created/updated first in each connector.
+  - The DAIMO model and dataset vocabularies are created/updated first in each connector.
   - INESData file assets use Management API upload-chunk + finalize-upload.
   - EDC mode only creates standard EDC HttpData assets and policies/contracts.
 EOF
@@ -100,6 +159,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --components-namespace)
       COMPONENTS_NAMESPACE="${2:-}"
+      shift 2
+      ;;
+    --common-services-namespace)
+      COMMON_SERVICES_NAMESPACE="${2:-}"
+      shift 2
+      ;;
+    --common-kubeconfig)
+      COMMON_KUBECONFIG="${2:-}"
       shift 2
       ;;
     --adapter)
@@ -134,20 +201,56 @@ while [[ $# -gt 0 ]]; do
       CONNECTOR_PROTOCOL_URLS="${2:-}"
       shift 2
       ;;
+    --model-vocabulary-id)
+      MODEL_VOCABULARY_ID="${2:-}"
+      shift 2
+      ;;
+    --model-vocabulary-name)
+      MODEL_VOCABULARY_NAME="${2:-}"
+      shift 2
+      ;;
+    --model-vocabulary-category)
+      MODEL_VOCABULARY_CATEGORY="${2:-}"
+      shift 2
+      ;;
+    --model-vocabulary-schema)
+      MODEL_VOCABULARY_SCHEMA_FILE="${2:-}"
+      shift 2
+      ;;
+    --dataset-vocabulary-id)
+      DATASET_VOCABULARY_ID="${2:-}"
+      shift 2
+      ;;
+    --dataset-vocabulary-name)
+      DATASET_VOCABULARY_NAME="${2:-}"
+      shift 2
+      ;;
+    --dataset-vocabulary-category)
+      DATASET_VOCABULARY_CATEGORY="${2:-}"
+      shift 2
+      ;;
+    --dataset-vocabulary-schema)
+      DATASET_VOCABULARY_SCHEMA_FILE="${2:-}"
+      shift 2
+      ;;
     --vocabulary-id)
-      VOCABULARY_ID="${2:-}"
+      MODEL_VOCABULARY_ID="${2:-}"
+      DATASET_VOCABULARY_ID="${2:-}"
       shift 2
       ;;
     --vocabulary-name)
-      VOCABULARY_NAME="${2:-}"
+      MODEL_VOCABULARY_NAME="${2:-}"
+      DATASET_VOCABULARY_NAME="${2:-}"
       shift 2
       ;;
     --vocabulary-category)
-      VOCABULARY_CATEGORY="${2:-}"
+      MODEL_VOCABULARY_CATEGORY="${2:-}"
+      DATASET_VOCABULARY_CATEGORY="${2:-}"
       shift 2
       ;;
     --vocabulary-schema)
-      VOCABULARY_SCHEMA_FILE="${2:-}"
+      MODEL_VOCABULARY_SCHEMA_FILE="${2:-}"
+      DATASET_VOCABULARY_SCHEMA_FILE="${2:-}"
       shift 2
       ;;
     --seed-scope)
@@ -169,6 +272,18 @@ while [[ $# -gt 0 ]]; do
     --skip-inesdata-models)
       SKIP_INESDATA_MODELS=1
       shift
+      ;;
+    --include-flares-metric-models)
+      INCLUDE_FLARES_METRIC_MODELS=1
+      shift
+      ;;
+    --skip-use-case-model-server-contract-check)
+      CHECK_USE_CASE_MODEL_SERVER_CONTRACT=0
+      shift
+      ;;
+    --use-case-publication-mode)
+      USE_CASE_PUBLICATION_MODE="${2:-}"
+      shift 2
       ;;
     --use-case-model-server-base-url)
       USE_CASE_MODEL_SERVER_BASE_URL="${2:-}"
@@ -197,6 +312,10 @@ while [[ $# -gt 0 ]]; do
     --negotiation-port-forward-delay-seconds)
       NEGOTIATION_PORT_FORWARD_DELAY_SECONDS="${2:-}"
       shift 2
+      ;;
+    --skip-dataset-storage-reconcile)
+      RECONCILE_DATASET_STORAGE=0
+      shift
       ;;
     --strict)
       STRICT_MODE=1
@@ -231,12 +350,26 @@ positive_integer_or_default() {
   fi
 }
 
+expand_home_path() {
+  local value="$1"
+  case "$value" in
+    "~") printf '%s' "$HOME" ;;
+    "~/"*) printf '%s/%s' "$HOME" "${value#~/}" ;;
+    *) printf '%s' "$value" ;;
+  esac
+}
+
+if [[ -n "$COMMON_KUBECONFIG" ]]; then
+  COMMON_KUBECONFIG="$(expand_home_path "$COMMON_KUBECONFIG")"
+fi
+
 NEGOTIATION_TIMEOUT_SECONDS="$(positive_integer_or_default "$NEGOTIATION_TIMEOUT_SECONDS" 180)"
 NEGOTIATION_POLL_INTERVAL_SECONDS="$(positive_integer_or_default "$NEGOTIATION_POLL_INTERVAL_SECONDS" 3)"
 NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS="$(positive_integer_or_default "$NEGOTIATION_STATE_REQUEST_TIMEOUT_SECONDS" 20)"
 NEGOTIATION_PORT_FORWARD_DELAY_SECONDS="$(positive_integer_or_default "$NEGOTIATION_PORT_FORWARD_DELAY_SECONDS" 3)"
 
 MODEL_SET="$(echo "$MODEL_SET" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+USE_CASE_PUBLICATION_MODE="$(echo "$USE_CASE_PUBLICATION_MODE" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
 ADAPTER="$(echo "$ADAPTER" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
 case "$ADAPTER" in
   ""|"inesdata") ADAPTER="inesdata" ;;
@@ -257,51 +390,63 @@ if [[ "$MODEL_SET" != "mock" && "$MODEL_SET" != "use-cases" && "$MODEL_SET" != "
   echo "Invalid --model-set value: $MODEL_SET. Expected mock, use-cases or combined." >&2
   exit 1
 fi
+case "$USE_CASE_PUBLICATION_MODE" in
+  ""|"mirror") USE_CASE_PUBLICATION_MODE="mirrored" ;;
+  "owner-split"|"participant-split") USE_CASE_PUBLICATION_MODE="split" ;;
+  "provider") USE_CASE_PUBLICATION_MODE="provider-only" ;;
+esac
+if [[ "$USE_CASE_PUBLICATION_MODE" != "mirrored" && "$USE_CASE_PUBLICATION_MODE" != "split" && "$USE_CASE_PUBLICATION_MODE" != "provider-only" ]]; then
+  echo "Invalid --use-case-publication-mode value: $USE_CASE_PUBLICATION_MODE. Expected mirrored, split or provider-only." >&2
+  exit 1
+fi
 if [[ "$INCLUDE_USE_CASE_MODELS" == "1" && "$MODEL_SET" == "mock" ]]; then
   MODEL_SET="use-cases"
 fi
+if [[ "$MODEL_SET" == "use-cases" || "$MODEL_SET" == "combined" ]]; then
+  # The minimal AIModelHub Step 10 registers FLARES metric endpoints together
+  # with FLARES/Mobility prediction endpoints.
+  INCLUDE_FLARES_METRIC_MODELS=1
+fi
 SEED_SCOPE="$(echo "$SEED_SCOPE" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
 case "$SEED_SCOPE" in
-  models|datasets|all) ;;
+  vocabularies|models|datasets|all) ;;
   *)
-    echo "Invalid --seed-scope value: $SEED_SCOPE. Expected models, datasets or all." >&2
+    echo "Invalid --seed-scope value: $SEED_SCOPE. Expected vocabularies, models, datasets or all." >&2
     exit 1
     ;;
 esac
-if ! [[ "$COMBINED_HTTP_COUNT" =~ ^[0-9]+$ ]] || [[ "$COMBINED_HTTP_COUNT" -lt 1 ]]; then
-  echo "Invalid --combined-http-count value: $COMBINED_HTTP_COUNT" >&2
-  exit 1
-fi
-if ! [[ "$COMBINED_INESDATA_COUNT" =~ ^[0-9]+$ ]] || [[ "$COMBINED_INESDATA_COUNT" -lt 1 ]]; then
-  echo "Invalid --combined-inesdata-count value: $COMBINED_INESDATA_COUNT" >&2
-  exit 1
+if [[ "$SEED_SCOPE" == "models" || "$SEED_SCOPE" == "all" ]]; then
+  if ! [[ "$COMBINED_HTTP_COUNT" =~ ^[0-9]+$ ]]; then
+    echo "Invalid --combined-http-count value: $COMBINED_HTTP_COUNT" >&2
+    exit 1
+  fi
+  if ! [[ "$COMBINED_INESDATA_COUNT" =~ ^[0-9]+$ ]]; then
+    echo "Invalid --combined-inesdata-count value: $COMBINED_INESDATA_COUNT" >&2
+    exit 1
+  fi
 fi
 
-resolve_vocabulary_schema_file() {
-  if [[ -n "$VOCABULARY_SCHEMA_FILE" ]]; then
-    if [[ -f "$VOCABULARY_SCHEMA_FILE" ]]; then
+resolve_schema_file() {
+  local target_var="$1"
+  shift
+  local configured="${!target_var}"
+  if [[ -n "$configured" ]]; then
+    if [[ -f "$configured" ]]; then
       return 0
     fi
-    echo "Vocabulary schema file not found: $VOCABULARY_SCHEMA_FILE" >&2
+    echo "Vocabulary schema file not found: $configured" >&2
     return 1
   fi
 
-  local candidates=(
-    "$ROOT_DIR/JS_Metada_Daimo.schema.json"
-    "$ROOT_DIR/JS_Metadata_Daimo.schema.json"
-    "$ROOT_DIR/JS_Metadata_Daimo.schema.JSON"
-  )
-
   local candidate
-  for candidate in "${candidates[@]}"; do
+  for candidate in "$@"; do
     if [[ -f "$candidate" ]]; then
-      VOCABULARY_SCHEMA_FILE="$candidate"
+      printf -v "$target_var" '%s' "$candidate"
       return 0
     fi
   done
 
-  echo "Could not find vocabulary schema file in project root." >&2
-  echo "Expected one of: JS_Metada_Daimo.schema.json or JS_Metadata_Daimo.schema.json" >&2
+  echo "Could not find vocabulary schema file for $target_var." >&2
   return 1
 }
 
@@ -326,13 +471,30 @@ if [[ -z "$KEYCLOAK_TOKEN_URL" ]]; then
   KEYCLOAK_TOKEN_URL="$kc_base/realms/$NAMESPACE/protocol/openid-connect/token"
 fi
 
-if ! resolve_vocabulary_schema_file; then
+if ! resolve_schema_file MODEL_VOCABULARY_SCHEMA_FILE \
+  "$ROOT_DIR/daimo_model.schema.json" \
+  "$ROOT_DIR/adapters/inesdata/sources/AIModelHub/daimo_model.schema.json" \
+  "$ROOT_DIR/JS_Metada_Daimo.schema.json" \
+  "$ROOT_DIR/JS_Metadata_Daimo.schema.json" \
+  "$ROOT_DIR/JS_Metadata_Daimo.schema.JSON"; then
   exit 1
 fi
 
-echo "Using vocabulary schema: $VOCABULARY_SCHEMA_FILE"
-echo "Using vocabulary id: $VOCABULARY_ID"
+if ! resolve_schema_file DATASET_VOCABULARY_SCHEMA_FILE \
+  "$ROOT_DIR/daimo_dataset.schema.json" \
+  "$ROOT_DIR/adapters/inesdata/sources/AIModelHub/daimo_dataset.schema.json" \
+  "$ROOT_DIR/JS_Metada_Daimo.schema.json" \
+  "$ROOT_DIR/JS_Metadata_Daimo.schema.json" \
+  "$ROOT_DIR/JS_Metadata_Daimo.schema.JSON"; then
+  exit 1
+fi
+
+echo "Using model vocabulary schema: $MODEL_VOCABULARY_SCHEMA_FILE"
+echo "Using model vocabulary id: $MODEL_VOCABULARY_ID"
+echo "Using dataset vocabulary schema: $DATASET_VOCABULARY_SCHEMA_FILE"
+echo "Using dataset vocabulary id: $DATASET_VOCABULARY_ID"
 echo "Using seed scope: $SEED_SCOPE"
+echo "Using use-case publication mode: $USE_CASE_PUBLICATION_MODE"
 
 printf 'placeholder-model-bytes-%s\n' "$(date -u +%s)" > "$MODEL_FILE"
 
@@ -369,6 +531,200 @@ s.close()' 2>/dev/null || printf '%s\n' "19193"
 schema_as_json_string() {
   local schema_file="$1"
   tr -d '\n' < "$schema_file" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+upsert_v3_asset() {
+  local connector="$1"
+  local asset_id="$2"
+  local json_file="$3"
+  local token="$4"
+  local mgmt_url="$5"
+  local asset_label="$6"
+  local out_file="$WORK_DIR/${connector}_${asset_id}.create.out"
+  local update_out_file="$WORK_DIR/${connector}_${asset_id}.update.out"
+  local code update_code
+
+  code="$(curl -s --max-time 30 -o "$out_file" -w '%{http_code}' \
+    -X POST "$mgmt_url/v3/assets" \
+    -H "Authorization: Bearer $token" \
+    -H 'Content-Type: application/json' \
+    --data-binary "@$json_file")" || true
+
+  if [[ "$code" == "200" || "$code" == "204" ]]; then
+    echo "[$connector] ${asset_label} asset $asset_id created (HTTP $code)"
+    return 0
+  fi
+
+  if [[ "$code" == "409" ]]; then
+    update_code="$(curl -s --max-time 30 -o "$update_out_file" -w '%{http_code}' \
+      -X PUT "$mgmt_url/v3/assets" \
+      -H "Authorization: Bearer $token" \
+      -H 'Content-Type: application/json' \
+      --data-binary "@$json_file")" || true
+
+    if [[ "$update_code" == "200" || "$update_code" == "204" ]]; then
+      echo "[$connector] ${asset_label} asset $asset_id updated (HTTP $update_code)"
+      return 0
+    fi
+
+    echo "[$connector] ${asset_label} asset $asset_id update FAILED (HTTP ${update_code:-NA})" >&2
+    cat "$update_out_file" >&2 2>/dev/null || true
+    return 1
+  fi
+
+  echo "[$connector] ${asset_label} asset $asset_id FAILED (HTTP ${code:-NA})" >&2
+  cat "$out_file" >&2 2>/dev/null || true
+  return 1
+}
+
+delete_v3_asset_if_exists() {
+  local connector="$1"
+  local asset_id="$2"
+  local token="$3"
+  local mgmt_url="$4"
+  local asset_label="$5"
+  local out_file="$WORK_DIR/${connector}_${asset_id}.delete.out"
+  local code
+
+  code="$(curl -s --max-time 30 -o "$out_file" -w '%{http_code}' \
+    -X DELETE "$mgmt_url/v3/assets/$asset_id" \
+    -H "Authorization: Bearer $token")" || true
+
+  if [[ "$code" == "200" || "$code" == "204" ]]; then
+    echo "[$connector] ${asset_label} asset $asset_id deleted before reload (HTTP $code)"
+    return 0
+  fi
+
+  if [[ "$code" == "404" ]]; then
+    return 0
+  fi
+
+  if [[ "$code" == "409" ]]; then
+    echo "[$connector] ${asset_label} asset $asset_id cannot be deleted because it is already referenced; keeping existing asset to avoid duplicates" >&2
+    return 2
+  fi
+
+  echo "[$connector] ${asset_label} asset $asset_id delete FAILED (HTTP ${code:-NA})" >&2
+  cat "$out_file" >&2 2>/dev/null || true
+  return 1
+}
+
+delete_v3_resource_if_exists() {
+  local connector="$1"
+  local resource_path="$2"
+  local resource_id="$3"
+  local token="$4"
+  local mgmt_url="$5"
+  local resource_label="$6"
+  local out_file="$WORK_DIR/${connector}_${resource_id}.delete.out"
+  local code
+
+  code="$(curl -s --max-time 30 -o "$out_file" -w '%{http_code}' \
+    -X DELETE "$mgmt_url/$resource_path/$resource_id" \
+    -H "Authorization: Bearer $token")" || true
+
+  if [[ "$code" == "200" || "$code" == "204" ]]; then
+    echo "[$connector] ${resource_label} $resource_id deleted (HTTP $code)"
+    return 0
+  fi
+
+  if [[ "$code" == "404" ]]; then
+    return 0
+  fi
+
+  echo "[$connector] ${resource_label} $resource_id delete skipped/failed (HTTP ${code:-NA})" >&2
+  cat "$out_file" >&2 2>/dev/null || true
+  return 1
+}
+
+retire_legacy_mobility_segments_dataset_asset() {
+  local connector="$1" token="$2" mgmt_url="$3"
+  local legacy_id="$LEGACY_MOBILITY_SEGMENTS_DATASET_ID"
+
+  if [[ -z "$legacy_id" || "$legacy_id" == "$MOBILITY_ACTUAL_TRAVEL_TIME_DATASET_ID" || "$legacy_id" == "$MOBILITY_DELAY_DATASET_ID" || "$legacy_id" == "$MOBILITY_PREVIOUS_DELAY_DATASET_ID" ]]; then
+    return 0
+  fi
+
+  delete_v3_resource_if_exists "$connector" "v3/contractdefinitions" "contract-seed-${legacy_id}" "$token" "$mgmt_url" "legacy Mobility dataset contract" || true
+  delete_v3_resource_if_exists "$connector" "v3/policydefinitions" "policy-seed-${legacy_id}" "$token" "$mgmt_url" "legacy Mobility dataset policy" || true
+  delete_v3_asset_if_exists "$connector" "$legacy_id" "$token" "$mgmt_url" "legacy Mobility dataset" || true
+}
+
+input_schema_fields_json_from_features_json() {
+  local features_json="$1"
+  python3 - "$features_json" <<'PY'
+import json
+import sys
+
+features = json.loads(sys.argv[1])
+fields = []
+properties = {}
+required = []
+for feature in features:
+    if not isinstance(feature, dict) or not feature.get("name"):
+        continue
+    name = str(feature["name"])
+    field_type = str(feature.get("type") or "string")
+    field = {
+        "name": name,
+        "type": field_type,
+        "nullable": bool(feature.get("nullable", False)),
+    }
+    if feature.get("description") not in (None, ""):
+        field["description"] = str(feature["description"])
+    if feature.get("minValue") not in (None, ""):
+        field["minValue"] = feature["minValue"]
+    if feature.get("maxValue") not in (None, ""):
+        field["maxValue"] = feature["maxValue"]
+    fields.append(field)
+
+    property_schema = {"type": field_type}
+    if feature.get("description") not in (None, ""):
+        property_schema["description"] = str(feature["description"])
+    if feature.get("minValue") not in (None, ""):
+        property_schema["minimum"] = feature["minValue"]
+    if feature.get("maxValue") not in (None, ""):
+        property_schema["maximum"] = feature["maxValue"]
+    properties[name] = property_schema
+    if not bool(feature.get("nullable", False)):
+        required.append(name)
+
+json_schema = {
+    "type": "object",
+    "properties": properties,
+}
+if required:
+    json_schema["required"] = required
+
+print(json.dumps({
+    "fields": fields,
+    "jsonSchema": json.dumps(json_schema, indent=2),
+}, separators=(",", ":")))
+PY
+}
+
+write_use_case_asset_json_from_fixture() {
+  local fixture_file="$1"
+  local output_file="$2"
+  local model_base_url="${3:-}"
+  local endpoint="${4:-}"
+
+  python3 - "$fixture_file" "$output_file" "$model_base_url" "$endpoint" <<'PY'
+import json
+import sys
+
+fixture_file, output_file, model_base_url, endpoint = sys.argv[1:5]
+with open(fixture_file, encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+if model_base_url and endpoint:
+    data_address = payload.setdefault("dataAddress", {})
+    data_address["baseUrl"] = model_base_url.rstrip("/") + endpoint
+
+with open(output_file, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+PY
 }
 
 get_json_value() {
@@ -466,28 +822,32 @@ ensure_vocabulary() {
   local token="$2"
   local mgmt_url="$3"
   local vocab_base="$4"
+  local vocabulary_id="$5"
+  local vocabulary_name="$6"
+  local vocabulary_category="$7"
+  local vocabulary_schema_file="$8"
   local schema_str payload_file create_out update_out get_out get_code post_code put_code
 
-  schema_str="$(schema_as_json_string "$VOCABULARY_SCHEMA_FILE")"
-  payload_file="$WORK_DIR/vocabulary_${connector}.json"
+  schema_str="$(schema_as_json_string "$vocabulary_schema_file")"
+  payload_file="$WORK_DIR/vocabulary_${connector}_${vocabulary_id}.json"
 
   cat > "$payload_file" <<EOF
 {
   "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
-  "@id": "$VOCABULARY_ID",
-  "name": "$VOCABULARY_NAME",
+  "@id": "$vocabulary_id",
+  "name": "$vocabulary_name",
   "connectorId": "$connector",
-  "category": "$VOCABULARY_CATEGORY",
+  "category": "$vocabulary_category",
   "jsonSchema": "$schema_str"
 }
 EOF
 
-  get_out="$WORK_DIR/vocabulary_${connector}.get.out"
-  create_out="$WORK_DIR/vocabulary_${connector}.create.out"
-  update_out="$WORK_DIR/vocabulary_${connector}.update.out"
+  get_out="$WORK_DIR/vocabulary_${connector}_${vocabulary_id}.get.out"
+  create_out="$WORK_DIR/vocabulary_${connector}_${vocabulary_id}.create.out"
+  update_out="$WORK_DIR/vocabulary_${connector}_${vocabulary_id}.update.out"
 
   get_code="$(curl -s -o "$get_out" -w '%{http_code}' \
-    "$mgmt_url/$vocab_base/$VOCABULARY_ID" \
+    "$mgmt_url/$vocab_base/$vocabulary_id" \
     -H "Authorization: Bearer $token")"
 
   if [[ "$get_code" == "200" ]]; then
@@ -497,12 +857,15 @@ EOF
       -H 'Content-Type: application/json' \
       --data-binary "@$payload_file")"
     if [[ "$put_code" == "204" || "$put_code" == "200" ]]; then
-      echo "[$connector] vocabulary '$VOCABULARY_ID' updated"
+      echo "[$connector] vocabulary '$vocabulary_id' updated"
       return 0
     fi
-    echo "[$connector] failed to update vocabulary '$VOCABULARY_ID' (HTTP $put_code)" >&2
-    cat "$update_out" >&2 || true
-    return 1
+    if [[ "$put_code" != "404" ]]; then
+      echo "[$connector] failed to update vocabulary '$vocabulary_id' (HTTP $put_code)" >&2
+      cat "$update_out" >&2 || true
+      return 1
+    fi
+    echo "[$connector] vocabulary '$vocabulary_id' update returned 404; creating it"
   fi
 
   post_code="$(curl -s -o "$create_out" -w '%{http_code}' \
@@ -512,7 +875,7 @@ EOF
     --data-binary "@$payload_file")"
 
   if [[ "$post_code" == "200" ]]; then
-    echo "[$connector] vocabulary '$VOCABULARY_ID' created"
+    echo "[$connector] vocabulary '$vocabulary_id' created"
     return 0
   fi
 
@@ -523,7 +886,7 @@ EOF
       -H 'Content-Type: application/json' \
       --data-binary "@$payload_file")"
     if [[ "$put_code" == "204" || "$put_code" == "200" ]]; then
-      echo "[$connector] vocabulary '$VOCABULARY_ID' updated after conflict"
+      echo "[$connector] vocabulary '$vocabulary_id' updated after conflict"
       return 0
     fi
     echo "[$connector] vocabulary conflict but update failed (HTTP $put_code)" >&2
@@ -531,9 +894,26 @@ EOF
     return 1
   fi
 
-  echo "[$connector] failed to create vocabulary '$VOCABULARY_ID' (HTTP $post_code)" >&2
+  echo "[$connector] failed to create vocabulary '$vocabulary_id' (HTTP $post_code)" >&2
   cat "$create_out" >&2 || true
   return 1
+}
+
+ensure_daimo_vocabularies() {
+  local connector="$1"
+  local token="$2"
+  local mgmt_url="$3"
+  local vocab_base="$4"
+
+  ensure_vocabulary \
+    "$connector" "$token" "$mgmt_url" "$vocab_base" \
+    "$MODEL_VOCABULARY_ID" "$MODEL_VOCABULARY_NAME" \
+    "$MODEL_VOCABULARY_CATEGORY" "$MODEL_VOCABULARY_SCHEMA_FILE" || return 1
+
+  ensure_vocabulary \
+    "$connector" "$token" "$mgmt_url" "$vocab_base" \
+    "$DATASET_VOCABULARY_ID" "$DATASET_VOCABULARY_NAME" \
+    "$DATASET_VOCABULARY_CATEGORY" "$DATASET_VOCABULARY_SCHEMA_FILE" || return 1
 }
 
 # =============================================================================
@@ -608,6 +988,60 @@ GROUP_ALGORITHMS=("Convolutional Neural Network" "Transformer" "Linear Regressio
 GROUP_FRAMEWORKS=("TensorFlow" "Custom" "scikit-learn" "scikit-learn" "XGBoost")
 GROUP_LIBRARIES=("Keras" "Transformers" "scikit-learn" "scikit-learn" "XGBoost")
 
+USE_CASE_MODEL_SLUGS=(
+  flares-5w1h-albert
+  flares-reliability-albert
+  flares-5w1h-bert
+  flares-reliability-bert
+  flares-5w1h-distilbert
+  flares-reliability-distilbert
+  mobility-lightgbm-actual-travel-time
+  mobility-randomforest-actual-travel-time
+  mobility-catboost-actual-travel-time
+  mobility-lightgbm-delay
+  mobility-randomforest-delay
+  mobility-catboost-delay
+  mobility-lightgbm-previous-delay
+  mobility-randomforest-previous-delay
+  mobility-catboost-previous-delay
+)
+
+USE_CASE_MODEL_TITLES=(
+  "FLARES 5W1H ALBERT"
+  "FLARES Reliability ALBERT"
+  "FLARES 5W1H BERT"
+  "FLARES Reliability BERT"
+  "FLARES 5W1H DistilBERT"
+  "FLARES Reliability DistilBERT"
+  "Mobility LightGBM Actual Travel Time"
+  "Mobility Random Forest Actual Travel Time"
+  "Mobility CatBoost Actual Travel Time"
+  "Mobility LightGBM Delay"
+  "Mobility Random Forest Delay"
+  "Mobility CatBoost Delay"
+  "Mobility LightGBM Previous Delay"
+  "Mobility Random Forest Previous Delay"
+  "Mobility CatBoost Previous Delay"
+)
+
+USE_CASE_MODEL_ENDPOINTS=(
+  /flares/dccuchile-albert-base-spanish-5w1h
+  /flares/dccuchile-albert-base-spanish-reliability
+  /flares/dccuchile-bert-base-spanish-wwm-uncased-5w1h
+  /flares/dccuchile-bert-base-spanish-wwm-uncased-reliability
+  /flares/dccuchile-distilbert-base-spanish-uncased-5w1h
+  /flares/dccuchile-distilbert-base-spanish-uncased-reliability
+  /mobility/lightgbm_actual_travel_time
+  /mobility/randomforest_actual_travel_time
+  /mobility/catboost_actual_travel_time
+  /mobility/lightgbm_delay
+  /mobility/randomforest_delay
+  /mobility/catboost_delay
+  /mobility/lightgbm_previous_delay
+  /mobility/randomforest_previous_delay
+  /mobility/catboost_previous_delay
+)
+
 FLARES_METRIC_MODEL_SLUGS=(
   flares-5w1h-albert-metrics
   flares-reliability-albert-metrics
@@ -644,6 +1078,165 @@ FLARES_METRIC_MODEL_DESCRIPTIONS=(
   "Computes FLARES reliability classification metrics from native validation rows"
 )
 
+USE_CASE_MODEL_DESCRIPTIONS=(
+  "Extracts 5W1H spans from Spanish text using a fine-tuned ALBERT token classifier"
+  "Classifies reliability for extracted FLARES spans using a fine-tuned ALBERT sequence classifier"
+  "Extracts 5W1H spans from Spanish text using a fine-tuned BERT token classifier"
+  "Classifies reliability for extracted FLARES spans using a fine-tuned BERT sequence classifier"
+  "Extracts 5W1H spans from Spanish text using a fine-tuned DistilBERT token classifier"
+  "Classifies reliability for extracted FLARES spans using a fine-tuned DistilBERT sequence classifier"
+  "Predicts actual travel time for public transport segments using LightGBM"
+  "Predicts actual travel time for public transport segments using Random Forest"
+  "Predicts actual travel time for public transport segments using CatBoost"
+  "Predicts segment delay for public transport trips using LightGBM"
+  "Predicts segment delay for public transport trips using Random Forest"
+  "Predicts segment delay for public transport trips using CatBoost"
+  "Predicts previous segment delay for public transport trips using LightGBM"
+  "Predicts previous segment delay for public transport trips using Random Forest"
+  "Predicts previous segment delay for public transport trips using CatBoost"
+)
+
+USE_CASE_MODEL_TASKS=(
+  "Natural Language Processing"
+  "Natural Language Processing"
+  "Natural Language Processing"
+  "Natural Language Processing"
+  "Natural Language Processing"
+  "Natural Language Processing"
+  "Tabular"
+  "Tabular"
+  "Tabular"
+  "Tabular"
+  "Tabular"
+  "Tabular"
+  "Tabular"
+  "Tabular"
+  "Tabular"
+)
+
+USE_CASE_MODEL_SUBTASKS=(
+  "token-classification"
+  "text-classification"
+  "token-classification"
+  "text-classification"
+  "token-classification"
+  "text-classification"
+  "tabular-regression"
+  "tabular-regression"
+  "tabular-regression"
+  "tabular-regression"
+  "tabular-regression"
+  "tabular-regression"
+  "tabular-regression"
+  "tabular-regression"
+  "tabular-regression"
+)
+
+USE_CASE_MODEL_TASK_TYPES=(
+  "classification"
+  "classification"
+  "classification"
+  "classification"
+  "classification"
+  "classification"
+  "regression"
+  "regression"
+  "regression"
+  "regression"
+  "regression"
+  "regression"
+  "regression"
+  "regression"
+  "regression"
+)
+
+USE_CASE_MODEL_MODALITIES=(
+  '["text"]'
+  '["text"]'
+  '["text"]'
+  '["text"]'
+  '["text"]'
+  '["text"]'
+  '["tabular"]'
+  '["tabular"]'
+  '["tabular"]'
+  '["tabular"]'
+  '["tabular"]'
+  '["tabular"]'
+  '["tabular"]'
+  '["tabular"]'
+  '["tabular"]'
+)
+
+USE_CASE_MODEL_SUBTASK_DESCRIPTIONS=(
+  "FLARES 5W1H span extraction"
+  "FLARES reliability classification"
+  "FLARES 5W1H span extraction"
+  "FLARES reliability classification"
+  "FLARES 5W1H span extraction"
+  "FLARES reliability classification"
+  "Public transport actual travel time prediction"
+  "Public transport actual travel time prediction"
+  "Public transport actual travel time prediction"
+  "Public transport segment delay prediction"
+  "Public transport segment delay prediction"
+  "Public transport segment delay prediction"
+  "Public transport previous delay prediction"
+  "Public transport previous delay prediction"
+  "Public transport previous delay prediction"
+)
+
+USE_CASE_MODEL_LIBRARIES=(
+  "Transformers"
+  "Transformers"
+  "Transformers"
+  "Transformers"
+  "Transformers"
+  "Transformers"
+  "LightGBM"
+  "scikit-learn"
+  "CatBoost"
+  "LightGBM"
+  "scikit-learn"
+  "CatBoost"
+  "LightGBM"
+  "scikit-learn"
+  "CatBoost"
+)
+
+CITY_USE_CASE_MODEL_SLUGS=(
+  flares-5w1h-albert
+  flares-reliability-albert
+  flares-5w1h-distilbert
+  flares-reliability-distilbert
+  mobility-lightgbm-actual-travel-time
+  mobility-randomforest-actual-travel-time
+)
+
+COMPANY_USE_CASE_MODEL_SLUGS=(
+  flares-5w1h-bert
+  flares-reliability-bert
+  mobility-catboost-actual-travel-time
+  mobility-lightgbm-delay
+  mobility-randomforest-delay
+  mobility-catboost-delay
+  mobility-lightgbm-previous-delay
+  mobility-randomforest-previous-delay
+  mobility-catboost-previous-delay
+)
+
+CITY_FLARES_METRIC_MODEL_SLUGS=(
+  flares-5w1h-albert-metrics
+  flares-reliability-albert-metrics
+  flares-5w1h-distilbert-metrics
+  flares-reliability-distilbert-metrics
+)
+
+COMPANY_FLARES_METRIC_MODEL_SLUGS=(
+  flares-5w1h-bert-metrics
+  flares-reliability-bert-metrics
+)
+
 # Per-connector group context — appended to title for differentiation
 CITY_GROUP_CTX=("Municipal Health" "City Services" "Citizens Wellness" "City Botanical" "City Treasury")
 COMPANY_GROUP_CTX=("Corporate Health" "Corp Analytics" "Employee Wellness" "AgriTech Lab" "Corp Finance")
@@ -653,10 +1246,23 @@ connector_tag() {
     *citycouncil*) echo "city" ;;
     *company*)     echo "company" ;;
     *)
-      connector_short_name "$1" \
-        | tr -c '[:alnum:]' '_' \
-        | sed 's/^_*//; s/_*$//; s/__*/_/g' \
-        | cut -c1-32
+      # Topologies that do not use the demo connector names (e.g. vm-distributed
+      # conn-org2/org3-pionera) carry their provider/consumer role in the
+      # --connector-k8s-namespaces map. Map that role onto the demo tags so the
+      # role-keyed model/dataset placement (city=provider, company=consumer)
+      # still works: the consumer must receive the FLARES/mobility datasets.
+      local _role
+      _role="$(lookup_connector_map "$CONNECTOR_K8S_NAMESPACES" "$1" "")"
+      case "$_role" in
+        provider) echo "city" ;;
+        consumer) echo "company" ;;
+        *)
+          connector_short_name "$1" \
+            | tr -c '[:alnum:]' '_' \
+            | sed 's/^_*//; s/_*$//; s/__*/_/g' \
+            | cut -c1-32
+          ;;
+      esac
       ;;
   esac
 }
@@ -667,6 +1273,48 @@ group_context() {
     city)    echo "${CITY_GROUP_CTX[$group]}" ;;
     company) echo "${COMPANY_GROUP_CTX[$group]}" ;;
     *)       echo "Group $group" ;;
+  esac
+}
+
+use_case_model_owner_tag() {
+  local slug="$1"
+  case "$slug" in
+    flares-5w1h-albert|flares-reliability-albert|flares-5w1h-distilbert|flares-reliability-distilbert|\
+    flares-5w1h-albert-metrics|flares-reliability-albert-metrics|flares-5w1h-distilbert-metrics|flares-reliability-distilbert-metrics|\
+    flares-dccuchile-albert-*|flares-dccuchile-distilbert-*|\
+    mobility-lightgbm-actual-travel-time|mobility-randomforest-actual-travel-time)
+      echo "city"
+      ;;
+    flares-5w1h-bert|flares-reliability-bert|flares-5w1h-bert-metrics|flares-reliability-bert-metrics|\
+    flares-dccuchile-bert-base-*|\
+    mobility-catboost-actual-travel-time|mobility-lightgbm-delay|mobility-randomforest-delay|mobility-catboost-delay|\
+    mobility-lightgbm-previous-delay|mobility-randomforest-previous-delay|mobility-catboost-previous-delay)
+      echo "company"
+      ;;
+    *)
+      echo "both"
+      ;;
+  esac
+}
+
+should_publish_model_for_tag() {
+  local tag="$1"
+  local slug="$2"
+  local owner
+  owner="$(use_case_model_owner_tag "$slug")"
+  case "$USE_CASE_PUBLICATION_MODE" in
+    mirrored)
+      return 0
+      ;;
+    provider-only)
+      [[ "$owner" == "both" || "$tag" == "city" ]]
+      ;;
+    split)
+      [[ "$owner" == "both" || "$owner" == "$tag" ]]
+      ;;
+    *)
+      return 1
+      ;;
   esac
 }
 
@@ -704,6 +1352,85 @@ input_example_json() {
     2) echo '{\"weight_kg\":70.0,\"height_m\":1.75}' ;;
     3) echo '{\"sepal_length\":5.1,\"sepal_width\":3.5,\"petal_length\":1.4,\"petal_width\":0.2}' ;;
     4) echo '{\"amount\":150.00,\"merchant_category\":\"retail\",\"location\":\"domestic\",\"timestamp\":\"2024-01-15T10:30:00Z\"}' ;;
+  esac
+}
+
+use_case_input_features_json() {
+  local slug="$1"
+  case "$slug" in
+    flares-5w1h-*)
+      cat <<'FLARES_5W1H_FEATURES'
+[{"name":"Id","type":"integer","description":"Input text identifier","nullable":false},{"name":"Text","type":"string","description":"Spanish text to analyze","nullable":false}]
+FLARES_5W1H_FEATURES
+      ;;
+    flares-reliability-*)
+      cat <<'FLARES_REL_FEATURES'
+[{"name":"Id","type":"integer","description":"Input text identifier","nullable":false},{"name":"Text","type":"string","description":"Original Spanish text","nullable":false},{"name":"Tag_Start","type":"integer","description":"Span start character offset","nullable":false},{"name":"Tag_End","type":"integer","description":"Span end character offset","nullable":false},{"name":"5W1H_Label","type":"string","description":"5W1H span label","nullable":false},{"name":"Tag_Text","type":"string","description":"Extracted span text","nullable":false}]
+FLARES_REL_FEATURES
+      ;;
+    mobility-lightgbm-previous-delay|mobility-randomforest-previous-delay|mobility-catboost-previous-delay)
+      cat <<'MOBILITY_PREV_FEATURES'
+[{"name":"trip_id","type":"string","description":"GTFS trip identifier","nullable":false},{"name":"from_stop_id","type":"string","description":"Origin stop identifier","nullable":false},{"name":"to_stop_id","type":"string","description":"Destination stop identifier","nullable":false},{"name":"route_id","type":"string","description":"GTFS route identifier","nullable":false},{"name":"scheduled_travel_time","type":"number","description":"Scheduled segment travel time in seconds","nullable":false},{"name":"shape_distance","type":"number","description":"Segment distance in meters","nullable":false},{"name":"is_peak","type":"integer","description":"Peak-hour indicator","nullable":false,"minValue":0,"maxValue":1},{"name":"hour_sin","type":"number","description":"Cyclic hour sine encoding","nullable":false},{"name":"hour_cos","type":"number","description":"Cyclic hour cosine encoding","nullable":false},{"name":"weekday_sin","type":"number","description":"Cyclic weekday sine encoding","nullable":false},{"name":"weekday_cos","type":"number","description":"Cyclic weekday cosine encoding","nullable":false}]
+MOBILITY_PREV_FEATURES
+      ;;
+    *)
+      cat <<'MOBILITY_FEATURES'
+[{"name":"trip_id","type":"string","description":"GTFS trip identifier","nullable":false},{"name":"from_stop_id","type":"string","description":"Origin stop identifier","nullable":false},{"name":"to_stop_id","type":"string","description":"Destination stop identifier","nullable":false},{"name":"route_id","type":"string","description":"GTFS route identifier","nullable":false},{"name":"scheduled_travel_time","type":"number","description":"Scheduled segment travel time in seconds","nullable":false},{"name":"shape_distance","type":"number","description":"Segment distance in meters","nullable":false},{"name":"is_peak","type":"integer","description":"Peak-hour indicator","nullable":false,"minValue":0,"maxValue":1},{"name":"hour_sin","type":"number","description":"Cyclic hour sine encoding","nullable":false},{"name":"hour_cos","type":"number","description":"Cyclic hour cosine encoding","nullable":false},{"name":"weekday_sin","type":"number","description":"Cyclic weekday sine encoding","nullable":false},{"name":"weekday_cos","type":"number","description":"Cyclic weekday cosine encoding","nullable":false},{"name":"previous_delay_ratio","type":"number","description":"Previous delay divided by scheduled travel time","nullable":false},{"name":"previous_delay_delta","type":"number","description":"Previous delay delta in seconds","nullable":false}]
+MOBILITY_FEATURES
+      ;;
+  esac
+}
+
+use_case_input_columns_json() {
+  local slug="$1"
+  case "$slug" in
+    flares-5w1h-*) echo '["Id","Text"]' ;;
+    flares-reliability-*) echo '["Id","Text","Tag_Start","Tag_End","5W1H_Label","Tag_Text"]' ;;
+    mobility-lightgbm-previous-delay|mobility-randomforest-previous-delay|mobility-catboost-previous-delay)
+      echo '["trip_id","from_stop_id","to_stop_id","route_id","scheduled_travel_time","shape_distance","is_peak","hour_sin","hour_cos","weekday_sin","weekday_cos"]'
+      ;;
+    *)
+      echo '["trip_id","from_stop_id","to_stop_id","route_id","scheduled_travel_time","shape_distance","is_peak","hour_sin","hour_cos","weekday_sin","weekday_cos","previous_delay_ratio","previous_delay_delta"]'
+      ;;
+  esac
+}
+
+use_case_label_column() {
+  local slug="$1"
+  case "$slug" in
+    flares-5w1h-*) echo "Tags" ;;
+    flares-reliability-*) echo "Reliability_Label" ;;
+    mobility-*-actual-travel-time) echo "actual_travel_time" ;;
+    mobility-*-previous-delay) echo "previous_delay" ;;
+    mobility-*-delay) echo "delay" ;;
+    *) echo "label" ;;
+  esac
+}
+
+use_case_input_example_json() {
+  local slug="$1"
+  case "$slug" in
+    flares-5w1h-*)
+      echo '[{\"Id\":840,\"Text\":\"El comité de medicamentos humanos espera concluir el análisis en marzo.\"}]'
+      ;;
+    flares-reliability-*)
+      echo '[{\"Id\":840,\"Text\":\"El comité de medicamentos humanos espera concluir el análisis en marzo.\",\"Tag_Start\":0,\"Tag_End\":35,\"5W1H_Label\":\"WHO\",\"Tag_Text\":\"El comité de medicamentos humanos\"}]'
+      ;;
+    mobility-lightgbm-previous-delay|mobility-randomforest-previous-delay|mobility-catboost-previous-delay)
+      echo '[{\"trip_id\":\"L13_1_05:45_LxI\",\"from_stop_id\":\"7716\",\"to_stop_id\":\"19219\",\"route_id\":\"13\",\"scheduled_travel_time\":120,\"shape_distance\":681.1956848810403,\"is_peak\":0,\"hour_sin\":0.7071067811865475,\"hour_cos\":0.7071067811865476,\"weekday_sin\":0.9749279121818236,\"weekday_cos\":-0.22252093395631434}]'
+      ;;
+    *)
+      echo '[{\"trip_id\":\"L13_1_05:45_LxI\",\"from_stop_id\":\"7716\",\"to_stop_id\":\"19219\",\"route_id\":\"13\",\"scheduled_travel_time\":120,\"shape_distance\":681.1956848810403,\"is_peak\":0,\"hour_sin\":0.7071067811865475,\"hour_cos\":0.7071067811865476,\"weekday_sin\":0.9749279121818236,\"weekday_cos\":-0.22252093395631434,\"previous_delay_ratio\":0.2499999979166667,\"previous_delay_delta\":0.0}]'
+      ;;
+  esac
+}
+
+use_case_supported_metrics_json() {
+  local slug="$1"
+  case "$slug" in
+    mobility-*) echo '["RMSE","MAE","MSE","R2"]' ;;
+    flares-reliability-*) echo '["Accuracy","Precision","Recall","F1"]' ;;
+    *) echo '["Precision","Recall","F1"]' ;;
   esac
 }
 
@@ -789,8 +1516,9 @@ seed_http_data_assets() {
     local algo="${GROUP_ALGORITHMS[$group]}"
     local fw="${GROUP_FRAMEWORKS[$group]}"
     local library="${GROUP_LIBRARIES[$group]}"
-    local input_feat input_ex
+    local input_feat input_schema input_ex
     input_feat="$(input_features_json "$group" | tr -d '\n')"
+    input_schema="$(input_schema_fields_json_from_features_json "$input_feat")"
     input_ex="$(input_example_json "$group")"
 
     local auc recall f1
@@ -806,7 +1534,7 @@ seed_http_data_assets() {
     "dct": "http://purl.org/dc/terms/",
     "dcterms": "http://purl.org/dc/terms/",
     "dcat": "http://www.w3.org/ns/dcat#",
-    "daimo": "https://w3id.org/daimo/ns#",
+    "daimo": "https://w3id.org/pionera/daimo#",
     "mls": "http://www.w3.org/ns/mls#"
   },
   "@id": "${asset_id}",
@@ -820,7 +1548,7 @@ seed_http_data_assets() {
     "dcterms:description": "${desc} Deployed as HTTP endpoint for ${connector}.",
     "dcat:keyword": ["machine-learning","http-model","${slug}","${tag}"],
     "assetData": {
-      "${VOCABULARY_ID}": {
+      "${MODEL_VOCABULARY_ID}": {
         "dct:title": "${asset_title}",
         "dcterms:title": "${asset_title}",
         "dct:description": "${desc}",
@@ -834,6 +1562,7 @@ seed_http_data_assets() {
         "dcterms:language": ["English","Spanish"],
         "dct:license": "apache-2.0",
         "dcterms:license": "apache-2.0",
+        "daimo:inputSchema": ${input_schema},
         "daimo:input_features": ${input_feat},
         "daimo:input_example": "${input_ex}",
         "mls:ModelEvaluation": [
@@ -883,7 +1612,11 @@ discover_use_case_model_specs() {
   local models_response="$WORK_DIR/use_case_models.response.json"
   local models_code
 
-  models_code="$(curl -s --max-time 45 -o "$models_response" -w '%{http_code}' \
+  # Follow redirects (-L): the connector-facing base URL is intentionally http
+  # (avoids cert validation for connector data transfers), but the external
+  # Apache proxy 301-redirects http->https. This is a read-only discovery GET,
+  # so following the redirect is safe and keeps the asset baseUrl unchanged.
+  models_code="$(curl -sL --max-time 45 -o "$models_response" -w '%{http_code}' \
     "$USE_CASE_MODEL_SERVER_BASE_URL/models")" || true
   if [[ "$models_code" != "200" ]]; then
     echo "Use-case model-server discovery failed at $USE_CASE_MODEL_SERVER_BASE_URL/models (HTTP ${models_code:-NA})" >&2
@@ -962,30 +1695,116 @@ json_escape() {
   python3 -c 'import json,sys; print(json.dumps(sys.argv[1])[1:-1])' "$1"
 }
 
-seed_use_case_http_data_assets() {
-  local connector="$1" token="$2" mgmt_url="$3"
-  local tag created=0 specs_file
-  tag="$(connector_tag "$connector")"
-  specs_file="$WORK_DIR/use_case_model_specs.tsv"
-
-  if ! discover_use_case_model_specs "$specs_file"; then
+validate_use_case_model_server_contract() {
+  if [[ "$CHECK_USE_CASE_MODEL_SERVER_CONTRACT" != "1" ]]; then
+    return 0
+  fi
+  if [[ "$SEED_SCOPE" != "models" && "$SEED_SCOPE" != "all" ]]; then
+    return 0
+  fi
+  if [[ "$MODEL_SET" != "use-cases" && "$MODEL_SET" != "combined" ]]; then
+    return 0
+  fi
+  if [[ "$SKIP_USE_CASE_MODELS" == "1" ]]; then
+    return 0
+  fi
+  if [[ -z "$USE_CASE_MODEL_SERVER_BASE_URL" ]]; then
+    echo "Use-case model-server base URL is required for AIModelHub Step 10 contract validation" >&2
     return 1
   fi
 
-  while IFS=$'\t' read -r slug title endpoint desc task subtask algo fw library; do
-    [[ -z "$slug" ]] && continue
-    local asset_id="${tag}-${slug}"
-    local asset_title="${title} - ${tag}"
-    local json_file="$WORK_DIR/${connector}_${asset_id}.json"
-    local escaped_title escaped_desc escaped_task escaped_subtask escaped_algo escaped_fw escaped_library
-    escaped_title="$(json_escape "$asset_title")"
-    escaped_desc="$(json_escape "$desc")"
-    escaped_task="$(json_escape "$task")"
-    escaped_subtask="$(json_escape "$subtask")"
-    escaped_algo="$(json_escape "$algo")"
-    escaped_fw="$(json_escape "$fw")"
-    escaped_library="$(json_escape "$library")"
+  local base_url="${USE_CASE_MODEL_SERVER_BASE_URL%/}"
+  local openapi_response="$WORK_DIR/use_case_openapi.response.json"
+  local expected_paths="$WORK_DIR/use_case_expected_paths.txt"
+  local code endpoint
 
+  code="$(curl -sL --max-time 45 -o "$openapi_response" -w '%{http_code}' \
+    "$base_url/openapi.json")" || true
+  if [[ "$code" != "200" ]]; then
+    echo "Use-case model-server contract validation failed at $base_url/openapi.json (HTTP ${code:-NA})" >&2
+    cat "$openapi_response" >&2 2>/dev/null || true
+    return 1
+  fi
+
+  : > "$expected_paths"
+  for endpoint in "${USE_CASE_MODEL_ENDPOINTS[@]}"; do
+    printf '%s\n' "$endpoint" >> "$expected_paths"
+  done
+  if [[ "$INCLUDE_FLARES_METRIC_MODELS" == "1" ]]; then
+    for endpoint in "${FLARES_METRIC_MODEL_ENDPOINTS[@]}"; do
+      printf '%s\n' "$endpoint" >> "$expected_paths"
+    done
+  fi
+
+  set +e
+  python3 - "$openapi_response" "$expected_paths" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+with open(sys.argv[2], encoding="utf-8") as handle:
+    expected = [line.strip() for line in handle if line.strip()]
+
+paths = set((payload.get("paths") or {}).keys())
+missing = [path for path in expected if path not in paths]
+if missing:
+    print("Use-case model-server is missing expected AIModelHub routes:", file=sys.stderr)
+    for path in missing:
+        print(f"  - {path}", file=sys.stderr)
+    sys.exit(1)
+
+print(f"Use-case model-server contract OK: {len(expected)} expected routes available")
+PY
+  local py_status=$?
+  set -e
+  return "$py_status"
+}
+
+seed_use_case_http_data_assets() {
+  local connector="$1" token="$2" mgmt_url="$3"
+  local tag created=0 asset_ids_file
+  tag="$(connector_tag "$connector")"
+  asset_ids_file="$WORK_DIR/${connector}_use_case_model_asset_ids.txt"
+
+  local base_url="${USE_CASE_MODEL_SERVER_BASE_URL%/}"
+  local expected="${#USE_CASE_MODEL_SLUGS[@]}"
+  case "$tag" in
+    city) expected="${#CITY_USE_CASE_MODEL_SLUGS[@]}" ;;
+    company) expected="${#COMPANY_USE_CASE_MODEL_SLUGS[@]}" ;;
+  esac
+
+  : > "$asset_ids_file"
+
+  for idx in "${!USE_CASE_MODEL_SLUGS[@]}"; do
+    local slug="${USE_CASE_MODEL_SLUGS[$idx]}"
+    if ! should_publish_model_for_tag "$tag" "$slug"; then
+      continue
+    fi
+
+    local title="${USE_CASE_MODEL_TITLES[$idx]}"
+    local endpoint="${USE_CASE_MODEL_ENDPOINTS[$idx]}"
+    local desc="${USE_CASE_MODEL_DESCRIPTIONS[$idx]}"
+    local task="${USE_CASE_MODEL_TASKS[$idx]}"
+    local subtask="${USE_CASE_MODEL_SUBTASKS[$idx]}"
+    local task_type="${USE_CASE_MODEL_TASK_TYPES[$idx]}"
+    local modality="${USE_CASE_MODEL_MODALITIES[$idx]}"
+    local subtask_description="${USE_CASE_MODEL_SUBTASK_DESCRIPTIONS[$idx]}"
+    local library="${USE_CASE_MODEL_LIBRARIES[$idx]}"
+    local input_feat input_schema input_ex supported_metrics
+    input_feat="$(use_case_input_features_json "$slug" | tr -d '\n')"
+    input_schema="$(input_schema_fields_json_from_features_json "$input_feat")"
+    input_ex="$(use_case_input_example_json "$slug")"
+    supported_metrics="$(use_case_supported_metrics_json "$slug")"
+
+    local asset_id="${tag}-${slug}"
+    local asset_title="${title} - PIONERA Use Case"
+    local json_file="$WORK_DIR/${connector}_${asset_id}.json"
+    local fixture_file="$USE_CASE_MODEL_ASSET_JSON_DIR/${asset_id}.json"
+
+    if [[ -f "$fixture_file" ]]; then
+      write_use_case_asset_json_from_fixture "$fixture_file" "$json_file" "$base_url" "$endpoint"
+    else
     cat > "$json_file" <<ASSET_EOF
 {
   "@context": {
@@ -993,44 +1812,42 @@ seed_use_case_http_data_assets() {
     "dct": "http://purl.org/dc/terms/",
     "dcterms": "http://purl.org/dc/terms/",
     "dcat": "http://www.w3.org/ns/dcat#",
-    "daimo": "https://w3id.org/daimo/ns#",
+    "daimo": "https://w3id.org/pionera/daimo#",
     "mls": "http://www.w3.org/ns/mls#"
   },
   "@id": "${asset_id}",
   "properties": {
-    "name": "${escaped_title}",
-    "version": "1.0.0",
+    "name": "${asset_title}",
+    "version": "2.0.$((idx + 1))",
     "contenttype": "application/json",
     "assetType": "machineLearning",
-    "shortDescription": "${escaped_desc}",
-    "dct:description": "${escaped_desc}",
-    "dcterms:description": "${escaped_desc}",
-    "dcat:keyword": ["machine-learning","use-case","real-model","${tag}"],
+    "shortDescription": "${desc}",
+    "dct:description": "${desc}. Served by the FLARES/Mobility FastAPI use-case server.",
+    "dcterms:description": "${desc}. Served by the FLARES/Mobility FastAPI use-case server.",
+    "dcat:keyword": ["machine-learning","http-model","pionera-use-case","flares","mobility","${slug}","${tag}"],
     "assetData": {
-      "${VOCABULARY_ID}": {
-        "dct:title": "${escaped_title}",
-        "dcterms:title": "${escaped_title}",
-        "dct:description": "${escaped_desc}",
-        "dcterms:description": "${escaped_desc}",
-        "daimo:task": "${escaped_task}",
-        "daimo:subtask": "${escaped_subtask}",
-        "daimo:algorithm": "${escaped_algo}",
-        "daimo:framework": "${escaped_fw}",
-        "daimo:library": "${escaped_library}",
-        "dct:language": ["English","Spanish"],
-        "dcterms:language": ["English","Spanish"],
+      "${MODEL_VOCABULARY_ID}": {
+        "daimo:modality": ${modality},
+        "daimo:taskType": "${task_type}",
+        "daimo:taskCategory": "${task}",
+        "daimo:subtask": "${subtask}",
+        "daimo:subtaskDescription": "${subtask_description}",
+        "daimo:endpointBehavior": "prediction",
+        "daimo:requestShape": "batch",
+        "dct:description": "${desc}. Served by the FLARES/Mobility FastAPI use-case server.",
+        "daimo:libraryName": "${library}",
+        "dct:language": ["Spanish"],
         "dct:license": "apache-2.0",
-        "dcterms:license": "apache-2.0",
-        "daimo:input_features": [{"name":"records","type":"array","description":"Batch input accepted by the deployed use-case model endpoint","nullable":false}],
-        "daimo:input_example": "[{}]",
-        "mls:ModelEvaluation": [{"metric":"validated_deployment","value":1.0}]
+        "daimo:inputSchema": ${input_schema},
+        "daimo:inputExample": "${input_ex}",
+        "daimo:metrics": ${supported_metrics}
       }
     }
   },
   "dataAddress": {
     "type": "HttpData",
     "name": "${asset_id}",
-    "baseUrl": "${USE_CASE_MODEL_SERVER_BASE_URL}${endpoint}",
+    "baseUrl": "${base_url}${endpoint}",
     "proxyMethod": "true",
     "proxyBody": "true",
     "method": "POST",
@@ -1038,64 +1855,61 @@ seed_use_case_http_data_assets() {
   }
 }
 ASSET_EOF
+    fi
 
-    local out_file="$WORK_DIR/${connector}_${asset_id}.create.out"
-    local code
-    code="$(curl -s --max-time 30 -o "$out_file" -w '%{http_code}' \
-      -X POST "$mgmt_url/v3/assets" \
-      -H "Authorization: Bearer $token" \
-      -H 'Content-Type: application/json' \
-      --data-binary "@$json_file")" || true
-
-    if [[ "$code" == "200" || "$code" == "204" || "$code" == "409" ]]; then
+    printf '%s\n' "$asset_id" >> "$asset_ids_file"
+    if upsert_v3_asset "$connector" "$asset_id" "$json_file" "$token" "$mgmt_url" "Use-case HttpData"; then
       created=$((created + 1))
-      echo "[$connector] use-case HttpData asset $asset_id created (HTTP $code)"
     else
-      echo "[$connector] use-case HttpData asset $asset_id FAILED (HTTP ${code:-NA})" >&2
-      cat "$out_file" >&2 2>/dev/null || true
       return 1
     fi
-  done < "$specs_file"
+  done
 
-  echo "[$connector] use-case HttpData assets created: $created"
+  echo "[$connector] use-case HttpData assets created: $created/$expected"
   return 0
 }
 
 seed_flares_metric_http_data_assets() {
   local connector="$1" token="$2" mgmt_url="$3"
-  local tag created=0
+  local tag created=0 asset_ids_file
   tag="$(connector_tag "$connector")"
+  asset_ids_file="$WORK_DIR/${connector}_use_case_model_asset_ids.txt"
+  local base_url="${USE_CASE_MODEL_SERVER_BASE_URL%/}"
 
   for idx in "${!FLARES_METRIC_MODEL_SLUGS[@]}"; do
     local slug="${FLARES_METRIC_MODEL_SLUGS[$idx]}"
+    if ! should_publish_model_for_tag "$tag" "$slug"; then
+      continue
+    fi
     local title="${FLARES_METRIC_MODEL_TITLES[$idx]}"
     local endpoint="${FLARES_METRIC_MODEL_ENDPOINTS[$idx]}"
     local desc="${FLARES_METRIC_MODEL_DESCRIPTIONS[$idx]}"
-    local input_columns input_feat input_ex label_column task subtask target_fields metric_evaluation supported_metrics metric_directions
-    input_columns="$(flares_metric_input_columns_json "$slug")"
+    local input_feat input_schema input_ex task subtask task_type modality subtask_description supported_metrics
     input_feat="$(flares_metric_input_features_json "$slug" | tr -d '\n')"
+    input_schema="$(input_schema_fields_json_from_features_json "$input_feat")"
     input_ex="$(flares_metric_input_example_json "$slug")"
-    label_column="$(flares_metric_label_column "$slug")"
     if [[ "$slug" == flares-5w1h-*-metrics ]]; then
-      task="Token Classification"
-      subtask="5W1H span extraction"
-      target_fields='["Tag_Start","Tag_End","5W1H_Label"]'
+      task="Natural Language Processing"
+      subtask="token-classification"
+      subtask_description="FLARES 5W1H span extraction metrics"
       supported_metrics='["Precision","Recall","F1"]'
-      metric_directions='{"Precision":"higher","Recall":"higher","F1":"higher"}'
-      metric_evaluation='[{"metric":"Precision","value":0.0},{"metric":"Recall","value":0.0},{"metric":"F1","value":0.0}]'
     else
-      task="Classification"
-      subtask="Reliability classification"
-      target_fields='["Reliability_Label"]'
+      task="Natural Language Processing"
+      subtask="text-classification"
+      subtask_description="FLARES reliability classification metrics"
       supported_metrics='["Accuracy","Precision","Recall","F1"]'
-      metric_directions='{"Accuracy":"higher","Precision":"higher","Recall":"higher","F1":"higher"}'
-      metric_evaluation='[{"metric":"Accuracy","value":0.0},{"metric":"Precision","value":0.0},{"metric":"Recall","value":0.0},{"metric":"F1","value":0.0}]'
     fi
+    task_type="classification"
+    modality='["text"]'
 
     local asset_id="${tag}-${slug}"
     local asset_title="${title} - PIONERA Use Case"
     local json_file="$WORK_DIR/${connector}_${asset_id}.json"
+    local fixture_file="$USE_CASE_MODEL_ASSET_JSON_DIR/${asset_id}.json"
 
+    if [[ -f "$fixture_file" ]]; then
+      write_use_case_asset_json_from_fixture "$fixture_file" "$json_file" "$base_url" "$endpoint"
+    else
     cat > "$json_file" <<ASSET_EOF
 {
   "@context": {
@@ -1103,7 +1917,7 @@ seed_flares_metric_http_data_assets() {
     "dct": "http://purl.org/dc/terms/",
     "dcterms": "http://purl.org/dc/terms/",
     "dcat": "http://www.w3.org/ns/dcat#",
-    "daimo": "https://w3id.org/daimo/ns#",
+    "daimo": "https://w3id.org/pionera/daimo#",
     "mls": "http://www.w3.org/ns/mls#"
   },
   "@id": "${asset_id}",
@@ -1117,37 +1931,28 @@ seed_flares_metric_http_data_assets() {
     "dcterms:description": "${desc}. Served by the FLARES FastAPI metric endpoint.",
     "dcat:keyword": ["machine-learning","metric-model","http-model","pionera-use-case","flares","${slug}","${tag}"],
     "assetData": {
-      "${VOCABULARY_ID}": {
-        "dct:title": "${asset_title}",
-        "dcterms:title": "${asset_title}",
-        "dct:description": "${desc}",
-        "dcterms:description": "${desc}",
-        "daimo:task": "${task}",
+      "${MODEL_VOCABULARY_ID}": {
+        "daimo:modality": ${modality},
+        "daimo:taskType": "${task_type}",
+        "daimo:taskCategory": "${task}",
         "daimo:subtask": "${subtask}",
-        "daimo:algorithm": "Transformer",
-        "daimo:framework": "PyTorch",
-        "daimo:library": "Transformers",
-        "daimo:benchmark_model_type": "metric",
-        "daimo:request_shape": "batch",
-        "daimo:metrics": ${supported_metrics},
-        "daimo:metric_directions": ${metric_directions},
-        "daimo:target_fields": ${target_fields},
+        "daimo:subtaskDescription": "${subtask_description}",
+        "daimo:endpointBehavior": "metric",
+        "daimo:requestShape": "batch",
+        "dct:description": "${desc}. Served by the FLARES FastAPI metric endpoint.",
+        "daimo:libraryName": "Transformers",
         "dct:language": ["Spanish"],
-        "dcterms:language": ["Spanish"],
         "dct:license": "apache-2.0",
-        "dcterms:license": "apache-2.0",
-        "daimo:input": ${input_columns},
-        "daimo:label": "${label_column}",
-        "daimo:input_features": ${input_feat},
-        "daimo:input_example": "${input_ex}",
-        "mls:ModelEvaluation": ${metric_evaluation}
+        "daimo:inputSchema": ${input_schema},
+        "daimo:inputExample": "${input_ex}",
+        "daimo:metrics": ${supported_metrics}
       }
     }
   },
   "dataAddress": {
     "type": "HttpData",
     "name": "${asset_id}",
-    "baseUrl": "${USE_CASE_MODEL_SERVER_BASE_URL}${endpoint}",
+    "baseUrl": "${base_url}${endpoint}",
     "proxyMethod": "true",
     "proxyBody": "true",
     "method": "POST",
@@ -1155,21 +1960,12 @@ seed_flares_metric_http_data_assets() {
   }
 }
 ASSET_EOF
+    fi
 
-    local out_file="$WORK_DIR/${connector}_${asset_id}.create.out"
-    local code
-    code="$(curl -s --max-time 30 -o "$out_file" -w '%{http_code}' \
-      -X POST "$mgmt_url/v3/assets" \
-      -H "Authorization: Bearer $token" \
-      -H 'Content-Type: application/json' \
-      --data-binary "@$json_file")" || true
-
-    if [[ "$code" == "200" || "$code" == "204" || "$code" == "409" ]]; then
+    if upsert_v3_asset "$connector" "$asset_id" "$json_file" "$token" "$mgmt_url" "FLARES metric HttpData"; then
       created=$((created + 1))
-      echo "[$connector] FLARES metric HttpData asset $asset_id created (HTTP $code)"
+      printf '%s\n' "$asset_id" >> "$asset_ids_file"
     else
-      echo "[$connector] FLARES metric HttpData asset $asset_id FAILED (HTTP ${code:-NA})" >&2
-      cat "$out_file" >&2 2>/dev/null || true
       return 1
     fi
   done
@@ -1206,7 +2002,7 @@ seed_inesdata_store_assets() {
     "dct": "http://purl.org/dc/terms/",
     "dcterms": "http://purl.org/dc/terms/",
     "dcat": "http://www.w3.org/ns/dcat#",
-    "daimo": "https://w3id.org/daimo/ns#",
+    "daimo": "https://w3id.org/pionera/daimo#",
     "mls": "http://www.w3.org/ns/mls#"
   },
   "@id": "${id}",
@@ -1222,7 +2018,7 @@ seed_inesdata_store_assets() {
     "dcterms:format": "pkl",
     "dcat:keyword": ["machine-learning","lightgbm","inesdata","${tag}"],
     "assetData": {
-      "${VOCABULARY_ID}": {
+      "${MODEL_VOCABULARY_ID}": {
         "dct:title": "${title}",
         "dcterms:title": "${title}",
         "dct:description": "Binary classifier for default probability estimation.",
@@ -1369,13 +2165,111 @@ CEOF
   return 0
 }
 
+create_use_case_model_policies_and_contracts() {
+  local connector="$1" token="$2" mgmt_url="$3"
+  local asset_ids_file="$WORK_DIR/${connector}_use_case_model_asset_ids.txt"
+
+  if [[ ! -s "$asset_ids_file" ]]; then
+    echo "[$connector] no use-case model asset ids found for narrow contracts: $asset_ids_file" >&2
+    return 1
+  fi
+
+  local created=0
+  while IFS= read -r asset_id; do
+    [[ -z "$asset_id" ]] && continue
+    local policy_id="policy-seed-${asset_id}"
+    local contract_id="contract-seed-${asset_id}"
+    local policy_file="$WORK_DIR/${connector}_${asset_id}_model_policy.json"
+    local policy_out="$WORK_DIR/${connector}_${asset_id}_model_policy.out"
+    local policy_code
+    local contract_file="$WORK_DIR/${connector}_${asset_id}_model_contract.json"
+    local contract_out="$WORK_DIR/${connector}_${asset_id}_model_contract.out"
+    local contract_code
+
+    cat > "$policy_file" <<PEOF
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "odrl": "http://www.w3.org/ns/odrl/2/"
+  },
+  "@id": "${policy_id}",
+  "policy": {
+    "@context": "http://www.w3.org/ns/odrl.jsonld",
+    "@type": "Set",
+    "permission": [],
+    "prohibition": [],
+    "obligation": []
+  }
+}
+PEOF
+
+    policy_code="$(curl -s --max-time 30 -o "$policy_out" -w '%{http_code}' \
+      -X POST "$mgmt_url/v3/policydefinitions" \
+      -H "Authorization: Bearer $token" \
+      -H 'Content-Type: application/json' \
+      --data-binary "@$policy_file")" || true
+
+    if [[ "$policy_code" == "200" || "$policy_code" == "204" || "$policy_code" == "409" ]]; then
+      echo "[$connector] model policy '$policy_id' created (HTTP $policy_code)"
+    else
+      echo "[$connector] model policy creation failed for $asset_id (HTTP ${policy_code:-NA})" >&2
+      cat "$policy_out" >&2 2>/dev/null || true
+      return 1
+    fi
+
+    cat > "$contract_file" <<CEOF
+{
+  "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
+  "@id": "${contract_id}",
+  "accessPolicyId": "${policy_id}",
+  "contractPolicyId": "${policy_id}",
+  "assetsSelector": [
+    {
+      "operandLeft": "https://w3id.org/edc/v0.0.1/ns/id",
+      "operator": "=",
+      "operandRight": "${asset_id}"
+    }
+  ]
+}
+CEOF
+
+    contract_code="$(curl -s --max-time 30 -o "$contract_out" -w '%{http_code}' \
+      -X POST "$mgmt_url/v3/contractdefinitions" \
+      -H "Authorization: Bearer $token" \
+      -H 'Content-Type: application/json' \
+      --data-binary "@$contract_file")" || true
+
+    if [[ "$contract_code" == "200" || "$contract_code" == "204" || "$contract_code" == "409" ]]; then
+      created=$((created + 1))
+      echo "[$connector] model contract '$contract_id' created (HTTP $contract_code)"
+    else
+      echo "[$connector] model contract creation failed for $asset_id (HTTP ${contract_code:-NA})" >&2
+      cat "$contract_out" >&2 2>/dev/null || true
+      return 1
+    fi
+  done < "$asset_ids_file"
+
+  echo "[$connector] model contracts created: $created"
+  return 0
+}
+
 # =============================================================================
 # SEED USE-CASE BENCHMARK DATASETS (Company provider -> City Council consumer)
 # =============================================================================
 
 upload_seed_file_asset() {
   local connector="$1" token="$2" mgmt_url="$3" asset_id="$4" json_file="$5" source_file="$6" upload_filename="$7" content_type="$8" asset_label="$9"
-  local up_code fin_code
+  local delete_status=0 up_code fin_code
+
+  delete_v3_asset_if_exists "$connector" "$asset_id" "$token" "$mgmt_url" "$asset_label" || delete_status=$?
+  if [[ "$delete_status" -eq 1 ]]; then
+    return 1
+  fi
+  local skip_finalize=0
+  if [[ "$delete_status" -eq 2 ]]; then
+    echo "[$connector] ${asset_label} asset $asset_id kept existing; refreshing S3 object only"
+    skip_finalize=1
+  fi
 
   up_code="$(request_retry "$WORK_DIR/${connector}_${asset_id}.upload.out" \
     -X POST "$mgmt_url/s3assets/upload-chunk" \
@@ -1386,13 +2280,17 @@ upload_seed_file_asset() {
     -F "json=@$json_file;type=application/json" \
     -F "file=@$source_file;type=$content_type")" || true
 
-  fin_code="$(request_retry "$WORK_DIR/${connector}_${asset_id}.finalize.out" \
-    -X POST "$mgmt_url/s3assets/finalize-upload" \
-    -H "Authorization: Bearer $token" \
-    -F "json=@$json_file;type=application/json" \
-    -F "fileName=$upload_filename")" || true
+  if [[ "$skip_finalize" -eq 1 ]]; then
+    fin_code="skipped"
+  else
+    fin_code="$(request_retry "$WORK_DIR/${connector}_${asset_id}.finalize.out" \
+      -X POST "$mgmt_url/s3assets/finalize-upload" \
+      -H "Authorization: Bearer $token" \
+      -F "json=@$json_file;type=application/json" \
+      -F "fileName=$upload_filename")" || true
+  fi
 
-  if [[ "$fin_code" == "200" || "$fin_code" == "409" ]] && [[ "$up_code" == "200" || "$up_code" == "000" || "$up_code" == "409" ]]; then
+  if [[ "$fin_code" == "200" || "$fin_code" == "409" || "$fin_code" == "skipped" ]] && [[ "$up_code" == "200" || "$up_code" == "000" || "$up_code" == "409" ]]; then
     echo "[$connector] ${asset_label} asset $asset_id upload=$up_code finalize=$fin_code"
     return 0
   fi
@@ -1404,7 +2302,7 @@ upload_seed_file_asset() {
 
 seed_mobility_segments_dataset_asset() {
   local connector="$1" token="$2" mgmt_url="$3"
-  local tag dataset_filename json_file
+  local tag dataset_filename sample_dataset_file sample_rows
   tag="$(connector_tag "$connector")"
 
   if [[ "$tag" != "company" ]]; then
@@ -1417,70 +2315,58 @@ seed_mobility_segments_dataset_asset() {
   fi
 
   dataset_filename="$(basename "$MOBILITY_SEGMENTS_DATASET_FILE")"
-  json_file="$WORK_DIR/${connector}_${MOBILITY_SEGMENTS_DATASET_ID}.json"
+  sample_dataset_file="$WORK_DIR/$MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME"
+  sample_rows="$MOBILITY_BENCHMARK_SAMPLE_ROWS"
+  if ! [[ "$sample_rows" =~ ^[0-9]+$ ]] || [[ "$sample_rows" -lt 1 ]]; then
+    echo "[$connector] invalid MOBILITY_BENCHMARK_SAMPLE_ROWS=$sample_rows" >&2
+    return 1
+  fi
+  head -n "$((sample_rows + 1))" "$MOBILITY_SEGMENTS_DATASET_FILE" > "$sample_dataset_file"
 
-  cat > "$json_file" <<DATASET_EOF
-{
-  "@context": {
-    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
-    "dct": "http://purl.org/dc/terms/",
-    "dcterms": "http://purl.org/dc/terms/",
-    "dcat": "http://www.w3.org/ns/dcat#",
-    "daimo": "https://w3id.org/daimo/ns#"
-  },
-  "@id": "${MOBILITY_SEGMENTS_DATASET_ID}",
-  "properties": {
-    "name": "Mobility Segments Test Dataset",
-    "version": "1.0.0",
-    "contenttype": "text/csv",
-    "assetType": "dataset",
-    "shortDescription": "Mobility benchmark validation dataset.",
-    "dct:description": "CSV validation dataset for Mobility benchmark models.",
-    "dcterms:description": "CSV validation dataset for Mobility benchmark models.",
-    "dcterms:format": "csv",
-    "dcat:keyword": ["dataset","benchmark","validation","mobility","csv"],
-    "assetData": {
-      "${VOCABULARY_ID}": {
-        "dct:title": "Mobility Segments Test Dataset",
-        "dcterms:title": "Mobility Segments Test Dataset",
-        "dct:description": "CSV validation dataset for Mobility benchmark models.",
-        "dcterms:description": "CSV validation dataset for Mobility benchmark models.",
-        "daimo:asset_type": "dataset",
-        "daimo:task": "Predictive event",
-        "daimo:subtask": "Other",
-        "daimo:input": [
-          "trip_id",
-          "journey_id",
-          "from_stop_id",
-          "to_stop_id",
-          "departure_time",
-          "arrival_time",
-          "actual_travel_time",
-          "scheduled_travel_time",
-          "delay",
-          "shape_distance",
-          "route_id",
-          "direction_id",
-          "service_id",
-          "hour",
-          "weekday",
-          "is_peak",
-          "hour_sin",
-          "hour_cos",
-          "weekday_sin",
-          "weekday_cos",
-          "previous_delay",
-          "previous_delay_ratio"
-        ],
-        "daimo:label": "previous_delay_delta"
-      }
-    }
-  },
-  "dataAddress": {"type":"InesDataStore"}
-}
-DATASET_EOF
+  retire_legacy_mobility_segments_dataset_asset "$connector" "$token" "$mgmt_url"
 
-  upload_seed_file_asset "$connector" "$token" "$mgmt_url" "$MOBILITY_SEGMENTS_DATASET_ID" "$json_file" "$MOBILITY_SEGMENTS_DATASET_FILE" "$dataset_filename" "text/csv" "Mobility dataset"
+  local dataset_ids=(
+    "$MOBILITY_ACTUAL_TRAVEL_TIME_DATASET_ID"
+    "$MOBILITY_DELAY_DATASET_ID"
+    "$MOBILITY_PREVIOUS_DELAY_DATASET_ID"
+    "$MOBILITY_ACTUAL_TRAVEL_TIME_SAMPLE_DATASET_ID"
+    "$MOBILITY_DELAY_SAMPLE_DATASET_ID"
+    "$MOBILITY_PREVIOUS_DELAY_SAMPLE_DATASET_ID"
+  )
+  local source_files=(
+    "$MOBILITY_SEGMENTS_DATASET_FILE"
+    "$MOBILITY_SEGMENTS_DATASET_FILE"
+    "$MOBILITY_SEGMENTS_DATASET_FILE"
+    "$sample_dataset_file"
+    "$sample_dataset_file"
+    "$sample_dataset_file"
+  )
+  local upload_filenames=(
+    "$dataset_filename"
+    "$dataset_filename"
+    "$dataset_filename"
+    "$MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME"
+    "$MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME"
+    "$MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME"
+  )
+
+  for idx in "${!dataset_ids[@]}"; do
+    local asset_id="${dataset_ids[$idx]}"
+    local json_file="$WORK_DIR/${connector}_${asset_id}.json"
+    local fixture_file="$USE_CASE_DATASET_ASSET_JSON_DIR/${asset_id}.json"
+    local source_file="${source_files[$idx]}"
+    local upload_filename="${upload_filenames[$idx]}"
+
+    if [[ ! -f "$fixture_file" ]]; then
+      echo "[$connector] Mobility dataset fixture not found: $fixture_file" >&2
+      return 1
+    fi
+
+    write_use_case_asset_json_from_fixture "$fixture_file" "$json_file"
+    if ! upload_seed_file_asset "$connector" "$token" "$mgmt_url" "$asset_id" "$json_file" "$source_file" "$upload_filename" "text/csv" "Mobility dataset"; then
+      return 1
+    fi
+  done
 }
 
 seed_flares_test_dataset_assets() {
@@ -1500,10 +2386,16 @@ seed_flares_test_dataset_assets() {
     "JSONL validation dataset for FLARES 5W1H span extraction metrics."
     "JSONL validation dataset for FLARES reliability classification metrics."
   )
-  local subtasks=("Other" "Text classification")
+  local subtasks=("token-classification" "text-classification")
+  local task_types=("classification" "classification")
+  local label_types=("span" "categorical")
   local keywords_json=(
     '["dataset","benchmark","validation","flares","5w1h","jsonl"]'
     '["dataset","benchmark","validation","flares","reliability","jsonl"]'
+  )
+  local vocabulary_keywords_json=(
+    '["benchmark","validation","test","flares","span-extraction","jsonl"]'
+    '["benchmark","validation","test","flares","classification","jsonl"]'
   )
   local input_json=(
     '["Id","Text"]'
@@ -1518,16 +2410,23 @@ seed_flares_test_dataset_assets() {
     local title="${titles[$idx]}"
     local description="${descriptions[$idx]}"
     local subtask="${subtasks[$idx]}"
+    local task_type="${task_types[$idx]}"
+    local label_type="${label_types[$idx]}"
     local keywords="${keywords_json[$idx]}"
+    local vocabulary_keywords="${vocabulary_keywords_json[$idx]}"
     local input="${input_json[$idx]}"
     local label="${labels[$idx]}"
     local json_file="$WORK_DIR/${connector}_${asset_id}.json"
+    local fixture_file="$USE_CASE_DATASET_ASSET_JSON_DIR/${asset_id}.json"
 
     if [[ ! -f "$source_file" ]]; then
       echo "[$connector] FLARES dataset file not found: $source_file" >&2
       return 1
     fi
 
+    if [[ -f "$fixture_file" ]]; then
+      write_use_case_asset_json_from_fixture "$fixture_file" "$json_file"
+    else
     cat > "$json_file" <<DATASET_EOF
 {
   "@context": {
@@ -1535,7 +2434,7 @@ seed_flares_test_dataset_assets() {
     "dct": "http://purl.org/dc/terms/",
     "dcterms": "http://purl.org/dc/terms/",
     "dcat": "http://www.w3.org/ns/dcat#",
-    "daimo": "https://w3id.org/daimo/ns#"
+    "daimo": "https://w3id.org/pionera/daimo#"
   },
   "@id": "${asset_id}",
   "properties": {
@@ -1550,22 +2449,34 @@ seed_flares_test_dataset_assets() {
     "fileName": "${upload_filename}",
     "dcat:keyword": ${keywords},
     "assetData": {
-      "${VOCABULARY_ID}": {
+      "${DATASET_VOCABULARY_ID}": {
         "dct:title": "${title}",
         "dcterms:title": "${title}",
         "dct:description": "${description}",
         "dcterms:description": "${description}",
-        "daimo:asset_type": "dataset",
-        "daimo:task": "Natural Language Processing",
-        "daimo:subtask": "${subtask}",
-        "daimo:input": ${input},
-        "daimo:label": "${label}"
+        "${DCT_NS}description": "${description}",
+        "${DCT_NS}language": ["Spanish"],
+        "${DCT_NS}license": "other",
+        "${DCT_NS}format": "jsonl",
+        "${DCAT_NS}keyword": ${vocabulary_keywords},
+        "${DAIMO_NS}modality": ["text"],
+        "${DAIMO_NS}taskCategory": "Natural Language Processing",
+        "${DAIMO_NS}taskType": "${task_type}",
+        "${DAIMO_NS}subtask": "${subtask}",
+        "${DAIMO_NS}subtaskDescription": "${description}",
+        "${DAIMO_NS}input": ${input},
+        "${DAIMO_NS}label": "${label}",
+        "${DAIMO_NS}labelType": "${label_type}",
+        "${DAIMO_NS}datasetVersion": "1.0.0",
+        "${DAIMO_NS}datasetRole": "benchmark",
+        "${DAIMO_NS}protocol": "holdout-test-set"
       }
     }
   },
   "dataAddress": {"type":"InesDataStore"}
 }
 DATASET_EOF
+    fi
 
     if ! upload_seed_file_asset "$connector" "$token" "$mgmt_url" "$asset_id" "$json_file" "$source_file" "$upload_filename" "application/x-ndjson" "FLARES dataset"; then
       return 1
@@ -1575,26 +2486,272 @@ DATASET_EOF
   return 0
 }
 
+reconcile_use_case_dataset_storage_assets() {
+  local connector="$1"
+  local creds_file="$2"
+
+  if [[ "$RECONCILE_DATASET_STORAGE" != "1" ]]; then
+    return 0
+  fi
+  if [[ "$ADAPTER" != "inesdata" ]]; then
+    return 0
+  fi
+  if [[ "$(connector_tag "$connector")" != "company" ]]; then
+    return 0
+  fi
+
+  local db_name db_user db_pass bucket
+  db_name="$(get_json_value "$creds_file" database name)"
+  db_user="$(get_json_value "$creds_file" database user)"
+  db_pass="$(get_json_value "$creds_file" database passwd)"
+  bucket="$(get_json_value "$creds_file" access_urls minio_bucket)"
+  if [[ -z "$bucket" ]]; then
+    bucket="$(get_json_value "$creds_file" public_access_urls minio_bucket)"
+  fi
+
+  if [[ -z "$db_name" || -z "$db_user" || -z "$db_pass" || -z "$bucket" ]]; then
+    echo "[$connector] cannot reconcile AI Model Hub benchmark dataset storage: missing database or bucket metadata" >&2
+    return 1
+  fi
+
+  local sql_file out_file err_file
+  sql_file="$WORK_DIR/${connector}_ai_model_hub_dataset_storage_reconcile.sql"
+  out_file="$WORK_DIR/${connector}_ai_model_hub_dataset_storage_reconcile.out"
+  err_file="$WORK_DIR/${connector}_ai_model_hub_dataset_storage_reconcile.err"
+
+  python3 - "$sql_file" "$bucket" "$DATASET_STORAGE_REGION" \
+    "$MOBILITY_ACTUAL_TRAVEL_TIME_DATASET_ID" "segments_test.csv" \
+    "$MOBILITY_DELAY_DATASET_ID" "segments_test.csv" \
+    "$MOBILITY_PREVIOUS_DELAY_DATASET_ID" "segments_test.csv" \
+    "$MOBILITY_ACTUAL_TRAVEL_TIME_SAMPLE_DATASET_ID" "$MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME" \
+    "$MOBILITY_DELAY_SAMPLE_DATASET_ID" "$MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME" \
+    "$MOBILITY_PREVIOUS_DELAY_SAMPLE_DATASET_ID" "$MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME" \
+    "$FLARES_5W1H_DATASET_ID" "5w1h_subtarea_1_test.jsonl" \
+    "$FLARES_RELIABILITY_DATASET_ID" "5w1h_subtarea_2_test.jsonl" <<'PY'
+import json
+import sys
+
+sql_file, bucket, region, *pairs = sys.argv[1:]
+ns = "https://w3id.org/edc/v0.0.1/ns/"
+
+lines = ["\\set ON_ERROR_STOP on", "begin;"]
+asset_ids = []
+for asset_id, file_name in zip(pairs[0::2], pairs[1::2]):
+    asset_ids.append(asset_id)
+    data_address = {
+        f"{ns}type": "AmazonS3",
+        f"{ns}keyName": file_name,
+        f"{ns}bucketName": bucket,
+        f"{ns}region": region,
+    }
+    private_properties = {"storageAssetFile": file_name}
+    lines.append(
+        "update edc_asset\n"
+        f"   set data_address = '{json.dumps(data_address, separators=(',', ':'))}'::json,\n"
+        f"       private_properties = '{json.dumps(private_properties, separators=(',', ':'))}'::json\n"
+        f" where asset_id = '{asset_id}';"
+    )
+ids_sql = ",".join("'" + asset_id.replace("'", "''") + "'" for asset_id in asset_ids)
+lines.append(
+    "select asset_id,\n"
+    "       data_address->>'https://w3id.org/edc/v0.0.1/ns/type',\n"
+    "       data_address->>'https://w3id.org/edc/v0.0.1/ns/keyName',\n"
+    "       private_properties->>'storageAssetFile'\n"
+    "  from edc_asset\n"
+    f" where asset_id in ({ids_sql})\n"
+    " order by asset_id;"
+)
+lines.append("commit;")
+with open(sql_file, "w", encoding="utf-8") as handle:
+    handle.write("\n".join(lines))
+    handle.write("\n")
+PY
+
+  local kubectl_cmd=(kubectl)
+  if [[ -n "$COMMON_KUBECONFIG" ]]; then
+    kubectl_cmd+=(--kubeconfig "$COMMON_KUBECONFIG")
+  fi
+
+  echo "[$connector] reconciling official AI Model Hub benchmark dataset storage metadata"
+  if ! "${kubectl_cmd[@]}" exec -i -n "$COMMON_SERVICES_NAMESPACE" "$COMMON_POSTGRES_POD" -- \
+    env "PGPASSWORD=$db_pass" psql -U "$db_user" -d "$db_name" -At \
+    < "$sql_file" > "$out_file" 2> "$err_file"; then
+    echo "[$connector] benchmark dataset storage reconciliation failed" >&2
+    cat "$err_file" >&2 2>/dev/null || true
+    return 1
+  fi
+
+  cat "$out_file"
+  local expected ok=1
+  for expected in \
+    "${MOBILITY_ACTUAL_TRAVEL_TIME_DATASET_ID}|AmazonS3|segments_test.csv|segments_test.csv" \
+    "${MOBILITY_DELAY_DATASET_ID}|AmazonS3|segments_test.csv|segments_test.csv" \
+    "${MOBILITY_PREVIOUS_DELAY_DATASET_ID}|AmazonS3|segments_test.csv|segments_test.csv" \
+    "${MOBILITY_ACTUAL_TRAVEL_TIME_SAMPLE_DATASET_ID}|AmazonS3|${MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME}|${MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME}" \
+    "${MOBILITY_DELAY_SAMPLE_DATASET_ID}|AmazonS3|${MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME}|${MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME}" \
+    "${MOBILITY_PREVIOUS_DELAY_SAMPLE_DATASET_ID}|AmazonS3|${MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME}|${MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME}" \
+    "${FLARES_5W1H_DATASET_ID}|AmazonS3|5w1h_subtarea_1_test.jsonl|5w1h_subtarea_1_test.jsonl" \
+    "${FLARES_RELIABILITY_DATASET_ID}|AmazonS3|5w1h_subtarea_2_test.jsonl|5w1h_subtarea_2_test.jsonl"; do
+    if ! grep -Fqx "$expected" "$out_file"; then
+      ok=0
+      echo "[$connector] missing reconciled dataset state: $expected" >&2
+    fi
+  done
+
+  if [[ "$ok" != "1" ]]; then
+    return 1
+  fi
+
+  echo "[$connector] official AI Model Hub benchmark datasets are transfer-ready"
+  return 0
+}
+
 seed_use_case_dataset_http_data_assets() {
   local connector="$1" token="$2" mgmt_url="$3"
   local tag created=0
   tag="$(connector_tag "$connector")"
 
-  local dataset_ids=("$MOBILITY_SEGMENTS_DATASET_ID" "$FLARES_5W1H_DATASET_ID" "$FLARES_RELIABILITY_DATASET_ID")
+  retire_legacy_mobility_segments_dataset_asset "$connector" "$token" "$mgmt_url"
+
+  local dataset_ids=(
+    "$MOBILITY_ACTUAL_TRAVEL_TIME_DATASET_ID"
+    "$MOBILITY_DELAY_DATASET_ID"
+    "$MOBILITY_PREVIOUS_DELAY_DATASET_ID"
+    "$MOBILITY_ACTUAL_TRAVEL_TIME_SAMPLE_DATASET_ID"
+    "$MOBILITY_DELAY_SAMPLE_DATASET_ID"
+    "$MOBILITY_PREVIOUS_DELAY_SAMPLE_DATASET_ID"
+    "$FLARES_5W1H_DATASET_ID"
+    "$FLARES_RELIABILITY_DATASET_ID"
+  )
   local titles=(
-    "Mobility segments test dataset"
+    "Mobility actual travel time test dataset"
+    "Mobility delay test dataset"
+    "Mobility previous delay test dataset"
+    "Mobility actual travel time sample test dataset"
+    "Mobility delay sample test dataset"
+    "Mobility previous delay sample test dataset"
     "FLARES 5W1H test dataset"
     "FLARES reliability test dataset"
   )
   local filenames=(
     "$(basename "$MOBILITY_SEGMENTS_DATASET_FILE")"
+    "$(basename "$MOBILITY_SEGMENTS_DATASET_FILE")"
+    "$(basename "$MOBILITY_SEGMENTS_DATASET_FILE")"
+    "$MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME"
+    "$MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME"
+    "$MOBILITY_SEGMENTS_SAMPLE_DATASET_FILENAME"
     "$(basename "$FLARES_5W1H_DATASET_FILE")"
     "$(basename "$FLARES_RELIABILITY_DATASET_FILE")"
   )
   local content_types=(
     "text/csv"
+    "text/csv"
+    "text/csv"
+    "text/csv"
+    "text/csv"
+    "text/csv"
     "application/x-ndjson"
     "application/x-ndjson"
+  )
+  local task_categories=(
+    "Tabular"
+    "Tabular"
+    "Tabular"
+    "Tabular"
+    "Tabular"
+    "Tabular"
+    "Natural Language Processing"
+    "Natural Language Processing"
+  )
+  local task_types=(
+    "regression"
+    "regression"
+    "regression"
+    "regression"
+    "regression"
+    "regression"
+    "classification"
+    "classification"
+  )
+  local subtasks=(
+    "tabular-regression"
+    "tabular-regression"
+    "tabular-regression"
+    "tabular-regression"
+    "tabular-regression"
+    "tabular-regression"
+    "token-classification"
+    "text-classification"
+  )
+  local label_types=(
+    "continuous"
+    "continuous"
+    "continuous"
+    "continuous"
+    "continuous"
+    "continuous"
+    "span"
+    "categorical"
+  )
+  local formats=(
+    "csv"
+    "csv"
+    "csv"
+    "csv"
+    "csv"
+    "csv"
+    "jsonl"
+    "jsonl"
+  )
+  local modalities_json=(
+    '["tabular"]'
+    '["tabular"]'
+    '["tabular"]'
+    '["tabular"]'
+    '["tabular"]'
+    '["tabular"]'
+    '["text"]'
+    '["text"]'
+  )
+  local languages_json=(
+    '["Language independent"]'
+    '["Language independent"]'
+    '["Language independent"]'
+    '["Language independent"]'
+    '["Language independent"]'
+    '["Language independent"]'
+    '["Spanish"]'
+    '["Spanish"]'
+  )
+  local keywords_json=(
+    '["benchmark","validation","test","mobility","actual-travel-time","public-transport","regression","csv"]'
+    '["benchmark","validation","test","mobility","delay","public-transport","regression","csv"]'
+    '["benchmark","validation","test","mobility","previous-delay","public-transport","regression","csv"]'
+    '["benchmark","validation","sample","test","mobility","actual-travel-time","public-transport","regression","csv"]'
+    '["benchmark","validation","sample","test","mobility","delay","public-transport","regression","csv"]'
+    '["benchmark","validation","sample","test","mobility","previous-delay","public-transport","regression","csv"]'
+    '["benchmark","validation","test","flares","span-extraction","jsonl"]'
+    '["benchmark","validation","test","flares","classification","jsonl"]'
+  )
+  local input_json=(
+    '["trip_id","from_stop_id","to_stop_id","route_id","scheduled_travel_time","shape_distance","is_peak","hour_sin","hour_cos","weekday_sin","weekday_cos","previous_delay_ratio","previous_delay_delta"]'
+    '["trip_id","from_stop_id","to_stop_id","route_id","scheduled_travel_time","shape_distance","is_peak","hour_sin","hour_cos","weekday_sin","weekday_cos","previous_delay_ratio","previous_delay_delta"]'
+    '["trip_id","from_stop_id","to_stop_id","route_id","scheduled_travel_time","shape_distance","is_peak","hour_sin","hour_cos","weekday_sin","weekday_cos"]'
+    '["trip_id","from_stop_id","to_stop_id","route_id","scheduled_travel_time","shape_distance","is_peak","hour_sin","hour_cos","weekday_sin","weekday_cos","previous_delay_ratio","previous_delay_delta"]'
+    '["trip_id","from_stop_id","to_stop_id","route_id","scheduled_travel_time","shape_distance","is_peak","hour_sin","hour_cos","weekday_sin","weekday_cos","previous_delay_ratio","previous_delay_delta"]'
+    '["trip_id","from_stop_id","to_stop_id","route_id","scheduled_travel_time","shape_distance","is_peak","hour_sin","hour_cos","weekday_sin","weekday_cos"]'
+    '["Id","Text"]'
+    '["Id","Text","5W1H_Label","Tag_Text","Tag_Start","Tag_End"]'
+  )
+  local labels=(
+    "actual_travel_time"
+    "delay"
+    "previous_delay"
+    "actual_travel_time"
+    "delay"
+    "previous_delay"
+    "Tags"
+    "Reliability_Label"
   )
 
   for idx in "${!dataset_ids[@]}"; do
@@ -1602,6 +2759,16 @@ seed_use_case_dataset_http_data_assets() {
     local title="${titles[$idx]} - ${tag}"
     local filename="${filenames[$idx]}"
     local content_type="${content_types[$idx]}"
+    local task_category="${task_categories[$idx]}"
+    local task_type="${task_types[$idx]}"
+    local subtask="${subtasks[$idx]}"
+    local label_type="${label_types[$idx]}"
+    local format="${formats[$idx]}"
+    local modality="${modalities_json[$idx]}"
+    local language="${languages_json[$idx]}"
+    local keywords="${keywords_json[$idx]}"
+    local input="${input_json[$idx]}"
+    local label="${labels[$idx]}"
     local endpoint="${USE_CASE_MODEL_SERVER_BASE_URL}/datasets/${filename}"
     local json_file="$WORK_DIR/${connector}_${asset_id}.json"
     local escaped_title
@@ -1614,7 +2781,7 @@ seed_use_case_dataset_http_data_assets() {
     "dct": "http://purl.org/dc/terms/",
     "dcterms": "http://purl.org/dc/terms/",
     "dcat": "http://www.w3.org/ns/dcat#",
-    "daimo": "https://w3id.org/daimo/ns#"
+    "daimo": "https://w3id.org/pionera/daimo#"
   },
   "@id": "${asset_id}",
   "properties": {
@@ -1626,11 +2793,26 @@ seed_use_case_dataset_http_data_assets() {
     "dcterms:description": "Use-case benchmark dataset referenced as standard EDC HttpData.",
     "dcat:keyword": ["dataset","benchmark","use-case","${tag}"],
     "assetData": {
-      "${VOCABULARY_ID}": {
+      "${DATASET_VOCABULARY_ID}": {
         "dct:title": "${escaped_title}",
         "dcterms:title": "${escaped_title}",
-        "daimo:asset_type": "dataset",
-        "daimo:benchmark_dataset_source": "${filename}"
+        "${DCT_NS}description": "Use-case benchmark dataset referenced as standard EDC HttpData.",
+        "${DCT_NS}language": ${language},
+        "${DCT_NS}license": "other",
+        "${DCT_NS}format": "${format}",
+        "${DCAT_NS}keyword": ${keywords},
+        "${DAIMO_NS}modality": ${modality},
+        "${DAIMO_NS}taskCategory": "${task_category}",
+        "${DAIMO_NS}taskType": "${task_type}",
+        "${DAIMO_NS}subtask": "${subtask}",
+        "${DAIMO_NS}subtaskDescription": "Use-case benchmark dataset referenced as standard EDC HttpData.",
+        "${DAIMO_NS}input": ${input},
+        "${DAIMO_NS}label": "${label}",
+        "${DAIMO_NS}labelType": "${label_type}",
+        "${DAIMO_NS}datasetVersion": "1.0.0",
+        "${DAIMO_NS}datasetRole": "benchmark",
+        "${DAIMO_NS}protocol": "holdout-test-set",
+        "${DAIMO_NS}benchmarkDatasetSource": "${filename}"
       }
     }
   },
@@ -1878,7 +3060,7 @@ seed_connector() {
       return 1
     fi
 
-    if ! ensure_vocabulary "$connector" "$token" "$mgmt_url" "$vocab_base"; then
+    if ! ensure_daimo_vocabularies "$connector" "$token" "$mgmt_url" "$vocab_base"; then
       cleanup_pf
       return 1
     fi
@@ -1903,9 +3085,11 @@ seed_connector() {
             cleanup_pf
             return 1
           fi
-          if ! seed_flares_metric_http_data_assets "$connector" "$token" "$mgmt_url"; then
-            cleanup_pf
-            return 1
+          if [[ "$INCLUDE_FLARES_METRIC_MODELS" == "1" ]]; then
+            if ! seed_flares_metric_http_data_assets "$connector" "$token" "$mgmt_url"; then
+              cleanup_pf
+              return 1
+            fi
           fi
         fi
         http_assets_label="use-case HttpData"
@@ -1916,14 +3100,18 @@ seed_connector() {
             cleanup_pf
             return 1
           fi
-          if ! seed_flares_metric_http_data_assets "$connector" "$token" "$mgmt_url"; then
+          if [[ "$INCLUDE_FLARES_METRIC_MODELS" == "1" ]]; then
+            if ! seed_flares_metric_http_data_assets "$connector" "$token" "$mgmt_url"; then
+              cleanup_pf
+              return 1
+            fi
+          fi
+        fi
+        if [[ "$COMBINED_HTTP_COUNT" -gt 0 ]]; then
+          if ! seed_http_data_assets "$connector" "$token" "$mgmt_url" "$COMBINED_HTTP_COUNT"; then
             cleanup_pf
             return 1
           fi
-        fi
-        if ! seed_http_data_assets "$connector" "$token" "$mgmt_url" "$COMBINED_HTTP_COUNT"; then
-          cleanup_pf
-          return 1
         fi
         http_assets_label="use-case HttpData + $COMBINED_HTTP_COUNT mock HttpData"
         ;;
@@ -1936,7 +3124,7 @@ seed_connector() {
       COUNT="$COMBINED_INESDATA_COUNT"
       inesdata_count_label="$COMBINED_INESDATA_COUNT"
     fi
-    if [[ "$SKIP_INESDATA_MODELS" != "1" ]] && ! seed_inesdata_store_assets "$connector" "$token" "$mgmt_url"; then
+    if [[ "$SKIP_INESDATA_MODELS" != "1" && "$COUNT" -gt 0 ]] && ! seed_inesdata_store_assets "$connector" "$token" "$mgmt_url"; then
       COUNT="$original_count"
       cleanup_pf
       return 1
@@ -1946,10 +3134,18 @@ seed_connector() {
     fi
     COUNT="$original_count"
 
-    # Create policy + contract definition for model assets.
-    if ! create_policy_and_contract "$connector" "$token" "$mgmt_url"; then
-      cleanup_pf
-      return 1
+    # Use-case mode must not publish every historical machineLearning asset:
+    # create one narrow contract per discovered FLARES/Mobility model.
+    if [[ "$MODEL_SET" == "use-cases" && "$SKIP_USE_CASE_MODELS" != "1" ]]; then
+      if ! create_use_case_model_policies_and_contracts "$connector" "$token" "$mgmt_url"; then
+        cleanup_pf
+        return 1
+      fi
+    else
+      if ! create_policy_and_contract "$connector" "$token" "$mgmt_url"; then
+        cleanup_pf
+        return 1
+      fi
     fi
   fi
 
@@ -1969,6 +3165,11 @@ seed_connector() {
         cleanup_pf
         return 1
       fi
+
+      if ! reconcile_use_case_dataset_storage_assets "$connector" "$creds_file"; then
+        cleanup_pf
+        return 1
+      fi
     fi
 
     if ! create_company_dataset_policies_and_contracts "$connector" "$token" "$mgmt_url"; then
@@ -1978,7 +3179,11 @@ seed_connector() {
   fi
 
   cleanup_pf
-  echo "[$connector] ${SEED_SCOPE} seeding complete: $http_assets_label + $inesdata_count_label InesDataStore"
+  if [[ "$SEED_SCOPE" == "vocabularies" ]]; then
+    echo "[$connector] vocabulary seeding complete: $MODEL_VOCABULARY_ID + $DATASET_VOCABULARY_ID"
+  else
+    echo "[$connector] ${SEED_SCOPE} seeding complete: $http_assets_label + $inesdata_count_label InesDataStore"
+  fi
   return 0
 }
 
@@ -2022,6 +3227,10 @@ write_negotiation_model_slugs() {
   local output_file="$1"
   : > "$output_file"
 
+  if [[ "$SEED_SCOPE" == "datasets" ]]; then
+    return 0
+  fi
+
   if [[ "$MODEL_SET" == "mock" || "$MODEL_SET" == "combined" ]]; then
     local max_assets="${#MODEL_SLUGS[@]}"
     if [[ "$MODEL_SET" == "combined" ]]; then
@@ -2036,18 +3245,17 @@ write_negotiation_model_slugs() {
 
   if [[ "$MODEL_SET" == "use-cases" || "$MODEL_SET" == "combined" ]]; then
     if [[ "$SKIP_USE_CASE_MODELS" != "1" ]]; then
-      local specs_file="$WORK_DIR/negotiation_use_case_model_specs.tsv"
-      if ! discover_use_case_model_specs "$specs_file"; then
-        return 1
-      fi
-      while IFS=$'\t' read -r slug _rest; do
-        [[ -n "$slug" ]] && printf '%s\n' "$slug" >> "$output_file"
-      done < "$specs_file"
-
-      local flares_slug
-      for flares_slug in "${FLARES_METRIC_MODEL_SLUGS[@]}"; do
-        printf '%s\n' "$flares_slug" >> "$output_file"
+      local use_case_slug
+      for use_case_slug in "${USE_CASE_MODEL_SLUGS[@]}"; do
+        printf '%s\n' "$use_case_slug" >> "$output_file"
       done
+
+      if [[ "$INCLUDE_FLARES_METRIC_MODELS" == "1" ]]; then
+        local flares_slug
+        for flares_slug in "${FLARES_METRIC_MODEL_SLUGS[@]}"; do
+          printf '%s\n' "$flares_slug" >> "$output_file"
+        done
+      fi
     fi
   fi
 
@@ -2133,7 +3341,7 @@ negotiate_one() {
   "protocol": "dataspace-protocol-http",
   "querySpec": {
     "offset": 0,
-    "limit": 50,
+    "limit": 5000,
     "filterExpression": []
   }
 }
@@ -2292,14 +3500,7 @@ negotiate_cross_connectors() {
 
   local total_slugs
   total_slugs="$(wc -l < "$negotiation_slugs_file" | xargs)"
-  local total_negotiations=$(( total_slugs * 2 ))
-
-  echo ""
-  echo "=========================================="
-  echo " Cross-Connector Negotiations (${total_negotiations} total)"
-  echo "=========================================="
-
-  if [[ "$total_slugs" -lt 1 ]]; then
+  if [[ "$total_slugs" -lt 1 && "$SEED_SCOPE" != "datasets" && "$SEED_SCOPE" != "all" ]]; then
     echo "Cannot run cross-connector negotiations: no model assets were selected" >&2
     return 1
   fi
@@ -2309,6 +3510,8 @@ negotiate_cross_connectors() {
   for c in "${_conns[@]}"; do
     c="$(echo "$c" | xargs)"
     [[ -z "$c" ]] && continue
+    local c_tag
+    c_tag="$(connector_tag "$c")"
     if [[ -z "$provider_connector" ]]; then
       provider_connector="$c"
     elif [[ -z "$consumer_connector" ]]; then
@@ -2317,6 +3520,10 @@ negotiate_cross_connectors() {
     case "$c" in
       *citycouncil*) city_connector="$c" ;;
       *company*)     company_connector="$c" ;;
+    esac
+    case "$c_tag" in
+      city)    city_connector="${city_connector:-$c}" ;;
+      company) company_connector="${company_connector:-$c}" ;;
     esac
   done
 
@@ -2333,28 +3540,84 @@ negotiate_cross_connectors() {
   local neg_ok=0 neg_fail=0
   local provider_tag consumer_tag slug
 
-  # Negotiate every provider HttpData model so consumer UIs only surface contract-ready assets.
   provider_tag="$(connector_tag "$provider_connector")"
   consumer_tag="$(connector_tag "$consumer_connector")"
+  local model_negotiations=0 dataset_negotiations=0 total_negotiations=0
   while IFS= read -r slug; do
     [[ -z "$slug" ]] && continue
-    local asset_id="${provider_tag}-${slug}"
-    if negotiate_one "$consumer_connector" "$provider_connector" "$asset_id" "${consumer_tag}->${provider_tag}"; then
-      neg_ok=$((neg_ok + 1))
-    else
-      neg_fail=$((neg_fail + 1))
+    if should_publish_model_for_tag "$provider_tag" "$slug"; then
+      model_negotiations=$((model_negotiations + 1))
+    fi
+    if should_publish_model_for_tag "$consumer_tag" "$slug"; then
+      model_negotiations=$((model_negotiations + 1))
     fi
   done < "$negotiation_slugs_file"
 
-  while IFS= read -r slug; do
-    [[ -z "$slug" ]] && continue
-    local asset_id="${consumer_tag}-${slug}"
-    if negotiate_one "$provider_connector" "$consumer_connector" "$asset_id" "${provider_tag}->${consumer_tag}"; then
-      neg_ok=$((neg_ok + 1))
+  if [[ "$SEED_SCOPE" == "datasets" || "$SEED_SCOPE" == "all" ]]; then
+    if [[ -n "$city_connector" && -n "$company_connector" ]]; then
+      dataset_negotiations="${#USE_CASE_DATASET_IDS[@]}"
     else
-      neg_fail=$((neg_fail + 1))
+      echo "Cannot run dataset negotiations: need city/provider and company/consumer connectors" >&2
+      dataset_negotiations=1
     fi
-  done < "$negotiation_slugs_file"
+  fi
+
+  total_negotiations=$((model_negotiations + dataset_negotiations))
+
+  echo ""
+  echo "=========================================="
+  echo " Cross-Connector Negotiations (${total_negotiations} total)"
+  echo "=========================================="
+
+  if [[ "$total_negotiations" -lt 1 ]]; then
+    echo "Skipping cross-connector negotiations: no published assets were selected"
+    return 0
+  fi
+
+  if [[ "$dataset_negotiations" -gt 0 && ( -z "$city_connector" || -z "$company_connector" ) ]]; then
+    return 1
+  fi
+
+  if [[ "$model_negotiations" -gt 0 ]]; then
+    # Negotiate only the assets published by each side so consumer UIs surface
+    # contract-ready models without requiring mirrored provider/consumer assets.
+    while IFS= read -r slug; do
+      [[ -z "$slug" ]] && continue
+      if ! should_publish_model_for_tag "$provider_tag" "$slug"; then
+        continue
+      fi
+      local asset_id="${provider_tag}-${slug}"
+      if negotiate_one "$consumer_connector" "$provider_connector" "$asset_id" "${consumer_tag}->${provider_tag}"; then
+        neg_ok=$((neg_ok + 1))
+      else
+        neg_fail=$((neg_fail + 1))
+      fi
+    done < "$negotiation_slugs_file"
+
+    while IFS= read -r slug; do
+      [[ -z "$slug" ]] && continue
+      if ! should_publish_model_for_tag "$consumer_tag" "$slug"; then
+        continue
+      fi
+      local asset_id="${consumer_tag}-${slug}"
+      if negotiate_one "$provider_connector" "$consumer_connector" "$asset_id" "${provider_tag}->${consumer_tag}"; then
+        neg_ok=$((neg_ok + 1))
+      else
+        neg_fail=$((neg_fail + 1))
+      fi
+    done < "$negotiation_slugs_file"
+  fi
+
+  if [[ "$dataset_negotiations" -gt 0 ]]; then
+    local dataset_id
+    for dataset_id in "${USE_CASE_DATASET_IDS[@]}"; do
+      if negotiate_one "$city_connector" "$company_connector" "$dataset_id" "city->company dataset"; then
+        neg_ok=$((neg_ok + 1))
+      else
+        neg_fail=$((neg_fail + 1))
+      fi
+    done
+  fi
 
   echo ""
   echo "Negotiations complete: $neg_ok succeeded, $neg_fail failed"
@@ -2373,6 +3636,10 @@ negotiate_cross_connectors() {
 # =============================================================================
 # MAIN EXECUTION
 # =============================================================================
+
+if ! validate_use_case_model_server_contract; then
+  exit 1
+fi
 
 IFS=',' read -r -a connectors <<< "$CONNECTORS_CSV"
 
@@ -2394,7 +3661,11 @@ for connector in "${connectors[@]}"; do
 done
 
 echo ""
-echo "Connector seeding summary: $total_ok/${#connectors[@]} succeeded (seed-scope=$SEED_SCOPE, model-set=$MODEL_SET, InesDataStore=$COUNT each)"
+if [[ "$SEED_SCOPE" == "vocabularies" ]]; then
+  echo "Connector vocabulary seeding summary: $total_ok/${#connectors[@]} succeeded ($MODEL_VOCABULARY_ID + $DATASET_VOCABULARY_ID)"
+else
+  echo "Connector seeding summary: $total_ok/${#connectors[@]} succeeded (seed-scope=$SEED_SCOPE, model-set=$MODEL_SET, InesDataStore=$COUNT each)"
+fi
 
 if [[ "${#failed_connectors[@]}" -gt 0 ]]; then
   echo "failed_connectors=${failed_connectors[*]}" >&2
@@ -2403,9 +3674,9 @@ if [[ "${#failed_connectors[@]}" -gt 0 ]]; then
   fi
 fi
 
-# Run cross-connector model negotiations only if model assets were seeded on at least 2 connectors.
-if [[ "$SEED_SCOPE" == "datasets" ]]; then
-  echo "Skipping cross-connector model negotiations for dataset-only seed scope"
+# Run cross-connector negotiations only when assets/contracts were seeded.
+if [[ "$SEED_SCOPE" == "vocabularies" ]]; then
+  echo "Skipping cross-connector negotiations for vocabulary-only seed scope"
 elif [[ "$total_ok" -ge 2 ]]; then
   if ! negotiate_cross_connectors; then
     if [[ "$STRICT_MODE" == "1" ]]; then
@@ -2413,7 +3684,7 @@ elif [[ "$total_ok" -ge 2 ]]; then
       exit 1
     fi
 
-    echo "Warning: cross-connector negotiations were incomplete; Step 8 finished with partial federated readiness" >&2
+    echo "Warning: cross-connector negotiations were incomplete; seeding finished with partial federated readiness" >&2
   fi
 else
   echo "Skipping cross-connector negotiations (need at least 2 successful connectors)" >&2

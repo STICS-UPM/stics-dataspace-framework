@@ -6,6 +6,21 @@ from unittest import mock
 import main
 
 
+class _FakeStreamingProcess:
+    def __init__(self, returncode=0, output=""):
+        self.returncode = returncode
+        self.stdout = output.splitlines(keepends=True)
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def terminate(self):
+        self.returncode = -15
+
+    def kill(self):
+        self.returncode = -9
+
+
 class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
     def _write_file(self, path, content="x"):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -142,11 +157,12 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
                 content = handle.read()
 
         self.assertEqual(result["status"], "promoted")
-        self.assertIn("AI_MODEL_HUB_MODEL_SERVER_MODE=combined", content)
-        self.assertIn("AI_MODEL_HUB_MODEL_SERVER_IMAGE=model-server:combined-abc1234", content)
+        self.assertIn("AI_MODEL_HUB_MODEL_SERVER_MODE=use-cases", content)
+        self.assertIn("AI_MODEL_HUB_MODEL_SERVER_IMAGE=model-server:use-cases-main", content)
         self.assertIn("AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH=/models", content)
         self.assertIn("AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES=true", content)
         self.assertIn("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH=/models", content)
+        self.assertIn("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH=skip", content)
         apply_profile.assert_called_once()
 
     def test_use_case_demo_seed_commands_match_steps_9_and_10(self):
@@ -174,6 +190,7 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
         self.assertIn("datasets", datasets_cmd)
         self.assertIn("--model-set", models_cmd)
         self.assertIn("use-cases", models_cmd)
+        self.assertIn("--include-flares-metric-models", models_cmd)
         self.assertIn("--adapter", models_cmd)
         self.assertIn("inesdata", models_cmd)
         self.assertIn("--skip-inesdata-models", models_cmd)
@@ -273,12 +290,18 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
                 ),
             )
 
-            completed = mock.Mock(returncode=0)
             with mock.patch.object(
                 main,
                 "apply_environment_configuration_profile",
                 return_value={"status": "applied"},
-            ), mock.patch.object(main.subprocess, "run", return_value=completed) as subprocess_run:
+            ), mock.patch.object(main.subprocess, "Popen") as subprocess_popen:
+                popen_calls = []
+
+                def fake_popen(args, **kwargs):
+                    popen_calls.append((args, kwargs))
+                    return _FakeStreamingProcess(returncode=0, output="ok\n")
+
+                subprocess_popen.side_effect = fake_popen
                 result = main._run_ai_model_hub_use_case_demo_flow(
                     profile_path,
                     {
@@ -295,13 +318,22 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "passed")
         step_names = [step["name"] for step in result["steps"]]
-        self.assertEqual(step_names, ["prepare-profile", "level5-components", "step9-datasets", "step10-models"])
-        commands = [call.args[0] for call in subprocess_run.call_args_list]
+        self.assertEqual(
+            step_names,
+            ["prepare-profile", "level5-components", "step8-vocabularies", "step9-datasets", "step10-models"],
+        )
+        commands = [call[0] for call in popen_calls]
         self.assertEqual(commands[0][1:], ["main.py", "inesdata", "level", "5", "--topology", "vm-distributed"])
+        level5_env = popen_calls[0][1]["env"]
+        self.assertEqual(level5_env["PIONERA_COMPONENTS"], "ai-model-hub")
+        self.assertEqual(level5_env["PIONERA_AI_MODEL_HUB_MODEL_SERVER_ENABLED"], "true")
+        self.assertEqual(level5_env["PIONERA_LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED"], "true")
         self.assertIn("--seed-scope", commands[1])
-        self.assertIn("datasets", commands[1])
-        self.assertIn("--model-set", commands[2])
-        self.assertIn("use-cases", commands[2])
+        self.assertIn("vocabularies", commands[1])
+        self.assertIn("--seed-scope", commands[2])
+        self.assertIn("datasets", commands[2])
+        self.assertIn("--model-set", commands[3])
+        self.assertIn("use-cases", commands[3])
 
     def test_use_case_demo_flow_stops_when_level5_fails(self):
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as tmpdir:
@@ -320,12 +352,18 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
                 ),
             )
 
-            failed = mock.Mock(returncode=7)
             with mock.patch.object(
                 main,
                 "apply_environment_configuration_profile",
                 return_value={"status": "applied"},
-            ), mock.patch.object(main.subprocess, "run", return_value=failed) as subprocess_run:
+            ), mock.patch.object(main.subprocess, "Popen") as subprocess_popen:
+                popen_calls = []
+
+                def fake_popen(args, **kwargs):
+                    popen_calls.append((args, kwargs))
+                    return _FakeStreamingProcess(returncode=7, output="failed\n")
+
+                subprocess_popen.side_effect = fake_popen
                 result = main._run_ai_model_hub_use_case_demo_flow(
                     profile_path,
                     {
@@ -339,7 +377,7 @@ class AIModelHubRealModelsWorkflowTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["reason"], "level5-failed")
         self.assertEqual([step["name"] for step in result["steps"]], ["prepare-profile", "level5-components"])
-        self.assertEqual(subprocess_run.call_count, 1)
+        self.assertEqual(len(popen_calls), 1)
 
 
 if __name__ == "__main__":

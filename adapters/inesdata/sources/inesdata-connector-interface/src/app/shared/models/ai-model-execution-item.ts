@@ -4,7 +4,6 @@ import { Asset } from './edc-connector-entities';
 export type AiModelExecutionSource = 'own' | 'federated';
 export type AiModelRequestShape = 'single' | 'batch';
 export type AiModelBenchmarkModelType = 'output' | 'metric';
-export type AiModelMetricDirection = 'higher' | 'lower';
 
 export interface AiModelExecutionInputFeature {
   name: string;
@@ -27,7 +26,11 @@ export interface AiModelExecutionItem {
   executionPath: string;
   httpMethodDefault: string;
   tasks: string[];
+  taskTypes: string[];
+  modalities: string[];
   subtasks?: string[];
+  endpointBehaviors: string[];
+  libraries: string[];
   algorithms: string[];
   frameworks: string[];
   inputFeatures: AiModelExecutionInputFeature[];
@@ -36,10 +39,8 @@ export interface AiModelExecutionItem {
   inputExample?: unknown;
   requestShape?: AiModelRequestShape;
   benchmarkModelType?: AiModelBenchmarkModelType;
-  targetFields?: string[];
-  predictionFields?: string[];
   supportedMetrics?: string[];
-  metricDirections?: Record<string, AiModelMetricDirection>;
+  predictionFields?: string[];
   positiveLabel?: string;
   scoreField?: string;
   rawAsset?: Asset;

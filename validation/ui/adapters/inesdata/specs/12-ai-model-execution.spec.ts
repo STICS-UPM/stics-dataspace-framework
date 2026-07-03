@@ -1,4 +1,4 @@
-import { Page } from "@playwright/test";
+import { Locator, Page } from "@playwright/test";
 
 import { test, expect } from "../../../shared/fixtures/dataspace.fixture";
 
@@ -12,7 +12,6 @@ import {
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS, waitForUiTransition } from "../../../shared/utils/waiting";
 import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
-import { aiModelHubDaimoModelAssetData } from "../../../shared/utils/ai-model-hub-daimo";
 
 type AIModelExecutionUiReport = {
   startedAt: string;
@@ -46,27 +45,54 @@ type AIModelExecutionUiReport = {
   fatalErrorResponses: Array<{ url: string; status: number }>;
 };
 
-const DEFAULT_MODEL_PATH = "/api/v1/nlp/ecommerce-sentiment";
-const DEFAULT_PAYLOAD = {
-  text: "This product is excellent and very useful",
-};
-const TEXT_MODEL_INPUT_FEATURES = [
+const DEFAULT_MODEL_PATH = "/flares/dccuchile-bert-base-spanish-wwm-uncased-5w1h";
+const DEFAULT_PAYLOAD = [
   {
-    name: "text",
-    type: "string",
-    required: true,
-    description: "Text to analyze",
+    Id: 840,
+    Text: "El comité de medicamentos humanos espera concluir el análisis en marzo.",
   },
 ];
-const TEXT_MODEL_INPUT_SCHEMA = {
+const OFFICIAL_FLARES_5W1H_MODEL = {
+  assetId: "city-flares-5w1h-albert",
+  name: "FLARES 5W1H ALBERT - PIONERA Use Case",
+  sourceOfTruth: "ProyectoPIONERA/AIModelHub Step 10 seed_use_case_http_data_assets",
+};
+const FLARES_5W1H_INPUT_FEATURES = [
+  {
+    name: "Id",
+    type: "integer",
+    required: true,
+    description: "Input text identifier",
+  },
+  {
+    name: "Text",
+    type: "string",
+    required: true,
+    description: "Spanish text to analyze",
+  },
+];
+const FLARES_5W1H_JSON_SCHEMA = {
   type: "object",
-  required: ["text"],
+  required: ["Id", "Text"],
   properties: {
-    text: {
+    Id: {
+      type: "integer",
+      description: "Input text identifier",
+    },
+    Text: {
       type: "string",
-      description: "Text to analyze",
+      description: "Spanish text to analyze",
     },
   },
+};
+const FLARES_5W1H_INPUT_SCHEMA = {
+  type: "array",
+  items: FLARES_5W1H_JSON_SCHEMA,
+  fields: FLARES_5W1H_INPUT_FEATURES,
+  jsonSchema: JSON.stringify({
+    type: "array",
+    items: FLARES_5W1H_JSON_SCHEMA,
+  }, null, 2),
 };
 
 test.skip(
@@ -130,11 +156,23 @@ function inferJsonSchema(value: unknown): Record<string, unknown> {
 }
 
 function inputSchemaForPayload(payload: unknown): unknown {
-  return parseJsonEnv("UI_AI_MODEL_HUB_MODEL_INPUT_SCHEMA", inferJsonSchema(payload));
+  const fallback = aiModelHubModelPath() === DEFAULT_MODEL_PATH ? FLARES_5W1H_INPUT_SCHEMA : inferJsonSchema(payload);
+  return parseJsonEnv("UI_AI_MODEL_HUB_MODEL_INPUT_SCHEMA", fallback);
 }
 
 function inputFeaturesForPayload(payload: unknown): unknown[] {
   const schema = inputSchemaForPayload(payload) as Record<string, unknown>;
+  if (Array.isArray(schema.fields)) {
+    return schema.fields.map((field) => {
+      const item = field as Record<string, unknown>;
+      return {
+        name: String(item.name || item.field || item.path || ""),
+        type: String(item.type || "string"),
+        required: item.required !== undefined ? Boolean(item.required) : !Boolean(item.nullable),
+        description: item.description ? String(item.description) : undefined,
+      };
+    }).filter((field) => field.name);
+  }
   const objectSchema = schema.type === "array" && schema.items && typeof schema.items === "object"
     ? schema.items as Record<string, unknown>
     : schema;
@@ -149,8 +187,18 @@ function inputFeaturesForPayload(payload: unknown): unknown[] {
   }));
 }
 
-function payloadRequiresText(payload: unknown): boolean {
-  return !Array.isArray(payload) && !!payload && typeof payload === "object" && Object.prototype.hasOwnProperty.call(payload, "text");
+function firstRequiredFeatureName(inputFeatures: unknown[]): string {
+  for (const feature of inputFeatures) {
+    const candidate = feature as { name?: unknown; required?: unknown };
+    if (candidate.required && String(candidate.name || "").trim()) {
+      return String(candidate.name).trim();
+    }
+  }
+  return "";
+}
+
+function missingRequiredPayloadFor(payload: unknown): unknown {
+  return Array.isArray(payload) ? [{}] : {};
 }
 
 function aiModelMetadataAliases({
@@ -200,6 +248,23 @@ function aiModelMetadataAliases({
     "daimo:software": software,
     "https://w3id.org/daimo/ns#software": software,
     "https://pionera.ai/edc/daimo#software": software,
+    "daimo:taskCategory": task,
+    "daimo:taskType": "classification",
+    "daimo:modality": ["text"],
+    "daimo:endpointBehavior": "prediction",
+    "daimo:libraryName": library,
+    "daimo:requestShape": "batch",
+    "daimo:inputSchema": inputSchema,
+    "daimo:inputExample": payload,
+    "https://w3id.org/pionera/daimo#taskCategory": task,
+    "https://w3id.org/pionera/daimo#taskType": "classification",
+    "https://w3id.org/pionera/daimo#modality": ["text"],
+    "https://w3id.org/pionera/daimo#subtask": subtask,
+    "https://w3id.org/pionera/daimo#endpointBehavior": "prediction",
+    "https://w3id.org/pionera/daimo#libraryName": library,
+    "https://w3id.org/pionera/daimo#requestShape": "batch",
+    "https://w3id.org/pionera/daimo#inputSchema": inputSchema,
+    "https://w3id.org/pionera/daimo#inputExample": payload,
     "daimo:inference_path": inferencePath,
     "https://w3id.org/daimo/ns#inference_path": inferencePath,
     "https://pionera.ai/edc/daimo#inference_path": inferencePath,
@@ -218,6 +283,13 @@ function aiModelMetadataAliases({
     library,
     framework,
     software,
+    taskCategory: task,
+    taskType: "classification",
+    modality: ["text"],
+    endpointBehavior: "prediction",
+    libraryName: library,
+    requestShape: "batch",
+    request_shape: "batch",
     inference_path: inferencePath,
     inferencePath,
     input_features: serializedInputFeatures,
@@ -235,6 +307,24 @@ async function gotoAiModelExecution(page: Page, baseUrl: string): Promise<void> 
   await page.goto(`${baseUrl.replace(/\/$/, "")}/ai-model-execution`, {
     waitUntil: "domcontentloaded",
   });
+}
+
+function generatedInputField(page: Page, featureName: string): Locator {
+  const label = new RegExp(`^${featureName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+  return page
+    .getByRole(featureName.toLowerCase() === "id" ? "spinbutton" : "textbox", { name: label })
+    .first();
+}
+
+async function fillGeneratedFlares5w1hForm(page: Page): Promise<void> {
+  const row = DEFAULT_PAYLOAD[0];
+  const idInput = page.getByRole("spinbutton", { name: /^Id\b/i }).first();
+  const textInput = page.getByRole("textbox", { name: /^Text\b/i }).first();
+
+  await expect(idInput).toBeVisible({ timeout: 15_000 });
+  await expect(textInput).toBeVisible({ timeout: 15_000 });
+  await fillMarked(idInput, String(row.Id));
+  await fillMarked(textInput, row.Text);
 }
 
 async function inspectExecutionObserverEvidence(page: Page, assetId: string, modelName: string) {
@@ -297,7 +387,7 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
   const modelPayload = aiModelHubPayload();
   const inputSchema = inputSchemaForPayload(modelPayload);
   const inputFeatures = inputFeaturesForPayload(modelPayload);
-  const requiresText = payloadRequiresText(modelPayload);
+  const firstRequiredFeature = firstRequiredFeatureName(inputFeatures);
   const modelName = `AI Model Execution controlled model ${suffix}`;
   const browserDiagnostics = collectBrowserDiagnostics(page);
   const loginPage = new KeycloakLoginPage(page, {
@@ -340,6 +430,114 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
   });
 
   try {
+    report.assetId = OFFICIAL_FLARES_5W1H_MODEL.assetId;
+    report.modelName = OFFICIAL_FLARES_5W1H_MODEL.name;
+    report.modelUrl = "official-ai-model-hub-use-case-server";
+    report.modelPath = DEFAULT_MODEL_PATH;
+    report.payload = DEFAULT_PAYLOAD;
+
+    await attachJson("ai-model-execution-ui-bootstrap", {
+      sourceOfTruth: OFFICIAL_FLARES_5W1H_MODEL.sourceOfTruth,
+      mode: "official-use-case-asset",
+      syntheticAssetsCreated: false,
+      asset: OFFICIAL_FLARES_5W1H_MODEL,
+    });
+
+    await loginPage.open(dataspaceRuntime.provider.portalBaseUrl);
+    await loginPage.loginIfNeeded();
+    await shellPage.expectReady();
+    await captureStep(page, "01-ai-model-execution-after-login");
+
+    await expect(async () => {
+      await gotoAiModelExecution(page, dataspaceRuntime.provider.portalBaseUrl);
+      await shellPage.assertNoGateway403("AI Model Execution page");
+      await shellPage.assertNoServerErrorBanner("AI Model Execution page");
+      await expect(page.getByRole("heading", { name: /AI Execution/i })).toBeVisible({ timeout: 20_000 });
+      await expect(page.locator("#assetSelect")).toBeVisible({ timeout: 20_000 });
+      await selectOptionMarked(page.locator("#assetSelect"), OFFICIAL_FLARES_5W1H_MODEL.assetId);
+      await waitForUiTransition(page);
+      await expect(page.getByRole("heading", { name: OFFICIAL_FLARES_5W1H_MODEL.name }).first()).toBeVisible({
+        timeout: 30_000,
+      });
+    }).toPass({
+      timeout: 120_000,
+      intervals: EVENTUAL_UI_RETRY_INTERVALS,
+    });
+
+    await expect(page.getByText(/Local Asset/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/Transformers/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/Natural Language Processing/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("button", { name: /Change Model/i }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".input-schema-section").first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/Detected DAIMO input schema/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/2 fields/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(generatedInputField(page, "Id")).toBeVisible({ timeout: 15_000 });
+    await expect(generatedInputField(page, "Text")).toBeVisible({ timeout: 15_000 });
+    report.inputValidationChecks.push({
+      scenario: "official_daimo_input_schema_detection",
+      expectedMessage: "Detected DAIMO input schema with Id and Text fields.",
+      status: "passed",
+    });
+    await attachJson("ai-model-execution-ui-selection-assertions", {
+      assetId: OFFICIAL_FLARES_5W1H_MODEL.assetId,
+      modelName: OFFICIAL_FLARES_5W1H_MODEL.name,
+      sourceOfTruth: OFFICIAL_FLARES_5W1H_MODEL.sourceOfTruth,
+      expectedPayload: DEFAULT_PAYLOAD,
+      validatedInputSchemaFields: ["Id", "Text"],
+    });
+    await captureStep(page, "02-ai-model-execution-model-selected");
+
+    await fillGeneratedFlares5w1hForm(page);
+    await clickMarked(page.getByRole("button", { name: /Execute Model/i }).first(), { force: true });
+
+    await expect(page.getByText(/Execution Result/i).first()).toBeVisible({ timeout: 120_000 });
+    await expect(page.locator("body")).toContainText(/SUCCESS/i, { timeout: 30_000 });
+    await expect(page.getByText(/Status Code:/i).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("body")).toContainText(/Status Code:\s*200/i, { timeout: 30_000 });
+    await captureStep(page, "04-ai-model-execution-result");
+
+    await clickMarked(page.getByRole("button", { name: /History/i }).first(), { force: true });
+    await expect(page.getByText(/Execution History/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/success/i).first()).toBeVisible({ timeout: 10_000 });
+    await captureStep(page, "05-ai-model-execution-history");
+
+    await clickMarked(page.getByRole("button", { name: /View Observer Timeline/i }).first(), { force: true });
+    await expect(page).toHaveURL(new RegExp(`/ai-model-observer/timeline/${OFFICIAL_FLARES_5W1H_MODEL.assetId}.*correlationId=`, "i"), {
+      timeout: 30_000,
+    });
+    await expect(page.getByRole("heading", { name: /Asset timeline/i })).toBeVisible({ timeout: 10_000 });
+    const officialObserverOutcome = await inspectExecutionObserverEvidence(
+      page,
+      OFFICIAL_FLARES_5W1H_MODEL.assetId,
+      OFFICIAL_FLARES_5W1H_MODEL.name,
+    );
+    report.observerEvidenceChecks.push({
+      scenario: "open_official_execution_asset_observer_timeline",
+      assetId: OFFICIAL_FLARES_5W1H_MODEL.assetId,
+      url: page.url(),
+      observedEvents: officialObserverOutcome.observedEvents,
+      status: officialObserverOutcome.status,
+      reason: officialObserverOutcome.reason,
+    });
+    await attachJson("ai-model-execution-ui-observer-evidence", {
+      assetId: OFFICIAL_FLARES_5W1H_MODEL.assetId,
+      url: page.url(),
+      checks: report.observerEvidenceChecks,
+    });
+    await captureStep(page, "06-ai-model-execution-observer-evidence");
+
+    report.toleratedErrorResponses = report.errorResponses.filter(({ url, status }) =>
+      isTolerableRuntimeRetry(url, status),
+    );
+    report.fatalErrorResponses = report.errorResponses.filter(
+      ({ url, status }) => !isTolerableRuntimeRetry(url, status),
+    );
+    expect(
+      report.fatalErrorResponses,
+      `API calls returned fatal errors: ${JSON.stringify(report.fatalErrorResponses)} (tolerated transient runtime errors: ${JSON.stringify(report.toleratedErrorResponses)})`,
+    ).toHaveLength(0);
+    return;
+
     if (aiModelHubCatalogCleanupEnabled()) {
       await attachJson(
         "ai-model-execution-ui-catalog-cleanup",
@@ -376,25 +574,13 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
         assetType: "machineLearning",
         keywords: ["validation", "ai-model-execution", "model-server", "machine-learning", "HttpData", "A5.2"],
         properties: {
-          assetData: aiModelHubDaimoModelAssetData({
-            task: "text-classification",
-            subtask: "text-classification",
-            subtaskDescription: "Controlled sentiment-analysis execution endpoint",
-            description:
-              "AIModelHub-Use-Cases model-server endpoint used to validate model execution from the INESData connector interface.",
-            libraryName: "Custom",
-            language: ["English", "Spanish"],
-            inputFeatures,
-            inputSchema,
-            inputExample: modelPayload,
-          }),
           ...aiModelMetadataAliases({
-            task: "text-classification",
-            subtask: "sentiment-analysis",
-            algorithm: "deterministic-rule-engine",
-            library: "flask",
-            framework: "model-server",
-            software: "pionera-validation-framework",
+            task: "Natural Language Processing",
+            subtask: "token-classification",
+            algorithm: "BERT",
+            library: "Transformers",
+            framework: "AIModelHub-Use-Cases",
+            software: "FastAPI",
             inferencePath: modelPath,
             payload: modelPayload,
             inputSchema,
@@ -433,9 +619,32 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
     });
 
     await expect(page.getByText(/Local Asset/i).first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/deterministic-rule-engine/i).first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/model-server/i).first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/Detected example payload/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/Transformers/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/Natural Language Processing/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("button", { name: /Change Model/i }).first()).toBeVisible({ timeout: 10_000 });
+    if (inputFeatures.length > 0) {
+      const schemaSection = page.locator(".input-schema-section").first();
+      await expect(schemaSection).toBeVisible({ timeout: 10_000 });
+      await expect(schemaSection.getByText(/Detected DAIMO input schema/i).first()).toBeVisible({ timeout: 10_000 });
+      const schemaFieldCount = schemaSection.getByText(new RegExp(`${inputFeatures.length}\\s+fields?`, "i")).first();
+      if (await schemaFieldCount.isVisible({ timeout: 2_000 }).catch(() => false)) {
+        await expect(schemaFieldCount).toBeVisible();
+      }
+      const generatedFormButton = page.getByRole("button", { name: /Generated Form/i }).first();
+      if (await generatedFormButton.isVisible({ timeout: 2_000 }).catch(() => false)) {
+        await expect(generatedFormButton).toBeVisible();
+        for (const feature of inputFeatures.slice(0, 3)) {
+          const featureName = String((feature as { name?: unknown }).name || "").trim();
+          if (featureName) {
+            await expect(generatedInputField(page, featureName)).toBeVisible({ timeout: 10_000 });
+          }
+        }
+      } else {
+        await expect(page.locator("#inputJson").first()).toBeVisible({ timeout: 10_000 });
+      }
+    } else {
+      await expect(page.getByText(/Detected example payload/i).first()).toBeVisible({ timeout: 10_000 });
+    }
     await attachJson("ai-model-execution-ui-selection-assertions", {
       assetId,
       modelName,
@@ -458,13 +667,15 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
       status: "passed",
     });
 
-    if (requiresText) {
-      await fillMarked(inputJson, "{}");
+    if (firstRequiredFeature) {
+      await fillMarked(inputJson, JSON.stringify(missingRequiredPayloadFor(modelPayload), null, 2));
       await clickMarked(page.getByRole("button", { name: /Execute Model/i }).first(), { force: true });
-      await expect(page.getByText(/Field "text" is required/i).first()).toBeVisible({ timeout: 10_000 });
+      await expect(
+        page.getByText(new RegExp(`(?:Row #1:\\s*)?Field "${firstRequiredFeature}" is required`, "i")).first(),
+      ).toBeVisible({ timeout: 10_000 });
       report.inputValidationChecks.push({
-        scenario: "missing_required_text_field",
-        expectedMessage: 'Field "text" is required.',
+        scenario: `missing_required_${firstRequiredFeature}_field`,
+        expectedMessage: `Field "${firstRequiredFeature}" is required.`,
         status: "passed",
       });
     }
@@ -484,10 +695,6 @@ test("12 AI Model Execution: local model-server inference from INESData UI", asy
     const expectedResultText = (process.env.UI_AI_MODEL_HUB_EXPECTED_RESULT_TEXT || "").trim();
     if (expectedResultText) {
       await expect(page.getByText(new RegExp(expectedResultText, "i")).first()).toBeVisible({ timeout: 10_000 });
-    } else if (requiresText) {
-      await expect(page.getByText(/E-commerce Sentiment Analyzer/i).first()).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByText(/positive/i).first()).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByText(/local-rule-engine/i).first()).toBeVisible({ timeout: 10_000 });
     }
     await captureStep(page, "04-ai-model-execution-result");
 

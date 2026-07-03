@@ -143,7 +143,7 @@ class ProxySettings:
         ).encode("utf-8")
 
     def management_token(self, connector_name):
-        if self.auth_mode != "service-account":
+        if self.auth_mode != "service-account" and not self.connector_password(connector_name):
             return None
         if not self.token_url:
             raise RuntimeError("Missing tokenUrl in proxy-config.json")
@@ -705,19 +705,24 @@ class DashboardProxyHandler(BaseHTTPRequestHandler):
     def _proxy_request(self, connector_name, service_name, remaining_path, query_string):
         access_token = None
         if SETTINGS.auth_mode == "oidc-bff" and service_name in {"management", "api", "control"}:
-            session = self._oidc_session()
-            if not session or not session.get("access_token"):
-                self._send_json(
-                    401,
-                    {
-                        "message": "Authentication required",
-                        "authMode": SETTINGS.auth_mode,
-                        "loginPath": self._public_path(SETTINGS.login_path),
-                        "authEvent": "session-expired",
-                    },
-                )
-                return
-            access_token = session.get("access_token")
+            if SETTINGS.connector_password(connector_name):
+                # Connector has a service-account password configured: use per-connector token
+                # even in oidc-bff mode (needed for cross-cluster connectors).
+                access_token = SETTINGS.management_token(connector_name)
+            else:
+                session = self._oidc_session()
+                if not session or not session.get("access_token"):
+                    self._send_json(
+                        401,
+                        {
+                            "message": "Authentication required",
+                            "authMode": SETTINGS.auth_mode,
+                            "loginPath": self._public_path(SETTINGS.login_path),
+                            "authEvent": "session-expired",
+                        },
+                    )
+                    return
+                access_token = session.get("access_token")
 
         target_url = self._target_url(connector_name, service_name, remaining_path, query_string)
         request = urllib.request.Request(

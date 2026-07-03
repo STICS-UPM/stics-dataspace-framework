@@ -420,6 +420,9 @@ function connectorProtocolAddressMode(deployerConfig: Record<string, string>, en
   if (adapter === "edc" && (topology === "local" || topology === "vm-single")) {
     return "internal";
   }
+  if (adapter === "inesdata" && topology === "vm-distributed") {
+    return "internal";
+  }
   if (topology === "vm-distributed") {
     return "public";
   }

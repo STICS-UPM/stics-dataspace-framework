@@ -20,10 +20,6 @@ from deployers.shared.lib.vm_distributed_public_access import (
     resolve_vm_distributed_public_urls,
 )
 from validation.components.artifact_cleanup import cleanup_empty_experiment_artifact_dirs
-from validation.components.ai_model_hub.model_server_policy import (
-    model_server_execution_labels,
-    model_server_validation_state,
-)
 
 
 def _project_root() -> Path:
@@ -434,24 +430,6 @@ def _split_model_server_validation_endpoints(config: dict[str, Any]) -> list[str
     return [entry.strip() for entry in raw_value.replace(";", ",").split(",") if entry.strip()]
 
 
-def _validation_payload_is_array(config: dict[str, Any]) -> bool:
-    raw_value = str(
-        config.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD")
-        or os.environ.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD")
-        or ""
-    ).strip()
-    if not raw_value:
-        return False
-    try:
-        return isinstance(json.loads(raw_value), list)
-    except json.JSONDecodeError:
-        return False
-
-
-def _ai_model_hub_model_server_enabled_for_ui(config: dict[str, Any], topology: str | None = None) -> bool:
-    return bool(model_server_validation_state(config, topology=topology).get("enabled"))
-
-
 def _export_ai_model_hub_model_server_validation_env(env: dict[str, str], config: dict[str, Any]) -> None:
     endpoints = _split_model_server_validation_endpoints(config)
     if endpoints:
@@ -468,7 +446,6 @@ def _export_ai_model_hub_model_server_validation_env(env: dict[str, str], config
     if payload:
         env["UI_AI_MODEL_HUB_MODEL_PAYLOAD"] = payload
         env["UI_AI_MODEL_HUB_EXTERNAL_MODEL_PAYLOAD"] = payload
-
 
 def _build_playwright_environment(
     *,
@@ -547,24 +524,20 @@ def _build_playwright_environment(
     model_server_url = connector_model_server_url or _model_server_public_base_url(config)
     if model_server_url:
         env.setdefault("AI_MODEL_HUB_MODEL_SERVER_BASE_URL", model_server_url)
-    model_server_state = model_server_validation_state(config, topology=topology)
-    model_server_mode = str(model_server_state.get("mode") or "").strip()
-    if model_server_state.get("enabled"):
-        execution_mode, coverage_status = model_server_execution_labels(model_server_mode)
-        env.setdefault("UI_AI_MODEL_HUB_MODEL_SERVER_DEMO", "1")
-        env.setdefault("UI_AI_MODEL_HUB_MODEL_SERVER_MODE", model_server_mode)
-        env.setdefault("AI_MODEL_HUB_MODEL_SERVER_MODE", model_server_mode)
-        env.setdefault("UI_AI_MODEL_HUB_MODEL_SERVER_EXECUTION_MODE", execution_mode)
-        env.setdefault("UI_AI_MODEL_HUB_MODEL_SERVER_COVERAGE_STATUS", coverage_status)
-        if _validation_payload_is_array(config):
-            env.setdefault("UI_AI_MODEL_HUB_BENCHMARKING_DEMO", "0")
-    else:
-        env["UI_AI_MODEL_HUB_MODEL_SERVER_DEMO"] = "0"
-        env["UI_AI_MODEL_HUB_BENCHMARKING_DEMO"] = "0"
-        env["UI_AI_MODEL_HUB_MODEL_SERVER_MODE"] = "disabled"
-        env["UI_AI_MODEL_HUB_MODEL_SERVER_COVERAGE_STATUS"] = "skipped_model_server_not_deployed"
-        if model_server_state.get("skip_reason"):
-            env["UI_AI_MODEL_HUB_MODEL_SERVER_SKIP_REASON"] = str(model_server_state["skip_reason"])
+    for key in (
+        "AI_MODEL_HUB_MODEL_SERVER_MODE",
+        "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES",
+        "AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE",
+    ):
+        configured_value = str(config.get(key) or os.environ.get(key) or "").strip()
+        if configured_value:
+            env.setdefault(key, configured_value)
+    if (
+        env.get("AI_MODEL_HUB_MODEL_SERVER_MODE") == "use-cases"
+        or str(env.get("AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES") or "").lower() == "true"
+        or env.get("AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE") == "split"
+    ):
+        env.setdefault("UI_AI_MODEL_HUB_USE_CASES_DEMO", "1")
     _export_ai_model_hub_model_server_validation_env(env, config)
 
     connectors = list(context.connectors or [])
@@ -608,6 +581,7 @@ def _build_playwright_environment(
         env.setdefault("PIONERA_PLAYWRIGHT_SUITE_NAME", f"{adapter} Playwright")
     env.setdefault("PLAYWRIGHT_INTERACTION_MARKERS", "1")
     env.setdefault("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "150")
+    env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
 
     return env
 

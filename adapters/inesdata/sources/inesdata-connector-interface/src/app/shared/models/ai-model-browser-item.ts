@@ -16,11 +16,13 @@ export interface AiModelBrowserItem {
   storageType: string;
   fileName: string;
   tasks: string[];
+  taskTypes: string[];
+  modalities: string[];
   subtasks: string[];
-  algorithms: string[];
+  endpointBehaviors: string[];
   libraries: string[];
-  frameworks: string[];
-  software: string[];
+  languages: string[];
+  licenses: string[];
   provider: string;
   source: AiModelBrowserSource;
   hasContract: boolean;

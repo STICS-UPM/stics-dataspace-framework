@@ -500,6 +500,62 @@ integration_cases:
         - PT5-MH-15
         - MH-OBS-05
 
+  - id: DS-UI-AMH-USECASES-01
+    scope: inesdata_integration
+    case_group: ai_model_hub
+    description: Official AI Model Hub FLARES and Mobility use cases from INESData UI
+    type: ui
+    validation_type: integration
+    dataspace_dimension: official_use_cases
+    execution_mode: ui_api
+    coverage_status: automated
+    mapping_status: mapped
+    preconditions:
+      - INESData provider and consumer connectors are reachable
+      - ProyectoPIONERA/AIModelHub steps 8, 9 and 10 have seeded the official DAIMO vocabularies, datasets and model assets
+      - ProyectoPIONERA/AIModelHub-Use-Cases model-server is deployed in use-cases mode
+      - FLARES and Mobility assets are split across the city/provider and company/consumer participants as defined by the official seeding script
+    steps:
+      - Open AI Model Browser and verify official PIONERA Use Case assets and DAIMO metadata
+      - Open AI Model Execution and execute the official FLARES 5W1H model with the detected input schema
+      - Open AI Model Benchmarking and run a FLARES Reliability benchmark with the official federated dataset
+      - Open Observer evidence for the generated benchmarkRunId and participant summary
+      - Run a Mobility Actual Travel Time benchmark with the official Mobility dataset
+      - Open Observer evidence for the generated Mobility benchmarkRunId
+      - Run a FLARES 5W1H Metrics benchmark with the official FLARES 5W1H dataset
+      - Run a Mobility Previous Delay benchmark with the official Mobility dataset
+    operations:
+      - discover_official_use_case_models
+      - validate_official_daimo_metadata
+      - execute_official_flares_model
+      - load_official_federated_benchmark_dataset
+      - run_official_flares_benchmark
+      - inspect_official_observer_evidence
+      - validate_mobility_compatible_model_pool
+      - run_official_mobility_benchmark
+      - inspect_official_mobility_observer_evidence
+      - run_official_flares_5w1h_metrics_benchmark
+      - run_official_mobility_previous_delay_benchmark
+    expected_result: INESData validates the official AI Model Hub Browser, Execution, Benchmarking and Observer flows for FLARES and Mobility using the assets, datasets and metadata seeded from the official repositories
+    automation:
+      status: automated
+      mode: ui_api
+      ui_spec: validation/ui/adapters/inesdata/specs/17-ai-model-official-use-cases.spec.ts
+      runtime_env:
+        UI_AI_MODEL_HUB_USE_CASES_DEMO: "1"
+        AI_MODEL_HUB_MODEL_SERVER_MODE: use-cases
+        AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE: split
+      linked_cases:
+        - MH-LING-01
+        - MH-MOB-01
+        - PT5-MH-01
+        - PT5-MH-10
+        - PT5-MH-12
+        - PT5-MH-13
+        - PT5-MH-14
+        - PT5-MH-15
+        - PT5-MH-17
+
   - id: DS-UI-AMH-DAIMO-01
     scope: inesdata_integration
     case_group: ai_model_hub

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+from contextlib import nullcontext
 from typing import Any
 
 from adapters.inesdata.adapter import InesdataAdapter
 from adapters.inesdata.components import INESDataComponentsAdapter
 from adapters.shared.components import SharedComponentsAdapter
 from adapters.inesdata.config import INESDataConfigAdapter, InesdataConfig
+from deployers.shared.lib import ai_model_hub_model_server
 from deployers.shared.lib.components import (
     component_validation_groups,
     components_for_adapter,
@@ -125,23 +127,33 @@ class InesdataDeployer:
     def deploy_components(self, context: DeploymentContext) -> dict[str, Any]:
         summary = summarize_components_for_adapter(context.config, self.name())
         components = list(summary.get("deployable") or [])
+        components_namespace = str(getattr(context.namespace_roles, "components_namespace", "") or "").strip()
+        model_server_result = None
         if not components:
-            return {
+            payload = {
                 "deployed": [],
                 "urls": {},
                 **summary,
             }
-        components_namespace = str(getattr(context.namespace_roles, "components_namespace", "") or "").strip()
-        result = self._resolve_components_adapter().deploy_components(
-            components,
-            ds_name=context.dataspace_name,
-            namespace=components_namespace,
-            deployer_config=context.config,
-        )
-        payload = dict(result or {})
-        payload.setdefault("deployed", list(components))
-        payload.setdefault("urls", {})
-        payload.update(summary)
+        else:
+            result = self._resolve_components_adapter().deploy_components(
+                components,
+                ds_name=context.dataspace_name,
+                namespace=components_namespace,
+                deployer_config=context.config,
+            )
+            payload = dict(result or {})
+            payload.setdefault("deployed", list(components))
+            payload.setdefault("urls", {})
+            payload.update(summary)
+
+        if self._should_deploy_integrated_ai_model_hub_model_server(summary, context.config):
+            model_server_result = self._deploy_integrated_ai_model_hub_model_server(
+                components_namespace,
+                context.config,
+            )
+        if model_server_result is not None:
+            payload["model_server"] = model_server_result
         return payload
 
     def get_cluster_connectors(self, context: DeploymentContext | None = None) -> list[str]:
@@ -182,7 +194,39 @@ class InesdataDeployer:
         return self._components_adapter
 
     def _configured_optional_components(self, config: dict[str, Any]) -> list[str]:
-        return components_for_adapter(config, self.name(), deployable_only=True)
+        return components_for_adapter(config, self.name(), deployable_only=False)
+
+    @staticmethod
+    def _should_deploy_integrated_ai_model_hub_model_server(
+        summary: dict[str, Any],
+        config: dict[str, Any],
+    ) -> bool:
+        integrated = {str(component or "").strip() for component in summary.get("integrated") or []}
+        if "ai-model-hub" not in integrated:
+            return False
+        return ai_model_hub_model_server.model_server_enabled(config)
+
+    def _deploy_integrated_ai_model_hub_model_server(
+        self,
+        namespace: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        components_adapter = self._resolve_components_adapter()
+        ensure_model_server = getattr(components_adapter, "_ensure_ai_model_hub_model_server", None)
+        if not callable(ensure_model_server):
+            raise RuntimeError(
+                "INESData integrated AI Model Hub model-server deployment is enabled, "
+                "but the components adapter does not expose _ensure_ai_model_hub_model_server()."
+            )
+        kubeconfig_context = getattr(components_adapter, "_temporary_component_kubeconfig", None)
+        context_manager = (
+            kubeconfig_context(config)
+            if callable(kubeconfig_context)
+            else nullcontext()
+        )
+        resolved_namespace = str(namespace or config.get("COMPONENTS_NAMESPACE") or "components").strip() or "components"
+        with context_manager:
+            return ensure_model_server(resolved_namespace, config)
 
     def _resolve_primary_connectors(self, dataspace_name: str, config: dict[str, Any]) -> list[str]:
         loader = getattr(getattr(self.adapter, "connectors", None), "load_dataspace_connectors", None)

@@ -7,11 +7,6 @@ import { gotoEdcDashboardRoute } from "./edc-dashboard.page";
 
 const PUSH_TRANSFER_PATTERN = /push/i;
 
-export type EdcTransferStartResult = {
-  transferType: string;
-  transferId?: string;
-};
-
 export class EdcContractsPage {
   constructor(private readonly page: Page) {}
 
@@ -45,7 +40,7 @@ export class EdcContractsPage {
     assetId: string,
     consumerRuntime: ConnectorPortalRuntime,
     objectName: string,
-  ): Promise<EdcTransferStartResult> {
+  ): Promise<string> {
     const card = this.contractCard(assetId);
     await expect(card, `Contract card for ${assetId} is not visible`).toBeVisible({
       timeout: 30_000,
@@ -78,18 +73,13 @@ export class EdcContractsPage {
     await clickMarked(dialog.getByRole("button", { name: /start transfer/i }));
     const response = await responsePromise;
     expect(response.ok(), `Transfer request returned HTTP ${response.status()}`).toBeTruthy();
-    const responseBody = await response.json().catch(() => undefined);
-    const transferId = String(responseBody?.["@id"] || responseBody?.id || "").trim() || undefined;
 
     await expect(dialog.locator("ul.steps, div[role='alert'], .loading").first()).toBeVisible({
       timeout: 30_000,
     });
     await this.closeOpenDialogIfPresent();
 
-    return {
-      transferType: selectedTransferType,
-      transferId,
-    };
+    return selectedTransferType;
   }
 
   private async selectPreferredTransferType(

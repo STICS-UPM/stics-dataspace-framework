@@ -457,6 +457,17 @@ def resolve_ontology_hub_runtime(
         ),
         "strictPreflight": _env_bool(current_env, "ONTOLOGY_HUB_UI_STRICT_PREFLIGHT", False),
         "prepareSparqlStore": _env_bool(current_env, "ONTOLOGY_HUB_PREPARE_SPARQL_STORE", True),
+        "prepareValidationFixture": _env_bool(current_env, "ONTOLOGY_HUB_PREPARE_VALIDATION_FIXTURE", True),
+        "validationFixtureRetryAttempts": _env_int(
+            current_env,
+            "ONTOLOGY_HUB_VALIDATION_FIXTURE_RETRY_ATTEMPTS",
+            6,
+        ),
+        "validationFixtureRetryDelaySeconds": _env_int(
+            current_env,
+            "ONTOLOGY_HUB_VALIDATION_FIXTURE_RETRY_SECONDS",
+            5,
+        ),
         "preflightTimeout": _env_int(
             current_env,
             "ONTOLOGY_HUB_UI_PREFLIGHT_TIMEOUT",

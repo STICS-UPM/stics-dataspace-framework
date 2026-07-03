@@ -65,47 +65,18 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
         self.assertEqual(result["health_check_interval_seconds"], 30)
         self.assertFalse(result["enable_user_config"])
 
-    def test_evaluate_runtime_config_response_passes_on_inesdata_connector_config(self):
-        body = json.dumps(
-            {
-                "managementApiUrl": "http://connector.example.local/management",
-                "catalogUrl": "http://connector.example.local/management/federatedcatalog",
-                "sharedUrl": "http://connector.example.local/shared",
-                "participantId": "connector-c1",
-                "service": {"asset": {"baseUrl": "/v3/assets"}},
-                "oauth2": {"issuer": "http://auth.example.local/realms/pionera"},
-            }
-        )
-
-        result = evaluate_runtime_config_response(
-            200,
-            "application/json",
-            body,
-            required_keys=[],
-        )
-
-        self.assertEqual(result["status"], "passed")
-        self.assertEqual(result["config_shape"], "inesdata-connector-interface")
-        self.assertEqual(result["management_api_url"], "http://connector.example.local/management")
-        self.assertEqual(result["participant_id"], "connector-c1")
-        self.assertEqual(result["oauth2_issuer"], "http://auth.example.local/realms/pionera")
-
     def test_run_ai_model_hub_validation_persists_artifacts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             def fake_http_get(url, timeout=20):
                 if url == "http://ai-model-hub.example.local":
                     return 200, "text/html", "<!doctype html><html><body><app-root></app-root></body></html>"
-                if (
-                    url
-                    == "http://ai-model-hub.example.local/inesdata-connector-interface/assets/config/app.config.json"
-                ):
+                if url == "http://ai-model-hub.example.local/config/app-config.json":
                     payload = {
-                        "managementApiUrl": "http://connector.example.local/management",
-                        "catalogUrl": "http://connector.example.local/management/federatedcatalog",
-                        "sharedUrl": "http://connector.example.local/shared",
-                        "participantId": "connector-c1",
-                        "service": {"asset": {"baseUrl": "/v3/assets"}},
-                        "oauth2": {"issuer": "http://auth.example.local/realms/pionera"},
+                        "menuItems": [
+                            {"label": "Catalog", "path": "/catalog"},
+                        ],
+                        "healthCheckIntervalSeconds": 30,
+                        "enableUserConfig": False,
                     }
                     return 200, "application/json", json.dumps(payload)
                 raise AssertionError(f"Unexpected URL: {url}")
@@ -130,18 +101,11 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertTrue(os.path.exists(result["artifacts"]["mh-bootstrap-01-response.json"]))
             self.assertTrue(os.path.exists(result["artifacts"]["mh-bootstrap-02-response.json"]))
 
-    def test_run_ai_model_hub_validation_falls_back_to_legacy_config_path(self):
+    def test_run_ai_model_hub_component_validation_builds_catalog_alignment(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            requested_urls = []
-
             def fake_http_get(url, timeout=20):
-                requested_urls.append(url)
                 if url == "http://ai-model-hub.example.local":
                     return 200, "text/html", "<!doctype html><html><body><app-root></app-root></body></html>"
-                if url.endswith("/inesdata-connector-interface/assets/config/app.config.json"):
-                    return 404, "text/html", "not found"
-                if url.endswith("/assets/config/app.config.json"):
-                    return 404, "text/html", "not found"
                 if url == "http://ai-model-hub.example.local/config/app-config.json":
                     payload = {
                         "menuItems": [
@@ -149,141 +113,6 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
                         ],
                         "healthCheckIntervalSeconds": 30,
                         "enableUserConfig": False,
-                    }
-                    return 200, "application/json", json.dumps(payload)
-                raise AssertionError(f"Unexpected URL: {url}")
-
-            with mock.patch("validation.components.ai_model_hub.runner._http_get", side_effect=fake_http_get):
-                result = run_ai_model_hub_validation(
-                    "http://ai-model-hub.example.local",
-                    experiment_dir=tmpdir,
-                )
-
-            self.assertEqual(result["status"], "passed")
-            config_case = result["executed_cases"][1]
-            self.assertEqual(
-                config_case["request"]["url"],
-                "http://ai-model-hub.example.local/config/app-config.json",
-            )
-            self.assertEqual(len(config_case["response"]["attempts"]), 3)
-            self.assertEqual(
-                requested_urls,
-                [
-                    "http://ai-model-hub.example.local",
-                    "http://ai-model-hub.example.local/inesdata-connector-interface/assets/config/app.config.json",
-                    "http://ai-model-hub.example.local/assets/config/app.config.json",
-                    "http://ai-model-hub.example.local/config/app-config.json",
-                ],
-            )
-
-    def test_run_ai_model_hub_validation_falls_back_to_edc_dashboard_config_path(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            requested_urls = []
-
-            def fake_http_get(url, timeout=20):
-                requested_urls.append(url)
-                if url == "http://ai-model-hub.example.local":
-                    return 200, "text/html", "<!doctype html><html><body><app-root></app-root></body></html>"
-                if url.endswith("/edc-dashboard/config/app-config.json"):
-                    payload = {
-                        "menuItems": [
-                            {"label": "ML Assets", "path": "/assets/ml"},
-                        ],
-                        "healthCheckIntervalSeconds": 30,
-                        "enableUserConfig": False,
-                    }
-                    return 200, "application/json", json.dumps(payload)
-                if url.endswith("/inesdata-connector-interface/assets/config/app.config.json"):
-                    return 404, "text/html", "not found"
-                if url.endswith("/assets/config/app.config.json"):
-                    return 404, "text/html", "not found"
-                if url.endswith("/config/app-config.json"):
-                    return 404, "text/html", "not found"
-                raise AssertionError(f"Unexpected URL: {url}")
-
-            with mock.patch("validation.components.ai_model_hub.runner._http_get", side_effect=fake_http_get):
-                result = run_ai_model_hub_validation(
-                    "http://ai-model-hub.example.local",
-                    experiment_dir=tmpdir,
-                )
-
-            self.assertEqual(result["status"], "passed")
-            config_case = result["executed_cases"][1]
-            self.assertEqual(
-                config_case["request"]["url"],
-                "http://ai-model-hub.example.local/edc-dashboard/config/app-config.json",
-            )
-            self.assertEqual(config_case["response"]["config_shape"], "data-dashboard")
-            self.assertEqual(len(config_case["response"]["attempts"]), 4)
-            self.assertEqual(
-                requested_urls,
-                [
-                    "http://ai-model-hub.example.local",
-                    "http://ai-model-hub.example.local/inesdata-connector-interface/assets/config/app.config.json",
-                    "http://ai-model-hub.example.local/assets/config/app.config.json",
-                    "http://ai-model-hub.example.local/config/app-config.json",
-                    "http://ai-model-hub.example.local/edc-dashboard/config/app-config.json",
-                ],
-            )
-
-    def test_run_ai_model_hub_validation_uses_runtime_dashboard_path_env(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            requested_urls = []
-
-            def fake_http_get(url, timeout=20):
-                requested_urls.append(url)
-                if url == "http://ai-model-hub.example.local/edc-dashboard/":
-                    return 200, "text/html", "<!doctype html><html><body><app-root></app-root></body></html>"
-                if url.endswith("/edc-dashboard/config/app-config.json"):
-                    payload = {
-                        "menuItems": [
-                            {"label": "ML Assets", "path": "/assets/ml"},
-                        ],
-                        "healthCheckIntervalSeconds": 30,
-                        "enableUserConfig": False,
-                    }
-                    return 200, "application/json", json.dumps(payload)
-                if url.endswith("/inesdata-connector-interface/assets/config/app.config.json"):
-                    return 404, "text/html", "not found"
-                if url.endswith("/assets/config/app.config.json"):
-                    return 404, "text/html", "not found"
-                if url.endswith("/config/app-config.json"):
-                    return 404, "text/html", "not found"
-                raise AssertionError(f"Unexpected URL: {url}")
-
-            with (
-                mock.patch("validation.components.ai_model_hub.runner._http_get", side_effect=fake_http_get),
-                mock.patch.dict(os.environ, {"AI_MODEL_HUB_DASHBOARD_PATH": "edc-dashboard/"}, clear=False),
-            ):
-                result = run_ai_model_hub_validation(
-                    "http://ai-model-hub.example.local",
-                    experiment_dir=tmpdir,
-                )
-
-            self.assertEqual(result["status"], "passed")
-            shell_case = result["executed_cases"][0]
-            self.assertEqual(
-                shell_case["request"]["url"],
-                "http://ai-model-hub.example.local/edc-dashboard/",
-            )
-            self.assertEqual(requested_urls[0], "http://ai-model-hub.example.local/edc-dashboard/")
-
-    def test_run_ai_model_hub_component_validation_builds_catalog_alignment(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            def fake_http_get(url, timeout=20):
-                if url == "http://ai-model-hub.example.local":
-                    return 200, "text/html", "<!doctype html><html><body><app-root></app-root></body></html>"
-                if (
-                    url
-                    == "http://ai-model-hub.example.local/inesdata-connector-interface/assets/config/app.config.json"
-                ):
-                    payload = {
-                        "managementApiUrl": "http://connector.example.local/management",
-                        "catalogUrl": "http://connector.example.local/management/federatedcatalog",
-                        "sharedUrl": "http://connector.example.local/shared",
-                        "participantId": "connector-c1",
-                        "service": {"asset": {"baseUrl": "/v3/assets"}},
-                        "oauth2": {"issuer": "http://auth.example.local/realms/pionera"},
                     }
                     return 200, "application/json", json.dumps(payload)
                 raise AssertionError(f"Unexpected URL: {url}")
@@ -408,158 +237,6 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertEqual(result["pt5_case_results"][0]["traceability"], ["MH-01"])
             self.assertTrue(result["artifacts"]["ui_report_json"].endswith("ui.json"))
 
-    def test_run_ai_model_hub_component_validation_skips_legacy_playwright_for_inesdata_connector_interface(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            bootstrap_result = {
-                "component": "ai-model-hub",
-                "suite": "bootstrap",
-                "status": "passed",
-                "summary": {"total": 2, "passed": 2, "failed": 0, "skipped": 0},
-                "executed_cases": [
-                    {
-                        "test_case_id": "MH-BOOTSTRAP-01",
-                        "type": "api",
-                        "case_group": "support",
-                        "validation_type": "support",
-                        "dataspace_dimension": "support",
-                        "mapping_status": "supporting",
-                        "coverage_status": "automated",
-                        "execution_mode": "api_support",
-                        "evaluation": {"status": "passed", "assertions": []},
-                    },
-                    {
-                        "test_case_id": "MH-BOOTSTRAP-02",
-                        "type": "api",
-                        "case_group": "support",
-                        "validation_type": "support",
-                        "dataspace_dimension": "support",
-                        "mapping_status": "supporting",
-                        "coverage_status": "automated",
-                        "execution_mode": "api_support",
-                        "response": {"config_shape": "inesdata-connector-interface"},
-                        "evaluation": {"status": "passed", "assertions": []},
-                    },
-                ],
-                "evidence_index": [],
-                "artifacts": {"report_json": os.path.join(tmpdir, "bootstrap.json")},
-            }
-            skipped_api_result = {
-                "component": "ai-model-hub",
-                "suite": "model-server-use-cases-api",
-                "status": "skipped",
-                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
-                "executed_cases": [],
-                "evidence_index": [],
-                "artifacts": {},
-            }
-
-            with (
-                mock.patch(
-                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_validation",
-                    return_value=bootstrap_result,
-                ),
-                mock.patch("validation.components.ai_model_hub.component_runner.run_ai_model_hub_ui_validation") as ui,
-                mock.patch(
-                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_functional_validation"
-                ) as functional,
-                mock.patch(
-                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_model_server_use_cases_validation",
-                    return_value=skipped_api_result,
-                ),
-                mock.patch.dict(os.environ, AI_MODEL_HUB_A52_SUITES_DISABLED, clear=False),
-            ):
-                result = run_ai_model_hub_component_validation(
-                    "http://ai-model-hub.example.local",
-                    experiment_dir=tmpdir,
-                )
-
-        ui.assert_not_called()
-        functional.assert_not_called()
-        self.assertEqual(result["status"], "passed")
-        self.assertEqual(result["suites"]["ui"]["status"], "skipped")
-        self.assertIn("INESData connector interface", result["suites"]["ui"]["skip_reason"])
-        self.assertEqual(result["suites"]["linguistic_functional"]["status"], "skipped")
-
-    def test_run_ai_model_hub_component_validation_skips_legacy_playwright_for_edc_dashboard(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            bootstrap_result = {
-                "component": "ai-model-hub",
-                "suite": "bootstrap",
-                "status": "passed",
-                "summary": {"total": 2, "passed": 2, "failed": 0, "skipped": 0},
-                "executed_cases": [
-                    {
-                        "test_case_id": "MH-BOOTSTRAP-01",
-                        "type": "api",
-                        "case_group": "support",
-                        "validation_type": "support",
-                        "dataspace_dimension": "support",
-                        "mapping_status": "supporting",
-                        "coverage_status": "automated",
-                        "execution_mode": "api_support",
-                        "evaluation": {"status": "passed", "assertions": []},
-                    },
-                    {
-                        "test_case_id": "MH-BOOTSTRAP-02",
-                        "type": "api",
-                        "case_group": "support",
-                        "validation_type": "support",
-                        "dataspace_dimension": "support",
-                        "mapping_status": "supporting",
-                        "coverage_status": "automated",
-                        "execution_mode": "api_support",
-                        "response": {"config_shape": "data-dashboard"},
-                        "evaluation": {"status": "passed", "assertions": []},
-                    },
-                ],
-                "evidence_index": [],
-                "artifacts": {"report_json": os.path.join(tmpdir, "bootstrap.json")},
-            }
-            skipped_api_result = {
-                "component": "ai-model-hub",
-                "suite": "model-server-use-cases-api",
-                "status": "skipped",
-                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
-                "executed_cases": [],
-                "evidence_index": [],
-                "artifacts": {},
-            }
-
-            with (
-                mock.patch(
-                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_validation",
-                    return_value=bootstrap_result,
-                ),
-                mock.patch("validation.components.ai_model_hub.component_runner.run_ai_model_hub_ui_validation") as ui,
-                mock.patch(
-                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_functional_validation"
-                ) as functional,
-                mock.patch(
-                    "validation.components.ai_model_hub.component_runner.run_ai_model_hub_model_server_use_cases_validation",
-                    return_value=skipped_api_result,
-                ),
-                mock.patch.dict(
-                    os.environ,
-                    {
-                        **AI_MODEL_HUB_A52_SUITES_DISABLED,
-                        "PIONERA_ADAPTER": "edc",
-                    },
-                    clear=False,
-                ),
-            ):
-                result = run_ai_model_hub_component_validation(
-                    "http://ai-model-hub.example.local",
-                    experiment_dir=tmpdir,
-                )
-
-        ui.assert_not_called()
-        functional.assert_not_called()
-        self.assertEqual(result["status"], "passed")
-        self.assertEqual(result["suites"]["ui"]["status"], "skipped")
-        self.assertIn("EDC dashboard layout", result["suites"]["ui"]["skip_reason"])
-        self.assertIn("EDC integration Playwright suite", result["suites"]["ui"]["skip_reason"])
-        self.assertEqual(result["suites"]["linguistic_functional"]["status"], "skipped")
-
     def test_run_ai_model_hub_component_validation_runs_a52_suites_by_default(self):
         def suite_result(suite, case_id, case_group="pt5", validation_type="functional"):
             return {
@@ -656,69 +333,6 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             self.assertIn("model_observer", result["phases"]["integration"]["suites"])
             self.assertTrue(os.path.exists(result["artifacts"]["artifact_manifest_json"]))
 
-    def test_model_execution_validation_skips_local_when_model_server_is_disabled(self):
-        class Adapter:
-            @staticmethod
-            def get_cluster_connectors():
-                return ["conn-provider"]
-
-            @staticmethod
-            def load_deployer_config():
-                return {
-                    "AI_MODEL_HUB_MODEL_SERVER_ENABLED": "false",
-                    "AI_MODEL_HUB_MODEL_SERVER_MODE": "disabled",
-                }
-
-        suite = mock.Mock()
-        with mock.patch(
-            "validation.components.ai_model_hub.model_execution_api.build_ai_model_hub_model_execution_suite",
-            return_value=(suite, Adapter()),
-        ), mock.patch.dict(os.environ, {"PIONERA_TOPOLOGY": "local"}, clear=True):
-            result = component_runner.run_ai_model_hub_model_execution_validation()
-
-        suite.run.assert_not_called()
-        self.assertEqual(result["status"], "skipped")
-        self.assertEqual(result["summary"]["skipped"], 1)
-        self.assertEqual(result["executed_cases"][0]["test_case_id"], "PT5-MH-10")
-        self.assertEqual(result["executed_cases"][0]["coverage_status"], "skipped_model_server_not_deployed")
-
-    def test_model_execution_validation_runs_local_mock_when_enabled(self):
-        class Adapter:
-            @staticmethod
-            def get_cluster_connectors():
-                return ["conn-provider"]
-
-            @staticmethod
-            def load_deployer_config():
-                return {
-                    "AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true",
-                    "AI_MODEL_HUB_MODEL_SERVER_MODE": "mock",
-                    "COMPONENTS_NAMESPACE": "components",
-                }
-
-        suite = mock.Mock()
-        suite.run.return_value = {
-            "component": "ai-model-hub",
-            "suite": "model-execution-api",
-            "status": "passed",
-            "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
-            "executed_cases": [],
-            "evidence_index": [],
-            "artifacts": {},
-        }
-        with mock.patch(
-            "validation.components.ai_model_hub.model_execution_api.build_ai_model_hub_model_execution_suite",
-            return_value=(suite, Adapter()),
-        ), mock.patch.dict(os.environ, {"PIONERA_TOPOLOGY": "local"}, clear=True):
-            result = component_runner.run_ai_model_hub_model_execution_validation()
-
-        self.assertEqual(result["status"], "passed")
-        suite.run.assert_called_once()
-        kwargs = suite.run.call_args.kwargs
-        self.assertEqual(kwargs["model_server_mode"], "mock")
-        self.assertEqual(kwargs["provider"], "conn-provider")
-        self.assertIn("http://model-server.components.svc.cluster.local:8080", kwargs["model_url"])
-
     def test_model_server_use_cases_validation_is_enabled_by_real_modes(self):
         self.assertFalse(model_server_use_case_validation_enabled({}))
         self.assertFalse(model_server_use_case_validation_enabled({"AI_MODEL_HUB_MODEL_SERVER_MODE": "mock"}))
@@ -764,11 +378,12 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
 
     def test_model_server_use_cases_validation_records_discovery_evidence(self):
         def fake_http_request(method, url, payload=None, timeout=30):
-            self.assertEqual(method, "GET")
-            if url == "https://org.example.test/model-server/models":
-                return 200, "application/json", json.dumps({"flares": [{"name": "flares-reliability"}]})
-            if url == "https://org.example.test/model-server/datasets":
+            if method == "GET" and url == "https://org.example.test/model-server/models":
+                return 200, "application/json", json.dumps({"flares": ["flares-reliability"]})
+            if method == "GET" and url == "https://org.example.test/model-server/datasets":
                 return 200, "application/json", json.dumps({"datasets": [{"name": "segments_test.csv"}]})
+            if method == "POST" and url == "https://org.example.test/model-server/flares/flares-reliability":
+                return 200, "application/json", json.dumps([{"label": "confiable"}])
             self.fail(f"unexpected URL: {url}")
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -791,9 +406,10 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["suite_display_name"], "AI Model Hub use cases")
-        self.assertEqual(result["summary"], {"total": 2, "passed": 2, "failed": 0, "skipped": 0})
+        self.assertEqual(result["summary"], {"total": 3, "passed": 3, "failed": 0, "skipped": 0})
         self.assertEqual(result["executed_cases"][0]["test_case_id"], "MH-MODEL-SERVER-01")
         self.assertEqual(result["executed_cases"][1]["test_case_id"], "MH-MODEL-SERVER-02")
+        self.assertEqual(result["executed_cases"][2]["test_case_id"], "MH-MODEL-SERVER-03")
         self.assertEqual(result["model_server"]["source_ref"], "abc123")
 
     def test_model_server_use_cases_validation_can_probe_configured_endpoints(self):
@@ -821,13 +437,13 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "passed")
-        self.assertEqual(result["summary"]["total"], 3)
-        self.assertEqual(result["executed_cases"][2]["test_case_id"], "MH-MODEL-SERVER-03")
+        self.assertEqual(result["summary"]["total"], 2)
+        self.assertEqual(result["executed_cases"][1]["test_case_id"], "MH-MODEL-SERVER-03")
+        self.assertFalse(result["model_server"]["datasets_validation_enabled"])
         self.assertEqual(
             calls,
             [
                 ("GET", "http://model-server.example.test/models", None),
-                ("GET", "http://model-server.example.test/datasets", None),
                 ("POST", "http://model-server.example.test/api/v1/flares", {"text": "sample"}),
                 ("POST", "http://model-server.example.test/api/v1/gtfs", {"text": "sample"}),
             ],
@@ -1375,6 +991,56 @@ class AIModelHubComponentValidationTests(unittest.TestCase):
 
         self.assertEqual(result, "http://observer.example.local")
         derive_backend.assert_not_called()
+
+    def test_resolve_model_observer_base_url_accepts_journal_environment(self):
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_MODEL_OBSERVER_JOURNAL_BASE_URL": "http://org1.example.test/public-portal-backend"},
+                clear=True,
+            ),
+            mock.patch.object(
+                component_runner,
+                "_derive_model_observer_base_url_from_adapter",
+                return_value="http://backend-demo.dev.ds.dataspaceunit.upm",
+            ) as derive_backend,
+        ):
+            result = component_runner._resolve_model_observer_base_url("http://ai-model-hub.example.local")
+
+        self.assertEqual(result, "http://org1.example.test/public-portal-backend")
+        derive_backend.assert_not_called()
+
+    def test_resolve_model_observer_base_url_accepts_journal_adapter_config(self):
+        class FakeConfig:
+            @staticmethod
+            def ds_domain_base():
+                return "pionera.example.test"
+
+        class FakeAdapter:
+            config = FakeConfig()
+
+            @staticmethod
+            def load_deployer_config():
+                return {
+                    "AI_MODEL_OBSERVER_JOURNAL_BASE_URL": "https://org1.example.test/public-portal-backend",
+                    "DS_1_NAME": "pionera",
+                    "DS_DOMAIN_BASE": "pionera.example.test",
+                }
+
+        with (
+            mock.patch.dict(os.environ, {"PIONERA_ADAPTER": "inesdata"}, clear=True),
+            mock.patch(
+                "validation.components.ai_model_hub.connector_governance_api._build_adapter",
+                return_value=FakeAdapter(),
+            ),
+            mock.patch(
+                "validation.components.ai_model_hub.connector_governance_api._dataspace_name_loader",
+                return_value=lambda adapter: (lambda: "pionera"),
+            ),
+        ):
+            result = component_runner._resolve_model_observer_base_url("http://ai-model-hub.example.local")
+
+        self.assertEqual(result, "https://org1.example.test/public-portal-backend")
 
     def test_resolve_model_observer_base_url_prefers_edc_connector_default_api(self):
         class FakeConfig:

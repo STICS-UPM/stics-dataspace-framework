@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import os
+import subprocess
 from typing import Any, Callable
 
 KAFKA_LEVEL6_RUN_FLAG = "PIONERA_LEVEL6_RUN_KAFKA"
@@ -90,6 +91,24 @@ def _remote_image_import_enabled(deployer_config: dict[str, Any], env: dict[str,
     return _truthy(value)
 
 
+def _discover_k8s_node_ip(kubeconfig: str = "") -> str:
+    env = dict(os.environ)
+    if kubeconfig:
+        env["KUBECONFIG"] = kubeconfig
+    try:
+        result = subprocess.run(
+            ["kubectl", "get", "nodes", "-o",
+             "jsonpath={.items[0].status.addresses[?(@.type==\"InternalIP\")].address}"],
+            capture_output=True, text=True, timeout=10, env=env,
+        )
+        ip = (result.stdout or "").strip()
+        if ip and result.returncode == 0:
+            return ip
+    except Exception:
+        pass
+    return ""
+
+
 def validate_kafka_runtime_preflight(
     runtime_config: dict[str, Any] | None,
     deployer_config: dict[str, Any] | None = None,
@@ -147,10 +166,37 @@ def validate_kafka_runtime_preflight(
         if reason:
             invalid.append({"address": address, "reason": reason})
     if invalid:
-        result["errors"].append(
-            "vm-distributed Kafka connector bootstrap cannot use localhost, minikube/docker host aliases, or Kubernetes ClusterIP/DNS names."
-        )
-        result["invalid_connector_bootstrap_servers"] = invalid
+        # For vm-distributed with NodePort, try to derive the external bootstrap from the node IP.
+        external_service_type = str(
+            runtime_config.get("k8s_external_service_type")
+            or deployer_config.get("KAFKA_K8S_EXTERNAL_SERVICE_TYPE")
+            or ""
+        ).strip().lower()
+        if external_service_type in ("nodeport", "loadbalancer"):
+            kubeconfig = str(runtime_config.get("k8s_kubeconfig") or "").strip()
+            node_ip = _discover_k8s_node_ip(kubeconfig)
+            if node_ip:
+                nodeport = str(
+                    runtime_config.get("k8s_nodeport")
+                    or deployer_config.get("KAFKA_K8S_NODEPORT")
+                    or "32093"
+                ).strip()
+                derived_bootstrap = f"{node_ip}:{nodeport}"
+                connector_bootstrap_servers = [derived_bootstrap]
+                result["connector_bootstrap_servers"] = connector_bootstrap_servers
+                result["warnings"].append(
+                    f"Derived connector bootstrap from Kubernetes node IP: {derived_bootstrap}. "
+                    "Set KAFKA_CLUSTER_BOOTSTRAP_SERVERS explicitly to suppress this warning."
+                )
+                invalid = [
+                    item for item in invalid
+                    if _invalid_vm_distributed_connector_bootstrap_reason(derived_bootstrap)
+                ]
+        if invalid:
+            result["errors"].append(
+                "vm-distributed Kafka connector bootstrap cannot use localhost, minikube/docker host aliases, or Kubernetes ClusterIP/DNS names."
+            )
+            result["invalid_connector_bootstrap_servers"] = invalid
 
     if not _configured_connector_image(deployer_config, env):
         if not _level4_local_images_enabled(deployer_config, env) and not _remote_image_import_enabled(deployer_config, env):

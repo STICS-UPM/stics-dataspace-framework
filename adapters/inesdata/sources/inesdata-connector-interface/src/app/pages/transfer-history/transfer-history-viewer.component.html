@@ -40,28 +40,11 @@
         <td mat-cell *matCellDef="let item">{{item.contractId}}</td>
       </ng-container>
 
-      <ng-container matColumnDef="validation">
-        <th mat-header-cell *matHeaderCellDef scope="col">Validation</th>
-        <td mat-cell *matCellDef="let item"
-            [class]="getValidationCssClass(item)"
-            [matTooltip]="getValidationDisplay(item)"
-            matTooltipClass="validation-tooltip">
-          <div class="validation-cell-content">
-            <span class="validation-summary">{{ getValidationSummary(item) }}</span>
-            <button mat-button color="primary" class="validation-details-button"
-                    *ngIf="hasValidationDetails(item)"
-                    (click)="openValidationDetails(item); $event.stopPropagation()">
-              Details
-            </button>
-          </div>
-        </td>
-      </ng-container>
-
       <tr mat-header-row *matHeaderRowDef="columns" class="transfer-history-table-header"></tr>
       <tr mat-row *matRowDef="let row; columns: columns;"></tr>
 
       <tr class="mat-row" *matNoDataRow>
-        <td class="mat-cell" [attr.colspan]="columns.length">
+        <td class="mat-cell" [attr.colspan]="5">
           There are no transfers.
         </td>
       </tr>

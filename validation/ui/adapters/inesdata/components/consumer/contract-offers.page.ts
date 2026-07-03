@@ -1,4 +1,4 @@
-import { expect, Locator, Page, type Response as PlaywrightResponse } from "@playwright/test";
+import { expect, Locator, Page } from "@playwright/test";
 
 import { clickMarked } from "../../../../shared/utils/live-marker";
 import { snackBar } from "../../../../shared/utils/selectors";
@@ -21,18 +21,6 @@ export type ContractOffersDiagnostics = {
   visibleTabs: string[];
   visibleButtons: string[];
   bodyTextSample: string;
-};
-
-export type NegotiationSubmission = {
-  url: string;
-  status: number;
-  negotiationId?: string;
-  bodySnippet?: string;
-};
-
-export type NegotiationNotificationResult = {
-  message?: string;
-  warning?: string;
 };
 
 export class ContractOffersPage {
@@ -100,40 +88,12 @@ export class ContractOffersPage {
     await clickMarked(this.page.getByRole("button", { name: /negotiate contract/i }).first());
   }
 
-  async negotiateFirstOfferAndWaitForSubmission(timeoutMs = 15_000): Promise<NegotiationSubmission | undefined> {
-    const responsePromise = this.page
-      .waitForResponse(
-        (response) =>
-          response.request().method() === "POST" &&
-          response.url().includes("/management/v3/contractnegotiations"),
-        { timeout: timeoutMs },
-      )
-      .catch(() => undefined);
-
-    await this.negotiateFirstOffer();
-
-    const response = await responsePromise;
-    return response ? negotiationSubmissionFromResponse(response) : undefined;
-  }
-
   async waitForNegotiationComplete(timeoutMs = 40_000): Promise<string> {
     const notification = snackBar(this.page);
     await expect(notification).toContainText(/contract negotiation complete!/i, {
       timeout: timeoutMs,
     });
     return ((await notification.textContent()) ?? "").replace(/\s+/g, " ").trim();
-  }
-
-  async readNegotiationCompletionNotification(timeoutMs = 10_000): Promise<NegotiationNotificationResult> {
-    try {
-      return {
-        message: await this.waitForNegotiationComplete(timeoutMs),
-      };
-    } catch (error) {
-      return {
-        warning: errorMessage(error),
-      };
-    }
   }
 
   private async visibleTexts(selector: string, limit = 25): Promise<string[]> {
@@ -170,25 +130,4 @@ function normalizeText(value: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-async function negotiationSubmissionFromResponse(response: PlaywrightResponse): Promise<NegotiationSubmission> {
-  const text = await response.text().catch(() => "");
-  let negotiationId: string | undefined;
-
-  if (text) {
-    try {
-      const body = JSON.parse(text);
-      negotiationId = String(body?.["@id"] || body?.id || "").trim() || undefined;
-    } catch {
-      negotiationId = undefined;
-    }
-  }
-
-  return {
-    url: response.url(),
-    status: response.status(),
-    negotiationId,
-    bodySnippet: text ? normalizeText(text).slice(0, 500) : undefined,
-  };
 }

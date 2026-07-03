@@ -109,6 +109,9 @@ class InesdataAdapter:
         return self.infrastructure.deploy_infrastructure()
 
     def deploy_dataspace(self):
+        topology = str(getattr(self, "topology", "local") or "local").strip().lower()
+        if topology != "local":
+            return self.deployment.deploy_dataspace_for_topology(topology=topology)
         return self.deployment.deploy_dataspace()
 
     def build_recreate_dataspace_plan(self):
@@ -401,6 +404,7 @@ class InesdataAdapter:
         payload = build_component_preview(
             configured=configured,
             deployable=summary.get("deployable"),
+            integrated=summary.get("integrated"),
             pending_support=summary.get("pending_support"),
             unsupported=summary.get("unsupported"),
             unknown=summary.get("unknown"),

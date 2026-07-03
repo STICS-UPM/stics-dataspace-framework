@@ -1,6 +1,7 @@
 """Configuration primitives for the generic EDC adapter."""
 
 import os
+import shlex
 import sys
 
 from adapters.inesdata.config import INESDataConfigAdapter, InesdataConfig
@@ -23,7 +24,7 @@ class EdcConfig(InesdataConfig):
     EDC_REFERENCE_REPO_URL = "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
     EDC_REFERENCE_REPO_SUBDIR = "asset-filter-template"
     EDC_DASHBOARD_REPO_URL = "https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard"
-    EDC_DASHBOARD_REPO_REF = "3a36d8d3282edb95e5caf361ad76d3535354e541"
+    EDC_DASHBOARD_REPO_REF = "a4cb3e659e1fd3abfa9516a036c261b19432ec13"
     EDC_MANAGEMENT_PORT = 19193
     EDC_PROTOCOL_PORT = 19194
     EDC_MANAGEMENT_PATH = "/management"
@@ -61,8 +62,36 @@ class EdcConfig(InesdataConfig):
         return os.path.join(cls.script_dir(), "deployers", cls.ADAPTER_NAME, "deployer.config.example")
 
     @classmethod
+    def _inesdata_deployer_dir(cls):
+        return os.path.join(cls.script_dir(), "deployers", "inesdata")
+
+    @classmethod
+    def venv_path(cls):
+        return os.path.join(cls._inesdata_deployer_dir(), cls.PATH_VENV)
+
+    @classmethod
+    def repo_requirements_path(cls):
+        return os.path.join(cls._inesdata_deployer_dir(), cls.PATH_REQUIREMENTS)
+
+    @classmethod
     def python_exec(cls):
         return os.getenv("PIONERA_EDC_BOOTSTRAP_PYTHON", sys.executable)
+
+    @classmethod
+    def bootstrap_dataspace_command(cls, action, dataspace=None):
+        inesdata_dir = cls._inesdata_deployer_dir()
+        python_exec = os.path.join(inesdata_dir, cls.PATH_VENV, "bin", "python")
+        bootstrap = os.path.join(inesdata_dir, "bootstrap.py")
+        resolved_action = str(action or "").strip()
+        resolved_dataspace = str(dataspace or cls.dataspace_name() or "").strip()
+        # Bootstrap uses relative Jinja2 template paths so it must run from its own dir.
+        # env -C changes CWD without breaking PIONERA_* env var propagation (unlike cd &&).
+        return (
+            f"env -C {shlex.quote(inesdata_dir)} "
+            f"{shlex.quote(python_exec)} "
+            f"{shlex.quote(bootstrap)} "
+            f"dataspace {shlex.quote(resolved_action)} {shlex.quote(resolved_dataspace)}"
+        )
 
     @classmethod
     def edc_deployment_dir(cls):
@@ -383,6 +412,10 @@ class EDCConfigAdapter(INESDataConfigAdapter):
                 prefer_existing=not for_write,
             )
         )
+
+    def connector_minio_policy_path(self, connector_name, ds_name=None, for_write=False):
+        del for_write
+        return self.edc_connector_policy_file(connector_name, ds_name=ds_name)
 
     def edc_connector_image_name(self):
         config = self.load_deployer_config()

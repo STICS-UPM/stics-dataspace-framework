@@ -1,0 +1,40 @@
+{
+  "id": "postman-environment-stics-edc-interop",
+  "name": "00 Environment - STICS EDC Interop",
+  "values": [
+    { "key": "keycloakUrl", "value": "https://auth.dev.linkeddata.es", "type": "text", "enabled": true },
+    { "key": "keycloakClientId", "value": "dataspace-users", "type": "text", "enabled": true },
+    { "key": "dataspace", "value": "stics", "type": "text", "enabled": true },
+
+    { "key": "providerMgmt", "value": "https://stics.bavenir.eu/management", "type": "text", "enabled": true },
+    { "key": "providerDsp", "value": "https://stics.bavenir.eu/protocol", "type": "text", "enabled": true },
+    { "key": "providerParticipantId", "value": "connector-stics", "type": "text", "enabled": true },
+    { "key": "provider_user", "value": "user-connector-stics", "type": "text", "enabled": true },
+    { "key": "provider_password", "value": "<copiar localmente desde credentials.json>", "type": "secret", "enabled": true },
+
+    { "key": "consumerMgmt", "value": "https://con-lab.stics.linkeddata.es/management", "type": "text", "enabled": true },
+    { "key": "consumerParticipantId", "value": "conlab-stics", "type": "text", "enabled": true },
+    { "key": "consumer_user", "value": "user-conlab-stics", "type": "text", "enabled": true },
+    { "key": "consumer_password", "value": "<copiar localmente desde credentials.json>", "type": "secret", "enabled": true },
+
+    { "key": "pushSinkUrl", "value": "https://con-lab.stics.linkeddata.es/push-sink", "type": "text", "enabled": true },
+
+    { "key": "provider_jwt", "value": "", "type": "secret", "enabled": true },
+    { "key": "consumer_jwt", "value": "", "type": "secret", "enabled": true },
+    { "key": "e2e_asset_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_policy_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_cd_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_offer_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_negotiation_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_agreement_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_transfer_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_push_asset_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_push_offer_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_push_negotiation_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_push_agreement_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_push_transfer_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_edr_endpoint", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_edr_authorization", "value": "", "type": "secret", "enabled": true }
+  ],
+  "_postman_variable_scope": "environment"
+}

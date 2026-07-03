@@ -146,10 +146,8 @@ de versiones no deberían terminar el proceso ante `ENOENT`; deberían mantener
 MongoDB y el filesystem en un estado consistente o devolver un error controlado.
 
 El framework mitiga la parte de infraestructura montando `/app/versions` como
-volumen del chart de Ontology Hub. El chart base conserva `emptyDir` como valor
-por defecto para mantener compatibilidad con despliegues efímeros, pero `Level
-5` activa automáticamente un PVC para `vm-single` y `vm-distributed`. El tamaño
-puede parametrizarse con:
+volumen del chart de Ontology Hub. Por defecto usa `emptyDir` para mantener
+compatibilidad con despliegues efímeros, y permite activar PVC con:
 
 ```yaml
 versions:
@@ -157,16 +155,6 @@ versions:
     enabled: true
     size: 1Gi
 ```
-
-En términos de configuración, el comportamiento se controla mediante
-`ONTOLOGY_HUB_VERSIONS_PERSISTENCE_ENABLED`,
-`COMPONENTS_VERSIONS_PERSISTENCE_ENABLED`,
-`ONTOLOGY_HUB_VERSIONS_PERSISTENCE_SIZE` y
-`COMPONENTS_VERSIONS_PERSISTENCE_SIZE`. Tras el rollout, el framework verifica
-que el deployment de Ontology Hub monta el volumen `versions` mediante
-`persistentVolumeClaim` y que el PVC está en estado `Bound`. Si se espera
-persistencia y el despliegue queda con `emptyDir`, `Level 5` falla con una
-causa explícita.
 
 Esto reduce la desincronización entre MongoDB y los ficheros `.n3` cuando hay
 reinicios del pod. En el experimento `2026-04-30 14:00:47`, `OH-APP-14` ya no

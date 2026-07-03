@@ -130,9 +130,10 @@ detecta valores vacíos o defaults generados, sin pisar valores personalizados.
 
 Dentro de este asistente existe la opción
 `10 - AI Model Hub use-case demo preparation`. Esta opción prepara el perfil de
-casos de uso con `model-server` combinado, muestra los comandos de `Level 5` y
-sembrado, ejecuta el registro de datasets de benchmark (`Step 9`) y registra
-modelos FLARES/Mobility (`Step 10`). El flujo es adapter-aware: en `inesdata`
+casos de uso con `model-server` en modo `use-cases`, muestra los comandos de
+`Level 5` y sembrado, registra los vocabularios DAIMO Model/Dataset (`Step 8`),
+ejecuta el registro de datasets de benchmark (`Step 9`) y registra modelos
+FLARES/Mobility descubiertos desde `/models` (`Step 10`). El flujo es adapter-aware: en `inesdata`
 usa las APIs propias del adapter, y en `edc` crea assets `HttpData`, políticas,
 contratos y negociaciones DSP entre los pares configurados.
 
@@ -263,6 +264,14 @@ framework, `Level 5` refresca los checkouts configurados antes de construir la
 imagen. Los ejemplos de configuración usan `main` para desplegar la versión más
 reciente disponible; para ejecuciones reproducibles se debe fijar
 `*_SOURCE_REF` a una etiqueta o commit.
+
+`AMH - AI Model Hub use-case Steps 7-10`
+
+Abre directamente el asistente de preparación de casos de uso de AI Model Hub.
+Si la sesión no está en `vm-distributed`, el menú ofrece cambiar a esa topología.
+Desde ese asistente, la opción de flujo completo aplica el perfil de casos de
+uso, ejecuta `Level 5` como `Step 7` del repositorio oficial y después ejecuta
+los pasos de siembra `Step 8`, `Step 9` y `Step 10`.
 
 ## Developer
 

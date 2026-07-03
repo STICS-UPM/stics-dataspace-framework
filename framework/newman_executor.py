@@ -23,10 +23,10 @@ class NewmanExecutor:
     CONTRACT_AGREEMENT_POLL_INTERVAL_SECONDS = 3
     CONTRACT_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS = 30
     ASYNC_COLLECTION_DELAY_REQUEST_MS = 2000
-    TRANSIENT_AUTH_ATTEMPTS = 3
+    TRANSIENT_AUTH_ATTEMPTS = 5
     TRANSIENT_AUTH_RETRY_DELAY_SECONDS = 5
-    MANAGEMENT_PREFLIGHT_ATTEMPTS = 3
-    MANAGEMENT_PREFLIGHT_RETRY_DELAY_SECONDS = 2
+    MANAGEMENT_PREFLIGHT_ATTEMPTS = 20
+    MANAGEMENT_PREFLIGHT_RETRY_DELAY_SECONDS = 3
     MANAGEMENT_PREFLIGHT_TIMEOUT_SECONDS = 15
     MANAGEMENT_PREFLIGHT_CATALOG_TIMEOUT_SECONDS = 15
     DSP_NEGOTIATION_RECOVERY_ATTEMPTS = 2
@@ -940,6 +940,7 @@ class NewmanExecutor:
                     "Accept": "application/json",
                 },
                 timeout=10,
+                verify=False,
             )
         except requests.RequestException as exc:
             issues.append(f"direct lookup failed: {exc}")
@@ -973,6 +974,7 @@ class NewmanExecutor:
                 },
                 json=payload,
                 timeout=10,
+                verify=False,
             )
         except requests.RequestException as exc:
             issues.append(f"list lookup failed: {exc}")
@@ -1177,6 +1179,7 @@ class NewmanExecutor:
                 },
                 json=payload,
                 timeout=10,
+                verify=False,
             )
         except requests.RequestException as exc:
             return f"provider diagnostics request failed: {exc}"
@@ -1297,6 +1300,7 @@ class NewmanExecutor:
                         "Accept": "application/json",
                     },
                     timeout=10,
+                    verify=False,
                 )
             except requests.RequestException as exc:
                 last_issue = f"direct lookup failed: {exc}"
@@ -1323,6 +1327,7 @@ class NewmanExecutor:
                         },
                         json=payload,
                         timeout=10,
+                        verify=False,
                     )
                 except requests.RequestException as exc:
                     last_issue = f"{last_issue}; list lookup failed: {exc}" if last_issue else str(exc)
@@ -1408,6 +1413,7 @@ class NewmanExecutor:
             "cli,json",
             "--color",
             "on",
+            "--insecure",
         ]
 
         collection_name = os.path.basename(collection_path)

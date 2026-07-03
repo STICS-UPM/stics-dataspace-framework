@@ -44,10 +44,12 @@ module.exports = defineConfig({
     screenshot: "only-on-failure",
     video: "on",
     ignoreHTTPSErrors: true,
-    launchOptions: headedGpuFix
-      ? {
-          args: ["--disable-gpu"],
-        }
-      : undefined,
+    launchOptions: {
+      args: [
+        "--ignore-certificate-errors",
+        "--disable-web-security",
+        ...(headedGpuFix ? ["--disable-gpu"] : []),
+      ],
+    },
   },
 });

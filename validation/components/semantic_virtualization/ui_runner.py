@@ -1,9 +1,11 @@
 import json
 import os
+import ssl
 import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
+from urllib import error as urllib_error, parse as urllib_parse, request as urllib_request
 
 from validation.components.artifact_cleanup import cleanup_empty_experiment_artifact_dirs
 from validation.components.fail_fast import playwright_max_failures_args
@@ -22,6 +24,39 @@ MAPPING_EDITOR_ENV = "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI"
 
 def _playwright_command() -> List[str]:
     return [*PLAYWRIGHT_COMMAND, *playwright_max_failures_args()]
+
+
+def _mapping_editor_url_from_env() -> str:
+    return (
+        os.environ.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_BASE_URL")
+        or os.environ.get("SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL")
+        or os.environ.get("MAPPING_EDITOR_BASE_URL")
+        or ""
+    ).strip().rstrip("/")
+
+
+def _probe_mapping_editor(url: str, timeout: int = 8) -> bool:
+    if not url:
+        return False
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        req = urllib_request.Request(url, method="GET")
+        with urllib_request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            return resp.getcode() == 200
+    except Exception:
+        return False
+
+
+def _resolve_mapping_editor_enabled() -> str:
+    explicit = os.environ.get(MAPPING_EDITOR_ENV, "").strip()
+    if explicit:
+        return explicit
+    editor_url = _mapping_editor_url_from_env()
+    if not editor_url:
+        return "0"
+    return "1" if _probe_mapping_editor(editor_url) else "0"
 
 
 UI_CASE_METADATA: Dict[str, Dict[str, Any]] = {
@@ -375,7 +410,7 @@ def run_semantic_virtualization_ui_validation(base_url: str, experiment_dir: str
     env = {
         **os.environ,
         "SEMANTIC_VIRTUALIZATION_BASE_URL": normalized_base_url,
-        MAPPING_EDITOR_ENV: os.environ.get(MAPPING_EDITOR_ENV, "1"),
+        MAPPING_EDITOR_ENV: _resolve_mapping_editor_enabled(),
         "PLAYWRIGHT_OUTPUT_DIR": artifact_paths["output_dir"],
         "PLAYWRIGHT_HTML_REPORT_DIR": artifact_paths["html_report_dir"],
         "PLAYWRIGHT_BLOB_REPORT_DIR": artifact_paths["blob_report_dir"],
@@ -383,6 +418,7 @@ def run_semantic_virtualization_ui_validation(base_url: str, experiment_dir: str
         "PIONERA_PLAYWRIGHT_SUITE_NAME": "Virtualizador functional",
         "PLAYWRIGHT_INTERACTION_MARKERS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKERS", "1"),
         "PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "350"),
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0",
     }
 
     error = None

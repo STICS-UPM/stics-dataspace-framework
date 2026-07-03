@@ -134,6 +134,38 @@ class SharedHostsManagerTests(unittest.TestCase):
             ],
         )
 
+    def test_build_context_host_blocks_skips_integrated_inesdata_component_hosts(self):
+        context = DeploymentContext(
+            deployer="inesdata",
+            topology="local",
+            environment="DEV",
+            dataspace_name="pionera",
+            ds_domain_base="dev.ds.dataspaceunit.upm",
+            connectors=["conn-org2-pionera", "conn-org3-pionera"],
+            components=["ontology-hub", "ai-model-hub", "semantic-virtualization"],
+            namespace_roles=NamespaceRoles(
+                registration_service_namespace="pionera",
+                provider_namespace="pionera",
+                consumer_namespace="pionera",
+            ),
+            config={
+                "COMPONENTS": "ontology-hub,ai-model-hub,semantic-virtualization",
+                "DOMAIN_BASE": "dev.ed.dataspaceunit.upm",
+                "KEYCLOAK_HOSTNAME": "keycloak.dev.ed.dataspaceunit.upm",
+                "MINIO_HOSTNAME": "minio.dev.ed.dataspaceunit.upm",
+            },
+        )
+
+        levels = hostnames_by_level(build_context_host_blocks(context))
+
+        self.assertEqual(
+            levels["level_5"],
+            [
+                "ontology-hub-pionera.dev.ds.dataspaceunit.upm",
+                "semantic-virtualization-pionera.dev.ds.dataspaceunit.upm",
+            ],
+        )
+
     def test_build_context_host_blocks_uses_topology_role_addresses(self):
         context = DeploymentContext(
             deployer="edc",

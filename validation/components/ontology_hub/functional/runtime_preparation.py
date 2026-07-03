@@ -34,6 +34,9 @@ def _format_command_for_console(cmd):
     if "-- mongosh " in cmd and " --eval " in cmd:
         prefix = cmd.split(" --eval ", 1)[0]
         return f"{prefix} --eval <script omitted; set PIONERA_VERBOSE_COMMANDS=true to show>"
+    if " -- sh -lc " in cmd:
+        prefix = cmd.split(" -- sh -lc ", 1)[0]
+        return f"{prefix} -- sh -lc <script omitted; set PIONERA_VERBOSE_COMMANDS=true to show>"
     return cmd
 
 
@@ -58,8 +61,9 @@ def _run(cmd, check=False):
     return result
 
 
-def _run_capture(cmd):
-    echo_output = _should_echo_command_output(cmd)
+def _run_capture(cmd, *, echo_output=None):
+    if echo_output is None:
+        echo_output = _should_echo_command_output(cmd)
     print(f"\nExecuting: {_format_command_for_console(cmd)}")
     try:
         result = subprocess.run(
@@ -223,6 +227,7 @@ def _ontology_hub_session_login(runtime, timeout=20, quiet=False):
         return None
 
     session = requests.Session()
+    session.verify = False
     try:
         login_response = session.get(f"{base_url}/edition/login", timeout=timeout, allow_redirects=True)
     except requests.RequestException as exc:
@@ -576,7 +581,7 @@ def wait_for_ontology_hub_preflight(runtime, timeout_seconds=180, stable_success
         all_ready = True
         for label, url in targets:
             try:
-                response = requests.get(url, timeout=10, allow_redirects=True)
+                response = requests.get(url, timeout=10, allow_redirects=True, verify=False)
                 last_statuses[label] = str(response.status_code)
                 if ontology_hub_response_looks_broken(response):
                     all_ready = False
@@ -623,32 +628,179 @@ def wait_for_ontology_hub_preflight(runtime, timeout_seconds=180, stable_success
     return False
 
 
+def _check_github_rate_limit_from_oh_pod(runtime):
+    """Return GitHub rate-limit evidence from the OH pod, or None on error."""
+    namespace = _ontology_hub_components_namespace(runtime)
+    release_name = _ontology_hub_release_name(runtime)
+    label_selector = f"app.kubernetes.io/name=ontology-hub,app.kubernetes.io/instance={release_name}"
+    pod_name = _run_capture(
+        f"kubectl get pods -n {shlex.quote(namespace)} "
+        f"-l {shlex.quote(label_selector)} "
+        f"--field-selector=status.phase=Running "
+        f"-o jsonpath='{{.items[0].metadata.name}}'"
+    )
+    if not pod_name:
+        return None
+    output = _run_capture(
+        f"kubectl exec -n {shlex.quote(namespace)} {shlex.quote(pod_name)} "
+        f"-- curl -si https://api.github.com/rate_limit",
+        echo_output=_env_flag("PIONERA_VERBOSE_COMMANDS", False),
+    )
+    if not output:
+        return None
+    status_match = re.search(r"^HTTP/\S+\s+(\d+)", output, re.IGNORECASE | re.MULTILINE)
+    limit_match = re.search(r"x-ratelimit-limit:\s*(\d+)", output, re.IGNORECASE)
+    remaining_match = re.search(r"x-ratelimit-remaining:\s*(\d+)", output, re.IGNORECASE)
+    reset_match = re.search(r"x-ratelimit-reset:\s*(\d+)", output, re.IGNORECASE)
+    if not remaining_match:
+        return None
+    status = int(status_match.group(1)) if status_match else None
+    limit = int(limit_match.group(1)) if limit_match else None
+    remaining = int(remaining_match.group(1))
+    reset_epoch = int(reset_match.group(1)) if reset_match else int(time.time()) + 3600
+    return {
+        "status": status,
+        "limit": limit,
+        "remaining": remaining,
+        "reset_epoch": reset_epoch,
+    }
+
+
+def _wait_for_github_api_quota(runtime, min_remaining=5, check_interval=30):
+    """Block until OH pod has enough GitHub API quota for a repository registration."""
+    result = _check_github_rate_limit_from_oh_pod(runtime)
+    if result is None:
+        return
+    remaining = result["remaining"]
+    reset_epoch = result["reset_epoch"]
+    if remaining >= min_remaining:
+        limit = result.get("limit")
+        status = result.get("status")
+        limit_suffix = f"/{limit}" if limit is not None else ""
+        status_suffix = f"status={status}, " if status is not None else ""
+        print(
+            f"\nGitHub API rate limit OK: {status_suffix}"
+            f"remaining={remaining}{limit_suffix}, reset_epoch={reset_epoch}.\n"
+        )
+        return
+    deadline = reset_epoch + 15
+    wait_total = max(0, deadline - int(time.time()))
+    print(
+        f"\nGitHub API rate limit low on OH pod ({remaining} remaining). "
+        f"Waiting up to {wait_total}s for reset at epoch {reset_epoch}...\n"
+    )
+    while time.time() < deadline:
+        time.sleep(check_interval)
+        result = _check_github_rate_limit_from_oh_pod(runtime)
+        if result is None:
+            break
+        remaining = result["remaining"]
+        reset_epoch = result["reset_epoch"]
+        if remaining >= min_remaining:
+            limit = result.get("limit")
+            limit_suffix = f"/{limit}" if limit is not None else ""
+            print(f"\nGitHub API rate limit recovered: remaining={remaining}{limit_suffix}, reset_epoch={reset_epoch}.\n")
+            return
+        remaining_wait = max(0, reset_epoch + 15 - int(time.time()))
+        print(f"Still waiting for GitHub API rate limit: {remaining} remaining, ~{remaining_wait}s left...")
+    print("\nGitHub API rate limit wait completed. Proceeding.\n")
+
+
+def _ensure_ontology_hub_elasticsearch_mapping_compat(runtime):
+    """Make persisted Ontology Hub Elasticsearch mappings compatible with the current app code."""
+    namespace = _ontology_hub_components_namespace(runtime)
+    release_name = _ontology_hub_release_name(runtime)
+    deployment_ref = f"deployment/{release_name}"
+    script = r'''
+set -u
+es_host="${ELASTIC_SEARCH_HOST:-elasticsearch}"
+es_url="http://${es_host}:9200/lov_vocabulary/_mapping"
+mapping_file="$(mktemp)"
+response_file="$(mktemp)"
+
+curl_es() {
+  if [ -n "${ELASTIC_SEARCH_PASSWORD:-}" ]; then
+    curl --silent --show-error --max-time 20 --user "${ELASTIC_SEARCH_USER:-elastic}:${ELASTIC_SEARCH_PASSWORD}" "$@"
+  else
+    curl --silent --show-error --max-time 20 "$@"
+  fi
+}
+
+status="$(curl_es --output "${mapping_file}" --write-out "%{http_code}" "${es_url}" || true)"
+case "${status}" in
+  200) ;;
+  404)
+    echo "Ontology Hub Elasticsearch mapping compatibility: lov_vocabulary is absent; the app will create it from official mappings."
+    exit 0
+    ;;
+  *)
+    echo "Ontology Hub Elasticsearch mapping compatibility failed while reading lov_vocabulary mapping: HTTP ${status}" >&2
+    cat "${mapping_file}" >&2
+    exit 31
+    ;;
+esac
+
+compat_payload="$(node -e 'const fs=require("fs"); const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const index=payload.lov_vocabulary || Object.values(payload)[0] || {}; const props=((index.mappings||{}).properties)||{}; const update={properties:{}}; for (const name of ["tags","langs"]) { const field=props[name]||{}; if (!field.type) { update.properties[name]={type:"keyword"}; } else if (field.type==="text" && field.fielddata!==true) { update.properties[name]={type:"text",fielddata:true,fields:field.fields||{keyword:{type:"keyword",ignore_above:256}}}; } } const names=Object.keys(update.properties); if (names.length===0) { process.exit(2); } process.stdout.write(JSON.stringify(update));' "${mapping_file}" || true)"
+if [ -z "${compat_payload}" ]; then
+  echo "Ontology Hub Elasticsearch mapping compatibility: lov_vocabulary tags/langs are compatible."
+  exit 0
+fi
+
+curl_es \
+  --fail \
+  --request PUT \
+  --header "Content-Type: application/json" \
+  --data "${compat_payload}" \
+  "${es_url}" >"${response_file}"
+cat "${response_file}"
+echo "Ontology Hub Elasticsearch mapping compatibility: enabled fielddata for legacy lov_vocabulary text facets."
+'''
+    output = _run_capture(
+        "kubectl exec "
+        f"-n {shlex.quote(namespace)} "
+        f"{shlex.quote(deployment_ref)} "
+        f"-- sh -lc {shlex.quote(script)}",
+    )
+    return output is not None
+
+
+def _prepare_ontology_hub_after_preflight(runtime):
+    if not _ensure_ontology_hub_elasticsearch_mapping_compat(runtime):
+        return False
+    _wait_for_github_api_quota(runtime)
+    return True
+
+
 def prepare_ontology_hub_for_functional(runtime):
     mode = ontology_hub_functional_reset_mode()
     preflight_timeout = int(runtime.get("preflightTimeout") or 180)
 
     if mode == "off":
         print("\nOntology Hub Functional cleanup skipped (ONTOLOGY_HUB_FUNCTIONAL_RESET_MODE=off).\n")
-        return wait_for_ontology_hub_preflight(runtime, timeout_seconds=min(preflight_timeout, 60))
+        ready = wait_for_ontology_hub_preflight(runtime, timeout_seconds=min(preflight_timeout, 60))
+        return ready and _prepare_ontology_hub_after_preflight(runtime)
 
     if mode == "hard":
         if not reset_ontology_hub_for_functional(runtime):
             return False
-        return wait_for_ontology_hub_preflight(runtime, timeout_seconds=preflight_timeout)
+        ready = wait_for_ontology_hub_preflight(runtime, timeout_seconds=preflight_timeout)
+        return ready and _prepare_ontology_hub_after_preflight(runtime)
 
     if not soft_cleanup_ontology_hub_for_functional(runtime):
         print("\nOntology Hub soft cleanup failed. Falling back to hard reset...\n")
         if not reset_ontology_hub_for_functional(runtime):
             return False
-        return wait_for_ontology_hub_preflight(runtime, timeout_seconds=preflight_timeout)
+        ready = wait_for_ontology_hub_preflight(runtime, timeout_seconds=preflight_timeout)
+        return ready and _prepare_ontology_hub_after_preflight(runtime)
 
     if wait_for_ontology_hub_preflight(runtime, timeout_seconds=min(preflight_timeout, 60)):
-        return True
+        return _prepare_ontology_hub_after_preflight(runtime)
 
     print("\nOntology Hub soft cleanup left the app unhealthy. Falling back to hard reset...\n")
     if not reset_ontology_hub_for_functional(runtime):
         return False
-    return wait_for_ontology_hub_preflight(runtime, timeout_seconds=preflight_timeout)
+    ready = wait_for_ontology_hub_preflight(runtime, timeout_seconds=preflight_timeout)
+    return ready and _prepare_ontology_hub_after_preflight(runtime)
 
 
 _prepare_ontology_hub_for_functional = prepare_ontology_hub_for_functional

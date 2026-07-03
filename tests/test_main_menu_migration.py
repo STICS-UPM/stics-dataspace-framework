@@ -164,6 +164,30 @@ class MainMenuMigrationTests(unittest.TestCase):
         self.assertEqual(captured_env["components"], "ontology-hub")
         self.assertEqual(captured_env["model_server"], "false")
 
+    def test_ai_model_hub_steps_shortcut_opens_use_case_assistant(self):
+        with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch(
+            "builtins.input",
+            side_effect=["AMH", "Y", "Q"],
+        ), mock.patch.object(
+            main,
+            "_run_ai_model_hub_use_case_demo_assistant",
+            return_value={"status": "completed", "adapter": "fake", "topology": "vm-distributed"},
+        ) as assistant:
+            result = main.main(
+                ["menu"],
+                adapter_registry=self.adapter_registry,
+                deployer_registry=self.deployer_registry,
+                validation_engine_cls=FakeValidationEngine,
+                metrics_collector_cls=FakeMetricsCollector,
+                experiment_storage=FakeStorage,
+            )
+
+        self.assertEqual(result["status"], "exited")
+        assistant.assert_called_once_with(
+            current_adapter="fake",
+            adapter_registry=self.adapter_registry,
+        )
+
     def test_legacy_shortcuts_are_routed_by_main_without_inesdata_py(self):
         with mock.patch.dict(sys.modules, {"inesdata": None}), mock.patch(
             "builtins.input",

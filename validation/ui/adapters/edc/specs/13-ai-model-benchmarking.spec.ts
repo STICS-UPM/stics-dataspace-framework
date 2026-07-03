@@ -22,20 +22,9 @@ type AIModelBenchmarkingEdcReport = {
   errorResponses: Array<{ url: string; status: number }>;
 };
 
-const modelServerSkipReason =
-  process.env.UI_AI_MODEL_HUB_MODEL_SERVER_SKIP_REASON ||
-  "AI Model Hub model-server is not deployed for this topology; skipping benchmarking-dependent EDC dashboard validation.";
-
 test.skip(
   process.env.UI_AI_MODEL_HUB_HTTPDATA_DEMO !== "1",
   "Set UI_AI_MODEL_HUB_HTTPDATA_DEMO=1 to validate AI Model Benchmarking through the EDC dashboard.",
-);
-
-test.skip(
-  process.env.UI_AI_MODEL_HUB_BENCHMARKING_DEMO === "0" ||
-    process.env.UI_AI_MODEL_HUB_MODEL_SERVER_DEMO === "0" ||
-    process.env.UI_AI_MODEL_HUB_MODEL_SERVER_COVERAGE_STATUS === "skipped_model_server_not_deployed",
-  modelServerSkipReason,
 );
 
 test("13 edc AI Model Benchmarking: compatible models and dataset validation", async ({

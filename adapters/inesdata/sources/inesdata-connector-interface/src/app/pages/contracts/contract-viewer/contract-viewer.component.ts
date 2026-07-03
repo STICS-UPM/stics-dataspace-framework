@@ -153,24 +153,7 @@ export class ContractViewerComponent implements OnInit {
       dataDestination: dataAddress
     };
 
-    const clientId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
-    const mgmt = environment.runtime.managementApiUrl.replace(/\/$/, '');
-    const publicBase = mgmt.replace(/\/management$/, '/public');
-    const rdfValidationCallbackUrl = `${publicBase}/validation/rdf-mirror`;
-    const dest = dataAddress as DataAddress & { properties?: Record<string, string> };
-    dest.properties = {
-      ...(dest.properties ?? {}),
-      rdfValidationCallbackUrl,
-      consumerTransferProcessId: clientId,
-    };
-
-    const extended = iniateTransfer as TransferProcessInput & {
-      id?: string;
-      '@id'?: string;
-    };
-    extended['@id'] = clientId;
-    extended.id = clientId;
-    return extended as TransferProcessInput;
+    return iniateTransfer;
   }
 
   /**
@@ -180,6 +163,7 @@ export class ContractViewerComponent implements OnInit {
    * @param provider Participant ID of the catalog which owns the asset
    */
   private async getDatasetFromFederatedCatalog(assetId: string, provider: string): Promise<DataOffer> {
+
     const querySpec: QuerySpec = {
       offset: 0,
       limit: 1,
@@ -198,80 +182,12 @@ export class ContractViewerComponent implements OnInit {
     }
 
     const datasetFound = await firstValueFrom(this.catalogService.getPaginatedDataOffers(querySpec));
-    const exactMatch = this.findCatalogOffer(datasetFound, assetId, provider);
 
-    if (this.hasEndpointUrl(exactMatch)) {
-      return exactMatch;
-    }
-
-    const assetOnlyQuerySpec: QuerySpec = {
-      offset: 0,
-      limit: 25,
-      filterExpression: [
-        {
-          operandLeft: "id",
-          operator: "=",
-          operandRight: assetId
-        }
-      ]
-    };
-    const assetMatches = await firstValueFrom(this.catalogService.getPaginatedDataOffers(assetOnlyQuerySpec));
-    const assetMatchWithEndpoint = this.findCatalogOffer(assetMatches, assetId, provider, true);
-
-    if (this.hasEndpointUrl(assetMatchWithEndpoint)) {
-      return assetMatchWithEndpoint;
-    }
-
-    const broadQuerySpec: QuerySpec = {
-      offset: 0,
-      limit: 100,
-      filterExpression: []
-    };
-    const broadMatches = await firstValueFrom(this.catalogService.getPaginatedDataOffers(broadQuerySpec));
-    const broadMatchWithEndpoint = this.findCatalogOffer(broadMatches, assetId, provider, true);
-
-    if (this.hasEndpointUrl(broadMatchWithEndpoint)) {
-      return broadMatchWithEndpoint;
-    }
-
-    if (exactMatch) {
-      throw new Error(`No endpoint URL found for asset ID ${assetId} and provider ID ${provider}`);
-    }
-
-    if (!datasetFound[0]) {
+    if (datasetFound[0]) {
+      return datasetFound[0];
+    } else {
       throw new Error(`No offer found for asset ID ${assetId} and provider ID ${provider}`);
     }
-
-    throw new Error(`No endpoint URL found for asset ID ${assetId} and provider ID ${provider}`);
-  }
-
-  private findCatalogOffer(
-    offers: DataOffer[] | undefined,
-    assetId: string,
-    provider: string,
-    requireEndpoint = false
-  ): DataOffer | undefined {
-    const normalizedProvider = `${provider || ''}`.trim();
-    const matchingOffers = (offers || []).filter(offer => {
-      const offerAssetId = `${offer?.assetId || ''}`.trim();
-      const participantId = `${offer?.properties?.participantId || ''}`.trim();
-      const originator = `${offer?.originator || ''}`.trim();
-      const providerMatches = !normalizedProvider
-        || participantId === normalizedProvider
-        || originator === normalizedProvider;
-
-      return offerAssetId === assetId && providerMatches;
-    });
-
-    if (requireEndpoint) {
-      return matchingOffers.find(offer => this.hasEndpointUrl(offer));
-    }
-
-    return matchingOffers[0];
-  }
-
-  private hasEndpointUrl(offer: DataOffer | undefined): offer is DataOffer {
-    return !!`${offer?.endpointUrl || ''}`.trim();
   }
 
   private startPolling(transferProcessId: IdResponse, contractId: string) {

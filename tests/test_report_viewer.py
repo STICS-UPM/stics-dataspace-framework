@@ -433,8 +433,6 @@ class ReportViewerTests(unittest.TestCase):
             )
 
             inspected = reports.inspect_experiment(experiment)
-            dashboard = reports.build_experiment_dashboard(inspected)
-            content = dashboard.read_text(encoding="utf-8")
 
         suite = next(item for item in inspected["suites"] if item["kind"] == "playwright-json")
         self.assertEqual(suite["audit_suite"], "INESData integration")
@@ -447,8 +445,6 @@ class ReportViewerTests(unittest.TestCase):
         self.assertEqual(groups["Ontology Hub"]["passed"], 1)
         self.assertEqual(groups["AI Model Hub"]["failed"], 1)
         self.assertEqual(groups["Semantic Virtualization"]["skipped"], 1)
-        self.assertIn("<td>INESData integration</td><td>AI Model Hub</td><td>ui / inesdata / AI Model Hub</td>", content)
-        self.assertIn("Official UI evidence in ui / inesdata Playwright report.", content)
 
     def test_edc_playwright_results_are_grouped_for_audit(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -526,6 +522,34 @@ class ReportViewerTests(unittest.TestCase):
         self.assertIn("UNE 0087 alignment", content)
         self.assertIn("Formal certification claim: no", content)
         self.assertIn("une_0087_alignment.json", content)
+
+    def test_une_0087_alignment_does_not_downgrade_passing_validation_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_10-40-00"
+            self._write_json(experiment / "metadata.json", {"adapter": "InesdataAdapter"})
+            self._write_json(experiment / "test_results.json", [{"status": "pass", "test_name": "ok"}])
+            self._write_json(
+                experiment / "une_0087_alignment.json",
+                {
+                    "assessment_type": "non_certifying_alignment",
+                    "certification_claim": False,
+                    "summary": {
+                        "total_criteria": 23,
+                        "statuses": {
+                            "covered": 14,
+                            "partially_covered": 7,
+                            "not_covered": 2,
+                            "not_applicable": 0,
+                        },
+                    },
+                },
+            )
+
+            inspected = reports.inspect_experiment(experiment)
+
+        une = next(item for item in inspected["suites"] if item["kind"] == "une-0087")
+        self.assertEqual(une["status"], "partial")
+        self.assertEqual(inspected["result"], "No failed suites detected")
 
     def test_legacy_metadata_does_not_use_minikube_as_topology(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -681,9 +705,9 @@ class ReportViewerTests(unittest.TestCase):
             content = dashboard.read_text(encoding="utf-8")
 
         suite = next(item for item in inspected["suites"] if item["kind"] == "playwright-json")
-        self.assertEqual(suite["status"], "partial")
+        self.assertEqual(suite["status"], "skipped")
         self.assertEqual(inspected["result"], "Partial")
-        self.assertIn('<span class="badge warn">partial</span>', content)
+        self.assertIn('<span class="badge neutral">skipped</span>', content)
 
     def test_component_summary_with_skipped_tests_is_not_reported_as_passed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -700,26 +724,163 @@ class ReportViewerTests(unittest.TestCase):
             inspected = reports.inspect_experiment(experiment)
 
         suite = next(item for item in inspected["suites"] if item["kind"] == "component")
-        self.assertEqual(suite["status"], "partial")
+        self.assertEqual(suite["status"], "skipped")
         self.assertEqual(inspected["result"], "Partial")
 
-    def test_component_summary_with_only_skipped_tests_stays_skipped(self):
+    def test_dashboard_renders_ai_model_hub_use_case_validation(self):
         with tempfile.TemporaryDirectory() as tmp:
             experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_15-00-00"
+            self._write_json(experiment / "metadata.json", {"adapter": "InesdataAdapter", "topology": "vm-distributed"})
+
+            case_ids = [
+                "MH-MODEL-SERVER-01",
+                "MH-MODEL-SERVER-03",
+                "PT5-MH-09",
+                "PT5-MH-10",
+                "PT5-MH-11",
+                "PT5-MH-12",
+                "PT5-MH-13",
+                "PT5-MH-14",
+                "PT5-MH-15",
+                "MH-MOB-01",
+                "MH-OBS-02",
+            ]
             self._write_json(
                 experiment / "components" / "ai-model-hub" / "ai_model_hub_component_validation.json",
                 {
                     "component": "ai-model-hub",
-                    "status": "skipped",
-                    "summary": {"total": 3, "passed": 0, "failed": 0, "skipped": 3},
+                    "status": "passed",
+                    "summary": {"total": len(case_ids), "passed": len(case_ids), "failed": 0, "skipped": 0},
+                    "executed_cases": [
+                        {
+                            "test_case_id": case_id,
+                            "description": f"{case_id} validation",
+                            "source_suite": "api",
+                            "evaluation": {"status": "passed"},
+                        }
+                        for case_id in case_ids
+                    ],
+                },
+            )
+            self._write_json(
+                experiment / "ui" / "inesdata" / "playwright_validation.json",
+                {
+                    "adapter": "inesdata",
+                    "status": "passed",
+                    "summary": {
+                        "total_specs": 6,
+                        "status_counts": {"passed": 6},
+                        "spec_results": [
+                            {"title": "09 AI Model Hub HttpData: visible model discovery", "status": "passed"},
+                            {"title": "10 AI Model Observer: home and evidence navigation", "status": "passed"},
+                            {"title": "11 AI Model Browser: controlled model discovery", "status": "passed"},
+                            {"title": "12 AI Model Execution: local model-server inference", "status": "passed"},
+                            {"title": "14 AI Model Hub DAIMO Vocabulary: machine-learning schema", "status": "passed"},
+                            {"title": "15 AI Model Execution: external model with negotiated agreement", "status": "passed"},
+                            {"title": "16 AI Model Observer: participant summary aggregates evidence", "status": "passed"},
+                        ],
+                    },
+                },
+            )
+            self._write_json(
+                experiment / "components" / "ai-model-hub" / "ai_model_hub_use_case_catalog_audit.json",
+                {
+                    "summary": {
+                        "missing_expected_assets": 0,
+                        "missing_expected_contracts": 0,
+                        "missing_expected_datasets": 0,
+                        "missing_expected_dataset_contracts": 0,
+                        "missing_input_schema_model_assets": 0,
+                        "wrong_owner_model_assets": 0,
+                        "legacy_artifacts": 0,
+                        "legacy_model_assets_missing_input_schema": 0,
+                        "unexpected_vocabularies": 0,
+                        "duplicated_vocabularies": 0,
+                    }
                 },
             )
 
             inspected = reports.inspect_experiment(experiment)
+            dashboard = reports.build_experiment_dashboard(inspected)
+            content = dashboard.read_text(encoding="utf-8")
+            use_case_json = json.loads(
+                (dashboard.parent / "ai_model_hub_use_case_validation.json").read_text(encoding="utf-8")
+            )
 
-        suite = next(item for item in inspected["suites"] if item["kind"] == "component")
-        self.assertEqual(suite["status"], "skipped")
-        self.assertEqual(inspected["result"], "Partial")
+        self.assertIn("Use cases", inspected["reports"])
+        self.assertEqual(inspected["ai_model_hub_use_case_validation"]["status"], "passed")
+        self.assertEqual(inspected["ai_model_hub_use_case_validation"]["summary"]["passed"], 7)
+        self.assertEqual(use_case_json["status"], "passed")
+        self.assertIn("AI Model Hub Use-Case Validation", content)
+        self.assertIn("AI Model Hub Step 8", content)
+        self.assertIn("AI Model Hub Step 9", content)
+        self.assertIn("AI Model Hub Step 10", content)
+        self.assertIn("FLARES linguistic use case", content)
+        self.assertIn("Mobility prediction use case", content)
+        self.assertIn("Catalog hygiene", content)
+        self.assertIn("Open structured use-case evidence JSON", content)
+        self.assertLess(content.index("Raw artifacts"), content.index("AI Model Hub Use-Case Validation"))
+
+    def test_ai_model_hub_use_case_validation_does_not_require_optional_catalog_audit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment = Path(tmp) / "experiments" / "experiment_2026-05-03_15-10-00"
+            self._write_json(experiment / "metadata.json", {"adapter": "InesdataAdapter", "topology": "vm-distributed"})
+            case_ids = [
+                "MH-MODEL-SERVER-01",
+                "MH-MODEL-SERVER-03",
+                "PT5-MH-09",
+                "PT5-MH-10",
+                "PT5-MH-11",
+                "PT5-MH-12",
+                "PT5-MH-13",
+                "PT5-MH-14",
+                "PT5-MH-15",
+                "MH-MOB-01",
+                "MH-OBS-02",
+            ]
+            self._write_json(
+                experiment / "components" / "ai-model-hub" / "ai_model_hub_component_validation.json",
+                {
+                    "component": "ai-model-hub",
+                    "status": "passed",
+                    "summary": {"total": len(case_ids), "passed": len(case_ids), "failed": 0, "skipped": 0},
+                    "executed_cases": [
+                        {"test_case_id": case_id, "evaluation": {"status": "passed"}}
+                        for case_id in case_ids
+                    ],
+                },
+            )
+            self._write_json(
+                experiment / "ui" / "inesdata" / "playwright_validation.json",
+                {
+                    "summary": {
+                        "spec_results": [
+                            {"title": "09 AI Model Hub HttpData: visible model discovery", "status": "passed"},
+                            {"title": "10 AI Model Observer: home and evidence navigation", "status": "passed"},
+                            {"title": "11 AI Model Browser: controlled model discovery", "status": "passed"},
+                            {"title": "12 AI Model Execution: local model-server inference", "status": "passed"},
+                            {"title": "14 AI Model Hub DAIMO Vocabulary: machine-learning schema", "status": "passed"},
+                            {"title": "15 AI Model Execution: external model with negotiated agreement", "status": "passed"},
+                            {"title": "16 AI Model Observer: participant summary aggregates evidence", "status": "passed"},
+                        ]
+                    }
+                },
+            )
+
+            inspected = reports.inspect_experiment(experiment)
+            dashboard = reports.build_experiment_dashboard(inspected)
+            content = dashboard.read_text(encoding="utf-8")
+
+        validation = inspected["ai_model_hub_use_case_validation"]
+        self.assertEqual(validation["status"], "passed")
+        self.assertEqual(validation["summary"]["passed"], 6)
+        self.assertEqual(validation["summary"]["other"], 0)
+        step8 = next(row for row in validation["rows"] if row["id"] == "step8-daimo-vocabularies")
+        self.assertEqual(step8["status"], "passed")
+        self.assertNotIn("Catalog hygiene", content)
+        self.assertNotIn("Catalog datasets", content)
+        self.assertNotIn("Catalog vocabularies", content)
+        self.assertNotIn("Catalog models", content)
 
     def test_static_report_server_binds_only_to_loopback(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,0 +1,78 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "daimo": "https://w3id.org/pionera/daimo#",
+    "input": "daimo:input",
+    "label": "daimo:label",
+    "datasetVersion": "daimo:datasetVersion",
+    "protocol": "daimo:protocol",
+    "randomSeed": "daimo:randomSeed"
+  },
+  "@id": "company-mobility-previous-delay-test",
+  "properties": {
+    "name": "Mobility Previous Delay Test Dataset",
+    "version": "1.0.0",
+    "contenttype": "text/csv",
+    "assetType": "dataset",
+    "shortDescription": "Mobility previous delay benchmark validation dataset.",
+    "dct:description": "CSV validation dataset for Mobility previous delay benchmark models.",
+    "dcterms:description": "CSV validation dataset for Mobility previous delay benchmark models.",
+    "dcterms:format": "csv",
+    "fileName": "segments_test.csv",
+    "dcat:keyword": [
+      "dataset",
+      "benchmark",
+      "validation",
+      "mobility",
+      "previous-delay",
+      "csv"
+    ],
+    "assetData": {
+      "JS_DAIMO_Dataset": {
+        "daimo:modality": [
+          "tabular"
+        ],
+        "daimo:taskType": "regression",
+        "daimo:taskCategory": "Tabular",
+        "daimo:subtask": "tabular-regression",
+        "daimo:subtaskDescription": "Public transport previous delay benchmark dataset",
+        "daimo:input": [
+          "trip_id",
+          "from_stop_id",
+          "to_stop_id",
+          "route_id",
+          "scheduled_travel_time",
+          "shape_distance",
+          "is_peak",
+          "hour_sin",
+          "hour_cos",
+          "weekday_sin",
+          "weekday_cos"
+        ],
+        "daimo:label": "previous_delay",
+        "daimo:labelType": "continuous",
+        "dct:license": "apache-2.0",
+        "dct:format": "csv",
+        "dcat:keyword": [
+          "benchmark",
+          "validation",
+          "mobility",
+          "previous-delay",
+          "public-transport",
+          "regression",
+          "csv"
+        ],
+        "daimo:datasetVersion": "1.0.0",
+        "daimo:datasetRole": "test",
+        "daimo:protocol": "holdout-test-set",
+        "daimo:benchmarkDatasetSource": "segments_test.csv"
+      }
+    }
+  },
+  "dataAddress": {
+    "type": "InesDataStore"
+  }
+}

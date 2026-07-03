@@ -8,7 +8,6 @@ import {
   resolveConnectorPortalRuntime,
   resolveDataspacePortalRuntime,
 } from "../utils/dataspace-runtime";
-import { installTransientNavigationRetry } from "../utils/navigation-retry";
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -87,15 +86,6 @@ type RuntimeFixtures = {
 };
 
 export const test = base.extend<RuntimeFixtures>({
-  page: async ({ page }, use) => {
-    const disposeNavigationRetry = installTransientNavigationRetry(page);
-    try {
-      await use(page);
-    } finally {
-      disposeNavigationRetry();
-    }
-  },
-
   portalBaseUrl: async ({}, use) => {
     await use(resolvePortalRuntime().portalBaseUrl);
   },

@@ -1,18 +1,20 @@
-/* Custom FOOTER component styles */
+.footer-container {
+  background: #ffffff;
+  border-top: 2px solid #e6e6e6;
+}
 
 .footer {
-  padding: 8px 16px 4px;
-  border-top: 3px solid #E6E6E6;
+  padding: 8px 18px 2px;
   background-color: white;
 
   &__company {
-    padding: 6px 10px 8px;
+    padding: 0 10px 6px;
     font-family: "Open Sans", sans-serif;
     color: var(--secondary-600);
     text-align: center;
-    font-size: 13px;
+    font-size: 9px;
     font-weight: 600;
-    line-height: 1.25;
+    line-height: 1.15;
     text-underline-position: from-font;
     text-decoration-skip-ink: none;
     background-color: white;
@@ -26,8 +28,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: clamp(22px, 4vw, 64px);
-    min-height: 58px;
+    gap: clamp(18px, 3vw, 48px);
+    min-height: 42px;
     overflow: hidden;
 
     img {
@@ -44,75 +46,93 @@
   }
 
   &__logo--pionera {
-    max-height: 52px;
-    max-width: 190px;
+    max-height: 36px;
+    max-width: 130px;
   }
 
   &__logo--funding {
-    max-height: 64px;
-    max-width: min(52vw, 760px);
+    max-height: 46px;
+    max-width: min(50vw, 620px);
   }
 
   &__logo--oeg {
-    max-height: 56px;
-    max-width: 150px;
+    max-height: 42px;
+    max-width: 70px;
   }
 
-  &__powered-by {
-    align-items: center;
-    color: var(--secondary-600);
+  &__powered {
     display: flex;
-    flex-direction: column;
-    font-family: "Open Sans", sans-serif;
-    font-size: 12px;
-    font-weight: 600;
-    gap: 2px;
+    align-items: baseline;
     justify-content: center;
-    line-height: 1.2;
-    margin: 2px 0 0;
-    text-align: center;
-  }
+    gap: 4px;
+    margin-top: 0;
+    color: #4b5563;
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1.05;
 
-  &__logo--inesdata {
-    max-height: 28px;
-    max-width: 180px;
-  }
-
-  &__title {
-    color: #ffffff;
-    font-size: 42px;
-    margin: 0 0 8px 0;
+    strong {
+      color: var(--pionera-icon);
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
   }
 }
 
 @media (max-width: 1600px) {
   .footer {
     &__logos {
-      gap: 32px;
+      gap: 28px;
     }
   }
 }
 
 @media (max-width: 1400px) {
   .footer {
-    padding: 5px 12px;
+    padding: 6px 12px 2px;
 
     &__logos {
-      gap: 24px;
+      gap: 22px;
     }
   }
 }
 
 @media (max-width: 1200px) {
   .footer {
-    padding: 4px 10px;
+    padding: 5px 10px 2px;
 
     &__logos {
-      gap: 18px;
+      gap: 16px;
     }
 
     &__company {
-      font-size: 12px;
+      font-size: 9px;
+    }
+  }
+}
+
+@media (max-width: 760px) {
+  .footer {
+    &__logos {
+      flex-wrap: wrap;
+      gap: 12px 18px;
+      min-height: 0;
+    }
+
+    &__logo--pionera {
+      max-height: 34px;
+      max-width: 120px;
+    }
+
+    &__logo--funding {
+      max-height: 44px;
+      max-width: 92vw;
+    }
+
+    &__logo--oeg {
+      max-height: 38px;
+      max-width: 62px;
     }
   }
 }

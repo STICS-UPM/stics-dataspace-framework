@@ -12,6 +12,44 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// morph-kgv periodically reprocesses its mappings and serves a transient 404
+// (and occasionally 5xx) during the reload window. Treat these as retryable so
+// reachability checks land on a healthy 200 window like SV-UI-02 already does.
+const TRANSIENT_STATUSES = new Set([0, 404, 502, 503, 504]);
+
+async function gotoWithRetry(page, url, attempts = 8, delayMs = 750) {
+  let response = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    response = await page.goto(url, { waitUntil: "domcontentloaded" }).catch(() => null);
+    const status = response ? response.status() : 0;
+    if (status === 200) {
+      return response;
+    }
+    if (!TRANSIENT_STATUSES.has(status)) {
+      return response;
+    }
+    if (attempt < attempts - 1) {
+      await delay(delayMs);
+    }
+  }
+  return response;
+}
+
+async function requestWithStatusRetry(request, url, headers, attempts = 8, delayMs = 750) {
+  let response = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    response = await request.get(url, { headers });
+    const status = response.status();
+    if (status === 200 || !TRANSIENT_STATUSES.has(status)) {
+      return response;
+    }
+    if (attempt < attempts - 1) {
+      await delay(delayMs);
+    }
+  }
+  return response;
+}
+
 async function requestJsonWithRetry(request, url, attempts = 8, delayMs = 750) {
   let last = {
     status: 0,
@@ -60,7 +98,7 @@ test("SV-UI-01: semantic virtualization root is reachable from a browser", async
   attachJson,
 }) => {
   const url = joinUrl(semanticVirtualizationRuntime.baseUrl, semanticVirtualizationRuntime.rootPath);
-  const response = await page.goto(url, { waitUntil: "domcontentloaded" });
+  const response = await gotoWithRetry(page, url);
   const status = response ? response.status() : 0;
 
   expect(response, `Expected browser navigation response from ${url}`).not.toBeNull();
@@ -107,11 +145,9 @@ test("SV-UI-03: semantic virtualization query endpoint is reachable from Playwri
   attachJson,
 }) => {
   const url = joinUrl(semanticVirtualizationRuntime.baseUrl, semanticVirtualizationRuntime.queryPath);
-  const response = await request.get(url, {
-    headers: {
-      Accept: "application/sparql-results+json",
-      "Cache-Control": "no-store",
-    },
+  const response = await requestWithStatusRetry(request, url, {
+    Accept: "application/sparql-results+json",
+    "Cache-Control": "no-store",
   });
   const body = await response.text();
 

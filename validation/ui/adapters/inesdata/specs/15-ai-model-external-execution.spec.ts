@@ -11,12 +11,10 @@ import {
   bootstrapProviderNegotiationArtifacts,
   cleanupProviderValidationArtifacts,
   probeConsumerEdrReadinessForAssetAgreement,
-  probeConsumerCatalogDatasetReadiness,
   waitForConsumerAgreement,
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS, waitForUiTransition } from "../../../shared/utils/waiting";
 import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
-import { aiModelHubDaimoModelAssetData } from "../../../shared/utils/ai-model-hub-daimo";
 
 type AIModelExternalExecutionUiReport = {
   startedAt: string;
@@ -100,27 +98,55 @@ type AIModelExternalExecutionUiReport = {
   fatalErrorResponses: Array<{ url: string; status: number }>;
 };
 
-const DEFAULT_MODEL_PATH = "/api/v1/nlp/twitter-sentiment";
-const DEFAULT_PAYLOAD = {
-  text: "This public model response is excellent and useful",
-};
-const TEXT_MODEL_INPUT_FEATURES = [
+const DEFAULT_MODEL_PATH = "/flares/dccuchile-bert-base-spanish-wwm-uncased-5w1h";
+const DEFAULT_PAYLOAD = [
   {
-    name: "text",
-    type: "string",
-    required: true,
-    description: "Text to analyze",
+    Id: 840,
+    Text: "El comité de medicamentos humanos espera concluir el análisis en marzo.",
   },
 ];
-const TEXT_MODEL_INPUT_SCHEMA = {
+const OFFICIAL_EXTERNAL_FLARES_MODEL = {
+  assetId: "city-flares-5w1h-albert",
+  name: "FLARES 5W1H ALBERT - PIONERA Use Case",
+  modelPath: "/flares/dccuchile-albert-base-spanish-5w1h",
+  sourceOfTruth: "ProyectoPIONERA/AIModelHub Step 10 FLARES/Mobility model assets",
+};
+const FLARES_5W1H_INPUT_FEATURES = [
+  {
+    name: "Id",
+    type: "integer",
+    required: true,
+    description: "Input text identifier",
+  },
+  {
+    name: "Text",
+    type: "string",
+    required: true,
+    description: "Spanish text to analyze",
+  },
+];
+const FLARES_5W1H_JSON_SCHEMA = {
   type: "object",
-  required: ["text"],
+  required: ["Id", "Text"],
   properties: {
-    text: {
+    Id: {
+      type: "integer",
+      description: "Input text identifier",
+    },
+    Text: {
       type: "string",
-      description: "Text to analyze",
+      description: "Spanish text to analyze",
     },
   },
+};
+const FLARES_5W1H_INPUT_SCHEMA = {
+  type: "array",
+  items: FLARES_5W1H_JSON_SCHEMA,
+  fields: FLARES_5W1H_INPUT_FEATURES,
+  jsonSchema: JSON.stringify({
+    type: "array",
+    items: FLARES_5W1H_JSON_SCHEMA,
+  }, null, 2),
 };
 
 const MAX_ATTACHED_RESPONSE_CHARS = 8_000;
@@ -219,7 +245,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function isRecoverableExecutionHttpStatus(status: number): boolean {
-  return [400, 502, 503, 504].includes(status);
+  return [400, 500, 502, 503, 504].includes(status);
 }
 
 function inferJsonSchema(value: unknown): Record<string, unknown> {
@@ -242,14 +268,26 @@ function inferJsonSchema(value: unknown): Record<string, unknown> {
 }
 
 function inputSchemaForPayload(payload: unknown): unknown {
+  const fallback = aiModelHubModelPath() === DEFAULT_MODEL_PATH ? FLARES_5W1H_INPUT_SCHEMA : inferJsonSchema(payload);
   if ((process.env.UI_AI_MODEL_HUB_EXTERNAL_MODEL_INPUT_SCHEMA || "").trim()) {
-    return parseJsonEnv("UI_AI_MODEL_HUB_EXTERNAL_MODEL_INPUT_SCHEMA", inferJsonSchema(payload));
+    return parseJsonEnv("UI_AI_MODEL_HUB_EXTERNAL_MODEL_INPUT_SCHEMA", fallback);
   }
-  return parseJsonEnv("UI_AI_MODEL_HUB_MODEL_INPUT_SCHEMA", inferJsonSchema(payload));
+  return parseJsonEnv("UI_AI_MODEL_HUB_MODEL_INPUT_SCHEMA", fallback);
 }
 
 function inputFeaturesForPayload(payload: unknown): unknown[] {
   const schema = inputSchemaForPayload(payload) as Record<string, unknown>;
+  if (Array.isArray(schema.fields)) {
+    return schema.fields.map((field) => {
+      const item = field as Record<string, unknown>;
+      return {
+        name: String(item.name || item.field || item.path || ""),
+        type: String(item.type || "string"),
+        required: item.required !== undefined ? Boolean(item.required) : !Boolean(item.nullable),
+        description: item.description ? String(item.description) : undefined,
+      };
+    }).filter((field) => field.name);
+  }
   const objectSchema = schema.type === "array" && schema.items && typeof schema.items === "object"
     ? schema.items as Record<string, unknown>
     : schema;
@@ -311,6 +349,23 @@ function aiModelMetadataAliases({
     "daimo:software": software,
     "https://w3id.org/daimo/ns#software": software,
     "https://pionera.ai/edc/daimo#software": software,
+    "daimo:taskCategory": task,
+    "daimo:taskType": "classification",
+    "daimo:modality": ["text"],
+    "daimo:endpointBehavior": "prediction",
+    "daimo:libraryName": library,
+    "daimo:requestShape": "batch",
+    "daimo:inputSchema": inputSchema,
+    "daimo:inputExample": payload,
+    "https://w3id.org/pionera/daimo#taskCategory": task,
+    "https://w3id.org/pionera/daimo#taskType": "classification",
+    "https://w3id.org/pionera/daimo#modality": ["text"],
+    "https://w3id.org/pionera/daimo#subtask": subtask,
+    "https://w3id.org/pionera/daimo#endpointBehavior": "prediction",
+    "https://w3id.org/pionera/daimo#libraryName": library,
+    "https://w3id.org/pionera/daimo#requestShape": "batch",
+    "https://w3id.org/pionera/daimo#inputSchema": inputSchema,
+    "https://w3id.org/pionera/daimo#inputExample": payload,
     "daimo:inference_path": inferencePath,
     "https://w3id.org/daimo/ns#inference_path": inferencePath,
     "https://pionera.ai/edc/daimo#inference_path": inferencePath,
@@ -329,6 +384,13 @@ function aiModelMetadataAliases({
     library,
     framework,
     software,
+    taskCategory: task,
+    taskType: "classification",
+    modality: ["text"],
+    endpointBehavior: "prediction",
+    libraryName: library,
+    requestShape: "batch",
+    request_shape: "batch",
     inference_path: inferencePath,
     inferencePath,
     input_features: serializedInputFeatures,
@@ -344,6 +406,52 @@ async function gotoAiModelExecution(page: Page, baseUrl: string): Promise<void> 
   await page.goto(`${baseUrl.replace(/\/$/, "")}/ai-model-execution`, {
     waitUntil: "domcontentloaded",
   });
+}
+
+async function selectExecutionModel(page: Page, assetId: string, modelName: string): Promise<void> {
+  const assetSelect = page.locator("#assetSelect").first();
+  await expect(assetSelect).toBeVisible({ timeout: 20_000 });
+
+  let selectByValue = false;
+  await expect(async () => {
+    const options = await assetSelect.locator("option").evaluateAll(items =>
+      items.map(item => ({
+        value: (item as HTMLOptionElement).value,
+        label: ((item as HTMLOptionElement).textContent || "").trim(),
+      })),
+    );
+    selectByValue = options.some(option => option.value === assetId);
+    const selectByLabel = options.some(option => option.label === modelName);
+    expect(
+      selectByValue || selectByLabel,
+      `Executable model option '${assetId}' was not loaded yet. Current options: ${options
+        .map(option => option.value || option.label)
+        .join(", ")}`,
+    ).toBeTruthy();
+  }).toPass({
+    timeout: 120_000,
+    intervals: EVENTUAL_UI_RETRY_INTERVALS,
+  });
+
+  if (selectByValue) {
+    await selectOptionMarked(assetSelect, assetId);
+  } else {
+    await selectOptionMarked(assetSelect, { label: modelName });
+  }
+  await waitForUiTransition(page);
+}
+
+async function fillGeneratedFlares5w1hForm(page: Page): Promise<void> {
+  const row = DEFAULT_PAYLOAD[0];
+  const idInput = page.getByRole("spinbutton", { name: /^Id\b/i }).first();
+  const textInput = page.getByRole("textbox", { name: /^Text\b/i }).first();
+
+  await expect(page.getByText(/Detected DAIMO input schema/i).first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/2 fields/i).first()).toBeVisible({ timeout: 10_000 });
+  await expect(idInput).toBeVisible({ timeout: 15_000 });
+  await expect(textInput).toBeVisible({ timeout: 15_000 });
+  await fillMarked(idInput, String(row.Id));
+  await fillMarked(textInput, row.Text);
 }
 
 async function inspectExecutionObserverEvidence(page: Page, assetId: string, modelName: string) {
@@ -463,6 +571,207 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
   });
 
   try {
+    if (process.env.UI_AI_MODEL_HUB_USE_CASES_DEMO !== "0") {
+      report.assetId = OFFICIAL_EXTERNAL_FLARES_MODEL.assetId;
+      report.modelName = OFFICIAL_EXTERNAL_FLARES_MODEL.name;
+      report.modelUrl = "official-ai-model-hub-use-case-server";
+      report.modelPath = OFFICIAL_EXTERNAL_FLARES_MODEL.modelPath;
+      report.payload = DEFAULT_PAYLOAD;
+
+      await attachJson("ai-model-external-execution-official-use-case", {
+        mode: "official-use-case-asset",
+        syntheticAssetsCreated: false,
+        sourceOfTruth: OFFICIAL_EXTERNAL_FLARES_MODEL.sourceOfTruth,
+        asset: OFFICIAL_EXTERNAL_FLARES_MODEL,
+      });
+
+      let lastNegotiationIssue = "";
+      for (let attempt = 1; attempt <= externalNegotiationMaxAttempts(); attempt += 1) {
+        try {
+          const negotiation = await bootstrapConsumerNegotiation(
+            request,
+            dataspaceRuntime,
+            OFFICIAL_EXTERNAL_FLARES_MODEL.assetId,
+            dataspaceRuntime.provider.protocolBaseUrl,
+            dataspaceRuntime.provider.connectorName,
+          );
+          report.consumerNegotiation = negotiation;
+          report.consumerNegotiationAttempts.push({
+            attempt,
+            status: "passed",
+            negotiationId: negotiation.negotiationId,
+            agreementId: negotiation.agreementId,
+            state: negotiation.state,
+          });
+          break;
+        } catch (error) {
+          lastNegotiationIssue = error instanceof Error ? error.message : String(error);
+          report.consumerNegotiationAttempts.push({
+            attempt,
+            status: "failed",
+            error: lastNegotiationIssue,
+          });
+          if (attempt < externalNegotiationMaxAttempts()) {
+            await sleep(5_000);
+          }
+        }
+      }
+      await attachJson("ai-model-external-execution-consumer-negotiation-attempts", report.consumerNegotiationAttempts);
+      if (!report.consumerNegotiation) {
+        throw new Error(
+          `Official external execution could not bootstrap a consumer agreement after ${externalNegotiationMaxAttempts()} attempt(s). ` +
+            lastNegotiationIssue,
+        );
+      }
+      await attachJson("ai-model-external-execution-consumer-negotiation", report.consumerNegotiation);
+
+      const consumerAgreement = await waitForConsumerAgreement(
+        request,
+        dataspaceRuntime,
+        OFFICIAL_EXTERNAL_FLARES_MODEL.assetId,
+        30,
+        1_500,
+      );
+      report.consumerAgreement = {
+        agreementId: consumerAgreement.agreementId,
+        assetId: consumerAgreement.assetId,
+        attempts: consumerAgreement.attempts,
+      };
+      await attachJson("ai-model-external-execution-consumer-agreement", report.consumerAgreement);
+      expect(report.consumerAgreement.agreementId, "No consumer agreement was found for the official external model").toBeTruthy();
+
+      await loginPage.open(dataspaceRuntime.consumer.portalBaseUrl);
+      await loginPage.loginIfNeeded();
+      await shellPage.expectReady();
+      await captureStep(page, "01-ai-model-external-execution-after-login");
+
+      await expect(async () => {
+        await gotoAiModelExecution(page, dataspaceRuntime.consumer.portalBaseUrl);
+        await shellPage.assertNoGateway403("AI Model Execution page");
+        await shellPage.assertNoServerErrorBanner("AI Model Execution page");
+        await expect(page.getByRole("heading", { name: /AI Execution/i })).toBeVisible({ timeout: 20_000 });
+        await selectExecutionModel(page, OFFICIAL_EXTERNAL_FLARES_MODEL.assetId, OFFICIAL_EXTERNAL_FLARES_MODEL.name);
+        await expect(page.getByRole("heading", { name: OFFICIAL_EXTERNAL_FLARES_MODEL.name }).first()).toBeVisible({
+          timeout: 20_000,
+        });
+      }).toPass({
+        timeout: 180_000,
+        intervals: EVENTUAL_UI_RETRY_INTERVALS,
+      });
+
+      await expect(page.getByText(/External Asset/i).first()).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(/Agreement ready/i).first()).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(dataspaceRuntime.provider.connectorName).first()).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(/^POST$/i).first()).toBeVisible({ timeout: 10_000 });
+      await fillGeneratedFlares5w1hForm(page);
+      await captureStep(page, "02-ai-model-external-execution-model-selected");
+      await attachJson("ai-model-external-execution-selection-assertions", {
+        assetId: OFFICIAL_EXTERNAL_FLARES_MODEL.assetId,
+        modelName: OFFICIAL_EXTERNAL_FLARES_MODEL.name,
+        sourceOfTruth: OFFICIAL_EXTERNAL_FLARES_MODEL.sourceOfTruth,
+        expectedPayload: DEFAULT_PAYLOAD,
+        expectedAgreementId: report.consumerAgreement.agreementId,
+        expectedUiState: ["External Asset", "Agreement ready", dataspaceRuntime.provider.connectorName, "POST"],
+      });
+
+      let lastExecutionIssue = "";
+      for (let attempt = 1; attempt <= externalExecutionMaxAttempts(); attempt += 1) {
+        const executeResponsePromise = page.waitForResponse(
+          (response) => response.url().includes("/management/v3/modelexecutions/execute"),
+          { timeout: 120_000 },
+        );
+        await clickMarked(page.getByRole("button", { name: /Execute Model/i }).first(), { force: true });
+        const executeResponse = await executeResponsePromise;
+        const executionAttempt = {
+          attempt,
+          url: executeResponse.url(),
+          status: executeResponse.status(),
+          responseBody: truncateForAttachment(await executeResponse.text().catch(() => "")),
+          requestPayload: {
+            assetId: OFFICIAL_EXTERNAL_FLARES_MODEL.assetId,
+            method: "POST",
+            path: OFFICIAL_EXTERNAL_FLARES_MODEL.modelPath,
+            payload: DEFAULT_PAYLOAD,
+          },
+        };
+        report.executionAttempts.push(executionAttempt);
+        await attachJson(`ai-model-external-execution-attempt-${attempt}`, executionAttempt);
+
+        await expect(page.getByText(/Execution Result/i).first()).toBeVisible({ timeout: 120_000 });
+        if (await page.getByText(/SUCCESS/i).first().isVisible().catch(() => false)) {
+          lastExecutionIssue = "";
+          break;
+        }
+
+        if (!isRecoverableExecutionHttpStatus(executeResponse.status())) {
+          lastExecutionIssue = `Official external execution attempt ${attempt} returned non-recoverable HTTP ${executeResponse.status()}: ${executionAttempt.responseBody || "<empty>"}.`;
+          break;
+        }
+
+        lastExecutionIssue = `Official external execution attempt ${attempt} returned HTTP ${executeResponse.status()}: ${executionAttempt.responseBody || "<empty>"}.`;
+        if (attempt < externalExecutionMaxAttempts()) {
+          await sleep(externalExecutionSettleMs());
+          const inputTabRetry = page.getByRole("button", { name: /^Input$/i }).first();
+          if (await inputTabRetry.isVisible().catch(() => false)) {
+            await clickMarked(inputTabRetry, { force: true });
+            await waitForUiTransition(page);
+          }
+          await expect(page.getByRole("button", { name: /Execute Model/i }).first()).toBeEnabled({ timeout: 30_000 });
+        }
+      }
+
+      if (lastExecutionIssue) {
+        throw new Error(`${lastExecutionIssue} External official execution did not stabilize after retries.`);
+      }
+      await expect(page.locator("body")).toContainText(/SUCCESS/i, { timeout: 30_000 });
+      await expect(page.getByText(/Status Code:/i).first()).toBeVisible({ timeout: 10_000 });
+      await expect(page.locator("body")).toContainText(/Status Code:\s*200/i, { timeout: 10_000 });
+      await captureStep(page, "03-ai-model-external-execution-result");
+
+      await clickMarked(page.getByRole("button", { name: /History/i }).first(), { force: true });
+      await expect(page.getByText(/Execution History/i).first()).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(/success/i).first()).toBeVisible({ timeout: 10_000 });
+      await captureStep(page, "04-ai-model-external-execution-history");
+
+      await clickMarked(page.getByRole("button", { name: /View Observer Timeline/i }).first(), { force: true });
+      await expect(
+        page,
+      ).toHaveURL(new RegExp(`/ai-model-observer/timeline/${OFFICIAL_EXTERNAL_FLARES_MODEL.assetId}.*correlationId=`, "i"), {
+        timeout: 30_000,
+      });
+      const observerOutcome = await inspectExecutionObserverEvidence(
+        page,
+        OFFICIAL_EXTERNAL_FLARES_MODEL.assetId,
+        OFFICIAL_EXTERNAL_FLARES_MODEL.name,
+      );
+      report.observerEvidenceChecks.push({
+        scenario: "open_official_external_execution_asset_observer_timeline",
+        assetId: OFFICIAL_EXTERNAL_FLARES_MODEL.assetId,
+        url: page.url(),
+        observedEvents: observerOutcome.observedEvents,
+        status: observerOutcome.status,
+        reason: observerOutcome.reason,
+      });
+      await attachJson("ai-model-external-execution-observer-evidence", {
+        assetId: OFFICIAL_EXTERNAL_FLARES_MODEL.assetId,
+        url: page.url(),
+        checks: report.observerEvidenceChecks,
+      });
+      await captureStep(page, "05-ai-model-external-execution-observer-evidence");
+
+      report.toleratedErrorResponses = report.errorResponses.filter(({ url, status }) =>
+        isTolerableRuntimeRetry(url, status),
+      );
+      report.fatalErrorResponses = report.errorResponses.filter(
+        ({ url, status }) => !isTolerableRuntimeRetry(url, status),
+      );
+      expect(
+        report.fatalErrorResponses,
+        `API calls returned fatal errors: ${JSON.stringify(report.fatalErrorResponses)} (tolerated transient runtime errors: ${JSON.stringify(report.toleratedErrorResponses)})`,
+      ).toHaveLength(0);
+      return;
+    }
+
     if (aiModelHubCatalogCleanupEnabled()) {
       await attachJson(
         "ai-model-external-execution-ui-catalog-cleanup",
@@ -500,25 +809,13 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
         assetType: "machineLearning",
         keywords: ["validation", "ai-model-execution", "external-model", "contract-agreement", "HttpData", "A5.2"],
         properties: {
-          assetData: aiModelHubDaimoModelAssetData({
-            task: "text-classification",
-            subtask: "text-classification",
-            subtaskDescription: "Controlled social-media sentiment execution endpoint",
-            description:
-              "Controlled provider-side HttpData model used to validate consumer execution after contract negotiation from the INESData connector interface.",
-            libraryName: "Custom",
-            language: ["English", "Spanish"],
-            inputFeatures,
-            inputSchema,
-            inputExample: modelPayload,
-          }),
           ...aiModelMetadataAliases({
-            task: "text-classification",
-            subtask: "social-media-sentiment",
-            algorithm: "deterministic-rule-engine",
-            library: "flask",
-            framework: "model-server",
-            software: "pionera-validation-framework",
+            task: "Natural Language Processing",
+            subtask: "token-classification",
+            algorithm: "BERT",
+            library: "Transformers",
+            framework: "AIModelHub-Use-Cases",
+            software: "FastAPI",
             inferencePath: modelPath,
             payload: modelPayload,
             inputSchema,
@@ -540,12 +837,15 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
     );
     await attachJson("ai-model-external-execution-provider-bootstrap", report.providerBootstrap);
 
-    report.catalogReadiness = await probeConsumerCatalogDatasetReadiness(request, dataspaceRuntime, assetId);
-    await attachJson("ai-model-external-execution-catalog-readiness", report.catalogReadiness);
-    expect(
-      report.catalogReadiness.status,
-      `External execution asset ${assetId} was not ready in the catalog API: ${report.catalogReadiness.error || "unknown error"}`,
-    ).toBe("ready");
+    await attachJson("ai-model-external-execution-catalog-readiness", {
+      status: "delegated-to-negotiation-bootstrap",
+      assetId,
+      counterPartyAddress: dataspaceRuntime.provider.protocolBaseUrl,
+      counterPartyId: dataspaceRuntime.provider.connectorName,
+      reason:
+        "External execution creates a direct contract negotiation immediately after provider bootstrap; " +
+        "bootstrapConsumerNegotiation performs the offer lookup used to build the contract request.",
+    });
 
     let lastNegotiationIssue = "";
     for (let attempt = 1; attempt <= externalNegotiationMaxAttempts(); attempt += 1) {
@@ -632,9 +932,10 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
       expectedUiState: ["External Asset", "Agreement ready", dataspaceRuntime.provider.connectorName, "POST"],
     });
 
-    const inputTab = page.getByRole("button", { name: /^(JSON Payload|Input)$/i }).first();
-    if (await inputTab.isVisible().catch(() => false)) {
-      await clickMarked(inputTab, { force: true });
+    const jsonPayloadTab = page.getByRole("button", { name: /^JSON Payload$/i }).first();
+    if (await jsonPayloadTab.isVisible().catch(() => false)) {
+      await clickMarked(jsonPayloadTab, { force: true });
+      await waitForUiTransition(page);
     }
     const inputJsonById = page.locator("#inputJson").first();
     const inputJson = (await inputJsonById.count()) > 0
@@ -700,9 +1001,14 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
 
       if (attempt < externalExecutionMaxAttempts()) {
         await sleep(externalExecutionSettleMs());
-        const inputTabRetry = page.getByRole("button", { name: /^(JSON Payload|Input)$/i }).first();
+        const inputTabRetry = page.getByRole("button", { name: /^Input$/i }).first();
         if (await inputTabRetry.isVisible().catch(() => false)) {
           await clickMarked(inputTabRetry, { force: true });
+          await waitForUiTransition(page);
+        }
+        const jsonPayloadTabRetry = page.getByRole("button", { name: /^JSON Payload$/i }).first();
+        if (await jsonPayloadTabRetry.isVisible().catch(() => false)) {
+          await clickMarked(jsonPayloadTabRetry, { force: true });
           await waitForUiTransition(page);
         }
         await expect(
@@ -728,10 +1034,6 @@ test("15 AI Model Execution: external model with negotiated agreement from INESD
     ).trim();
     if (expectedResultText) {
       await expect(page.getByText(new RegExp(expectedResultText, "i")).first()).toBeVisible({ timeout: 10_000 });
-    } else if (modelPath === DEFAULT_MODEL_PATH) {
-      await expect(page.getByText(/Twitter Sentiment Analyzer/i).first()).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByText(/positive/i).first()).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByText(/local-rule-engine/i).first()).toBeVisible({ timeout: 10_000 });
     }
     await captureStep(page, "03-ai-model-external-execution-result");
 

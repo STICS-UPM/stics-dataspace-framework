@@ -125,6 +125,44 @@ function formControl(page: Page, label: RegExp) {
   return formField(page, label).locator("input, textarea").first();
 }
 
+async function selectMaterialOption(
+  page: Page,
+  label: RegExp,
+  optionText: RegExp,
+  selectedText: RegExp,
+): Promise<void> {
+  const field = formField(page, label);
+  await expect(field).toBeVisible({ timeout: 15_000 });
+
+  const combobox = field.getByRole("combobox").first();
+  const matSelect = field.locator("mat-select").first();
+  const overlayOptions = page.locator(".cdk-overlay-pane [role='option'], .cdk-overlay-pane mat-option");
+  let lastFieldText = ((await field.textContent().catch(() => "")) ?? "").replace(/\s+/g, " ").trim();
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const trigger = (await combobox.count().catch(() => 0)) > 0 ? combobox : matSelect;
+    await clickMarked(trigger, { timeout: 5_000, force: true });
+
+    const option = overlayOptions.filter({ hasText: optionText }).last();
+    await expect(option).toBeVisible({ timeout: 10_000 });
+    await option.scrollIntoViewIfNeeded().catch(() => undefined);
+    await clickMarked(option, { timeout: 5_000, force: true });
+    await page.keyboard.press("Escape").catch(() => undefined);
+
+    try {
+      await expect(field).toContainText(selectedText, { timeout: 5_000 });
+      return;
+    } catch {
+      lastFieldText = ((await field.textContent().catch(() => "")) ?? "").replace(/\s+/g, " ").trim();
+      await page.waitForTimeout(500);
+    }
+  }
+
+  throw new Error(
+    `Material select ${label} did not keep option ${optionText}; last visible field text was '${lastFieldText}'.`,
+  );
+}
+
 async function parseVocabularyList(response: Response): Promise<VocabularyRecord[]> {
   try {
     const payload = await response.json();
@@ -209,8 +247,7 @@ test("14 AI Model Hub DAIMO Vocabulary: machine-learning schema is created from 
 
     await fillMarked(formControl(page, /^ID$/i), vocabularyId);
     await fillMarked(formControl(page, /^Name$/i), vocabularyName);
-    await clickMarked(formField(page, /Asset category/i).locator("mat-select").first());
-    await clickMarked(page.getByRole("option", { name: /Machine learning/i }).first());
+    await selectMaterialOption(page, /Asset category/i, /Machine learning/i, /Machine learning/i);
     await fillMarked(formControl(page, /Schema \(JSON\)/i), schemaText);
     await captureStep(page, "03-ai-model-daimo-vocabulary-filled");
 
@@ -273,9 +310,9 @@ test("14 AI Model Hub DAIMO Vocabulary: machine-learning schema is created from 
     await page.keyboard.press("Escape");
 
     await page.goto(assetCreateUrl(dataspaceRuntime.provider.portalBaseUrl), { waitUntil: "domcontentloaded" });
+    await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
     await expect(page.getByText(/Create an asset/i).first()).toBeVisible({ timeout: 20_000 });
-    await clickMarked(formField(page, /Asset type/i).locator("mat-select").first());
-    await clickMarked(page.getByRole("option", { name: /Machine learning/i }).first());
+    await selectMaterialOption(page, /Asset type/i, /Machine learning/i, /Machine learning/i);
     await expect(page.getByRole("tab", { name: /Detailed information/i })).toBeVisible({ timeout: 20_000 });
     await clickMarked(page.getByRole("tab", { name: /Detailed information/i }), { force: true });
     await expect(page.getByRole("tab", { name: /Machine learning information/i })).toBeVisible({ timeout: 20_000 });

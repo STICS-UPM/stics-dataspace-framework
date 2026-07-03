@@ -1,25 +1,13 @@
-#wrapper,
-#wrapper > div {
-  width: 100%;
-  min-width: 0;
-}
-
-#wrapper > div {
-  overflow-x: auto;
-}
-
 table {
   margin-top: 20px;
 }
 
 .transfer-history-table {
-  display: table !important;
-  width: 100% !important;
-  min-width: 760px;
+  width: 100%;
 }
 
 .mat-table {
-  overflow-x: visible;
+  overflow-x: scroll;
 }
 
 .mat-cell,
@@ -71,82 +59,7 @@ table {
   height: 56px !important;
 }
 
-:host ::ng-deep .transfer-history-table th,
-:host ::ng-deep .transfer-history-table td {
-  min-width: 110px;
-}
-
-:host ::ng-deep .transfer-history-table th:last-child,
-:host ::ng-deep .transfer-history-table td:last-child {
-  min-width: 150px;
-}
-
 :host ::ng-deep table button {
   color: var(--secondary-500) !important;
   border-color: var(--secondary-500) !important;
-}
-
-.validation-success {
-  color: var(--success-500, #2e7d32);
-  font-weight: 500;
-}
-
-.validation-failed {
-  color: var(--error-500, #c62828);
-}
-
-.validation-skipped {
-  color: var(--secondary-400, #888);
-}
-
-.validation-na {
-  color: var(--secondary-400, #888);
-  font-style: italic;
-}
-
-td.validation-success,
-td.validation-failed,
-td.validation-skipped,
-td.validation-na {
-  max-width: 480px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.validation-cell-content {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.validation-summary {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.validation-details-button {
-  flex: 0 0 auto;
-  line-height: 28px;
-  min-width: auto;
-  padding: 0 8px;
-}
-
-:host ::ng-deep .validation-tooltip {
-  white-space: pre-wrap;
-  max-width: 720px;
-}
-
-@media (max-width: 900px) {
-  .table-header-container {
-    align-items: stretch !important;
-    flex-direction: column !important;
-    gap: 0.75rem;
-  }
-
-  .table-header-container button {
-    width: 100%;
-  }
 }

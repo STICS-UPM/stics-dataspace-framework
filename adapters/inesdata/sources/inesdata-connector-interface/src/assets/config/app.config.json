@@ -78,6 +78,6 @@
     "scope": "openid profile email",
     "responseType": "code",
     "showDebugInformation": true,
-    "allowedUrls": "http://localhost:4200,http://connector-c1:4200"
+    "allowedUrls": "http://localhost:4200,http://connector-c1:4200,http://localhost:1337"
   }
 }

@@ -283,7 +283,6 @@ test_cases:
       mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: PT5-VS-07
-      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
       latest_evidence: experiments/semantic-virtualization-ui-marked-20260506/components/semantic-virtualization/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
 
@@ -303,7 +302,6 @@ test_cases:
       mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: PT5-VS-08
-      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
       latest_evidence: experiments/semantic-virtualization-ui-marked-20260506/components/semantic-virtualization/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
 
@@ -501,7 +499,6 @@ ui_demo_cases:
       mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: SV-UI-04
-      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
       latest_evidence: experiments/semantic-virtualization-ui-marked-20260506/components/semantic-virtualization/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
 
@@ -525,7 +522,6 @@ ui_demo_cases:
       mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: SV-UI-05
-      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
       latest_evidence: experiments/semantic-virtualization-ui-marked-20260506/components/semantic-virtualization/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
 
@@ -548,7 +544,6 @@ ui_demo_cases:
       mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: SV-UI-06
-      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
       latest_evidence: experiments/semantic-virtualization-ui-marked-20260506/components/semantic-virtualization/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
 
@@ -571,7 +566,6 @@ ui_demo_cases:
       mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: SV-UI-07
-      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
       latest_evidence: experiments/semantic-virtualization-mapping-editor-sv-ui-07-20260507-r4/components/semantic-virtualization/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
 
@@ -595,7 +589,6 @@ ui_demo_cases:
       mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: SV-UI-08
-      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
       latest_evidence: experiments/semantic-virtualization-mapping-editor-sv-ui-08-20260507-r4/components/semantic-virtualization/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
 
@@ -620,6 +613,5 @@ ui_demo_cases:
       mode: ui
       ui_spec: validation/components/semantic_virtualization/ui/specs/sv_ui_02_mapping_editor.spec.js
       evidence_case: SV-UI-10
-      enable_with: SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI=1
       latest_evidence: experiments/semantic-virtualization-mapping-editor-sv-ui-10-20260507-r3/components/semantic-virtualization/ui/results.json
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1

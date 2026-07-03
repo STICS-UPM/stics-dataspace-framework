@@ -415,6 +415,7 @@ def run_ai_model_hub_ui_validation(base_url: str, experiment_dir: str | None = N
         "PIONERA_PLAYWRIGHT_SUITE_NAME": "AI Model Hub functional",
         "PLAYWRIGHT_INTERACTION_MARKERS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKERS", "1"),
         "PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS": os.environ.get("PLAYWRIGHT_INTERACTION_MARKER_DELAY_MS", "350"),
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0",
     }
 
     error = None

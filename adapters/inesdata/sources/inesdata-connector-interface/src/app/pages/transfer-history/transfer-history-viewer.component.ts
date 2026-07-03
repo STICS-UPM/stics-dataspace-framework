@@ -5,7 +5,6 @@ import { QuerySpec, TransferProcess } from "../../shared/models/edc-connector-en
 import { ConfirmationDialogComponent, ConfirmDialogModel } from "../../shared/components/confirmation-dialog/confirmation-dialog.component";
 import { MatDialog } from "@angular/material/dialog";
 import { PageEvent } from '@angular/material/paginator';
-import { TransferDetailsDialogComponent } from './transfer-details-dialog.component';
 
 @Component({
   selector: 'app-transfer-history',
@@ -14,11 +13,9 @@ import { TransferDetailsDialogComponent } from './transfer-details-dialog.compon
 })
 export class TransferHistoryViewerComponent implements OnInit {
 
-  columns: string[] = ['state', 'lastUpdated', 'assetId', 'contractId', 'validation'];
+  columns: string[] = ['state', 'lastUpdated', 'assetId', 'contractId'];
   transferProcesses: TransferProcess[];
   storageExplorerLinkTemplate: string | undefined;
-
-  private static readonly VALIDATION_KEY_PREFIX = 'inesdata.rdf.validation.';
 
   // Pagination
   pageSize = 10;
@@ -69,116 +66,5 @@ export class TransferHistoryViewerComponent implements OnInit {
     this.currentPage = 0;
     this.countTransferProcesses();
     this.loadTransferProcesses(0);
-  }
-
-  /**
-   * After {@code expandArray} / JSON-LD handling, validation fields may be plain strings or
-   * wrapped objects ({@value}, nested arrays). Avoid String(object) → "[object Object]" in the table.
-   */
-  private validationValueToString(raw: unknown): string {
-    if (raw == null) {
-      return '';
-    }
-    if (typeof raw === 'string') {
-      return raw.trim();
-    }
-    if (typeof raw === 'number' || typeof raw === 'boolean') {
-      return String(raw);
-    }
-    if (Array.isArray(raw)) {
-      return raw.map((x) => this.validationValueToString(x)).filter((s) => s.length > 0).join(', ');
-    }
-    if (typeof raw === 'object') {
-      const o = raw as Record<string, unknown>;
-      if ('@value' in o) {
-        return this.validationValueToString(o['@value']);
-      }
-      if ('value' in o) {
-        return this.validationValueToString(o['value']);
-      }
-      if ('@list' in o && Array.isArray(o['@list'])) {
-        return this.validationValueToString(o['@list']);
-      }
-      try {
-        return JSON.stringify(o);
-      } catch {
-        return '';
-      }
-    }
-    return String(raw).trim();
-  }
-
-  private getValidationProp(item: any, suffix: string): string {
-    const pp = item?.privateProperties;
-    if (!pp) {
-      return '';
-    }
-    const key = TransferHistoryViewerComponent.VALIDATION_KEY_PREFIX + suffix;
-    const value = pp[key]
-      ?? pp['https://w3id.org/edc/v0.0.1/ns/' + key]
-      ?? pp['edc:' + key];
-    return this.validationValueToString(value);
-  }
-
-  getValidationStatus(item: any): string {
-    return this.getValidationProp(item, 'status').toUpperCase();
-  }
-
-  getValidationDisplay(item: any): string {
-    const status = this.getValidationStatus(item);
-    if (!status) {
-      return 'N/A';
-    }
-    if (status === 'SUCCESS') {
-      return 'SUCCESS';
-    }
-    const message = this.getValidationProp(item, 'message');
-    const errors = this.getValidationProp(item, 'errors');
-    const parts: string[] = [];
-    if (message) {
-      parts.push(`message="${message}"`);
-    }
-    if (errors) {
-      parts.push(`errors=[${errors}]`);
-    }
-    return parts.length ? parts.join(' ') : status;
-  }
-
-  getValidationSummary(item: any): string {
-    return this.getValidationStatus(item) || 'N/A';
-  }
-
-  hasValidationDetails(item: any): boolean {
-    const display = this.getValidationDisplay(item);
-    const summary = this.getValidationSummary(item);
-    return Boolean(display && display !== 'N/A' && display !== summary);
-  }
-
-  getValidationCssClass(item: any): string {
-    const status = this.getValidationStatus(item);
-    if (!status) {
-      return 'validation-na';
-    }
-    if (status === 'SUCCESS') {
-      return 'validation-success';
-    }
-    if (status === 'SKIPPED') {
-      return 'validation-skipped';
-    }
-    return 'validation-failed';
-  }
-
-  openValidationDetails(item: any) {
-    const display = this.getValidationDisplay(item);
-    if (!display || display === 'N/A') {
-      return;
-    }
-    this.dialog.open(TransferDetailsDialogComponent, {
-      width: '600px',
-      data: {
-        title: 'Validation details',
-        content: display
-      }
-    });
   }
 }

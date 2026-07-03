@@ -65,7 +65,9 @@ elasticsearch:
   port: 9200
   auth:
     username: elastic
-    password: changeme
+    # Leave empty for the chart to generate/reuse a Kubernetes Secret, or set
+    # through a private values file / existingSecretName for controlled demos.
+    password: ""
   javaOpts: "-Xms512m -Xmx512m"
   diskThreshold:
     # Validation VMs can run close to disk watermarks while still being usable.

@@ -41,18 +41,6 @@ type ConsumerNegotiationArtifacts = {
   state?: string;
 };
 
-type ConsumerNegotiationOutcomeStatus = "agreement" | "terminated" | "timeout";
-
-type ConsumerNegotiationOutcome = {
-  negotiationId: string;
-  agreementId: string;
-  state: string;
-  attempts: number;
-  status: ConsumerNegotiationOutcomeStatus;
-  errorDetail?: string;
-  negotiation?: unknown;
-};
-
 type ConsumerAgreementArtifacts = {
   agreementId: string | null;
   assetId: string;
@@ -124,14 +112,21 @@ type ProviderCleanupReport = {
 
 type TokenProvider = string | (() => Promise<string>);
 
+export type ProviderContractDefinitionLookup = {
+  contractDefinitionId: string;
+  found: boolean;
+  itemCount: number;
+  attempts: number;
+  httpStatus?: number;
+  matchedItem?: unknown;
+};
+
 const TRANSIENT_HTTP_STATUSES = new Set([401, 502, 503, 504]);
 const TRANSIENT_FEDERATED_CATALOG_HTTP_STATUSES = new Set([401, 500, 502, 503, 504]);
 const TRANSIENT_HTTP_MAX_ATTEMPTS = 4;
 const TRANSIENT_HTTP_RETRY_DELAY_MS = 2000;
 const CLEANUP_ENTITY_ORDER: CleanupEntityKind[] = ["contractdefinitions", "policydefinitions", "assets"];
 const DEFAULT_CATALOG_READINESS_TIMEOUT_MS = 180_000;
-const DEFAULT_EDC_VM_SINGLE_CATALOG_READINESS_TIMEOUT_MS = 360_000;
-const DEFAULT_CONSUMER_TRANSFER_ACTIVE_TIMEOUT_MS = 120_000;
 const ACCEPTED_CONSUMER_TRANSFER_STATES = new Set(["STARTED", "COMPLETED", "ENDED", "TERMINATED", "DEPROVISIONED"]);
 
 function sleep(ms: number): Promise<void> {
@@ -161,58 +156,19 @@ function catalogReadinessTimeoutMs(): number {
   if (Number.isFinite(configured) && configured > 0) {
     return configured;
   }
-  const adapter = (process.env.UI_ADAPTER || process.env.PIONERA_ADAPTER || "").trim().toLowerCase();
   const topology = (
     process.env.UI_TOPOLOGY ||
     process.env.PIONERA_TOPOLOGY ||
     process.env.INESDATA_TOPOLOGY ||
+    process.env.TOPOLOGY ||
     ""
   )
     .trim()
     .toLowerCase();
-  if (adapter === "edc" && topology === "vm-single") {
-    return DEFAULT_EDC_VM_SINGLE_CATALOG_READINESS_TIMEOUT_MS;
+  if (topology === "vm-distributed") {
+    return 360_000;
   }
   return DEFAULT_CATALOG_READINESS_TIMEOUT_MS;
-}
-
-function positiveIntegerFromEnv(name: string, fallback: number): number {
-  const raw = process.env[name]?.trim();
-  if (!raw) {
-    return fallback;
-  }
-  const value = Number.parseInt(raw, 10);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
-}
-
-function edcTopologyTransferActiveTimeoutMs(): number {
-  const topology = (process.env.UI_TOPOLOGY || process.env.PIONERA_TOPOLOGY || "")
-    .trim()
-    .toLowerCase();
-  if (topology === "vm-distributed") {
-    return 420_000;
-  }
-  if (topology === "vm-single") {
-    return 300_000;
-  }
-  return 180_000;
-}
-
-export function resolveConsumerTransferActiveTimeoutMs(runtime?: DataspacePortalRuntime): number {
-  const isEdcAdapter = runtime?.adapter === "edc" || runtime?.consumer?.adapter === "edc";
-  const fallback = isEdcAdapter
-    ? edcTopologyTransferActiveTimeoutMs()
-    : DEFAULT_CONSUMER_TRANSFER_ACTIVE_TIMEOUT_MS;
-  return positiveIntegerFromEnv(
-    "UI_CONSUMER_TRANSFER_ACTIVE_TIMEOUT_MS",
-    positiveIntegerFromEnv(
-      "PIONERA_CONSUMER_TRANSFER_ACTIVE_TIMEOUT_MS",
-      positiveIntegerFromEnv(
-        "UI_EDC_TRANSFER_SUCCESS_TIMEOUT_MS",
-        positiveIntegerFromEnv("PIONERA_EDC_TRANSFER_SUCCESS_TIMEOUT_MS", fallback),
-      ),
-    ),
-  );
 }
 
 async function resolveToken(tokenProvider: TokenProvider): Promise<string> {
@@ -475,6 +431,15 @@ async function createPolicy(
   });
 }
 
+export async function createProviderPolicyDefinition(
+  request: APIRequestContext,
+  runtime: DataspacePortalRuntime,
+  policyId: string,
+): Promise<void> {
+  const providerToken = () => issueUserToken(request, runtime);
+  await createPolicy(request, runtime, providerToken, policyId);
+}
+
 async function createAsset(
   request: APIRequestContext,
   runtime: DataspacePortalRuntime,
@@ -690,13 +655,70 @@ export async function cleanupProviderValidationArtifacts(
   return report;
 }
 
+export async function probeProviderContractDefinition(
+  request: APIRequestContext,
+  runtime: DataspacePortalRuntime,
+  contractDefinitionId: string,
+): Promise<ProviderContractDefinitionLookup> {
+  const providerToken = await issueUserToken(request, runtime);
+  const limit = 100;
+  let itemCount = 0;
+  let attempts = 0;
+  let httpStatus: number | undefined;
+
+  for (let offset = 0; offset < 500; offset += limit) {
+    attempts += 1;
+    const response = await executeRetriableRequest("Probe provider contract definition", () =>
+      request.post(`${runtime.provider.managementBaseUrl}/contractdefinitions/request`, {
+        headers: {
+          Authorization: `Bearer ${providerToken}`,
+          "Content-Type": "application/json",
+        },
+        data: {
+          "@context": {
+            "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+          },
+          "@type": "QuerySpec",
+          offset,
+          limit,
+          filterExpression: [],
+        },
+      }),
+    );
+    httpStatus = response.status();
+    const items = payloadItems(await response.json());
+    itemCount += items.length;
+    const matchedItem = items.find((item) => extractEntityId(item) === contractDefinitionId);
+    if (matchedItem) {
+      return {
+        contractDefinitionId,
+        found: true,
+        itemCount,
+        attempts,
+        httpStatus,
+        matchedItem,
+      };
+    }
+    if (items.length < limit) {
+      break;
+    }
+  }
+
+  return {
+    contractDefinitionId,
+    found: false,
+    itemCount,
+    attempts,
+    httpStatus,
+  };
+}
+
 export async function fetchConsumerCatalogResponse(
   request: APIRequestContext,
   runtime: DataspacePortalRuntime,
   counterPartyAddress: string,
   counterPartyId?: string,
 ): Promise<unknown> {
-  const catalogLimit = Number.parseInt(process.env.UI_EDC_CATALOG_REQUEST_LIMIT || "", 10);
   const { response } = await executeRetriableConsumerRequest("Consumer catalog request", request, runtime, (consumerToken) =>
     request.post(`${runtime.consumer.managementBaseUrl}/catalog/request`, {
       headers: {
@@ -713,7 +735,7 @@ export async function fetchConsumerCatalogResponse(
         protocol: "dataspace-protocol-http",
         querySpec: {
           offset: 0,
-          limit: Number.isFinite(catalogLimit) && catalogLimit > 0 ? catalogLimit : 1000,
+          limit: 100,
           filterExpression: [],
         },
       },
@@ -1235,54 +1257,6 @@ async function lookupNegotiation(
   );
 }
 
-export async function waitForConsumerNegotiationOutcome(
-  request: APIRequestContext,
-  runtime: DataspacePortalRuntime,
-  negotiationId: string,
-  attempts = 30,
-  delayMs = 1_000,
-): Promise<ConsumerNegotiationOutcome> {
-  let lastNegotiation: any | undefined;
-  let lastState = "UNKNOWN";
-  let lastAgreementId = "";
-  let lastErrorDetail = "";
-
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const negotiation = await lookupNegotiation(request, runtime, negotiationId);
-
-    if (negotiation) {
-      lastNegotiation = negotiation;
-      lastState = negotiationState(negotiation) || lastState;
-      lastAgreementId = negotiationAgreementId(negotiation) || lastAgreementId;
-      lastErrorDetail = negotiationErrorDetail(negotiation) || lastErrorDetail;
-
-      if (lastAgreementId || lastState === "TERMINATED") {
-        return {
-          negotiationId,
-          agreementId: lastAgreementId,
-          state: lastState,
-          attempts: attempt,
-          status: lastAgreementId ? "agreement" : "terminated",
-          errorDetail: lastErrorDetail || undefined,
-          negotiation,
-        };
-      }
-    }
-
-    await sleep(delayMs);
-  }
-
-  return {
-    negotiationId,
-    agreementId: lastAgreementId,
-    state: lastState,
-    attempts,
-    status: lastAgreementId ? "agreement" : lastState === "TERMINATED" ? "terminated" : "timeout",
-    errorDetail: lastErrorDetail || undefined,
-    negotiation: lastNegotiation,
-  };
-}
-
 export async function bootstrapConsumerNegotiation(
   request: APIRequestContext,
   runtime: DataspacePortalRuntime,
@@ -1458,10 +1432,7 @@ export async function bootstrapConsumerTransfer(
     throw new Error("Transfer response does not contain an identifier");
   }
 
-  const timeoutMs = resolveConsumerTransferActiveTimeoutMs(runtime);
-  const deadline = Date.now() + timeoutMs;
-  let lastState = "UNKNOWN";
-  let lastErrorDetail = "";
+  const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const { response: stateResponse } = await executeRetriableConsumerRequest(
       "Consumer transfer status lookup",
@@ -1477,8 +1448,6 @@ export async function bootstrapConsumerTransfer(
     await ensureOk(stateResponse, "Consumer transfer status lookup");
     const stateBody = await stateResponse.json();
     const state = String(stateBody?.state || "").trim().toUpperCase();
-    lastState = state || lastState;
-    lastErrorDetail = String(stateBody?.errorDetail || stateBody?.["edc:errorDetail"] || "").trim();
     if (state === "COMPLETED" || state === "STARTED") {
       return {
         transferId,
@@ -1493,11 +1462,7 @@ export async function bootstrapConsumerTransfer(
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
-  throw new Error(
-    `Transfer '${transferId}' did not reach an active state in ${timeoutMs} ms. ` +
-      `Last observed state: ${lastState}` +
-      (lastErrorDetail ? `. Last error: ${lastErrorDetail}` : ""),
-  );
+  throw new Error(`Transfer '${transferId}' did not reach an active state in time`);
 }
 
 function transferReferencesAssetAgreement(transfer: any, assetId: string, agreementId: string): boolean {

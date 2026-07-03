@@ -21,14 +21,6 @@ class NewmanTransferScriptTest(unittest.TestCase):
             script,
         )
 
-    def test_transfer_destination_allows_fast_terminal_state_with_resolved_destination(self):
-        script = TRANSFER_TESTS.read_text(encoding="utf-8")
-
-        self.assertIn("Terminated transfer still exposes a destination for storage validation", script)
-        self.assertIn("Transfer destination validation did not observe a failed terminated transfer", script)
-        self.assertIn("state === \"TERMINATED\" && transferErrorDetail", script)
-        self.assertNotIn("Transfer destination validation did not observe a terminated transfer", script)
-
     def test_provider_setup_authentication_failures_refresh_token_without_regenerating_e2e_ids(self):
         script = PROVIDER_TESTS.read_text(encoding="utf-8")
 

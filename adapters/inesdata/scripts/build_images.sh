@@ -15,6 +15,8 @@ GRADLE_MAX_WORKERS="${GRADLE_MAX_WORKERS:-1}"
 GRADLE_COMMON_ARGS="${GRADLE_COMMON_ARGS:---no-daemon --no-parallel -Dorg.gradle.workers.max=$GRADLE_MAX_WORKERS}"
 LOCAL_DOCKERFILE_FIXUPS="${INESDATA_LOCAL_DOCKERFILE_FIXUPS:-true}"
 DOCKER_CMD="${DOCKER_CMD:-${PIONERA_DOCKER_CMD:-}}"
+DOCKER_BUILD_EXTRA_ARGS="${INESDATA_DOCKER_BUILD_EXTRA_ARGS:-${PIONERA_DOCKER_BUILD_EXTRA_ARGS:-}}"
+DOCKER_BUILD_NO_CACHE="${INESDATA_DOCKER_BUILD_NO_CACHE:-${PIONERA_DOCKER_BUILD_NO_CACHE:-false}}"
 TEMP_DOCKERFILES=()
 EFFECTIVE_DOCKERFILE=""
 
@@ -51,6 +53,8 @@ Environment variables:
   GRADLE_COMMON_ARGS (default: --no-daemon --no-parallel -Dorg.gradle.workers.max=<GRADLE_MAX_WORKERS>)
   INESDATA_LOCAL_DOCKERFILE_FIXUPS (default: true; use temporary Dockerfiles without modifying sources)
   DOCKER_CMD / PIONERA_DOCKER_CMD (default: docker, or Docker Desktop docker.exe on WSL)
+  INESDATA_DOCKER_BUILD_EXTRA_ARGS / PIONERA_DOCKER_BUILD_EXTRA_ARGS
+  INESDATA_DOCKER_BUILD_NO_CACHE / PIONERA_DOCKER_BUILD_NO_CACHE (default: false)
 
 Component keys:
   connector
@@ -378,6 +382,14 @@ echo "Target: $TARGET"
 echo "Gradle args: $GRADLE_COMMON_ARGS"
 resolve_docker_cmd
 echo "Docker command: $DOCKER_CMD"
+if is_truthy "$DOCKER_BUILD_NO_CACHE"; then
+  echo "Docker build cache: disabled"
+else
+  echo "Docker build cache: enabled"
+fi
+if [[ -n "${DOCKER_BUILD_EXTRA_ARGS:-}" ]]; then
+  echo "Docker build extra args: $DOCKER_BUILD_EXTRA_ARGS"
+fi
 
 if [[ "$TARGET" == "TODO" ]]; then
   selected_components=("${ALL_COMPONENTS[@]}")
@@ -429,7 +441,11 @@ for component in "${selected_components[@]}"; do
   dockerfile_for_build "$component" "$repo_dir" "$dockerfile"
   effective_dockerfile="$EFFECTIVE_DOCKERFILE"
   docker_cmd_q="$(printf '%q' "$DOCKER_CMD")"
-  build_cmd="$docker_cmd_q build -f $effective_dockerfile -t $full_image $extra_args ."
+  cache_args=""
+  if is_truthy "$DOCKER_BUILD_NO_CACHE"; then
+    cache_args="--no-cache"
+  fi
+  build_cmd="$docker_cmd_q build $cache_args $DOCKER_BUILD_EXTRA_ARGS -f $effective_dockerfile -t $full_image $extra_args ."
   echo -e "$component\t$repo_dir\t$image\t$tag\t$full_image\t$build_cmd" >> "$MANIFEST_FILE"
 
   echo

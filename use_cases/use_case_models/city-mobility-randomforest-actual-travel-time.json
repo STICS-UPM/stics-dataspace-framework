@@ -1,0 +1,149 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "daimo": "https://w3id.org/pionera/daimo#",
+    "mls": "http://www.w3.org/ns/mls#"
+  },
+  "@id": "city-mobility-randomforest-actual-travel-time",
+  "properties": {
+    "name": "Mobility Random Forest Actual Travel Time - PIONERA Use Case",
+    "version": "2.0.8",
+    "contenttype": "application/json",
+    "assetType": "machineLearning",
+    "shortDescription": "Predicts actual travel time for public transport segments using Random Forest",
+    "dct:description": "Predicts actual travel time for public transport segments using Random Forest. Served by the FLARES/Mobility FastAPI use-case server.",
+    "dcterms:description": "Predicts actual travel time for public transport segments using Random Forest. Served by the FLARES/Mobility FastAPI use-case server.",
+    "dcat:keyword": [
+      "machine-learning",
+      "http-model",
+      "pionera-use-case",
+      "flares",
+      "mobility",
+      "mobility-randomforest-actual-travel-time",
+      "city"
+    ],
+    "assetData": {
+      "JS_DAIMO_Model": {
+        "daimo:modality": [
+          "tabular"
+        ],
+        "daimo:taskType": "regression",
+        "daimo:taskCategory": "Tabular",
+        "daimo:subtask": "tabular-regression",
+        "daimo:subtaskDescription": "Public transport actual travel time prediction",
+        "daimo:endpointBehavior": "prediction",
+        "daimo:requestShape": "batch",
+        "dct:description": "Predicts actual travel time for public transport segments using Random Forest. Served by the FLARES/Mobility FastAPI use-case server.",
+        "daimo:libraryName": "scikit-learn",
+        "dct:language": [
+          "Spanish"
+        ],
+        "dct:license": "apache-2.0",
+        "daimo:inputSchema": {
+          "fields": [
+            {
+              "name": "trip_id",
+              "type": "string",
+              "nullable": false,
+              "description": "GTFS trip identifier"
+            },
+            {
+              "name": "from_stop_id",
+              "type": "string",
+              "nullable": false,
+              "description": "Origin stop identifier"
+            },
+            {
+              "name": "to_stop_id",
+              "type": "string",
+              "nullable": false,
+              "description": "Destination stop identifier"
+            },
+            {
+              "name": "route_id",
+              "type": "string",
+              "nullable": false,
+              "description": "GTFS route identifier"
+            },
+            {
+              "name": "scheduled_travel_time",
+              "type": "number",
+              "nullable": false,
+              "description": "Scheduled segment travel time in seconds"
+            },
+            {
+              "name": "shape_distance",
+              "type": "number",
+              "nullable": false,
+              "description": "Segment distance in meters"
+            },
+            {
+              "name": "is_peak",
+              "type": "integer",
+              "nullable": false,
+              "description": "Peak-hour indicator",
+              "minValue": 0,
+              "maxValue": 1
+            },
+            {
+              "name": "hour_sin",
+              "type": "number",
+              "nullable": false,
+              "description": "Cyclic hour sine encoding"
+            },
+            {
+              "name": "hour_cos",
+              "type": "number",
+              "nullable": false,
+              "description": "Cyclic hour cosine encoding"
+            },
+            {
+              "name": "weekday_sin",
+              "type": "number",
+              "nullable": false,
+              "description": "Cyclic weekday sine encoding"
+            },
+            {
+              "name": "weekday_cos",
+              "type": "number",
+              "nullable": false,
+              "description": "Cyclic weekday cosine encoding"
+            },
+            {
+              "name": "previous_delay_ratio",
+              "type": "number",
+              "nullable": false,
+              "description": "Previous delay divided by scheduled travel time"
+            },
+            {
+              "name": "previous_delay_delta",
+              "type": "number",
+              "nullable": false,
+              "description": "Previous delay delta in seconds"
+            }
+          ],
+          "jsonSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"trip_id\": {\n      \"type\": \"string\",\n      \"description\": \"GTFS trip identifier\"\n    },\n    \"from_stop_id\": {\n      \"type\": \"string\",\n      \"description\": \"Origin stop identifier\"\n    },\n    \"to_stop_id\": {\n      \"type\": \"string\",\n      \"description\": \"Destination stop identifier\"\n    },\n    \"route_id\": {\n      \"type\": \"string\",\n      \"description\": \"GTFS route identifier\"\n    },\n    \"scheduled_travel_time\": {\n      \"type\": \"number\",\n      \"description\": \"Scheduled segment travel time in seconds\"\n    },\n    \"shape_distance\": {\n      \"type\": \"number\",\n      \"description\": \"Segment distance in meters\"\n    },\n    \"is_peak\": {\n      \"type\": \"integer\",\n      \"description\": \"Peak-hour indicator\",\n      \"minimum\": 0,\n      \"maximum\": 1\n    },\n    \"hour_sin\": {\n      \"type\": \"number\",\n      \"description\": \"Cyclic hour sine encoding\"\n    },\n    \"hour_cos\": {\n      \"type\": \"number\",\n      \"description\": \"Cyclic hour cosine encoding\"\n    },\n    \"weekday_sin\": {\n      \"type\": \"number\",\n      \"description\": \"Cyclic weekday sine encoding\"\n    },\n    \"weekday_cos\": {\n      \"type\": \"number\",\n      \"description\": \"Cyclic weekday cosine encoding\"\n    },\n    \"previous_delay_ratio\": {\n      \"type\": \"number\",\n      \"description\": \"Previous delay divided by scheduled travel time\"\n    },\n    \"previous_delay_delta\": {\n      \"type\": \"number\",\n      \"description\": \"Previous delay delta in seconds\"\n    }\n  },\n  \"required\": [\n    \"trip_id\",\n    \"from_stop_id\",\n    \"to_stop_id\",\n    \"route_id\",\n    \"scheduled_travel_time\",\n    \"shape_distance\",\n    \"is_peak\",\n    \"hour_sin\",\n    \"hour_cos\",\n    \"weekday_sin\",\n    \"weekday_cos\",\n    \"previous_delay_ratio\",\n    \"previous_delay_delta\"\n  ]\n}"
+        },
+        "daimo:inputExample": "[{\"trip_id\":\"L13_1_05:45_LxI\",\"from_stop_id\":\"7716\",\"to_stop_id\":\"19219\",\"route_id\":\"13\",\"scheduled_travel_time\":120,\"shape_distance\":681.1956848810403,\"is_peak\":0,\"hour_sin\":0.7071067811865475,\"hour_cos\":0.7071067811865476,\"weekday_sin\":0.9749279121818236,\"weekday_cos\":-0.22252093395631434,\"previous_delay_ratio\":0.2499999979166667,\"previous_delay_delta\":0.0}]",
+        "daimo:metrics": [
+          "RMSE",
+          "MAE",
+          "MSE",
+          "R2"
+        ]
+      }
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "name": "city-mobility-randomforest-actual-travel-time",
+    "baseUrl": "http://host.docker.internal:8000/mobility/randomforest_actual_travel_time",
+    "proxyMethod": "true",
+    "proxyBody": "true",
+    "method": "POST",
+    "contentType": "application/json"
+  }
+}

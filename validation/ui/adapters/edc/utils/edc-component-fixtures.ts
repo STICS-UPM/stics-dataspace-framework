@@ -1,8 +1,4 @@
 import { modelServerBaseUrlFromUrl, modelServerUrlForPath } from "../../../shared/utils/model-server-url";
-import {
-  aiModelHubDaimoDatasetAssetData,
-  aiModelHubDaimoModelAssetData,
-} from "../../../shared/utils/ai-model-hub-daimo";
 
 export const DEFAULT_AI_MODEL_PATH = "/api/v1/nlp/ecommerce-sentiment";
 export const DEFAULT_AI_MODEL_PAYLOAD = {
@@ -208,17 +204,6 @@ export function aiModelAssetOptions({
     keywords: tags,
     properties: {
       "asset:prop:type": "machineLearning",
-      assetData: aiModelHubDaimoModelAssetData({
-        task,
-        subtask,
-        subtaskDescription: subtask,
-        description: "Machine-learning model endpoint governed through EDC as a contractual HttpData asset.",
-        libraryName: library,
-        language: ["English", "Spanish"],
-        inputFeatures: TEXT_MODEL_INPUT_FEATURES,
-        inputSchema: TEXT_MODEL_INPUT_SCHEMA,
-        inputExample: DEFAULT_AI_MODEL_PAYLOAD,
-      }),
       contenttype: "application/json",
       "dcat:keyword": tags,
       "daimo:tags": tags,
@@ -257,16 +242,6 @@ export function benchmarkDatasetAssetOptions(suffix: string): Record<string, unk
     keywords: tags,
     properties: {
       "asset:prop:type": "dataset",
-      assetData: aiModelHubDaimoDatasetAssetData({
-        task: "text-classification",
-        subtask: "text-classification",
-        subtaskDescription: "Controlled sentiment benchmark dataset",
-        input: ["input.text"],
-        label: "expected_label",
-        labelType: "categorical",
-        format: "json",
-        keywords: ["benchmark", "validation", "classification", "json"],
-      }),
       contenttype: "application/json",
       "dcat:keyword": tags,
       "daimo:asset_kind": "dataset",

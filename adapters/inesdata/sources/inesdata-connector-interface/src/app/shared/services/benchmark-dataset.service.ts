@@ -21,6 +21,10 @@ interface BenchmarkDatasetTransferContext {
   transferType: string;
 }
 
+export interface BenchmarkDatasetQuery {
+  searchTerm?: string;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -38,10 +42,10 @@ export class BenchmarkDatasetService {
     private readonly transferProcessService: TransferProcessService
   ) {}
 
-  getBenchmarkDatasets(): Observable<BenchmarkDatasetAsset[]> {
+  getBenchmarkDatasets(filters: BenchmarkDatasetQuery = {}): Observable<BenchmarkDatasetAsset[]> {
     return forkJoin({
       ownAssets: this.loadOwnAssets(),
-      federatedOffers: this.loadFederatedOffers(),
+      federatedOffers: this.loadFederatedOffers(filters),
       agreementAssetIds: this.loadAgreementAssetIds()
     }).pipe(
       map(({ ownAssets, federatedOffers, agreementAssetIds }) => {
@@ -68,8 +72,7 @@ export class BenchmarkDatasetService {
   extractInlineDatasetPayload(asset: BenchmarkDatasetAsset): unknown | null {
     const keys = [
       'daimo:benchmark_dataset',
-      'https://pionera.ai/edc/daimo#benchmark_dataset',
-      'https://w3id.org/daimo/ns#benchmark_dataset',
+      'https://w3id.org/pionera/daimo#benchmark_dataset',
       'benchmark_dataset',
       'benchmarkDataset'
     ];
@@ -103,8 +106,7 @@ export class BenchmarkDatasetService {
     const sources = this.metadataSources(asset);
     const raw = this.findFirstValue(sources, [
       'daimo:benchmark_dataset_mapping',
-      'https://pionera.ai/edc/daimo#benchmark_dataset_mapping',
-      'https://w3id.org/daimo/ns#benchmark_dataset_mapping',
+      'https://w3id.org/pionera/daimo#benchmark_dataset_mapping',
       'benchmark_dataset_mapping',
       'benchmarkDatasetMapping',
       'mapping'
@@ -113,19 +115,17 @@ export class BenchmarkDatasetService {
 
     const input = this.unique([
       ...this.extractFieldNameList(mapping['input']),
-      ...this.extractFieldNameList(this.findFirstDirectValue(sources, [
+      ...this.extractFieldNameList(this.findFirstValue(sources, [
         'daimo:input',
-        'https://pionera.ai/edc/daimo#input',
-        'https://w3id.org/daimo/ns#input',
+        'https://w3id.org/pionera/daimo#input',
         'input'
       ]))
     ]);
     const label = this.firstText(
       mapping['label'],
-      this.findFirstDirectValue(sources, [
+      this.findFirstValue(sources, [
         'daimo:label',
-        'https://pionera.ai/edc/daimo#label',
-        'https://w3id.org/daimo/ns#label',
+        'https://w3id.org/pionera/daimo#label',
         'label'
       ])
     );
@@ -158,10 +158,12 @@ export class BenchmarkDatasetService {
     );
   }
 
-  private loadFederatedOffers(): Observable<DataOffer[]> {
+  private loadFederatedOffers(filters: BenchmarkDatasetQuery): Observable<DataOffer[]> {
     return this.catalogBrowserService.count().pipe(
       catchError(() => of(0)),
-      switchMap(total => this.catalogBrowserService.getPaginatedDataOffers(this.buildQuerySpec(total || this.minPageSize)).pipe(
+      switchMap(total => this.catalogBrowserService.getPaginatedDataOffers(
+        this.buildQuerySpec(total || this.minPageSize, this.buildFederatedFilterExpression(filters))
+      ).pipe(
         catchError(() => of([]))
       ))
     );
@@ -192,11 +194,25 @@ export class BenchmarkDatasetService {
     );
   }
 
-  private buildQuerySpec(total: number): QuerySpec {
+  private buildQuerySpec(total: number, filterExpression: any[] = []): QuerySpec {
     return {
       offset: 0,
-      limit: Math.max(total, this.minPageSize)
+      limit: Math.max(total, this.minPageSize),
+      filterExpression
     };
+  }
+
+  private buildFederatedFilterExpression(filters: BenchmarkDatasetQuery): any[] {
+    const filterExpression: any[] = [
+      { operandLeft: 'daimo:assetType', operator: 'LIKE', operandRight: '%dataset%' }
+    ];
+
+    const searchTerm = filters.searchTerm?.trim();
+    if (searchTerm) {
+      filterExpression.push({ operandLeft: 'daimo:search', operator: 'LIKE', operandRight: `%${searchTerm}%` });
+    }
+
+    return filterExpression;
   }
 
   private mapOwnAsset(asset: Asset): BenchmarkDatasetAsset {
@@ -207,11 +223,8 @@ export class BenchmarkDatasetService {
     const assetType = this.firstText(
       this.readLocalProperty(asset, ['assetType', 'edc:assetType', 'https://w3id.org/edc/v0.0.1/ns/assetType']),
       this.findFirstValue(metadataNode, [
-        'daimo:asset_type',
-        'https://pionera.ai/edc/daimo#asset_type',
-        'https://w3id.org/daimo/ns#asset_type',
-        'asset_type',
         'daimo:assetType',
+        'https://w3id.org/pionera/daimo#assetType',
         'assetType'
       ])
     ) || '';
@@ -234,9 +247,6 @@ export class BenchmarkDatasetService {
       fileName: this.firstText(dataAddress['keyName'], dataAddress['s3Key'], dataAddress['fileName'], dataAddress['filename']) || '',
       tags: this.unique([
         ...this.collectMetadataValues(metadataNode, [
-          'daimo:tags',
-          'https://pionera.ai/edc/daimo#tags',
-          'https://w3id.org/daimo/ns#tags',
           'dcat:keyword',
           'http://www.w3.org/ns/dcat#keyword',
           'keywords'
@@ -261,11 +271,8 @@ export class BenchmarkDatasetService {
       properties['assetType'],
       rawProperties['assetType'],
       this.findFirstValue(metadataNode, [
-        'daimo:asset_type',
-        'https://pionera.ai/edc/daimo#asset_type',
-        'https://w3id.org/daimo/ns#asset_type',
-        'asset_type',
         'daimo:assetType',
+        'https://w3id.org/pionera/daimo#assetType',
         'assetType'
       ])
     ) || '';
@@ -285,9 +292,6 @@ export class BenchmarkDatasetService {
       fileName: this.firstText(properties['fileName']) || '',
       tags: this.unique([
         ...this.collectMetadataValues(metadataNode, [
-          'daimo:tags',
-          'https://pionera.ai/edc/daimo#tags',
-          'https://w3id.org/daimo/ns#tags',
           'dcat:keyword',
           'http://www.w3.org/ns/dcat#keyword',
           'keywords'
@@ -314,10 +318,8 @@ export class BenchmarkDatasetService {
 
   private hasInferenceMetadata(asset: BenchmarkDatasetAsset): boolean {
     const value = this.findFirstValue(this.metadataSources(asset), [
-      'https://pionera.ai/edc/daimo#inference_path',
-      'https://w3id.org/daimo/ns#inference_path',
-      'daimo:inference_path',
-      'inference_path',
+      'https://w3id.org/pionera/daimo#inferencePath',
+      'daimo:inferencePath',
       'inferencePath'
     ]);
     return typeof value === 'string' && value.trim().length > 0;
@@ -662,23 +664,15 @@ export class BenchmarkDatasetService {
       return;
     }
 
+    if (value['@list'] !== undefined) {
+      this.collectFieldNames(value['@list'], target);
+      return;
+    }
+
     const fieldName = this.firstText(value['name'], value['field'], value['path'], value['column']);
     if (fieldName) {
       target.push(fieldName);
     }
-  }
-
-  private findFirstDirectValue(sources: Record<string, unknown>[], keys: string[]): unknown {
-    for (const source of sources) {
-      for (const key of keys) {
-        const value = source[key];
-        if (value !== undefined && value !== null) {
-          return value;
-        }
-      }
-    }
-
-    return undefined;
   }
 
   private findFirstValue(node: unknown, keys: string[]): unknown {
@@ -769,6 +763,11 @@ export class BenchmarkDatasetService {
     const record = value as Record<string, unknown>;
     if (record['@value'] !== undefined) {
       this.collectTextValues(record['@value'], results);
+      return;
+    }
+
+    if (record['@list'] !== undefined) {
+      this.collectTextValues(record['@list'], results);
       return;
     }
 

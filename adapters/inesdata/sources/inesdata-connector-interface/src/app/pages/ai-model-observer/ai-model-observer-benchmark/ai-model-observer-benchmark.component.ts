@@ -9,6 +9,8 @@ import { ModelObserverReadService } from 'src/app/shared/services/model-observer
   styleUrls: ['./ai-model-observer-benchmark.component.scss']
 })
 export class AiModelObserverBenchmarkComponent implements OnInit {
+  private readonly benchmarkEvidenceLimit = 10000;
+
   benchmarkRunId = '';
   timeline: ModelObserverTimelineView | null = null;
   isLoading = false;
@@ -76,7 +78,10 @@ export class AiModelObserverBenchmarkComponent implements OnInit {
   private loadBenchmark(filter: ModelObserverQueryFilter = {}): void {
     this.isLoading = true;
     this.error = '';
-    this.modelObserverReadService.getBenchmarkTimeline(this.benchmarkRunId, filter).subscribe({
+    this.modelObserverReadService.getBenchmarkTimeline(this.benchmarkRunId, {
+      ...filter,
+      limit: this.benchmarkEvidenceLimit
+    }).subscribe({
       next: (timeline) => {
         this.timeline = timeline;
         this.isLoading = false;

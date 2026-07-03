@@ -51,10 +51,12 @@ module.exports = defineConfig({
     ignoreHTTPSErrors: true,
     actionTimeout: timeouts.actionTimeoutMs,
     navigationTimeout: timeouts.navigationTimeoutMs,
-    launchOptions: headedGpuFix
-      ? {
-          args: ["--disable-gpu"],
-        }
-      : undefined,
+    launchOptions: {
+      args: [
+        "--ignore-certificate-errors",
+        "--disable-web-security",
+        ...(headedGpuFix ? ["--disable-gpu"] : []),
+      ],
+    },
   },
 });

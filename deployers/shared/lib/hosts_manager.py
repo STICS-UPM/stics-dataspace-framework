@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import subprocess
+import tempfile
 from typing import Any
 from urllib.parse import urlparse
 
@@ -111,6 +112,7 @@ def build_context_host_blocks(
     deployer_name = _clean_token(getattr(context, "deployer", "deployer")) or "deployer"
     connectors = [_clean_token(connector) for connector in list(getattr(context, "connectors", []) or [])]
     components = [_clean_token(component) for component in list(getattr(context, "components", []) or [])]
+    integrated_components = _integrated_components_for_context(config, deployer_name)
 
     blocks: list[HostBlock] = []
     if include_common:
@@ -152,7 +154,7 @@ def build_context_host_blocks(
     component_entries = [
         HostEntry(component_address, f"{_component_hostname(component, dataspace_name)}.{ds_domain_base}")
         for component in components
-        if component and ds_domain_base
+        if component and ds_domain_base and _normalized_component_key(component) not in integrated_components
     ]
     if component_entries:
         blocks.append(
@@ -249,18 +251,28 @@ def apply_managed_blocks(
 
 
 def _write_hosts_file_with_sudo(hosts_file: str, content: str) -> None:
+    # Write to a temp file first so sudo cp inherits the real TTY stdin —
+    # subprocess.run(..., input=...) replaces stdin with a pipe, blocking sudo
+    # from prompting for the password when use_pty is set in sudoers.
+    tmp_path = None
     try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".hosts", delete=False, encoding="utf-8") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
         subprocess.run(
-            ["sudo", "tee", hosts_file],
-            input=content,
-            text=True,
-            stdout=subprocess.DEVNULL,
+            ["sudo", "cp", tmp_path, hosts_file],
             check=True,
         )
     except FileNotFoundError as exc:
         raise PermissionError("sudo is not available to update the hosts file") from exc
     except subprocess.CalledProcessError as exc:
         raise PermissionError("sudo could not update the hosts file") from exc
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def merge_missing_managed_blocks(
@@ -615,6 +627,33 @@ def _connector_short_name(connector: str, dataspace_name: str) -> str:
     if normalized_connector.startswith(prefix):
         return normalized_connector[len(prefix):]
     return normalized_connector
+
+
+def _integrated_components_for_context(config: dict[str, Any], deployer_name: str) -> set[str]:
+    try:
+        from .components import normalize_component_key, summarize_components_for_adapter
+    except Exception:
+        return set()
+
+    try:
+        summary = summarize_components_for_adapter(config, deployer_name)
+    except Exception:
+        return set()
+
+    return {
+        normalize_component_key(component)
+        for component in list(summary.get("integrated") or [])
+        if normalize_component_key(component)
+    }
+
+
+def _normalized_component_key(component: str) -> str:
+    try:
+        from .components import normalize_component_key
+
+        return normalize_component_key(component)
+    except Exception:
+        return _clean_token(component).lower().replace("_", "-")
 
 
 def _component_hostname(component: str, dataspace_name: str) -> str:

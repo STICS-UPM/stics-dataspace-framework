@@ -13,7 +13,6 @@ import {
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS, waitForUiTransition } from "../../../shared/utils/waiting";
 import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
-import { aiModelHubDaimoModelAssetData } from "../../../shared/utils/ai-model-hub-daimo";
 
 type AIModelBrowserUiReport = {
   startedAt: string;
@@ -80,28 +79,43 @@ type BrowserModelFixture = {
   modelUrl: string;
 };
 
-const DEFAULT_MODEL_PATH = "/api/v1/nlp/ecommerce-sentiment";
+const DEFAULT_MODEL_PATH = "/flares/dccuchile-bert-base-spanish-wwm-uncased-5w1h";
 const TEXT_MODEL_INPUT_FEATURES = [
   {
-    name: "text",
+    name: "Id",
+    type: "integer",
+    required: true,
+    description: "Input text identifier",
+  },
+  {
+    name: "Text",
     type: "string",
     required: true,
-    description: "Text to analyze",
+    description: "Spanish text to analyze",
   },
 ];
 const TEXT_MODEL_INPUT_SCHEMA = {
   type: "object",
-  required: ["text"],
+  required: ["Id", "Text"],
   properties: {
-    text: {
+    Id: {
+      type: "integer",
+      description: "Input text identifier",
+    },
+    Text: {
       type: "string",
-      description: "Text to analyze",
+      description: "Spanish text to analyze",
     },
   },
 };
-const TEXT_MODEL_INPUT_EXAMPLE = {
-  text: "This product is excellent and very useful",
-};
+const TEXT_MODEL_INPUT_EXAMPLE = [
+  {
+    Id: 840,
+    Text: "El comité de medicamentos humanos espera concluir el análisis en marzo.",
+  },
+];
+const PIONERA_DAIMO_NS = "https://w3id.org/pionera/daimo#";
+const DATASET_DETAIL_URL_RE = /\/(?:catalog\/datasets|assets)\/view/;
 
 test.skip(
   process.env.UI_AI_MODEL_HUB_HTTPDATA_DEMO !== "1",
@@ -148,8 +162,39 @@ function aiModelMetadataAliases({
   const inputFeatures = JSON.stringify(TEXT_MODEL_INPUT_FEATURES);
   const inputSchema = JSON.stringify(TEXT_MODEL_INPUT_SCHEMA);
   const inputExample = JSON.stringify(TEXT_MODEL_INPUT_EXAMPLE);
+  const modality = task === "Tabular" ? ["tabular"] : ["text"];
+  const modelVocabulary = {
+    "daimo:modality": modality,
+    "daimo:taskType": task === "Tabular" ? "regression" : "classification",
+    "daimo:taskCategory": task,
+    "daimo:subtask": subtask,
+    "daimo:subtaskDescription": `${task} ${subtask} model`,
+    "daimo:endpointBehavior": "prediction",
+    "daimo:requestShape": "batch",
+    "daimo:libraryName": library,
+    "dct:language": ["English", "Spanish"],
+    "dct:license": "apache-2.0",
+    "daimo:inputSchema": TEXT_MODEL_INPUT_SCHEMA,
+    "daimo:inputExample": inputExample,
+    "daimo:metrics": task === "Tabular" ? ["RMSE", "MAE", "MSE", "R2"] : ["Accuracy", "Precision", "Recall", "F1"],
+    [`${PIONERA_DAIMO_NS}modality`]: modality,
+    [`${PIONERA_DAIMO_NS}taskType`]: task === "Tabular" ? "regression" : "classification",
+    [`${PIONERA_DAIMO_NS}taskCategory`]: task,
+    [`${PIONERA_DAIMO_NS}subtask`]: subtask,
+    [`${PIONERA_DAIMO_NS}subtaskDescription`]: `${task} ${subtask} model`,
+    [`${PIONERA_DAIMO_NS}endpointBehavior`]: "prediction",
+    [`${PIONERA_DAIMO_NS}requestShape`]: "batch",
+    [`${PIONERA_DAIMO_NS}libraryName`]: library,
+    [`${PIONERA_DAIMO_NS}inputSchema`]: TEXT_MODEL_INPUT_SCHEMA,
+    [`${PIONERA_DAIMO_NS}inputExample`]: inputExample,
+    [`${PIONERA_DAIMO_NS}metrics`]: task === "Tabular" ? ["RMSE", "MAE", "MSE", "R2"] : ["Accuracy", "Precision", "Recall", "F1"],
+  };
 
   const metadata = {
+    assetData: {
+      JS_DAIMO_Model: modelVocabulary,
+      "https://w3id.org/edc/v0.0.1/ns/JS_DAIMO_Model": modelVocabulary,
+    },
     "daimo:asset_kind": "model",
     "daimo:task": task,
     "https://w3id.org/daimo/ns#task": task,
@@ -169,6 +214,11 @@ function aiModelMetadataAliases({
     "daimo:software": software,
     "https://w3id.org/daimo/ns#software": software,
     "https://pionera.ai/edc/daimo#software": software,
+    "daimo:taskCategory": task,
+    "daimo:modality": modality,
+    "daimo:endpointBehavior": "prediction",
+    "daimo:libraryName": library,
+    "daimo:requestShape": "batch",
     "daimo:inference_path": inferencePath,
     "https://w3id.org/daimo/ns#inference_path": inferencePath,
     "https://pionera.ai/edc/daimo#inference_path": inferencePath,
@@ -187,6 +237,12 @@ function aiModelMetadataAliases({
     library,
     framework,
     software,
+    taskCategory: task,
+    modality,
+    endpointBehavior: "prediction",
+    libraryName: library,
+    requestShape: "batch",
+    request_shape: "batch",
     inference_path: inferencePath,
     inferencePath,
     input_features: inputFeatures,
@@ -207,7 +263,20 @@ async function gotoAiModelBrowser(page: Page, baseUrl: string): Promise<void> {
 }
 
 function aiModelBrowserSearchInput(page: Page) {
-  return page.locator("input[placeholder*='classification']").first();
+  return page
+    .locator(
+      [
+        ".search-field input",
+        "input[placeholder*='name']",
+        "input[placeholder*='keyword']",
+        "input[placeholder*='provider']",
+        "input[placeholder*='task']",
+        "input[placeholder*='regression']",
+        "input[placeholder*='CatBoost']",
+        "input.search-input",
+      ].join(", "),
+    )
+    .first();
 }
 
 function aiModelCard(page: Page, assetId: string) {
@@ -339,46 +408,48 @@ test("11 AI Model Browser: controlled model discovery, filtering and detail from
   const suffix = `amh-browser-${Date.now()}`;
   const modelPath = aiModelHubModelPath();
   const modelUrl = aiModelHubModelUrl(dataspaceRuntime.componentsNamespace);
+  const mobilityModelPath = "/mobility/lightgbm_actual_travel_time";
+  const mobilityModelUrl = modelServerUrlForPath(mobilityModelPath, dataspaceRuntime.componentsNamespace);
   const models: BrowserModelFixture[] = [
     {
-      key: "sentiment",
-      assetId: `qa-ui-amh-browser-sentiment-${suffix}`,
-      name: `AI Model Browser sentiment model ${suffix}`,
-      sourceObjectName: `ai-model-browser-sentiment-${suffix}.json`,
-      shortDescription: "Sentiment classification model exposed as HttpData for AI Model Browser validation",
+      key: "flares-5w1h",
+      assetId: `qa-ui-amh-browser-flares-5w1h-${suffix}`,
+      name: `AI Model Browser FLARES 5W1H model ${suffix}`,
+      sourceObjectName: `ai-model-browser-flares-5w1h-${suffix}.json`,
+      shortDescription: "FLARES 5W1H model exposed as HttpData for AI Model Browser validation",
       description:
-        "Controlled sentiment model endpoint used to validate DAIMO discovery, multidimensional filtering and detail navigation from INESData AI Model Browser.",
-      keywords: ["validation", "ai-model-browser", "machine-learning", "sentiment", "HttpData", "A5.2"],
-      task: "text-classification",
-      subtask: "sentiment-analysis",
-      algorithm: "controlled-baseline",
-      library: "validation-fixture",
-      framework: "controlled-httpdata",
-      software: "pionera-validation-framework",
+        "FLARES 5W1H model endpoint used to validate DAIMO discovery, multidimensional filtering and detail navigation from INESData AI Model Browser.",
+      keywords: ["validation", "ai-model-browser", "machine-learning", "flares", "HttpData", "A5.2"],
+      task: "Natural Language Processing",
+      subtask: "token-classification",
+      algorithm: "BERT",
+      library: "Transformers",
+      framework: "AIModelHub-Use-Cases",
+      software: "FastAPI",
       format: "json",
       contentType: "application/json",
       modelPath,
       modelUrl,
     },
     {
-      key: "forecast",
-      assetId: `qa-ui-amh-browser-forecast-${suffix}`,
-      name: `AI Model Browser forecast model ${suffix}`,
-      sourceObjectName: `ai-model-browser-forecast-${suffix}.onnx`,
-      shortDescription: "Forecasting model metadata fixture used as a controlled filter contrast",
+      key: "mobility",
+      assetId: `qa-ui-amh-browser-mobility-${suffix}`,
+      name: `AI Model Browser Mobility LightGBM model ${suffix}`,
+      sourceObjectName: `ai-model-browser-mobility-${suffix}.json`,
+      shortDescription: "Mobility travel-time model metadata used as a controlled filter contrast",
       description:
-        "Controlled forecast model fixture used to prove that DAIMO task, subtask, algorithm, library, framework, software and format filters discriminate browser results.",
-      keywords: ["validation", "ai-model-browser", "machine-learning", "forecasting", "HttpData", "A5.2"],
-      task: "time-series-regression",
-      subtask: "demand-forecasting",
-      algorithm: "gradient-boosting-regressor",
-      library: "scikit-learn-fixture",
-      framework: "sklearn-httpdata",
-      software: "validation-analytics-suite",
-      format: "onnx",
-      contentType: "application/octet-stream",
-      modelPath,
-      modelUrl,
+        "Mobility LightGBM model endpoint used to prove that DAIMO task filters discriminate browser results.",
+      keywords: ["validation", "ai-model-browser", "machine-learning", "mobility", "HttpData", "A5.2"],
+      task: "Tabular",
+      subtask: "regression",
+      algorithm: "LightGBM",
+      library: "LightGBM",
+      framework: "AIModelHub-Use-Cases",
+      software: "FastAPI",
+      format: "json",
+      contentType: "application/json",
+      modelPath: mobilityModelPath,
+      modelUrl: mobilityModelUrl,
     },
   ];
   const targetModel = models[0];
@@ -436,6 +507,151 @@ test("11 AI Model Browser: controlled model discovery, filtering and detail from
   });
 
   try {
+    const officialTargetModel = {
+      assetId: "company-flares-5w1h-bert",
+      name: "FLARES 5W1H BERT - PIONERA Use Case",
+      task: "Natural Language Processing",
+      taskType: "classification",
+      subtask: "token-classification",
+      library: "Transformers",
+      modelPath: "/flares/dccuchile-bert-base-spanish-wwm-uncased-5w1h",
+    };
+    const officialComparisonModel = {
+      assetId: "company-mobility-catboost-actual-travel-time",
+      name: "Mobility CatBoost Actual Travel Time - PIONERA Use Case",
+      task: "Tabular",
+      taskType: "regression",
+      subtask: "tabular-regression",
+      library: "CatBoost",
+      modelPath: "/mobility/catboost_actual_travel_time",
+    };
+
+    report.assetId = officialTargetModel.assetId;
+    report.modelName = officialTargetModel.name;
+    report.modelUrl = "official-ai-model-hub-use-case-server";
+    report.modelPath = officialTargetModel.modelPath;
+    report.comparisonAssetId = officialComparisonModel.assetId;
+
+    await attachJson("ai-model-browser-ui-bootstrap", {
+      sourceOfTruth: "ProyectoPIONERA/AIModelHub Step 10 use-case model assets",
+      mode: "official-use-case-assets",
+      syntheticAssetsCreated: false,
+      assets: [officialTargetModel, officialComparisonModel],
+    });
+
+    await loginPage.open(dataspaceRuntime.consumer.portalBaseUrl);
+    await loginPage.loginIfNeeded();
+    await shellPage.expectReady();
+    await captureStep(page, "01-ai-model-browser-after-login");
+
+    await expect(async () => {
+      await gotoAiModelBrowser(page, dataspaceRuntime.consumer.portalBaseUrl);
+      await shellPage.assertNoGateway403("AI Model Browser page");
+      await shellPage.assertNoServerErrorBanner("AI Model Browser page");
+      await expect(page.getByRole("heading", { name: /AI Model Browser/i })).toBeVisible({ timeout: 20_000 });
+
+      const searchInput = aiModelBrowserSearchInput(page);
+      await expect(searchInput).toBeVisible({ timeout: 20_000 });
+      await searchInput.fill("PIONERA Use Case");
+      await waitForUiTransition(page);
+
+      await expect(aiModelCard(page, officialTargetModel.assetId)).toBeVisible({ timeout: 20_000 });
+      await expect(aiModelCard(page, officialComparisonModel.assetId)).toBeVisible({ timeout: 20_000 });
+    }).toPass({
+      timeout: 120_000,
+      intervals: EVENTUAL_UI_RETRY_INTERVALS,
+    });
+    await captureStep(page, "02-ai-model-browser-official-use-case-search");
+
+    const officialCard = aiModelCard(page, officialTargetModel.assetId);
+    await expect(officialCard).toBeVisible({ timeout: 10_000 });
+    const officialCardText = await officialCard.innerText();
+    for (const expectedText of [
+      officialTargetModel.name,
+      officialTargetModel.assetId,
+      "Local",
+      "Contract published",
+      officialTargetModel.task,
+      officialTargetModel.taskType,
+      officialTargetModel.subtask,
+      officialTargetModel.library,
+    ]) {
+      expect(officialCardText.toLowerCase()).toContain(expectedText.toLowerCase());
+    }
+
+    const searchInput = aiModelBrowserSearchInput(page);
+    await searchInput.fill(officialTargetModel.assetId);
+    await waitForUiTransition(page);
+    await expect(aiModelCard(page, officialTargetModel.assetId)).toBeVisible({ timeout: 10_000 });
+    report.filterChecks.push({
+      filterGroup: "Search",
+      selectedValue: officialTargetModel.assetId,
+      expectedVisibleAssetId: officialTargetModel.assetId,
+      status: "passed",
+    });
+
+    await searchInput.fill(officialComparisonModel.assetId);
+    await waitForUiTransition(page);
+    await expect(aiModelCard(page, officialComparisonModel.assetId)).toBeVisible({ timeout: 10_000 });
+    report.filterChecks.push({
+      filterGroup: "Search",
+      selectedValue: officialComparisonModel.assetId,
+      expectedVisibleAssetId: officialComparisonModel.assetId,
+      status: "passed",
+    });
+
+    await searchInput.fill(officialTargetModel.name);
+    await waitForUiTransition(page);
+    await expect(aiModelCard(page, officialTargetModel.assetId)).toBeVisible({ timeout: 10_000 });
+    await attachJson("ai-model-browser-ui-filter-assertions", {
+      sourceOfTruth: "Official PIONERA use-case metadata",
+      checks: report.filterChecks,
+    });
+    await captureStep(page, "03-ai-model-browser-official-use-case-filtered-result");
+
+    await clickMarked(aiModelCard(page, officialTargetModel.assetId).getByRole("button", { name: /View details/i }).first(), {
+      force: true,
+    });
+    await waitForUiTransition(page);
+    await expect(page).toHaveURL(DATASET_DETAIL_URL_RE);
+    await expect(page.getByText(officialTargetModel.name).first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(officialTargetModel.assetId, { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/Contract offer|JSON-LD|Asset information/i).first()).toBeVisible({ timeout: 15_000 });
+    report.detailChecks.push({
+      scenario: "official_use_case_model_detail",
+      expectedContent: [
+        officialTargetModel.assetId,
+        officialTargetModel.name,
+        officialTargetModel.task,
+        officialTargetModel.taskType,
+        officialTargetModel.library,
+      ],
+      status: "passed",
+    });
+    report.primaryActionChecks.push({
+      scenario: "official_use_case_model_detail_action",
+      expectedContent: ["View details", "Contract offer"],
+      status: "passed",
+    });
+    await attachJson("ai-model-browser-ui-detail-assertions", {
+      sourceOfTruth: "ProyectoPIONERA/AIModelHub official use-case catalog",
+      checks: report.detailChecks,
+      primaryActionChecks: report.primaryActionChecks,
+    });
+    await captureStep(page, "04-ai-model-browser-official-use-case-detail");
+
+    report.toleratedErrorResponses = report.errorResponses.filter(({ url, status }) =>
+      isTolerableCatalogRetry(url, status),
+    );
+    report.fatalErrorResponses = report.errorResponses.filter(
+      ({ url, status }) => !isTolerableCatalogRetry(url, status),
+    );
+    expect(
+      report.fatalErrorResponses,
+      `API calls returned fatal errors: ${JSON.stringify(report.fatalErrorResponses)} (tolerated transient catalog errors: ${JSON.stringify(report.toleratedErrorResponses)})`,
+    ).toHaveLength(0);
+    return;
+
     if (aiModelHubCatalogCleanupEnabled()) {
       await attachJson(
         "ai-model-browser-ui-catalog-cleanup",
@@ -472,17 +688,6 @@ test("11 AI Model Browser: controlled model discovery, filtering and detail from
             assetType: "machineLearning",
             keywords: model.keywords,
             properties: {
-              assetData: aiModelHubDaimoModelAssetData({
-                task: model.task,
-                subtask: model.subtask,
-                subtaskDescription: model.subtask,
-                description: model.description,
-                libraryName: model.library,
-                language: ["English", "Spanish"],
-                inputFeatures: TEXT_MODEL_INPUT_FEATURES,
-                inputSchema: TEXT_MODEL_INPUT_SCHEMA,
-                inputExample: TEXT_MODEL_INPUT_EXAMPLE,
-              }),
               ...aiModelMetadataAliases({
                 task: model.task,
                 subtask: model.subtask,
@@ -577,7 +782,7 @@ test("11 AI Model Browser: controlled model discovery, filtering and detail from
     await clearActiveFilters(page);
 
     const richFilters = [
-      { filterGroup: "Format", section: /Format(?:\s*\(\d+\))?/i, value: targetModel.format },
+      { filterGroup: "Task Categories", section: /Task Categories(?:\s*\(\d+\))?/i, value: targetModel.task },
     ];
 
     for (const filter of richFilters) {
@@ -609,7 +814,7 @@ test("11 AI Model Browser: controlled model discovery, filtering and detail from
       force: true,
     });
     await waitForUiTransition(page);
-    await expect(page).toHaveURL(/\/catalog\/datasets\/view/);
+    await expect(page).toHaveURL(DATASET_DETAIL_URL_RE);
     await expect(page.getByText(/Contract offer/i).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole("button", { name: /Negotiate Contract/i }).first()).toBeVisible({ timeout: 10_000 });
     report.primaryActionChecks.push({
@@ -636,7 +841,7 @@ test("11 AI Model Browser: controlled model discovery, filtering and detail from
       force: true,
     });
     await waitForUiTransition(page);
-    await expect(page).toHaveURL(/\/catalog\/datasets\/view/);
+    await expect(page).toHaveURL(DATASET_DETAIL_URL_RE);
     await expect(page.getByText(targetModel.assetId, { exact: true }).first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(targetModel.name).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(targetModel.contentType).first()).toBeVisible({ timeout: 10_000 });

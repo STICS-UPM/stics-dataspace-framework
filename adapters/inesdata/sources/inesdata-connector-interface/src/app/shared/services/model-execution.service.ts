@@ -3,7 +3,7 @@ import { Injectable } from '@angular/core';
 import { forkJoin, Observable, of, throwError } from 'rxjs';
 import { catchError, map, switchMap } from 'rxjs/operators';
 import { environment } from 'src/environments/environment';
-import { AiModelBenchmarkModelType, AiModelExecutionInputFeature, AiModelExecutionItem, AiModelMetricDirection, AiModelRequestShape, ModelExecutionRequestPayload, ModelExecutionResponsePayload } from '../models/ai-model-execution-item';
+import { AiModelBenchmarkModelType, AiModelExecutionInputFeature, AiModelExecutionItem, AiModelRequestShape, ModelExecutionRequestPayload, ModelExecutionResponsePayload } from '../models/ai-model-execution-item';
 import { Asset, QuerySpec } from '../models/edc-connector-entities';
 import { DataOffer } from '../models/data-offer';
 import { AssetService } from './asset.service';
@@ -87,7 +87,11 @@ export class ModelExecutionService {
   private loadFederatedOffers(): Observable<DataOffer[]> {
     return this.catalogBrowserService.count().pipe(
       catchError(() => of(0)),
-      switchMap(total => this.catalogBrowserService.getPaginatedDataOffers(this.buildQuerySpec(total || this.minPageSize)).pipe(
+      switchMap(total => this.catalogBrowserService.getPaginatedDataOffers(
+        this.buildQuerySpec(total || this.minPageSize, [
+          { operandLeft: 'daimo:assetType', operator: '=', operandRight: 'machineLearning' }
+        ])
+      ).pipe(
         catchError(() => of([]))
       ))
     );
@@ -114,10 +118,11 @@ export class ModelExecutionService {
     };
   }
 
-  private buildQuerySpec(total: number): QuerySpec {
+  private buildQuerySpec(total: number, filterExpression: any[] = []): QuerySpec {
     return {
       offset: 0,
-      limit: Math.max(total, this.minPageSize)
+      limit: Math.max(total, this.minPageSize),
+      filterExpression
     };
   }
 
@@ -142,20 +147,24 @@ export class ModelExecutionService {
       ),
       executionPath: this.firstText(dataAddress['path'], dataAddress['edc:path'], dataAddress['proxyPath'], dataAddress['edc:proxyPath']) || '',
       httpMethodDefault: this.firstText(dataAddress['method'], dataAddress['edc:method']) || 'POST',
-      tasks: this.collectMetadataValues(metadataNode, ['daimo:task', 'https://w3id.org/daimo/ns#task', 'https://pionera.ai/edc/daimo#task', 'task']),
-      subtasks: this.collectMetadataValues(metadataNode, ['daimo:subtask', 'https://w3id.org/daimo/ns#subtask', 'https://pionera.ai/edc/daimo#subtask', 'subtask']),
-      algorithms: this.collectMetadataValues(metadataNode, ['daimo:algorithm', 'https://w3id.org/daimo/ns#algorithm', 'https://pionera.ai/edc/daimo#algorithm', 'algorithm']),
-      frameworks: this.collectMetadataValues(metadataNode, ['daimo:framework', 'https://w3id.org/daimo/ns#framework', 'https://pionera.ai/edc/daimo#framework', 'framework']),
+      tasks: this.collectPreferredMetadataValues(metadataNode, [
+        ['daimo:taskCategory', 'https://w3id.org/pionera/daimo#taskCategory', 'taskCategory']
+      ]),
+      taskTypes: this.collectMetadataValues(metadataNode, ['daimo:taskType', 'https://w3id.org/pionera/daimo#taskType', 'taskType']),
+      modalities: this.collectMetadataValues(metadataNode, ['daimo:modality', 'https://w3id.org/pionera/daimo#modality', 'modality']),
+      subtasks: this.collectMetadataValues(metadataNode, ['daimo:subtask', 'https://w3id.org/pionera/daimo#subtask', 'subtask']),
+      endpointBehaviors: this.collectMetadataValues(metadataNode, ['daimo:endpointBehavior', 'https://w3id.org/pionera/daimo#endpointBehavior', 'endpointBehavior']),
+      libraries: this.collectMetadataValues(metadataNode, ['daimo:libraryName', 'https://w3id.org/pionera/daimo#libraryName', 'libraryName']),
+      algorithms: [],
+      frameworks: [],
       inputFeatures: this.extractInputFeatures(metadataNode, inputSchema),
       inputColumns: this.extractInputColumns(metadataNode),
       inputSchema,
       inputExample: this.extractInputExample(metadataNode),
       requestShape,
       benchmarkModelType: this.extractBenchmarkModelType(metadataNode),
-      targetFields: this.extractTargetFields(metadataNode),
-      predictionFields: this.extractPredictionFields(metadataNode),
       supportedMetrics: this.extractSupportedMetrics(metadataNode),
-      metricDirections: this.extractMetricDirections(metadataNode),
+      predictionFields: this.extractPredictionFields(metadataNode),
       positiveLabel: this.extractPositiveLabel(metadataNode),
       scoreField: this.extractScoreField(metadataNode),
       rawAsset: asset
@@ -179,20 +188,24 @@ export class ModelExecutionService {
       description: this.firstText(offer?.properties?.description, offer?.properties?.shortDescription),
       executionPath: this.firstText(offer?.properties?.path) || '',
       httpMethodDefault: this.firstText(offer?.properties?.method) || 'POST',
-      tasks: this.collectMetadataValues(metadataNode, ['daimo:task', 'https://w3id.org/daimo/ns#task', 'https://pionera.ai/edc/daimo#task', 'task']),
-      subtasks: this.collectMetadataValues(metadataNode, ['daimo:subtask', 'https://w3id.org/daimo/ns#subtask', 'https://pionera.ai/edc/daimo#subtask', 'subtask']),
-      algorithms: this.collectMetadataValues(metadataNode, ['daimo:algorithm', 'https://w3id.org/daimo/ns#algorithm', 'https://pionera.ai/edc/daimo#algorithm', 'algorithm']),
-      frameworks: this.collectMetadataValues(metadataNode, ['daimo:framework', 'https://w3id.org/daimo/ns#framework', 'https://pionera.ai/edc/daimo#framework', 'framework']),
+      tasks: this.collectPreferredMetadataValues(metadataNode, [
+        ['daimo:taskCategory', 'https://w3id.org/pionera/daimo#taskCategory', 'taskCategory']
+      ]),
+      taskTypes: this.collectMetadataValues(metadataNode, ['daimo:taskType', 'https://w3id.org/pionera/daimo#taskType', 'taskType']),
+      modalities: this.collectMetadataValues(metadataNode, ['daimo:modality', 'https://w3id.org/pionera/daimo#modality', 'modality']),
+      subtasks: this.collectMetadataValues(metadataNode, ['daimo:subtask', 'https://w3id.org/pionera/daimo#subtask', 'subtask']),
+      endpointBehaviors: this.collectMetadataValues(metadataNode, ['daimo:endpointBehavior', 'https://w3id.org/pionera/daimo#endpointBehavior', 'endpointBehavior']),
+      libraries: this.collectMetadataValues(metadataNode, ['daimo:libraryName', 'https://w3id.org/pionera/daimo#libraryName', 'libraryName']),
+      algorithms: [],
+      frameworks: [],
       inputFeatures: this.extractInputFeatures(metadataNode, inputSchema),
       inputColumns: this.extractInputColumns(metadataNode),
       inputSchema,
       inputExample: this.extractInputExample(metadataNode),
       requestShape,
       benchmarkModelType: this.extractBenchmarkModelType(metadataNode),
-      targetFields: this.extractTargetFields(metadataNode),
-      predictionFields: this.extractPredictionFields(metadataNode),
       supportedMetrics: this.extractSupportedMetrics(metadataNode),
-      metricDirections: this.extractMetricDirections(metadataNode),
+      predictionFields: this.extractPredictionFields(metadataNode),
       positiveLabel: this.extractPositiveLabel(metadataNode),
       scoreField: this.extractScoreField(metadataNode),
       rawOffer: offer
@@ -360,10 +373,8 @@ export class ModelExecutionService {
 
   private extractInputSchema(node: unknown): unknown {
     const value = this.findFirstValue(node, [
-      'daimo:input_schema',
-      'https://w3id.org/daimo/ns#input_schema',
-      'https://pionera.ai/edc/daimo#input_schema',
-      'input_schema',
+      'daimo:inputSchema',
+      'https://w3id.org/pionera/daimo#inputSchema',
       'inputSchema'
     ]);
 
@@ -371,57 +382,35 @@ export class ModelExecutionService {
       return this.parseJsonLikeValue(value);
     }
 
-    const directFeatures = this.findFirstValue(node, [
-      'daimo:input_features',
-      'https://w3id.org/daimo/ns#input_features',
-      'https://pionera.ai/edc/daimo#input_features',
-      'input_features',
-      'inputFeatures'
-    ]);
-    return this.parseJsonLikeValue(directFeatures);
+    return undefined;
   }
 
   private extractInputFeatures(node: unknown, inputSchema: unknown): AiModelExecutionInputFeature[] {
-    const directFeatures = this.parseInputFeatureCollection(this.findFirstValue(node, [
-      'daimo:input_features',
-      'https://w3id.org/daimo/ns#input_features',
-      'https://pionera.ai/edc/daimo#input_features',
-      'input_features',
-      'inputFeatures'
-    ]));
-
-    if (directFeatures.length > 0) {
-      return directFeatures;
-    }
-
     const schemaFeatures = this.parseInputFeatureCollection(inputSchema);
     if (schemaFeatures.length > 0) {
       return schemaFeatures;
     }
 
-    return this.buildInputFeaturesFromSchema(inputSchema);
+    const jsonSchemaFeatures = this.buildInputFeaturesFromSchema(inputSchema);
+    if (jsonSchemaFeatures.length > 0) {
+      return jsonSchemaFeatures;
+    }
+
+    return [];
   }
 
   private extractInputColumns(node: unknown): string[] {
     return this.extractFieldNameList(node, [
       'daimo:input',
-      'https://w3id.org/daimo/ns#input',
-      'https://pionera.ai/edc/daimo#input',
-      'daimo:input_columns',
-      'https://w3id.org/daimo/ns#input_columns',
-      'https://pionera.ai/edc/daimo#input_columns',
-      'input',
-      'input_columns',
-      'inputColumns'
+      'https://w3id.org/pionera/daimo#input',
+      'input'
     ]);
   }
 
   private extractInputExample(node: unknown): unknown {
     const value = this.findFirstValue(node, [
-      'daimo:input_example',
-      'https://w3id.org/daimo/ns#input_example',
-      'https://pionera.ai/edc/daimo#input_example',
-      'input_example',
+      'daimo:inputExample',
+      'https://w3id.org/pionera/daimo#inputExample',
       'inputExample'
     ]);
     return this.parseJsonLikeValue(value);
@@ -429,17 +418,9 @@ export class ModelExecutionService {
 
   private extractRequestShape(node: unknown, inputSchema: unknown): AiModelRequestShape {
     const raw = this.findFirstValue(node, [
-      'daimo:request_shape',
-      'https://w3id.org/daimo/ns#request_shape',
-      'https://pionera.ai/edc/daimo#request_shape',
-      'request_shape',
-      'requestShape',
-      'payload_shape',
-      'payloadShape',
-      'input_container',
-      'inputContainer',
-      'batch_input',
-      'batchInput'
+      'daimo:requestShape',
+      'https://w3id.org/pionera/daimo#requestShape',
+      'requestShape'
     ]);
 
     const parsed = this.parseJsonLikeValue(raw);
@@ -460,73 +441,26 @@ export class ModelExecutionService {
 
   private extractBenchmarkModelType(node: unknown): AiModelBenchmarkModelType {
     const raw = this.findFirstValue(node, [
-      'daimo:benchmark_model_type',
-      'https://w3id.org/daimo/ns#benchmark_model_type',
-      'https://pionera.ai/edc/daimo#benchmark_model_type',
-      'benchmark_model_type',
-      'benchmarkModelType',
-      'model_output_type',
-      'modelOutputType'
+      'daimo:endpointBehavior',
+      'https://w3id.org/pionera/daimo#endpointBehavior',
+      'endpointBehavior'
     ]);
     const value = this.firstText(this.parseJsonLikeValue(raw)).toLowerCase().replace(/[\s_-]/g, '');
 
     return ['metric', 'metrics', 'evaluator', 'evaluation'].includes(value) ? 'metric' : 'output';
   }
 
-  private extractTargetFields(node: unknown): string[] {
-    return this.extractFieldNameList(node, [
-      'daimo:target_field',
-      'https://w3id.org/daimo/ns#target_field',
-      'https://pionera.ai/edc/daimo#target_field',
-      'daimo:target_fields',
-      'https://w3id.org/daimo/ns#target_fields',
-      'https://pionera.ai/edc/daimo#target_fields',
-      'target_field',
-      'targetField',
-      'target_fields',
-      'targetFields',
-      'label_field',
-      'labelField',
-      'expected_field',
-      'expectedField'
-    ]);
-  }
-
-  private extractPredictionFields(node: unknown): string[] {
-    return this.extractFieldNameList(node, [
-      'daimo:prediction_field',
-      'https://w3id.org/daimo/ns#prediction_field',
-      'https://pionera.ai/edc/daimo#prediction_field',
-      'daimo:prediction_fields',
-      'https://w3id.org/daimo/ns#prediction_fields',
-      'https://pionera.ai/edc/daimo#prediction_fields',
-      'prediction_field',
-      'predictionField',
-      'prediction_fields',
-      'predictionFields',
-      'output_field',
-      'outputField',
-      'output_fields',
-      'outputFields'
-    ]);
-  }
-
   private extractSupportedMetrics(node: unknown): string[] {
     const directMetrics = this.collectMetricNames(this.findFirstValue(node, [
       'daimo:metrics',
-      'https://w3id.org/daimo/ns#metrics',
-      'https://pionera.ai/edc/daimo#metrics',
+      'https://w3id.org/pionera/daimo#metrics',
       'daimo:metric',
-      'https://w3id.org/daimo/ns#metric',
-      'https://pionera.ai/edc/daimo#metric',
+      'https://w3id.org/pionera/daimo#metric',
+      'http://data.europa.eu/it6/hasEvaluationMeasure',
       'metrics',
-      'metric',
-      'supported_metrics',
-      'supportedMetrics'
+      'metric'
     ]));
     const evaluationMetrics = this.collectMetricNames(this.findFirstValue(node, [
-      'mls:ModelEvaluation',
-      'https://www.w3.org/ns/mls#ModelEvaluation',
       'ModelEvaluation',
       'modelEvaluation',
       'evaluations'
@@ -535,45 +469,43 @@ export class ModelExecutionService {
     return this.unique([...directMetrics, ...evaluationMetrics]);
   }
 
-  private extractMetricDirections(node: unknown): Record<string, AiModelMetricDirection> {
-    const directions: Record<string, AiModelMetricDirection> = {};
-    this.collectMetricDirections(this.findFirstValue(node, [
-      'daimo:metric_direction',
-      'https://w3id.org/daimo/ns#metric_direction',
-      'https://pionera.ai/edc/daimo#metric_direction',
-      'daimo:metric_directions',
-      'https://w3id.org/daimo/ns#metric_directions',
-      'https://pionera.ai/edc/daimo#metric_directions',
-      'metric_direction',
-      'metricDirection',
-      'metric_directions',
-      'metricDirections'
-    ]), directions);
-    return directions;
+  private extractPredictionFields(node: unknown): string[] {
+    return this.extractFieldNameList(node, [
+      'daimo:prediction',
+      'https://w3id.org/pionera/daimo#prediction',
+      'prediction',
+      'daimo:predictionField',
+      'https://w3id.org/pionera/daimo#predictionField',
+      'predictionField',
+      'daimo:predictionFields',
+      'https://w3id.org/pionera/daimo#predictionFields',
+      'predictionFields',
+      'daimo:prediction_field',
+      'https://w3id.org/daimo/ns#prediction_field',
+      'https://pionera.ai/edc/daimo#prediction_field',
+      'prediction_field',
+      'daimo:prediction_fields',
+      'https://w3id.org/daimo/ns#prediction_fields',
+      'https://pionera.ai/edc/daimo#prediction_fields',
+      'prediction_fields'
+    ]);
   }
 
   private extractPositiveLabel(node: unknown): string {
     return this.firstText(this.findFirstValue(node, [
-      'daimo:positive_label',
-      'https://w3id.org/daimo/ns#positive_label',
-      'https://pionera.ai/edc/daimo#positive_label',
-      'positive_label',
+      'daimo:positiveLabel',
+      'https://w3id.org/pionera/daimo#positiveLabel',
       'positiveLabel',
-      'positive_class',
       'positiveClass'
     ]));
   }
 
   private extractScoreField(node: unknown): string {
     return this.firstText(this.findFirstValue(node, [
-      'daimo:score_field',
-      'https://w3id.org/daimo/ns#score_field',
-      'https://pionera.ai/edc/daimo#score_field',
-      'score_field',
+      'daimo:scoreField',
+      'https://w3id.org/pionera/daimo#scoreField',
       'scoreField',
-      'confidence_field',
       'confidenceField',
-      'probability_field',
       'probabilityField'
     ]));
   }
@@ -619,67 +551,6 @@ export class ModelExecutionService {
     }
 
     return [];
-  }
-
-  private collectMetricDirections(value: unknown, target: Record<string, AiModelMetricDirection>): void {
-    const parsed = this.parseJsonLikeValue(value);
-    if (parsed === undefined || parsed === null) {
-      return;
-    }
-
-    if (Array.isArray(parsed)) {
-      parsed.forEach(item => this.collectMetricDirections(item, target));
-      return;
-    }
-
-    if (typeof parsed === 'string') {
-      parsed.split(',').forEach(item => {
-        const [metric, direction] = item.split(':').map(part => part.trim());
-        const normalizedDirection = this.normalizeMetricDirection(direction);
-        if (metric && normalizedDirection) {
-          target[this.normalizeMetricKey(metric)] = normalizedDirection;
-        }
-      });
-      return;
-    }
-
-    if (!this.isRecord(parsed)) {
-      return;
-    }
-
-    const directMetric = this.firstText(parsed['metric'], parsed['name'], parsed['key'], parsed['id']);
-    const directDirection = this.normalizeMetricDirection(
-      this.firstText(parsed['direction'], parsed['order'], parsed['better'], parsed['value'])
-    );
-    if (directMetric && directDirection) {
-      target[this.normalizeMetricKey(directMetric)] = directDirection;
-      return;
-    }
-
-    Object.entries(parsed).forEach(([metric, direction]) => {
-      const normalizedDirection = this.normalizeMetricDirection(direction);
-      if (normalizedDirection) {
-        target[this.normalizeMetricKey(metric)] = normalizedDirection;
-        return;
-      }
-      this.collectMetricDirections(direction, target);
-    });
-  }
-
-  private normalizeMetricDirection(value: unknown): AiModelMetricDirection | null {
-    const normalized = this.firstText(value).toLowerCase().replace(/[\s_-]/g, '');
-    if (['lower', 'low', 'min', 'minimum', 'minimize', 'smaller', 'less'].includes(normalized)) {
-      return 'lower';
-    }
-    if (['higher', 'high', 'max', 'maximum', 'maximize', 'larger', 'greater', 'more'].includes(normalized)) {
-      return 'higher';
-    }
-    return null;
-  }
-
-  private normalizeMetricKey(value: string): string {
-    const normalized = value.toLowerCase().replace(/[^a-z0-9]/g, '');
-    return normalized === 'f1score' ? 'f1' : normalized;
   }
 
   private collectFieldNames(value: unknown): string[] {
@@ -728,6 +599,17 @@ export class ModelExecutionService {
     const values: string[] = [];
     this.walkMetadata(node, new Set(keys), values);
     return this.unique(values);
+  }
+
+  private collectPreferredMetadataValues(node: unknown, keyGroups: string[][]): string[] {
+    for (const keys of keyGroups) {
+      const values = this.collectMetadataValues(node, keys);
+      if (values.length > 0) {
+        return values;
+      }
+    }
+
+    return [];
   }
 
   private walkMetadata(node: unknown, keys: Set<string>, results: string[]): void {
@@ -832,22 +714,30 @@ export class ModelExecutionService {
   }
 
   private parseInputFeatureCollection(value: unknown): AiModelExecutionInputFeature[] {
-    const parsed = this.parseJsonLikeValue(value);
+    const parsed = this.unwrapInputSchemaContainer(this.parseJsonLikeValue(value));
     const schemaRecord = this.asRecord(parsed);
+    const fieldCollection = this.parseJsonLikeValue(this.readAliasedValue(schemaRecord, [
+      'fields',
+      'features',
+      'inputFields',
+      'https://w3id.org/edc/v0.0.1/ns/fields',
+      'https://w3id.org/edc/v0.0.1/ns/features',
+      'https://w3id.org/edc/v0.0.1/ns/inputFields',
+      'https://w3id.org/pionera/daimo#fields',
+      'https://w3id.org/pionera/daimo#inputFields'
+    ]));
     const rawFields = Array.isArray(parsed)
       ? parsed
-      : Array.isArray(schemaRecord.features)
-        ? schemaRecord.features
-        : Array.isArray(schemaRecord.fields)
-          ? schemaRecord.fields
-          : schemaRecord.text !== undefined
-            ? [{
-              name: 'text',
-              type: this.firstText(schemaRecord.type) || 'string',
-              required: true,
-              description: this.firstText(schemaRecord.description) || 'Text to analyze'
-            }]
-            : [];
+      : Array.isArray(fieldCollection)
+        ? fieldCollection
+        : schemaRecord.text !== undefined
+          ? [{
+            name: 'text',
+            type: this.firstText(schemaRecord.type) || 'string',
+            required: true,
+            description: this.firstText(schemaRecord.description) || 'Text to analyze'
+          }]
+          : [];
 
     if (!Array.isArray(rawFields)) {
       return [];
@@ -856,19 +746,19 @@ export class ModelExecutionService {
     return rawFields
       .map(item => this.parseJsonLikeValue(item))
       .map(item => typeof item === 'string' ? { name: item, type: 'string', required: false } : this.asRecord(item))
-      .filter(item => !!this.firstText(item.name, item.field, item.path))
+      .filter(item => !!this.getInputFieldName(item))
       .map(item => ({
-        name: this.firstText(item.name, item.field, item.path),
-        type: this.firstText(item.type, item.dataType, item.dtype) || 'string',
-        required: item.required !== undefined ? this.readBoolean(item.required) : !this.readBoolean(item.nullable),
-        description: this.firstText(item.description, item.title) || undefined,
-        minValue: this.readNumber(item.minValue ?? item.min ?? item.minimum),
-        maxValue: this.readNumber(item.maxValue ?? item.max ?? item.maximum)
+        name: this.getInputFieldName(item),
+        type: this.getInputFieldType(item),
+        required: this.getInputFieldRequired(item),
+        description: this.getInputFieldDescription(item),
+        minValue: this.getInputFieldMinValue(item),
+        maxValue: this.getInputFieldMaxValue(item)
       }));
   }
 
   private buildInputFeaturesFromSchema(schema: unknown): AiModelExecutionInputFeature[] {
-    const schemaRecord = this.resolveSchemaRoot(this.asRecord(this.parseJsonLikeValue(schema)));
+    const schemaRecord = this.resolveSchemaRoot(this.asRecord(this.resolveInputJsonSchema(schema)));
     if (!this.isRecord(schemaRecord)) {
       return [];
     }
@@ -917,8 +807,8 @@ export class ModelExecutionService {
         type: inferredType,
         required: requiredSet.has(propertyName),
         description: this.firstText(schemaRecord.description, schemaRecord.title) || undefined,
-        minValue: this.readNumber(schemaRecord.minValue ?? schemaRecord.min ?? schemaRecord.minimum),
-        maxValue: this.readNumber(schemaRecord.maxValue ?? schemaRecord.max ?? schemaRecord.maximum)
+        minValue: this.getInputFieldMinValue(schemaRecord),
+        maxValue: this.getInputFieldMaxValue(schemaRecord)
       });
     });
   }
@@ -948,8 +838,138 @@ export class ModelExecutionService {
     return schemaNode;
   }
 
+  private unwrapInputSchemaContainer(value: unknown): unknown {
+    if (!Array.isArray(value) || value.length !== 1 || !this.isRecord(value[0])) {
+      return value;
+    }
+
+    const record = value[0] as Record<string, unknown>;
+    const hasInputSchemaShape = this.readAliasedValue(record, [
+      'fields',
+      'features',
+      'inputFields',
+      'jsonSchema',
+      'schema',
+      'https://w3id.org/edc/v0.0.1/ns/fields',
+      'https://w3id.org/edc/v0.0.1/ns/features',
+      'https://w3id.org/edc/v0.0.1/ns/inputFields',
+      'https://w3id.org/edc/v0.0.1/ns/jsonSchema',
+      'https://w3id.org/pionera/daimo#fields',
+      'https://w3id.org/pionera/daimo#inputFields',
+      'https://w3id.org/pionera/daimo#jsonSchema'
+    ]) !== undefined;
+
+    return hasInputSchemaShape ? record : value;
+  }
+
+  private resolveInputJsonSchema(schema: unknown): unknown {
+    const parsed = this.unwrapInputSchemaContainer(this.parseJsonLikeValue(schema));
+    const schemaRecord = this.asRecord(parsed);
+    const jsonSchema = this.parseJsonLikeValue(this.readAliasedValue(schemaRecord, [
+      'jsonSchema',
+      'schema',
+      'https://w3id.org/edc/v0.0.1/ns/jsonSchema',
+      'https://w3id.org/edc/v0.0.1/ns/schema',
+      'https://w3id.org/pionera/daimo#jsonSchema'
+    ]));
+
+    return jsonSchema !== undefined ? jsonSchema : parsed;
+  }
+
+  private getInputFieldName(item: Record<string, unknown>): string {
+    return this.firstText(
+      item.name,
+      item.field,
+      item.path,
+      item['https://w3id.org/edc/v0.0.1/ns/name'],
+      item['https://w3id.org/edc/v0.0.1/ns/field'],
+      item['https://w3id.org/edc/v0.0.1/ns/path'],
+      item['https://w3id.org/pionera/daimo#name'],
+      item['https://w3id.org/pionera/daimo#field']
+    );
+  }
+
+  private getInputFieldType(item: Record<string, unknown>): string {
+    return this.firstText(
+      item.type,
+      item.dataType,
+      item.dtype,
+      item['https://w3id.org/edc/v0.0.1/ns/type'],
+      item['https://w3id.org/edc/v0.0.1/ns/dataType'],
+      item['https://w3id.org/pionera/daimo#type'],
+      item['https://w3id.org/pionera/daimo#dataType']
+    ) || 'string';
+  }
+
+  private getInputFieldRequired(item: Record<string, unknown>): boolean {
+    const required = this.readAliasedValue(item, [
+      'required',
+      'https://w3id.org/edc/v0.0.1/ns/required',
+      'https://w3id.org/pionera/daimo#required'
+    ]);
+    if (required !== undefined) {
+      return this.readBoolean(required);
+    }
+
+    const nullable = this.readAliasedValue(item, [
+      'nullable',
+      'https://w3id.org/edc/v0.0.1/ns/nullable',
+      'https://w3id.org/pionera/daimo#nullable'
+    ]);
+    return !this.readBoolean(nullable);
+  }
+
+  private getInputFieldDescription(item: Record<string, unknown>): string | undefined {
+    return this.firstText(
+      item.description,
+      item.title,
+      item['https://w3id.org/edc/v0.0.1/ns/description'],
+      item['https://w3id.org/edc/v0.0.1/ns/title'],
+      item['http://purl.org/dc/terms/description'],
+      item['http://purl.org/dc/terms/title'],
+      item['https://w3id.org/pionera/daimo#description']
+    ) || undefined;
+  }
+
+  private getInputFieldMinValue(item: Record<string, unknown>): number | undefined {
+    return this.readNumber(this.readAliasedValue(item, [
+      'minValue',
+      'min',
+      'minimum',
+      'https://w3id.org/edc/v0.0.1/ns/minValue',
+      'https://w3id.org/edc/v0.0.1/ns/min',
+      'https://w3id.org/edc/v0.0.1/ns/minimum',
+      'https://w3id.org/pionera/daimo#minValue',
+      'https://w3id.org/pionera/daimo#min',
+      'https://w3id.org/pionera/daimo#minimum'
+    ]));
+  }
+
+  private getInputFieldMaxValue(item: Record<string, unknown>): number | undefined {
+    return this.readNumber(this.readAliasedValue(item, [
+      'maxValue',
+      'max',
+      'maximum',
+      'https://w3id.org/edc/v0.0.1/ns/maxValue',
+      'https://w3id.org/edc/v0.0.1/ns/max',
+      'https://w3id.org/edc/v0.0.1/ns/maximum',
+      'https://w3id.org/pionera/daimo#maxValue',
+      'https://w3id.org/pionera/daimo#max',
+      'https://w3id.org/pionera/daimo#maximum'
+    ]));
+  }
+
+  private readAliasedValue(record: Record<string, unknown>, keys: string[]): unknown {
+    for (const key of keys) {
+      if (record[key] !== undefined) {
+        return record[key];
+      }
+    }
+    return undefined;
+  }
+
   private isArraySchema(schema: unknown): boolean {
-    const schemaNode = this.asRecord(this.parseJsonLikeValue(schema));
+    const schemaNode = this.asRecord(this.resolveInputJsonSchema(schema));
     if (!this.isRecord(schemaNode)) {
       return false;
     }
@@ -1059,6 +1079,11 @@ export class ModelExecutionService {
   }
 
   private readBoolean(value: unknown): boolean {
+    const parsed = this.parseJsonLikeValue(value);
+    if (parsed !== value) {
+      return this.readBoolean(parsed);
+    }
+
     if (typeof value === 'boolean') {
       return value;
     }
@@ -1069,6 +1094,11 @@ export class ModelExecutionService {
   }
 
   private readNumber(value: unknown): number | undefined {
+    const parsed = this.parseJsonLikeValue(value);
+    if (parsed !== value) {
+      return this.readNumber(parsed);
+    }
+
     if (typeof value === 'number') {
       return value;
     }

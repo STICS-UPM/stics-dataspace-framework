@@ -3,10 +3,14 @@ package org.upm.inesdata.validator;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonString;
 import org.eclipse.edc.validator.jsonobject.JsonObjectValidator;
+import org.eclipse.edc.validator.jsonobject.validators.MandatoryArray;
+import org.eclipse.edc.validator.jsonobject.validators.MandatoryObject;
 import org.eclipse.edc.validator.jsonobject.validators.MandatoryValue;
+import org.eclipse.edc.validator.spi.Validator;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 import static org.eclipse.edc.spi.constants.CoreConstants.EDC_NAMESPACE;
 
@@ -15,7 +19,7 @@ public class JsonSchemaValidator {
     public static JsonObjectValidator.Builder fromJsonSchema(JsonObject schema, String vocabulary) {
         var builder = JsonObjectValidator.newValidator();
 
-        var requiredProperties = schema.containsKey("required") && schema.getJsonArray("required") != null
+        List<String> requiredProperties = schema.containsKey("required") && schema.getJsonArray("required") != null
                 ? schema.getJsonArray("required")
                 .stream()
                 .map(item -> ((JsonString) item).getString())
@@ -24,7 +28,8 @@ public class JsonSchemaValidator {
 
         builder.verifyObject(vocabulary, vocabularyBuilder -> {
             for (var propertyName : requiredProperties) {
-                vocabularyBuilder.verify(getFullyQualifiedPropertyName(schema, (String) propertyName), MandatoryValue::new);
+                var propertySchema = getPropertySchema(schema, propertyName);
+                vocabularyBuilder.verify(getFullyQualifiedPropertyName(schema, propertyName), mandatoryValidatorFor(propertySchema));
             }
 
             if (schema.containsKey("properties") && schema.getJsonObject("properties") != null) {
@@ -100,5 +105,22 @@ public class JsonSchemaValidator {
             }
         }
         return EDC_NAMESPACE + propertyName;
+    }
+
+    private static JsonObject getPropertySchema(JsonObject schema, String propertyName) {
+        var properties = schema.getJsonObject("properties");
+        return properties != null ? properties.getJsonObject(propertyName) : null;
+    }
+
+    private static Function<org.eclipse.edc.validator.jsonobject.JsonLdPath, Validator<JsonObject>> mandatoryValidatorFor(JsonObject propertySchema) {
+        if (propertySchema == null || !propertySchema.containsKey("type")) {
+            return MandatoryValue::new;
+        }
+
+        return switch (propertySchema.getString("type")) {
+            case "object" -> MandatoryObject::new;
+            case "array" -> MandatoryArray::new;
+            default -> MandatoryValue::new;
+        };
     }
 }

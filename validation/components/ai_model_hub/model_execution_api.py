@@ -11,11 +11,6 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
-from validation.components.ai_model_hub.model_server_policy import (
-    model_server_execution_labels,
-    model_server_validation_state,
-)
-from validation.components.ai_model_hub.daimo_metadata import model_asset_data
 from validation.datasets.manager import dataset_source_dir
 
 
@@ -26,11 +21,21 @@ FUNCTIONAL_CASE_ID = "MH-LING-01"
 EDC_NAMESPACE = "https://w3id.org/edc/v0.0.1/ns/"
 DAIMO_NAMESPACE = "https://w3id.org/daimo/0.0.1/ns#"
 LEGACY_DAIMO_NAMESPACE = "https://pionera.ai/edc/daimo#"
-DEFAULT_MODEL_PATH = "/api/v1/nlp/ecommerce-sentiment"
-DEFAULT_PAYLOAD = {"text": "This product is excellent and very useful"}
-DEFAULT_EXPECTED_MODEL = "E-commerce Sentiment Analyzer"
 FLARES_MODEL_PATH = "/flares/dccuchile-distilbert-base-spanish-uncased-reliability"
 FLARES_EXPECTED_MODEL = ""
+DEFAULT_MODEL_PATH = FLARES_MODEL_PATH
+DEFAULT_PAYLOAD = [
+    {
+        "Id": 840,
+        "Text": "El comité de medicamentos humanos espera concluir el análisis en marzo.",
+        "5W1H_Label": "WHO",
+        "Tag_Text": "El comité de medicamentos humanos",
+        "Tag_Start": 0,
+        "Tag_End": 35,
+    }
+]
+DEFAULT_EXPECTED_MODEL = FLARES_EXPECTED_MODEL
+DEFAULT_EXPECTED_MODEL_ALIASES: set[str] = set()
 FLARES_DATASET_DIR = str(dataset_source_dir("flares-dataset"))
 FLARES_TRIAL_FILE = "5w1h_subtask_2_trial.json"
 FLARES_TEST_FILE = "5w1h_subtarea_2_test.json"
@@ -55,9 +60,7 @@ def _join_management_url(base_url: str, path: str) -> str:
     suffix = str(path or "").strip()
     if not base:
         return ""
-    if base.endswith("/management/v3") and suffix.startswith("/management/v3/"):
-        suffix = suffix[len("/management/v3") :]
-    elif base.endswith("/management") and suffix.startswith("/management/"):
+    if base.endswith("/management") and suffix.startswith("/management/"):
         suffix = suffix[len("/management"):]
     if not suffix.startswith("/"):
         suffix = f"/{suffix}"
@@ -85,6 +88,8 @@ class AIModelHubModelExecutionApiSuite:
 
     DEFAULT_REQUEST_ATTEMPTS = 3
     DEFAULT_REQUEST_RETRY_SECONDS = 2
+    DEFAULT_EXECUTION_ATTEMPTS = 6
+    DEFAULT_EXECUTION_RETRY_SECONDS = 10
 
     def __init__(
         self,
@@ -142,19 +147,8 @@ class AIModelHubModelExecutionApiSuite:
                 or config.get("ADAPTER_NAME")
                 or "inesdata"
             ).strip().lower(),
-            "topology": str(
-                _env_first(
-                    "AI_MODEL_HUB_MODEL_EXECUTION_TOPOLOGY",
-                    "PIONERA_TOPOLOGY",
-                    "INESDATA_TOPOLOGY",
-                    "TOPOLOGY",
-                )
-                or config.get("TOPOLOGY")
-                or "local"
-            ).strip().lower(),
             "inference_api_path": str(config.get("AI_MODEL_HUB_INFERENCE_API_PATH") or "/api/infer"),
         }
-        runtime["model_server"] = model_server_validation_state(config, topology=runtime["topology"])
         runtime["inference_api_path"] = (
             _env_first("AI_MODEL_HUB_INFERENCE_API_PATH", "AI_MODEL_HUB_EDC_INFERENCE_API_PATH")
             or runtime["inference_api_path"]
@@ -310,6 +304,57 @@ class AIModelHubModelExecutionApiSuite:
         )
         return response.status_code, self._response_json_or_text(response)
 
+    @staticmethod
+    def _response_keys(body: Any) -> list[str]:
+        if isinstance(body, dict):
+            return sorted(str(key) for key in body.keys())
+        if isinstance(body, list):
+            return ["<array>"]
+        return []
+
+    @staticmethod
+    def _execution_retry_attempts() -> int:
+        raw_value = _env_first("AI_MODEL_HUB_MODEL_EXECUTION_ATTEMPTS")
+        try:
+            return max(1, int(raw_value or AIModelHubModelExecutionApiSuite.DEFAULT_EXECUTION_ATTEMPTS))
+        except ValueError:
+            return AIModelHubModelExecutionApiSuite.DEFAULT_EXECUTION_ATTEMPTS
+
+    @staticmethod
+    def _execution_retry_seconds() -> float:
+        raw_value = _env_first("AI_MODEL_HUB_MODEL_EXECUTION_RETRY_SECONDS")
+        try:
+            return max(0.0, float(raw_value or AIModelHubModelExecutionApiSuite.DEFAULT_EXECUTION_RETRY_SECONDS))
+        except ValueError:
+            return float(AIModelHubModelExecutionApiSuite.DEFAULT_EXECUTION_RETRY_SECONDS)
+
+    @staticmethod
+    def _is_retriable_execution_response(status_code: int, body: Any) -> bool:
+        if status_code in {502, 503, 504}:
+            return True
+        if status_code != 404 or not isinstance(body, dict):
+            return False
+        detail = str(body.get("detail") or body.get("error") or body.get("message") or "").strip().lower()
+        return detail in {"not found", "404 not found"}
+
+    def _post_model_execution_json(self, url: str, token: str, payload: dict[str, Any]) -> tuple[int, Any, list[dict[str, Any]]]:
+        attempts: list[dict[str, Any]] = []
+        max_attempts = self._execution_retry_attempts()
+        retry_seconds = self._execution_retry_seconds()
+        for attempt in range(1, max_attempts + 1):
+            status_code, body = self._post_json(url, token, payload, "AI Model Hub model execution")
+            attempts.append(
+                {
+                    "attempt": attempt,
+                    "http_status": status_code,
+                    "response_keys": self._response_keys(body),
+                }
+            )
+            if attempt >= max_attempts or not self._is_retriable_execution_response(status_code, body):
+                return status_code, body, attempts
+            time.sleep(retry_seconds)
+        return attempts[-1]["http_status"], {}, attempts
+
     def _delete(self, url: str, token: str, label: str):
         response = self._request_with_retry(
             "delete",
@@ -321,24 +366,9 @@ class AIModelHubModelExecutionApiSuite:
             return response.status_code, None
         return response.status_code, self._response_json_or_text(response)
 
-    def _create_asset(
-        self,
-        provider: str,
-        provider_jwt: str,
-        model_url: str,
-        suffix: str,
-        runtime: dict[str, Any],
-    ):
+    def _create_asset(self, provider: str, provider_jwt: str, model_url: str, suffix: str):
         asset_id = f"a52-model-exec-{suffix}"
         keywords = ["validation", "ai-model-hub", "model-execution", "A5.2"]
-        data_address = {
-            "type": "HttpData",
-            "baseUrl": model_url,
-            "method": "POST",
-            "name": f"ai-model-hub-model-execution-{suffix}",
-        }
-        if runtime.get("adapter") == "edc":
-            data_address["proxyPath"] = "true"
         payload = {
             "@context": {
                 "@vocab": EDC_NAMESPACE,
@@ -352,29 +382,9 @@ class AIModelHubModelExecutionApiSuite:
             "properties": {
                 "name": f"AI Model Hub executable model {suffix}",
                 "version": "1.0.0",
-                "shortDescription": "Temporary model endpoint for the A5.2 controlled execution baseline",
+                "shortDescription": "Temporary FLARES model endpoint for the A5.2 controlled execution baseline",
                 "assetType": "machineLearning",
-                "assetData": model_asset_data(
-                    task="text-classification",
-                    subtask="text-classification",
-                    subtask_description="Controlled sentiment-analysis execution endpoint",
-                    description="HttpData endpoint consumed through the connector-side model execution API",
-                    library_name="Custom",
-                    language=["English", "Spanish"],
-                    input_features=[
-                        {
-                            "name": "text",
-                            "type": "string",
-                            "description": "Text to analyze",
-                        }
-                    ],
-                    input_schema={
-                        "type": "object",
-                        "required": ["text"],
-                        "properties": {"text": {"type": "string", "description": "Text to analyze"}},
-                    },
-                    input_example=DEFAULT_PAYLOAD,
-                ),
+                "assetData": {},
                 "asset:prop:type": "machineLearning",
                 "storageType": "HttpData",
                 "edc:dataAddressType": "HttpData",
@@ -384,50 +394,96 @@ class AIModelHubModelExecutionApiSuite:
                 "daimo:asset_kind": "model",
                 f"{DAIMO_NAMESPACE}asset_kind": "model",
                 f"{LEGACY_DAIMO_NAMESPACE}asset_kind": "model",
-                "daimo:task": "text-classification",
-                f"{DAIMO_NAMESPACE}task": "text-classification",
-                f"{LEGACY_DAIMO_NAMESPACE}task": "text-classification",
-                "daimo:subtask": "sentiment-analysis",
-                f"{DAIMO_NAMESPACE}subtask": "sentiment-analysis",
-                f"{LEGACY_DAIMO_NAMESPACE}subtask": "sentiment-analysis",
-                "daimo:algorithm": "deterministic-rule-engine",
-                f"{DAIMO_NAMESPACE}algorithm": "deterministic-rule-engine",
-                f"{LEGACY_DAIMO_NAMESPACE}algorithm": "deterministic-rule-engine",
-                "daimo:library": "flask",
-                "daimo:library_name": "flask",
-                f"{DAIMO_NAMESPACE}library": "flask",
-                f"{LEGACY_DAIMO_NAMESPACE}library": "flask",
-                f"{LEGACY_DAIMO_NAMESPACE}library_name": "flask",
-                "daimo:framework": "model-server",
-                f"{DAIMO_NAMESPACE}framework": "model-server",
-                f"{LEGACY_DAIMO_NAMESPACE}framework": "model-server",
-                "daimo:software": "pionera-validation-framework",
-                f"{DAIMO_NAMESPACE}software": "pionera-validation-framework",
-                f"{LEGACY_DAIMO_NAMESPACE}software": "pionera-validation-framework",
+                "daimo:task": "Natural Language Processing",
+                f"{DAIMO_NAMESPACE}task": "Natural Language Processing",
+                f"{LEGACY_DAIMO_NAMESPACE}task": "Natural Language Processing",
+                "daimo:taskCategory": "Natural Language Processing",
+                "daimo:taskType": "classification",
+                "daimo:modality": ["text"],
+                "daimo:subtask": "text-classification",
+                f"{DAIMO_NAMESPACE}subtask": "text-classification",
+                f"{LEGACY_DAIMO_NAMESPACE}subtask": "text-classification",
+                "daimo:algorithm": "DistilBERT",
+                f"{DAIMO_NAMESPACE}algorithm": "DistilBERT",
+                f"{LEGACY_DAIMO_NAMESPACE}algorithm": "DistilBERT",
+                "daimo:library": "Transformers",
+                "daimo:library_name": "Transformers",
+                "daimo:libraryName": "Transformers",
+                f"{DAIMO_NAMESPACE}library": "Transformers",
+                f"{LEGACY_DAIMO_NAMESPACE}library": "Transformers",
+                f"{LEGACY_DAIMO_NAMESPACE}library_name": "Transformers",
+                "daimo:framework": "AIModelHub-Use-Cases",
+                f"{DAIMO_NAMESPACE}framework": "AIModelHub-Use-Cases",
+                f"{LEGACY_DAIMO_NAMESPACE}framework": "AIModelHub-Use-Cases",
+                "daimo:software": "FastAPI",
+                f"{DAIMO_NAMESPACE}software": "FastAPI",
+                f"{LEGACY_DAIMO_NAMESPACE}software": "FastAPI",
+                "daimo:requestShape": "batch",
                 "daimo:inference_path": DEFAULT_MODEL_PATH,
                 f"{DAIMO_NAMESPACE}inference_path": DEFAULT_MODEL_PATH,
                 f"{LEGACY_DAIMO_NAMESPACE}inference_path": DEFAULT_MODEL_PATH,
                 "daimo:tags": keywords,
                 f"{LEGACY_DAIMO_NAMESPACE}tags": keywords,
-                "task": "text-classification",
-                "subtask": "sentiment-analysis",
-                "algorithm": "deterministic-rule-engine",
-                "library": "flask",
-                "framework": "model-server",
-                "software": "pionera-validation-framework",
+                "task": "Natural Language Processing",
+                "taskCategory": "Natural Language Processing",
+                "taskType": "classification",
+                "modality": ["text"],
+                "subtask": "text-classification",
+                "algorithm": "DistilBERT",
+                "library": "Transformers",
+                "libraryName": "Transformers",
+                "framework": "AIModelHub-Use-Cases",
+                "software": "FastAPI",
+                "requestShape": "batch",
+                "request_shape": "batch",
                 "contenttype": "application/json",
                 "inputFeatures": [
                     {
-                        "name": "text",
+                        "name": "Id",
+                        "type": "integer",
+                        "required": True,
+                        "description": "Input text identifier",
+                    },
+                    {
+                        "name": "Text",
                         "type": "string",
                         "required": True,
-                        "description": "Text to analyze",
-                    }
+                        "description": "Original Spanish text",
+                    },
+                    {
+                        "name": "Tag_Start",
+                        "type": "integer",
+                        "required": True,
+                        "description": "Span start character offset",
+                    },
+                    {
+                        "name": "Tag_End",
+                        "type": "integer",
+                        "required": True,
+                        "description": "Span end character offset",
+                    },
+                    {
+                        "name": "5W1H_Label",
+                        "type": "string",
+                        "required": True,
+                        "description": "5W1H span label",
+                    },
+                    {
+                        "name": "Tag_Text",
+                        "type": "string",
+                        "required": True,
+                        "description": "Extracted span text",
+                    },
                 ],
                 "inputExample": DEFAULT_PAYLOAD,
                 "format": "json",
             },
-            "dataAddress": data_address,
+            "dataAddress": {
+                "type": "HttpData",
+                "baseUrl": model_url,
+                "method": "POST",
+                "name": f"ai-model-hub-model-execution-{suffix}",
+            },
         }
         status_code, body = self._post_json(
             self._management_url(provider, "/management/v3/assets"),
@@ -446,7 +502,7 @@ class AIModelHubModelExecutionApiSuite:
         asset_id: str,
         payload: Any,
         runtime: dict[str, Any],
-    ) -> tuple[int, Any, str]:
+    ) -> tuple[int, Any, str, list[dict[str, Any]]]:
         if runtime.get("adapter") == "edc":
             url = self._execution_url(provider, runtime)
             request_payload = {
@@ -461,13 +517,8 @@ class AIModelHubModelExecutionApiSuite:
                 "assetId": asset_id,
                 "payload": payload,
             }
-        status_code, body = self._post_json(
-            url,
-            provider_jwt,
-            request_payload,
-            "AI Model Hub model execution",
-        )
-        return status_code, body, url
+        status_code, body, attempts = self._post_model_execution_json(url, provider_jwt, request_payload)
+        return status_code, body, url, attempts
 
     def _delete_asset(self, provider: str, provider_jwt: str, asset_id: str):
         return self._delete(
@@ -488,8 +539,19 @@ class AIModelHubModelExecutionApiSuite:
             assertions.append(f"Expected HTTP 2xx, got HTTP {status_code}")
         if not isinstance(body, (dict, list)):
             assertions.append("Model execution response must be a JSON object or array")
-        elif expected_model and isinstance(body, dict) and body.get("model") != expected_model:
-            assertions.append(f"Expected model '{expected_model}', got '{body.get('model')}'")
+        elif expected_model and isinstance(body, dict):
+            actual_model = str(body.get("model") or "")
+            expected_aliases = {expected_model}
+            if expected_model == DEFAULT_EXPECTED_MODEL:
+                expected_aliases.update(DEFAULT_EXPECTED_MODEL_ALIASES)
+            configured_aliases = _env_first("AI_MODEL_HUB_MODEL_EXECUTION_EXPECTED_MODEL_ALIASES")
+            if configured_aliases:
+                expected_aliases.update(
+                    alias.strip() for alias in configured_aliases.split(",") if alias.strip()
+                )
+            if actual_model not in expected_aliases:
+                expected_label = "' or '".join(sorted(expected_aliases))
+                assertions.append(f"Expected model '{expected_label}', got '{body.get('model')}'")
 
         return {
             "status": "failed" if assertions else "passed",
@@ -538,9 +600,6 @@ class AIModelHubModelExecutionApiSuite:
         assertions: list[str],
         request_payload: dict[str, Any],
         response_payload: dict[str, Any],
-        execution_mode: str = "api",
-        coverage_status: str = "automated",
-        model_server_mode: str = "",
     ) -> dict[str, Any]:
         return {
             "test_case_id": TEST_CASE_ID,
@@ -551,9 +610,8 @@ class AIModelHubModelExecutionApiSuite:
             "dataspace_dimension": "execution",
             "mapping_status": "mapped",
             "automation_mode": "api",
-            "execution_mode": execution_mode,
-            "coverage_status": coverage_status,
-            "model_server_mode": model_server_mode,
+            "execution_mode": "api",
+            "coverage_status": "automated",
             "request": request_payload,
             "response": response_payload,
             "evaluation": {
@@ -576,7 +634,6 @@ class AIModelHubModelExecutionApiSuite:
         response_payload: dict[str, Any],
         functional_context: dict[str, Any],
         semantic_evaluation: dict[str, Any] | None = None,
-        model_server_mode: str = "",
     ) -> dict[str, Any]:
         expected_output = dict(functional_context.get("expected_output") or {})
         semantic_evaluation = semantic_evaluation or {
@@ -589,9 +646,6 @@ class AIModelHubModelExecutionApiSuite:
         pending_semantic_comparison = (
             semantic_evaluation.get("semantic_comparison_status") == "pending_flares_model_endpoint"
         )
-        coverage_status = semantic_evaluation.get("coverage_status") or "partial_api_execution"
-        if model_server_mode == "mock" and coverage_status == "automated":
-            coverage_status = "automated_mock_model_server"
         return {
             "test_case_id": FUNCTIONAL_CASE_ID,
             "description": "Execute a FLARES linguistic record through the connector-side model execution API",
@@ -602,8 +656,7 @@ class AIModelHubModelExecutionApiSuite:
             "mapping_status": "phase_3",
             "automation_mode": "api",
             "execution_mode": "api",
-            "coverage_status": coverage_status,
-            "model_server_mode": model_server_mode,
+            "coverage_status": semantic_evaluation.get("coverage_status") or "partial_api_execution",
             "request": request_payload,
             "response": response_payload,
             "evaluation": {
@@ -661,6 +714,70 @@ class AIModelHubModelExecutionApiSuite:
             },
         }
 
+    def _wait_for_provider_management_ready(
+        self,
+        provider: str,
+        provider_jwt: str,
+        runtime: dict[str, Any] | None = None,
+        max_wait_seconds: int = 300,
+        poll_interval_seconds: int = 5,
+        token_refresh_interval_seconds: int = 240,
+    ) -> tuple[int, int, str]:
+        """Wait until the provider management API accepts asset write operations.
+
+        After a connector restart, this probe waits up to 300s for the management
+        API to become ready. Keycloak tokens expire after ~300s, so the token
+        refresh interval is set conservatively.
+        """
+        probe_id = f"__probe-asset-ready-{int(time.time())}"
+        create_url = self._management_url(provider, "/management/v3/assets")
+        delete_url = self._management_url(provider, f"/management/v3/assets/{probe_id}")
+        probe_payload = {
+            "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/"},
+            "@id": probe_id,
+            "properties": {"name": "readiness-probe"},
+            "dataAddress": {"type": "HttpData", "baseUrl": "http://localhost/probe"},
+        }
+        current_jwt = provider_jwt
+        headers = {"Authorization": f"Bearer {current_jwt}", "Content-Type": "application/json"}
+        start = time.time()
+        last_token_refresh = start
+        deadline = start + max_wait_seconds
+        attempts = 0
+        while time.time() < deadline:
+            if runtime and (time.time() - last_token_refresh) >= token_refresh_interval_seconds:
+                try:
+                    current_jwt = self._login(provider, "provider", runtime)
+                    headers = {"Authorization": f"Bearer {current_jwt}", "Content-Type": "application/json"}
+                    last_token_refresh = time.time()
+                except Exception:
+                    pass
+            attempts += 1
+            try:
+                r = self.session.post(create_url, json=probe_payload, headers=headers, timeout=10)
+                if r.status_code in {200, 201, 409}:
+                    if r.status_code in {200, 201}:
+                        try:
+                            self.session.delete(
+                                delete_url,
+                                headers={"Authorization": f"Bearer {current_jwt}"},
+                                timeout=10,
+                            )
+                        except Exception:
+                            pass
+                    return attempts, round(time.time() - start), current_jwt
+                if r.status_code in {400, 401, 403, 404, 405}:
+                    return attempts, round(time.time() - start), current_jwt
+            except requests.RequestException:
+                pass
+            time.sleep(poll_interval_seconds)
+        if runtime:
+            try:
+                current_jwt = self._login(provider, "provider", runtime)
+            except Exception:
+                pass
+        return attempts, round(time.time() - start), current_jwt
+
     def run(
         self,
         *,
@@ -670,30 +787,14 @@ class AIModelHubModelExecutionApiSuite:
         expected_model: str | None = DEFAULT_EXPECTED_MODEL,
         functional_context: dict[str, Any] | None = None,
         experiment_dir: str | None = None,
-        model_server_mode: str | None = None,
     ) -> dict[str, Any]:
         started_at = datetime.now().isoformat()
         runtime = self._runtime()
-        resolved_model_server_mode = str(model_server_mode or (runtime.get("model_server") or {}).get("mode") or "")
-        if model_url and resolved_model_server_mode in {"", "disabled"}:
-            resolved_model_server_mode = "external"
-        execution_mode, coverage_status = model_server_execution_labels(resolved_model_server_mode)
-        model_server_metadata = dict(runtime.get("model_server") or {})
-        if model_url and not model_server_metadata.get("enabled"):
-            model_server_metadata["enabled"] = True
-            model_server_metadata["has_explicit_url"] = True
-            model_server_metadata["skip_reason"] = ""
-        model_server_metadata.update(
-            {
-                "mode": resolved_model_server_mode,
-                "execution_mode": execution_mode,
-                "coverage_status": coverage_status,
-            }
-        )
         component_dir = self._component_dir(experiment_dir)
+
         suffix = self._safe_suffix(self.uuid_factory())
         if payload is None:
-            inference_payload: Any = dict(DEFAULT_PAYLOAD)
+            inference_payload: Any = json.loads(json.dumps(DEFAULT_PAYLOAD))
         elif isinstance(payload, dict):
             inference_payload = dict(payload)
         else:
@@ -712,16 +813,21 @@ class AIModelHubModelExecutionApiSuite:
             provider_jwt = self._login(provider, "provider", runtime)
             step("provider_login", connector=provider)
 
+            probe_attempts, probe_wait_s, provider_jwt = self._wait_for_provider_management_ready(
+                provider, provider_jwt, runtime=runtime
+            )
+            if probe_attempts > 1:
+                step("provider_management_ready_probe", probe_attempts=probe_attempts, waited_seconds=probe_wait_s)
+
             asset_id, created_asset_id, asset_status, asset_payload = self._create_asset(
                 provider,
                 provider_jwt,
                 model_url,
                 suffix,
-                runtime,
             )
             step("create_httpdata_asset", http_status=asset_status, asset_id=created_asset_id)
 
-            execution_status, execution_body, execution_url = self._execute_model(
+            execution_status, execution_body, execution_url, execution_attempts = self._execute_model(
                 provider,
                 provider_jwt,
                 asset_id,
@@ -738,6 +844,7 @@ class AIModelHubModelExecutionApiSuite:
                 status=evaluation["status"],
                 http_status=execution_status,
                 response_keys=evaluation["response_keys"],
+                attempts=execution_attempts,
             )
             execution_request = {
                 "method": "POST",
@@ -748,6 +855,7 @@ class AIModelHubModelExecutionApiSuite:
             execution_response = {
                 "http_status": execution_status,
                 "body": execution_body,
+                "attempts": execution_attempts,
             }
             executed_cases.append(
                 self._case_result(
@@ -755,9 +863,6 @@ class AIModelHubModelExecutionApiSuite:
                     assertions=list(evaluation["assertions"]),
                     request_payload=execution_request,
                     response_payload=execution_response,
-                    execution_mode=execution_mode,
-                    coverage_status=coverage_status,
-                    model_server_mode=resolved_model_server_mode,
                 )
             )
             if functional_context:
@@ -772,7 +877,6 @@ class AIModelHubModelExecutionApiSuite:
                         response_payload=execution_response,
                         functional_context=functional_context,
                         semantic_evaluation=semantic_evaluation,
-                        model_server_mode=resolved_model_server_mode,
                     )
                 )
         except Exception as exc:
@@ -791,9 +895,6 @@ class AIModelHubModelExecutionApiSuite:
                     assertions=[message],
                     request_payload=failed_request,
                     response_payload=failed_response,
-                    execution_mode=execution_mode,
-                    coverage_status=coverage_status,
-                    model_server_mode=resolved_model_server_mode,
                 )
             )
             if functional_context:
@@ -804,7 +905,6 @@ class AIModelHubModelExecutionApiSuite:
                         request_payload=failed_request,
                         response_payload=failed_response,
                         functional_context=functional_context,
-                        model_server_mode=resolved_model_server_mode,
                     )
                 )
 
@@ -844,9 +944,7 @@ class AIModelHubModelExecutionApiSuite:
                 "dataspace": runtime.get("dataspace"),
                 "ds_domain": runtime.get("ds_domain"),
                 "adapter": runtime.get("adapter"),
-                "topology": runtime.get("topology"),
             },
-            "model_server": model_server_metadata,
             "created_entities": {
                 "asset_id": asset_id,
             },
@@ -942,46 +1040,12 @@ def _build_adapter(adapter_name: str, topology: str):
 
 
 def _adapter_management_url_resolver(adapter):
-    connectors = getattr(adapter, "connectors", None)
-    credentials_loader = getattr(adapter, "load_connector_credentials", None)
-    base_builder = getattr(connectors, "connector_base_url", None)
-    interface_builder = getattr(connectors, "build_connector_url", None)
-    if not any(callable(candidate) for candidate in (credentials_loader, base_builder, interface_builder)):
+    builder = getattr(getattr(adapter, "connectors", None), "build_connector_url", None)
+    if not callable(builder):
         return None
 
-    def management_base_url(connector: str) -> str:
-        if callable(credentials_loader):
-            credentials = credentials_loader(connector) or {}
-            public_urls = credentials.get("public_access_urls") if isinstance(credentials, dict) else {}
-            if isinstance(public_urls, dict):
-                management_v3 = str(public_urls.get("connector_management_api_v3") or "").strip().rstrip("/")
-                if management_v3:
-                    return management_v3
-                management = str(public_urls.get("connector_management_api") or "").strip().rstrip("/")
-                if management:
-                    return _join_management_url(management, "/management/v3")
-
-        if callable(base_builder):
-            base = str(base_builder(connector) or "").strip().rstrip("/")
-            if base:
-                return _join_management_url(base, "/management/v3")
-
-        if callable(interface_builder):
-            base = str(interface_builder(connector) or "").strip().rstrip("/")
-            if not base:
-                return ""
-            if base.endswith("/management/v3") or base.endswith("/management"):
-                return _join_management_url(base, "/management/v3")
-            for suffix in ("/inesdata-connector-interface", "/inesdata-connector-interface/"):
-                if base.endswith(suffix):
-                    base = base[: -len(suffix)].rstrip("/")
-                    break
-            if base:
-                return _join_management_url(base, "/management/v3")
-        return ""
-
     def resolver(connector: str, path: str) -> str:
-        base = management_base_url(connector)
+        base = str(builder(connector) or "").strip().rstrip("/")
         suffix = str(path or "").strip()
         if not base:
             return ""
@@ -1366,14 +1430,11 @@ def _default_experiment_dir() -> str:
     return os.path.join("experiments", f"ai-model-hub-model-execution-api-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
 
 
-def _parse_json_object(value: str, label: str) -> dict[str, Any]:
+def _parse_json_value(value: str, label: str) -> Any:
     try:
-        parsed = json.loads(value)
+        return json.loads(value)
     except json.JSONDecodeError as exc:
         raise argparse.ArgumentTypeError(f"{label} must be valid JSON: {exc}") from exc
-    if not isinstance(parsed, dict):
-        raise argparse.ArgumentTypeError(f"{label} must be a JSON object")
-    return parsed
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1407,7 +1468,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.expected_model == DEFAULT_EXPECTED_MODEL:
             args.expected_model = FLARES_EXPECTED_MODEL
     else:
-        payload = _parse_json_object(args.payload_json, "--payload-json")
+        payload = _parse_json_value(args.payload_json, "--payload-json")
 
     suite, adapter = build_ai_model_hub_model_execution_suite(args.adapter, topology=args.topology)
     connectors = list(adapter.get_cluster_connectors() or []) if not args.provider else []

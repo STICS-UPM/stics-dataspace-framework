@@ -48,7 +48,8 @@ class SharedComponentsContractTests(unittest.TestCase):
         self.assertEqual(ontology.supported_adapters, ("inesdata", "edc"))
         self.assertEqual(ontology.deployable_adapters, ("inesdata", "edc"))
         self.assertEqual(ai_model_hub.supported_adapters, ("inesdata", "edc"))
-        self.assertEqual(ai_model_hub.deployable_adapters, ("inesdata", "edc"))
+        self.assertEqual(ai_model_hub.deployable_adapters, ("edc",))
+        self.assertEqual(ai_model_hub.deployment_strategy, "integrated-in-inesdata-connector-interface")
         semantic_virtualization = get_component_contract("semantic_virtualization")
         self.assertEqual(semantic_virtualization.supported_adapters, ("inesdata", "edc"))
         self.assertEqual(semantic_virtualization.deployable_adapters, ("inesdata", "edc"))
@@ -61,6 +62,10 @@ class SharedComponentsContractTests(unittest.TestCase):
 
         self.assertEqual(
             components_for_adapter(config, "inesdata", deployable_only=True),
+            ["ontology-hub", "semantic-virtualization"],
+        )
+        self.assertEqual(
+            components_for_adapter(config, "inesdata", deployable_only=False),
             ["ontology-hub", "ai-model-hub", "semantic-virtualization"],
         )
         self.assertEqual(
@@ -94,6 +99,20 @@ class SharedComponentsContractTests(unittest.TestCase):
 
         self.assertEqual(summary["configured"], ["ontology-hub", "ai-model-hub", "semantic-virtualization"])
         self.assertEqual(summary["deployable"], ["ontology-hub", "ai-model-hub", "semantic-virtualization"])
+        self.assertEqual(summary["integrated"], [])
+        self.assertEqual(summary["pending_support"], [])
+        self.assertEqual(summary["unsupported"], [])
+        self.assertEqual(summary["unknown"], [])
+
+    def test_summarize_components_for_inesdata_keeps_integrated_ai_model_hub_validable(self):
+        summary = summarize_components_for_adapter(
+            {"COMPONENTS": "ontology-hub,ai-model-hub,semantic-virtualization"},
+            "inesdata",
+        )
+
+        self.assertEqual(summary["configured"], ["ontology-hub", "ai-model-hub", "semantic-virtualization"])
+        self.assertEqual(summary["deployable"], ["ontology-hub", "semantic-virtualization"])
+        self.assertEqual(summary["integrated"], ["ai-model-hub"])
         self.assertEqual(summary["pending_support"], [])
         self.assertEqual(summary["unsupported"], [])
         self.assertEqual(summary["unknown"], [])

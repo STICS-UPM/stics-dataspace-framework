@@ -27,8 +27,6 @@ export class ConfirmDialogModel {
   private _cancelText: string = "Cancel";
   private _cancelColor: "accent" | "warn" | "primary" | "" = "";
   private _confirmColor: "accent" | "warn" | "primary" | "" = "";
-  public showCancel: boolean = true;
-  public showConfirm: boolean = true;
 
   constructor(public title: string, public message: string) {
   }

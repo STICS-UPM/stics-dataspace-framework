@@ -91,79 +91,6 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
     def wait_for_connector_ready(self, connector_name, timeout=300):
         return self.wait_for_management_api_ready(connector_name, timeout=timeout)
 
-    def _edc_management_api_ready_timeout(self):
-        try:
-            deployer_config = self.config_adapter.load_deployer_config() or {}
-        except Exception:
-            deployer_config = {}
-        raw_value = (
-            os.environ.get("PIONERA_EDC_MANAGEMENT_API_TIMEOUT_SECONDS")
-            or os.environ.get("EDC_MANAGEMENT_API_TIMEOUT_SECONDS")
-            or deployer_config.get("EDC_MANAGEMENT_API_TIMEOUT_SECONDS")
-            or deployer_config.get("MANAGEMENT_API_TIMEOUT_SECONDS")
-            or getattr(self.config, "TIMEOUT_POD_WAIT", None)
-            or 300
-        )
-        try:
-            return max(int(float(raw_value)), 1)
-        except (TypeError, ValueError):
-            return 300
-
-    def _edc_management_port_forward_refresh_delay(self):
-        try:
-            deployer_config = self.config_adapter.load_deployer_config() or {}
-        except Exception:
-            deployer_config = {}
-        raw_value = (
-            os.environ.get("PIONERA_EDC_MANAGEMENT_PORT_FORWARD_REFRESH_DELAY_SECONDS")
-            or os.environ.get("EDC_MANAGEMENT_PORT_FORWARD_REFRESH_DELAY_SECONDS")
-            or deployer_config.get("EDC_MANAGEMENT_PORT_FORWARD_REFRESH_DELAY_SECONDS")
-            or deployer_config.get("MANAGEMENT_PORT_FORWARD_REFRESH_DELAY_SECONDS")
-            or 15
-        )
-        try:
-            return max(float(raw_value), 0.0)
-        except (TypeError, ValueError):
-            return 15.0
-
-    def _edc_management_port_forward_refresh_failures(self):
-        try:
-            deployer_config = self.config_adapter.load_deployer_config() or {}
-        except Exception:
-            deployer_config = {}
-        raw_value = (
-            os.environ.get("PIONERA_EDC_MANAGEMENT_PORT_FORWARD_REFRESH_FAILURES")
-            or os.environ.get("EDC_MANAGEMENT_PORT_FORWARD_REFRESH_FAILURES")
-            or deployer_config.get("EDC_MANAGEMENT_PORT_FORWARD_REFRESH_FAILURES")
-            or deployer_config.get("MANAGEMENT_PORT_FORWARD_REFRESH_FAILURES")
-            or 3
-        )
-        try:
-            return max(int(float(raw_value)), 1)
-        except (TypeError, ValueError):
-            return 3
-
-    def _should_refresh_connector_management_api_fallback(self, port_forward, consecutive_failures):
-        if not port_forward:
-            return True
-        opened_at = port_forward.get("opened_at")
-        if opened_at is None:
-            return True
-        if consecutive_failures < self._edc_management_port_forward_refresh_failures():
-            return False
-        try:
-            age_seconds = time.time() - float(opened_at)
-        except (TypeError, ValueError):
-            return True
-        return age_seconds >= self._edc_management_port_forward_refresh_delay()
-
-    def _refresh_connector_management_api_fallback(self, connector_name, port_forward):
-        self._close_temporary_port_forward(port_forward)
-        local_url, local_fallback = self._start_connector_management_api_fallback(connector_name)
-        if local_url:
-            print(f"Refreshing temporary local EDC management API port-forward for {connector_name}.")
-        return local_url, local_fallback
-
     def wait_for_management_api_ready(self, connector_name, timeout=180, poll_interval=3):
         print(f"Waiting for EDC management API to be ready: {connector_name}")
         payload = {
@@ -182,7 +109,6 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
 
         start = time.time()
         last_issue = None
-        local_fallback_failures = 0
         try:
             while time.time() - start <= timeout:
                 headers = self.get_management_api_headers(connector_name)
@@ -193,7 +119,6 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
 
                 try:
                     response = requests.post(url, headers=headers, json=payload, timeout=5)
-                    local_fallback_failures = 0
                     if response.status_code == 200:
                         print(f"EDC management API ready: {connector_name}")
                         return True
@@ -205,23 +130,6 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                     last_issue = f"HTTP {response.status_code}"
                 except requests.RequestException as exc:
                     last_issue = str(exc)
-                    if local_fallback and self._should_attempt_local_fallback(exc):
-                        local_fallback_failures += 1
-                        if not self._should_refresh_connector_management_api_fallback(
-                            local_fallback,
-                            local_fallback_failures,
-                        ):
-                            time.sleep(poll_interval)
-                            continue
-                        local_url, local_fallback = self._refresh_connector_management_api_fallback(
-                            connector_name,
-                            local_fallback,
-                        )
-                        local_fallback_failures = 0
-                        if local_url:
-                            url = local_url
-                            time.sleep(poll_interval)
-                            continue
 
                 time.sleep(poll_interval)
         finally:
@@ -235,7 +143,7 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
 
     def wait_for_all_connectors(self, connectors):
         print("\nWaiting for all EDC connectors to expose their management API...\n")
-        timeout = self._edc_management_api_ready_timeout()
+        timeout = int(getattr(self.config, "TIMEOUT_MANAGEMENT_API_WAIT", 360))
         for connector in connectors:
             if not self.wait_for_management_api_ready(connector, timeout=timeout):
                 print(f"Connector management API not ready: {connector}")
@@ -415,6 +323,25 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
                 or "latest"
             ).strip(),
         }
+
+    def _edc_dashboard_image_override_configured(self, images=None):
+        if images is None:
+            images = self._edc_dashboard_image_values()
+        try:
+            deployer_config = self.config_adapter.load_deployer_config() or {}
+        except Exception:
+            deployer_config = {}
+        dashboard_name = str(
+            os.environ.get("PIONERA_EDC_DASHBOARD_IMAGE_NAME")
+            or deployer_config.get("EDC_DASHBOARD_IMAGE_NAME")
+            or ""
+        ).strip()
+        proxy_name = str(
+            os.environ.get("PIONERA_EDC_DASHBOARD_PROXY_IMAGE_NAME")
+            or deployer_config.get("EDC_DASHBOARD_PROXY_IMAGE_NAME")
+            or ""
+        ).strip()
+        return bool(dashboard_name and proxy_name)
 
     def _run_level4_edc_image_script(self, script_path, args=None, env_prefix=""):
         root_dir = self._framework_root_dir()
@@ -618,6 +545,9 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
             return True
 
         images = self._edc_dashboard_image_values()
+        if mode != "required" and self._edc_dashboard_image_override_configured(images):
+            print("Skipping Level 4 local EDC dashboard image preparation; explicit image override is configured.")
+            return True
         missing = [key for key, value in images.items() if not value]
         if missing:
             print("EDC dashboard local image values are incomplete: " + ", ".join(sorted(missing)))
@@ -852,26 +782,26 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
             return True
 
         deployer_config = config_loader() or {}
-        vault_url = str(
-            deployer_config.get("VT_URL") or deployer_config.get("VAULT_URL") or ""
-        ).strip().rstrip("/")
+        primary_url = str(deployer_config.get("VT_URL") or "").strip().rstrip("/")
+        fallback_url = str(deployer_config.get("VAULT_URL") or "").strip().rstrip("/")
         vault_token = str(deployer_config.get("VT_TOKEN") or "").strip()
-        if not vault_url or not vault_token:
+        if not (primary_url or fallback_url) or not vault_token:
             print("Vault token validation failed: VT_URL/VT_TOKEN are not defined in deployer.config")
             return False
 
         validated, network_failure = self._verify_edc_vault_management_token_over_http(
-            vault_url,
+            primary_url or fallback_url,
             vault_token,
         )
         if validated:
             return True
 
         if network_failure:
+            fallback_vault_url = primary_url or fallback_url
             if (
                 self._should_attempt_local_fallback(network_failure["exception"])
-                and self._vault_cluster_service_reference(vault_url)
-                and self._verify_edc_vault_management_token_via_port_forward(vault_url, vault_token)
+                and self._vault_cluster_service_reference(fallback_vault_url)
+                and self._verify_edc_vault_management_token_via_port_forward(fallback_vault_url, vault_token)
             ):
                 return True
             print(
@@ -889,11 +819,17 @@ class EDCConnectorsAdapter(INESDataConnectorsAdapter):
         if not callable(config_loader):
             return None, None
         deployer_config = config_loader() or {}
-        vault_url = str(
-            deployer_config.get("VT_URL") or deployer_config.get("VAULT_URL") or ""
-        ).strip().rstrip("/")
+        primary = str(deployer_config.get("VT_URL") or "").strip().rstrip("/")
+        fallback = str(deployer_config.get("VAULT_URL") or "").strip().rstrip("/")
         vault_token = str(deployer_config.get("VT_TOKEN") or "").strip()
-        return vault_url, vault_token
+        # VT_URL may be cluster-internal DNS; probe both and return the reachable one.
+        for candidate in filter(None, [primary, fallback]):
+            try:
+                requests.get(f"{candidate}/v1/sys/health", timeout=3, verify=False)
+                return candidate, vault_token
+            except requests.RequestException:
+                continue
+        return (primary or fallback), vault_token
 
     def _connector_credentials_file_path(self, connector_name, ds_name=None, for_write=False):
         resolver = getattr(self.config_adapter, "edc_connector_credentials_path", None)
@@ -1615,9 +1551,6 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             return []
 
         escaped_prefix = re.escape(path_prefix)
-        public_api_url = self._edc_connector_public_api_base_url(connector_name) or public_url
-        api_host, api_path_prefix = self._public_hostname_and_path(public_api_url)
-        api_escaped_prefix = re.escape(api_path_prefix) if api_host == host and api_path_prefix else ""
         proxy_body_size = str(ingress.get("proxyBodySize") or "800m")
         common_annotations = {
             "nginx.ingress.kubernetes.io/proxy-body-size": proxy_body_size,
@@ -1660,24 +1593,6 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             }
 
         route_specs = []
-        if api_escaped_prefix:
-            route_specs.extend(
-                (
-                    api_escaped_prefix,
-                    segment,
-                    connector_name,
-                    port,
-                )
-                for segment, port in (
-                    ("api", 19191),
-                    ("control", 19192),
-                    ("management", 19193),
-                    ("protocol", 19194),
-                    ("version", 19195),
-                    ("shared", 19196),
-                    ("public", 19291),
-                )
-            )
         dashboard = (values or {}).get("dashboard") or {}
         dashboard_proxy = {}
         if dashboard.get("enabled"):
@@ -1685,7 +1600,6 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             if dashboard_proxy.get("enabled"):
                 route_specs.append(
                     (
-                        escaped_prefix,
                         "edc-dashboard-api",
                         f"{connector_name}-dashboard-proxy",
                         int(dashboard_proxy.get("port") or 8080),
@@ -1714,10 +1628,10 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                             "paths": [
                                 {
                                     "pathType": "ImplementationSpecific",
-                                    "path": f"{route_prefix}(/|$)({segment}.*)",
+                                    "path": f"{escaped_prefix}(/|$)({segment}.*)",
                                     "backend": backend(service_name, port),
                                 }
-                                for route_prefix, segment, service_name, port in route_specs
+                                for segment, service_name, port in route_specs
                             ]
                         },
                     }
@@ -2710,16 +2624,29 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
             return None
         return f"{keycloak_url}/realms/{ds_name}/protocol/openid-connect/token"
 
+    def _keycloak_frontend_base_url(self):
+        deployer_config = self.config_adapter.load_deployer_config()
+        frontend_url = str(deployer_config.get("KEYCLOAK_FRONTEND_URL") or "").strip().rstrip("/")
+        if frontend_url:
+            return frontend_url
+        return self._keycloak_base_url()
+
     def _keycloak_authorization_url_for_dataspace(self, ds_name):
-        keycloak_url = self._keycloak_base_url()
+        keycloak_url = self._keycloak_frontend_base_url()
         if not keycloak_url:
             return None
+        # KEYCLOAK_FRONTEND_URL includes the /auth path (e.g. https://host/auth).
+        # Append realm path only when the URL does not already end with the realm.
+        if f"/realms/{ds_name}" in keycloak_url:
+            return f"{keycloak_url}/protocol/openid-connect/auth"
         return f"{keycloak_url}/realms/{ds_name}/protocol/openid-connect/auth"
 
     def _keycloak_logout_url_for_dataspace(self, ds_name):
-        keycloak_url = self._keycloak_base_url()
+        keycloak_url = self._keycloak_frontend_base_url()
         if not keycloak_url:
             return None
+        if f"/realms/{ds_name}" in keycloak_url:
+            return f"{keycloak_url}/protocol/openid-connect/logout"
         return f"{keycloak_url}/realms/{ds_name}/protocol/openid-connect/logout"
 
     @staticmethod

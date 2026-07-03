@@ -269,7 +269,7 @@ def build_functional_catalog_alignment(
     )
 
     return {
-        "source_file": "docs/A5.2_Casos_Prueba_.xlsx",
+        "source_file": "context/A5.2_Casos_Prueba_Framework_Reproducibles.xlsx",
         "source_documents": [
             "context/deliverables/logs.txt",
             "context/deliverables/ontology-hub/PIONERA E2.1 - final.docx",

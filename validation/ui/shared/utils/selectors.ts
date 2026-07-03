@@ -19,5 +19,11 @@ export function snackBar(page: Page): Locator {
 }
 
 export function errorBanner(page: Page): Locator {
-  return page.locator("text=/\\b403\\b|Forbidden|\\b500\\b|Internal Server Error|Access Denied/i");
+  // Scoped to semantic notification containers to avoid false positives from data items
+  // (e.g. asset names containing "500") that appear in tables or card fields.
+  return page
+    .locator(
+      "[role='alert'], [role='alertdialog'], .mat-mdc-snack-bar-container, snack-bar-container, .mat-snack-bar-container",
+    )
+    .filter({ hasText: /\b403\b|Forbidden|\b500\b|Internal Server Error|Access Denied/i });
 }

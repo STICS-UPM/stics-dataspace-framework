@@ -1,0 +1,86 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "daimo": "https://w3id.org/pionera/daimo#",
+    "mls": "http://www.w3.org/ns/mls#"
+  },
+  "@id": "city-flares-5w1h-distilbert-metrics",
+  "properties": {
+    "name": "FLARES 5W1H DistilBERT Metrics - PIONERA Use Case",
+    "version": "2.1.5",
+    "contenttype": "application/json",
+    "assetType": "machineLearning",
+    "shortDescription": "Computes FLARES 5W1H span metrics from native validation rows",
+    "dct:description": "Computes FLARES 5W1H span metrics from native validation rows. Served by the FLARES FastAPI metric endpoint.",
+    "dcterms:description": "Computes FLARES 5W1H span metrics from native validation rows. Served by the FLARES FastAPI metric endpoint.",
+    "dcat:keyword": [
+      "machine-learning",
+      "metric-model",
+      "http-model",
+      "pionera-use-case",
+      "flares",
+      "flares-5w1h-distilbert-metrics",
+      "city"
+    ],
+    "assetData": {
+      "JS_DAIMO_Model": {
+        "daimo:modality": [
+          "text"
+        ],
+        "daimo:taskType": "classification",
+        "daimo:taskCategory": "Natural Language Processing",
+        "daimo:subtask": "token-classification",
+        "daimo:subtaskDescription": "FLARES 5W1H span extraction metrics",
+        "daimo:endpointBehavior": "metric",
+        "daimo:requestShape": "batch",
+        "dct:description": "Computes FLARES 5W1H span metrics from native validation rows. Served by the FLARES FastAPI metric endpoint.",
+        "daimo:libraryName": "Transformers",
+        "dct:language": [
+          "Spanish"
+        ],
+        "dct:license": "apache-2.0",
+        "daimo:inputSchema": {
+          "fields": [
+            {
+              "name": "Id",
+              "type": "integer",
+              "nullable": false,
+              "description": "Input text identifier"
+            },
+            {
+              "name": "Text",
+              "type": "string",
+              "nullable": false,
+              "description": "Spanish text to analyze"
+            },
+            {
+              "name": "Tags",
+              "type": "array",
+              "nullable": false,
+              "description": "Gold 5W1H span annotations"
+            }
+          ],
+          "jsonSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"Id\": {\n      \"type\": \"integer\",\n      \"description\": \"Input text identifier\"\n    },\n    \"Text\": {\n      \"type\": \"string\",\n      \"description\": \"Spanish text to analyze\"\n    },\n    \"Tags\": {\n      \"type\": \"array\",\n      \"description\": \"Gold 5W1H span annotations\"\n    }\n  },\n  \"required\": [\n    \"Id\",\n    \"Text\",\n    \"Tags\"\n  ]\n}"
+        },
+        "daimo:inputExample": "{\"Id\":875,\"Text\":\"Ya en 1988, un grupo de biologos zarparon para recoger organismos marinos.\",\"Tags\":[{\"Tag_Start\":3,\"Tag_End\":10,\"5W1H_Label\":\"WHEN\",\"Tag_Text\":\"en 1988\"}]}",
+        "daimo:metrics": [
+          "Precision",
+          "Recall",
+          "F1"
+        ]
+      }
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "name": "city-flares-5w1h-distilbert-metrics",
+    "baseUrl": "http://host.docker.internal:8000/flares/dccuchile-distilbert-base-spanish-uncased-5w1h/metrics",
+    "proxyMethod": "true",
+    "proxyBody": "true",
+    "method": "POST",
+    "contentType": "application/json"
+  }
+}

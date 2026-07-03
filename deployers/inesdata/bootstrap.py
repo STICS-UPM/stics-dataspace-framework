@@ -358,6 +358,11 @@ def cli(ctx, pg_user, pg_password, pg_host, pg_port, kc_user, kc_password, kc_ur
     # Load layered configuration. Shared credentials live in
     # deployers/infrastructure while this file keeps adapter-specific values.
     config = load_effective_deployer_config()
+    click.echo('\n=== EFFECTIVE CONFIG ===')
+    click.echo(f'DATABASE_HOSTNAME: {config.get("DATABASE_HOSTNAME")}')
+    click.echo(f'VM_COMMON_IP: {config.get("VM_COMMON_IP")}')
+    click.echo(f'VM_COMMON_PUBLIC_URL: {config.get("VM_COMMON_PUBLIC_URL")}')
+    click.echo('========================\n')
     ctx.obj['config'] = config
 
     # DATABASE
@@ -768,7 +773,7 @@ def delete_database(pg_user, pg_password, pg_host, pg_port, database, username):
         cur.execute(sql.SQL("DROP USER IF EXISTS {};").format(sql.Identifier(username)))
     except Exception as e:
         # Handle other exceptions here
-        print(f"An error occurred deleting the database '{database}' and user '{username}': {str(e)}")
+        click.echo(f"An error occurred deleting the database '{database}' and user '{username}': {str(e)}")
 
     cur.close()
     conn.close()
@@ -781,6 +786,9 @@ def connector_participant_urls(config, connector, dataspace, environment):
     public_urls = build_connector_public_access_urls(connector, dataspace, environment, config)
     public_protocol = public_urls.get("connector_protocol_api")
     public_shared = public_urls.get("connector_shared_api")
+    dsp_base = connector_dsp_public_base_url(connector, dataspace, config)
+    if dsp_base:
+        return f"{dsp_base}/protocol", f"{dsp_base}/shared"
     if public_protocol and public_shared:
         return public_protocol, public_shared
 
@@ -836,7 +844,7 @@ def check_database_db(pg_user, pg_password, pg_host, pg_port, database):
     cur.execute("SELECT 1;")
     cur.close()
     conn.close()
-    print("Connection successful")
+    click.echo("Connection successful")
 
 #######################################
 ### KEYS FUNCTIONS
@@ -958,7 +966,7 @@ def get_password_values(datasource, environment, source_type, name):
     return data
     """
     flattened_data = flatten_json(data)
-    print(flattened_data)
+    click.echo(flattened_data)
     """
 
 def flatten_json(json_obj, parent_key='', sep='-'):
@@ -1137,7 +1145,8 @@ def dataspace_public_access_urls(dataspace, config):
     if not _is_vm_distributed_public_common_mode(config):
         return {}
 
-    values = {**dict(config or {}), **resolve_vm_distributed_public_urls(config)}
+    original_config = dict(config or {})
+    values = {**original_config, **resolve_vm_distributed_public_urls(config)}
     urls = {}
 
     public_portal = normalize_public_url_with_trailing_slash(
@@ -1148,8 +1157,8 @@ def dataspace_public_access_urls(dataspace, config):
         urls["public_portal_login"] = public_portal
 
     public_portal_backend = normalize_url(
-        values.get("PUBLIC_PORTAL_BACKEND_PUBLIC_URL")
-        or values.get("DATASPACE_PUBLIC_PORTAL_BACKEND_URL")
+        original_config.get("PUBLIC_PORTAL_BACKEND_PUBLIC_URL")
+        or original_config.get("DATASPACE_PUBLIC_PORTAL_BACKEND_URL")
     )
     if public_portal_backend:
         urls["public_portal_backend_admin"] = (
@@ -1469,6 +1478,56 @@ def connector_public_base_url(connector, dataspace, config):
     return ""
 
 
+def connector_dsp_public_base_url(connector, dataspace, config):
+    values = config or {}
+    topology = normalize_topology(
+        values.get("TOPOLOGY")
+        or values.get("PIONERA_TOPOLOGY")
+        or values.get("INESDATA_TOPOLOGY")
+        or ""
+    )
+    if topology == "local" and (
+        str(values.get("VM_PROVIDER_PUBLIC_URL") or values.get("VM_PROVIDER_HTTP_URL") or "").strip()
+        and str(values.get("VM_CONSUMER_PUBLIC_URL") or values.get("VM_CONSUMER_HTTP_URL") or "").strip()
+    ):
+        topology = "vm-distributed"
+    mode = str(
+        values.get("PIONERA_CONNECTOR_PROTOCOL_ADDRESS_MODE")
+        or values.get("CONNECTOR_PROTOCOL_ADDRESS_MODE")
+        or ("internal" if topology == "vm-distributed" else "")
+    ).strip().lower()
+    if topology != "vm-distributed" or mode not in {"internal", "private"}:
+        return ""
+
+    protocol = str(
+        values.get("VM_DISTRIBUTED_CONNECTOR_DSP_PROTOCOL")
+        or values.get("INESDATA_CONNECTOR_DSP_PROTOCOL")
+        or "http"
+    ).strip().lower()
+    if protocol not in {"http", "https"}:
+        protocol = "http"
+
+    public_urls = resolve_vm_distributed_public_urls(values)
+    role_options = (
+        ("VM_PROVIDER_CONNECTORS", "VM_PROVIDER_PUBLIC_URL", "VM_PROVIDER_HTTP_URL"),
+        ("VM_CONSUMER_CONNECTORS", "VM_CONSUMER_PUBLIC_URL", "VM_CONSUMER_HTTP_URL"),
+    )
+    for connectors_key, public_url_key, fallback_url_key in role_options:
+        for configured_connector in split_config_list(values.get(connectors_key)):
+            if not connector_matches_configured_name(connector, dataspace, configured_connector):
+                continue
+            base_url = normalize_url(
+                _first_usable_vm_public_url(values, public_urls, public_url_key, fallback_url_key)
+            )
+            parsed = urlparse(base_url)
+            if parsed.netloc:
+                path = parsed.path.rstrip("/")
+                return f"{protocol}://{parsed.netloc}{path}"
+            if base_url:
+                return f"{protocol}://{base_url.removeprefix('http://').removeprefix('https://')}"
+    return ""
+
+
 def minio_console_public_url(config):
     public_urls = resolve_vm_distributed_public_urls(config)
     explicit_url = config.get("MINIO_CONSOLE_PUBLIC_URL") or public_urls.get("MINIO_CONSOLE_PUBLIC_URL")
@@ -1777,7 +1836,7 @@ def create_manager_group(keycloak_admin, realm_name):
             available_roles = keycloak_admin.get_client_roles(client_id=client_id)
             roles_to_add = [role for role in available_roles if role['name'] in roles_to_assign]
             keycloak_admin.assign_group_client_roles(client_id=client_id, group_id=group_id, roles=roles_to_add)
-            print(f"    + Manager group {group_name} has been asigned the following roles {roles_to_assign}")
+            click.echo(f"    + Manager group {group_name} has been asigned the following roles {roles_to_assign}")
 
 def create_client(keycloak_admin, dataspace, client_name, environment):
     clients = keycloak_admin.get_clients()
@@ -2319,6 +2378,8 @@ def create_connector_value_files(dataspace_name, connector_name, environment):
 
     config = load_effective_deployer_config()
     config["DATABASE_HOSTNAME"] = connector_runtime_database_hostname(config)
+    click.echo("DATABASE_HOSTNAME after connector_runtime_database_hostname:",
+      config.get("DATABASE_HOSTNAME"))
     config["VAULT_URL"] = connector_runtime_vault_url(config)
     keys['registration_service_internal_hostname'] = registration_service_internal_hostname(
         config,

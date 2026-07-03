@@ -13,6 +13,8 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
+      annotations:
+        checksum/ontology-hub-secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: {{ include "ontology-hub.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
@@ -81,7 +83,7 @@ spec:
               value: {{ default (.Values.elasticsearch.serviceName | default "elasticsearch") (index .Values.env "ELASTIC_SEARCH_HOST") | quote }}
             - name: ELASTIC_SEARCH_USER
               value: {{ default (.Values.elasticsearch.auth.username | default "elastic") (index .Values.env "ELASTIC_SEARCH_USER") | quote }}
-            {{- if or .Values.secrets.existingSecretName .Values.elasticsearch.auth.password (gt (len .Values.secrets.values) 0) }}
+            {{- if or .Values.elasticsearch.enabled .Values.secrets.existingSecretName (gt (len .Values.secrets.values) 0) }}
             - name: ELASTIC_SEARCH_PASSWORD
               valueFrom:
                 secretKeyRef:

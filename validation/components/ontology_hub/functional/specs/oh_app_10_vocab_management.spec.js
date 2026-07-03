@@ -137,7 +137,7 @@ test("OH-APP-11: add a new ontology version", async ({
   captureStep,
   attachJson,
 }, testInfo) => {
-  test.setTimeout(300000);
+  test.setTimeout(POST_VERSION_CRASH_TEST_TIMEOUT_MS);
   const versionCreationUri =
     ontologyHubRuntime.versionCreationUri || "https://saref.etsi.org/saref4city/v1.1.2/";
   const versionRuntimeBase = buildVocabularyRuntime(ontologyHubRuntime, "OH-APP-11", testInfo, {

@@ -280,10 +280,28 @@ class KafkaManager:
             return configured[0]
         return ids["external_bootstrap"]
 
+    def _discover_kubernetes_node_ip(self):
+        try:
+            result = self._run_command([
+                "kubectl", "get", "nodes",
+                "-o", "jsonpath={.items[0].status.addresses[?(@.type==\"InternalIP\")].address}",
+            ], timeout=10)
+            ip = (getattr(result, "stdout", "") or "").strip()
+            if ip:
+                return ip
+        except Exception:
+            pass
+        return ""
+
     def _kubernetes_connector_bootstrap(self, config, ids):
         configured = self._normalize_bootstrap_servers(config.get("cluster_bootstrap_servers"))
         if configured:
             return configured[0]
+        topology = str(config.get("topology") or "").strip().lower()
+        if topology == "vm-distributed" and ids.get("external_service_type", "").lower() in ("nodeport", "loadbalancer"):
+            node_ip = self._discover_kubernetes_node_ip()
+            if node_ip:
+                return f"{node_ip}:{ids['nodeport']}"
         return ids["internal_bootstrap"]
 
     @staticmethod

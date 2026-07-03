@@ -103,11 +103,18 @@ function resolveSemanticVirtualizationRuntime() {
       `http://semantic-virtualization-editor-${dataspace}.${dsDomain}`,
   );
 
+  const ingressResolveIp = String(
+    process.env.SEMANTIC_VIRTUALIZATION_INGRESS_RESOLVE_IP ||
+      config.SEMANTIC_VIRTUALIZATION_INGRESS_RESOLVE_IP ||
+      "",
+  ).trim();
+
   return {
     dataspace,
     dsDomain,
     baseUrl,
     mappingEditorBaseUrl,
+    ingressResolveIp,
     rootPath: process.env.SEMANTIC_VIRTUALIZATION_ROOT_PATH || "/",
     mappingEditorRootPath: process.env.SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_ROOT_PATH || "/",
     capabilitiesPath: process.env.SEMANTIC_VIRTUALIZATION_CAPABILITIES_PATH || "/openapi.json",

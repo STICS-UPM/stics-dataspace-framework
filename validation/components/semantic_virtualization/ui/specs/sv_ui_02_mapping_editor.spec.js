@@ -70,7 +70,10 @@ async function openMappingEditor(page, semanticVirtualizationRuntime) {
   expect(status).toBe(200);
 
   const streamUrl = streamlitWebSocketUrl(url);
-  const streamProbe = await probeWebSocketHandshake(streamUrl);
+  const streamProbe = await probeWebSocketHandshake(
+    streamUrl,
+    semanticVirtualizationRuntime.ingressResolveIp,
+  );
   expect(
     streamProbe,
     `Expected Streamlit WebSocket ${streamUrl} to return HTTP 101 through the public route`,
@@ -87,18 +90,24 @@ function streamlitWebSocketUrl(editorUrl) {
   return streamUrl.toString();
 }
 
-function probeWebSocketHandshake(streamUrl) {
+function probeWebSocketHandshake(streamUrl, resolveIp = "") {
   return new Promise((resolve) => {
     const parsedUrl = new URL(streamUrl);
     const transport = parsedUrl.protocol === "wss:" ? https : http;
+    // When an internal ingress IP is provided, connect to it directly while
+    // preserving the public Host/SNI so the nginx ingress routes correctly.
+    // This bypasses an external proxy that does not tunnel WebSocket upgrades.
+    const connectIp = String(resolveIp || "").trim();
     const request = transport.request({
       protocol: parsedUrl.protocol === "wss:" ? "https:" : "http:",
-      hostname: parsedUrl.hostname,
+      hostname: connectIp || parsedUrl.hostname,
+      servername: parsedUrl.hostname,
       port: parsedUrl.port || (parsedUrl.protocol === "wss:" ? 443 : 80),
       path: `${parsedUrl.pathname}${parsedUrl.search}`,
       method: "GET",
       rejectUnauthorized: false,
       headers: {
+        Host: parsedUrl.host,
         Connection: "Upgrade",
         Upgrade: "websocket",
         "Sec-WebSocket-Key": Buffer.from("pionera-ws-probe").toString("base64"),
@@ -143,153 +152,28 @@ function mappingEditorIdleTimeoutMs() {
   return Number.isFinite(value) && value > 0 ? value : 90 * 1000;
 }
 
-function mappingEditorSidebarClickTimeoutMs() {
-  const raw = process.env.SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SIDEBAR_CLICK_TIMEOUT_MS || "15000";
-  const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? value : 15 * 1000;
-}
-
 async function editorStep(title, body) {
   return test.step(title, body, { timeout: mappingEditorStepTimeoutMs() });
 }
 
-async function streamlitConnectionState(page) {
-  const connectionDialog = page.getByText(/Connection error|Connection timed out/i).first();
-  if (await connectionDialog.isVisible().catch(() => false)) {
-    return "connection-error";
-  }
-
-  const text = await bodyText(page);
-  if (/\bCONNECTING\b/i.test(text)) {
-    return "connecting";
-  }
-
-  const stopButton = page.getByRole("button", { name: /^Stop$/ }).first();
-  return (await stopButton.isVisible().catch(() => false)) ? "busy" : "idle";
-}
-
-async function dismissStreamlitConnectionDialog(page) {
-  const dialog = page
-    .getByRole("dialog")
-    .filter({ hasText: /Connection error|Connection timed out/i })
-    .first();
-  const closeButton = dialog.getByRole("button", { name: /Close/i }).first();
-
-  if (await closeButton.isVisible().catch(() => false)) {
-    await closeButton.click({ timeout: 5000 }).catch(() => {});
-  }
-}
-
 async function waitForStreamlitIdle(page, timeout = mappingEditorIdleTimeoutMs()) {
-  const deadline = Date.now() + timeout;
-  let lastState = "unknown";
-
-  while (Date.now() < deadline) {
-    lastState = await streamlitConnectionState(page);
-    if (lastState === "idle") {
-      return;
-    }
-    if (lastState === "connection-error") {
-      await dismissStreamlitConnectionDialog(page);
-    }
-    await page.waitForTimeout(lastState === "busy" ? 1000 : 2000);
-  }
-
-  const text = await bodyText(page);
-  throw new Error(
-    `Mapping editor did not become idle after ${timeout}ms. Last Streamlit state: ${lastState}. Body excerpt: ${text.slice(0, 300)}`,
-  );
-}
-
-async function waitForSidebarNavigationWindow(page, labelPattern, timeout = mappingEditorIdleTimeoutMs()) {
-  const deadline = Date.now() + timeout;
-  let lastState = "unknown";
-  const sidebarLink = page.getByRole("link", { name: labelPattern }).first();
-
-  while (Date.now() < deadline) {
-    lastState = await streamlitConnectionState(page);
-    const linkVisible = await sidebarLink.isVisible().catch(() => false);
-    if (lastState === "idle" || (linkVisible && ["connecting", "connection-error"].includes(lastState))) {
-      return lastState;
-    }
-    await page.waitForTimeout(lastState === "busy" ? 1000 : 2000);
-  }
-
-  throw new Error(
-    `Mapping editor did not become ready for sidebar navigation to ${labelPattern}. Last Streamlit state: ${lastState}`,
-  );
-}
-
-async function sidebarLinkState(sidebarLink) {
-  return await sidebarLink
-    .evaluate((element) => {
-      const container = element.closest('[data-testid="stSidebarNavLinkContainer"]');
-      const disabled =
-        element.hasAttribute("disabled") ||
-        element.getAttribute("aria-disabled") === "true" ||
-        Boolean(container && container.hasAttribute("disabled"));
-      const rect = element.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height / 2;
-      const topElement = document.elementFromPoint(centerX, centerY);
-      const topLink = topElement && topElement.closest ? topElement.closest("a") : null;
-      const intercepted = Boolean(
-        topElement &&
-          topLink !== element &&
-          !element.contains(topElement) &&
-          !(container && container.contains(topElement) && !disabled),
-      );
-
-      return {
-        disabled,
-        href: element.getAttribute("href") || "",
-        intercepted,
-      };
-    })
-    .catch(() => ({ disabled: true, href: "", intercepted: true }));
-}
-
-function isRecoverableSidebarClickError(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  return /intercepts pointer events|not enabled|Timeout|Test timeout|Element is not attached/i.test(message);
-}
-
-async function navigateSidebarLinkByHref(page, sidebarLink, labelPattern) {
-  const state = await sidebarLinkState(sidebarLink);
-  expect(state.href, `Sidebar link ${labelPattern} did not expose a navigation href`).toBeTruthy();
-  const response = await page.goto(state.href, {
-    waitUntil: "domcontentloaded",
-    timeout: 60 * 1000,
-  });
-  const status = response ? response.status() : 0;
-  expect([200, 304], `Sidebar href navigation to ${state.href} returned HTTP ${status}`).toContain(status);
-  await page.waitForLoadState("networkidle").catch(() => {});
-  await waitForStreamlitIdle(page);
+  await expect
+    .poll(
+      async () => {
+        const stopButton = page.getByRole("button", { name: /^Stop$/ }).first();
+        return (await stopButton.isVisible().catch(() => false)) ? "busy" : "idle";
+      },
+      { timeout, intervals: [500, 1000, 2000, 5000] },
+    )
+    .toBe("idle");
 }
 
 async function openSidebarPage(page, labelPattern) {
-  const preNavigationState = await waitForSidebarNavigationWindow(page, labelPattern);
+  await waitForStreamlitIdle(page);
   const sidebarLink = page.getByRole("link", { name: labelPattern }).first();
   await expect(sidebarLink).toBeVisible({ timeout: 30 * 1000 });
-  const state = await sidebarLinkState(sidebarLink);
-
-  if (preNavigationState === "idle" && !state.disabled && !state.intercepted) {
-    try {
-      await clickMarked(sidebarLink, { timeout: mappingEditorSidebarClickTimeoutMs() });
-    } catch (error) {
-      if (!isRecoverableSidebarClickError(error)) {
-        throw error;
-      }
-      await navigateSidebarLinkByHref(page, sidebarLink, labelPattern);
-      return;
-    }
-  } else {
-    await navigateSidebarLinkByHref(page, sidebarLink, labelPattern);
-    return;
-  }
-
+  await clickMarked(sidebarLink);
   await page.waitForLoadState("networkidle").catch(() => {});
-  await waitForStreamlitIdle(page);
 }
 
 async function createEphemeralMapping(page) {
@@ -325,11 +209,7 @@ async function uploadStreamlitFileMarked(page, labelPattern, filePath) {
 async function chooseStreamlitSelectboxOptionMarked(page, labelPattern, optionPattern) {
   const selectbox = page.getByLabel(labelPattern).first();
   await expect(selectbox).toBeVisible({ timeout: 30 * 1000 });
-  await waitForStreamlitIdle(page, 45 * 1000);
-  await expect(selectbox, `Streamlit selectbox ${labelPattern} stayed disabled`).toBeEnabled({
-    timeout: 45 * 1000,
-  });
-  await clickMarked(selectbox, { timeout: 15 * 1000 });
+  await clickMarked(selectbox);
 
   let option = page.getByRole("option", { name: optionPattern }).first();
   const optionVisible = await option
@@ -419,10 +299,7 @@ async function importOntologyFixture(page) {
 }
 
 test.describe("Mapping editor validation", () => {
-  test.skip(
-    process.env.SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI !== "1",
-    "Mapping editor validation was disabled explicitly for this execution.",
-  );
+
 
 test("PT5-VS-07: mapping editor graphical UI is reachable", async ({
   page,

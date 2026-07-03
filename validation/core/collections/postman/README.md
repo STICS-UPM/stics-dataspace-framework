@@ -1259,3 +1259,28 @@ Esta colección compacta **no sustituye** al conjunto completo `01`-`06`, porque
 - `Validation-Environment/docs/06_information_exchange_flow.md` sigue siendo el documento conceptual del flujo.
 - Este documento es la referencia operativa exacta para Postman manual.
 - La colección `Validation-Environment/validation/core/collections/postman/03_e2e_compact.json` es el artefacto importable que implementa exactamente esta guía.
+
+## Evidencia STICS: interoperabilidad real provider/consumer (PULL + PUSH)
+
+Además de las colecciones genéricas del framework, esta carpeta contiene una
+colección **específica del proyecto STICS**, autocontenida y ya verificada
+contra el entorno real `vm-distributed`:
+
+- `04_stics_edc_interop.json` — flujo completo: login de ambos conectores,
+  creación de asset/policy/contract-definition en el provider, catálogo DSP,
+  negociación de contrato, y **ambos** tipos de transferencia
+  (`HttpData-PULL` con pull real de datos vía EDR, y `HttpData-PUSH` con
+  entrega real al sink del consumer).
+- `00_environment_stics.json` — environment con las URLs públicas reales
+  (`stics.bavenir.eu` para el provider, `con-lab.stics.linkeddata.es` para el
+  consumer). Rellenar `provider_password`/`consumer_password` localmente
+  (vienen de `credentials.json`, no están versionados).
+
+A diferencia de `03_e2e_compact.json` (genérico, deriva hostnames desde la
+convención `{{connector}}.{{dsDomain}}` del framework), esta colección usa
+directamente los hostnames públicos reales del proyecto STICS, porque los
+conectores `connector-stics`/`conlab-stics` corren fuera de Kubernetes vía
+Docker Compose y no siguen esa convención.
+
+Documentación narrativa con los mismos pasos en `curl` (sin necesidad de
+Postman): [docs/47_stics_edc_interop_evidence.md](../../../../docs/47_stics_edc_interop_evidence.md).

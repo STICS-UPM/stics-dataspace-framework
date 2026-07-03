@@ -875,6 +875,7 @@ class ManagementApiTestDataCleaner:
         )
         return urllib3.PoolManager(
             timeout=urllib3.Timeout(connect=connect_timeout, read=read_timeout),
+            cert_reqs="CERT_NONE",
         )
 
     def _minio_timeout_seconds(self, *keys: str, default: float) -> float:

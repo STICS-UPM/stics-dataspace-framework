@@ -9,7 +9,6 @@ export class UploaderFileComponent {
 
   files: any[] = [];
 
-  @Input() accept: string = '';
   @Input() isMultiple: boolean = false
   @Output() filesChange: EventEmitter<any[]> = new EventEmitter<any[]>()
 

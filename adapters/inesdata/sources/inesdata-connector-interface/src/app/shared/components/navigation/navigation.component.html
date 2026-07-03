@@ -11,7 +11,6 @@
       <mat-toolbar class="sidenav-toolbar">
         <span class="brand-label">
           <img class="brand-logo" src="assets/branding/pionera-logo.svg" alt="PIONERA logo">
-          <span class="brand-name" *ngIf="showBrandName">{{ brandName }}</span>
         </span>
       </mat-toolbar>
       <mat-nav-list>
@@ -20,6 +19,8 @@
             mat-list-item
             *ngIf="route.data?.title"
             [routerLink]="[route.path]"
+            routerLinkActive="is-active"
+            [routerLinkActiveOptions]="{ exact: false }"
           >
             <mat-icon matListItemIcon>{{ route.data?.icon }}</mat-icon>
             <span class="nav-label">{{ route.data?.title ?? route.path }}</span>
@@ -28,7 +29,7 @@
       </mat-nav-list>
     </mat-sidenav>
     <mat-sidenav-content>
-      <mat-toolbar color="primary">
+      <mat-toolbar class="app-toolbar">
         <button
           type="button"
           aria-label="Toggle sidenav"

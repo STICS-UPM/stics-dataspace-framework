@@ -18,10 +18,8 @@ class OntologyHubVocabFormPage {
 
   async gotoEdit(baseUrl, prefix) {
     await this.page.goto(buildOntologyHubUrl(baseUrl, `edition/vocabs/${encodeURIComponent(prefix)}`), {
-      waitUntil: "commit",
-      timeout: navigationTimeoutMs,
+      waitUntil: "domcontentloaded",
     });
-    await this.page.waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs }).catch(() => {});
   }
 
   async expectReady(prefix = "") {

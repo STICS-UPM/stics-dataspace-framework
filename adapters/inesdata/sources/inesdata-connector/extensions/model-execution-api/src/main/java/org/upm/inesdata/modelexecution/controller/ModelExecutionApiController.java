@@ -20,13 +20,17 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import java.time.Instant;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static jakarta.ws.rs.core.HttpHeaders.ACCEPT;
 import static jakarta.ws.rs.core.HttpHeaders.AUTHORIZATION;
@@ -37,8 +41,7 @@ import static jakarta.ws.rs.core.HttpHeaders.CONTENT_TYPE;
 @Produces(MediaType.APPLICATION_JSON)
 public class ModelExecutionApiController {
     private static final String DEFAULT_CONTEXT = "https://w3id.org/edc/v0.0.1/ns/";
-    private static final int DEFAULT_EDR_ATTEMPTS = 20;
-    private static final long DEFAULT_EDR_DELAY_MS = 500;
+    private static final long DEFAULT_EXECUTION_TARGET_CACHE_TTL_MS = 15 * 60 * 1000;
 
     private final ObjectMapper mapper;
     private final Monitor monitor;
@@ -51,10 +54,12 @@ public class ModelExecutionApiController {
     private final String defaultTransferType;
     private final int edrAttempts;
     private final long edrDelayMs;
+    private final String edrEndpointMode;
     private final boolean observerEnabled;
     private final String observerTargetUrl;
     private final String observerSourceComponent;
     private final HttpClient httpClient;
+    private final Map<String, CachedExecutionTarget> executionTargetCache;
 
     public ModelExecutionApiController(TypeManager typeManager,
                                        Monitor monitor,
@@ -67,6 +72,7 @@ public class ModelExecutionApiController {
                                        String defaultTransferType,
                                        int edrAttempts,
                                        long edrDelayMs,
+                                       String edrEndpointMode,
                                        boolean observerEnabled,
                                        String observerJournalBaseUrl,
                                        String observerJournalEventsPath,
@@ -81,11 +87,16 @@ public class ModelExecutionApiController {
         this.defaultProtocol = defaultProtocol;
         this.defaultTransferType = defaultTransferType;
         this.edrAttempts = Math.max(1, edrAttempts);
-        this.edrDelayMs = Math.max(1, edrDelayMs);
+        this.edrDelayMs = Math.max(100L, edrDelayMs);
+        this.edrEndpointMode = firstNonBlank(edrEndpointMode, "public").toLowerCase(Locale.ROOT);
         this.observerEnabled = observerEnabled;
         this.observerTargetUrl = buildObserverTargetUrl(observerJournalBaseUrl, observerJournalEventsPath);
         this.observerSourceComponent = firstNonBlank(observerSourceComponent, "inesdata-connector:model-execution-api");
-        this.httpClient = HttpClient.newHttpClient();
+        this.httpClient = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .version(HttpClient.Version.HTTP_1_1)
+                .build();
+        this.executionTargetCache = new ConcurrentHashMap<>();
     }
 
     @POST
@@ -119,7 +130,7 @@ public class ModelExecutionApiController {
             }
 
             var authHeaderValue = firstNonBlank(httpHeaders.getHeaderString(AUTHORIZATION), null);
-            resolution = resolveExecutionTarget(requestNode, assetId, authHeaderValue);
+            resolution = resolveExecutionTarget(requestNode, assetId, authHeaderValue, benchmarkRunId);
             if (resolution == null || !hasText(resolution.endpoint())) {
                 return error(Response.Status.BAD_REQUEST, "Unable to resolve executable endpoint for assetId");
             }
@@ -139,8 +150,14 @@ public class ModelExecutionApiController {
 
             var requestedMethod = firstNonBlank(textValue(requestNode, "method"), resolution.method());
             var requestedPath = firstNonBlank(textValue(requestNode, "path"), resolution.path());
+            if ("edr-http".equals(resolution.endpointKind())) {
+                requestedPath = firstNonBlank(resolution.path(), "");
+            }
             var headersNode = firstNode(requestNode, "headers");
             var outboundResponse = invokeTarget(resolution, requestedMethod, requestedPath, headersNode, payload);
+            if (isAuthorizationFailure(outboundResponse.statusCode())) {
+                evictCachedExecutionTarget(benchmarkRunId, assetId, authHeaderValue);
+            }
 
             var contentType = outboundResponse.headers().firstValue(CONTENT_TYPE).orElse(MediaType.APPLICATION_JSON);
             publishExecutionEvent(
@@ -224,7 +241,14 @@ public class ModelExecutionApiController {
 
     private ResolvedExecutionTarget resolveExecutionTarget(JsonNode requestNode,
                                                            String assetId,
-                                                           String managementAuthorization) throws Exception {
+                                                           String managementAuthorization,
+                                                           String benchmarkRunId) throws Exception {
+        var cacheKey = executionTargetCacheKey(benchmarkRunId, assetId, managementAuthorization);
+        var cachedTarget = cachedExecutionTarget(cacheKey);
+        if (cachedTarget != null) {
+            return cachedTarget;
+        }
+
         var localTarget = resolveLocalAsset(assetId, managementAuthorization);
         if (localTarget != null) {
             return localTarget;
@@ -254,8 +278,8 @@ public class ModelExecutionApiController {
             throw new ExecutionException("Unable to resolve EDR for assetId");
         }
 
-        return new ResolvedExecutionTarget(
-            edrInfo.endpoint(),
+        var target = new ResolvedExecutionTarget(
+            normalizeEdrEndpoint(edrInfo.endpoint(), transferParams.connectorId()),
             "POST",
             "",
             edrInfo.authHeader(),
@@ -266,6 +290,66 @@ public class ModelExecutionApiController {
             "edr-http",
             transferParams.connectorId()
         );
+        cacheExecutionTarget(cacheKey, target);
+        return target;
+    }
+
+    private ResolvedExecutionTarget cachedExecutionTarget(String cacheKey) {
+        if (!hasText(cacheKey)) {
+            return null;
+        }
+
+        var cachedTarget = executionTargetCache.get(cacheKey);
+        if (cachedTarget == null) {
+            return null;
+        }
+
+        if (cachedTarget.isFresh(System.currentTimeMillis())) {
+            return cachedTarget.target();
+        }
+
+        executionTargetCache.remove(cacheKey, cachedTarget);
+        return null;
+    }
+
+    private void cacheExecutionTarget(String cacheKey, ResolvedExecutionTarget target) {
+        if (!hasText(cacheKey) || target == null || !"federated-with-agreement".equals(target.executionMode())) {
+            return;
+        }
+        executionTargetCache.put(cacheKey, new CachedExecutionTarget(
+                target,
+                System.currentTimeMillis() + DEFAULT_EXECUTION_TARGET_CACHE_TTL_MS
+        ));
+    }
+
+    private void evictCachedExecutionTarget(String benchmarkRunId, String assetId, String managementAuthorization) {
+        var cacheKey = executionTargetCacheKey(benchmarkRunId, assetId, managementAuthorization);
+        if (hasText(cacheKey)) {
+            executionTargetCache.remove(cacheKey);
+        }
+    }
+
+    private String executionTargetCacheKey(String benchmarkRunId, String assetId, String managementAuthorization) {
+        if (!hasText(benchmarkRunId) || !hasText(assetId)) {
+            return null;
+        }
+        return benchmarkRunId + "|" + assetId + "|" + authFingerprint(managementAuthorization);
+    }
+
+    private String authFingerprint(String managementAuthorization) {
+        if (!hasText(managementAuthorization)) {
+            return "anonymous";
+        }
+        try {
+            var digest = MessageDigest.getInstance("SHA-256").digest(managementAuthorization.getBytes(StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+        } catch (NoSuchAlgorithmException exception) {
+            return Integer.toHexString(managementAuthorization.hashCode());
+        }
+    }
+
+    private boolean isAuthorizationFailure(int statusCode) {
+        return statusCode == 401 || statusCode == 403;
     }
 
     private ResolvedExecutionTarget resolveLocalAsset(String assetId, String managementAuthorization) throws Exception {
@@ -695,6 +779,67 @@ public class ModelExecutionApiController {
         return normalizedBase + (normalizedPath.startsWith("/") ? normalizedPath : "/" + normalizedPath);
     }
 
+    private String normalizeEdrEndpoint(String endpoint, String remoteParticipantId) {
+        if (!hasText(endpoint)) {
+            return endpoint;
+        }
+
+        try {
+            var uri = URI.create(endpoint);
+            var host = firstNonBlank(uri.getHost(), "").toLowerCase(Locale.ROOT);
+            var path = firstNonBlank(uri.getPath(), "");
+            if (!host.endsWith(".pionera.oeg.fi.upm.es") || !"/public".equals(path)) {
+                return endpoint;
+            }
+
+            if (shouldUsePublicHttpEdrEndpoint() && "https".equalsIgnoreCase(uri.getScheme())) {
+                return "http://" + host
+                        + (uri.getPort() > 0 && uri.getPort() != 443 ? ":" + uri.getPort() : "")
+                        + path
+                        + (hasText(uri.getQuery()) ? "?" + uri.getQuery() : "")
+                        + (hasText(uri.getFragment()) ? "#" + uri.getFragment() : "");
+            }
+
+            if (!shouldUseInternalKubernetesEdrEndpoint() || !hasText(remoteParticipantId)) {
+                return endpoint;
+            }
+
+            var namespace = inferPioneraConnectorNamespace(remoteParticipantId);
+            if (!hasText(namespace)) {
+                return endpoint;
+            }
+
+            var internalBase = "http://%s.%s.svc.cluster.local:19291".formatted(remoteParticipantId, namespace);
+            return internalBase + path
+                    + (hasText(uri.getQuery()) ? "?" + uri.getQuery() : "")
+                    + (hasText(uri.getFragment()) ? "#" + uri.getFragment() : "");
+        } catch (RuntimeException exception) {
+            return endpoint;
+        }
+    }
+
+    private boolean shouldUsePublicHttpEdrEndpoint() {
+        return "public-http".equals(edrEndpointMode)
+                || "http".equals(edrEndpointMode);
+    }
+
+    private boolean shouldUseInternalKubernetesEdrEndpoint() {
+        return "internal-k8s".equals(edrEndpointMode)
+                || "kubernetes".equals(edrEndpointMode)
+                || "k8s".equals(edrEndpointMode);
+    }
+
+    private String inferPioneraConnectorNamespace(String participantId) {
+        var value = firstNonBlank(participantId, "").toLowerCase(Locale.ROOT);
+        if (value.contains("org2")) {
+            return "provider";
+        }
+        if (value.contains("org3")) {
+            return "consumer";
+        }
+        return "";
+    }
+
     private String encodePathSegment(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
@@ -765,6 +910,12 @@ public class ModelExecutionApiController {
                                            String executionMode,
                                            String endpointKind,
                                            String remoteParticipantId) {
+    }
+
+    private record CachedExecutionTarget(ResolvedExecutionTarget target, long expiresAtMillis) {
+        private boolean isFresh(long nowMillis) {
+            return target != null && expiresAtMillis > nowMillis;
+        }
     }
 
     private static class ExecutionException extends RuntimeException {

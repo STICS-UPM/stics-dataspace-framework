@@ -95,6 +95,9 @@ class ConsoleTestNameReporter {
     ) {
       return "Ontology Hub";
     }
+    if (isAdapterIntegrationSpec && file.includes("17-ai-model-official-use-cases.spec")) {
+      return "AI Model Hub Official Use Cases";
+    }
     if (
       isAdapterIntegrationSpec &&
       (

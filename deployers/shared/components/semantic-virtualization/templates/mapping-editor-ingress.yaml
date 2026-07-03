@@ -9,6 +9,7 @@
 {{- $path := $ingress.path | default "/" }}
 {{- $pathType := $ingress.pathType | default "Prefix" }}
 {{- $servicePort := $service.port | default 8501 }}
+{{- $ingressClass := $ingress.ingressClassName | default "" }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -21,6 +22,9 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
+  {{- if $ingressClass }}
+  ingressClassName: {{ $ingressClass }}
+  {{- end }}
   rules:
     - host: {{ $ingressHost }}
       http:

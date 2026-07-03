@@ -26,7 +26,6 @@ from deployers.shared.lib.components import (
 from deployers.shared.lib.cluster_runtime import build_cluster_runtime
 from deployers.shared.lib import image_runtime
 from deployers.shared.lib import local_images
-from deployers.shared.lib.public_hostnames import resolved_common_service_hostnames
 from deployers.shared.lib.remote_k3s_images import remote_k3s_image_import_target, shell_join
 from deployers.shared.lib.topology import VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY, normalize_topology
 from deployers.infrastructure.lib.paths import shared_artifact_roots
@@ -405,15 +404,6 @@ class INESDataComponentsAdapter:
         except (TypeError, ValueError):
             return None
         return parsed if parsed > 0 else None
-
-    def _ontology_hub_versions_persistence_expected(self, deployer_config: dict) -> bool:
-        config = dict(deployer_config or {})
-        persistence_enabled = config.get("ONTOLOGY_HUB_VERSIONS_PERSISTENCE_ENABLED")
-        if persistence_enabled is None:
-            persistence_enabled = config.get("COMPONENTS_VERSIONS_PERSISTENCE_ENABLED")
-        if persistence_enabled is None and (self._is_vm_single_topology() or self._is_vm_distributed_topology()):
-            persistence_enabled = True
-        return self._parse_bool(persistence_enabled, default=False)
 
     @staticmethod
     def _strip_url_scheme(host_or_url: str) -> str:
@@ -883,11 +873,15 @@ class INESDataComponentsAdapter:
             self._DEFAULT_COMPONENT_SOURCE_REF,
         ):
             value = str(candidate or "").strip()
+            if self._source_ref_uses_local_checkout(value):
+                return ""
             if value:
                 return value
         return self._DEFAULT_COMPONENT_SOURCE_REF
 
     def _ontology_hub_source_refresh_enabled(self, deployer_config: dict | None = None) -> bool:
+        if self._ontology_hub_uses_local_source_checkout(deployer_config):
+            return False
         explicit = None
         for candidate in (
             os.getenv("ONTOLOGY_HUB_SOURCE_REFRESH"),
@@ -903,6 +897,21 @@ class INESDataComponentsAdapter:
         if explicit is not None:
             return self._parse_bool(explicit, default=False)
         return bool(self._ontology_hub_source_ref(deployer_config))
+
+    @staticmethod
+    def _source_ref_uses_local_checkout(value: str) -> bool:
+        return str(value or "").strip().lower() in {"local", "checkout-local", "working-tree"}
+
+    def _ontology_hub_uses_local_source_checkout(self, deployer_config: dict | None = None) -> bool:
+        for candidate in (
+            os.getenv("ONTOLOGY_HUB_SOURCE_REF"),
+            os.getenv("ONTOLOGY_HUB_REPO_REF"),
+            (deployer_config or {}).get("ONTOLOGY_HUB_SOURCE_REF"),
+            (deployer_config or {}).get("ONTOLOGY_HUB_REPO_REF"),
+        ):
+            if self._source_ref_uses_local_checkout(candidate):
+                return True
+        return False
 
     @staticmethod
     def _looks_like_git_sha(value: str) -> bool:
@@ -1504,9 +1513,7 @@ class INESDataComponentsAdapter:
             "AI Model Hub source directory is not usable",
             root_cause=(
                 "Expected the AI Model Hub dashboard Dockerfile at "
-                "DataDashboard/Dockerfile or "
-                "adapters/inesdata/sources/inesdata-connector-interface/docker/Dockerfile "
-                "inside the configured AIModelHub checkout. "
+                "DataDashboard/Dockerfile inside the configured AIModelHub checkout. "
                 "Level 5 expects the canonical checkout at adapters/inesdata/sources/AIModelHub."
             ),
         )
@@ -1520,23 +1527,11 @@ class INESDataComponentsAdapter:
     @staticmethod
     def _ai_model_hub_dashboard_source_candidates(ai_model_hub_dir: str):
         return (
-            (
-                os.path.join(
-                    ai_model_hub_dir,
-                    "adapters",
-                    "inesdata",
-                    "sources",
-                    "inesdata-connector-interface",
-                ),
-                os.path.join("docker", "Dockerfile"),
-            ),
             (os.path.join(ai_model_hub_dir, "DataDashboard"), "Dockerfile"),
         )
 
     @staticmethod
     def _ai_model_hub_dashboard_dockerfile(dashboard_dir: str) -> str:
-        if os.path.isfile(os.path.join(dashboard_dir, "docker", "Dockerfile")):
-            return os.path.join("docker", "Dockerfile")
         return "Dockerfile"
 
     def _resolve_morph_kgv_source_dir(self, deployer_config: dict) -> str:
@@ -1961,19 +1956,18 @@ class INESDataComponentsAdapter:
             "VM_SINGLE_REMOTE_IMAGE_IMPORT_TTY",
             "VM_DISTRIBUTED_REMOTE_IMAGE_IMPORT_TTY",
         )
-        remote_image_prune = self._config_value(
+        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE"] = self._config_value(
             config,
             "VM_SINGLE_REMOTE_IMAGE_PRUNE",
             "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE",
         )
-        remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE"] = remote_image_prune or "true"
         remote_config["VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP"] = (
             self._config_value(
                 config,
                 "VM_SINGLE_REMOTE_IMAGE_PRUNE_KEEP",
                 "VM_DISTRIBUTED_REMOTE_IMAGE_PRUNE_KEEP",
             )
-            or "1"
+            or "2"
         )
 
         return remote_k3s_image_import_target(remote_config, role="common")
@@ -2096,100 +2090,6 @@ class INESDataComponentsAdapter:
     def _remote_k3s_interactive_fallback_allowed() -> bool:
         return bool(sys.stdin.isatty() and sys.stdout.isatty())
 
-    @staticmethod
-    def _image_repository(image_ref: str) -> str:
-        ref = str(image_ref or "").strip().split("@", 1)[0]
-        if not ref:
-            return ""
-        last_segment = ref.rsplit("/", 1)[-1]
-        if ":" in last_segment:
-            return ref.rsplit(":", 1)[0]
-        return ref
-
-    def _remote_k3s_prune_imported_images_command(self, image_refs, *, prune_keep: str = "1", sudo_stdin=False):
-        repos = []
-        for image_ref in self._dedupe_image_refs(image_refs):
-            for candidate in self._k3s_image_save_refs(image_ref):
-                repo = self._image_repository(candidate)
-                if repo and repo not in repos:
-                    repos.append(repo)
-        if not repos:
-            return ""
-
-        keep_q = shlex.quote(str(prune_keep or "1"))
-        repos_q = " ".join(shlex.quote(repo) for repo in repos)
-        jsonpath_q = shlex.quote(
-            '{range .items[*]}'
-            '{range .spec.initContainers[*]}{.image}{"\\n"}{end}'
-            '{range .spec.containers[*]}{.image}{"\\n"}{end}'
-            '{end}'
-        )
-        if sudo_stdin:
-            sudo_prelude = [
-                "__pionera_sudo_password=''",
-                "IFS= read -r __pionera_sudo_password || __pionera_sudo_password=''",
-                "pionera_sudo() {",
-                "  printf '%s\\n' \"$__pionera_sudo_password\" | sudo -S -p '' \"$@\"",
-                "}",
-            ]
-        else:
-            sudo_prelude = ["pionera_sudo() { sudo -n \"$@\"; }"]
-
-        return "\n".join(
-            [
-                "set -eu",
-                *sudo_prelude,
-                f"keep={keep_q}",
-                "case \"$keep\" in ''|*[!0-9]*) keep=1;; esac",
-                f"set -- {repos_q}",
-                "in_use=\"$(pionera_sudo k3s kubectl get pods -A "
-                f"-o jsonpath={jsonpath_q} 2>/dev/null || true)\"",
-                "for repo do",
-                "  count=0",
-                "  pionera_sudo k3s ctr -n k8s.io images ls -q 2>/dev/null | "
-                "while IFS= read -r image; do",
-                "    case \"$image\" in \"$repo\":*|docker.io/\"$repo\":*|*/\"$repo\":*) "
-                "printf '%s\\n' \"$image\";; esac",
-                "  done | sort -r | while IFS= read -r image; do",
-                "    short=\"${image#docker.io/}\"",
-                "    library_short=\"${image#docker.io/library/}\"",
-                "    if printf '%s\\n' \"$in_use\" | grep -Fxq \"$image\" || "
-                "printf '%s\\n' \"$in_use\" | grep -Fxq \"$short\" || "
-                "printf '%s\\n' \"$in_use\" | grep -Fxq \"$library_short\"; then",
-                "      continue",
-                "    fi",
-                "    count=$((count + 1))",
-                "    if [ \"$count\" -le \"$keep\" ]; then",
-                "      continue",
-                "    fi",
-                "    echo \"Pruning old k3s image: $image\"",
-                "    pionera_sudo k3s ctr -n k8s.io images rm \"$image\" >/dev/null 2>&1 || true",
-                "  done",
-                "done",
-                "pionera_sudo k3s crictl rmi --prune >/dev/null 2>&1 || true",
-                "pionera_sudo k3s ctr -n k8s.io content prune >/dev/null 2>&1 || true",
-            ]
-        )
-
-    def _prune_remote_k3s_imported_images(self, remote_target, image_refs):
-        if not remote_target or not getattr(remote_target, "prune_imported_images", False):
-            return
-        password_env = self._remote_k3s_sudo_password_env_name()
-        prune_command = self._remote_k3s_prune_imported_images_command(
-            image_refs,
-            prune_keep=getattr(remote_target, "prune_keep", "1"),
-            sudo_stdin=bool(password_env),
-        )
-        if not prune_command:
-            return
-
-        print("Pruning old remote k3s images for imported local image repositories...")
-        ssh_command = shell_join(remote_target.ssh_command_args(prune_command))
-        if password_env:
-            ssh_command = self._pipe_env_secret_command(password_env, ssh_command)
-        if self.run(ssh_command, check=False) is None:
-            print("Warning: remote k3s image prune failed; continuing.")
-
     def _load_images_into_k3s(self, image_refs, deployer_config: dict | None = None):
         image_refs = self._dedupe_image_refs(image_refs)
         if not image_refs:
@@ -2246,7 +2146,6 @@ class INESDataComponentsAdapter:
                                     "Failed to import image(s) into remote k3s containerd",
                                     root_cause=refs_label,
                                 )
-                            self._prune_remote_k3s_imported_images(remote_target, image_refs)
                             return
                         if self._remote_k3s_interactive_fallback_allowed():
                             print(
@@ -2266,7 +2165,6 @@ class INESDataComponentsAdapter:
                 )
                 if self.run(ssh_command, check=False) is None:
                     self._fail("Failed to import image(s) into remote k3s containerd", root_cause=refs_label)
-                self._prune_remote_k3s_imported_images(remote_target, image_refs)
                 return
             if self.run(f"sudo k3s ctr -n k8s.io images import {archive_q}", check=False) is None:
                 self._fail("Failed to import image(s) into k3s containerd", root_cause=refs_label)
@@ -2881,6 +2779,34 @@ class INESDataComponentsAdapter:
 
         return self._connector_public_base_url(connector_id, config)
 
+    def _ai_model_hub_standalone_dashboard_enabled(self, deployer_config: dict) -> bool:
+        config = dict(deployer_config or {})
+        for key in (
+            "AI_MODEL_HUB_STANDALONE_DASHBOARD_ENABLED",
+            "AI_MODEL_HUB_DASHBOARD_ENABLED",
+            "LEVEL5_AI_MODEL_HUB_DASHBOARD_ENABLED",
+        ):
+            if key in config and str(config.get(key) or "").strip() != "":
+                return self._parse_bool(config.get(key), default=False)
+        return False
+
+    def _ai_model_hub_integrated_connector_interface_url(self, *, ds_name=None, deployer_config=None) -> str:
+        config = dict(deployer_config or {})
+        connector_ids = self._resolve_dataspace_connector_ids(
+            ds_name=ds_name or self._dataspace_name(),
+            deployer_config=config,
+        )
+        if not connector_ids:
+            return ""
+
+        connector_id = connector_ids[0]
+        base_url = self._connector_external_base_url(connector_id, config, role="provider")
+        if not base_url:
+            base_url = self._connector_public_base_url(connector_id, config)
+        if not base_url:
+            return ""
+        return f"{base_url.rstrip('/')}/inesdata-connector-interface/"
+
     def _connector_protocol_base_url(self, connector_id: str, deployer_config: dict, *, role: str = "") -> str:
         config = dict(deployer_config or {})
         mode = str(
@@ -2891,198 +2817,6 @@ class INESDataComponentsAdapter:
         if mode in {"internal", "private"}:
             return self._connector_public_base_url(connector_id, config)
         return self._connector_external_base_url(connector_id, config, role=role)
-
-    @staticmethod
-    def _strip_url_suffix(url: str, suffix: str) -> str:
-        value = str(url or "").strip().rstrip("/")
-        normalized_suffix = str(suffix or "").strip().rstrip("/")
-        if normalized_suffix and value.endswith(normalized_suffix):
-            return value[: -len(normalized_suffix)].rstrip("/")
-        return value
-
-    @staticmethod
-    def _first_config_value(config: dict, *keys: str) -> str:
-        for key in keys:
-            value = str((config or {}).get(key) or "").strip()
-            if value:
-                return value
-        return ""
-
-    def _ai_model_hub_keycloak_issuer(self, deployer_config: dict, ds_name: str) -> str:
-        config = dict(deployer_config or {})
-        explicit = self._first_config_value(
-            config,
-            "AI_MODEL_HUB_OAUTH2_ISSUER",
-            "AI_MODEL_HUB_KEYCLOAK_ISSUER",
-            "AI_MODEL_HUB_KEYCLOAK_URL",
-            "KEYCLOAK_FRONTEND_URL",
-            "KEYCLOAK_PUBLIC_URL",
-        )
-        if explicit:
-            base = self._to_public_url(explicit).rstrip("/")
-        else:
-            common_config = dict(config)
-            if not str(common_config.get("DOMAIN_BASE") or "").strip():
-                ds_domain = str(common_config.get("DS_DOMAIN_BASE") or "").strip()
-                if ds_domain:
-                    common_config["DOMAIN_BASE"] = ds_domain
-            hostnames = resolved_common_service_hostnames(common_config)
-            base = self._to_public_url(hostnames.get("keycloak_hostname") or "").rstrip("/")
-
-        if not base:
-            return ""
-        realm_path = f"/realms/{ds_name}"
-        if base.endswith(realm_path):
-            return base
-        return f"{base}{realm_path}"
-
-    def _ai_model_hub_portal_backend_url(self, deployer_config: dict) -> str:
-        config = dict(deployer_config or {})
-        return self._first_config_value(
-            config,
-            "AI_MODEL_HUB_STRAPI_URL",
-            "AI_MODEL_HUB_PORTAL_BACKEND_URL",
-            "PUBLIC_PORTAL_BACKEND_PUBLIC_URL",
-            "PUBLIC_PORTAL_BACKEND_URL",
-            "PUBLIC_PORTAL_PUBLIC_URL",
-        ).rstrip("/")
-
-    def _ai_model_hub_model_observer_proxy_target(
-        self,
-        deployer_config: dict,
-        *,
-        ds_name: str,
-        strapi_url: str = "",
-    ) -> str:
-        config = dict(deployer_config or {})
-        explicit = self._first_config_value(
-            config,
-            "AI_MODEL_HUB_MODEL_OBSERVER_PROXY_TARGET",
-            "MODEL_OBSERVER_PROXY_TARGET",
-        )
-        if explicit:
-            return explicit.rstrip("/")
-        if strapi_url:
-            return strapi_url.rstrip("/")
-
-        resolved_ds_name = str(ds_name or self._dataspace_name() or "").strip() or self._dataspace_name()
-        resolved_index = self._resolve_dataspace_index(
-            ds_name=resolved_ds_name,
-            deployer_config=config,
-        )
-        registration_namespace = str(
-            config.get(f"DS_{resolved_index}_REGISTRATION_NAMESPACE")
-            or config.get("REGISTRATION_NAMESPACE")
-            or config.get(f"DS_{resolved_index}_NAMESPACE")
-            or self._resolve_legacy_components_namespace(
-                ds_name=resolved_ds_name,
-                deployer_config=config,
-            )
-            or resolved_ds_name
-        ).strip()
-        service_name = f"{resolved_ds_name}-public-portal-backend" if resolved_ds_name else "public-portal-backend"
-        if registration_namespace:
-            return f"http://{service_name}.{registration_namespace}.svc:1337"
-        return f"http://{service_name}:1337"
-
-    def _ai_model_hub_inesdata_ui_env(self, *, ds_name=None, deployer_config=None) -> dict:
-        resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
-        resolved_ds_name = str(ds_name or self._dataspace_name() or "").strip() or self._dataspace_name()
-        connector_ids = self._resolve_dataspace_connector_ids(
-            ds_name=resolved_ds_name,
-            deployer_config=resolved_config,
-        )
-        connector_config = self._ai_model_hub_connector_config(
-            ds_name=resolved_ds_name,
-            deployer_config=resolved_config,
-        )
-
-        selected = next(
-            (entry for entry in connector_config if entry.get("connectorName") == "Provider"),
-            connector_config[0] if connector_config else {},
-        )
-        provider_id = connector_ids[0] if connector_ids else ""
-        management_url = str(selected.get("managementUrl") or "").rstrip("/")
-        default_url = str(selected.get("defaultUrl") or "").rstrip("/")
-        connector_base = self._strip_url_suffix(management_url, "/management")
-        if not connector_base:
-            connector_base = self._strip_url_suffix(default_url, "/api")
-
-        catalog_url = str(selected.get("catalogUrl") or "").rstrip("/")
-        if not catalog_url and management_url:
-            catalog_url = f"{management_url}/federatedcatalog"
-
-        shared_url = str(resolved_config.get("AI_MODEL_HUB_SHARED_URL") or "").strip().rstrip("/")
-        if not shared_url and connector_base:
-            shared_url = f"{connector_base}/shared"
-
-        strapi_url = self._ai_model_hub_portal_backend_url(resolved_config)
-        model_observer_proxy_target = self._ai_model_hub_model_observer_proxy_target(
-            resolved_config,
-            ds_name=resolved_ds_name,
-            strapi_url=strapi_url,
-        )
-        keycloak_issuer = self._ai_model_hub_keycloak_issuer(resolved_config, resolved_ds_name)
-        storage_account = str(
-            resolved_config.get("AI_MODEL_HUB_STORAGE_ACCOUNT")
-            or resolved_config.get("STORAGE_ACCOUNT")
-            or ""
-        ).strip()
-        if not storage_account and provider_id:
-            storage_account = f"{self._connector_short_name(provider_id, resolved_ds_name)}assets"
-
-        allowed_urls = []
-        for value in (
-            connector_base,
-            management_url,
-            default_url,
-            catalog_url,
-            shared_url,
-            strapi_url,
-            self._configured_component_public_url("ai-model-hub", resolved_config),
-        ):
-            normalized = str(value or "").strip().rstrip("/")
-            if normalized and normalized not in allowed_urls:
-                allowed_urls.append(normalized)
-
-        env = {
-            "MANAGEMENT_API_URL": management_url,
-            "STRAPI_URL": strapi_url,
-            "CATALOG_URL": catalog_url,
-            "SHARED_URL": shared_url,
-            "PARTICIPANT_ID": provider_id,
-            "STORAGE_ACCOUNT": storage_account,
-            "STORAGE_LINK_TEMPLATE": str(
-                resolved_config.get("AI_MODEL_HUB_STORAGE_LINK_TEMPLATE")
-                or resolved_config.get("STORAGE_LINK_TEMPLATE")
-                or "storageexplorer://v=1"
-            ),
-            "OAUTH2_ISSUER": keycloak_issuer,
-            "OAUTH2_REDIRECT_PATH": str(
-                resolved_config.get("AI_MODEL_HUB_OAUTH2_REDIRECT_PATH")
-                or "/inesdata-connector-interface"
-            ),
-            "OAUTH2_CLIENT_ID": str(
-                resolved_config.get("AI_MODEL_HUB_OAUTH2_CLIENT_ID")
-                or "dataspace-users"
-            ),
-            "OAUTH2_SCOPE": str(
-                resolved_config.get("AI_MODEL_HUB_OAUTH2_SCOPE")
-                or "openid profile email"
-            ),
-            "OAUTH2_RESPONSE_TYPE": str(
-                resolved_config.get("AI_MODEL_HUB_OAUTH2_RESPONSE_TYPE")
-                or "code"
-            ),
-            "OAUTH2_SHOW_DEBUG_INFO": str(
-                resolved_config.get("AI_MODEL_HUB_OAUTH2_SHOW_DEBUG_INFO")
-                or "true"
-            ).lower(),
-            "OAUTH2_ALLOWED_URLS": ",".join(allowed_urls),
-            "MODEL_OBSERVER_PROXY_TARGET": model_observer_proxy_target,
-        }
-
-        return {key: value for key, value in env.items() if value is not None}
 
     def _ai_model_hub_connector_config(self, *, ds_name=None, deployer_config=None) -> list[dict]:
         resolved_config = dict(deployer_config or self.config_adapter.load_deployer_config() or {})
@@ -3177,7 +2911,7 @@ class INESDataComponentsAdapter:
             if persistence_enabled is not None:
                 versions = overrides.setdefault("versions", {})
                 persistence = versions.setdefault("persistence", {})
-                persistence["enabled"] = self._ontology_hub_versions_persistence_expected(deployer_config)
+                persistence["enabled"] = self._parse_bool(persistence_enabled, default=True)
                 persistence_size = str(
                     deployer_config.get("ONTOLOGY_HUB_VERSIONS_PERSISTENCE_SIZE")
                     or deployer_config.get("COMPONENTS_VERSIONS_PERSISTENCE_SIZE")
@@ -3231,12 +2965,6 @@ class INESDataComponentsAdapter:
             )
             if connector_config:
                 overrides.setdefault("config", {})["edcConnectorConfig"] = connector_config
-            overrides.setdefault("env", {}).update(
-                self._ai_model_hub_inesdata_ui_env(
-                    ds_name=self._dataspace_name(),
-                    deployer_config=deployer_config,
-                )
-            )
 
         if normalized == "semantic-virtualization":
             host = self._configured_component_host(normalized, deployer_config)
@@ -3604,6 +3332,17 @@ class INESDataComponentsAdapter:
                 if metadata.get("excluded") or metadata.get("error"):
                     continue
                 normalized = metadata.get("normalized_component")
+                if (
+                    normalized == "ai-model-hub"
+                    and not self._ai_model_hub_standalone_dashboard_enabled(deployer_config)
+                ):
+                    public_url = self._ai_model_hub_integrated_connector_interface_url(
+                        ds_name=ds_name,
+                        deployer_config=deployer_config,
+                    )
+                    if public_url:
+                        inferred_urls[normalized] = public_url
+                        continue
                 host = metadata.get("host")
                 public_url = metadata.get("public_url") or (
                     self._configured_component_public_url(normalized, deployer_config) if normalized else ""
@@ -3633,7 +3372,16 @@ class INESDataComponentsAdapter:
                 except Exception:
                     host = None
 
-                public_url = self._configured_component_public_url(normalized, deployer_config)
+                if (
+                    normalized == "ai-model-hub"
+                    and not self._ai_model_hub_standalone_dashboard_enabled(deployer_config)
+                ):
+                    public_url = self._ai_model_hub_integrated_connector_interface_url(
+                        ds_name=ds_name,
+                        deployer_config=deployer_config,
+                    )
+                else:
+                    public_url = self._configured_component_public_url(normalized, deployer_config)
                 if public_url:
                     inferred_urls[normalized] = public_url
                 elif host:
@@ -3714,6 +3462,17 @@ class INESDataComponentsAdapter:
                     metadata_by_component[normalized] = metadata
                 if metadata.get("excluded") or metadata.get("error"):
                     continue
+                if (
+                    normalized == "ai-model-hub"
+                    and not self._ai_model_hub_standalone_dashboard_enabled(deployer_config)
+                ):
+                    public_url = self._ai_model_hub_integrated_connector_interface_url(
+                        ds_name=ds_name,
+                        deployer_config=deployer_config,
+                    )
+                    if public_url:
+                        inferred_urls[normalized] = public_url
+                        continue
                 host = metadata.get("host")
                 public_url = metadata.get("public_url") or (
                     self._configured_component_public_url(normalized, deployer_config) if normalized else ""
@@ -3744,7 +3503,16 @@ class INESDataComponentsAdapter:
                 except Exception:
                     host = None
 
-                public_url = self._configured_component_public_url(normalized, deployer_config)
+                if (
+                    normalized == "ai-model-hub"
+                    and not self._ai_model_hub_standalone_dashboard_enabled(deployer_config)
+                ):
+                    public_url = self._ai_model_hub_integrated_connector_interface_url(
+                        ds_name=ds_name,
+                        deployer_config=deployer_config,
+                    )
+                else:
+                    public_url = self._configured_component_public_url(normalized, deployer_config)
                 if public_url:
                     inferred_urls[normalized] = public_url
                 elif host:

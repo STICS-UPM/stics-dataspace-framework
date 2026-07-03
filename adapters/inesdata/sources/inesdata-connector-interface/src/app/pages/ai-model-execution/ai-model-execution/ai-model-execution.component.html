@@ -37,16 +37,23 @@
 
     <div *ngIf="selectedAsset" class="model-info-card">
       <div class="model-header">
-        <h2>{{ selectedAsset.name }}</h2>
-        <span class="badge badge-primary">{{ selectedAsset.contentType || 'HttpData' }}</span>
+        <div class="model-title">
+          <h2>{{ selectedAsset.name }}</h2>
+          <span class="badge badge-primary">{{ selectedAsset.contentType || 'HttpData' }}</span>
+        </div>
+        <button class="change-model-button" type="button" (click)="changeModel()" [disabled]="executing">
+          Change Model
+        </button>
       </div>
 
       <div class="model-chip-row">
         <span class="soft-chip">{{ getSourceLabel(selectedAsset) }}</span>
         <span class="soft-chip">{{ selectedAsset.provider }}</span>
-        <span class="soft-chip" *ngIf="selectedAsset.algorithms.length > 0">{{ selectedAsset.algorithms[0] }}</span>
-        <span class="soft-chip" *ngIf="selectedAsset.frameworks.length > 0">{{ selectedAsset.frameworks[0] }}</span>
         <span class="soft-chip" *ngIf="selectedAsset.tasks.length > 0">{{ selectedAsset.tasks[0] }}</span>
+        <span class="soft-chip" *ngIf="selectedAsset.taskTypes.length > 0">{{ selectedAsset.taskTypes[0] }}</span>
+        <span class="soft-chip" *ngIf="selectedAsset.modalities.length > 0">{{ selectedAsset.modalities.join(', ') }}</span>
+        <span class="soft-chip" *ngIf="selectedAsset.libraries.length > 0">{{ selectedAsset.libraries[0] }}</span>
+        <span class="soft-chip" *ngIf="selectedAsset.endpointBehaviors.length > 0">{{ selectedAsset.endpointBehaviors[0] }}</span>
         <span class="soft-chip" *ngIf="selectedAsset.hasAgreement && !selectedAsset.isLocal">Agreement ready</span>
       </div>
 
@@ -65,13 +72,29 @@
           <span class="label">Path:</span>
           <span class="value">{{ executionPath || '/' }}</span>
         </div>
-        <div class="detail-row" *ngIf="selectedAsset.algorithms.length > 0">
-          <span class="label">Algorithm:</span>
-          <span class="value">{{ selectedAsset.algorithms[0] }}</span>
+        <div class="detail-row" *ngIf="selectedAsset.tasks.length > 0">
+          <span class="label">Task category:</span>
+          <span class="value">{{ selectedAsset.tasks[0] }}</span>
         </div>
-        <div class="detail-row" *ngIf="selectedAsset.frameworks.length > 0">
-          <span class="label">Framework:</span>
-          <span class="value">{{ selectedAsset.frameworks[0] }}</span>
+        <div class="detail-row" *ngIf="selectedAsset.taskTypes.length > 0">
+          <span class="label">Task type:</span>
+          <span class="value">{{ selectedAsset.taskTypes[0] }}</span>
+        </div>
+        <div class="detail-row" *ngIf="selectedAsset.modalities.length > 0">
+          <span class="label">Modality:</span>
+          <span class="value">{{ selectedAsset.modalities.join(', ') }}</span>
+        </div>
+        <div class="detail-row" *ngIf="selectedAsset.subtasks && selectedAsset.subtasks.length > 0">
+          <span class="label">Subtask:</span>
+          <span class="value">{{ selectedAsset.subtasks[0] }}</span>
+        </div>
+        <div class="detail-row" *ngIf="selectedAsset.libraries.length > 0">
+          <span class="label">Library:</span>
+          <span class="value">{{ selectedAsset.libraries[0] }}</span>
+        </div>
+        <div class="detail-row" *ngIf="selectedAsset.endpointBehaviors.length > 0">
+          <span class="label">Endpoint behavior:</span>
+          <span class="value">{{ selectedAsset.endpointBehaviors[0] }}</span>
         </div>
       </div>
 
@@ -118,7 +141,25 @@
           </div>
         </div>
 
-        <div *ngIf="selectedAsset?.inputExample !== undefined && selectedAsset?.inputExample !== null" class="history-section">
+        <details *ngIf="hasDaimoInputSchema" class="history-section input-schema-section">
+          <summary class="input-schema-summary">
+            <span>Detected DAIMO input schema</span>
+            <span class="input-schema-count" *ngIf="inputFields.length > 0">{{ inputFields.length }} fields</span>
+          </summary>
+          <div *ngIf="inputFields.length > 0" class="schema-field-list">
+            <div *ngFor="let field of inputFields" class="schema-field">
+              <div class="schema-field-main">
+                <span class="schema-field-name">{{ field.spec.name }}</span>
+                <span class="schema-field-type">{{ field.spec.type }}</span>
+                <span *ngIf="field.spec.required" class="schema-field-required">required</span>
+              </div>
+              <span *ngIf="field.spec.description" class="schema-field-description">{{ field.spec.description }}</span>
+            </div>
+          </div>
+          <pre *ngIf="inputFields.length === 0" class="json-small">{{ asPrettyJson(selectedAsset?.inputSchema) }}</pre>
+        </details>
+
+        <div *ngIf="!hasDaimoInputSchema && selectedAsset?.inputExample !== undefined && selectedAsset?.inputExample !== null" class="history-section">
           <strong>Detected example payload</strong>
           <pre class="json-small">{{ asPrettyJson(selectedAsset?.inputExample) }}</pre>
         </div>

@@ -76,13 +76,13 @@ console.log(JSON.stringify({
         self.assertEqual(payload["root"], "https://org1.example.test/semantic-virtualization-editor/")
         self.assertEqual(payload["query"], "https://org1.example.test/semantic-virtualization/openapi.json")
 
-    def test_ui_runner_enables_mapping_editor_suite_by_default(self):
+    def test_ui_runner_disables_mapping_editor_suite_by_default(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             payload = _playwright_payload()
 
             def fake_subprocess_run(command, cwd=None, env=None):
                 self.assertEqual(env["SEMANTIC_VIRTUALIZATION_BASE_URL"], "http://sv.example.local")
-                self.assertEqual(env["SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI"], "1")
+                self.assertEqual(env["SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_UI"], "0")
                 self.assertEqual(env["PIONERA_PLAYWRIGHT_SUITE_NAME"], "Virtualizador functional")
                 self.assertIn("../components/semantic_virtualization/ui/playwright.config.js", command)
                 with open(env["PLAYWRIGHT_JSON_REPORT_FILE"], "w", encoding="utf-8") as handle:

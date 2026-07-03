@@ -210,6 +210,7 @@ class TransferStorageVerifier:
         )
         return urllib3.PoolManager(
             timeout=urllib3.Timeout(connect=connect_timeout, read=read_timeout),
+            cert_reqs="CERT_NONE",
         )
 
     @staticmethod

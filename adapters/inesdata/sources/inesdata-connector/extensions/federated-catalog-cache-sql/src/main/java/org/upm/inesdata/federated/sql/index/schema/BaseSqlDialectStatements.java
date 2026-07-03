@@ -65,17 +65,6 @@ public class BaseSqlDialectStatements implements SqlFederatedCatalogStatements {
     /**
      * {@inheritDoc}
      *
-     * @see SqlFederatedCatalogStatements#getDeleteCatalogByIdTemplate()
-     */
-    @Override
-    public String getDeleteCatalogByIdTemplate() {
-        return executeStatement()
-            .delete(getCatalogTable(), getCatalogIdColumn());
-    }
-
-    /**
-     * {@inheritDoc}
-     *
      * @see SqlFederatedCatalogStatements#getInsertDataServiceTemplate()
      */
     @Override
@@ -189,7 +178,7 @@ public class BaseSqlDialectStatements implements SqlFederatedCatalogStatements {
      */
     @Override
     public String getSelectDistributionsForDatasetTemplate() {
-        return format("SELECT * FROM %s AS a WHERE dataset_id = ? AND catalog_id = ?", getDistributionTable());
+        return format("SELECT * FROM %s AS a WHERE dataset_id = ?", getDistributionTable());
     }
 
     /**

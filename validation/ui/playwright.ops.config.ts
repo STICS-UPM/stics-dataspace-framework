@@ -32,5 +32,8 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "on",
     ignoreHTTPSErrors: true,
+    launchOptions: {
+      args: ["--ignore-certificate-errors", "--disable-web-security"],
+    },
   },
 });

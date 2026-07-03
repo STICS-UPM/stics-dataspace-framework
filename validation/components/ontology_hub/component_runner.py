@@ -152,7 +152,7 @@ def run_ontology_hub_component_validation(base_url: str, experiment_dir: str | N
     started_at = datetime.now().isoformat()
     normalized_base_url = (base_url or "").rstrip("/")
     phases: Dict[str, Dict[str, Any]] = {}
-    api_only = component_api_only_enabled()
+    api_only = component_api_only_enabled(component=COMPONENT_KEY)
 
     phase_runners = [
         ("functional", run_ontology_hub_functional_component_validation),

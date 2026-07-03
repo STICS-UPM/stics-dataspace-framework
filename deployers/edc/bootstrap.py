@@ -818,8 +818,21 @@ def configure_keycloak(config: dict[str, str], connector: str, dataspace: str, e
     admin.ensure_client(connector, cert_path)
 
 
+def _resolve_vault_url(config: dict[str, str]) -> str:
+    """Return the first reachable Vault URL. VT_URL may be cluster-internal DNS."""
+    primary = str(config.get("VT_URL") or "http://localhost:8200").strip().rstrip("/")
+    fallback = str(config.get("VAULT_URL") or "").strip().rstrip("/")
+    for candidate in filter(None, [primary, fallback]):
+        try:
+            requests.get(f"{candidate}/v1/sys/health", timeout=3, verify=False)
+            return candidate
+        except requests.RequestException:
+            continue
+    return primary
+
+
 def configure_vault(config: dict[str, str], connector: str, dataspace: str, environment: str) -> None:
-    vault_url = config.get("VT_URL", "http://localhost:8200").rstrip("/")
+    vault_url = _resolve_vault_url(config)
     token = config.get("VT_TOKEN", "")
     headers = {"X-Vault-Token": token}
     policy_name = f"{connector}-secrets-policy"

@@ -5,7 +5,6 @@
     "description": "Consumer retrieves provider catalog through Management API and DSP protocol",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
-
   "event": [
     {
       "listen": "test",
@@ -17,9 +16,7 @@
       }
     }
   ],
-
   "item": [
-
     {
       "name": "Provider Login",
       "request": {
@@ -46,16 +43,35 @@
         "body": {
           "mode": "urlencoded",
           "urlencoded": [
-            { "key": "grant_type", "value": "password", "type": "text" },
-            { "key": "client_id", "value": "{{keycloakClientId}}", "type": "text" },
-            { "key": "username", "value": "{{provider_user}}", "type": "text" },
-            { "key": "password", "value": "{{provider_password}}", "type": "text" },
-            { "key": "scope", "value": "openid profile email", "type": "text" }
+            {
+              "key": "grant_type",
+              "value": "password",
+              "type": "text"
+            },
+            {
+              "key": "client_id",
+              "value": "{{keycloakClientId}}",
+              "type": "text"
+            },
+            {
+              "key": "username",
+              "value": "{{provider_user}}",
+              "type": "text"
+            },
+            {
+              "key": "password",
+              "value": "{{provider_password}}",
+              "type": "text"
+            },
+            {
+              "key": "scope",
+              "value": "openid profile email",
+              "type": "text"
+            }
           ]
         }
       }
     },
-
     {
       "name": "Consumer Login",
       "request": {
@@ -82,16 +98,35 @@
         "body": {
           "mode": "urlencoded",
           "urlencoded": [
-            { "key": "grant_type", "value": "password", "type": "text" },
-            { "key": "client_id", "value": "{{keycloakClientId}}", "type": "text" },
-            { "key": "username", "value": "{{consumer_user}}", "type": "text" },
-            { "key": "password", "value": "{{consumer_password}}", "type": "text" },
-            { "key": "scope", "value": "openid profile email", "type": "text" }
+            {
+              "key": "grant_type",
+              "value": "password",
+              "type": "text"
+            },
+            {
+              "key": "client_id",
+              "value": "{{keycloakClientId}}",
+              "type": "text"
+            },
+            {
+              "key": "username",
+              "value": "{{consumer_user}}",
+              "type": "text"
+            },
+            {
+              "key": "password",
+              "value": "{{consumer_password}}",
+              "type": "text"
+            },
+            {
+              "key": "scope",
+              "value": "openid profile email",
+              "type": "text"
+            }
           ]
         }
       }
     },
-
     {
       "name": "Request Federated Catalog (Management API)",
       "request": {
@@ -121,11 +156,10 @@
         },
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"CatalogRequest\",\n  \"counterPartyAddress\": \"{{providerProtocolAddress}}\",\n  \"counterPartyId\": \"{{provider}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"querySpec\": {\n    \"offset\": 0,\n    \"limit\": 100,\n    \"filterExpression\": []\n  }\n}"
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"CatalogRequest\",\n  \"counterPartyAddress\": \"{{providerProtocolAddress}}\",\n  \"counterPartyId\": \"{{provider}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"querySpec\": {\n    \"offset\": 0,\n    \"limit\": 500,\n    \"filterExpression\": []\n  }\n}"
         }
       }
     },
-
     {
       "name": "Direct DSP Catalog Request",
       "request": {
@@ -154,10 +188,9 @@
         },
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"CatalogRequest\",\n  \"counterPartyAddress\": \"{{providerProtocolAddress}}\",\n  \"counterPartyId\": \"{{provider}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"querySpec\": {\n    \"offset\": 0,\n    \"limit\": 100,\n    \"filterExpression\": []\n  }\n}"
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"CatalogRequest\",\n  \"counterPartyAddress\": \"{{providerProtocolAddress}}\",\n  \"counterPartyId\": \"{{provider}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"querySpec\": {\n    \"offset\": 0,\n    \"limit\": 500,\n    \"filterExpression\": []\n  }\n}"
         }
       }
     }
-
   ]
 }

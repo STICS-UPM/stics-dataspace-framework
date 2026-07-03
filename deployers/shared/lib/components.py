@@ -48,8 +48,8 @@ COMPONENT_CONTRACTS: dict[str, ComponentContract] = {
     "ai-model-hub": ComponentContract(
         component="ai-model-hub",
         supported_adapters=("inesdata", "edc"),
-        deployable_adapters=("inesdata", "edc"),
-        deployment_strategy="shared-chart-active-adapter",
+        deployable_adapters=("edc",),
+        deployment_strategy="integrated-in-inesdata-connector-interface",
         validation_groups=("ai-model-hub",),
         edc_required_connector_extensions=(
             EDC_EXTENSION_ASSET_FILTER,
@@ -414,6 +414,7 @@ def summarize_components_for_adapter(config: dict[str, Any] | None, adapter: str
     adapter_name = str(adapter or "").strip().lower()
     configured = configured_optional_components(config)
     deployable: list[str] = []
+    integrated: list[str] = []
     pending_support: list[str] = []
     unsupported: list[str] = []
     unknown: list[str] = []
@@ -427,6 +428,9 @@ def summarize_components_for_adapter(config: dict[str, Any] | None, adapter: str
             deployable.append(component)
             continue
         if adapter_name in contract.supported_adapters:
+            if "integrated" in str(contract.deployment_strategy or "").lower():
+                integrated.append(component)
+                continue
             pending_support.append(component)
             continue
         unsupported.append(component)
@@ -434,6 +438,7 @@ def summarize_components_for_adapter(config: dict[str, Any] | None, adapter: str
     return {
         "configured": configured,
         "deployable": deployable,
+        "integrated": integrated,
         "pending_support": pending_support,
         "unsupported": unsupported,
         "unknown": unknown,
@@ -447,10 +452,12 @@ def build_component_preview(
     pending_support: list[str] | tuple[str, ...] | None,
     unsupported: list[str] | tuple[str, ...] | None,
     unknown: list[str] | tuple[str, ...] | None,
+    integrated: list[str] | tuple[str, ...] | None = None,
     inferred_urls: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     configured_values = [str(value or "").strip() for value in (configured or []) if str(value or "").strip()]
     deployable_values = [str(value or "").strip() for value in (deployable or []) if str(value or "").strip()]
+    integrated_values = [str(value or "").strip() for value in (integrated or []) if str(value or "").strip()]
     pending_values = [str(value or "").strip() for value in (pending_support or []) if str(value or "").strip()]
     unsupported_values = [str(value or "").strip() for value in (unsupported or []) if str(value or "").strip()]
     unknown_values = [str(value or "").strip() for value in (unknown or []) if str(value or "").strip()]
@@ -463,6 +470,7 @@ def build_component_preview(
             "components": [],
             "configured": [],
             "deployable": [],
+            "integrated": [],
             "pending_support": [],
             "unsupported": [],
             "unknown": [],
@@ -470,11 +478,14 @@ def build_component_preview(
 
     component_entries: list[dict[str, Any]] = []
     deployable_set = set(deployable_values)
+    integrated_set = set(integrated_values)
     pending_set = set(pending_values)
     unsupported_set = set(unsupported_values)
     for component in configured_values:
         if component in deployable_set:
             component_status = "planned"
+        elif component in integrated_set:
+            component_status = "integrated"
         elif component in pending_set:
             component_status = "pending-support"
         elif component in unsupported_set:
@@ -492,6 +503,9 @@ def build_component_preview(
     if deployable_values:
         status = "planned"
         action = "deploy_components"
+    elif integrated_values:
+        status = "integrated"
+        action = "validate_integrated_components"
     elif pending_values:
         status = "pending-support"
         action = "skip"
@@ -508,6 +522,7 @@ def build_component_preview(
         "components": component_entries,
         "configured": configured_values,
         "deployable": deployable_values,
+        "integrated": integrated_values,
         "pending_support": pending_values,
         "unsupported": unsupported_values,
         "unknown": unknown_values,

@@ -75,6 +75,11 @@ def analyze_seed_script(script_text: str) -> Dict[str, Any]:
     return {
         "line_count": len(script_text.splitlines()),
         "supports_seed_scope": "--seed-scope" in script_text and "SEED_SCOPE" in script_text,
+        "supports_daimo_vocabularies": (
+            "JS_DAIMO_Model" in script_text
+            and "JS_DAIMO_Dataset" in script_text
+            and "vocabularies" in script_text
+        ),
         "supports_dataset_assets": (
             "MOBILITY_SEGMENTS_DATASET_FILE" in script_text
             and "FLARES_5W1H_DATASET_FILE" in script_text
@@ -99,6 +104,7 @@ def classify_porting_need(local_features: Dict[str, Any], upstream_features: Dic
     gaps = []
     for key, description in (
         ("supports_seed_scope", "Step 9/10 selectable seed scopes"),
+        ("supports_daimo_vocabularies", "Step 8 DAIMO model and dataset vocabularies"),
         ("supports_dataset_assets", "Step 9 benchmark dataset assets and contracts"),
         ("supports_flares_metric_models", "FLARES metric-model assets for custom evaluation"),
         ("supports_skip_flags", "safe split between base, dataset and use-case model seeding"),
@@ -130,11 +136,15 @@ def build_demo_adoption_plan(local_features: Dict[str, Any], upstream_features: 
         local_features,
         upstream_features,
     )
+    step_8_status = _step_status(
+        ("supports_seed_scope", "supports_daimo_vocabularies"),
+        local_features,
+        upstream_features,
+    )
     step_10_status = _step_status(
         (
             "supports_seed_scope",
             "supports_use_case_models",
-            "supports_flares_metric_models",
             "supports_skip_flags",
         ),
         local_features,
@@ -147,10 +157,24 @@ def build_demo_adoption_plan(local_features: Dict[str, Any], upstream_features: 
             "title": "Deploy/start AI Model Hub model server",
             "local_status": "available",
             "local_mapping": (
-                "Use AI_MODEL_HUB_MODEL_SERVER_MODE=combined or use-cases, then run the "
+                "Use AI_MODEL_HUB_MODEL_SERVER_MODE=use-cases, then run the "
                 "framework model-server deployment step."
             ),
-            "notes": "No upstream merge is needed for the existing combined/use-cases model-server integration.",
+            "notes": "The framework-owned flow intentionally avoids mock/sentiment endpoints.",
+        },
+        {
+            "upstream_step": 8,
+            "title": "Seed DAIMO model and dataset vocabularies",
+            "local_status": step_8_status,
+            "local_mapping": "scripts/seed_ml_assets_for_connectors.sh",
+            "requires_features": [
+                "supports_seed_scope",
+                "supports_daimo_vocabularies",
+            ],
+            "target_command_after_port": (
+                "bash scripts/seed_ml_assets_for_connectors.sh --seed-scope vocabularies"
+            ),
+            "notes": "Creates/updates only JS_DAIMO_Model and JS_DAIMO_Dataset.",
         },
         {
             "upstream_step": 9,
@@ -163,8 +187,7 @@ def build_demo_adoption_plan(local_features: Dict[str, Any], upstream_features: 
                 "supports_skip_flags",
             ],
             "target_command_after_port": (
-                "bash scripts/seed_ml_assets_for_connectors.sh "
-                "--seed-scope datasets --model-set combined --skip-use-case-models"
+                "bash scripts/seed_ml_assets_for_connectors.sh --seed-scope datasets"
             ),
             "notes": (
                 "Ready to run after the AIModelHub-Use-Cases dataset files are present."
@@ -174,13 +197,12 @@ def build_demo_adoption_plan(local_features: Dict[str, Any], upstream_features: 
         },
         {
             "upstream_step": 10,
-            "title": "Seed FLARES/Mobility model assets and FLARES metric-model assets",
+            "title": "Seed FLARES/Mobility model assets",
             "local_status": step_10_status,
             "local_mapping": "scripts/seed_ml_assets_for_connectors.sh",
             "requires_features": [
                 "supports_seed_scope",
                 "supports_use_case_models",
-                "supports_flares_metric_models",
                 "supports_skip_flags",
             ],
             "target_command_after_port": (
@@ -188,7 +210,7 @@ def build_demo_adoption_plan(local_features: Dict[str, Any], upstream_features: 
                 "--seed-scope models --model-set use-cases "
                 "--include-use-case-models --skip-inesdata-models"
             ),
-            "notes": "Use this only after Step 7 exposes the combined/use-case model server to connectors.",
+            "notes": "Use this only after Step 7 exposes the use-cases model server to connectors.",
         },
     ]
 

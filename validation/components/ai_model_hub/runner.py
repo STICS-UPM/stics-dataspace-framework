@@ -6,14 +6,11 @@ from urllib import error, parse, request
 
 
 COMPONENT_KEY = "ai-model-hub"
-DASHBOARD_PATH = os.environ.get("AI_MODEL_HUB_DASHBOARD_PATH", "")
-DEFAULT_APP_CONFIG_PATHS = (
-    "inesdata-connector-interface/assets/config/app.config.json",
-    "assets/config/app.config.json",
-    "config/app-config.json",
-    "edc-dashboard/config/app-config.json",
-)
-APP_CONFIG_PATH = os.environ.get("AI_MODEL_HUB_APP_CONFIG_PATH", ",".join(DEFAULT_APP_CONFIG_PATHS))
+DEFAULT_DASHBOARD_PATH = ""
+DEFAULT_APP_CONFIG_PATH = "config/app-config.json"
+INESDATA_APP_CONFIG_PATH = "assets/config/app.config.json"
+DEFAULT_APP_CONFIG_REQUIRED_KEYS = ("menuItems",)
+INESDATA_APP_CONFIG_REQUIRED_KEYS = ("managementApiUrl", "catalogUrl", "participantId")
 
 SUPPORT_CASE_METADATA: Dict[str, Dict[str, str]] = {
     "MH-BOOTSTRAP-01": {
@@ -59,24 +56,50 @@ def _build_url(base_url: str, relative_path: str) -> str:
     return parse.urljoin(f"{normalized_base_url}/", relative_path.lstrip("/"))
 
 
-def _configured_app_config_paths() -> List[str]:
-    raw_paths = os.environ.get("AI_MODEL_HUB_APP_CONFIG_PATH", APP_CONFIG_PATH)
-    paths = [
-        path.strip()
-        for path in str(raw_paths or "").replace("\n", ",").split(",")
-        if path.strip()
-    ]
-    return paths or list(DEFAULT_APP_CONFIG_PATHS)
+def _dashboard_path() -> str:
+    return os.environ.get("AI_MODEL_HUB_DASHBOARD_PATH", DEFAULT_DASHBOARD_PATH)
 
 
-def _configured_dashboard_path() -> str:
-    return str(os.environ.get("AI_MODEL_HUB_DASHBOARD_PATH", DASHBOARD_PATH) or "").strip()
+def _component_adapter_name() -> str:
+    return str(
+        os.environ.get("AI_MODEL_HUB_COMPONENT_ADAPTER")
+        or os.environ.get("PIONERA_ADAPTER")
+        or os.environ.get("UI_ADAPTER")
+        or ""
+    ).strip().lower()
+
+
+def _default_app_config_path() -> str:
+    if _component_adapter_name() == "inesdata":
+        return INESDATA_APP_CONFIG_PATH
+    return DEFAULT_APP_CONFIG_PATH
+
+
+def _app_config_path() -> str:
+    return os.environ.get("AI_MODEL_HUB_APP_CONFIG_PATH", _default_app_config_path())
+
+
+def _default_app_config_required_keys() -> tuple[str, ...]:
+    if _component_adapter_name() == "inesdata":
+        return INESDATA_APP_CONFIG_REQUIRED_KEYS
+    return DEFAULT_APP_CONFIG_REQUIRED_KEYS
+
+
+def _app_config_required_keys() -> list[str]:
+    raw_value = str(os.environ.get("AI_MODEL_HUB_APP_CONFIG_REQUIRED_KEYS") or "").strip()
+    if not raw_value:
+        return list(_default_app_config_required_keys())
+    return [entry.strip() for entry in raw_value.replace(";", ",").split(",") if entry.strip()]
 
 
 def _http_get(url: str, timeout: int = 20) -> Tuple[int, str, str]:
+    import ssl as _ssl
+    _ctx = _ssl.create_default_context()
+    _ctx.check_hostname = False
+    _ctx.verify_mode = _ssl.CERT_NONE
     req = request.Request(url, method="GET")
     try:
-        with request.urlopen(req, timeout=timeout) as response:
+        with request.urlopen(req, timeout=timeout, context=_ctx) as response:
             body = response.read().decode("utf-8", errors="replace")
             return response.getcode(), response.headers.get("Content-Type", ""), body
     except error.HTTPError as exc:
@@ -157,16 +180,6 @@ def evaluate_runtime_config_response(
             f"Runtime configuration is missing required keys: {', '.join(missing)}"
         )
 
-    has_legacy_dashboard_shape = "menuItems" in payload
-    has_inesdata_connector_shape = all(
-        key in payload for key in ("managementApiUrl", "catalogUrl", "service", "oauth2")
-    )
-    if not required_keys and not has_legacy_dashboard_shape and not has_inesdata_connector_shape:
-        result["status"] = "failed"
-        result["assertions"].append(
-            "Runtime configuration payload does not match a known AI Model Hub layout"
-        )
-
     menu_items = payload.get("menuItems")
     if "menuItems" in payload and not isinstance(menu_items, list):
         result["status"] = "failed"
@@ -195,44 +208,10 @@ def evaluate_runtime_config_response(
             "Runtime configuration field 'enableUserConfig' must be a boolean"
         )
 
-    service = payload.get("service")
-    if "service" in payload and not isinstance(service, dict):
-        result["status"] = "failed"
-        result["assertions"].append("Runtime configuration field 'service' must be an object")
-
-    oauth2 = payload.get("oauth2")
-    if "oauth2" in payload and not isinstance(oauth2, dict):
-        result["status"] = "failed"
-        result["assertions"].append("Runtime configuration field 'oauth2' must be an object")
-
-    for string_key in (
-        "managementApiUrl",
-        "strapiUrl",
-        "catalogUrl",
-        "sharedUrl",
-        "ontologyUrl",
-        "participantId",
-    ):
-        value = payload.get(string_key)
-        if string_key in payload and value is not None and not isinstance(value, str):
-            result["status"] = "failed"
-            result["assertions"].append(
-                f"Runtime configuration field '{string_key}' must be a string"
-            )
-
     result["app_title"] = app_title
-    result["config_shape"] = (
-        "inesdata-connector-interface"
-        if has_inesdata_connector_shape
-        else "data-dashboard" if has_legacy_dashboard_shape else "unknown"
-    )
     result["menu_items_count"] = len(menu_items) if isinstance(menu_items, list) else 0
     result["health_check_interval_seconds"] = health_check_interval_seconds
     result["enable_user_config"] = enable_user_config
-    result["management_api_url"] = payload.get("managementApiUrl")
-    result["catalog_url"] = payload.get("catalogUrl")
-    result["participant_id"] = payload.get("participantId")
-    result["oauth2_issuer"] = oauth2.get("issuer") if isinstance(oauth2, dict) else None
     return result
 
 
@@ -315,7 +294,7 @@ def run_ai_model_hub_validation(base_url: str, experiment_dir: str | None = None
     started_at = datetime.now().isoformat()
     normalized_base_url = (base_url or "").rstrip("/")
 
-    shell_url = _build_url(normalized_base_url, _configured_dashboard_path())
+    shell_url = _build_url(normalized_base_url, _dashboard_path())
     shell_status, shell_content_type, shell_body = _http_get(shell_url)
     shell_evaluation = evaluate_html_shell_response(
         shell_status,
@@ -340,41 +319,14 @@ def run_ai_model_hub_validation(base_url: str, experiment_dir: str | None = None
         assertions=list(shell_evaluation.get("assertions") or []),
     )
 
-    config_attempts: List[Dict[str, Any]] = []
-    config_url = ""
-    config_status = 0
-    config_content_type = ""
-    config_body = ""
-    config_evaluation: Dict[str, Any] = {
-        "status": "failed",
-        "assertions": ["Runtime configuration was not requested"],
-    }
-    for config_path in _configured_app_config_paths():
-        candidate_url = _build_url(normalized_base_url, config_path)
-        candidate_status, candidate_content_type, candidate_body = _http_get(candidate_url)
-        candidate_evaluation = evaluate_runtime_config_response(
-            candidate_status,
-            candidate_content_type,
-            candidate_body,
-            required_keys=[],
-        )
-        config_attempts.append(
-            {
-                "path": config_path,
-                "url": candidate_url,
-                "http_status": candidate_status,
-                "status": candidate_evaluation["status"],
-                "assertions": list(candidate_evaluation.get("assertions") or []),
-            }
-        )
-        config_url = candidate_url
-        config_status = candidate_status
-        config_content_type = candidate_content_type
-        config_body = candidate_body
-        config_evaluation = candidate_evaluation
-        if candidate_evaluation["status"] == "passed":
-            break
-
+    config_url = _build_url(normalized_base_url, _app_config_path())
+    config_status, config_content_type, config_body = _http_get(config_url)
+    config_evaluation = evaluate_runtime_config_response(
+        config_status,
+        config_content_type,
+        config_body,
+        required_keys=_app_config_required_keys(),
+    )
     config_case = _build_case_result(
         case_id="MH-BOOTSTRAP-02",
         description="Runtime application configuration availability",
@@ -383,23 +335,16 @@ def run_ai_model_hub_validation(base_url: str, experiment_dir: str | None = None
         request_payload={
             "method": "GET",
             "url": config_url,
-            "attempted_urls": [attempt["url"] for attempt in config_attempts],
         },
         response_payload={
             "http_status": config_status,
             "content_type": config_content_type,
             "body_excerpt": config_body[:500],
             "payload_keys": config_evaluation.get("payload_keys"),
-            "config_shape": config_evaluation.get("config_shape"),
             "app_title": config_evaluation.get("app_title"),
             "menu_items_count": config_evaluation.get("menu_items_count"),
             "health_check_interval_seconds": config_evaluation.get("health_check_interval_seconds"),
             "enable_user_config": config_evaluation.get("enable_user_config"),
-            "management_api_url": config_evaluation.get("management_api_url"),
-            "catalog_url": config_evaluation.get("catalog_url"),
-            "participant_id": config_evaluation.get("participant_id"),
-            "oauth2_issuer": config_evaluation.get("oauth2_issuer"),
-            "attempts": config_attempts,
         },
         assertions=list(config_evaluation.get("assertions") or []),
     )

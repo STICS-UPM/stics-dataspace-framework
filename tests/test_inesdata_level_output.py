@@ -542,7 +542,8 @@ minio:
                 }
             )
 
-        kubeconfigs = [command[command.index("--kubeconfig") + 1] for command in observed]
+        patch_commands = [command for command in observed if "patch" in command]
+        kubeconfigs = [command[command.index("--kubeconfig") + 1] for command in patch_commands]
         self.assertEqual(
             kubeconfigs,
             [
@@ -550,6 +551,29 @@ minio:
                 os.path.join(home_dir, ".kube", "consumer.yaml"),
             ],
         )
+
+    def test_shared_foundation_forwarded_header_patch_skips_unreachable_kubeconfig(self):
+        infrastructure = self._make_shared_foundation_infrastructure()
+        observed = []
+
+        def fake_run(command, **_kwargs):
+            observed.append(command)
+            if "--raw=/version" in command:
+                return mock.Mock(returncode=1, stdout="", stderr="connection refused")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), mock.patch(
+            "adapters.shared.infrastructure.subprocess.run",
+            side_effect=fake_run,
+        ):
+            infrastructure._ensure_ingress_nginx_forwarded_headers_vm_distributed(
+                {"K3S_KUBECONFIG_PROVIDER": "/clusters/provider.yaml"}
+            )
+
+        self.assertTrue(any("--raw=/version" in command for command in observed))
+        self.assertFalse(any("patch" in command for command in observed))
+        self.assertIn("Kubernetes API is not reachable", output.getvalue())
 
     def test_wsl_docker_config_repair_removes_desktop_exe_creds_store(self):
         docker_dir = os.path.join(self.tmpdir.name, ".docker")
@@ -1414,7 +1438,7 @@ minio:
         infrastructure._common_services_release_status = lambda: "failed"
         infrastructure._common_services_release_recoverable_after_helm_failure = mock.Mock(return_value=False)
         infrastructure.wait_for_level2_service_pods = mock.Mock(return_value=True)
-        infrastructure.wait_for_namespace_stability = mock.Mock(return_value=True)
+        infrastructure.wait_for_common_services_stability = mock.Mock(return_value=True)
         infrastructure.ensure_vault_unsealed = mock.Mock(return_value=True)
 
         ready, root_cause = infrastructure.verify_common_services_ready_for_level3()
@@ -1422,7 +1446,7 @@ minio:
         self.assertFalse(ready)
         self.assertEqual(root_cause, "common services Helm release is failed")
         infrastructure.wait_for_level2_service_pods.assert_not_called()
-        infrastructure.wait_for_namespace_stability.assert_not_called()
+        infrastructure.wait_for_common_services_stability.assert_not_called()
         infrastructure.ensure_vault_unsealed.assert_not_called()
 
     def test_verify_common_services_ready_for_level3_allows_recoverable_failed_release(self):
@@ -1430,7 +1454,7 @@ minio:
         infrastructure._common_services_release_status = lambda: "failed"
         infrastructure._common_services_release_recoverable_after_helm_failure = mock.Mock(return_value=True)
         infrastructure.wait_for_level2_service_pods = mock.Mock(return_value=True)
-        infrastructure.wait_for_namespace_stability = mock.Mock(return_value=True)
+        infrastructure.wait_for_common_services_stability = mock.Mock(return_value=True)
         infrastructure.ensure_vault_unsealed = mock.Mock(return_value=True)
 
         ready, root_cause = infrastructure.verify_common_services_ready_for_level3()
@@ -1443,7 +1467,7 @@ minio:
             timeout=300,
             require_vault_ready=True,
         )
-        infrastructure.wait_for_namespace_stability.assert_called_once_with(
+        infrastructure.wait_for_common_services_stability.assert_called_once_with(
             "common",
             duration=12,
             poll_interval=3,
@@ -4523,7 +4547,7 @@ minio:
             },
         ]
 
-        clock = iter([0.0, 0.0, 0.01, 0.02, 0.03])
+        clock = iter([0.0, 0.0, 0.01, 0.02, 0.04])
         output = io.StringIO()
         with contextlib.redirect_stdout(output), mock.patch(
             "adapters.inesdata.infrastructure.time.time",
@@ -4540,6 +4564,99 @@ minio:
 
         self.assertTrue(result)
         self.assertIn("Namespace 'ingress-nginx' is stable", output.getvalue())
+
+    def test_wait_for_common_services_stability_ignores_pods_outside_core_set(self):
+        infrastructure = self._make_infrastructure()
+        infrastructure.config.NS_COMMON = "common"
+        infrastructure.config.TIMEOUT_NAMESPACE = 1
+        infrastructure._pod_snapshot = lambda *_args, **_kwargs: [
+            {
+                "name": "common-srvs-kafka-controller-0",
+                "ready": "0/1",
+                "status": "Init:ImagePullBackOff",
+                "restarts": "0",
+            },
+            {
+                "name": "common-srvs-keycloak-0",
+                "ready": "1/1",
+                "status": "Running",
+                "restarts": "0",
+            },
+            {
+                "name": "common-srvs-minio-0",
+                "ready": "1/1",
+                "status": "Running",
+                "restarts": "0",
+            },
+            {
+                "name": "common-srvs-postgresql-0",
+                "ready": "1/1",
+                "status": "Running",
+                "restarts": "0",
+            },
+            {
+                "name": "common-srvs-vault-0",
+                "ready": "1/1",
+                "status": "Running",
+                "restarts": "0",
+            },
+        ]
+
+        clock = iter([0.0, 0.0, 0.01, 0.02, 0.03])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), mock.patch(
+            "adapters.inesdata.infrastructure.time.time",
+            side_effect=lambda: next(clock),
+        ), mock.patch(
+            "adapters.inesdata.infrastructure.time.sleep",
+            return_value=None,
+        ):
+            result = infrastructure.wait_for_common_services_stability(
+                "common",
+                duration=0.01,
+                poll_interval=0,
+            )
+
+        self.assertTrue(result)
+        self.assertIn("Namespace 'common' is stable", output.getvalue())
+        self.assertIn("Warning: ignoring pods outside the Level 2 common services core set", output.getvalue())
+
+    def test_wait_for_namespace_stability_still_blocks_unfiltered_failed_pods(self):
+        infrastructure = self._make_infrastructure()
+        infrastructure.config.TIMEOUT_NAMESPACE = 1
+        infrastructure._pod_snapshot = lambda *_args, **_kwargs: [
+            {
+                "name": "common-srvs-kafka-controller-0",
+                "ready": "0/1",
+                "status": "Init:ImagePullBackOff",
+                "restarts": "0",
+            },
+            {
+                "name": "common-srvs-keycloak-0",
+                "ready": "1/1",
+                "status": "Running",
+                "restarts": "0",
+            },
+        ]
+
+        clock = iter([0.0, 0.0, 0.01, 0.02, 0.03])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), mock.patch(
+            "adapters.inesdata.infrastructure.time.time",
+            side_effect=lambda: next(clock),
+        ), mock.patch(
+            "adapters.inesdata.infrastructure.time.sleep",
+            return_value=None,
+        ):
+            result = infrastructure.wait_for_namespace_stability(
+                "common",
+                duration=0.01,
+                poll_interval=0,
+                timeout=0.01,
+            )
+
+        self.assertFalse(result)
+        self.assertIn("common-srvs-kafka-controller-0 (Init:ImagePullBackOff)", output.getvalue())
 
     def test_verify_cluster_ready_for_level2_uses_extended_ingress_timeouts(self):
         infrastructure = self._make_infrastructure()
@@ -4593,7 +4710,7 @@ minio:
         infrastructure = self._make_infrastructure()
         infrastructure._common_services_release_status = lambda: "deployed"
         infrastructure.wait_for_level2_service_pods = mock.Mock(return_value=True)
-        infrastructure.wait_for_namespace_stability = mock.Mock(return_value=True)
+        infrastructure.wait_for_common_services_stability = mock.Mock(return_value=True)
         infrastructure.ensure_vault_unsealed = mock.Mock(return_value=True)
 
         ready, root_cause = infrastructure.verify_common_services_ready_for_level3()
@@ -4605,7 +4722,7 @@ minio:
             timeout=300,
             require_vault_ready=True,
         )
-        infrastructure.wait_for_namespace_stability.assert_called_once_with(
+        infrastructure.wait_for_common_services_stability.assert_called_once_with(
             "common",
             duration=12,
             poll_interval=3,

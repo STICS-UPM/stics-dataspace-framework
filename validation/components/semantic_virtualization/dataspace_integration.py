@@ -324,7 +324,7 @@ class SemanticVirtualizationDataspaceIntegrationSuite:
             "counterPartyAddress": self._protocol_address(provider),
             "counterPartyId": provider,
             "protocol": "dataspace-protocol-http",
-            "querySpec": {"offset": 0, "limit": 100, "filterExpression": []},
+            "querySpec": {"offset": 0, "limit": 500, "filterExpression": []},
         }
         return self._post_json(
             self._management_url(consumer, "/management/v3/catalog/request"),

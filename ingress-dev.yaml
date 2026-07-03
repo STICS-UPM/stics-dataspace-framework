@@ -1,0 +1,151 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak-dev
+  namespace: common-srvs
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: keycloak.dev.linkeddata.es
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: common-srvs-keycloak
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak-admin-dev
+  namespace: common-srvs
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: admin.auth.dev.linkeddata.es
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: common-srvs-keycloak
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-dev
+  namespace: common-srvs
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: minio.dev.linkeddata.es
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: common-srvs-minio
+            port:
+              number: 9000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-console-dev
+  namespace: common-srvs
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: console.minio-s3.dev.linkeddata.es
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: common-srvs-minio-console
+            port:
+              number: 9001
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: registration-service-dev
+  namespace: core-control
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: registration-service-demo.dev.linkeddata.es
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: stics-registration-service
+            port:
+              number: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend-dev
+  namespace: core-control
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: backend.dev.linkeddata.es
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: stics-public-portal-backend
+            port:
+              number: 1337
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend-dev
+  namespace: core-control
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: portal.dev.linkeddata.es
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: stics-public-portal-frontend
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vault-dev
+  namespace: common-srvs
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: conn-citycouncil-demo.dev.linkeddata.es
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: common-srvs-vault
+            port:
+              number: 8200

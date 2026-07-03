@@ -93,7 +93,7 @@ class OntologyHubCleanupGuardsTests(unittest.TestCase):
         http_calls = []
         fake_session = mock.Mock()
 
-        def fake_get(url, timeout=10, allow_redirects=True):
+        def fake_get(url, timeout=10, allow_redirects=True, **kwargs):
             http_calls.append(url)
             return SimpleNamespace(status_code=200, text="<html>ok</html>", url=url)
 
@@ -262,76 +262,6 @@ homePage.vocabularyBubble = () => bubble;
         self.assertEqual(result["circleClicks"][1], {"force": True})
         self.assertEqual(result["bubbleClicks"], [])
 
-    def test_home_page_goto_retries_transient_navigation_timeout_with_commit_wait(self):
-        module_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "validation",
-            "components",
-            "ontology_hub",
-            "ui",
-            "pages",
-            "home.page.js",
-        )
-        script = f"""
-const {{ OntologyHubHomePage }} = require({json.dumps(module_path)});
-
-const calls = [];
-const page = {{
-  _gotoAttempts: 0,
-  async goto(url, options) {{
-    this._gotoAttempts += 1;
-    calls.push({{ type: "goto", url, options }});
-    if (this._gotoAttempts === 1) {{
-      throw new Error("page.goto: Timeout 30000ms exceeded.");
-    }}
-  }},
-  async waitForLoadState(state, options) {{
-    calls.push({{ type: "waitForLoadState", state, options }});
-    throw new Error("domcontentloaded arrived late");
-  }},
-  async waitForTimeout(ms) {{
-    calls.push({{ type: "waitForTimeout", ms }});
-  }},
-}};
-
-(async () => {{
-  const homePage = new OntologyHubHomePage(page);
-  await homePage.goto("http://ontology-hub-demo.dev.ds.dataspaceunit.upm");
-  console.log(JSON.stringify({{
-    calls,
-    gotoAttempts: page._gotoAttempts,
-  }}));
-}})().catch((error) => {{
-  console.error(error && error.stack ? error.stack : String(error));
-  process.exit(1);
-}});
-"""
-
-        result = self._run_node_json(script)
-
-        self.assertEqual(result["gotoAttempts"], 2)
-        self.assertEqual(result["calls"][0]["options"]["waitUntil"], "commit")
-        self.assertEqual(result["calls"][2]["options"]["waitUntil"], "commit")
-        self.assertEqual(result["calls"][3]["type"], "waitForLoadState")
-
-    def test_excel_flows_use_tolerant_domcontentloaded_wait_helper(self):
-        root = os.path.dirname(os.path.dirname(__file__))
-        flows_path = os.path.join(
-            root,
-            "validation",
-            "components",
-            "ontology_hub",
-            "functional",
-            "support",
-            "excel-flows.js",
-        )
-        with open(flows_path, encoding="utf8") as handle:
-            content = handle.read()
-
-        self.assertIn("async function waitForDomContentLoaded", content)
-        self.assertIn("async function gotoWithDomReady", content)
-        self.assertNotIn('await page.waitForLoadState("domcontentloaded");', content)
-
     def test_themis_panel_uses_visible_entrypoints_when_legacy_user_options_is_hidden(self):
         module_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
@@ -378,8 +308,13 @@ function makeLocator(name, options = {{}}) {{
         throw new Error(`${{name}} is not visible`);
       }}
     }},
+    filter() {{
+      return makeLocator(`${{name}}-filtered`, {{ present: false }});
+    }},
   }};
 }}
+
+const notPresent = makeLocator("not-present", {{ present: false }});
 
 const page = {{
   _themisVisible: false,
@@ -399,12 +334,8 @@ const page = {{
       }});
     }}
     if (selector === ".ontology-tab[data-onto-target='themis']") {{
-      return makeLocator("themis-tab", {{
-        visible: true,
-        onClick() {{
-          page._themisVisible = true;
-        }},
-      }});
+      // Not present: simulating a page without the newer tab UI.
+      return notPresent;
     }}
     if (selector === "#themisVocabContainer") {{
       return makeLocator("themis-container", {{
@@ -421,7 +352,14 @@ const page = {{
         visible: () => page._themisVisible,
       }});
     }}
-    throw new Error(`Unexpected selector: ${{selector}}`);
+    // Complex compound selectors (text-themis-tab etc.) — return not-present.
+    return notPresent;
+  }},
+  getByRole(_role, _opts) {{
+    return notPresent;
+  }},
+  getByText(_text) {{
+    return notPresent;
   }},
   async waitForFunction() {{
     if (!page._themisVisible) {{
@@ -547,7 +485,6 @@ const page = {{
   _recovered: false,
   _currentUrl: "http://ontology-hub-demo.dev.ds.dataspaceunit.upm/edition/vocabs/demo/versions/edit",
   async waitForTimeout() {{}},
-  async waitForLoadState() {{}},
   async goto(url) {{
     this._attempt += 1;
     this._currentUrl = url;

@@ -1,0 +1,105 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "daimo": "https://w3id.org/pionera/daimo#",
+    "mls": "http://www.w3.org/ns/mls#"
+  },
+  "@id": "city-flares-reliability-distilbert",
+  "properties": {
+    "name": "FLARES Reliability DistilBERT - PIONERA Use Case",
+    "version": "2.0.6",
+    "contenttype": "application/json",
+    "assetType": "machineLearning",
+    "shortDescription": "Classifies reliability for extracted FLARES spans using a fine-tuned DistilBERT sequence classifier",
+    "dct:description": "Classifies reliability for extracted FLARES spans using a fine-tuned DistilBERT sequence classifier. Served by the FLARES/Mobility FastAPI use-case server.",
+    "dcterms:description": "Classifies reliability for extracted FLARES spans using a fine-tuned DistilBERT sequence classifier. Served by the FLARES/Mobility FastAPI use-case server.",
+    "dcat:keyword": [
+      "machine-learning",
+      "http-model",
+      "pionera-use-case",
+      "flares",
+      "mobility",
+      "flares-reliability-distilbert",
+      "city"
+    ],
+    "assetData": {
+      "JS_DAIMO_Model": {
+        "daimo:modality": [
+          "text"
+        ],
+        "daimo:taskType": "classification",
+        "daimo:taskCategory": "Natural Language Processing",
+        "daimo:subtask": "text-classification",
+        "daimo:subtaskDescription": "FLARES reliability classification",
+        "daimo:endpointBehavior": "prediction",
+        "daimo:requestShape": "batch",
+        "dct:description": "Classifies reliability for extracted FLARES spans using a fine-tuned DistilBERT sequence classifier. Served by the FLARES/Mobility FastAPI use-case server.",
+        "daimo:libraryName": "Transformers",
+        "dct:language": [
+          "Spanish"
+        ],
+        "dct:license": "apache-2.0",
+        "daimo:inputSchema": {
+          "fields": [
+            {
+              "name": "Id",
+              "type": "integer",
+              "nullable": false,
+              "description": "Input text identifier"
+            },
+            {
+              "name": "Text",
+              "type": "string",
+              "nullable": false,
+              "description": "Original Spanish text"
+            },
+            {
+              "name": "Tag_Start",
+              "type": "integer",
+              "nullable": false,
+              "description": "Span start character offset"
+            },
+            {
+              "name": "Tag_End",
+              "type": "integer",
+              "nullable": false,
+              "description": "Span end character offset"
+            },
+            {
+              "name": "5W1H_Label",
+              "type": "string",
+              "nullable": false,
+              "description": "5W1H span label"
+            },
+            {
+              "name": "Tag_Text",
+              "type": "string",
+              "nullable": false,
+              "description": "Extracted span text"
+            }
+          ],
+          "jsonSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"Id\": {\n      \"type\": \"integer\",\n      \"description\": \"Input text identifier\"\n    },\n    \"Text\": {\n      \"type\": \"string\",\n      \"description\": \"Original Spanish text\"\n    },\n    \"Tag_Start\": {\n      \"type\": \"integer\",\n      \"description\": \"Span start character offset\"\n    },\n    \"Tag_End\": {\n      \"type\": \"integer\",\n      \"description\": \"Span end character offset\"\n    },\n    \"5W1H_Label\": {\n      \"type\": \"string\",\n      \"description\": \"5W1H span label\"\n    },\n    \"Tag_Text\": {\n      \"type\": \"string\",\n      \"description\": \"Extracted span text\"\n    }\n  },\n  \"required\": [\n    \"Id\",\n    \"Text\",\n    \"Tag_Start\",\n    \"Tag_End\",\n    \"5W1H_Label\",\n    \"Tag_Text\"\n  ]\n}"
+        },
+        "daimo:inputExample": "[{\"Id\":840,\"Text\":\"El comité de medicamentos humanos espera concluir el análisis en marzo.\",\"Tag_Start\":0,\"Tag_End\":35,\"5W1H_Label\":\"WHO\",\"Tag_Text\":\"El comité de medicamentos humanos\"}]",
+        "daimo:metrics": [
+          "Accuracy",
+          "Precision",
+          "Recall",
+          "F1"
+        ]
+      }
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "name": "city-flares-reliability-distilbert",
+    "baseUrl": "http://host.docker.internal:8000/flares/dccuchile-distilbert-base-spanish-uncased-reliability",
+    "proxyMethod": "true",
+    "proxyBody": "true",
+    "method": "POST",
+    "contentType": "application/json"
+  }
+}

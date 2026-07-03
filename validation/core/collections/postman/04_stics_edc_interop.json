@@ -1,0 +1,988 @@
+{
+  "info": {
+    "name": "04 STICS EDC Interop (PULL + PUSH)",
+    "_postman_id": "stics-edc-interop-04",
+    "description": "Self-contained collection proving real interoperability between the STICS provider (connector-stics) and consumer (conlab-stics) EDC connectors: Keycloak auth, asset/policy/contract-definition creation, DSP catalog fetch, contract negotiation, and both HttpData-PULL and HttpData-PUSH transfers. Run with environment '00 Environment - STICS EDC Interop' via 'Run collection' in order. Fill provider_password/consumer_password locally first (see docs/47_stics_edc_interop_evidence.md).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Provider Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "url": {
+          "raw": "{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token",
+          "host": [
+            "{{keycloakUrl}}"
+          ],
+          "path": [
+            "realms",
+            "{{dataspace}}",
+            "protocol",
+            "openid-connect",
+            "token"
+          ]
+        },
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "password",
+              "type": "text"
+            },
+            {
+              "key": "client_id",
+              "value": "{{keycloakClientId}}",
+              "type": "text"
+            },
+            {
+              "key": "username",
+              "value": "{{provider_user}}",
+              "type": "text"
+            },
+            {
+              "key": "password",
+              "value": "{{provider_password}}",
+              "type": "text"
+            },
+            {
+              "key": "scope",
+              "value": "openid profile email",
+              "type": "text"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('provider token obtained', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.access_token).to.be.a('string');",
+              "  pm.environment.set('provider_jwt', json.access_token);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "id": "c564b2d0-5b6a-4762-9637-27f786c486c9"
+    },
+    {
+      "name": "Consumer Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "url": {
+          "raw": "{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token",
+          "host": [
+            "{{keycloakUrl}}"
+          ],
+          "path": [
+            "realms",
+            "{{dataspace}}",
+            "protocol",
+            "openid-connect",
+            "token"
+          ]
+        },
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "password",
+              "type": "text"
+            },
+            {
+              "key": "client_id",
+              "value": "{{keycloakClientId}}",
+              "type": "text"
+            },
+            {
+              "key": "username",
+              "value": "{{consumer_user}}",
+              "type": "text"
+            },
+            {
+              "key": "password",
+              "value": "{{consumer_password}}",
+              "type": "text"
+            },
+            {
+              "key": "scope",
+              "value": "openid profile email",
+              "type": "text"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('consumer token obtained', function () {",
+              "  const json = pm.response.json();",
+              "  pm.expect(json.access_token).to.be.a('string');",
+              "  pm.environment.set('consumer_jwt', json.access_token);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "id": "bd3ee250-fbec-4702-9d49-b74c0ed76bf4"
+    },
+    {
+      "name": "Provider: Create Asset (PULL demo)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.environment.set('e2e_asset_id', 'stics-interop-asset-' + Date.now());",
+              "pm.environment.set('e2e_policy_id', 'stics-interop-policy-' + Date.now());",
+              "pm.environment.set('e2e_cd_id', 'stics-interop-cd-' + Date.now());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('asset created', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{providerMgmt}}/v3/assets",
+          "host": [
+            "{{providerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "assets"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"dcterms\": \"http://purl.org/dc/terms/\",\n    \"dcat\": \"http://www.w3.org/ns/dcat#\"\n  },\n  \"@id\": \"{{e2e_asset_id}}\",\n  \"properties\": {\n    \"name\": \"stics interop test asset\",\n    \"contenttype\": \"application/json\",\n    \"version\": \"1.0.0\",\n    \"shortDescription\": \"STICS provider-consumer interoperability test asset\",\n    \"description\": \"STICS provider-consumer interoperability test asset\",\n    \"assetType\": \"dataset\",\n    \"dcterms:description\": \"STICS provider-consumer interoperability test asset\",\n    \"dcat:keyword\": [\"stics\", \"interop-test\"]\n  },\n  \"dataAddress\": {\n    \"type\": \"HttpData\",\n    \"name\": \"stics interop test asset\",\n    \"baseUrl\": \"https://jsonplaceholder.typicode.com/todos/1\",\n    \"proxyPath\": \"true\"\n  }\n}"
+        }
+      },
+      "id": "c914bd0b-7c7e-4a38-b007-bfe57443eca2"
+    },
+    {
+      "name": "Provider: Create Policy (PULL demo)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{providerMgmt}}/v3/policydefinitions",
+          "host": [
+            "{{providerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "policydefinitions"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\", \"odrl\": \"http://www.w3.org/ns/odrl/2/\"},\n  \"@id\": \"{{e2e_policy_id}}\",\n  \"policy\": {\n    \"@context\": \"http://www.w3.org/ns/odrl.jsonld\",\n    \"@type\": \"Set\",\n    \"permission\": [], \"prohibition\": [], \"obligation\": []\n  }\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('policy created', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ],
+      "id": "e75a33cf-557f-47ef-968b-547ab76cfae6"
+    },
+    {
+      "name": "Provider: Create Contract Definition (PULL demo)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{providerMgmt}}/v3/contractdefinitions",
+          "host": [
+            "{{providerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "contractdefinitions"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"},\n  \"@id\": \"{{e2e_cd_id}}\",\n  \"accessPolicyId\": \"{{e2e_policy_id}}\",\n  \"contractPolicyId\": \"{{e2e_policy_id}}\",\n  \"assetsSelector\": [\n    {\"@type\": \"CriterionDto\", \"operandLeft\": \"https://w3id.org/edc/v0.0.1/ns/id\", \"operator\": \"=\", \"operandRight\": \"{{e2e_asset_id}}\"}\n  ]\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('contract definition created', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ],
+      "id": "e4f383be-bb1a-4264-946a-6c0c9eb5b499"
+    },
+    {
+      "name": "Consumer: Fetch Catalog (PULL demo)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{consumerMgmt}}/v3/catalog/request",
+          "host": [
+            "{{consumerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "catalog",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"},\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"protocol\": \"dataspace-protocol-http\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "let datasets = json['dcat:dataset'] || json['http://www.w3.org/ns/dcat#dataset'] || [];",
+              "if (!Array.isArray(datasets)) { datasets = [datasets]; }",
+              "const assetId = pm.environment.get('e2e_asset_id');",
+              "const ds = datasets.find(d => d['@id'] === assetId);",
+              "pm.test('asset found in provider catalog', function () { pm.expect(ds).to.not.be.undefined; });",
+              "if (ds) {",
+              "  let offer = ds['odrl:hasPolicy'] || ds['hasPolicy'];",
+              "  if (Array.isArray(offer)) { offer = offer[0]; }",
+              "  pm.environment.set('e2e_offer_id', offer['@id']);",
+              "  console.log('offer id:', offer['@id']);",
+              "} else {",
+              "  console.log('datasets seen:', JSON.stringify(datasets.map(d => d['@id'])));",
+              "}"
+            ]
+          }
+        }
+      ],
+      "id": "d1b9c707-af5e-46b5-a626-c7974d04d0c0"
+    },
+    {
+      "name": "Consumer: Negotiate Contract (PULL demo)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{consumerMgmt}}/v3/contractnegotiations",
+          "host": [
+            "{{consumerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "contractnegotiations"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"},\n  \"@type\": \"ContractRequest\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"policy\": {\n    \"@context\": \"http://www.w3.org/ns/odrl.jsonld\",\n    \"@id\": \"{{e2e_offer_id}}\",\n    \"@type\": \"Offer\",\n    \"assigner\": \"{{providerParticipantId}}\",\n    \"target\": \"{{e2e_asset_id}}\"\n  }\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "pm.test('negotiation started', function () { pm.expect(json['@id']).to.be.a('string'); });",
+              "pm.environment.set('e2e_negotiation_id', json['@id']);",
+              "pm.environment.set('e2e_negotiation_retries', '0');"
+            ]
+          }
+        }
+      ],
+      "id": "e693a595-31ec-462c-bb48-673e3fef9160"
+    },
+    {
+      "name": "Consumer: Check Negotiation Status (PULL demo, self-looping until FINALIZED)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          }
+        ],
+        "url": {
+          "raw": "{{consumerMgmt}}/v3/contractnegotiations/{{e2e_negotiation_id}}",
+          "host": [
+            "{{consumerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "contractnegotiations",
+            "{{e2e_negotiation_id}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "console.log('negotiation state:', json.state);",
+              "if (json.state === 'FINALIZED') {",
+              "  pm.environment.set('e2e_agreement_id', json.contractAgreementId);",
+              "  pm.test('negotiation finalized', function () { pm.expect(json.contractAgreementId).to.be.a('string'); });",
+              "} else if (json.state === 'TERMINATED' || json.state === 'TERMINATING') {",
+              "  throw new Error('Negotiation terminated: ' + JSON.stringify(json));",
+              "} else {",
+              "  const retries = parseInt(pm.environment.get('e2e_negotiation_retries') || '0', 10);",
+              "  if (retries < 40) {",
+              "    pm.environment.set('e2e_negotiation_retries', String(retries + 1));",
+              "    const waitUntil = Date.now() + 3000; while (Date.now() < waitUntil) { /* blocking delay so the retry budget isn't burned before the async negotiation converges */ }",
+              "    pm.execution.setNextRequest(pm.info.requestName);",
+              "  } else {",
+              "    throw new Error('Negotiation did not reach FINALIZED in time, last state: ' + json.state);",
+              "  }",
+              "}"
+            ]
+          }
+        }
+      ],
+      "id": "a9a4e889-c977-4777-bc43-6e81df69eab5"
+    },
+    {
+      "name": "Consumer: Start Transfer (HttpData-PULL)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{consumerMgmt}}/v3/transferprocesses",
+          "host": [
+            "{{consumerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "transferprocesses"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"},\n  \"@type\": \"TransferRequestDto\",\n  \"connectorId\": \"{{providerParticipantId}}\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"contractId\": \"{{e2e_agreement_id}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"transferType\": \"HttpData-PULL\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "pm.test('transfer started', function () { pm.expect(json['@id']).to.be.a('string'); });",
+              "pm.environment.set('e2e_transfer_id', json['@id']);",
+              "pm.environment.set('e2e_transfer_retries', '0');"
+            ]
+          }
+        }
+      ],
+      "id": "72a6d0f0-0818-4e36-bded-4e4e3a82be2c"
+    },
+    {
+      "name": "Consumer: Check Transfer Status (PULL demo, self-looping until STARTED/COMPLETED)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          }
+        ],
+        "url": {
+          "raw": "{{consumerMgmt}}/v3/transferprocesses/{{e2e_transfer_id}}",
+          "host": [
+            "{{consumerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "transferprocesses",
+            "{{e2e_transfer_id}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "console.log('transfer state:', json.state);",
+              "if (json.state === 'STARTED' || json.state === 'COMPLETED') {",
+              "  pm.test('transfer started/completed', function () { pm.expect(json.state).to.be.oneOf(['STARTED', 'COMPLETED']); });",
+              "} else if (json.state === 'TERMINATED') {",
+              "  throw new Error('Transfer terminated: ' + JSON.stringify(json));",
+              "} else {",
+              "  const retries = parseInt(pm.environment.get('e2e_transfer_retries') || '0', 10);",
+              "  if (retries < 40) {",
+              "    pm.environment.set('e2e_transfer_retries', String(retries + 1));",
+              "    const waitUntil = Date.now() + 3000; while (Date.now() < waitUntil) { /* blocking delay so the retry budget isn't burned before the async transfer starts */ }",
+              "    pm.execution.setNextRequest(pm.info.requestName);",
+              "  } else {",
+              "    throw new Error('Transfer did not start in time, last state: ' + json.state);",
+              "  }",
+              "}"
+            ]
+          }
+        }
+      ],
+      "id": "ded43656-9787-4cb8-89e0-fe0c176c108b"
+    },
+    {
+      "name": "Consumer: Get EDR (Endpoint Data Reference)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          }
+        ],
+        "url": {
+          "raw": "{{consumerMgmt}}/v3/edrs/{{e2e_transfer_id}}/dataaddress",
+          "host": [
+            "{{consumerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "edrs",
+            "{{e2e_transfer_id}}",
+            "dataaddress"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "pm.test('EDR obtained', function () { pm.expect(json.endpoint).to.be.a('string'); });",
+              "pm.environment.set('e2e_edr_endpoint', json.endpoint);",
+              "pm.environment.set('e2e_edr_authorization', json.authorization);"
+            ]
+          }
+        }
+      ],
+      "id": "e4eb4069-4d08-43e4-a6ef-f14c63cd14a8"
+    },
+    {
+      "name": "Consumer: Pull Real Data via EDR",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "{{e2e_edr_authorization}}"
+          }
+        ],
+        "url": {
+          "raw": "{{e2e_edr_endpoint}}",
+          "host": [
+            "{{e2e_edr_endpoint}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('pulled real data with HTTP 200', function () { pm.response.to.have.status(200); });",
+              "console.log('PULLED DATA:', pm.response.text());"
+            ]
+          }
+        }
+      ],
+      "id": "7a7fda38-cedb-4692-9dbe-57690889a397"
+    },
+    {
+      "name": "Provider: Create Asset (PUSH demo)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.environment.set('e2e_push_asset_id', 'stics-push-asset-' + Date.now());",
+              "pm.environment.set('e2e_push_policy_id', 'stics-push-policy-' + Date.now());",
+              "pm.environment.set('e2e_push_cd_id', 'stics-push-cd-' + Date.now());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('push asset created', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{providerMgmt}}/v3/assets",
+          "host": [
+            "{{providerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "assets"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"dcterms\": \"http://purl.org/dc/terms/\",\n    \"dcat\": \"http://www.w3.org/ns/dcat#\"\n  },\n  \"@id\": \"{{e2e_push_asset_id}}\",\n  \"properties\": {\n    \"name\": \"stics interop push test asset\",\n    \"contenttype\": \"application/json\",\n    \"version\": \"1.0.0\",\n    \"shortDescription\": \"STICS provider-consumer HttpData-PUSH test asset\",\n    \"description\": \"STICS provider-consumer HttpData-PUSH test asset\",\n    \"assetType\": \"dataset\",\n    \"dcterms:description\": \"STICS provider-consumer HttpData-PUSH test asset\",\n    \"dcat:keyword\": [\"stics\", \"interop-test\", \"push\"]\n  },\n  \"dataAddress\": {\n    \"type\": \"HttpData\",\n    \"name\": \"stics interop push test asset\",\n    \"baseUrl\": \"https://jsonplaceholder.typicode.com/todos/2\",\n    \"proxyPath\": \"true\"\n  }\n}"
+        }
+      },
+      "id": "a1f65f1d-83a1-4f6e-8442-3741363623c8"
+    },
+    {
+      "name": "Provider: Create Policy (PUSH demo)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{providerMgmt}}/v3/policydefinitions",
+          "host": [
+            "{{providerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "policydefinitions"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\", \"odrl\": \"http://www.w3.org/ns/odrl/2/\"},\n  \"@id\": \"{{e2e_push_policy_id}}\",\n  \"policy\": {\n    \"@context\": \"http://www.w3.org/ns/odrl.jsonld\",\n    \"@type\": \"Set\",\n    \"permission\": [], \"prohibition\": [], \"obligation\": []\n  }\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('push policy created', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ],
+      "id": "c203dfea-7ff4-4eea-8ae4-b74c2ae76da7"
+    },
+    {
+      "name": "Provider: Create Contract Definition (PUSH demo)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{provider_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{providerMgmt}}/v3/contractdefinitions",
+          "host": [
+            "{{providerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "contractdefinitions"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"},\n  \"@id\": \"{{e2e_push_cd_id}}\",\n  \"accessPolicyId\": \"{{e2e_push_policy_id}}\",\n  \"contractPolicyId\": \"{{e2e_push_policy_id}}\",\n  \"assetsSelector\": [\n    {\"@type\": \"CriterionDto\", \"operandLeft\": \"https://w3id.org/edc/v0.0.1/ns/id\", \"operator\": \"=\", \"operandRight\": \"{{e2e_push_asset_id}}\"}\n  ]\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('push contract definition created', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ],
+      "id": "d459e4f0-cd27-450e-8729-ab4635e8a6bc"
+    },
+    {
+      "name": "Consumer: Fetch Catalog (PUSH demo)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{consumerMgmt}}/v3/catalog/request",
+          "host": [
+            "{{consumerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "catalog",
+            "request"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"},\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"protocol\": \"dataspace-protocol-http\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "let datasets = json['dcat:dataset'] || json['http://www.w3.org/ns/dcat#dataset'] || [];",
+              "if (!Array.isArray(datasets)) { datasets = [datasets]; }",
+              "const assetId = pm.environment.get('e2e_push_asset_id');",
+              "const ds = datasets.find(d => d['@id'] === assetId);",
+              "pm.test('push asset found in provider catalog', function () { pm.expect(ds).to.not.be.undefined; });",
+              "if (ds) {",
+              "  let offer = ds['odrl:hasPolicy'] || ds['hasPolicy'];",
+              "  if (Array.isArray(offer)) { offer = offer[0]; }",
+              "  pm.environment.set('e2e_push_offer_id', offer['@id']);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "id": "6e180082-ef27-4f29-9677-f352b024d888"
+    },
+    {
+      "name": "Consumer: Negotiate Contract (PUSH demo)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{consumerMgmt}}/v3/contractnegotiations",
+          "host": [
+            "{{consumerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "contractnegotiations"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"},\n  \"@type\": \"ContractRequest\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"policy\": {\n    \"@context\": \"http://www.w3.org/ns/odrl.jsonld\",\n    \"@id\": \"{{e2e_push_offer_id}}\",\n    \"@type\": \"Offer\",\n    \"assigner\": \"{{providerParticipantId}}\",\n    \"target\": \"{{e2e_push_asset_id}}\"\n  }\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "pm.test('push negotiation started', function () { pm.expect(json['@id']).to.be.a('string'); });",
+              "pm.environment.set('e2e_push_negotiation_id', json['@id']);",
+              "pm.environment.set('e2e_push_negotiation_retries', '0');"
+            ]
+          }
+        }
+      ],
+      "id": "c9170e09-cdfd-4621-8b20-91f53de55a65"
+    },
+    {
+      "name": "Consumer: Check Negotiation Status (PUSH demo, self-looping until FINALIZED)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          }
+        ],
+        "url": {
+          "raw": "{{consumerMgmt}}/v3/contractnegotiations/{{e2e_push_negotiation_id}}",
+          "host": [
+            "{{consumerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "contractnegotiations",
+            "{{e2e_push_negotiation_id}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "console.log('push negotiation state:', json.state);",
+              "if (json.state === 'FINALIZED') {",
+              "  pm.environment.set('e2e_push_agreement_id', json.contractAgreementId);",
+              "  pm.test('push negotiation finalized', function () { pm.expect(json.contractAgreementId).to.be.a('string'); });",
+              "} else if (json.state === 'TERMINATED' || json.state === 'TERMINATING') {",
+              "  throw new Error('Push negotiation terminated: ' + JSON.stringify(json));",
+              "} else {",
+              "  const retries = parseInt(pm.environment.get('e2e_push_negotiation_retries') || '0', 10);",
+              "  if (retries < 40) {",
+              "    pm.environment.set('e2e_push_negotiation_retries', String(retries + 1));",
+              "    const waitUntil = Date.now() + 3000; while (Date.now() < waitUntil) { /* blocking delay so the retry budget isn't burned before the async negotiation converges */ }",
+              "    pm.execution.setNextRequest(pm.info.requestName);",
+              "  } else {",
+              "    throw new Error('Push negotiation did not reach FINALIZED in time, last state: ' + json.state);",
+              "  }",
+              "}"
+            ]
+          }
+        }
+      ],
+      "id": "9f30d14f-25b0-4a70-9a86-bfb6b116e084"
+    },
+    {
+      "name": "Consumer: Start Transfer (HttpData-PUSH)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{consumerMgmt}}/v3/transferprocesses",
+          "host": [
+            "{{consumerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "transferprocesses"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"@context\": {\"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"},\n  \"@type\": \"TransferRequestDto\",\n  \"connectorId\": \"{{providerParticipantId}}\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"contractId\": \"{{e2e_push_agreement_id}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"transferType\": \"HttpData-PUSH\",\n  \"dataDestination\": {\n    \"type\": \"HttpData\",\n    \"baseUrl\": \"{{pushSinkUrl}}\"\n  }\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "pm.test('push transfer started', function () { pm.expect(json['@id']).to.be.a('string'); });",
+              "pm.environment.set('e2e_push_transfer_id', json['@id']);",
+              "pm.environment.set('e2e_push_transfer_retries', '0');"
+            ]
+          }
+        }
+      ],
+      "id": "e95fcd6f-5513-493f-b8e1-e178d487268e"
+    },
+    {
+      "name": "Consumer: Check Transfer Status (PUSH demo, self-looping until COMPLETED)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{consumer_jwt}}"
+          }
+        ],
+        "url": {
+          "raw": "{{consumerMgmt}}/v3/transferprocesses/{{e2e_push_transfer_id}}",
+          "host": [
+            "{{consumerMgmt}}"
+          ],
+          "path": [
+            "v3",
+            "transferprocesses",
+            "{{e2e_push_transfer_id}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "console.log('push transfer state:', json.state);",
+              "if (json.state === 'COMPLETED') {",
+              "  pm.test('push transfer completed', function () { pm.expect(json.state).to.equal('COMPLETED'); });",
+              "  console.log('PUSH transfer completed. Verify the real POST arrived by checking ~/push_sink_received.log on the consumer VM (192.168.122.239) \u2014 it should show X-Real-IP of the provider VM (178.105.249.140).');",
+              "} else if (json.state === 'TERMINATED') {",
+              "  throw new Error('Push transfer terminated: ' + JSON.stringify(json));",
+              "} else {",
+              "  const retries = parseInt(pm.environment.get('e2e_push_transfer_retries') || '0', 10);",
+              "  if (retries < 40) {",
+              "    pm.environment.set('e2e_push_transfer_retries', String(retries + 1));",
+              "    const waitUntil = Date.now() + 3000; while (Date.now() < waitUntil) { /* blocking delay so the retry budget isn't burned before the async push completes */ }",
+              "    pm.execution.setNextRequest(pm.info.requestName);",
+              "  } else {",
+              "    throw new Error('Push transfer did not complete in time, last state: ' + json.state);",
+              "  }",
+              "}"
+            ]
+          }
+        }
+      ],
+      "id": "b7b66bb5-80a8-4dde-a1d8-aa509d31f189"
+    }
+  ]
+}

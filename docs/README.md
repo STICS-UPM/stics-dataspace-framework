@@ -133,6 +133,8 @@ distribuida.
 | [44 Guía de auditoría](./44_audit_navigation_guide.md) | Orden de lectura, alcance, evidencias y límites de seguridad |
 | [45 Conectores externos](./45_external_connector_readiness.md) | Checklist para conectores y entornos externos |
 | [46 vm-distributed](./46_vm_distributed_runbook.md) | Procedimiento operativo de topología distribuida |
+| [47 Evidencia interoperabilidad STICS](./47_stics_edc_interop_evidence.md) | Comandos `curl`/Postman verificados: negociación de contrato y transferencia real `HttpData-PULL`/`HttpData-PUSH` entre provider y consumer |
+| [48 Guía para dummies: nuevo conector](./48_new_connector_setup_guide_for_dummies.md) | Paso a paso completo, con chuleta de errores, para montar un conector EDC nuevo desde cero (identidad, Postgres, properties, docker-compose, puente de red, TLS) |
 
 ## Trazabilidad Histórica
 

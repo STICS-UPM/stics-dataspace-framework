@@ -1,0 +1,80 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "daimo": "https://w3id.org/pionera/daimo#",
+    "mls": "http://www.w3.org/ns/mls#"
+  },
+  "@id": "company-flares-5w1h-bert",
+  "properties": {
+    "name": "FLARES 5W1H BERT - PIONERA Use Case",
+    "version": "2.0.3",
+    "contenttype": "application/json",
+    "assetType": "machineLearning",
+    "shortDescription": "Extracts 5W1H spans from Spanish text using a fine-tuned BERT token classifier",
+    "dct:description": "Extracts 5W1H spans from Spanish text using a fine-tuned BERT token classifier. Served by the FLARES/Mobility FastAPI use-case server.",
+    "dcterms:description": "Extracts 5W1H spans from Spanish text using a fine-tuned BERT token classifier. Served by the FLARES/Mobility FastAPI use-case server.",
+    "dcat:keyword": [
+      "machine-learning",
+      "http-model",
+      "pionera-use-case",
+      "flares",
+      "mobility",
+      "flares-5w1h-bert",
+      "company"
+    ],
+    "assetData": {
+      "JS_DAIMO_Model": {
+        "daimo:modality": [
+          "text"
+        ],
+        "daimo:taskType": "classification",
+        "daimo:taskCategory": "Natural Language Processing",
+        "daimo:subtask": "token-classification",
+        "daimo:subtaskDescription": "FLARES 5W1H span extraction",
+        "daimo:endpointBehavior": "prediction",
+        "daimo:requestShape": "batch",
+        "dct:description": "Extracts 5W1H spans from Spanish text using a fine-tuned BERT token classifier. Served by the FLARES/Mobility FastAPI use-case server.",
+        "daimo:libraryName": "Transformers",
+        "dct:language": [
+          "Spanish"
+        ],
+        "dct:license": "apache-2.0",
+        "daimo:inputSchema": {
+          "fields": [
+            {
+              "name": "Id",
+              "type": "integer",
+              "nullable": false,
+              "description": "Input text identifier"
+            },
+            {
+              "name": "Text",
+              "type": "string",
+              "nullable": false,
+              "description": "Spanish text to analyze"
+            }
+          ],
+          "jsonSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"Id\": {\n      \"type\": \"integer\",\n      \"description\": \"Input text identifier\"\n    },\n    \"Text\": {\n      \"type\": \"string\",\n      \"description\": \"Spanish text to analyze\"\n    }\n  },\n  \"required\": [\n    \"Id\",\n    \"Text\"\n  ]\n}"
+        },
+        "daimo:inputExample": "[{\"Id\":840,\"Text\":\"El comité de medicamentos humanos espera concluir el análisis en marzo.\"}]",
+        "daimo:metrics": [
+          "Precision",
+          "Recall",
+          "F1"
+        ]
+      }
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "name": "company-flares-5w1h-bert",
+    "baseUrl": "http://host.docker.internal:8000/flares/dccuchile-bert-base-spanish-wwm-uncased-5w1h",
+    "proxyMethod": "true",
+    "proxyBody": "true",
+    "method": "POST",
+    "contentType": "application/json"
+  }
+}

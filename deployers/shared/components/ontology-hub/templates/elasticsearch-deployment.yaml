@@ -16,6 +16,7 @@ spec:
     metadata:
       annotations:
         checksum/elasticsearch-config: {{ include (print $.Template.BasePath "/elasticsearch-configmap.yaml") . | sha256sum }}
+        checksum/ontology-hub-secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: elasticsearch

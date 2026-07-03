@@ -187,7 +187,7 @@ function publicMinioConsoleUrlFromCredentials(
   const credentials = readJsonIfExists(
     connectorCredentialsPath(adapter, connectorName, dataspace, environment),
   );
-  const value = credentials?.public_access_urls?.minio_console;
+  const value = credentials?.access_urls?.minio_console ?? credentials?.public_access_urls?.minio_console;
   if (typeof value !== "string" || value.trim().length === 0) {
     return undefined;
   }

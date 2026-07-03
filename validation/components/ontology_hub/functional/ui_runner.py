@@ -280,6 +280,7 @@ def run_ontology_hub_functional_validation(base_url: str, experiment_dir: str | 
         "PLAYWRIGHT_BLOB_REPORT_DIR": artifact_paths["blob_report_dir"],
         "PLAYWRIGHT_JSON_REPORT_FILE": artifact_paths["json_report_file"],
         "PIONERA_PLAYWRIGHT_SUITE_NAME": "Ontology Hub functional",
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0",
     }
 
     error = None

@@ -169,6 +169,100 @@ def _validation_payload(environ: Dict[str, str] | None = None) -> Any:
         return {"text": raw_value}
 
 
+def _validation_endpoint_payloads(environ: Dict[str, str] | None = None) -> Dict[str, Any]:
+    values = dict(environ or os.environ)
+    raw_value = str(values.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINT_PAYLOADS") or "").strip()
+    if not raw_value:
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _default_mobility_payload() -> List[Dict[str, Any]]:
+    return [
+        {
+            "trip_id": "L13_1_05:45_LxI",
+            "from_stop_id": "7716",
+            "to_stop_id": "19219",
+            "route_id": "13",
+            "scheduled_travel_time": 120,
+            "shape_distance": 681.1956848810403,
+            "is_peak": 0,
+            "hour_sin": 0.7071067811865475,
+            "hour_cos": 0.7071067811865476,
+            "weekday_sin": 0.9749279121818236,
+            "weekday_cos": -0.22252093395631434,
+            "previous_delay_ratio": 0.2499999979166667,
+            "previous_delay_delta": 0.0,
+        }
+    ]
+
+
+def _default_flares_text_payload() -> List[Dict[str, Any]]:
+    return [
+        {
+            "Id": 840,
+            "Text": (
+                "El comite de medicamentos humanos espera poder concluir el analisis "
+                "de todo el paquete de datos a mediados de marzo."
+            ),
+        }
+    ]
+
+
+def _default_flares_reliability_payload() -> List[Dict[str, Any]]:
+    row = _default_flares_text_payload()[0]
+    return [
+        {
+            **row,
+            "Tag_Start": 0,
+            "Tag_End": 38,
+            "5W1H_Label": "WHO",
+            "Tag_Text": "El comite de medicamentos humanos",
+        }
+    ]
+
+
+def _payload_for_endpoint(
+    endpoint_path: str,
+    *,
+    environ: Dict[str, str],
+    configured_endpoint_payloads: Dict[str, Any],
+    configured_global_payload: Any | None,
+) -> Any:
+    normalized_path = endpoint_path if endpoint_path.startswith("/") else f"/{endpoint_path}"
+    if normalized_path in configured_endpoint_payloads:
+        return configured_endpoint_payloads[normalized_path]
+    if endpoint_path in configured_endpoint_payloads:
+        return configured_endpoint_payloads[endpoint_path]
+    if configured_global_payload is not None:
+        return configured_global_payload
+    lowered = normalized_path.lower()
+    if lowered.startswith("/mobility/"):
+        return _default_mobility_payload()
+    if lowered.startswith("/flares/") and "reliability" in lowered:
+        return _default_flares_reliability_payload()
+    if lowered.startswith("/flares/"):
+        return _default_flares_text_payload()
+    return _validation_payload(environ)
+
+
+def _discovered_endpoint_paths(discovery_payload: Any) -> List[str]:
+    if not isinstance(discovery_payload, dict):
+        return []
+    paths: List[str] = []
+    for model_name in discovery_payload.get("flares") or []:
+        if str(model_name or "").strip():
+            paths.append(f"/flares/{model_name}")
+    for model_name in discovery_payload.get("mobility") or []:
+        if str(model_name or "").strip():
+            paths.append(f"/mobility/{model_name}")
+    return paths
+
+
 def run_ai_model_hub_model_server_use_cases_validation(
     experiment_dir: str | None = None,
     environ: Dict[str, str] | None = None,
@@ -230,12 +324,15 @@ def run_ai_model_hub_model_server_use_cases_validation(
     ).strip()
     if not discovery_path.startswith("/"):
         discovery_path = f"/{discovery_path}"
+    configured_datasets_path = values.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH")
+    if configured_datasets_path is None:
+        configured_datasets_path = values.get("AI_MODEL_HUB_MODEL_SERVER_DATASETS_PATH")
+    default_datasets_path = "disabled" if mode == "use-cases" else "/datasets"
     datasets_path = str(
-        values.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH")
-        or values.get("AI_MODEL_HUB_MODEL_SERVER_DATASETS_PATH")
-        or "/datasets"
+        configured_datasets_path if configured_datasets_path is not None else default_datasets_path
     ).strip()
-    if not datasets_path.startswith("/"):
+    datasets_validation_enabled = datasets_path.lower() not in {"", "0", "false", "no", "none", "skip", "disabled"}
+    if datasets_validation_enabled and not datasets_path.startswith("/"):
         datasets_path = f"/{datasets_path}"
 
     executed_cases: List[Dict[str, Any]] = []
@@ -285,20 +382,33 @@ def run_ai_model_hub_model_server_use_cases_validation(
         label="model discovery",
     )
     executed_cases.append(discovery_case)
-    datasets_case = _get_discovery_case(
-        case_id=CASE_ID_DATASETS,
-        description="Use-case dataset discovery endpoint",
-        path=datasets_path,
-        label="dataset discovery",
-    )
-    executed_cases.append(datasets_case)
+    datasets_case: Dict[str, Any] | None = None
+    if datasets_validation_enabled:
+        datasets_case = _get_discovery_case(
+            case_id=CASE_ID_DATASETS,
+            description="Use-case dataset discovery endpoint",
+            path=datasets_path,
+            label="dataset discovery",
+        )
+        executed_cases.append(datasets_case)
 
-    endpoint_paths = _validation_endpoint_paths(values)
+    configured_endpoint_paths = _validation_endpoint_paths(values)
+    discovery_payload = (discovery_case.get("response") or {}).get("json_payload")
+    endpoint_paths = configured_endpoint_paths or _discovered_endpoint_paths(discovery_payload)
+    execution_case: Dict[str, Any] | None = None
     if endpoint_paths:
         endpoint_assertions: List[str] = []
         endpoint_results = []
-        payload = _validation_payload(values)
+        configured_endpoint_payloads = _validation_endpoint_payloads(values)
+        raw_global_payload = str(values.get("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD") or "").strip()
+        configured_global_payload = _validation_payload(values) if raw_global_payload else None
         for endpoint_path in endpoint_paths:
+            payload = _payload_for_endpoint(
+                endpoint_path,
+                environ=values,
+                configured_endpoint_payloads=configured_endpoint_payloads,
+                configured_global_payload=configured_global_payload,
+            )
             endpoint_url = _build_url(base_url, endpoint_path)
             status, content_type, body = _http_request("POST", endpoint_url, payload=payload)
             response_payload = _json_payload(body)
@@ -316,20 +426,19 @@ def run_ai_model_hub_model_server_use_cases_validation(
             if response_payload is None:
                 endpoint_assertions.append(f"{endpoint_url} did not return valid JSON")
 
-        executed_cases.append(
-            _case_result(
-                case_id=CASE_ID_OPTIONAL_EXECUTION,
-                description="Configured use-case inference endpoints",
-                status="failed" if endpoint_assertions else "passed",
-                request_payload={
-                    "method": "POST",
-                    "paths": endpoint_paths,
-                    "payload": payload,
-                },
-                response_payload={"endpoint_results": endpoint_results},
-                assertions=endpoint_assertions,
-            )
+        execution_case = _case_result(
+            case_id=CASE_ID_OPTIONAL_EXECUTION,
+            description="Configured use-case inference endpoints",
+            status="failed" if endpoint_assertions else "passed",
+            request_payload={
+                "method": "POST",
+                "paths": endpoint_paths,
+                "source": "configured" if configured_endpoint_paths else "discovered",
+            },
+            response_payload={"endpoint_results": endpoint_results},
+            assertions=endpoint_assertions,
         )
+        executed_cases.append(execution_case)
 
     summary = _summarize_cases(executed_cases)
     suite_status = "failed" if summary["failed"] else "passed"
@@ -350,6 +459,7 @@ def run_ai_model_hub_model_server_use_cases_validation(
             "base_url": base_url,
             "discovery_path": discovery_path,
             "datasets_path": datasets_path,
+            "datasets_validation_enabled": datasets_validation_enabled,
             "source_repository": values.get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY") or "",
             "source_ref": values.get("AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF") or "",
         },
@@ -363,9 +473,10 @@ def run_ai_model_hub_model_server_use_cases_validation(
             {
                 "report_json": report_path,
                 "mh-model-server-01-response.json": discovery_path_json,
-                "mh-model-server-02-response.json": datasets_path_json,
             }
         )
+        if datasets_case is not None:
+            artifacts["mh-model-server-02-response.json"] = datasets_path_json
         _write_json(
             discovery_path_json,
             {
@@ -391,32 +502,33 @@ def run_ai_model_hub_model_server_use_cases_validation(
                 "path": discovery_path_json,
             }
         )
-        _write_json(
-            datasets_path_json,
-            {
-                "request": datasets_case["request"],
-                "response": datasets_case["response"],
-                "evaluation": datasets_case["evaluation"],
-            },
-        )
-        evidence_index.append(
-            {
-                "scope": "case",
-                "suite": SUITE_NAME,
-                "test_case_id": CASE_ID_DATASETS,
-                "artifact_name": "mh-model-server-02-response.json",
-                "path": datasets_path_json,
-            }
-        )
-        if len(executed_cases) > 2:
+        if datasets_case is not None:
+            _write_json(
+                datasets_path_json,
+                {
+                    "request": datasets_case["request"],
+                    "response": datasets_case["response"],
+                    "evaluation": datasets_case["evaluation"],
+                },
+            )
+            evidence_index.append(
+                {
+                    "scope": "case",
+                    "suite": SUITE_NAME,
+                    "test_case_id": CASE_ID_DATASETS,
+                    "artifact_name": "mh-model-server-02-response.json",
+                    "path": datasets_path_json,
+                }
+            )
+        if execution_case is not None:
             execution_path_json = os.path.join(component_dir, "mh-model-server-03-response.json")
             artifacts["mh-model-server-03-response.json"] = execution_path_json
             _write_json(
                 execution_path_json,
                 {
-                    "request": executed_cases[2]["request"],
-                    "response": executed_cases[2]["response"],
-                    "evaluation": executed_cases[2]["evaluation"],
+                    "request": execution_case["request"],
+                    "response": execution_case["response"],
+                    "evaluation": execution_case["evaluation"],
                 },
             )
             evidence_index.append(

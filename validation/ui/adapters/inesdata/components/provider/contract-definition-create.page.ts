@@ -103,9 +103,18 @@ export class ContractDefinitionCreatePage {
   async expectContractDefinitionListed(
     contractDefinitionId: string,
     expectations: ContractDefinitionListExpectations = {},
+    baseUrl?: string,
     timeoutMs = 60_000,
   ): Promise<void> {
     await expect(async () => {
+      // Reload the list on every attempt. The Angular list fetches the contract
+      // definitions once on load; a list rendered before the new definition
+      // propagates stays stale forever, so re-scanning the DOM never finds it.
+      // Re-navigating re-queries the management API and resets to page 1.
+      if (baseUrl) {
+        await this.gotoList(baseUrl);
+        await waitForUiTransition(this.page);
+      }
       const found = await this.findContractDefinition(contractDefinitionId, expectations);
       expect(
         found,

@@ -3,81 +3,98 @@
   min-height: 0;
   display: flex;
   flex-grow: 1;
+  background: var(--white);
 }
 
 .sidenav {
-  width: 300px;
-  box-shadow: 0.2em 0em 0.5em rgba(0, 0, 0, 0.1);
+  width: 172px;
+  border-right: 1px solid var(--grey-500);
+  box-shadow: 2px 0 7px rgba(2, 91, 119, 0.08);
+  background: #ffffff;
   overflow: hidden;
 }
 
 .sidenav .mat-toolbar,
 .sidenav-toolbar {
   background: inherit;
-  min-height: 56px;
-  height: 56px;
-  font-size: 24px;
+  min-height: 54px;
+  height: 54px;
+  font-size: 18px;
   font-weight: 400;
-  line-height: 27.24px;
+  line-height: 1;
   color: var(--secondary-600);
 }
 
 .sidenav-toolbar {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  padding: 0 10px 0 14px;
+  justify-content: center;
+  padding: 8px 12px 6px;
 }
 
 .brand-label {
   display: flex;
   align-items: center;
+  justify-content: center;
   min-width: 0;
-  gap: 8px;
   overflow: hidden;
   white-space: nowrap;
+  width: 100%;
 }
 
 .brand-logo {
   display: block;
   flex: 0 0 auto;
   width: auto;
-  max-width: 170px;
-  max-height: 44px;
+  max-width: 118px;
+  max-height: 40px;
   object-fit: contain;
 }
 
 .brand-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: none;
 }
 
 .sidenav mat-nav-list {
   display: flex;
   flex-direction: column;
-  padding: 4px 0;
+  padding: 6px 0 10px;
   overflow: hidden;
 }
 
 .sidenav a[mat-list-item] {
   align-items: center;
   display: flex;
-  min-height: 42px;
-  height: 42px;
-  --mdc-list-list-item-one-line-container-height: 42px;
+  min-height: 34px;
+  height: 34px;
+  --mdc-list-list-item-one-line-container-height: 34px;
   margin: 0;
+  border-left: 3px solid transparent;
+  transition: background-color 0.16s ease, border-color 0.16s ease;
+}
+
+.sidenav a[mat-list-item]:hover,
+.sidenav a[mat-list-item]:focus {
+  background: var(--brand-soft);
+  border-left-color: var(--tertiary-500);
+}
+
+.sidenav a[mat-list-item].is-active {
+  background: var(--brand-soft);
+  border-left-color: var(--brand-500);
+  font-weight: 700;
 }
 
 .sidenav mat-icon {
   align-items: center;
   display: inline-flex;
-  flex: 0 0 24px;
-  height: 24px;
+  flex: 0 0 18px;
+  height: 18px;
   justify-content: center;
-  line-height: 24px;
-  margin-right: 14px;
-  transform: scale(0.9);
-  width: 24px;
+  line-height: 18px;
+  margin-right: 8px;
+  transform: scale(0.72);
+  width: 18px;
 }
 
 .nav-label {
@@ -87,11 +104,17 @@
   white-space: nowrap;
 }
 
-.mat-toolbar.mat-primary {
+.mat-toolbar.mat-primary,
+.mat-toolbar.app-toolbar,
+.mat-mdc-toolbar.app-toolbar {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: var(--brand-500);
+  min-height: 34px;
+  height: 34px;
+  background: var(--brand-500) !important;
+  box-shadow: 0 1px 4px rgba(2, 91, 119, 0.18);
+  color: #ffffff !important;
 }
 
 .logout {
@@ -99,20 +122,23 @@
   text-align: right;
   display: flex;
   justify-content: flex-end;
-  font-size: 18px;
+  font-size: 12px;
 }
 
 .logout span {
   display: flex;
   align-items: center;
+  gap: 4px;
   cursor: pointer;
   transition: color 0.3s;
 }
 
 
 .logout mat-icon {
-  font-size: 18px;
-  margin-right: 10px;
+  font-size: 15px;
+  height: 15px;
+  margin-right: 0;
+  width: 15px;
   align-content: center;
 }
 
@@ -133,10 +159,11 @@ mat-sidenav-content {
 .scrollable-content {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 12px;
+  padding: 10px 10px 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  background: #ffffff;
 }
 
 .page-content {
@@ -145,23 +172,27 @@ mat-sidenav-content {
 }
 
 mat-toolbar {
-  min-height: 56px;
-  height: 56px;
-  font-size: 18px;
+  min-height: 34px;
+  height: 34px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .footer-content {
   flex: 0 0 auto;
-  margin: 18px -12px -12px;
+  margin: 16px -10px 0;
 }
 
-:host ::ng-deep .mdc-list-item__primary-text,
-:host ::ng-deep mat-nav-list mat-icon{
+:host ::ng-deep .mdc-list-item__primary-text {
   color: var(--secondary-600) !important;
 }
 
+:host ::ng-deep mat-nav-list mat-icon{
+  color: var(--pionera-icon) !important;
+}
+
 :host ::ng-deep mat-nav-list .mdc-list-item__primary-text {
-  font-size: 15px;
+  font-size: 11px;
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
@@ -170,7 +201,7 @@ mat-toolbar {
 
 :host ::ng-deep mat-nav-list .mat-mdc-list-item,
 :host ::ng-deep mat-nav-list .mat-mdc-list-item .mdc-list-item__content {
-  height: 42px !important;
+  height: 34px !important;
 }
 
 :host ::ng-deep mat-nav-list .mat-mdc-list-item .mdc-list-item__content {
@@ -182,12 +213,12 @@ mat-toolbar {
   align-items: center;
   align-self: center;
   display: inline-flex;
-  height: 24px;
+  height: 18px;
   justify-content: center;
   margin-bottom: 0;
-  margin-right: 12px;
+  margin-right: 8px;
   margin-top: 0;
-  width: 24px;
+  width: 18px;
 }
 
 :host ::ng-deep .mdc-list-item:focus::before {

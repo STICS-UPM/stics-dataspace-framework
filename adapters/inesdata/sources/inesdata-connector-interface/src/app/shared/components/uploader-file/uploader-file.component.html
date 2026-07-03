@@ -1,5 +1,5 @@
 <div class="container-upload" appDnd (fileDropped)="onFileDropped($event)" *ngIf="files.length === 0">
-	<input type="file" #fileDropRef id="fileDropRef" [multiple]="isMultiple" [accept]="accept" (change)="fileBrowseHandler($event)" />
+	<input type="file" #fileDropRef id="fileDropRef" [multiple]="isMultiple" (change)="fileBrowseHandler($event)" />
 	<svg xmlns="http://www.w3.org/2000/svg" width="63" height="64" viewBox="0 0 63 64">
 		<g fill="#FFFFFF" fill-rule="nonzero">
 			<path

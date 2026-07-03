@@ -4,7 +4,6 @@ const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
 const EDC_NAMESPACE = "https://w3id.org/edc/v0.0.1/ns/";
 const DAIMO_NAMESPACE = "https://w3id.org/daimo/0.0.1/ns#";
 const LEGACY_DAIMO_NAMESPACE = "https://pionera.ai/edc/daimo#";
-const MODEL_VOCABULARY_ID = "JS_DAIMO_Model";
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -74,35 +73,6 @@ function aiModelMetadataAliases({ task, library, inferencePath, keywords }) {
   };
 }
 
-function aiModelHubDaimoModelAssetData({ task, library, inferencePath, description }) {
-  return {
-    [MODEL_VOCABULARY_ID]: {
-      "daimo:modality": ["text"],
-      "daimo:taskType": task && task.includes("regression") ? "regression" : "classification",
-      "daimo:taskCategory": "Natural Language Processing",
-      "daimo:subtask": task && task.includes("token") ? "token-classification" : "text-classification",
-      "daimo:subtaskDescription": task || "AI Model Hub validation model",
-      "daimo:endpointBehavior": "prediction",
-      "daimo:requestShape": "single",
-      "dct:description": description || "AI Model Hub model endpoint exposed as HttpData.",
-      "daimo:libraryName": library || "Custom",
-      "dct:language": ["English", "Spanish"],
-      "dct:license": "apache-2.0",
-      "daimo:inputSchema": {
-        fields: [{ name: "text", type: "string", description: "Text to analyze" }],
-        jsonSchema: JSON.stringify({
-          type: "object",
-          required: ["text"],
-          properties: { text: { type: "string" } },
-        }),
-      },
-      "daimo:inputExample": JSON.stringify({ text: "This product is excellent and very useful" }),
-      "daimo:metrics": ["Accuracy", "Precision", "Recall", "F1"],
-      ...(inferencePath ? { "daimo:inferencePath": inferencePath } : {}),
-    },
-  };
-}
-
 async function createPublishedProviderModelAsset(request, runtime, payload) {
   const providerToken = await requestConnectorManagementToken(runtime, runtime.providerConnectorId);
   const {
@@ -131,12 +101,7 @@ async function createPublishedProviderModelAsset(request, runtime, payload) {
         version,
         shortDescription: description,
         assetType: "machineLearning",
-        assetData: aiModelHubDaimoModelAssetData({
-          task,
-          library,
-          inferencePath: payload.inferencePath || payload.modelPath,
-          description,
-        }),
+        assetData: {},
         "asset:prop:type": "machineLearning",
         contenttype: runtime.modelContentType,
         "dct:description": description,
@@ -250,12 +215,7 @@ async function createLocalConsumerModelAsset(request, runtime, payload) {
         version,
         shortDescription: description,
         assetType: "machineLearning",
-        assetData: aiModelHubDaimoModelAssetData({
-          task,
-          library,
-          inferencePath: payload.inferencePath || payload.modelPath,
-          description,
-        }),
+        assetData: {},
         "asset:prop:type": "machineLearning",
         contenttype: runtime.modelContentType,
         "dct:description": description,

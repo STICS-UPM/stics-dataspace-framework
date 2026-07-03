@@ -33,4 +33,6 @@ export interface ModelObserverQueryFilter {
   correlationId?: string;
   eventType?: string;
   status?: string;
+  limit?: number;
+  offset?: number;
 }

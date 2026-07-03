@@ -14,14 +14,15 @@ function appendUrlPath(baseUrl: string, pathValue: string): string {
   return `${withoutTrailingSlash(baseUrl.trim())}${normalizePath(pathValue)}`;
 }
 
-function normalizeUrl(baseUrl: string, fallbackScheme: string): string {
+function forceUrlScheme(baseUrl: string, scheme: string): string {
   const rawValue = withoutTrailingSlash(baseUrl.trim());
   if (!rawValue) {
     return "";
   }
-  const withScheme = rawValue.includes("://") ? rawValue : `${fallbackScheme}://${rawValue}`;
+  const withScheme = rawValue.includes("://") ? rawValue : `${scheme}://${rawValue}`;
   try {
     const parsed = new URL(withScheme);
+    parsed.protocol = `${scheme}:`;
     parsed.search = "";
     parsed.hash = "";
     return withoutTrailingSlash(parsed.toString());
@@ -58,29 +59,14 @@ function connectorModelServerBaseUrlFromTopology(): string {
     process.env.AI_MODEL_HUB_MODEL_SERVER_PUBLIC_PATH ||
     "/model-server"
   ).trim();
-  const explicitPublicUrl = (
-    process.env.UI_AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL ||
-    process.env.AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL ||
-    process.env.UI_MODEL_SERVER_PUBLIC_URL ||
-    process.env.MODEL_SERVER_PUBLIC_URL ||
-    ""
-  ).trim();
-  if (explicitPublicUrl) {
-    return withoutTrailingSlash(explicitPublicUrl);
-  }
-
-  const commonBaseCandidate = (
-    process.env.UI_VM_COMMON_PUBLIC_URL ||
-    process.env.VM_COMMON_PUBLIC_URL ||
-    process.env.UI_AI_MODEL_HUB_MODEL_SERVER_PUBLIC_BASE_URL ||
-    process.env.AI_MODEL_HUB_MODEL_SERVER_PUBLIC_BASE_URL ||
-    process.env.UI_COMPONENTS_PUBLIC_BASE_URL ||
-    process.env.COMPONENTS_PUBLIC_BASE_URL ||
+  const commonHttpUrl = (
     process.env.UI_VM_COMMON_HTTP_URL ||
     process.env.VM_COMMON_HTTP_URL ||
+    process.env.UI_VM_COMMON_PUBLIC_URL ||
+    process.env.VM_COMMON_PUBLIC_URL ||
     ""
   ).trim();
-  const commonBaseUrl = normalizeUrl(commonBaseCandidate, "https");
+  const commonBaseUrl = forceUrlScheme(commonHttpUrl, "http");
   if (commonBaseUrl) {
     return appendUrlPath(commonBaseUrl, publicPath);
   }
@@ -95,7 +81,7 @@ function connectorModelServerBaseUrlFromTopology(): string {
   if (!domain) {
     return "";
   }
-  return appendUrlPath(`https://org1.${domain}`, publicPath);
+  return appendUrlPath(`http://org1.${domain}`, publicPath);
 }
 
 function publicModelServerBaseUrlFromTopology(): string {

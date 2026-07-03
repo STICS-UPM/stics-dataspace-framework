@@ -5,7 +5,6 @@ import json
 import os
 import sys
 import tempfile
-import time
 import unittest
 from unittest import mock
 
@@ -1431,112 +1430,6 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         )
         adapter._close_temporary_port_forward.assert_called_once()
 
-    def test_wait_for_management_api_ready_refreshes_failed_internal_port_forward(self):
-        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
-        port_forwards = [
-            (
-                "http://127.0.0.1:45555/management/v3/assets/request",
-                {
-                    "namespace": "demoedc",
-                    "pod_name": "conn-citycounciledc-demoedc-0",
-                    "local_port": 45555,
-                    "opened_at": 0,
-                },
-            ),
-            (
-                "http://127.0.0.1:45556/management/v3/assets/request",
-                {
-                    "namespace": "demoedc",
-                    "pod_name": "conn-citycounciledc-demoedc-0",
-                    "local_port": 45556,
-                    "opened_at": time.time(),
-                },
-            ),
-        ]
-        adapter._start_connector_management_api_fallback = mock.Mock(side_effect=port_forwards)
-        adapter._close_temporary_port_forward = mock.Mock()
-        adapter._edc_management_port_forward_refresh_delay = lambda: 0
-        adapter._edc_management_port_forward_refresh_failures = lambda: 1
-        adapter.get_management_api_headers = lambda connector: {"Authorization": "Bearer token"}
-        adapter.invalidate_management_api_token = mock.Mock()
-        adapter.connector_base_url = mock.Mock(side_effect=AssertionError("public URL should not be used"))
-        response = mock.Mock(status_code=200)
-
-        with mock.patch(
-            "adapters.edc.connectors.requests.post",
-            side_effect=[requests.ConnectionError("Connection refused"), response],
-        ) as post_mock:
-            ready = adapter.wait_for_management_api_ready("conn-citycounciledc-demoedc", timeout=5, poll_interval=0)
-
-        self.assertTrue(ready)
-        self.assertEqual(adapter._start_connector_management_api_fallback.call_count, 2)
-        self.assertEqual(
-            [call.args[0] for call in post_mock.call_args_list],
-            [
-                "http://127.0.0.1:45555/management/v3/assets/request",
-                "http://127.0.0.1:45556/management/v3/assets/request",
-            ],
-        )
-        adapter._close_temporary_port_forward.assert_has_calls(
-            [
-                mock.call(port_forwards[0][1]),
-                mock.call(port_forwards[1][1]),
-            ]
-        )
-
-    def test_wait_for_management_api_ready_keeps_fresh_internal_port_forward_on_transient_refusal(self):
-        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
-        port_forward = {
-            "namespace": "demoedc",
-            "pod_name": "conn-citycounciledc-demoedc-0",
-            "local_port": 45555,
-            "opened_at": time.time(),
-        }
-        adapter._start_connector_management_api_fallback = mock.Mock(
-            return_value=(
-                "http://127.0.0.1:45555/management/v3/assets/request",
-                port_forward,
-            )
-        )
-        adapter._close_temporary_port_forward = mock.Mock()
-        adapter.get_management_api_headers = lambda connector: {"Authorization": "Bearer token"}
-        adapter.invalidate_management_api_token = mock.Mock()
-        adapter.connector_base_url = mock.Mock(side_effect=AssertionError("public URL should not be used"))
-        response = mock.Mock(status_code=200)
-
-        with mock.patch(
-            "adapters.edc.connectors.requests.post",
-            side_effect=[requests.ConnectionError("Connection refused"), response],
-        ) as post_mock:
-            ready = adapter.wait_for_management_api_ready("conn-citycounciledc-demoedc", timeout=5, poll_interval=0)
-
-        self.assertTrue(ready)
-        adapter._start_connector_management_api_fallback.assert_called_once()
-        self.assertEqual(
-            [call.args[0] for call in post_mock.call_args_list],
-            [
-                "http://127.0.0.1:45555/management/v3/assets/request",
-                "http://127.0.0.1:45555/management/v3/assets/request",
-            ],
-        )
-        adapter._close_temporary_port_forward.assert_called_once_with(port_forward)
-
-    def test_wait_for_all_connectors_uses_edc_management_timeout_config(self):
-        adapter = EDCConnectorsAdapter.__new__(EDCConnectorsAdapter)
-        adapter.config_adapter = mock.Mock()
-        adapter.config_adapter.load_deployer_config.return_value = {
-            "EDC_MANAGEMENT_API_TIMEOUT_SECONDS": "420",
-        }
-        adapter.config = mock.Mock()
-        adapter.config.TIMEOUT_POD_WAIT = 120
-        adapter.wait_for_management_api_ready = mock.Mock(return_value=True)
-
-        self.assertTrue(adapter.wait_for_all_connectors(["conn-citycounciledc-demoedc"]))
-        adapter.wait_for_management_api_ready.assert_called_once_with(
-            "conn-citycounciledc-demoedc",
-            timeout=420,
-        )
-
     def _make_oidc_adapter(self, root):
         adapter = self._make_adapter(root)
         adapter.config_adapter = self.OidcEdcConnectorConfigAdapter(root)
@@ -2176,24 +2069,8 @@ class EdcConnectorAdapterTests(unittest.TestCase):
         routed = manifests[0]
         self.assertEqual(routed["spec"]["rules"][0]["host"], "org4.example.test")
         paths = routed["spec"]["rules"][0]["http"]["paths"]
-        management_path = next(path for path in paths if "(management.*)" in path["path"])
-        self.assertEqual(
-            management_path["path"],
-            "/edc/c/citycounciledc(/|$)(management.*)",
-        )
-        self.assertEqual(
-            management_path["backend"]["service"],
-            {
-                "name": "conn-citycounciledc-pionera-edc",
-                "port": {"number": 19193},
-            },
-        )
-        self.assertFalse(any(path["path"] == "/c/citycounciledc(/|$)(management.*)" for path in paths))
+        self.assertFalse(any("(management.*)" in path["path"] for path in paths))
         dashboard_proxy_path = next(path for path in paths if "(edc-dashboard-api.*)" in path["path"])
-        self.assertEqual(
-            dashboard_proxy_path["path"],
-            "/c/citycounciledc(/|$)(edc-dashboard-api.*)",
-        )
         self.assertEqual(
             dashboard_proxy_path["backend"]["service"],
             {

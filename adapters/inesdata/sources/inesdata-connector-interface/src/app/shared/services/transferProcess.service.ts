@@ -16,7 +16,7 @@ import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Observable, from, lastValueFrom, throwError } from 'rxjs';
 import { TransferProcessInput, QuerySpec } from "../models/edc-connector-entities";
 import { environment } from 'src/environments/environment';
-import { expand, expandArray, IdResponse, JSON_LD_DEFAULT_CONTEXT, TransferProcess, TransferProcessState } from '@think-it-labs/edc-connector-client';
+import { expand, IdResponse, JSON_LD_DEFAULT_CONTEXT, TransferProcess, TransferProcessState } from '@think-it-labs/edc-connector-client';
 
 export interface EndpointDataAddress {
   [key: string]: any;
@@ -178,14 +178,9 @@ export class TransferProcessService {
           "@context": JSON_LD_DEFAULT_CONTEXT,
         }
 
-    return from(lastValueFrom(this.http.post<TransferProcess[]>(
+    return from(lastValueFrom(this.http.post<TransferProcess>(
       `${this.BASE_URL}${environment.runtime.service.transferProcess.getAll}`, body
-    )).then(results => {
-      if (!results || !Array.isArray(results)) {
-        return [];
-      }
-      return expandArray(results, () => new TransferProcess());
-    }));
+    )));
   }
 
 

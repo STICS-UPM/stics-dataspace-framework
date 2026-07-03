@@ -7,11 +7,6 @@ const {
 
 const { navigationTimeoutMs, readyTimeoutMs } = resolveOntologyHubTimeouts();
 
-function isTransientNavigationError(error) {
-  const message = String((error && error.message) || error || "");
-  return /timeout|net::err|navigation failed|target closed/i.test(message);
-}
-
 function isPointerInterceptionError(error) {
   return /intercepts pointer events|element is not receiving pointer events/i.test(
     String((error && error.message) || error || ""),
@@ -24,30 +19,10 @@ class OntologyHubHomePage {
   }
 
   async goto(baseUrl) {
-    const targetUrl = buildOntologyHubUrl(baseUrl, "dataset");
-    const deadline = Date.now() + Math.max(navigationTimeoutMs * 2, readyTimeoutMs);
-    let lastError = null;
-
-    while (Date.now() < deadline) {
-      try {
-        await this.page.goto(targetUrl, {
-          waitUntil: "commit",
-          timeout: navigationTimeoutMs,
-        });
-        await this.page
-          .waitForLoadState("domcontentloaded", { timeout: navigationTimeoutMs })
-          .catch(() => {});
-        return;
-      } catch (error) {
-        lastError = error;
-        if (!isTransientNavigationError(error)) {
-          throw error;
-        }
-        await this.page.waitForTimeout(2000);
-      }
-    }
-
-    throw lastError || new Error("Ontology Hub home page did not load within the retry window.");
+    await this.page.goto(buildOntologyHubUrl(baseUrl, "dataset"), {
+      waitUntil: "domcontentloaded",
+      timeout: navigationTimeoutMs,
+    });
   }
 
   async expectReady() {

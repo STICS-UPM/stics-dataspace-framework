@@ -52,7 +52,7 @@ async function gotoHealthyPage(page, url, label, timeoutMs = 300000) {
   let lastError = null;
 
   while (Date.now() < deadline) {
-    await page.goto(url, { waitUntil: "commit" }).catch((error) => {
+    await page.goto(url, { waitUntil: "domcontentloaded" }).catch((error) => {
       lastError = error;
     });
     try {
@@ -113,12 +113,9 @@ test("OH-APP-22: patterns page generates a zip", async ({
   await gotoHealthyPage(page, patternsUrl, `Patterns for ${patternsQuery}`);
 
   const selectAllButton = page.getByRole("button", { name: /^select all$/i }).first();
-  await selectAllButton.waitFor({ state: "visible", timeout: 60000 }).catch((error) => {
-    throw new Error(
-      "Patterns page does not expose the 'Select All' control expected by the Excel flow. " +
-        error.message,
-    );
-  });
+  if ((await selectAllButton.count()) === 0) {
+    throw new Error("Patterns page does not expose the 'Select All' control expected by the Excel flow.");
+  }
 
   await clickMarked(selectAllButton);
   const selectedVocabularyItems = page.locator("#selectedVocabularies .nav-item-vocabulary");
@@ -145,12 +142,9 @@ test("OH-APP-22: patterns page generates a zip", async ({
   }
 
   const submitButton = page.locator("button, input[type='submit']").filter({ hasText: /submit/i }).first();
-  await submitButton.waitFor({ state: "visible", timeout: 60000 }).catch((error) => {
-    throw new Error(
-      "Patterns page does not expose the Submit control expected by the Excel flow. " +
-        error.message,
-    );
-  });
+  if ((await submitButton.count()) === 0) {
+    throw new Error("Patterns page does not expose the Submit control expected by the Excel flow.");
+  }
 
   const patternsResponsePromise = page.waitForResponse(
     (response) => response.url().includes("/dataset/api/v2/patterns"),

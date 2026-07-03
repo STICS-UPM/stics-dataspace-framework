@@ -1,0 +1,74 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "daimo": "https://w3id.org/pionera/daimo#",
+    "input": "daimo:input",
+    "label": "daimo:label",
+    "datasetVersion": "daimo:datasetVersion",
+    "protocol": "daimo:protocol",
+    "randomSeed": "daimo:randomSeed"
+  },
+  "@id": "company-flares-reliability-test",
+  "properties": {
+    "name": "FLARES Reliability Test Dataset",
+    "version": "1.0.0",
+    "contenttype": "application/x-ndjson",
+    "assetType": "dataset",
+    "shortDescription": "JSONL validation dataset for FLARES reliability classification metrics.",
+    "dct:description": "JSONL validation dataset for FLARES reliability classification metrics.",
+    "dcterms:description": "JSONL validation dataset for FLARES reliability classification metrics.",
+    "dcterms:format": "jsonl",
+    "fileName": "5w1h_subtarea_2_test.jsonl",
+    "dcat:keyword": [
+      "dataset",
+      "benchmark",
+      "validation",
+      "flares",
+      "reliability",
+      "jsonl"
+    ],
+    "assetData": {
+      "JS_DAIMO_Dataset": {
+        "daimo:modality": [
+          "text"
+        ],
+        "daimo:taskType": "classification",
+        "daimo:taskCategory": "Natural Language Processing",
+        "daimo:subtask": "text-classification",
+        "daimo:subtaskDescription": "FLARES reliability classification benchmark dataset",
+        "daimo:input": [
+          "Id",
+          "Text",
+          "5W1H_Label",
+          "Tag_Text",
+          "Tag_Start",
+          "Tag_End"
+        ],
+        "daimo:label": "Reliability_Label",
+        "daimo:labelType": "categorical",
+        "dct:language": [
+          "Spanish"
+        ],
+        "dct:license": "apache-2.0",
+        "dct:format": "jsonl",
+        "dcat:keyword": [
+          "dataset",
+          "benchmark",
+          "validation",
+          "flares",
+          "reliability",
+          "jsonl"
+        ],
+        "daimo:datasetVersion": "1.0.0",
+        "daimo:datasetRole": "test",
+        "daimo:protocol": "holdout-test-set"
+      }
+    }
+  },
+  "dataAddress": {
+    "type": "InesDataStore"
+  }
+}

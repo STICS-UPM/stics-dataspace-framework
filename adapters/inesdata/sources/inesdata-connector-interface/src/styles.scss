@@ -4,21 +4,25 @@
   /* Mode 1 */
   /* color */
   --white: #ffffff;
-  --brand-500: #ef7011;
+  --brand-500: #006f7f;
+  --brand-600: #005f6f;
+  --brand-700: #024b5f;
+  --brand-soft: #e9f5f7;
+  --pionera-icon: #2fa0b5;
   --grey-400: #eeeeee;
   --grey-500: #e6e6e6;
   --grey-600: #d9d8d8;
   --grey-700: #b3b3b3;
   --grey-800: #a3a3a3;
-  --secondary-500: #3c6b85;
-  --secondary-600: #203f57;
-  --secondary-700: #212529;
+  --secondary-500: #2f7f90;
+  --secondary-600: #025b77;
+  --secondary-700: #14313f;
   --secondary-red-500: #f44336;
-  --tertiary-500: #4dafba;
-  --mdc-list-list-item-label-text-color: #203f57;
-  --mdc-list-list-item-hover-label-text-color: #203f57;
-  --mdc-list-list-item-focus-label-text-color: #203f57;
-  --mat-mdc-button-persistent-ripple-color: #3c6b85;
+  --tertiary-500: #2fa0b5;
+  --mdc-list-list-item-label-text-color: #025b77;
+  --mdc-list-list-item-hover-label-text-color: #025b77;
+  --mdc-list-list-item-focus-label-text-color: #025b77;
+  --mat-mdc-button-persistent-ripple-color: #2f7f90;
 }
 
 ::-webkit-input-placeholder {
@@ -41,12 +45,6 @@ body {
   height: 100%;
 }
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
 html,
 div,
 p,
@@ -61,15 +59,21 @@ input {
 
 body {
   margin: 0;
-  overflow-x: hidden;
 }
 
-app-root,
-app-navigation,
-mat-sidenav-container,
-mat-sidenav-content,
-router-outlet + * {
-  min-width: 0;
+.mat-toolbar.mat-primary,
+.mat-mdc-toolbar.mat-primary,
+.mat-toolbar.app-toolbar,
+.mat-mdc-toolbar.app-toolbar {
+  background-color: var(--brand-500) !important;
+  color: #ffffff !important;
+}
+
+.mat-toolbar.mat-primary mat-icon,
+.mat-mdc-toolbar.mat-primary mat-icon,
+.mat-toolbar.app-toolbar mat-icon,
+.mat-mdc-toolbar.app-toolbar mat-icon {
+  color: #ffffff !important;
 }
 
 /* scrollbar */
@@ -152,9 +156,9 @@ router-outlet + * {
   }
 
   &.snackbar-warning-style {
-    --mdc-snackbar-container-color: #FAEED1;
-    --mdc-snackbar-supporting-text-color: #A64A00;
-    --mat-mdc-snack-bar-button-color: #d19800;
+    --mdc-snackbar-container-color: var(--brand-soft);
+    --mdc-snackbar-supporting-text-color: var(--brand-700);
+    --mat-mdc-snack-bar-button-color: var(--pionera-icon);
   }
 
   .mat-mdc-snack-bar-label {
@@ -167,110 +171,8 @@ router-outlet + * {
 }
 
 mat-card:not(.dialog-card, .creation-card) {
-  width: min(500px, 100%);
-  max-width: 100%;
-  min-width: 0;
+  width: 500px;
   margin: 0.5em 0em;
-}
-
-.card,
-mat-card,
-.mat-mdc-card,
-.mdc-card {
-  max-width: 100%;
-  min-width: 0;
-}
-
-mat-card-header,
-.mat-mdc-card-header,
-.mat-mdc-card-header-text,
-mat-card-content,
-.mat-mdc-card-content,
-mat-card-title,
-.mat-mdc-card-title,
-mat-card-subtitle,
-.mat-mdc-card-subtitle {
-  min-width: 0;
-  max-width: 100%;
-}
-
-mat-card-title,
-.mat-mdc-card-title,
-mat-card-subtitle,
-.mat-mdc-card-subtitle {
-  overflow-wrap: anywhere;
-}
-
-mat-card-content,
-.mat-mdc-card-content {
-  overflow-wrap: anywhere;
-}
-
-mat-card-actions,
-.mat-mdc-card-actions,
-.card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  max-width: 100%;
-  min-width: 0;
-}
-
-mat-card-actions button,
-.mat-mdc-card-actions button,
-.card-actions button {
-  max-width: 100%;
-  white-space: normal;
-}
-
-.mat-mdc-form-field,
-.mat-mdc-select,
-.mat-mdc-input-element,
-input,
-select,
-textarea {
-  max-width: 100%;
-  min-width: 0;
-}
-
-.mat-mdc-table,
-table {
-  max-width: 100%;
-}
-
-.mat-mdc-table:not(table) {
-  display: block;
-  overflow-x: auto;
-}
-
-table.mat-mdc-table,
-table.mat-table {
-  display: table;
-  width: 100%;
-}
-
-pre,
-code {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-@media (max-width: 720px) {
-  mat-card-actions,
-  .mat-mdc-card-actions,
-  .card-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  mat-card-actions button,
-  .mat-mdc-card-actions button,
-  .card-actions button {
-    width: 100%;
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-  }
 }
 
 //CREATE POLICY STYLES
@@ -526,7 +428,7 @@ app-json-dialog {
 }
 
 .footer-content {
-  margin-left: 300px;
+  margin-left: 0;
 }
 
 // MAT Styles

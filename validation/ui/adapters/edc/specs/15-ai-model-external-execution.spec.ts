@@ -41,19 +41,9 @@ type AIModelExternalExecutionEdcReport = {
   errorResponses: Array<{ url: string; status: number }>;
 };
 
-const modelServerSkipReason =
-  process.env.UI_AI_MODEL_HUB_MODEL_SERVER_SKIP_REASON ||
-  "AI Model Hub model-server is not deployed for this topology; skipping external execution-dependent EDC dashboard validation.";
-
 test.skip(
   process.env.UI_AI_MODEL_HUB_HTTPDATA_DEMO !== "1",
   "Set UI_AI_MODEL_HUB_HTTPDATA_DEMO=1 to validate external AI Model execution through the EDC dashboard.",
-);
-
-test.skip(
-  process.env.UI_AI_MODEL_HUB_MODEL_SERVER_DEMO === "0" ||
-    process.env.UI_AI_MODEL_HUB_MODEL_SERVER_COVERAGE_STATUS === "skipped_model_server_not_deployed",
-  modelServerSkipReason,
 );
 
 test("15 edc AI Model External Execution: negotiated model is executable by consumer", async ({
@@ -126,10 +116,7 @@ test("15 edc AI Model External Execution: negotiated model is executable by cons
     await dashboardPage.expectShellReady();
     await captureStep(page, "01-edc-ai-model-external-after-login");
 
-    await executionPage.goto(dataspaceRuntime.consumer.portalBaseUrl, {
-      externalCatalogCounterPartyAddress: dataspaceRuntime.provider.protocolBaseUrl,
-      externalCatalogCounterPartyId: dataspaceRuntime.provider.connectorName,
-    });
+    await executionPage.goto(dataspaceRuntime.consumer.portalBaseUrl);
     await dashboardPage.expectNoServerErrorBanner("EDC external AI Model Execution");
     await executionPage.expectReady();
     await executionPage.waitForExecutableAsset(assetId, 120_000);

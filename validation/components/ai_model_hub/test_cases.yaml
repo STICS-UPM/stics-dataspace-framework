@@ -54,12 +54,8 @@ support_checks:
       runner_case: mh_bootstrap_02_runtime_config
       real_flow:
         method: GET
-        path: /inesdata-connector-interface/assets/config/app.config.json
-      notes: >-
-        Bootstrap support check used to confirm that runtime configuration is
-        wired before UI flows are automated. The runner also accepts
-        /assets/config/app.config.json and the legacy /config/app-config.json
-        route.
+        path: /config/app-config.json
+      notes: Bootstrap support check used to confirm that runtime configuration is wired before UI flows are automated.
 
   - id: MH-MODEL-SERVER-01
     component: ai_model_hub
@@ -111,7 +107,7 @@ support_checks:
       real_flow:
         method: GET
         path: /datasets
-      notes: Executed with model discovery to verify that Level 6 can validate the datasets used by Step 9 seeding.
+      notes: Executed when the active model-server profile exposes dataset discovery. The upstream AIModelHub-Use-Cases server does not expose /datasets, so use-cases mode skips this support check unless AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH is set explicitly; connector-side dataset seeding remains validated by catalog audit and Step 9 logs.
 
   - id: MH-MODEL-SERVER-03
     component: ai_model_hub
@@ -1052,6 +1048,6 @@ functional_use_cases:
         UI_AI_MODEL_HUB_HTTPDATA_DEMO: "1"
       fixture:
         source: adapters/inesdata/sources/AIModelHub-Use-Cases
-        endpoint: /api/v1/nlp/twitter-sentiment
+        endpoint: /flares/dccuchile-bert-base-spanish-wwm-uncased-5w1h
       visual_markers: PLAYWRIGHT_INTERACTION_MARKERS=1
       notes: Level 6 includes this spec in the INESData integration profile. The spec creates a run-scoped provider model, negotiates a consumer agreement, selects the external agreed model from the consumer UI and validates execution output/history.

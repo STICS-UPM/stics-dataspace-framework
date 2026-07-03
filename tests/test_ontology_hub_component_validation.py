@@ -8,6 +8,7 @@ import yaml
 
 from validation.components.ontology_hub.integration.runner import (
     _http_get_until_stable,
+    _prepare_validation_fixture,
     evaluate_html_page_response,
     evaluate_sparql_response,
     evaluate_term_search_response,
@@ -25,12 +26,64 @@ CATALOG_PATH = os.path.join(
     "integration",
     "test_cases.yaml",
 )
+CHART_VALUES_PATH = os.path.join(
+    PROJECT_ROOT,
+    "deployers",
+    "shared",
+    "components",
+    "ontology-hub",
+    "values.yaml",
+)
+CHART_DEPLOYMENT_TEMPLATE_PATH = os.path.join(
+    PROJECT_ROOT,
+    "deployers",
+    "shared",
+    "components",
+    "ontology-hub",
+    "templates",
+    "deployment.yaml",
+)
+CHART_ELASTICSEARCH_DEPLOYMENT_TEMPLATE_PATH = os.path.join(
+    PROJECT_ROOT,
+    "deployers",
+    "shared",
+    "components",
+    "ontology-hub",
+    "templates",
+    "elasticsearch-deployment.yaml",
+)
+CHART_HELPERS_TEMPLATE_PATH = os.path.join(
+    PROJECT_ROOT,
+    "deployers",
+    "shared",
+    "components",
+    "ontology-hub",
+    "templates",
+    "_helpers.tpl",
+)
+CHART_SECRET_TEMPLATE_PATH = os.path.join(
+    PROJECT_ROOT,
+    "deployers",
+    "shared",
+    "components",
+    "ontology-hub",
+    "templates",
+    "secret.yaml",
+)
 
 
 class OntologyHubComponentValidationTests(unittest.TestCase):
     def _load_catalog(self):
         with open(CATALOG_PATH, "r", encoding="utf-8") as handle:
             return yaml.safe_load(handle) or {}
+
+    def _load_chart_values(self):
+        with open(CHART_VALUES_PATH, "r", encoding="utf-8") as handle:
+            return yaml.safe_load(handle) or {}
+
+    def _read_text(self, path):
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read()
 
     def test_integration_catalog_does_not_duplicate_inesdata_readonly_route(self):
         catalog = self._load_catalog()
@@ -81,6 +134,56 @@ class OntologyHubComponentValidationTests(unittest.TestCase):
         self.assertEqual(runtime["dataspace"], "pionera-edc")
         self.assertEqual(runtime["releaseName"], "pionera-ontology-hub")
         self.assertEqual(runtime["componentsNamespace"], "components")
+
+    def test_shared_chart_does_not_publish_default_elasticsearch_password(self):
+        values = self._load_chart_values()
+        helpers_template = self._read_text(CHART_HELPERS_TEMPLATE_PATH)
+        secret_template = self._read_text(CHART_SECRET_TEMPLATE_PATH)
+
+        self.assertEqual(values["elasticsearch"]["auth"]["password"], "")
+        self.assertIn('define "ontology-hub.elasticsearchPassword"', helpers_template)
+        self.assertIn("lookup \"v1\" \"Secret\"", helpers_template)
+        self.assertIn("randAlphaNum", helpers_template)
+        self.assertIn('include "ontology-hub.elasticsearchPassword"', secret_template)
+
+    def test_shared_chart_rolls_pods_when_ontology_hub_secret_changes(self):
+        deployment_template = self._read_text(CHART_DEPLOYMENT_TEMPLATE_PATH)
+        elasticsearch_template = self._read_text(CHART_ELASTICSEARCH_DEPLOYMENT_TEMPLATE_PATH)
+
+        self.assertIn("checksum/ontology-hub-secret", deployment_template)
+        self.assertIn("checksum/ontology-hub-secret", elasticsearch_template)
+
+    def test_validation_fixture_preparation_links_legacy_lov_mapping_path(self):
+        runtime = {
+            "componentsNamespace": "components",
+            "releaseName": "pionera-ontology-hub",
+            "expectedVocabularyPrefix": "custom-vocab",
+            "expectedSparqlResourceUri": "https://example.org/custom/v1/",
+            "creationNamespace": "https://example.org/custom/",
+            "expectedClassUri": "https://example.org/custom/Person",
+            "expectedLabel": "Person",
+            "expectedPrimaryTag": "Services",
+        }
+
+        with mock.patch(
+            "validation.components.ontology_hub.integration.runner._kubectl_exec_shell",
+            return_value={"executed": True, "returncode": 0},
+        ) as exec_mock:
+            _prepare_validation_fixture(runtime)
+
+        script = exec_mock.call_args.kwargs["script"]
+        self.assertIn("/app/app/elastic/mappings", script)
+        self.assertIn("/Users/alexel200/Downloads/Pionera/Ontology-Hub/app/elastic", script)
+        self.assertIn("PioneraValidationFixtureVocabulary", script)
+        self.assertIn("collection: \"vocabularies\"", script)
+        self.assertIn("/app/versions", script)
+        self.assertIn("owl:Class", script)
+        self.assertIn("pt5ValidationFixture", script)
+        self.assertIn("lov_class", script)
+        self.assertIn("framework-managed ES fixture index", script)
+        self.assertIn("Index 'lov' does not exist", script)
+        self.assertIn("custom-vocab", script)
+        self.assertIn("https://example.org/custom/v1/", script)
 
     def test_evaluate_term_search_response_passes_on_valid_json_payload(self):
         payload = {
@@ -281,7 +384,11 @@ class OntologyHubComponentValidationTests(unittest.TestCase):
                 if "/dataset/sparql?" in url:
                     return 200, "application/sparql-results+json", json.dumps({"head": {}, "boolean": True})
                 if url.endswith("/dataset/patterns?q=saref4grid"):
-                    return 200, "text/html", "<html><body><h1>Patterns</h1><div>Selected vocabularies</div><input id='checkbox_saref4grid'></body></html>"
+                    return (
+                        200,
+                        "text/html",
+                        "<html><body><h1>Patterns</h1><script>function detectPatterns(){return '/dataset/api/v2/patterns';}</script></body></html>",
+                    )
                 if url.endswith("/dataset/api"):
                     return 200, "text/html", "<html><body>Pionera API /api/v2/term/search /dataset/api/v2/agent/list</body></html>"
                 if url.endswith("/dataset"):
@@ -321,6 +428,144 @@ class OntologyHubComponentValidationTests(unittest.TestCase):
             self.assertTrue(os.path.exists(result["artifacts"]["pt5-oh-13-response.json"]))
             self.assertTrue(os.path.exists(result["artifacts"]["pt5-oh-14-response.json"]))
             self.assertTrue(os.path.exists(result["artifacts"]["pt5-oh-15-response.json"]))
+
+    def test_run_ontology_hub_validation_recovers_empty_search_fixture_once(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            search_calls = 0
+
+            def fake_http_get(url, timeout=20):
+                nonlocal search_calls
+                if "api/v2/term/search" in url:
+                    search_calls += 1
+                    if search_calls == 1:
+                        return 200, "application/json", json.dumps(
+                            {
+                                "total_results": 0,
+                                "results": [],
+                                "aggregations": {
+                                    "vocabs": {"buckets": []},
+                                    "tags": {"buckets": []},
+                                },
+                            }
+                        )
+                    return 200, "application/json", json.dumps(
+                        {
+                            "total_results": 1,
+                            "filters": {},
+                            "aggregations": {
+                                "vocabs": {"buckets": [{"key": "saref4grid", "doc_count": 1}]},
+                                "tags": {"buckets": []},
+                            },
+                            "results": [
+                                {
+                                    "prefixedName": ["saref4grid:Person"],
+                                    "vocabulary": {"prefix": "saref4grid"},
+                                    "uri": ["http://schema.org/Person"],
+                                    "tags": ["Services"],
+                                }
+                            ],
+                        }
+                    )
+                raise AssertionError(f"Unexpected URL: {url}")
+
+            with mock.patch(
+                "validation.components.ontology_hub.integration.runner._http_get",
+                side_effect=fake_http_get,
+            ), mock.patch(
+                "validation.components.ontology_hub.integration.runner._prepare_validation_fixture",
+                return_value={"executed": True, "returncode": 0},
+            ) as prepare_mock:
+                result = run_ontology_hub_validation(
+                    "http://ontology-hub-demo.dev.ds.dataspaceunit.upm",
+                    experiment_dir=tmpdir,
+                    case_ids=["PT5-OH-08"],
+                )
+
+            self.assertEqual(result["status"], "passed")
+            self.assertEqual(result["summary"], {"total": 1, "passed": 1, "failed": 0, "skipped": 0})
+            self.assertEqual(search_calls, 2)
+            prepare_mock.assert_called_once()
+            self.assertEqual(result["executed_cases"][0]["fixture_recovery"]["status"], "passed")
+
+            with open(result["artifacts"]["pt5-oh-08-response.json"], "r", encoding="utf-8") as handle:
+                artifact = json.load(handle)
+            self.assertIn("initial_attempt", artifact)
+            self.assertIn("fixture_preparation", artifact)
+            self.assertEqual(len(artifact["retry_history"]), 1)
+            self.assertEqual(json.loads(artifact["initial_attempt"]["body"])["total_results"], 0)
+            self.assertEqual(json.loads(artifact["body"])["total_results"], 1)
+
+    def test_sparql_retries_boolean_false_after_fixture_preparation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            public_calls = 0
+            internal_retry_bodies = [
+                json.dumps({"head": {}, "boolean": False}),
+                json.dumps({"head": {}, "boolean": True}),
+            ]
+
+            def fake_http_get(url, timeout=20):
+                nonlocal public_calls
+                public_calls += 1
+                if "/dataset/sparql?" in url:
+                    return 502, "text/html", "Bad Gateway"
+                raise AssertionError(f"Unexpected URL: {url}")
+
+            def fake_exec_http_get(**kwargs):
+                body = internal_retry_bodies.pop(0)
+                return (
+                    200,
+                    "application/sparql-results+json",
+                    body,
+                    {
+                        "executed": True,
+                        "namespace": kwargs["namespace"],
+                        "target": f"deployment/{kwargs['deployment_name']}",
+                        "url": kwargs["url"],
+                        "returncode": 0,
+                    },
+                )
+
+            with mock.patch(
+                "validation.components.ontology_hub.integration.runner._kubectl_http_get_until_stable",
+                return_value=(
+                    200,
+                    "application/sparql-results+json",
+                    json.dumps({"head": {}, "boolean": False}),
+                    [{"attempt": 1, "http_status": 200}],
+                    True,
+                ),
+            ), mock.patch(
+                "validation.components.ontology_hub.integration.runner._prepare_sparql_store",
+                return_value={"executed": True, "returncode": 0},
+            ) as prepare_mock, mock.patch(
+                "validation.components.ontology_hub.integration.runner._kubectl_exec_http_get",
+                side_effect=fake_exec_http_get,
+            ), mock.patch(
+                "validation.components.ontology_hub.integration.runner._http_get",
+                side_effect=fake_http_get,
+            ), mock.patch(
+                "validation.components.ontology_hub.integration.runner.time.sleep",
+            ) as sleep_mock:
+                result = run_ontology_hub_validation(
+                    "http://ontology-hub-demo.dev.ds.dataspaceunit.upm",
+                    experiment_dir=tmpdir,
+                    case_ids=["PT5-OH-13"],
+                )
+
+            self.assertEqual(result["status"], "passed")
+            prepare_mock.assert_called_once()
+            self.assertEqual(sleep_mock.call_count, 8)
+            sleep_mock.assert_any_call(5.0)
+            self.assertEqual(public_calls, 8)
+            case = result["executed_cases"][0]
+            self.assertEqual(case["evaluation"]["status"], "passed")
+            self.assertEqual(case["evaluation"]["public_ingress_status"], "failed")
+            self.assertTrue(case["evaluation"]["warnings"])
+
+            with open(result["artifacts"]["pt5-oh-13-response.json"], "r", encoding="utf-8") as handle:
+                artifact = json.load(handle)
+            history = artifact["internal_cluster"]["retry_history"]
+            self.assertEqual([entry["evaluation_status"] for entry in history], ["failed", "passed"])
 
 
 if __name__ == "__main__":

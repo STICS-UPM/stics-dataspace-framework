@@ -26,14 +26,10 @@ export class EdcCatalogPage {
     counterPartyAddress: string,
     counterPartyId?: string,
     catalogResponseBody?: unknown,
-    expectedAssetId?: string,
   ): Promise<void> {
     const routePattern = "**/management/v3/catalog/request*";
     const routeHandler = async (route: Route) => {
-      const preparedBodyMatchesAsset =
-        catalogResponseBody !== undefined &&
-        (!expectedAssetId || this.catalogResponseContainsAsset(catalogResponseBody, expectedAssetId));
-      if (preparedBodyMatchesAsset) {
+      if (catalogResponseBody !== undefined) {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -50,12 +46,10 @@ export class EdcCatalogPage {
       payload["@type"] = payload["@type"] || "CatalogRequest";
       payload.counterPartyAddress = counterPartyAddress;
       payload.protocol = payload.protocol || "dataspace-protocol-http";
-      const querySpec = this.isRecord(payload.querySpec) ? payload.querySpec : {};
-      payload.querySpec = {
-        ...querySpec,
+      payload.querySpec = payload.querySpec || {
         offset: 0,
-        limit: Math.max(this.asNumber(querySpec.limit) || 0, 1000),
-        filterExpression: Array.isArray(querySpec.filterExpression) ? querySpec.filterExpression : [],
+        limit: 100,
+        filterExpression: [],
       };
       if (counterPartyId) {
         payload.counterPartyId = counterPartyId;
@@ -110,7 +104,7 @@ export class EdcCatalogPage {
     const startedAt = Date.now();
 
     while (Date.now() - startedAt < timeoutMs) {
-      await this.requestCatalogManually(counterPartyAddress, counterPartyId, catalogResponseBody, assetId);
+      await this.requestCatalogManually(counterPartyAddress, counterPartyId, catalogResponseBody);
       await this.filterByAssetId(assetId);
       if ((await this.catalogCard(assetId).count().catch(() => 0)) > 0) {
         await expect(this.catalogCard(assetId)).toBeVisible({ timeout: 15_000 });
@@ -194,46 +188,5 @@ export class EdcCatalogPage {
 
   private openDialog() {
     return this.page.locator("dialog[open]#dashboard-dialog").first();
-  }
-
-  private catalogResponseContainsAsset(catalogResponseBody: unknown, assetId: string): boolean {
-    return this.catalogDatasets(catalogResponseBody).some((dataset) => this.datasetId(dataset) === assetId);
-  }
-
-  private catalogDatasets(body: unknown): unknown[] {
-    if (Array.isArray(body)) {
-      return body.flatMap((entry) => this.catalogDatasets(entry));
-    }
-    if (!this.isRecord(body)) {
-      return [];
-    }
-    const datasets = body["dcat:dataset"] ?? body["dataset"] ?? body["datasets"];
-    if (Array.isArray(datasets)) {
-      return datasets;
-    }
-    return datasets === undefined ? [] : [datasets];
-  }
-
-  private datasetId(dataset: unknown): string | null {
-    if (!this.isRecord(dataset)) {
-      return null;
-    }
-    const id = dataset["@id"] ?? dataset["id"] ?? dataset["edc:id"];
-    return typeof id === "string" && id.length > 0 ? id : null;
-  }
-
-  private asNumber(value: unknown): number | null {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-    if (typeof value === "string" && value.trim().length > 0) {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
-  }
-
-  private isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
   }
 }

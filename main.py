@@ -3,7 +3,6 @@ import atexit
 import builtins
 import contextlib
 import getpass
-import http.client
 import ipaddress
 import importlib
 import inspect
@@ -15,7 +14,6 @@ import signal
 import shlex
 import shutil
 import socket
-import ssl
 import subprocess
 import sys
 import tempfile
@@ -46,6 +44,8 @@ ensure_runtime_dependencies(
 )
 
 from tabulate import tabulate
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from framework.experiment_runner import ExperimentRunner
 from framework.experiment_storage import ExperimentStorage
@@ -111,11 +111,7 @@ from deployers.shared.lib.config_loader import (
     TOPOLOGY_OVERLAY_KEYS,
     VM_SERVICE_TOPOLOGY_KEYS,
 )
-from deployers.shared.lib.components import (
-    COMPONENT_CONTRACTS,
-    components_for_adapter,
-    resolve_component_release_name,
-)
+from deployers.shared.lib.components import COMPONENT_CONTRACTS, components_for_adapter
 from deployers.shared.lib.connectors import (
     parse_connector_list,
     parse_connector_mapping,
@@ -672,7 +668,6 @@ def _local_adapter_connector_full_names(adapter_name):
 
 
 def _local_adapter_component_release_names(adapter_name):
-    normalized = str(adapter_name or "").strip().lower()
     dataspace = _local_adapter_dataspace_name(adapter_name)
     if not dataspace:
         return []
@@ -682,53 +677,7 @@ def _local_adapter_component_release_names(adapter_name):
         for component in str(config.get("COMPONENTS") or "").split(",")
         if component.strip()
     ]
-    release_names = []
-    for component in components:
-        release_dataspace = _local_adapter_component_release_dataspace_name(
-            normalized,
-            config,
-            dataspace,
-            component,
-        )
-        release_names.append(
-            resolve_component_release_name(component, dataspace_name=release_dataspace)
-        )
-    return _unique_non_empty(release_names)
-
-
-def _local_adapter_component_release_dataspace_name(adapter_name, config, dataspace, component):
-    config = dict(config or {})
-    explicit = str(
-        config.get("COMPONENTS_RELEASE_DATASPACE_NAME")
-        or config.get("COMPONENTS_HELM_RELEASE_DATASPACE_NAME")
-        or ""
-    ).strip()
-    if explicit:
-        return explicit
-
-    scope = str(config.get("COMPONENTS_RELEASE_SCOPE") or "auto").strip().lower()
-    if scope in {"dataspace", "adapter", "per-adapter", "adapter-dataspace"}:
-        return dataspace
-    if scope in {"shared", "base", "common", "common-dataspace"}:
-        return _base_dataspace_name_for_shared_components(dataspace)
-    if str(adapter_name or "").strip().lower() != "edc":
-        return dataspace
-
-    shared_components_raw = str(
-        config.get("COMPONENTS_SHARED_RELEASE_COMPONENTS")
-        or "ontology-hub,ai-model-hub,semantic-virtualization"
-    ).strip()
-    lowered = shared_components_raw.lower()
-    if lowered in {"*", "all"}:
-        return _base_dataspace_name_for_shared_components(dataspace)
-    if lowered in {"", "none", "false", "no", "0"}:
-        return dataspace
-
-    shared_components = _normalized_component_tokens(shared_components_raw)
-    normalized_component = str(component or "").strip().lower().replace("_", "-")
-    if normalized_component in shared_components:
-        return _base_dataspace_name_for_shared_components(dataspace)
-    return dataspace
+    return _unique_non_empty([f"{dataspace}-{component}" for component in components])
 
 
 def _local_adapter_expected_release_names(adapter_name, *, include_components=False):
@@ -891,13 +840,9 @@ def _build_local_adapter_switch_plan(payload, target_adapter):
     active_component_namespaces = _unique_non_empty(workloads.get("active_component_namespaces") or [])
 
     adapters_to_remove = set(active_adapters - {target})
+    if target == "edc" and active_component_namespaces:
+        adapters_to_remove.add("inesdata")
     adapters_to_remove = sorted(adapter for adapter in adapters_to_remove if adapter in {"inesdata", "edc"})
-    component_cleanup_adapters = set(adapters_to_remove)
-    if active_component_namespaces and not active_adapters and target in {"inesdata", "edc"}:
-        component_cleanup_adapters.add("edc" if target == "inesdata" else "inesdata")
-    component_cleanup_adapters = sorted(
-        adapter for adapter in component_cleanup_adapters if adapter in {"inesdata", "edc"}
-    )
 
     namespace_actions = []
     for adapter_name in adapters_to_remove:
@@ -918,13 +863,13 @@ def _build_local_adapter_switch_plan(payload, target_adapter):
                 }
             )
 
-    if component_cleanup_adapters:
+    if "inesdata" in adapters_to_remove or target == "edc":
         component_namespaces = active_component_namespaces
         if not component_namespaces:
-            for adapter_name in component_cleanup_adapters:
+            for adapter_name in adapters_to_remove or [target]:
                 component_namespaces.extend(_local_adapter_component_namespaces(adapter_name))
         component_expected_releases = []
-        for adapter_name in component_cleanup_adapters:
+        for adapter_name in adapters_to_remove:
             component_expected_releases.extend(
                 _local_adapter_expected_release_names(adapter_name, include_components=True)
             )
@@ -1093,32 +1038,10 @@ def _execute_local_adapter_switch_plan(plan):
 
     print()
     print("Switching local adapter resources...")
-    readiness_results = []
-    readiness_blockers = []
-    for action in plan.get("namespace_actions") or []:
-        readiness = _local_switch_namespace_cleanup_readiness(action)
-        readiness_results.append((action, readiness))
-        if readiness.get("status") == "ready":
-            continue
-        if readiness.get("reason") == "namespace-not-found":
-            continue
-        readiness_blockers.append((action, readiness))
-    if readiness_blockers:
-        details = []
-        for action, readiness in readiness_blockers[:5]:
-            namespace = action.get("namespace")
-            reason = readiness.get("reason", "not-ready")
-            releases = readiness.get("helm_releases") or []
-            release_suffix = f"; helm releases: {', '.join(releases)}" if releases else ""
-            details.append(f"{namespace} ({reason}{release_suffix})")
-        raise RuntimeError(
-            "Local adapter switch cleanup is not safe; no namespaces were deleted. "
-            f"Root cause: {'; '.join(details)}"
-        )
-
     namespace_results = []
-    for action, readiness in readiness_results:
+    for action in plan.get("namespace_actions") or []:
         namespace = action["namespace"]
+        readiness = _local_switch_namespace_cleanup_readiness(action)
         if readiness.get("status") != "ready":
             reason = readiness.get("reason", "not-ready")
             print(f"- Skipping namespace {namespace} ({reason})")
@@ -1825,6 +1748,27 @@ def _edc_dashboard_connector_namespaces(deployer_context):
     return connector_namespaces
 
 
+def _edc_dashboard_connector_kubeconfigs(deployer_context):
+    topology = normalize_topology(getattr(deployer_context, "topology", None) or LOCAL_TOPOLOGY)
+    if topology != "vm-distributed":
+        return {}
+    connectors = list(getattr(deployer_context, "connectors", []) or [])
+    if not connectors:
+        return {}
+    try:
+        role_kubeconfigs = _configured_vm_distributed_role_kubeconfigs()
+    except Exception:
+        return {}
+    provider_kc = role_kubeconfigs.get("provider") or ""
+    consumer_kc = role_kubeconfigs.get("consumer") or ""
+    result = {}
+    if len(connectors) >= 1 and provider_kc:
+        result[connectors[0]] = provider_kc
+    if len(connectors) >= 2 and consumer_kc:
+        result[connectors[1]] = consumer_kc
+    return result
+
+
 def _inesdata_interface_connector_namespaces(deployer_context):
     connectors = list(getattr(deployer_context, "connectors", []) or [])
     default_namespace = str(getattr(deployer_context, "dataspace_name", "") or "").strip()
@@ -1931,7 +1875,7 @@ def _positive_int_env(name, default):
         return int(default)
 
 
-def _kubectl_endpoint_ready(namespace, service_name):
+def _kubectl_endpoint_ready(namespace, service_name, kubeconfig=None):
     command = [
         "kubectl",
         "get",
@@ -1942,12 +1886,17 @@ def _kubectl_endpoint_ready(namespace, service_name):
         "-o",
         "json",
     ]
+    run_env = None
+    if kubeconfig:
+        run_env = dict(os.environ)
+        run_env["KUBECONFIG"] = kubeconfig
     try:
         result = subprocess.run(
             command,
             check=False,
             capture_output=True,
             text=True,
+            env=run_env,
         )
     except FileNotFoundError:
         return False, "kubectl is not available"
@@ -2185,6 +2134,7 @@ def _http_readiness_gate(
             timeout=timeout_seconds,
             allow_redirects=False,
             headers={"Cache-Control": "no-store"},
+            verify=False,
         )
     except Exception as exc:
         return {
@@ -2228,10 +2178,7 @@ def _edc_dashboard_route_readiness_gate(label, url, timeout_seconds):
         return gate
 
     parsed = urllib.parse.urlparse(location)
-    redirect_path = parsed.path.rstrip("/")
-    if redirect_path == "/edc-dashboard-api/auth/login" or redirect_path.endswith(
-        "/edc-dashboard-api/auth/login"
-    ):
+    if parsed.path.rstrip("/") == "/edc-dashboard-api/auth/login":
         gate["ready"] = True
         gate["detail"] = f"{gate.get('detail')} (auth redirect accepted)"
     return gate
@@ -2254,6 +2201,7 @@ def _http_form_readiness_gate(label, url, form_data, expected_statuses, timeout_
             timeout=timeout_seconds,
             allow_redirects=False,
             headers={"Cache-Control": "no-store"},
+            verify=False,
         )
     except Exception as exc:
         return {
@@ -2561,6 +2509,96 @@ def _edc_dashboard_http_gates(deployer_context, connectors, timeout_seconds):
     return gates
 
 
+def _restart_edc_connector_deployments(deployer_context, timeout_seconds=300):
+    """Restart EDC connector pods after Playwright S3-PUSH transfers.
+
+    Playwright S3-PUSH transfers leave EDC deprovisioning processes running in
+    the background that cause POST /management/v3/assets to return HTTP 500 for
+    up to 20+ minutes. Restarting the connector pods clears this state immediately.
+    """
+    connectors = list(getattr(deployer_context, "connectors", []) or [])
+    if not connectors:
+        return
+    connector_namespaces = _edc_dashboard_connector_namespaces(deployer_context)
+    connector_kubeconfigs = _edc_dashboard_connector_kubeconfigs(deployer_context)
+    for connector in connectors:
+        namespace = connector_namespaces.get(connector) or ""
+        kubeconfig = connector_kubeconfigs.get(connector) or None
+        if not namespace:
+            continue
+        run_env = dict(os.environ)
+        if kubeconfig:
+            run_env["KUBECONFIG"] = kubeconfig
+        print(f"Restarting EDC connector deployment: {connector} (namespace: {namespace})")
+        try:
+            subprocess.run(
+                ["kubectl", "rollout", "restart", f"deployment/{connector}", "-n", namespace],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=run_env,
+            )
+            subprocess.run(
+                [
+                    "kubectl", "rollout", "status", f"deployment/{connector}",
+                    "-n", namespace, f"--timeout={timeout_seconds}s",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=run_env,
+            )
+            print(f"Connector ready: {connector}")
+            time.sleep(15)
+        except subprocess.CalledProcessError as exc:
+            print(f"Warning: EDC connector restart failed for {connector}: {(exc.stderr or '').strip()}")
+        except FileNotFoundError:
+            print("Warning: kubectl not available — skipping EDC connector restart")
+            return
+
+
+def _restart_inesdata_connector_deployments(deployer_context, timeout_seconds=300):
+    connectors = list(getattr(deployer_context, "connectors", []) or [])
+    if not connectors:
+        return
+    connector_namespaces = _inesdata_interface_connector_namespaces(deployer_context)
+    connector_kubeconfigs = _edc_dashboard_connector_kubeconfigs(deployer_context)
+    for connector in connectors:
+        namespace = connector_namespaces.get(connector) or ""
+        kubeconfig = connector_kubeconfigs.get(connector) or None
+        if not namespace:
+            continue
+        run_env = dict(os.environ)
+        if kubeconfig:
+            run_env["KUBECONFIG"] = kubeconfig
+        print(f"Restarting inesdata connector deployment: {connector} (namespace: {namespace})")
+        try:
+            subprocess.run(
+                ["kubectl", "rollout", "restart", f"deployment/{connector}", "-n", namespace],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=run_env,
+            )
+            subprocess.run(
+                [
+                    "kubectl", "rollout", "status", f"deployment/{connector}",
+                    "-n", namespace, f"--timeout={timeout_seconds}s",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=run_env,
+            )
+            print(f"Connector ready: {connector}")
+            time.sleep(15)
+        except subprocess.CalledProcessError as exc:
+            print(f"Warning: inesdata connector restart failed for {connector}: {(exc.stderr or '').strip()}")
+        except FileNotFoundError:
+            print("Warning: kubectl not available — skipping inesdata connector restart")
+            return
+
+
 def _edc_dashboard_connector_kubeconfig_role(deployer_context, connector, connector_index):
     config = dict(getattr(deployer_context, "config", {}) or {})
     topology = normalize_topology(
@@ -2623,6 +2661,7 @@ def _probe_edc_dashboard_readiness(deployer_context):
     connector_namespaces = _edc_dashboard_connector_namespaces(deployer_context)
     namespaces = sorted({namespace for namespace in connector_namespaces.values() if namespace})
     namespace = namespaces[0] if len(namespaces) == 1 else ""
+    connector_kubeconfigs = _edc_dashboard_connector_kubeconfigs(deployer_context)
     gates = []
     http_timeout = _positive_float_env("PIONERA_EDC_DASHBOARD_HTTP_TIMEOUT_SECONDS", 5)
 
@@ -2648,6 +2687,7 @@ def _probe_edc_dashboard_readiness(deployer_context):
 
     for connector_index, connector in enumerate(connectors):
         connector_namespace = connector_namespaces.get(connector) or namespace
+        connector_kubeconfig = connector_kubeconfigs.get(connector) or None
         for suffix in ("dashboard", "dashboard-proxy"):
             service_name = f"{connector}-{suffix}"
             with _edc_dashboard_connector_kubeconfig_context(
@@ -3733,6 +3773,7 @@ def _resolve_level6_kafka_enabled_for_run(
     validation_profile=None,
     deployer_name=None,
     flag_enabled=None,
+    cli_enabled=False,
     prompt=True,
 ):
     if not _supports_level6_kafka_edc(
@@ -3752,6 +3793,11 @@ def _resolve_level6_kafka_enabled_for_run(
             print(f"Kafka transfer validation skipped by {KAFKA_LEVEL6_SKIP_FLAG}=true.")
             print(f"Unset it or set {KAFKA_LEVEL6_SKIP_FLAG}=false to allow the interactive prompt.")
         return flag_decision
+
+    if cli_enabled:
+        print()
+        print("Kafka transfer validation enabled by --kafka.")
+        return True
 
     if not prompt:
         return False
@@ -5694,6 +5740,29 @@ def _temporary_environment(overrides):
                 os.environ[key] = value
 
 
+def _discover_component_release_names(components_namespace: str) -> dict:
+    """Discover actual component release names from the cluster for the given namespace."""
+    try:
+        result = subprocess.run(
+            ["kubectl", "get", "deployments", "-n", components_namespace,
+             "--no-headers", "-o", "custom-columns=NAME:.metadata.name"],
+            check=False, capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return {}
+        names = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    except Exception:
+        return {}
+
+    overrides = {}
+    for name in names:
+        if name.endswith("-ontology-hub"):
+            overrides["ONTOLOGY_HUB_RELEASE_NAME"] = name
+        elif name.endswith("-semantic-virtualization"):
+            overrides["SEMANTIC_VIRTUALIZATION_RELEASE_NAME"] = name
+        elif name.endswith("-ai-model-hub"):
+            overrides["AI_MODEL_HUB_RELEASE_NAME"] = name
+    return overrides
 def _normalized_component_tokens(values):
     if values is None:
         return []
@@ -5823,27 +5892,15 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
     environment = str(getattr(deployer_context, "environment", "") or config.get("ENVIRONMENT") or "DEV").strip()
     runtime_dir = str(getattr(deployer_context, "runtime_dir", "") or "").strip()
 
-    def _connector_public_access_url(connector, *keys):
-        payload, _error = _load_inesdata_connector_credentials_payload(
-            deployer_context,
-            connector,
-        )
-        if not isinstance(payload, dict):
-            return ""
-        for url_group_name in ("public_access_urls", "access_urls"):
-            url_group = payload.get(url_group_name)
-            if not isinstance(url_group, dict):
-                continue
-            for key in keys:
-                value = str(url_group.get(key) or "").strip().rstrip("/")
-                if value:
-                    return value
-        return ""
-
     def _connector_base_url(connector, role):
-        configured = _configured_public_connector_base_url(connector, deployer_context)
-        if configured:
-            return configured.rstrip("/")
+        use_configured_public_url = adapter_name != "edc" or normalize_topology(topology) in {
+            VM_SINGLE_TOPOLOGY,
+            VM_DISTRIBUTED_TOPOLOGY,
+        }
+        if use_configured_public_url:
+            configured = _configured_public_connector_base_url(connector, deployer_context)
+            if configured:
+                return configured.rstrip("/")
         if connector and ds_domain:
             return f"http://{connector}.{ds_domain}"
         return ""
@@ -5887,8 +5944,6 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
             "AI_MODEL_HUB_KEYCLOAK_URL": keycloak_url,
         }
     )
-    if adapter_name == "edc":
-        env.setdefault("AI_MODEL_HUB_DASHBOARD_PATH", "edc-dashboard/")
     if runtime_dir:
         env["UI_RUNTIME_DIR"] = runtime_dir
     component_validation_mode = str(
@@ -5900,6 +5955,38 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
     if component_validation_mode:
         env["PIONERA_COMPONENT_VALIDATION_MODE"] = component_validation_mode
         env["LEVEL6_COMPONENT_VALIDATION_MODE"] = component_validation_mode
+    if adapter_name == "inesdata":
+        ai_model_hub_enabled = "ai-model-hub" in set(_normalized_component_tokens(components))
+        if ai_model_hub_enabled:
+            if not str(
+                os.environ.get("AI_MODEL_HUB_ENABLE_UI_VALIDATION")
+                or config.get("AI_MODEL_HUB_ENABLE_UI_VALIDATION")
+                or ""
+            ).strip():
+                env["AI_MODEL_HUB_ENABLE_UI_VALIDATION"] = "0"
+            if not str(
+                os.environ.get("AI_MODEL_HUB_ENABLE_FUNCTIONAL_VALIDATION")
+                or config.get("AI_MODEL_HUB_ENABLE_FUNCTIONAL_VALIDATION")
+                or ""
+            ).strip():
+                env["AI_MODEL_HUB_ENABLE_FUNCTIONAL_VALIDATION"] = "0"
+            if normalize_topology(topology) == VM_DISTRIBUTED_TOPOLOGY:
+                if not str(
+                    os.environ.get("AI_MODEL_HUB_NEGOTIATION_TIMEOUT_SECONDS")
+                    or config.get("AI_MODEL_HUB_NEGOTIATION_TIMEOUT_SECONDS")
+                    or ""
+                ).strip():
+                    env["AI_MODEL_HUB_NEGOTIATION_TIMEOUT_SECONDS"] = "240"
+        env.setdefault("AI_MODEL_HUB_DASHBOARD_PATH", "/")
+        env.setdefault("AI_MODEL_HUB_APP_CONFIG_PATH", "assets/config/app.config.json")
+        env.setdefault("AI_MODEL_HUB_APP_CONFIG_REQUIRED_KEYS", "managementApiUrl,participantId,service")
+    if adapter_name == "edc" and not component_validation_mode:
+        env["PIONERA_COMPONENT_VALIDATION_MODE"] = "api"
+        env["LEVEL6_COMPONENT_VALIDATION_MODE"] = "api"
+        components_namespace = str(config.get("COMPONENTS_NAMESPACE") or "components").strip() or "components"
+        discovered_release_names = _discover_component_release_names(components_namespace)
+        for release_env_var, release_name in discovered_release_names.items():
+            env.setdefault(release_env_var, release_name)
     for key in (
         "AI_MODEL_HUB_MODEL_SERVER_MODE",
         "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
@@ -5915,6 +6002,7 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS",
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD",
         "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES",
+        "AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE",
         "COMPONENTS_PUBLIC_BASE_URL",
         "MODEL_SERVER_PUBLIC_URL",
         "MODEL_SERVER_PUBLIC_PATH",
@@ -5954,53 +6042,37 @@ def _level6_component_validation_environment(deployer_context, deployer_name, co
     if provider:
         provider_base_url = _connector_base_url(provider, "provider")
         provider_protocol_base_url = _connector_protocol_base_url(provider, "provider", provider_base_url)
-        provider_management_url = _connector_public_access_url(
-            provider,
-            "connector_management_api_v3",
-            "connector_management_api",
-        )
-        provider_protocol_url = _connector_public_access_url(provider, "connector_protocol_api")
-        provider_default_url = _connector_public_access_url(provider, "connector_default_api")
         env.update(
             {
                 "AI_MODEL_HUB_PROVIDER_CONNECTOR_ID": provider,
                 "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_PROVIDER": provider,
                 "AI_MODEL_HUB_MODEL_EXECUTION_PROVIDER": provider,
                 "AI_MODEL_HUB_PROVIDER_MANAGEMENT_URL": (
-                    provider_management_url or (f"{provider_base_url}/management" if provider_base_url else "")
+                    f"{provider_base_url}/management" if provider_base_url else ""
                 ),
                 "AI_MODEL_HUB_PROVIDER_PROTOCOL_URL": (
-                    provider_protocol_url
-                    or (f"{provider_protocol_base_url}/protocol" if provider_protocol_base_url else "")
+                    f"{provider_protocol_base_url}/protocol" if provider_protocol_base_url else ""
                 ),
                 "AI_MODEL_HUB_PROVIDER_DEFAULT_URL": (
-                    provider_default_url or (f"{provider_base_url}/api" if provider_base_url else "")
+                    f"{provider_base_url}/api" if provider_base_url else ""
                 ),
             }
         )
     if consumer:
         consumer_base_url = _connector_base_url(consumer, "consumer")
         consumer_protocol_base_url = _connector_protocol_base_url(consumer, "consumer", consumer_base_url)
-        consumer_management_url = _connector_public_access_url(
-            consumer,
-            "connector_management_api_v3",
-            "connector_management_api",
-        )
-        consumer_protocol_url = _connector_public_access_url(consumer, "connector_protocol_api")
-        consumer_default_url = _connector_public_access_url(consumer, "connector_default_api")
         env.update(
             {
                 "AI_MODEL_HUB_CONSUMER_CONNECTOR_ID": consumer,
                 "AI_MODEL_HUB_CONNECTOR_GOVERNANCE_CONSUMER": consumer,
                 "AI_MODEL_HUB_CONSUMER_MANAGEMENT_URL": (
-                    consumer_management_url or (f"{consumer_base_url}/management" if consumer_base_url else "")
+                    f"{consumer_base_url}/management" if consumer_base_url else ""
                 ),
                 "AI_MODEL_HUB_CONSUMER_PROTOCOL_URL": (
-                    consumer_protocol_url
-                    or (f"{consumer_protocol_base_url}/protocol" if consumer_protocol_base_url else "")
+                    f"{consumer_protocol_base_url}/protocol" if consumer_protocol_base_url else ""
                 ),
                 "AI_MODEL_HUB_CONSUMER_DEFAULT_URL": (
-                    consumer_default_url or (f"{consumer_base_url}/api" if consumer_base_url else "")
+                    f"{consumer_base_url}/api" if consumer_base_url else ""
                 ),
             }
         )
@@ -6753,7 +6825,7 @@ def _menu_action_requires_vm_single_address(choice):
 
 def _menu_action_benefits_from_vm_distributed_configuration(choice):
     normalized = str(choice or "").strip().upper()
-    if normalized in {"0", "P", "H", "U", "X", "J", "CM", "COMPONENTS"}:
+    if normalized in {"0", "P", "H", "U", "X", "J", "CM", "COMPONENTS", "AMH", "AI-MODEL-HUB", "AIHUB"}:
         return True
     return normalized in {str(level_id) for level_id in LEVEL_DESCRIPTIONS}
 
@@ -7497,135 +7569,6 @@ def _run_edc_local_image_script(script_path, minikube_profile, env, cluster_runt
         )
 
 
-def _resolve_edc_connector_namespace_from_config(target, *, default_namespace, provider_namespace, consumer_namespace):
-    raw_target = str(target or "").strip()
-    normalized = raw_target.lower().replace("-", "_")
-    aliases = {
-        "provider": provider_namespace,
-        "provider_namespace": provider_namespace,
-        "consumer": consumer_namespace,
-        "consumer_namespace": consumer_namespace,
-        "dataspace": default_namespace,
-        "default": default_namespace,
-        "registration": default_namespace,
-        "registration_service": default_namespace,
-        "core": default_namespace,
-    }
-    return aliases.get(normalized, raw_target) or default_namespace
-
-
-def _edc_dashboard_deployment_targets_from_config(adapter, config):
-    config_adapter = getattr(adapter, "config_adapter", None)
-    dataspace_getter = getattr(config_adapter, "primary_dataspace_name", None)
-    dataspace_name = str(dataspace_getter() or "").strip() if callable(dataspace_getter) else ""
-    if not dataspace_name:
-        dataspace_name = str(config.get("DS_1_NAME") or "").strip()
-
-    connectors = parse_connector_list(config.get("DS_1_CONNECTORS"), dataspace_name)
-    if not connectors:
-        return []
-
-    default_namespace = str(
-        config.get("DS_1_NAMESPACE")
-        or config.get("NAMESPACE")
-        or dataspace_name
-        or "default"
-    ).strip()
-    provider_namespace = str(config.get("DS_1_PROVIDER_NAMESPACE") or default_namespace).strip()
-    consumer_namespace = str(config.get("DS_1_CONSUMER_NAMESPACE") or provider_namespace).strip()
-    explicit_mapping = parse_connector_mapping(config.get("DS_1_CONNECTOR_NAMESPACES"), dataspace_name)
-
-    targets = []
-    for index, connector in enumerate(connectors):
-        if connector in explicit_mapping:
-            namespace = _resolve_edc_connector_namespace_from_config(
-                explicit_mapping[connector],
-                default_namespace=default_namespace,
-                provider_namespace=provider_namespace,
-                consumer_namespace=consumer_namespace,
-            )
-        elif index == 0:
-            namespace = provider_namespace
-        elif index == 1:
-            namespace = consumer_namespace
-        else:
-            namespace = default_namespace
-        targets.append({"connector": connector, "namespace": namespace, "deployment": f"{connector}-dashboard"})
-    return targets
-
-
-def _restart_edc_dashboard_deployments_after_local_image_build(adapter, config, images):
-    if not _env_flag("PIONERA_EDC_DASHBOARD_ROLLOUT_RESTART", default=True):
-        return {"status": "skipped", "reason": "disabled-by-env"}
-
-    if not shutil.which("kubectl"):
-        return {"status": "skipped", "reason": "kubectl-not-found"}
-
-    expected_image = f"{images['dashboard_name']}:{images['dashboard_tag']}"
-    targets = _edc_dashboard_deployment_targets_from_config(adapter, config)
-    restarted = []
-    missing = []
-
-    for target in targets:
-        namespace = target["namespace"]
-        deployment = target["deployment"]
-        get_result = subprocess.run(
-            ["kubectl", "get", "deployment", deployment, "-n", namespace, "-o", "json"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if get_result.returncode != 0:
-            missing.append(f"{namespace}/{deployment}")
-            continue
-
-        try:
-            payload = json.loads(get_result.stdout or "{}")
-        except json.JSONDecodeError:
-            raise RuntimeError(f"kubectl returned invalid JSON for deployment {namespace}/{deployment}")
-
-        containers = (
-            payload.get("spec", {})
-            .get("template", {})
-            .get("spec", {})
-            .get("containers", [])
-        )
-        images_in_deployment = {
-            str(container.get("image") or "").strip()
-            for container in containers
-            if isinstance(container, dict)
-        }
-        if expected_image not in images_in_deployment:
-            missing.append(f"{namespace}/{deployment}:image-mismatch")
-            continue
-
-        restart_result = subprocess.run(
-            ["kubectl", "rollout", "restart", f"deployment/{deployment}", "-n", namespace],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if restart_result.returncode != 0:
-            detail = (restart_result.stderr or restart_result.stdout or "").strip()
-            raise RuntimeError(f"Could not restart EDC dashboard deployment {namespace}/{deployment}: {detail}")
-
-        status_result = subprocess.run(
-            ["kubectl", "rollout", "status", f"deployment/{deployment}", "-n", namespace, "--timeout=180s"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if status_result.returncode != 0:
-            detail = (status_result.stderr or status_result.stdout or "").strip()
-            raise RuntimeError(f"EDC dashboard deployment {namespace}/{deployment} did not finish rollout: {detail}")
-        restarted.append(f"{namespace}/{deployment}")
-
-    if restarted:
-        print("Restarted EDC dashboard deployments after local image refresh: " + ", ".join(restarted))
-        return {"status": "restarted", "deployments": restarted, "missing": missing}
-    return {"status": "skipped", "reason": "no-matching-deployments", "missing": missing}
-
-
 def _prepare_edc_local_dashboard_images(adapter, config):
     if not _mapping_flag(config, "EDC_DASHBOARD_ENABLED", default=False):
         return {"status": "skipped", "reason": "dashboard-disabled"}
@@ -7673,14 +7616,12 @@ def _prepare_edc_local_dashboard_images(adapter, config):
     os.environ.setdefault("PIONERA_EDC_DASHBOARD_IMAGE_PULL_POLICY", "IfNotPresent")
     os.environ.setdefault("PIONERA_EDC_DASHBOARD_PROXY_IMAGE_PULL_POLICY", "IfNotPresent")
     os.environ["PIONERA_EDC_LOCAL_DASHBOARD_IMAGES_PREPARED"] = "true"
-    rollout = _restart_edc_dashboard_deployments_after_local_image_build(adapter, config, images)
     return {
         "status": "prepared",
         "dashboard_image": f"{images['dashboard_name']}:{images['dashboard_tag']}",
         "dashboard_proxy_image": f"{images['proxy_name']}:{images['proxy_tag']}",
         "minikube_profile": minikube_profile,
         "cluster_runtime": cluster_runtime,
-        "rollout": rollout,
     }
 
 
@@ -9918,6 +9859,7 @@ def run_validate(
     kafka_edc_validation_suite_cls=KafkaEdcValidationSuite,
     kafka_manager_cls=KafkaManager,
     validation_mode=None,
+    kafka_enabled=False,
 ):
     """Run validation collections with the selected adapter."""
     validation_mode_info = _resolve_level6_validation_mode(validation_mode, topology=topology)
@@ -9937,6 +9879,7 @@ def run_validate(
             adapter,
             validation_profile=validation_profile,
             deployer_name=resolved_deployer_name,
+            cli_enabled=kafka_enabled,
         )
         hosts_sync = (
             _sync_deployer_hosts_if_enabled(deployer_context)
@@ -10019,6 +9962,18 @@ def run_validate(
         component_results = []
         component_validation_summary = None
         une_0087_alignment = None
+
+        if (
+            resolved_deployer_name == "edc"
+            and deployer_context is not None
+        ):
+            _restart_edc_connector_deployments(deployer_context)
+
+        if (
+            resolved_deployer_name == "inesdata"
+            and deployer_context is not None
+        ):
+            _restart_inesdata_connector_deployments(deployer_context)
 
         print_interoperability_suite_header("Newman connector interoperability", "Newman")
         try:
@@ -10657,6 +10612,7 @@ def run_run(
                 save_metadata=False,
                 baseline=baseline,
                 validation_mode=validation_mode,
+                kafka_enabled=kafka_enabled,
             )
             metrics = run_metrics(
                 adapter,
@@ -11247,18 +11203,19 @@ def _vm_distributed_check_role_kubeconfigs(connector_values):
     return checks
 
 
-def _ensure_vm_distributed_level4_kubeconfig_supported():
+def _ensure_vm_distributed_level_kubeconfig_tunnels(level_id):
     config = _load_effective_infrastructure_deployer_config(topology="vm-distributed")
     kubeconfig_sync = _ensure_vm_distributed_local_kubeconfigs(
         config,
-        roles=_vm_distributed_level_kubeconfig_roles(4),
+        roles=_vm_distributed_level_kubeconfig_roles(level_id),
     )
     _raise_vm_distributed_kubeconfig_sync_failure(kubeconfig_sync)
     kubeconfigs = _configured_vm_distributed_role_kubeconfigs()
+    expected_roles = set(_vm_distributed_level_kubeconfig_roles(level_id))
     connector_values = {
         role: path
         for role, path in kubeconfigs.items()
-        if role in {"common", "provider", "consumer"} and path
+        if role in expected_roles and path
     }
     unique_values = sorted(set(connector_values.values()))
     tunnel_results = _ensure_vm_distributed_k3s_tunnels(connector_values, config)
@@ -11277,7 +11234,7 @@ def _ensure_vm_distributed_level4_kubeconfig_supported():
             suffix = f" Command: {command}" if command else ""
             details.append(f"{role}: {server}: {reason}.{suffix}")
         raise RuntimeError(
-            "Level 4 cannot continue because required vm-distributed Kubernetes API tunnels are not available. "
+            f"Level {level_id} cannot continue because required vm-distributed Kubernetes API tunnels are not available. "
             "The framework tried to prepare them before touching connector state. "
             + " ".join(details)
         )
@@ -11327,7 +11284,7 @@ def _ensure_vm_distributed_level4_kubeconfig_supported():
                 f"{item.get('server') or '(server not found)'}: {item.get('reason')}"
             )
         raise RuntimeError(
-            "Level 4 cannot continue because one or more vm-distributed Kubernetes contexts are not reachable. "
+            f"Level {level_id} cannot continue because one or more vm-distributed Kubernetes contexts are not reachable. "
             "This check runs before changing connector credentials or deploying Helm releases. "
             + " ".join(details)
         )
@@ -11338,6 +11295,10 @@ def _ensure_vm_distributed_level4_kubeconfig_supported():
         "checks": checks,
         "tunnels": tunnel_results,
     }
+
+
+def _ensure_vm_distributed_level4_kubeconfig_supported():
+    return _ensure_vm_distributed_level_kubeconfig_tunnels(4)
 
 
 def _context_components(context):
@@ -11400,6 +11361,7 @@ def run_level(
     metrics_collector_cls=MetricsCollector,
     experiment_storage=ExperimentStorage,
     baseline=False,
+    kafka_enabled=False,
 ):
     """Run one numbered level using the selected adapter/deployer context."""
     try:
@@ -11463,6 +11425,7 @@ def run_level(
                     metrics_collector_cls=metrics_collector_cls,
                     experiment_storage=experiment_storage,
                     baseline=baseline,
+                    kafka_enabled=kafka_enabled,
                 )
     if os.environ.get("PIONERA_LEVEL_RUNTIME_ENV_ACTIVE") != "true":
         if normalized_topology == "vm-distributed" and level_id >= 1:
@@ -11486,6 +11449,7 @@ def run_level(
                     metrics_collector_cls=metrics_collector_cls,
                     experiment_storage=experiment_storage,
                     baseline=baseline,
+                    kafka_enabled=kafka_enabled,
                 )
     level_context = None
     level_local_capacity = None
@@ -11578,6 +11542,8 @@ def run_level(
             if callable(sync_routing):
                 sync_routing()
     elif level_id == 5:
+        if normalized_topology == "vm-distributed":
+            _ensure_vm_distributed_level_kubeconfig_tunnels(5)
         orchestrator = build_deployer_orchestrator(
             deployer_name=resolved_deployer_name,
             deployer_registry=deployer_registry,
@@ -11599,16 +11565,38 @@ def run_level(
         result = deploy_components(context)
         if isinstance(result, dict):
             result.setdefault("datasets", dataset_sync)
+        _run_ai_model_hub_post_deploy_seed(resolved_deployer_name, normalized_topology)
     else:
-        result = run_validate(
-            adapter,
-            deployer_name=resolved_deployer_name,
-            deployer_registry=deployer_registry,
-            topology=topology,
-            validation_engine_cls=validation_engine_cls,
-            experiment_storage=experiment_storage,
-            baseline=baseline,
+        if normalized_topology == "vm-distributed":
+            _ensure_vm_distributed_level_kubeconfig_tunnels(6)
+        pre_catalog_cleanup = _run_connector_catalog_cleanup(
+            resolved_deployer_name,
+            normalized_topology,
+            phase="pre",
         )
+        post_catalog_cleanup = None
+        try:
+            result = run_validate(
+                adapter,
+                deployer_name=resolved_deployer_name,
+                deployer_registry=deployer_registry,
+                topology=topology,
+                validation_engine_cls=validation_engine_cls,
+                experiment_storage=experiment_storage,
+                baseline=baseline,
+                kafka_enabled=kafka_enabled,
+            )
+        finally:
+            post_catalog_cleanup = _run_connector_catalog_cleanup(
+                resolved_deployer_name,
+                normalized_topology,
+                phase="post",
+            )
+        if isinstance(result, dict):
+            result["connector_catalog_cleanup"] = {
+                "pre": pre_catalog_cleanup,
+                "post": post_catalog_cleanup,
+            }
 
     if level_id == 1:
         if normalized_topology == "vm-single":
@@ -11663,6 +11651,7 @@ def run_levels(
     metrics_collector_cls=MetricsCollector,
     experiment_storage=ExperimentStorage,
     baseline=False,
+    kafka_enabled=False,
 ):
     """Run a sequence of numbered levels with one adapter instance."""
     selected_levels = [int(level) for level in (levels or sorted(LEVEL_DESCRIPTIONS))]
@@ -11686,6 +11675,7 @@ def run_levels(
                 metrics_collector_cls=metrics_collector_cls,
                 experiment_storage=experiment_storage,
                 baseline=baseline,
+                kafka_enabled=kafka_enabled,
             )
         )
 
@@ -12674,6 +12664,15 @@ VM_DISTRIBUTED_TOPOLOGY_KEYS = (
     "AI_MODEL_HUB_PUBLIC_URL",
     "SEMANTIC_VIRTUALIZATION_PUBLIC_URL",
     "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_URL",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_HOST",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_NAMESPACE",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SERVICE_NAME",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SERVICE_PORT",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SERVICE_TYPE",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_NODE_PORT",
     "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_MODE",
     "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_LOCAL_PORT",
     "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_TUNNEL_REMOTE_HOST",
@@ -16232,13 +16231,25 @@ def _vm_distributed_profile_sensitive_key(key):
 
 
 DEFAULT_ENVIRONMENT_PROFILE_NAME = "pionera"
+ENVIRONMENT_PROFILE_NAME_ENV_KEYS = (
+    "PIONERA_CONFIG_PROFILE",
+    "PIONERA_ENVIRONMENT_PROFILE",
+)
+PRIVATE_ENVIRONMENT_PROFILES_DIR = os.path.join(".secrets", "profiles")
+LEGACY_ENVIRONMENT_PROFILES_DIR = ".profiles"
 
 
 def _environment_profile_name(raw_name=None):
+    if raw_name is None:
+        for env_key in ENVIRONMENT_PROFILE_NAME_ENV_KEYS:
+            env_value = os.getenv(env_key)
+            if env_value:
+                raw_name = env_value
+                break
     requested = str(
         raw_name
         if raw_name is not None
-        else os.getenv("PIONERA_ENVIRONMENT_PROFILE", DEFAULT_ENVIRONMENT_PROFILE_NAME)
+        else DEFAULT_ENVIRONMENT_PROFILE_NAME
     ).strip()
     if not requested:
         return DEFAULT_ENVIRONMENT_PROFILE_NAME
@@ -16251,35 +16262,54 @@ def _environment_profile_name(raw_name=None):
 
 
 def _environment_profiles_dir():
-    return os.path.abspath(os.path.join(_framework_root_dir(), ".profiles"))
+    return os.path.abspath(os.path.join(_framework_root_dir(), PRIVATE_ENVIRONMENT_PROFILES_DIR))
 
 
-def _environment_profile_path(profile_name=None):
-    return os.path.join(_environment_profiles_dir(), f"{_environment_profile_name(profile_name)}.env")
+def _legacy_environment_profiles_dir():
+    return os.path.abspath(os.path.join(_framework_root_dir(), LEGACY_ENVIRONMENT_PROFILES_DIR))
+
+
+def _environment_profile_candidate_paths(profile_name=None):
+    name = _environment_profile_name(profile_name)
+    return [
+        os.path.join(_environment_profiles_dir(), f"{name}.env"),
+        os.path.join(_legacy_environment_profiles_dir(), f"{name}.env"),
+    ]
+
+
+def _environment_profile_path(profile_name=None, prefer_existing=True):
+    candidates = _environment_profile_candidate_paths(profile_name)
+    if prefer_existing:
+        for path in candidates:
+            if os.path.isfile(path):
+                return path
+    return candidates[0]
 
 
 def _available_environment_profiles():
-    profiles_dir = _environment_profiles_dir()
-    if not os.path.isdir(profiles_dir):
-        return []
-    profiles = []
-    for filename in sorted(os.listdir(profiles_dir)):
-        if not filename.endswith(".env"):
+    profiles_by_name = {}
+    for directory, storage in (
+        (_environment_profiles_dir(), "private"),
+        (_legacy_environment_profiles_dir(), "legacy"),
+    ):
+        if not os.path.isdir(directory):
             continue
-        path = os.path.join(profiles_dir, filename)
-        if not os.path.isfile(path):
-            continue
-        profile_name = filename[: -len(".env")]
-        if not profile_name:
-            continue
-        profiles.append(
-            {
+        for filename in sorted(os.listdir(directory)):
+            if not filename.endswith(".env"):
+                continue
+            path = os.path.join(directory, filename)
+            if not os.path.isfile(path):
+                continue
+            profile_name = filename[: -len(".env")]
+            if not profile_name or profile_name in profiles_by_name:
+                continue
+            profiles_by_name[profile_name] = {
                 "name": profile_name,
                 "path": path,
                 "relative_path": _framework_relative_path(path),
+                "storage": storage,
             }
-        )
-    return profiles
+    return [profiles_by_name[name] for name in sorted(profiles_by_name)]
 
 
 def _adapter_profile_keys(adapter_name):
@@ -16373,7 +16403,7 @@ def _split_configuration_profile_updates(profile_values, topology="vm-distribute
                 {
                     "key": key,
                     "reason": "sensitive-key",
-                    "message": "Sensitive values must stay out of local configuration profiles.",
+                    "message": "Sensitive values must stay out of private configuration profiles.",
                 }
             )
             continue
@@ -16382,7 +16412,7 @@ def _split_configuration_profile_updates(profile_values, topology="vm-distribute
                 {
                     "key": key,
                     "reason": "unknown-key",
-                    "message": "This key is not supported by local configuration profiles.",
+                    "message": "This key is not supported by private configuration profiles.",
                 }
             )
             continue
@@ -16540,17 +16570,21 @@ def _select_environment_profile_interactively():
     profiles = _available_environment_profiles()
     current_name = _environment_profile_name()
     print()
-    print("Local configuration profiles")
+    print("Private configuration profiles")
     print(f"Current profile: {_current_environment_profile_display()}")
-    print(f"Profiles directory: {_framework_relative_path(_environment_profiles_dir())}")
+    print(f"Private profiles directory: {_framework_relative_path(_environment_profiles_dir())}")
+    legacy_dir = _legacy_environment_profiles_dir()
+    if os.path.isdir(legacy_dir):
+        print(f"Legacy profiles directory: {_framework_relative_path(legacy_dir)}")
     if profiles:
         print()
         for index, profile in enumerate(profiles, start=1):
             marker = "*" if profile["name"] == current_name else " "
-            print(f"{index} - {profile['name']} {marker} ({profile['relative_path']})")
+            storage = profile.get("storage") or "private"
+            print(f"{index} - {profile['name']} {marker} ({storage}; {profile['relative_path']})")
     else:
         print()
-        print("No local profiles found yet.")
+        print("No private profiles found yet.")
         print("W -> 1 will create the selected profile if it does not exist.")
 
     print()
@@ -16580,11 +16614,12 @@ def _select_environment_profile_interactively():
     else:
         selected_name = _environment_profile_name(answer)
 
+    os.environ["PIONERA_CONFIG_PROFILE"] = selected_name
     os.environ["PIONERA_ENVIRONMENT_PROFILE"] = selected_name
     selected_path = _environment_profile_path(selected_name)
     print(f"Selected profile: {selected_name} ({_framework_relative_path(selected_path)})")
     if not os.path.isfile(selected_path):
-        print("This profile does not exist yet. W -> 1 will create it as a template.")
+        print("This profile does not exist yet. W -> 1 will create a private quick-start template.")
     return {
         "status": "selected",
         "profile": selected_name,
@@ -16595,6 +16630,27 @@ def _select_environment_profile_interactively():
 def _read_vm_distributed_profile_content(profile_path):
     with open(profile_path, encoding="utf-8") as handle:
         return handle.read()
+
+
+def _vm_distributed_profile_apply_ready_missing_keys(profile_values):
+    values = dict(profile_values or {})
+
+    def has_any(*keys):
+        return any(str(values.get(key) or "").strip() for key in keys)
+
+    checks = (
+        ("DOMAIN_BASE", ("DOMAIN_BASE",)),
+        ("DS_DOMAIN_BASE", ("DS_DOMAIN_BASE",)),
+        ("VM_COMMON_IP", ("VM_COMMON_IP", "VM_EXTERNAL_IP")),
+        ("VM_PROVIDER_IP", ("VM_PROVIDER_IP", "VM_CONNECTORS_IP")),
+        ("VM_CONSUMER_IP", ("VM_CONSUMER_IP",)),
+        ("K3S_KUBECONFIG_COMMON", ("K3S_KUBECONFIG_COMMON", "K3S_KUBECONFIG")),
+        ("K3S_KUBECONFIG_PROVIDER", ("K3S_KUBECONFIG_PROVIDER",)),
+        ("K3S_KUBECONFIG_CONSUMER", ("K3S_KUBECONFIG_CONSUMER",)),
+        ("DS_1_NAME", ("DS_1_NAME",)),
+        ("DS_1_CONNECTORS", ("DS_1_CONNECTORS",)),
+    )
+    return [label for label, keys in checks if not has_any(*keys)]
 
 
 VM_DISTRIBUTED_PROFILE_TEMPLATE_KEYS = (
@@ -16619,11 +16675,22 @@ VM_DISTRIBUTED_PROFILE_TEMPLATE_KEYS = (
     "AI_MODEL_HUB_IMAGE_REF",
     "SEMANTIC_VIRTUALIZATION_IMAGE_REF",
     "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_IMAGE_REF",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_URL",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_EXPOSURE_MODE",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_HOST_PORT",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_PUBLIC_HOST",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SERVICE_NAME",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SERVICE_PORT",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_SERVICE_TYPE",
+    "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_NODE_PORT",
+    "AI_MODEL_HUB_MODEL_SERVER_ENABLED",
+    "LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED",
     "AI_MODEL_HUB_MODEL_SERVER_IMAGE",
     "AI_MODEL_HUB_MODEL_SERVER_MODE",
     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
+    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REFRESH",
     "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
     "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
     "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
@@ -16638,6 +16705,8 @@ VM_DISTRIBUTED_PROFILE_TEMPLATE_KEYS = (
     "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH",
     "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS",
     "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_PAYLOAD",
+    "AI_MODEL_HUB_MODEL_SERVER_COMBINED_MOCK_HTTP_COUNT",
+    "AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE",
     "AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR",
     "AI_MODEL_HUB_REAL_MODELS_TRAIN_COMMAND",
     "VM_EXTERNAL_IP",
@@ -16768,11 +16837,14 @@ VM_SINGLE_PROFILE_TEMPLATE_KEYS = (
     "AI_MODEL_HUB_IMAGE_REF",
     "SEMANTIC_VIRTUALIZATION_IMAGE_REF",
     "SEMANTIC_VIRTUALIZATION_MAPPING_EDITOR_IMAGE_REF",
+    "AI_MODEL_HUB_MODEL_SERVER_ENABLED",
+    "LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED",
     "AI_MODEL_HUB_MODEL_SERVER_IMAGE",
     "AI_MODEL_HUB_MODEL_SERVER_MODE",
     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
+    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REFRESH",
     "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
     "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
     "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
@@ -16782,6 +16854,8 @@ VM_SINGLE_PROFILE_TEMPLATE_KEYS = (
     "AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES",
     "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
     "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
+    "AI_MODEL_HUB_MODEL_SERVER_COMBINED_MOCK_HTTP_COUNT",
+    "AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE",
     "AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR",
     "AI_MODEL_HUB_REAL_MODELS_TRAIN_COMMAND",
     "VM_EXTERNAL_IP",
@@ -16879,7 +16953,7 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
     if selected_topology == "vm-single":
         sections = (
             (
-                "Local validation-environment profile.\n"
+                "Private validation-environment profile.\n"
                 "This file is ignored by Git and must not contain passwords, tokens or private keys.",
                 ("PROFILE_TOPOLOGY", "PROFILE_ADAPTER", "ENVIRONMENT_NAME", "FRAMEWORK_EXECUTION_MODE"),
             ),
@@ -16922,11 +16996,14 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
             (
                 "AI Model Hub model server",
                 (
+                    "AI_MODEL_HUB_MODEL_SERVER_ENABLED",
+                    "LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED",
                     "AI_MODEL_HUB_MODEL_SERVER_IMAGE",
                     "AI_MODEL_HUB_MODEL_SERVER_MODE",
                     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
                     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
                     "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
+                    "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REFRESH",
                     "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
                     "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
                     "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
@@ -16936,6 +17013,7 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
                     "AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES",
                     "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
                     "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
+                    "AI_MODEL_HUB_MODEL_SERVER_COMBINED_MOCK_HTTP_COUNT",
                     "AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR",
                     "AI_MODEL_HUB_REAL_MODELS_TRAIN_COMMAND",
                 ),
@@ -17041,9 +17119,78 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
     if selected_topology != "vm-distributed":
         return "".join(f"{key}=\n" for key in _vm_distributed_profile_template_keys(topology, selected_adapter))
 
+    template_mode = str(os.getenv("PIONERA_PROFILE_TEMPLATE") or "quick").strip().lower()
+    if template_mode not in {"full", "complete"}:
+        rendered = [
+            "# Private validation-environment profile.",
+            "# This file is ignored by Git. Do not put passwords, tokens, cookies, private keys or kubeconfig contents here.",
+            "# Use file paths to SSH keys and kubeconfigs, not the secret material itself.",
+            f"PROFILE_TOPOLOGY={selected_topology}",
+            f"PROFILE_ADAPTER={selected_adapter}",
+            "ENVIRONMENT_NAME=",
+            "",
+            "# Domains. In the common PIONERA pattern, org1 is common services, org2 provider and org3 consumer.",
+            "DOMAIN_BASE=",
+            "DS_DOMAIN_BASE=",
+            "TOPOLOGY_ROUTING_MODE=host",
+            "",
+            "# VM placement. For a quick demo, common/components can be the same VM.",
+            "VM_COMMON_IP=",
+            "VM_PROVIDER_IP=",
+            "VM_CONSUMER_IP=",
+            "VM_COMPONENTS_IP=",
+            "INGRESS_EXTERNAL_IP=",
+            "",
+            "# SSH route. Use direct when WSL/operator reaches every VM; use bastion for mixed ownership networks such as STICS.",
+            "SSH_ACCESS_MODE=",
+            "VM_SSH_USER=",
+            "SSH_BASTION_HOST=",
+            "SSH_BASTION_PORT=2222",
+            "SSH_BASTION_USER=",
+            "SSH_BASTION_IDENTITY_FILE=",
+            "SSH_IDENTITY_FILE=",
+            "VM_COMMON_SSH_HOST=",
+            "VM_PROVIDER_SSH_HOST=",
+            "VM_CONSUMER_SSH_HOST=",
+            "VM_COMPONENTS_SSH_HOST=",
+            "",
+            "# Local kubeconfig paths for the operator workstation. Use the same file when all roles share a cluster.",
+            "K3S_KUBECONFIG_COMMON=",
+            "K3S_KUBECONFIG_PROVIDER=",
+            "K3S_KUBECONFIG_CONSUMER=",
+            "K3S_KUBECONFIG_COMPONENTS=",
+            "VM_DISTRIBUTED_KUBECONFIG_AUTO_LOCALIZE=true",
+            "VM_DISTRIBUTED_KUBECONFIG_SYNC=auto",
+            "",
+            "# Dataspace inventory. Connector locations decide which VM/cluster hosts each connector.",
+            "DS_1_NAME=",
+            "DS_1_CONNECTORS=",
+            "DS_1_CONNECTOR_NAMESPACES=",
+            "DS_1_VALIDATION_PAIRS=",
+            "LEVEL4_CONNECTOR_RECONCILIATION_MODE=full",
+            "COMPONENTS=ontology-hub,semantic-virtualization,ai-model-hub",
+            "",
+            "# Optional public URL overrides. Leave blank to infer from DOMAIN_BASE/DS_DOMAIN_BASE.",
+            "VM_COMMON_PUBLIC_URL=",
+            "VM_PROVIDER_PUBLIC_URL=",
+            "VM_CONSUMER_PUBLIC_URL=",
+            "COMPONENTS_PUBLIC_BASE_URL=",
+            "",
+            "# Optional image pins. Leave blank for chart/default image behavior.",
+            "INESDATA_CONNECTOR_IMAGE_NAME=",
+            "INESDATA_CONNECTOR_IMAGE_TAG=",
+            "INESDATA_CONNECTOR_INTERFACE_IMAGE_NAME=",
+            "INESDATA_CONNECTOR_INTERFACE_IMAGE_TAG=",
+        ]
+        return "\n".join(rendered).rstrip() + "\n"
+
+    _meta_hints = {
+        "PROFILE_TOPOLOGY": selected_topology,
+        "PROFILE_ADAPTER": selected_adapter,
+    }
     sections = (
         (
-            "Local validation-environment profile.\n"
+            "Private validation-environment profile.\n"
             "This file is ignored by Git and must not contain passwords, tokens or private keys.",
             ("PROFILE_TOPOLOGY", "PROFILE_ADAPTER", "ENVIRONMENT_NAME", "FRAMEWORK_EXECUTION_MODE"),
         ),
@@ -17078,11 +17225,14 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
         (
             "AI Model Hub model server",
             (
+                "AI_MODEL_HUB_MODEL_SERVER_ENABLED",
+                "LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED",
                 "AI_MODEL_HUB_MODEL_SERVER_IMAGE",
                 "AI_MODEL_HUB_MODEL_SERVER_MODE",
                 "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
                 "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
                 "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
+                "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REFRESH",
                 "AI_MODEL_HUB_MODEL_SERVER_MANIFEST_PATH",
                 "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
                 "AI_MODEL_HUB_MODEL_SERVER_CONTAINER_PORT",
@@ -17092,6 +17242,7 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
                 "AI_MODEL_HUB_MODEL_SERVER_COPY_EXCLUDES",
                 "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
                 "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
+                "AI_MODEL_HUB_MODEL_SERVER_COMBINED_MOCK_HTTP_COUNT",
                 "AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR",
                 "AI_MODEL_HUB_REAL_MODELS_TRAIN_COMMAND",
             ),
@@ -17232,7 +17383,10 @@ def _vm_distributed_profile_template_content(topology="vm-distributed", adapter_
             if key in emitted:
                 continue
             emitted.add(key)
-            rendered.append(f"{key}=")
+            if key in _meta_hints:
+                rendered.append(f"# {key}={_meta_hints[key]}")
+            else:
+                rendered.append(f"{key}=")
         rendered.append("")
     if selected_adapter == "edc":
         rendered.append("# EDC adapter options")
@@ -17266,13 +17420,12 @@ def _ensure_pionera_environment_profile_file(topology="vm-distributed", adapter_
 
 
 def _ensure_vm_distributed_profile_file(adapter_name="inesdata"):
-    pionera_state = _ensure_pionera_environment_profile_file(
-        topology="vm-distributed",
-        adapter_name=adapter_name,
-    )
     current_name = _environment_profile_name()
     if current_name == DEFAULT_ENVIRONMENT_PROFILE_NAME:
-        return pionera_state
+        return _ensure_pionera_environment_profile_file(
+            topology="vm-distributed",
+            adapter_name=adapter_name,
+        )
     return _ensure_environment_profile_file(
         current_name,
         topology="vm-distributed",
@@ -17326,6 +17479,15 @@ def _load_vm_distributed_wizard_profile_suggestions(adapter_name=""):
             "rejected": rejected,
             "values": {},
         }
+    missing_apply_keys = _vm_distributed_profile_apply_ready_missing_keys(profile_values)
+    if missing_apply_keys:
+        return {
+            "status": "partial",
+            "path": profile_path,
+            "content": _read_vm_distributed_profile_content(profile_path),
+            "values": profile_values,
+            "missing_apply_keys": missing_apply_keys,
+        }
     return {
         "status": "loaded",
         "path": profile_path,
@@ -17347,11 +17509,11 @@ def _print_vm_distributed_wizard_profile_suggestions(profile):
             print("Configuration profile: not found.")
         print(f"Profile location: {_framework_relative_path(payload.get('path') or _vm_distributed_profile_path())}")
         if status in {"created", "template"}:
-            print("Fill this file, then run W -> 1 again to review and apply it.")
+            print("Fill the quick-start fields, then run W -> 1 again to review and apply it.")
         return
 
     print()
-    if status == "loaded":
+    if status in {"loaded", "partial"}:
         print(f"Configuration profile detected: {_framework_relative_path(payload.get('path'))}")
         print("Profile content:")
         print("-" * 50)
@@ -17359,6 +17521,11 @@ def _print_vm_distributed_wizard_profile_suggestions(profile):
         print(content or "(empty)")
         print("-" * 50)
         print("This profile contains only supported non-sensitive keys.")
+        if status == "partial":
+            missing = ", ".join(list(payload.get("missing_apply_keys") or []))
+            print("Profile is incomplete for direct apply; values will be used as prompt defaults.")
+            if missing:
+                print(f"Missing minimum fields: {missing}")
         return
 
     print(f"Configuration profile ignored: {_framework_relative_path(payload.get('path'))}")
@@ -18179,7 +18346,7 @@ def _ensure_vm_single_k3s_runtime_config(topology_config):
         raise RuntimeError(
             "Topology 'vm-single' must use k3s. "
             "Set CLUSTER_TYPE=k3s in deployers/infrastructure/topologies/vm-single.config "
-            "or in the selected .profiles/*.env profile."
+            "or in the selected private profile under .secrets/profiles/*.env."
         )
     return runtime
 
@@ -18510,22 +18677,6 @@ def _vm_single_mapping_editor_health_url(url):
     return f"{str(url or '').rstrip('/')}/_stcore/health"
 
 
-def _vm_single_mapping_editor_websocket_url(url):
-    normalized_url = str(url or "").strip()
-    if not normalized_url:
-        return ""
-    base_url = normalized_url if normalized_url.endswith("/") else f"{normalized_url}/"
-    try:
-        stream_url = urllib.parse.urljoin(base_url, "_stcore/stream")
-        parsed = urllib.parse.urlparse(stream_url)
-    except Exception:
-        return ""
-    if not parsed.scheme or not parsed.netloc:
-        return ""
-    scheme = "wss" if parsed.scheme.lower() == "https" else "ws"
-    return urllib.parse.urlunparse((scheme, parsed.netloc, parsed.path or "/", "", parsed.query, ""))
-
-
 def _vm_single_mapping_editor_http_ready(url, timeout_seconds=2):
     if not url:
         return False
@@ -18537,48 +18688,6 @@ def _vm_single_mapping_editor_http_ready(url, timeout_seconds=2):
     except requests.RequestException:
         return False
     return int(getattr(response, "status_code", 0) or 0) == 200
-
-
-def _vm_single_mapping_editor_websocket_ready(url, timeout_seconds=2):
-    stream_url = _vm_single_mapping_editor_websocket_url(url)
-    if not stream_url:
-        return False
-    try:
-        parsed = urllib.parse.urlparse(stream_url)
-        path = parsed.path or "/"
-        if parsed.query:
-            path = f"{path}?{parsed.query}"
-        timeout = max(float(timeout_seconds), 0.5)
-        if parsed.scheme == "wss":
-            connection = http.client.HTTPSConnection(
-                parsed.hostname,
-                parsed.port or 443,
-                timeout=timeout,
-                context=ssl._create_unverified_context(),
-            )
-        else:
-            connection = http.client.HTTPConnection(
-                parsed.hostname,
-                parsed.port or 80,
-                timeout=timeout,
-            )
-        try:
-            connection.request(
-                "GET",
-                path,
-                headers={
-                    "Connection": "Upgrade",
-                    "Upgrade": "websocket",
-                    "Sec-WebSocket-Key": "cGlvbmVyYS13cy1wcm9iZQ==",
-                    "Sec-WebSocket-Version": "13",
-                },
-            )
-            response = connection.getresponse()
-            return int(getattr(response, "status", 0) or 0) == 101
-        finally:
-            connection.close()
-    except Exception:
-        return False
 
 
 def _vm_single_mapping_editor_port_forward_command(topology_config, local_port):
@@ -18752,15 +18861,16 @@ def _vm_single_mapping_editor_has_dedicated_public_url(topology_config):
 def _vm_single_mapping_editor_dedicated_public_url_ready(topology_config):
     if not _vm_single_mapping_editor_has_dedicated_public_url(topology_config):
         return False
-    url = _vm_single_mapping_editor_public_url(topology_config)
-    return _vm_single_mapping_editor_http_ready(url, timeout_seconds=2) and _vm_single_mapping_editor_websocket_ready(
-        url,
+    return _vm_single_mapping_editor_http_ready(
+        _vm_single_mapping_editor_public_url(topology_config),
         timeout_seconds=2,
     )
 
 
 def _vm_single_mapping_editor_should_use_tunnel(plan, topology_config):
     if os.environ.get("PIONERA_VM_SINGLE_REMOTE_LEVEL_ACTIVE") == "true":
+        return False
+    if os.environ.get("PIONERA_LEVEL_RUNTIME_ENV_ACTIVE") == "true":
         return False
     if _vm_single_running_on_target(plan):
         return False
@@ -19082,21 +19192,7 @@ def _ensure_vm_single_k3s_api_access(adapter_name=None, command_runner=None):
     }
 
 
-def _vm_single_remote_sudo_password(env=None):
-    source = os.environ if env is None else dict(env or {})
-    for key in (
-        "K3S_REMOTE_IMPORT_SUDO_PASSWORD",
-        "PIONERA_REMOTE_SUDO_PASSWORD",
-        "PIONERA_SUDO_PASSWORD",
-        "SUDO_PASSWORD",
-    ):
-        value = source.get(key)
-        if value:
-            return str(value)
-    return ""
-
-
-def _vm_single_k3s_remote_prepare_shell(topology_config, *, sudo_stdin=False):
+def _vm_single_k3s_remote_prepare_shell(topology_config):
     remote_kubeconfig = _vm_single_remote_kubeconfig_path(topology_config)
     service_name = _vm_distributed_config_value(topology_config, "K3S_SERVICE_NAME", default="k3s") or "k3s"
     install_exec = _vm_distributed_config_value(
@@ -19113,56 +19209,25 @@ def _vm_single_k3s_remote_prepare_shell(topology_config, *, sudo_stdin=False):
     remote_kubeconfig_q = shlex.quote(remote_kubeconfig)
     service_name_q = shlex.quote(service_name)
     kubeconfig_mode_q = shlex.quote(kubeconfig_mode)
-    install_command = f"curl -sfL https://get.k3s.io | sh -s - {install_exec_args}"
-    sudo_prelude = []
-    if sudo_stdin:
-        sudo_prelude = [
-            "__pionera_sudo_password=''",
-            "if [ -t 0 ]; then",
-            "  __pionera_stty_state=\"$(stty -g 2>/dev/null || true)\"",
-            "  stty -echo 2>/dev/null || true",
-            "  IFS= read -r __pionera_sudo_password || __pionera_sudo_password=''",
-            "  if [ -n \"$__pionera_stty_state\" ]; then",
-            "    stty \"$__pionera_stty_state\" 2>/dev/null || true",
-            "  else",
-            "    stty echo 2>/dev/null || true",
-            "  fi",
-            "else",
-            "  IFS= read -r __pionera_sudo_password || __pionera_sudo_password=''",
-            "fi",
-            "pionera_sudo() {",
-            "  printf '%s\\n' \"$__pionera_sudo_password\" | sudo -S -p '' \"$@\"",
-            "}",
-            "pionera_sudo_sh_c() {",
-            "  printf '%s\\n' \"$__pionera_sudo_password\" | sudo -S -p '' sh -c \"$1\"",
-            "}",
-        ]
-    else:
-        sudo_prelude = [
-            "pionera_sudo() { sudo \"$@\"; }",
-            "pionera_sudo_sh_c() { sudo sh -c \"$1\"; }",
-        ]
-
     return "\n".join(
         [
             "set -eu",
-            *sudo_prelude,
             "needs_install=0",
             "command -v k3s >/dev/null 2>&1 || needs_install=1",
             f"systemctl is-active --quiet {service_name_q} || needs_install=1",
             f"test -f {remote_kubeconfig_q} || needs_install=1",
             'if [ "$needs_install" = "1" ]; then',
             "  echo 'Installing or repairing k3s on vm-single...'",
-            f"  pionera_sudo_sh_c {shlex.quote(install_command)}",
+            f"  curl -sfL https://get.k3s.io | sudo sh -s - {install_exec_args}",
             "else",
             "  echo 'k3s already installed on vm-single.'",
             "fi",
             "if systemctl list-unit-files k3s-agent.service --no-pager >/dev/null 2>&1; then",
-            "  pionera_sudo systemctl stop k3s-agent >/dev/null 2>&1 || true",
-            "  pionera_sudo systemctl disable k3s-agent >/dev/null 2>&1 || true",
+            "  sudo systemctl stop k3s-agent >/dev/null 2>&1 || true",
+            "  sudo systemctl disable k3s-agent >/dev/null 2>&1 || true",
             "fi",
-            f"pionera_sudo systemctl start {service_name_q}",
-            f"pionera_sudo chmod {kubeconfig_mode_q} {remote_kubeconfig_q}",
+            f"sudo systemctl start {service_name_q}",
+            f"sudo chmod {kubeconfig_mode_q} {remote_kubeconfig_q}",
             f"systemctl is-active {service_name_q}",
             f"test -r {remote_kubeconfig_q}",
         ]
@@ -19326,19 +19391,11 @@ def _run_vm_single_level1_via_ssh_tunnel(adapter, adapter_name):
 
     print("vm-single Level 1 will prepare k3s on the VM over SSH.")
     print("The framework stays on this machine; Kubernetes access will use an SSH tunnel.")
-    sudo_password = _vm_single_remote_sudo_password()
-    remote_shell = _vm_single_k3s_remote_prepare_shell(
-        bundle["topology"],
-        sudo_stdin=bool(sudo_password),
-    )
-    command = _vm_single_remote_ssh_command(plan, remote_shell, allocate_tty=not bool(sudo_password))
+    remote_shell = _vm_single_k3s_remote_prepare_shell(bundle["topology"])
+    command = _vm_single_remote_ssh_command(plan, remote_shell)
     if not command:
         raise RuntimeError("Cannot prepare vm-single Level 1 because the target SSH command could not be built.")
-    run_kwargs = {"check": False}
-    if sudo_password:
-        print("Using configured local sudo secret for vm-single remote k3s preparation.")
-        run_kwargs.update({"input": f"{sudo_password}\n", "text": True})
-    completed = subprocess.run(command, **run_kwargs)
+    completed = subprocess.run(command, check=False)
     if int(getattr(completed, "returncode", 1) or 0) != 0:
         raise RuntimeError("Remote vm-single k3s preparation failed. Check the SSH output above before retrying.")
 
@@ -19472,12 +19529,12 @@ def _vm_single_remote_level_shell(topology_config, adapter_name, level_id):
     )
 
 
-def _vm_single_remote_ssh_command(plan, remote_shell, *, allocate_tty=True):
+def _vm_single_remote_ssh_command(plan, remote_shell):
     payload = dict(plan or {})
     vms = [item for item in list(payload.get("vms") or []) if isinstance(item, dict)]
     vm = vms[0] if vms else {}
     command = _vm_distributed_build_ssh_command(payload, vm, remote_command=remote_shell)
-    if allocate_tty and command and command[0] == "ssh" and "-tt" not in command:
+    if command and command[0] == "ssh" and "-tt" not in command:
         command.insert(1, "-tt")
     return command
 
@@ -19748,11 +19805,22 @@ def _ai_model_hub_real_models_source_ref(profile_values=None):
     ).strip()
 
 
+def _ai_model_hub_public_model_server_url(url):
+    value = str(url or "").strip().rstrip("/")
+    if not value:
+        return ""
+    parsed = urllib.parse.urlparse(value)
+    host = parsed.hostname or ""
+    if parsed.scheme == "http" and host.endswith(".pionera.oeg.fi.upm.es"):
+        return urllib.parse.urlunparse(parsed._replace(scheme="https"))
+    return value
+
+
 def _ai_model_hub_real_models_public_url(profile_values=None):
     values = dict(profile_values or {})
     explicit = str(values.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL") or "").strip().rstrip("/")
     if explicit:
-        return explicit
+        return _ai_model_hub_public_model_server_url(explicit)
     public_base = str(
         values.get("COMPONENTS_PUBLIC_BASE_URL")
         or values.get("VM_COMMON_PUBLIC_URL")
@@ -19760,7 +19828,25 @@ def _ai_model_hub_real_models_public_url(profile_values=None):
     ).strip().rstrip("/")
     if not public_base:
         return ""
-    return f"{public_base}/model-server"
+    return _ai_model_hub_public_model_server_url(f"{public_base}/model-server")
+
+
+def _ai_model_hub_connector_model_server_url(values, components_namespace):
+    values = dict(values or {})
+    for key in (
+        "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL",
+        "MODEL_SERVER_CONNECTOR_BASE_URL",
+        "AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_URL",
+        "MODEL_SERVER_CONNECTOR_URL",
+    ):
+        candidate = str(values.get(key) or "").strip().rstrip("/")
+        if not candidate:
+            continue
+        return _ai_model_hub_public_model_server_url(candidate)
+    public_candidate = _ai_model_hub_real_models_public_url(values)
+    if public_candidate:
+        return public_candidate
+    return ai_model_hub_model_server.service_url(components_namespace)
 
 
 def _ensure_ai_model_hub_real_models_source(profile_values=None):
@@ -19926,6 +20012,7 @@ def _write_ai_model_hub_real_models_profile_updates(profile_path, updates):
             "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH",
             "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH",
             "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES",
+            "AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE",
             "AI_MODEL_HUB_REAL_MODELS_ARTIFACT_DIR",
             "AI_MODEL_HUB_REAL_MODELS_TRAIN_COMMAND",
         ),
@@ -19944,8 +20031,9 @@ def _promote_ai_model_hub_real_models_profile(profile_path, profile_values=None,
         "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": status.get("repository") or "",
         "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH": "/models",
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH": "/models",
-        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH": "/datasets",
+        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH": "skip",
         "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES": "true",
+        "AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE": "split",
     }
     if status.get("public_url"):
         updates["AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL"] = status["public_url"]
@@ -19976,6 +20064,7 @@ def _restore_ai_model_hub_mock_model_server_profile(profile_path, adapter_name="
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH": "",
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH": "",
         "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES": "",
+        "AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE": "",
     }
     _write_ai_model_hub_real_models_profile_updates(profile_path, updates)
     apply_result = apply_environment_configuration_profile(
@@ -20078,20 +20167,23 @@ def _print_ai_model_hub_use_case_demo_status(status, topology_config=None):
 def _ai_model_hub_use_case_demo_profile_updates(profile_values=None):
     values = dict(profile_values or {})
     status = _ai_model_hub_use_case_demo_status(values)
-    source_ref = status.get("source_ref") or status.get("resolved_commit") or ""
-    image_suffix = (source_ref or "demo")[:7]
+    source_ref = "main"
     updates = {
-        "AI_MODEL_HUB_MODEL_SERVER_MODE": "combined",
-        "AI_MODEL_HUB_MODEL_SERVER_IMAGE": f"model-server:combined-{image_suffix}",
+        "AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true",
+        "LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true",
+        "AI_MODEL_HUB_MODEL_SERVER_MODE": "use-cases",
+        "AI_MODEL_HUB_MODEL_SERVER_IMAGE": "model-server:use-cases-main",
         "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR": _framework_relative_path(status["source_dir"]),
         "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY": status.get("repository") or "",
+        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF": source_ref,
+        "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REFRESH": "true",
         "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH": "/models",
         "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH": "/models",
-        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH": "/datasets",
+        "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH": "skip",
+        "AI_MODEL_HUB_MODEL_SERVER_COMBINED_MOCK_HTTP_COUNT": "0",
         "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES": "true",
+        "AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE": "split",
     }
-    if source_ref:
-        updates["AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF"] = source_ref
     if status.get("public_url"):
         updates["AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL"] = status["public_url"]
         updates["AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL"] = status["public_url"]
@@ -20103,17 +20195,22 @@ def _write_ai_model_hub_use_case_demo_profile_updates(profile_path, updates):
         profile_path,
         updates,
         (
+            "AI_MODEL_HUB_MODEL_SERVER_ENABLED",
+            "LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED",
             "AI_MODEL_HUB_MODEL_SERVER_MODE",
             "AI_MODEL_HUB_MODEL_SERVER_IMAGE",
             "AI_MODEL_HUB_MODEL_SERVER_SOURCE_DIR",
             "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REPOSITORY",
             "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REF",
+            "AI_MODEL_HUB_MODEL_SERVER_SOURCE_REFRESH",
             "AI_MODEL_HUB_MODEL_SERVER_READINESS_PATH",
             "AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL",
             "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_URL",
             "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DISCOVERY_PATH",
             "AI_MODEL_HUB_MODEL_SERVER_VALIDATION_DATASETS_PATH",
+            "AI_MODEL_HUB_MODEL_SERVER_COMBINED_MOCK_HTTP_COUNT",
             "AI_MODEL_HUB_ENABLE_MODEL_SERVER_USE_CASES",
+            "AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE",
         ),
     )
 
@@ -20140,7 +20237,32 @@ def _promote_ai_model_hub_use_case_demo_profile(profile_path, profile_values=Non
 
 
 def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="inesdata"):
-    values = dict(profile_values or {})
+    normalized_adapter = str(adapter_name or "inesdata").strip().lower() or "inesdata"
+    values = {}
+    if normalized_adapter == "inesdata":
+        try:
+            from adapters.inesdata.config import INESDataConfigAdapter, InesdataConfig
+
+            values.update(
+                INESDataConfigAdapter(
+                    InesdataConfig,
+                    topology=VM_DISTRIBUTED_TOPOLOGY,
+                ).load_deployer_config()
+                or {}
+            )
+        except Exception:
+            values.update(_load_effective_infrastructure_deployer_config(topology=VM_DISTRIBUTED_TOPOLOGY) or {})
+            values.update(_load_effective_adapter_deployer_config(normalized_adapter, topology=VM_DISTRIBUTED_TOPOLOGY))
+    else:
+        values.update(_load_effective_infrastructure_deployer_config(topology=VM_DISTRIBUTED_TOPOLOGY) or {})
+        values.update(_load_effective_adapter_deployer_config(normalized_adapter, topology=VM_DISTRIBUTED_TOPOLOGY))
+    values.update(
+        {
+            key: value
+            for key, value in dict(profile_values or {}).items()
+            if str(value or "").strip()
+        }
+    )
     dataspace = str(
         values.get("DS_1_NAME")
         or values.get("DS_NAME")
@@ -20148,6 +20270,11 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
         or ("pionera-edc" if str(adapter_name or "").strip().lower() == "edc" else "pionera")
     ).strip()
     components_namespace = str(values.get("COMPONENTS_NAMESPACE") or "components").strip() or "components"
+    common_services_namespace = str(
+        values.get("COMMON_SERVICES_NAMESPACE")
+        or values.get("NS_COMMON")
+        or "common-srvs"
+    ).strip() or "common-srvs"
     connectors = parse_connector_list(values.get("DS_1_CONNECTORS"), dataspace)
     if not connectors:
         connectors = [
@@ -20155,7 +20282,6 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
             f"conn-org3-{dataspace}",
         ]
     root_dir = os.path.dirname(__file__)
-    normalized_adapter = str(adapter_name or "inesdata").strip().lower() or "inesdata"
     environment = str(
         values.get("AI_MODEL_HUB_SEED_DEPLOYMENT_ENVIRONMENT")
         or values.get("DEPLOYMENT_ENVIRONMENT")
@@ -20258,15 +20384,15 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
                     f"{connector_dsp_protocol}://{'.'.join(host_parts)}"
                     f"{connector_protocol_path_prefix}/protocol"
                 )
-    model_server_url = str(
-        values.get("AI_MODEL_HUB_MODEL_SERVER_CONNECTOR_BASE_URL")
-        or values.get("AI_MODEL_HUB_MODEL_SERVER_PUBLIC_URL")
-        or _ai_model_hub_real_models_public_url(values)
-        or ""
-    ).strip().rstrip("/")
+    model_server_url = _ai_model_hub_connector_model_server_url(values, components_namespace)
+    common_kubeconfig = str(kubeconfig_by_role.get("common") or "").strip()
+    if common_kubeconfig:
+        common_kubeconfig = os.path.abspath(os.path.expanduser(common_kubeconfig))
     return {
         "dataspace": dataspace,
         "components_namespace": components_namespace,
+        "common_services_namespace": common_services_namespace,
+        "common_kubeconfig": common_kubeconfig,
         "connectors": connectors,
         "credentials_dir": credentials_dir,
         "keycloak_token_url": keycloak_token_url,
@@ -20274,6 +20400,11 @@ def _ai_model_hub_use_case_demo_seed_runtime(profile_values=None, adapter_name="
         "connector_kubeconfigs": connector_kubeconfigs,
         "connector_protocol_urls": connector_protocol_urls,
         "model_server_url": model_server_url,
+        "use_case_publication_mode": str(
+            values.get("AI_MODEL_HUB_USE_CASE_PUBLICATION_MODE")
+            or values.get("USE_CASE_PUBLICATION_MODE")
+            or "split"
+        ).strip(),
         "negotiation_timeout_seconds": str(
             values.get("AI_MODEL_HUB_SEED_NEGOTIATION_TIMEOUT_SECONDS")
             or values.get("SEED_NEGOTIATION_TIMEOUT_SECONDS")
@@ -20307,6 +20438,8 @@ def _ai_model_hub_use_case_demo_seed_command(profile_values=None, adapter_name="
         runtime["dataspace"],
         "--components-namespace",
         runtime["components_namespace"],
+        "--common-services-namespace",
+        runtime["common_services_namespace"],
         "--connectors",
         ",".join(runtime["connectors"]),
         "--adapter",
@@ -20317,6 +20450,8 @@ def _ai_model_hub_use_case_demo_seed_command(profile_values=None, adapter_name="
     ]
     if runtime.get("keycloak_token_url"):
         args.extend(["--keycloak-token-url", runtime["keycloak_token_url"]])
+    if runtime.get("common_kubeconfig"):
+        args.extend(["--common-kubeconfig", runtime["common_kubeconfig"]])
     if runtime.get("connector_k8s_namespaces"):
         args.extend(
             [
@@ -20355,12 +20490,17 @@ def _ai_model_hub_use_case_demo_seed_command(profile_values=None, adapter_name="
                 "--model-set",
                 "use-cases",
                 "--skip-inesdata-models",
+                "--include-flares-metric-models",
+                "--use-case-publication-mode",
+                runtime.get("use_case_publication_mode") or "split",
             ]
         )
         if runtime.get("model_server_url"):
             args.extend(["--use-case-model-server-base-url", runtime["model_server_url"]])
+            if ".svc.cluster.local" in runtime["model_server_url"]:
+                args.append("--skip-use-case-model-server-contract-check")
     else:
-        args.extend(["--seed-scope", "datasets"])
+        args.extend(["--seed-scope", step if step == "vocabularies" else "datasets"])
     return args
 
 
@@ -20387,28 +20527,65 @@ def _run_ai_model_hub_use_case_demo_logged_command(args, log_prefix, env_updates
     log_path = os.path.join(artifact_dir, f"{log_prefix}-{started_at}.log")
     env = os.environ.copy()
     env.update({key: value for key, value in dict(env_updates or {}).items() if str(value).strip()})
-    with open(log_path, "ab") as log_handle:
-        completed = subprocess.run(
-            args,
-            cwd=os.path.dirname(__file__),
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            check=False,
-            env=env,
-        )
+    print()
+    print(f"Streaming {log_prefix} output. Log: {_framework_relative_path(log_path)}")
+    returncode = 255
+    with open(log_path, "w", encoding="utf-8", errors="replace") as log_handle:
+        try:
+            process = subprocess.Popen(
+                args,
+                cwd=os.path.dirname(__file__),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+                env=env,
+            )
+        except OSError as exc:
+            message = f"Failed to start command: {exc}"
+            print(message)
+            log_handle.write(message + "\n")
+            return {
+                "status": "failed",
+                "returncode": returncode,
+                "command": " ".join(shlex.quote(part) for part in args),
+                "log_path": log_path,
+            }
+        try:
+            for line in process.stdout or []:
+                print(line, end="")
+                log_handle.write(line)
+                log_handle.flush()
+            returncode = process.wait()
+        except KeyboardInterrupt:
+            process.terminate()
+            try:
+                returncode = process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                returncode = process.wait()
+            raise
     return {
-        "status": "passed" if completed.returncode == 0 else "failed",
-        "returncode": completed.returncode,
+        "status": "passed" if returncode == 0 else "failed",
+        "returncode": returncode,
         "command": " ".join(shlex.quote(part) for part in args),
         "log_path": log_path,
     }
 
 
 def _run_ai_model_hub_use_case_demo_level5(adapter_name="inesdata"):
+    profile_name = _environment_profile_name()
     return _run_ai_model_hub_use_case_demo_logged_command(
         _ai_model_hub_use_case_demo_level5_command(adapter_name=adapter_name),
-        "level5-components",
-        env_updates={"PIONERA_ENVIRONMENT_PROFILE": _environment_profile_name()},
+        "step7-ai-model-hub-deploy",
+        env_updates={
+            "PIONERA_CONFIG_PROFILE": profile_name,
+            "PIONERA_ENVIRONMENT_PROFILE": profile_name,
+            "PIONERA_COMPONENTS": "ai-model-hub",
+            "PIONERA_AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true",
+            "PIONERA_LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED": "true",
+        },
     )
 
 
@@ -20417,6 +20594,126 @@ def _run_ai_model_hub_use_case_demo_seed_step(profile_values=None, adapter_name=
     result = _run_ai_model_hub_use_case_demo_logged_command(args, f"seed-{step}")
     result["step"] = step
     return result
+
+
+def _run_connector_catalog_cleanup(deployer_name, normalized_topology, phase="pre"):
+    """Prune accumulated test-junk offers from the connector catalog before
+    Level 6 runs. The federated catalog is capped (~100 datasets); junk assets
+    (qa-ui-*, pt5-mh-*, asset-e2e-*, contract-ui-*, kafka-edc-asset-*) pile up
+    across runs and push fresh test/model offers outside the cap, so discovery
+    and negotiation suites fail to find their own assets. This removes the junk
+    contract definitions (the catalog offers) while preserving the seeded AI
+    Model Hub assets. Connectors are untouched (management API deletes only).
+
+    Controlled by PIONERA_LEVEL6_CATALOG_CLEANUP (default on). Non-fatal."""
+    adapter = str(deployer_name or "").strip().lower()
+    if adapter != "inesdata" or normalized_topology != "vm-distributed":
+        return {"status": "skipped", "reason": "unsupported-target", "phase": phase}
+    if not _bool_value(os.environ.get("PIONERA_LEVEL6_CATALOG_CLEANUP"), default=True):
+        return {"status": "skipped", "reason": "disabled", "phase": phase}
+    normalized_phase = str(phase or "pre").strip().lower()
+    if normalized_phase == "post" and not _bool_value(
+        os.environ.get("PIONERA_LEVEL6_CATALOG_POST_CLEANUP"),
+        default=True,
+    ):
+        return {"status": "skipped", "reason": "post-cleanup-disabled", "phase": normalized_phase}
+    script = os.path.join(os.path.dirname(__file__), "scripts", "clean_connector_catalog.py")
+    if not os.path.isfile(script):
+        return {"status": "skipped", "reason": "missing-script", "phase": normalized_phase}
+    action_label = "post-clean" if normalized_phase == "post" else "pre-clean"
+    print(f"\nPruning accumulated test-junk offers from the connector catalog (Level 6 {action_label})...")
+    args = [sys.executable, script, "--apply"]
+    if normalized_phase == "post":
+        if _bool_value(os.environ.get("PIONERA_LEVEL6_CATALOG_POST_CLEANUP_AGREEMENTS"), default=True):
+            args.append("--agreements")
+        if _bool_value(os.environ.get("PIONERA_LEVEL6_CATALOG_POST_CLEANUP_ASSETS"), default=True):
+            args.append("--assets")
+        if _bool_value(os.environ.get("PIONERA_LEVEL6_CATALOG_POST_CLEANUP_VOCABULARIES"), default=True):
+            args.append("--vocabularies")
+        if _bool_value(os.environ.get("PIONERA_LEVEL6_CATALOG_POST_CLEANUP_SPLIT_USE_CASE_MODELS"), default=True):
+            args.append("--split-use-case-models")
+    elif _bool_value(os.environ.get("PIONERA_LEVEL6_CATALOG_CLEANUP_ASSETS"), default=False):
+        args.append("--assets")
+    try:
+        completed = subprocess.run(
+            args, cwd=os.path.dirname(__file__), check=False,
+            capture_output=True, text=True, timeout=600,
+        )
+        tail = "\n".join((completed.stdout or "").strip().splitlines()[-12:])
+        if tail:
+            print(tail)
+        if completed.returncode != 0:
+            print(f"  catalog cleanup exited {completed.returncode} (non-fatal); continuing.")
+        return {
+            "status": "passed" if completed.returncode == 0 else "failed",
+            "phase": normalized_phase,
+            "returncode": completed.returncode,
+        }
+    except Exception as exc:  # noqa: BLE001 - cleanup must not block validation
+        print(f"  catalog cleanup skipped ({exc}); continuing.")
+        return {"status": "skipped", "phase": normalized_phase, "reason": str(exc)}
+
+
+def _run_ai_model_hub_post_deploy_seed(deployer_name, normalized_topology):
+    """Seed AI Model Hub ML model + dataset assets into the connector catalog
+    after a Level 5 component deploy, so the benchmarking (PT5-MH-12..15) and
+    linguistic (MH-LING-01) validation flows can discover and negotiate FLARES
+    models and datasets from the dataspace catalog.
+
+    The same seed steps are exposed interactively via the use-case demo
+    assistant; this hook runs them automatically as part of the standard
+    pipeline. Non-fatal by default: the datasets step succeeds immediately,
+    while the models step only fully succeeds once trained FLARES/mobility
+    artifacts exist in AIModelHub-Use-Cases/models/ (until then the model
+    server's /models is empty and the step is skipped without blocking the
+    deploy). Controlled by AI_MODEL_HUB_SEED_ON_DEPLOY (default OFF) and
+    AI_MODEL_HUB_SEED_ON_DEPLOY_STRICT (default off).
+
+    NOTE: default is OFF. The broad seed publishes many model/dataset offers
+    that flood the federated catalog (capped ~100), which crowds out fresh test
+    assets and breaks the INESData consumer-catalog / negotiation / transfer and
+    Kafka suites. Enable explicitly only when validating the AI Model Hub
+    benchmarking/linguistic flow."""
+    adapter = str(deployer_name or "").strip().lower()
+    if adapter != "inesdata" or normalized_topology != "vm-distributed":
+        return
+    bundle = _load_vm_distributed_configuration_bundle(adapter_name=adapter)
+    values = {}
+    for section in ("infrastructure", "topology", "adapter"):
+        values.update(bundle.get(section) or {})
+    values.setdefault("PROFILE_TOPOLOGY", "vm-distributed")
+    if not _bool_value(values.get("AI_MODEL_HUB_SEED_ON_DEPLOY"), default=False):
+        print(
+            "AI Model Hub seed-on-deploy disabled "
+            "(AI_MODEL_HUB_SEED_ON_DEPLOY=false); skipping catalog seeding."
+        )
+        return
+    if not _bool_value(values.get("AI_MODEL_HUB_MODEL_SERVER_ENABLED"), default=False):
+        return
+    strict = _bool_value(values.get("AI_MODEL_HUB_SEED_ON_DEPLOY_STRICT"), default=False)
+    print("\nSeeding AI Model Hub ML assets into the connector catalog (Level 5 post-deploy)...")
+    for step in ("datasets", "models"):
+        try:
+            result = _run_ai_model_hub_use_case_demo_seed_step(
+                values, adapter_name=adapter, step=step
+            )
+        except Exception as exc:  # noqa: BLE001 - seeding must not abort the deploy
+            result = {"status": "failed", "error": str(exc)}
+        status = str((result or {}).get("status") or "unknown")
+        log_path = (result or {}).get("log_path") or ""
+        suffix = f" (log: {_framework_relative_path(log_path)})" if log_path else ""
+        print(f"  [seed-{step}] {status}{suffix}")
+        if status != "passed":
+            if strict:
+                raise RuntimeError(
+                    f"AI Model Hub seed step '{step}' failed during Level 5 post-deploy"
+                )
+            if step == "models":
+                print(
+                    "  note: model seeding needs trained FLARES/mobility artifacts in "
+                    "AIModelHub-Use-Cases/models/ (empty /models -> skipped). Datasets and "
+                    "wiring are in place; drop in the trained models and re-run Level 5."
+                )
 
 
 def _run_ai_model_hub_use_case_demo_flow(profile_path, profile_values=None, adapter_name="inesdata", run_level5=True):
@@ -20441,6 +20738,15 @@ def _run_ai_model_hub_use_case_demo_flow(profile_path, profile_values=None, adap
         if level5_result.get("status") != "passed":
             return {"status": "failed", "reason": "level5-failed", "steps": steps}
 
+    vocabularies_result = _run_ai_model_hub_use_case_demo_seed_step(
+        refreshed_values,
+        adapter_name=adapter_name,
+        step="vocabularies",
+    )
+    steps.append({"name": "step8-vocabularies", **vocabularies_result})
+    if vocabularies_result.get("status") != "passed":
+        return {"status": "failed", "reason": "step8-vocabularies-failed", "steps": steps}
+
     datasets_result = _run_ai_model_hub_use_case_demo_seed_step(
         refreshed_values,
         adapter_name=adapter_name,
@@ -20462,6 +20768,16 @@ def _run_ai_model_hub_use_case_demo_flow(profile_path, profile_values=None, adap
     return {"status": "passed", "steps": steps}
 
 
+def _ai_model_hub_use_case_demo_step_display_name(step_name):
+    return {
+        "prepare-profile": "Prepare use-case profile",
+        "level5-components": "Step 7 - Deploy AI Model Hub/model-server",
+        "step8-vocabularies": "Step 8 - Seed DAIMO vocabularies",
+        "step9-datasets": "Step 9 - Seed benchmark datasets",
+        "step10-models": "Step 10 - Seed FLARES/Mobility model assets",
+    }.get(step_name, step_name or "step")
+
+
 def _print_ai_model_hub_use_case_demo_flow_result(result):
     payload = dict(result or {})
     print()
@@ -20470,7 +20786,7 @@ def _print_ai_model_hub_use_case_demo_flow_result(result):
         print(f"Reason: {payload.get('reason')}")
     for step in list(payload.get("steps") or []):
         print()
-        print(f"[{step.get('name') or 'step'}]")
+        print(f"[{_ai_model_hub_use_case_demo_step_display_name(step.get('name'))}]")
         _print_ai_model_hub_use_case_demo_action_result(step)
 
 
@@ -20514,26 +20830,29 @@ def _run_ai_model_hub_use_case_demo_assistant(current_adapter=None, adapter_regi
         status = _ai_model_hub_use_case_demo_status(profile_values)
         _print_ai_model_hub_use_case_demo_status(status, topology_config=topology_config)
         print()
-        print("1 - Prepare/apply use-case demo profile (combined model-server)")
-        print("2 - Show Level 5 and demo seed commands")
-        print("3 - Run Step 9: seed benchmark datasets")
-        print("4 - Run Step 10: seed FLARES/Mobility model assets")
-        print("5 - Run use-case demo flow (profile + Level 5 + Steps 9/10)")
+        print("1 - Run official AI Model Hub use-case flow (Steps 7-10)")
+        print("2 - Show exact commands")
         print("B/Q - Back")
         choice = _interactive_read("\nSelection: ").strip().upper()
         if not choice or choice in {"B", "Q"}:
             return {"status": "completed", "adapter": selected_adapter, "topology": "vm-distributed"}
 
         if choice == "1":
-            if not _interactive_confirm("Apply the AI Model Hub use-case demo profile now?", default=False):
-                print("Profile promotion cancelled.")
+            print()
+            print(
+                "This applies the use-case profile, deploys only AI Model Hub/model-server, "
+                "and executes the official Steps 8, 9 and 10."
+            )
+            if not _interactive_confirm("Run the official AI Model Hub flow now?", default=False):
+                print("AI Model Hub flow cancelled.")
                 continue
-            result = _promote_ai_model_hub_use_case_demo_profile(
+            result = _run_ai_model_hub_use_case_demo_flow(
                 profile_path,
                 profile_values,
                 adapter_name=selected_adapter,
+                run_level5=True,
             )
-            _print_ai_model_hub_use_case_demo_action_result(result)
+            _print_ai_model_hub_use_case_demo_flow_result(result)
             profile_values, _parse_errors = _load_vm_distributed_profile(profile_path)
             topology_config.update({key: value for key, value in profile_values.items() if str(value).strip()})
             continue
@@ -20553,65 +20872,37 @@ def _run_ai_model_hub_use_case_demo_assistant(current_adapter=None, adapter_regi
                 adapter_name=selected_adapter,
                 step="datasets",
             )
+            vocabularies_cmd = _ai_model_hub_use_case_demo_seed_command(
+                profile_values,
+                adapter_name=selected_adapter,
+                step="vocabularies",
+            )
             models_cmd = _ai_model_hub_use_case_demo_seed_command(
                 profile_values,
                 adapter_name=selected_adapter,
                 step="models",
             )
             print()
+            level5_env = [
+                "PIONERA_COMPONENTS=ai-model-hub",
+                "PIONERA_AI_MODEL_HUB_MODEL_SERVER_ENABLED=true",
+                "PIONERA_LEVEL5_AI_MODEL_HUB_MODEL_SERVER_ENABLED=true",
+            ]
             print("AI Model Hub use-case demo commands:")
-            print("  Level 5 / Step 7:")
-            print("    " + " ".join(shlex.quote(part) for part in level5_cmd))
+            print("  AI Model Hub deploy / Step 7:")
+            print(
+                "    "
+                + " ".join(shlex.quote(part) for part in [*level5_env, *level5_cmd])
+            )
+            print("  Step 8 vocabularies:")
+            print("    " + " ".join(shlex.quote(part) for part in vocabularies_cmd))
             print("  Step 9 datasets:")
             print("    " + " ".join(shlex.quote(part) for part in datasets_cmd))
             print("  Step 10 FLARES/Mobility models:")
             print("    " + " ".join(shlex.quote(part) for part in models_cmd))
             continue
 
-        if choice == "3":
-            if not _interactive_confirm("Run Step 9 dataset seeding now?", default=False):
-                print("Dataset seeding cancelled.")
-                continue
-            result = _run_ai_model_hub_use_case_demo_seed_step(
-                profile_values,
-                adapter_name=selected_adapter,
-                step="datasets",
-            )
-            _print_ai_model_hub_use_case_demo_action_result(result)
-            continue
-
-        if choice == "4":
-            print()
-            print("This registers FLARES/Mobility HttpData assets discovered from the running model-server /models endpoint.")
-            if not _interactive_confirm("Run Step 10 model asset seeding now?", default=False):
-                print("Model asset seeding cancelled.")
-                continue
-            result = _run_ai_model_hub_use_case_demo_seed_step(
-                profile_values,
-                adapter_name=selected_adapter,
-                step="models",
-            )
-            _print_ai_model_hub_use_case_demo_action_result(result)
-            continue
-
-        if choice == "5":
-            print()
-            print("This applies the combined model-server profile, runs Level 5, then seeds Step 9 datasets and Step 10 model assets.")
-            if not _interactive_confirm("Run the AI Model Hub use-case demo flow now?", default=False):
-                print("Use-case demo flow cancelled.")
-                continue
-            result = _run_ai_model_hub_use_case_demo_flow(
-                profile_path,
-                profile_values,
-                adapter_name=selected_adapter,
-                run_level5=True,
-            )
-            _print_ai_model_hub_use_case_demo_flow_result(result)
-            profile_values, _parse_errors = _load_vm_distributed_profile(profile_path)
-            topology_config.update({key: value for key, value in profile_values.items() if str(value).strip()})
-            continue
-
-        print("Invalid AI Model Hub use-case demo selection.")
+        print("Invalid AI Model Hub flow selection.")
 
 
 def _print_vm_distributed_assistant_menu(current_adapter=None):
@@ -20621,8 +20912,8 @@ def _print_vm_distributed_assistant_menu(current_adapter=None):
     print("=" * 50)
     print(f"Adapter: {current_adapter or '(not selected)'}")
     print(f"Profile: {_current_environment_profile_display()}")
-    print("P - Select local configuration profile")
-    print("1 - Configure/update local vm-distributed .config files")
+    print("P - Select private configuration profile")
+    print("1 - Configure/update vm-distributed .config files from profile or prompts")
     print("2 - Show configured topology and static preflight")
     print("3 - Preview deployment and hosts plan")
     print("4 - Run non-destructive SSH/HTTP preflight")
@@ -21662,6 +21953,7 @@ def _print_interactive_menu(adapter_name, adapter_registry=None, topology="local
     print()
     print("[Components]")
     print("CM - Deploy selected components")
+    print("AMH - Run official AI Model Hub Steps 7-10")
     print()
     print("[Control]")
     print("? - Help")
@@ -21739,6 +22031,8 @@ def _print_interactive_help():
     print("CM - Use to deploy a selected subset of Level 5 components without editing deployer.config.")
     print("     It accepts Ontology Hub, AI Model Hub, Semantic Virtualization, and the optional AI Model Hub model server.")
     print("     The model server is enabled only for that run and is deployed through AI Model Hub.")
+    print("AMH - Use to run the official AI Model Hub flow: deploy AI Model Hub/model-server and seed Steps 8-10.")
+    print("      The grouped flow applies the use-case profile, runs Level 5/Step 7, and seeds Steps 8, 9 and 10.")
     print()
     print("[Compatibility]")
     print("Levels 1-2 belong to the shared local foundation; the menu asks for an adapter only when an operation needs Levels 3-6, unless you preselect one with S.")
@@ -23082,7 +23376,7 @@ def _offer_open_level6_dashboard(framework_report):
     print("Level 6 dashboard available at:")
     _print_dashboard_access_urls(dashboard_path, server_url=server["url"])
     print(f"Dashboard file: {dashboard_path}")
-    print("The local server is bound to 127.0.0.1 and stays alive while this framework process is running.")
+    print("The dashboard server stays alive while this framework process is running.")
     if not server.get("ready"):
         print("The dashboard server is still starting. If the browser does not open, use the URL above.")
     _open_dashboard_url_with_wsl_file_fallback(url, dashboard_path, server_ready=bool(server.get("ready")))
@@ -23122,7 +23416,7 @@ def _open_experiment_dashboard_interactive(experiment):
     print("Experiment dashboard available at:")
     _print_dashboard_access_urls(dashboard_path, server_url=server["url"])
     print(f"Dashboard file: {dashboard_path}")
-    print("The local server is bound to 127.0.0.1 and stays alive while this framework process is running.")
+    print("The dashboard server stays alive while this framework process is running.")
     if not server.get("ready"):
         print("The dashboard server is still starting. If the browser does not open, use the URL above.")
     _open_dashboard_url_with_wsl_file_fallback(url, dashboard_path, server_ready=bool(server.get("ready")))
@@ -23558,6 +23852,27 @@ def run_interactive_menu(
                     if result is not None:
                         current_adapter = result.get("adapter") or current_adapter
                         _print_action_result(result)
+                    continue
+
+                if choice in {"AMH", "AI-MODEL-HUB", "AIHUB"}:
+                    if normalize_topology(topology) != "vm-distributed":
+                        if not _interactive_confirm(
+                            "Switch active topology to vm-distributed for the AI Model Hub use-case Steps 7-10?",
+                            default=True,
+                        ):
+                            print("AI Model Hub use-case flow cancelled.")
+                            continue
+                        topology = "vm-distributed"
+                        print("Active topology set to vm-distributed.")
+                        _apply_interactive_topology_runtime_environment(topology)
+                    result = _run_ai_model_hub_use_case_demo_assistant(
+                        current_adapter=current_adapter,
+                        adapter_registry=registry,
+                    )
+                    if isinstance(result, dict):
+                        current_adapter = result.get("adapter") or current_adapter
+                        if result.get("status") not in {"completed", "cancelled"}:
+                            _print_ai_model_hub_use_case_demo_action_result(result)
                     continue
 
                 if choice == "J":
@@ -24225,6 +24540,7 @@ def main(
             metrics_collector_cls=metrics_collector_cls,
             experiment_storage=experiment_storage,
             baseline=args.baseline,
+            kafka_enabled=args.kafka,
         )
         if args.json:
             print(json.dumps(result, indent=2, default=str))
@@ -24243,6 +24559,7 @@ def main(
                 experiment_storage=experiment_storage,
                 baseline=args.baseline,
                 validation_mode=args.validation_mode,
+                kafka_enabled=args.kafka,
             )
         except ValueError as exc:
             parser.error(str(exc))

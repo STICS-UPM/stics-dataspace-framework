@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from contextlib import contextmanager
 from unittest import mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -106,6 +107,45 @@ class FakeComponentsAdapter:
         return {"deployed": list(components), "urls": {"ontology-hub": "http://ontology-hub-demo"}}
 
 
+class ModelServerOnlyConfigAdapter(FakeConfigAdapter):
+    def load_deployer_config(self):
+        config = super().load_deployer_config()
+        config["COMPONENTS"] = "ai-model-hub"
+        config["AI_MODEL_HUB_MODEL_SERVER_ENABLED"] = "true"
+        config["AI_MODEL_HUB_MODEL_SERVER_MODE"] = "use-cases"
+        return config
+
+
+class ModelServerOnlyAdapter(FakeAdapter):
+    def __init__(self):
+        super().__init__()
+        self.config_adapter = ModelServerOnlyConfigAdapter()
+
+
+class FakeIntegratedModelServerComponentsAdapter(FakeComponentsAdapter):
+    def __init__(self):
+        super().__init__()
+        self.model_server_calls = []
+
+    @contextmanager
+    def _temporary_component_kubeconfig(self, deployer_config=None):
+        self.model_server_calls.append({"kubeconfig": dict(deployer_config or {})})
+        yield
+
+    def _ensure_ai_model_hub_model_server(self, namespace, deployer_config):
+        self.model_server_calls.append(
+            {
+                "namespace": namespace,
+                "deployer_config": dict(deployer_config or {}),
+            }
+        )
+        return {
+            "enabled": True,
+            "mode": "use-cases",
+            "namespace": namespace,
+        }
+
+
 class InesdataDeployerWrapperTests(unittest.TestCase):
     def test_name_and_supported_topologies_are_stable(self):
         deployer = InesdataDeployer(adapter=FakeAdapter(), components_adapter=FakeComponentsAdapter(), config_cls=FakeConfig)
@@ -165,15 +205,16 @@ class InesdataDeployerWrapperTests(unittest.TestCase):
 
         result = deployer.deploy_components(context)
 
-        self.assertEqual(result["deployed"], ["ontology-hub", "ai-model-hub"])
+        self.assertEqual(result["deployed"], ["ontology-hub"])
         self.assertEqual(result["configured"], ["ontology-hub", "ai-model-hub"])
-        self.assertEqual(result["deployable"], ["ontology-hub", "ai-model-hub"])
+        self.assertEqual(result["deployable"], ["ontology-hub"])
+        self.assertEqual(result["integrated"], ["ai-model-hub"])
         self.assertEqual(result["pending_support"], [])
         self.assertEqual(
             components_adapter.calls,
             [
                 {
-                    "components": ["ontology-hub", "ai-model-hub"],
+                    "components": ["ontology-hub"],
                     "kwargs": {
                         "ds_name": "demo",
                         "namespace": "components",
@@ -181,6 +222,35 @@ class InesdataDeployerWrapperTests(unittest.TestCase):
                     },
                 }
             ],
+        )
+
+    def test_deploy_components_runs_integrated_ai_model_hub_model_server(self):
+        components_adapter = FakeIntegratedModelServerComponentsAdapter()
+        deployer = InesdataDeployer(
+            adapter=ModelServerOnlyAdapter(),
+            components_adapter=components_adapter,
+            config_cls=FakeConfig,
+        )
+        context = deployer.resolve_context(topology="local")
+
+        result = deployer.deploy_components(context)
+
+        self.assertEqual(result["deployed"], [])
+        self.assertEqual(result["deployable"], [])
+        self.assertEqual(result["integrated"], ["ai-model-hub"])
+        self.assertEqual(
+            result["model_server"],
+            {
+                "enabled": True,
+                "mode": "use-cases",
+                "namespace": "components",
+            },
+        )
+        self.assertEqual(components_adapter.calls, [])
+        self.assertEqual(components_adapter.model_server_calls[1]["namespace"], "components")
+        self.assertEqual(
+            components_adapter.model_server_calls[1]["deployer_config"]["AI_MODEL_HUB_MODEL_SERVER_MODE"],
+            "use-cases",
         )
 
     def test_resolve_components_adapter_reuses_shared_adapter_from_runtime_adapter(self):

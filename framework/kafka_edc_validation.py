@@ -1,7 +1,6 @@
 import json
 import math
 import os
-import re
 import subprocess
 import time
 import uuid
@@ -22,14 +21,6 @@ class KafkaTransferIncomplete(RuntimeError):
     def __init__(self, message, metrics=None):
         super().__init__(message)
         self.metrics = metrics or {}
-
-
-class KafkaTransferStateTimeout(RuntimeError):
-    """Raised when EDC accepts a transfer request but does not activate it in time."""
-
-    def __init__(self, message, diagnostics=None):
-        super().__init__(message)
-        self.diagnostics = diagnostics or {}
 
 
 class KafkaEdcValidationSuite:
@@ -62,9 +53,6 @@ class KafkaEdcValidationSuite:
     DEFAULT_CONTINUE_AFTER_REQUESTED_TRANSFER_TIMEOUT = True
     DEFAULT_KUBERNETES_EXEC_USE_TOPIC_OFFSETS = False
     DEFAULT_KUBERNETES_EXEC_SCAN_MAX_MESSAGES = 100
-    DEFAULT_DIAGNOSTIC_LOG_TAIL_LINES = 200
-    DEFAULT_DIAGNOSTIC_COMMAND_TIMEOUT_SECONDS = 15
-    DEFAULT_DIAGNOSTIC_MAX_PODS = 8
 
     def __init__(
         self,
@@ -148,17 +136,12 @@ class KafkaEdcValidationSuite:
             "stabilization_group_wait_seconds": "KAFKA_EDC_STABILIZATION_GROUP_WAIT_SECONDS",
             "stabilization_probe_timeout_seconds": "KAFKA_EDC_STABILIZATION_PROBE_TIMEOUT_SECONDS",
             "kubernetes_exec_timeout_seconds": "KAFKA_EDC_KUBERNETES_EXEC_TIMEOUT_SECONDS",
-            "kubernetes_exec_bootstrap_servers": "KAFKA_EDC_KUBERNETES_EXEC_BOOTSTRAP_SERVERS",
             "kubernetes_exec_use_topic_offsets": "KAFKA_EDC_KUBERNETES_EXEC_USE_TOPIC_OFFSETS",
             "kubernetes_exec_scan_max_messages": "KAFKA_EDC_KUBERNETES_EXEC_SCAN_MAX_MESSAGES",
             "pair_attempts": "KAFKA_EDC_PAIR_ATTEMPTS",
             "pair_retry_seconds": "KAFKA_EDC_PAIR_RETRY_SECONDS",
             "validation_backend": "KAFKA_EDC_VALIDATION_BACKEND",
             "continue_after_requested_transfer_timeout": "KAFKA_EDC_CONTINUE_AFTER_REQUESTED_TRANSFER_TIMEOUT",
-            "diagnostic_namespaces": "KAFKA_EDC_DIAGNOSTIC_NAMESPACES",
-            "diagnostic_log_tail_lines": "KAFKA_EDC_DIAGNOSTIC_LOG_TAIL_LINES",
-            "diagnostic_command_timeout_seconds": "KAFKA_EDC_DIAGNOSTIC_COMMAND_TIMEOUT_SECONDS",
-            "diagnostic_max_pods": "KAFKA_EDC_DIAGNOSTIC_MAX_PODS",
         }
         for key, config_key in optional_mapping.items():
             value = deployer.get(config_key)
@@ -206,9 +189,6 @@ class KafkaEdcValidationSuite:
             "kubernetes_exec_scan_max_messages",
             "pair_attempts",
             "pair_retry_seconds",
-            "diagnostic_log_tail_lines",
-            "diagnostic_command_timeout_seconds",
-            "diagnostic_max_pods",
         ):
             raw = runtime.get(integer_key)
             if raw in (None, ""):
@@ -777,512 +757,6 @@ class KafkaEdcValidationSuite:
             return " ".join(str(item) for item in command)
         return str(command or "").strip()
 
-    @staticmethod
-    def _append_unique(items, value):
-        normalized = str(value or "").strip()
-        if normalized and normalized not in items:
-            items.append(normalized)
-
-    @staticmethod
-    def _split_csv(value):
-        if isinstance(value, (list, tuple, set)):
-            candidates = value
-        else:
-            candidates = str(value or "").split(",")
-        return [str(item or "").strip() for item in candidates if str(item or "").strip()]
-
-    @staticmethod
-    def _redact_diagnostic_text(value):
-        text = str(value or "")
-        text = re.sub(
-            r"(?i)(authorization\s*:\s*bearer\s+)[^\s\"']+",
-            r"\1<redacted>",
-            text,
-        )
-        text = re.sub(
-            r"(?i)\b(password|passwd|secret|client[_-]?secret|access[_-]?token|refresh[_-]?token|"
-            r"id[_-]?token|api[_-]?key|sasl[_-]?plain[_-]?password|token)\b(\s*[:=]\s*)([^\s,;\"']+)",
-            r"\1\2<redacted>",
-            text,
-        )
-        text = re.sub(
-            r"(?i)(\"(?:password|passwd|secret|client[_-]?secret|access[_-]?token|refresh[_-]?token|"
-            r"id[_-]?token|api[_-]?key|sasl[_-]?plain[_-]?password|token)\"\s*:\s*\")[^\"]+(\")",
-            r"\1<redacted>\2",
-            text,
-        )
-        return text
-
-    @classmethod
-    def _redact_diagnostic_value(cls, value):
-        if isinstance(value, dict):
-            redacted = {}
-            for key, item in value.items():
-                key_text = str(key or "")
-                if re.search(
-                    r"(?i)(password|passwd|secret|credential|authorization|cookie|jwt|"
-                    r"access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|sasl)",
-                    key_text,
-                ):
-                    redacted[key] = "<redacted>"
-                else:
-                    redacted[key] = cls._redact_diagnostic_value(item)
-            return redacted
-        if isinstance(value, list):
-            return [cls._redact_diagnostic_value(item) for item in value]
-        if isinstance(value, str):
-            return cls._redact_diagnostic_text(value)
-        return value
-
-    def _kubernetes_command_environment(self):
-        kafka_manager = self.kafka_manager
-        if kafka_manager is None:
-            return None
-        env_loader = getattr(kafka_manager, "_command_environment", None)
-        if callable(env_loader):
-            return env_loader()
-        return None
-
-    def _run_kubernetes_diagnostic_command(self, command, input_text=None, timeout_seconds=None):
-        command = list(command or [])
-        timeout_seconds = int(timeout_seconds or self.DEFAULT_DIAGNOSTIC_COMMAND_TIMEOUT_SECONDS)
-        command_env = self._kubernetes_command_environment()
-        kafka_manager = self.kafka_manager
-        runner = getattr(kafka_manager, "command_runner", None) if kafka_manager is not None else None
-        if callable(runner):
-            try:
-                result = runner(command, input_text=input_text, timeout=timeout_seconds, env=command_env)
-            except TypeError:
-                try:
-                    result = runner(command, input_text=input_text, timeout=timeout_seconds)
-                except TypeError:
-                    result = runner(command, input_text=input_text)
-            except subprocess.TimeoutExpired as exc:
-                result = subprocess.CompletedProcess(
-                    command,
-                    124,
-                    stdout=exc.stdout or "",
-                    stderr=exc.stderr or "Command timed out",
-                )
-            try:
-                setattr(result, "_pionera_command", command)
-            except Exception:
-                pass
-            return result
-
-        try:
-            result = subprocess.run(
-                command,
-                text=True,
-                input=input_text,
-                capture_output=True,
-                check=False,
-                timeout=timeout_seconds,
-                env=command_env,
-            )
-        except subprocess.TimeoutExpired as exc:
-            result = subprocess.CompletedProcess(
-                command,
-                124,
-                stdout=exc.stdout or "",
-                stderr=exc.stderr or "Command timed out",
-            )
-        except OSError as exc:
-            result = subprocess.CompletedProcess(command, 127, stdout="", stderr=str(exc))
-        try:
-            setattr(result, "_pionera_command", command)
-        except Exception:
-            pass
-        return result
-
-    def _primary_dataspace_config(self):
-        config = self._load_deployer_values()
-        ds_name = str(self._dataspace_name() or "").strip()
-        selected_index = 1
-        for index in range(1, 21):
-            configured_name = str(config.get(f"DS_{index}_NAME") or "").strip()
-            if ds_name and configured_name == ds_name:
-                selected_index = index
-                break
-            if not configured_name:
-                continue
-            if selected_index == 1 and not str(config.get("DS_1_NAME") or "").strip():
-                selected_index = index
-        namespace = str(
-            config.get(f"DS_{selected_index}_NAMESPACE")
-            or config.get("DS_1_NAMESPACE")
-            or ds_name
-            or ""
-        ).strip()
-        return config, selected_index, ds_name, namespace
-
-    @staticmethod
-    def _connector_aliases_for_diagnostics(connector, ds_name=None):
-        raw = str(connector or "").strip()
-        aliases = []
-        KafkaEdcValidationSuite._append_unique(aliases, raw)
-        if raw.startswith("conn-"):
-            short = raw[len("conn-"):]
-            KafkaEdcValidationSuite._append_unique(aliases, short)
-        else:
-            short = raw
-            if raw:
-                KafkaEdcValidationSuite._append_unique(aliases, f"conn-{raw}")
-
-        ds_name = str(ds_name or "").strip()
-        if ds_name and short.endswith(f"-{ds_name}"):
-            base = short[: -(len(ds_name) + 1)]
-            KafkaEdcValidationSuite._append_unique(aliases, base)
-            KafkaEdcValidationSuite._append_unique(aliases, f"conn-{base}-{ds_name}")
-        return aliases
-
-    @staticmethod
-    def _namespace_token_for_diagnostics(config, ds_index, token, fallback_namespace):
-        value = str(token or "").strip()
-        if not value:
-            return fallback_namespace
-        normalized = value.lower()
-        role_keys = {
-            "provider": f"DS_{ds_index}_PROVIDER_NAMESPACE",
-            "consumer": f"DS_{ds_index}_CONSUMER_NAMESPACE",
-            "registration": f"DS_{ds_index}_REGISTRATION_NAMESPACE",
-            "dataspace": f"DS_{ds_index}_NAMESPACE",
-            "control": f"DS_{ds_index}_NAMESPACE",
-        }
-        config_key = role_keys.get(normalized)
-        if config_key:
-            return str(config.get(config_key) or config.get(config_key.replace(f"DS_{ds_index}_", "DS_1_")) or value).strip()
-        return str(
-            config.get(f"DS_{ds_index}_{value.upper()}_NAMESPACE")
-            or config.get(f"DS_1_{value.upper()}_NAMESPACE")
-            or value
-        ).strip()
-
-    def _connector_namespace_for_diagnostics(self, connector, *, fallback_role=None):
-        config, ds_index, ds_name, ds_namespace = self._primary_dataspace_config()
-        aliases = {
-            alias.lower()
-            for alias in self._connector_aliases_for_diagnostics(connector, ds_name=ds_name)
-            if alias
-        }
-        mapping = str(
-            config.get(f"DS_{ds_index}_CONNECTOR_NAMESPACES")
-            or config.get("DS_1_CONNECTOR_NAMESPACES")
-            or ""
-        )
-        fallback_namespace = ds_namespace
-        if fallback_role:
-            fallback_namespace = self._namespace_token_for_diagnostics(
-                config,
-                ds_index,
-                fallback_role,
-                ds_namespace,
-            )
-
-        for entry in self._split_csv(mapping):
-            if ":" not in entry:
-                continue
-            name, namespace_token = entry.split(":", 1)
-            name_aliases = {
-                alias.lower()
-                for alias in self._connector_aliases_for_diagnostics(name.strip(), ds_name=ds_name)
-                if alias
-            }
-            if aliases.intersection(name_aliases):
-                return self._namespace_token_for_diagnostics(
-                    config,
-                    ds_index,
-                    namespace_token,
-                    fallback_namespace,
-                )
-        return fallback_namespace
-
-    def _diagnostic_namespaces(self, runtime, provider, consumer):
-        config, _, _, ds_namespace = self._primary_dataspace_config()
-        namespaces = []
-        for namespace in self._split_csv((runtime or {}).get("diagnostic_namespaces")):
-            self._append_unique(namespaces, namespace)
-
-        self._append_unique(
-            namespaces,
-            self._connector_namespace_for_diagnostics(provider, fallback_role="provider"),
-        )
-        self._append_unique(
-            namespaces,
-            self._connector_namespace_for_diagnostics(consumer, fallback_role="consumer"),
-        )
-        for namespace in self._split_csv((runtime or {}).get("k8s_probe_namespaces")):
-            self._append_unique(namespaces, namespace)
-        self._append_unique(namespaces, (runtime or {}).get("k8s_namespace"))
-        self._append_unique(namespaces, ds_namespace)
-        self._append_unique(namespaces, config.get("COMMON_SERVICES_NAMESPACE"))
-        return namespaces
-
-    def _transfer_reference_values(self, transfer_id, asset_id=None, agreement_id=None, transfer=None):
-        references = []
-        for value in (transfer_id, asset_id, agreement_id):
-            self._append_unique(references, value)
-        if isinstance(transfer, dict):
-            for key in ("@id", "id", "correlationId", "assetId", "contractId", "contractAgreementId"):
-                self._append_unique(references, transfer.get(key))
-            data_destination = transfer.get("dataDestination")
-            if isinstance(data_destination, dict):
-                self._append_unique(references, data_destination.get("topic"))
-        return references
-
-    @staticmethod
-    def _transfer_matches_references(transfer, references):
-        if not isinstance(transfer, dict):
-            return False
-        try:
-            body = json.dumps(transfer, ensure_ascii=False, sort_keys=True)
-        except (TypeError, ValueError):
-            body = str(transfer)
-        return any(reference and str(reference) in body for reference in references)
-
-    def _transfer_process_diagnostic_snapshot(
-        self,
-        connector,
-        token,
-        *,
-        transfer_id,
-        references,
-    ):
-        snapshot = {
-            "connector": connector,
-            "direct_status": None,
-            "direct": None,
-            "matching_count": 0,
-            "matches": [],
-            "total_listed": None,
-            "errors": [],
-        }
-        try:
-            direct_body, direct_status = self._get_optional_json(
-                self._management_url(connector, f"/management/v3/transferprocesses/{transfer_id}"),
-                token,
-                "Kafka transfer diagnostic direct lookup",
-                accepted_statuses={200, 404},
-            )
-            snapshot["direct_status"] = direct_status
-            if isinstance(direct_body, dict):
-                snapshot["direct"] = self._redact_diagnostic_value(direct_body)
-        except Exception as exc:
-            snapshot["errors"].append(f"direct_lookup:{exc}")
-
-        try:
-            transfers = self._query_collection(
-                connector,
-                token,
-                "/management/v3/transferprocesses/request",
-                "Kafka transfer diagnostic listing",
-                limit=200,
-            )
-            snapshot["total_listed"] = len(transfers)
-            matches = [
-                self._redact_diagnostic_value(item)
-                for item in transfers
-                if self._transfer_matches_references(item, references)
-            ]
-            snapshot["matches"] = matches[:20]
-            snapshot["matching_count"] = len(matches)
-        except Exception as exc:
-            snapshot["errors"].append(f"list:{exc}")
-        return snapshot
-
-    @staticmethod
-    def _pod_container_statuses(pod):
-        statuses = []
-        status = pod.get("status") if isinstance(pod, dict) else {}
-        for item in status.get("containerStatuses") or []:
-            if not isinstance(item, dict):
-                continue
-            statuses.append(
-                {
-                    "name": item.get("name"),
-                    "ready": item.get("ready"),
-                    "restartCount": item.get("restartCount"),
-                    "state": item.get("state"),
-                    "lastState": item.get("lastState"),
-                }
-            )
-        return statuses
-
-    def _select_kubernetes_diagnostic_pods(self, pods, provider, consumer, max_pods):
-        if max_pods <= 0:
-            return []
-        config, _, ds_name, _ = self._primary_dataspace_config()
-        del config
-        aliases = []
-        for connector in (provider, consumer):
-            for alias in self._connector_aliases_for_diagnostics(connector, ds_name=ds_name):
-                if len(alias) > 2:
-                    self._append_unique(aliases, alias.lower())
-        generic_tokens = ("connector", "dataplane", "data-plane", "controlplane", "control-plane", "edc")
-        selected = []
-        for pod in pods:
-            metadata = pod.get("metadata") if isinstance(pod, dict) else {}
-            name = str(metadata.get("name") or "")
-            labels = metadata.get("labels") or {}
-            label_text = " ".join(f"{key}={value}" for key, value in labels.items())
-            haystack = f"{name} {label_text}".lower()
-            if any(alias in haystack for alias in aliases) or any(token in haystack for token in generic_tokens):
-                selected.append(pod)
-            if len(selected) >= max_pods:
-                break
-        return selected
-
-    def _collect_kubernetes_transfer_diagnostics(self, runtime, provider, consumer):
-        provisioner = str((runtime or {}).get("provisioner") or "").strip().lower()
-        has_kubernetes_runtime = provisioner.startswith("kubernetes") or bool((runtime or {}).get("k8s_namespace"))
-        if not has_kubernetes_runtime:
-            return {
-                "status": "skipped",
-                "reason": "non_kubernetes_runtime",
-            }
-
-        timeout_seconds = self._runtime_int(
-            runtime,
-            "diagnostic_command_timeout_seconds",
-            self.DEFAULT_DIAGNOSTIC_COMMAND_TIMEOUT_SECONDS,
-            minimum=1,
-        )
-        tail_lines = self._runtime_int(
-            runtime,
-            "diagnostic_log_tail_lines",
-            self.DEFAULT_DIAGNOSTIC_LOG_TAIL_LINES,
-            minimum=20,
-        )
-        max_pods = self._runtime_int(
-            runtime,
-            "diagnostic_max_pods",
-            self.DEFAULT_DIAGNOSTIC_MAX_PODS,
-            minimum=1,
-        )
-        diagnostics = {
-            "status": "collected",
-            "namespaces": [],
-            "pods": [],
-            "errors": [],
-            "tail_lines": tail_lines,
-        }
-        for namespace in self._diagnostic_namespaces(runtime, provider, consumer):
-            diagnostics["namespaces"].append(namespace)
-            result = self._run_kubernetes_diagnostic_command(
-                ["kubectl", "get", "pods", "-n", namespace, "-o", "json"],
-                timeout_seconds=timeout_seconds,
-            )
-            if getattr(result, "returncode", 1) != 0:
-                diagnostics["errors"].append(
-                    {
-                        "namespace": namespace,
-                        "operation": "get_pods",
-                        "error": self._redact_diagnostic_text(
-                            self._kubernetes_command_failure_message(result, "Kubernetes pod listing")
-                        ),
-                    }
-                )
-                continue
-            try:
-                pod_list = json.loads(getattr(result, "stdout", "") or "{}")
-            except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                diagnostics["errors"].append(
-                    {
-                        "namespace": namespace,
-                        "operation": "parse_pods",
-                        "error": str(exc),
-                    }
-                )
-                continue
-            selected_pods = self._select_kubernetes_diagnostic_pods(
-                pod_list.get("items") or [],
-                provider,
-                consumer,
-                max_pods - len(diagnostics["pods"]),
-            )
-            for pod in selected_pods:
-                metadata = pod.get("metadata") if isinstance(pod, dict) else {}
-                status = pod.get("status") if isinstance(pod, dict) else {}
-                pod_name = str(metadata.get("name") or "").strip()
-                if not pod_name:
-                    continue
-                pod_record = {
-                    "namespace": namespace,
-                    "pod": pod_name,
-                    "phase": status.get("phase"),
-                    "labels": metadata.get("labels") or {},
-                    "container_statuses": self._pod_container_statuses(pod),
-                }
-                logs_result = self._run_kubernetes_diagnostic_command(
-                    [
-                        "kubectl",
-                        "logs",
-                        "-n",
-                        namespace,
-                        pod_name,
-                        "--all-containers=true",
-                        f"--tail={tail_lines}",
-                    ],
-                    timeout_seconds=timeout_seconds,
-                )
-                if getattr(logs_result, "returncode", 1) == 0:
-                    pod_record["logs"] = self._redact_diagnostic_text(getattr(logs_result, "stdout", "") or "")
-                else:
-                    pod_record["logs_error"] = self._redact_diagnostic_text(
-                        self._kubernetes_command_failure_message(logs_result, "Kubernetes pod logs")
-                    )
-                diagnostics["pods"].append(self._redact_diagnostic_value(pod_record))
-                if len(diagnostics["pods"]) >= max_pods:
-                    return diagnostics
-        if not diagnostics["pods"] and not diagnostics["errors"]:
-            diagnostics["status"] = "empty"
-        return diagnostics
-
-    def _collect_transfer_timeout_diagnostics(
-        self,
-        *,
-        provider,
-        consumer,
-        provider_jwt,
-        consumer_jwt,
-        transfer_id,
-        asset_id,
-        agreement_id,
-        runtime,
-        last_transfer=None,
-    ):
-        references = self._transfer_reference_values(
-            transfer_id,
-            asset_id=asset_id,
-            agreement_id=agreement_id,
-            transfer=last_transfer,
-        )
-        diagnostics = {
-            "reason": "transfer_state_timeout",
-            "transfer_id": transfer_id,
-            "asset_id": asset_id,
-            "agreement_id": agreement_id,
-            "references": references,
-            "transfer_processes": {},
-            "kubernetes": None,
-        }
-        if consumer_jwt:
-            diagnostics["transfer_processes"]["consumer"] = self._transfer_process_diagnostic_snapshot(
-                consumer,
-                consumer_jwt,
-                transfer_id=transfer_id,
-                references=references,
-            )
-        if provider_jwt:
-            diagnostics["transfer_processes"]["provider"] = self._transfer_process_diagnostic_snapshot(
-                provider,
-                provider_jwt,
-                transfer_id=transfer_id,
-                references=references,
-            )
-        diagnostics["kubernetes"] = self._collect_kubernetes_transfer_diagnostics(runtime, provider, consumer)
-        return self._redact_diagnostic_value(diagnostics)
-
     def _kubernetes_command_failure_message(self, result, label):
         returncode = getattr(result, "returncode", "unknown")
         stderr = (getattr(result, "stderr", "") or "").strip()
@@ -1346,15 +820,6 @@ class KafkaEdcValidationSuite:
         service_name = str((runtime or {}).get("k8s_service_name") or "framework-kafka").strip() or "framework-kafka"
         return namespace, service_name
 
-    @staticmethod
-    def _kubernetes_exec_bootstrap_servers(runtime):
-        runtime = runtime if isinstance(runtime, dict) else {}
-        return str(
-            runtime.get("kubernetes_exec_bootstrap_servers")
-            or runtime.get("cluster_bootstrap_servers")
-            or "localhost:9092"
-        ).strip()
-
     def _run_kubernetes_kafka_command(self, runtime, kafka_args, input_text=None, timeout_seconds=None):
         namespace, deployment_name = self._kubernetes_exec_ids(runtime)
         command = [
@@ -1414,10 +879,9 @@ class KafkaEdcValidationSuite:
         return result
 
     def _ensure_topic_with_kubernetes_exec(self, runtime, topic_name):
-        bootstrap_servers = self._kubernetes_exec_bootstrap_servers(runtime)
         list_result = self._run_kubernetes_kafka_command(
             runtime,
-            ["kafka-topics", "--bootstrap-server", bootstrap_servers, "--list"],
+            ["kafka-topics", "--bootstrap-server", "localhost:9092", "--list"],
         )
         if getattr(list_result, "returncode", 1) != 0:
             raise RuntimeError(self._kubernetes_command_failure_message(list_result, "Kafka topic list"))
@@ -1428,7 +892,7 @@ class KafkaEdcValidationSuite:
                 [
                     "kafka-topics",
                     "--bootstrap-server",
-                    bootstrap_servers,
+                    "localhost:9092",
                     "--create",
                     "--if-not-exists",
                     "--topic",
@@ -1444,7 +908,7 @@ class KafkaEdcValidationSuite:
 
         verify_result = self._run_kubernetes_kafka_command(
             runtime,
-            ["kafka-topics", "--bootstrap-server", bootstrap_servers, "--list"],
+            ["kafka-topics", "--bootstrap-server", "localhost:9092", "--list"],
         )
         if getattr(verify_result, "returncode", 1) != 0:
             raise RuntimeError(self._kubernetes_command_failure_message(verify_result, "Kafka topic verify"))
@@ -1455,14 +919,13 @@ class KafkaEdcValidationSuite:
         return True
 
     def _kubernetes_topic_end_offset(self, runtime, topic_name):
-        bootstrap_servers = self._kubernetes_exec_bootstrap_servers(runtime)
         result = self._run_kubernetes_kafka_command(
             runtime,
             [
                 "kafka-run-class",
                 "kafka.tools.GetOffsetShell",
                 "--broker-list",
-                bootstrap_servers,
+                "localhost:9092",
                 "--topic",
                 topic_name,
                 "--time",
@@ -1656,7 +1119,7 @@ class KafkaEdcValidationSuite:
             "protocol": "dataspace-protocol-http",
             "querySpec": {
                 "offset": 0,
-                "limit": 100,
+                "limit": 500,
                 "filterExpression": [],
             },
         }
@@ -2186,20 +1649,9 @@ class KafkaEdcValidationSuite:
                 "timeout_seconds": int(runtime["transfer_timeout_seconds"]),
             }
 
-        message = (
+        raise RuntimeError(
             f"Transfer {transfer_id} did not reach a started/finalized state in time"
             + (f" (last_state={last_state}, detail={last_detail})" if last_state or last_detail else "")
-        )
-        raise KafkaTransferStateTimeout(
-            message,
-            diagnostics={
-                "transfer_id": transfer_id,
-                "last_state": last_state,
-                "last_detail": last_detail,
-                "last_transfer": self._redact_diagnostic_value(last_transfer),
-                "timeout_seconds": int(runtime["transfer_timeout_seconds"]),
-                "poll_interval_seconds": int(runtime["poll_interval_seconds"]),
-            },
         )
 
     def _build_kafka_client_kwargs(self, runtime, *, endpoint=None, username=None, password=None):
@@ -2664,7 +2116,6 @@ class KafkaEdcValidationSuite:
 
     def _produce_kubernetes_exec_message(self, runtime, topic, payload):
         timeout_seconds = int(runtime.get("kubernetes_exec_timeout_seconds", 30))
-        bootstrap_servers = self._kubernetes_exec_bootstrap_servers(runtime)
         result = self._run_kubernetes_kafka_command(
             runtime,
             [
@@ -2672,7 +2123,7 @@ class KafkaEdcValidationSuite:
                 str(timeout_seconds),
                 "kafka-console-producer",
                 "--bootstrap-server",
-                bootstrap_servers,
+                "localhost:9092",
                 "--topic",
                 topic,
             ],
@@ -2684,13 +2135,12 @@ class KafkaEdcValidationSuite:
 
     def _consume_kubernetes_exec_messages(self, runtime, topic, timeout_ms=2000, max_messages=50, offset=None):
         timeout_seconds = int(runtime.get("kubernetes_exec_timeout_seconds", 30))
-        bootstrap_servers = self._kubernetes_exec_bootstrap_servers(runtime)
         kafka_args = [
             "timeout",
             str(timeout_seconds),
             "kafka-console-consumer",
             "--bootstrap-server",
-            bootstrap_servers,
+            "localhost:9092",
             "--topic",
             topic,
         ]
@@ -2726,10 +2176,9 @@ class KafkaEdcValidationSuite:
         return messages
 
     def _list_kubernetes_exec_consumer_groups(self, runtime):
-        bootstrap_servers = self._kubernetes_exec_bootstrap_servers(runtime)
         result = self._run_kubernetes_kafka_command(
             runtime,
-            ["kafka-consumer-groups", "--bootstrap-server", bootstrap_servers, "--list"],
+            ["kafka-consumer-groups", "--bootstrap-server", "localhost:9092", "--list"],
         )
         if getattr(result, "returncode", 1) != 0:
             raise RuntimeError(self._kubernetes_command_failure_message(result, "Kafka consumer group list"))
@@ -2741,13 +2190,12 @@ class KafkaEdcValidationSuite:
         return groups
 
     def _describe_kubernetes_exec_consumer_group(self, runtime, group_id, source_topic=None):
-        bootstrap_servers = self._kubernetes_exec_bootstrap_servers(runtime)
         result = self._run_kubernetes_kafka_command(
             runtime,
             [
                 "kafka-consumer-groups",
                 "--bootstrap-server",
-                bootstrap_servers,
+                "localhost:9092",
                 "--describe",
                 "--group",
                 group_id,
@@ -3326,7 +2774,6 @@ class KafkaEdcValidationSuite:
             "Request could not be authenticated",
             "Unable to obtain credentials",
             "did not produce contractAgreementId in time",
-            "did not reach a started/finalized state in time",
             "Kafka transfer path did not relay a probe message in time",
             "No Kafka messages were consumed through the EDC transfer",
             "Kafka transfer consumed only",
@@ -3589,40 +3036,6 @@ class KafkaEdcValidationSuite:
             partial_metrics = getattr(exc, "metrics", None)
             if isinstance(partial_metrics, dict) and partial_metrics:
                 payload["metrics"] = partial_metrics
-            exception_diagnostics = getattr(exc, "diagnostics", None)
-            if isinstance(exception_diagnostics, dict) and exception_diagnostics:
-                payload.setdefault("diagnostics", {})["exception"] = exception_diagnostics
-            if isinstance(exc, KafkaTransferStateTimeout) and payload.get("transfer_id"):
-                try:
-                    transfer_diagnostics = self._collect_transfer_timeout_diagnostics(
-                        provider=provider,
-                        consumer=consumer,
-                        provider_jwt=provider_jwt,
-                        consumer_jwt=consumer_jwt,
-                        transfer_id=payload.get("transfer_id"),
-                        asset_id=payload.get("asset_id"),
-                        agreement_id=payload.get("agreement_id"),
-                        runtime=runtime,
-                        last_transfer=(exception_diagnostics or {}).get("last_transfer"),
-                    )
-                    payload.setdefault("diagnostics", {})["transfer_state_timeout"] = transfer_diagnostics
-                    kubernetes_diag = transfer_diagnostics.get("kubernetes") or {}
-                    record_step(
-                        "collect_transfer_failure_diagnostics",
-                        "passed",
-                        transfer_process_snapshots=len(
-                            transfer_diagnostics.get("transfer_processes") or {}
-                        ),
-                        kubernetes_status=kubernetes_diag.get("status"),
-                        kubernetes_pods=len(kubernetes_diag.get("pods") or []),
-                    )
-                except Exception as diagnostic_exc:
-                    payload.setdefault("diagnostics", {})["transfer_state_timeout_error"] = str(diagnostic_exc)
-                    record_step(
-                        "collect_transfer_failure_diagnostics",
-                        "warning",
-                        error=str(diagnostic_exc),
-                    )
             payload["error"] = {
                 "type": type(exc).__name__,
                 "message": str(exc),

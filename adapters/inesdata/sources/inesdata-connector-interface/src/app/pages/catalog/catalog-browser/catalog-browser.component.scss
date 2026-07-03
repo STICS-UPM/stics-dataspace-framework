@@ -1,5 +1,67 @@
+:host {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+}
+
+:host .container {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 24px;
+  overflow: visible;
+}
+
+:host .card,
+:host mat-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:host mat-card:not(.creation-card) {
+  width: 100%;
+  word-break: normal;
+}
+
+:host mat-card-header,
+:host mat-card-content,
+:host mat-card-actions,
+:host mat-list,
+:host mat-list-item {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:host mat-card-title,
+:host [matListItemLine],
+:host .asset-property-name {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+:host mat-card-title {
+  line-height: 1.25;
+}
+
+:host ::ng-deep .mat-mdc-card-header-text,
+:host ::ng-deep .mdc-list-item__content,
+:host ::ng-deep .mdc-button__label {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+}
+
+:host .card-actions {
+  display: flex !important;
+  justify-content: center;
+  width: 100%;
+}
+
+:host .card-actions button {
+  max-width: 100%;
+  white-space: normal;
+  line-height: 1.3;
+}
+
 mat-card-actions {
   padding-bottom: 5px !important;
   margin-top: 10px;
 }
-

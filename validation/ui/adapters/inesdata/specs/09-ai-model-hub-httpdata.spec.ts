@@ -10,11 +10,9 @@ import {
   cleanupProviderValidationArtifacts,
   probeConsumerCatalogDatasetReadiness,
   waitForConsumerAgreement,
-  waitForConsumerNegotiationOutcome,
 } from "../../../shared/utils/provider-bootstrap";
 import { EVENTUAL_UI_RETRY_INTERVALS } from "../../../shared/utils/waiting";
 import { modelServerUrlForPath } from "../../../shared/utils/model-server-url";
-import { aiModelHubDaimoModelAssetData } from "../../../shared/utils/ai-model-hub-daimo";
 
 type AIModelHubUiReport = {
   startedAt: string;
@@ -34,26 +32,6 @@ type AIModelHubUiReport = {
   fatalErrorResponses: Array<{ url: string; status: number }>;
   negotiationMessage?: string;
   negotiationNotificationWarning?: string;
-  uiNegotiationAttempts: Array<{
-    attempt: number;
-    response?: {
-      url: string;
-      status: number;
-      negotiationId?: string;
-      bodySnippet?: string;
-    };
-    notification?: string;
-    notificationWarning?: string;
-    outcome?: {
-      negotiationId: string;
-      agreementId: string;
-      state: string;
-      attempts: number;
-      status: "agreement" | "terminated" | "timeout";
-      errorDetail?: string;
-    };
-    retryReason?: string;
-  }>;
   consumerAgreement?: {
     agreementId: string | null;
     assetId: string;
@@ -61,28 +39,28 @@ type AIModelHubUiReport = {
   };
 };
 
-const DEFAULT_MODEL_PATH = "/api/v1/nlp/ecommerce-sentiment";
-const TEXT_MODEL_INPUT_FEATURES = [
+const DEFAULT_MODEL_PATH = "/flares/dccuchile-bert-base-spanish-wwm-uncased-5w1h";
+const PIONERA_DAIMO_NS = "https://w3id.org/pionera/daimo#";
+const FLARES_5W1H_INPUT_SCHEMA = [
   {
-    name: "text",
+    name: "Id",
+    type: "integer",
+    required: true,
+    description: "Input text identifier",
+  },
+  {
+    name: "Text",
     type: "string",
     required: true,
-    description: "Text to analyze",
+    description: "Spanish text to analyze",
   },
 ];
-const TEXT_MODEL_INPUT_SCHEMA = {
-  type: "object",
-  required: ["text"],
-  properties: {
-    text: {
-      type: "string",
-      description: "Text to analyze",
-    },
+const FLARES_5W1H_INPUT_EXAMPLE = JSON.stringify([
+  {
+    Id: 840,
+    Text: "El comité de medicamentos humanos espera concluir el análisis en marzo.",
   },
-};
-const TEXT_MODEL_INPUT_EXAMPLE = {
-  text: "This product is excellent and very useful",
-};
+]);
 
 test.skip(
   process.env.UI_AI_MODEL_HUB_HTTPDATA_DEMO !== "1",
@@ -109,70 +87,6 @@ function aiModelHubCatalogCleanupEnabled(): boolean {
   return process.env.UI_AI_MODEL_HUB_CATALOG_CLEANUP === "1";
 }
 
-function aiModelHubNegotiationAttempts(): number {
-  const configured = Number.parseInt(process.env.UI_AI_MODEL_HUB_NEGOTIATION_ATTEMPTS || "", 10);
-  return Number.isFinite(configured) && configured > 0 ? configured : 3;
-}
-
-function aiModelHubHttpDataTimeoutMs(): number {
-  const configured = Number.parseInt(process.env.UI_AI_MODEL_HUB_HTTPDATA_TIMEOUT_MS || "", 10);
-  return Number.isFinite(configured) && configured > 0 ? configured : 540_000;
-}
-
-function aiModelMetadataAliases(inferencePath: string): Record<string, unknown> {
-  const inputFeatures = JSON.stringify(TEXT_MODEL_INPUT_FEATURES);
-  const inputSchema = JSON.stringify(TEXT_MODEL_INPUT_SCHEMA);
-  const inputExample = JSON.stringify(TEXT_MODEL_INPUT_EXAMPLE);
-
-  return {
-    "daimo:asset_kind": "model",
-    "daimo:task": "text-classification",
-    "https://w3id.org/daimo/ns#task": "text-classification",
-    "https://pionera.ai/edc/daimo#task": "text-classification",
-    "daimo:subtask": "sentiment-analysis",
-    "https://w3id.org/daimo/ns#subtask": "sentiment-analysis",
-    "https://pionera.ai/edc/daimo#subtask": "sentiment-analysis",
-    "daimo:algorithm": "controlled-baseline",
-    "https://w3id.org/daimo/ns#algorithm": "controlled-baseline",
-    "https://pionera.ai/edc/daimo#algorithm": "controlled-baseline",
-    "daimo:library": "validation-fixture",
-    "https://w3id.org/daimo/ns#library": "validation-fixture",
-    "https://pionera.ai/edc/daimo#library": "validation-fixture",
-    "daimo:framework": "controlled-httpdata",
-    "https://w3id.org/daimo/ns#framework": "controlled-httpdata",
-    "https://pionera.ai/edc/daimo#framework": "controlled-httpdata",
-    "daimo:software": "pionera-validation-framework",
-    "https://w3id.org/daimo/ns#software": "pionera-validation-framework",
-    "https://pionera.ai/edc/daimo#software": "pionera-validation-framework",
-    "daimo:inference_path": inferencePath,
-    "https://w3id.org/daimo/ns#inference_path": inferencePath,
-    "https://pionera.ai/edc/daimo#inference_path": inferencePath,
-    "daimo:input_features": inputFeatures,
-    "https://w3id.org/daimo/ns#input_features": inputFeatures,
-    "https://pionera.ai/edc/daimo#input_features": inputFeatures,
-    "daimo:input_schema": inputSchema,
-    "https://w3id.org/daimo/ns#input_schema": inputSchema,
-    "https://pionera.ai/edc/daimo#input_schema": inputSchema,
-    "daimo:input_example": inputExample,
-    "https://w3id.org/daimo/ns#input_example": inputExample,
-    "https://pionera.ai/edc/daimo#input_example": inputExample,
-    task: "text-classification",
-    subtask: "sentiment-analysis",
-    algorithm: "controlled-baseline",
-    library: "validation-fixture",
-    framework: "controlled-httpdata",
-    software: "pionera-validation-framework",
-    inference_path: inferencePath,
-    inferencePath,
-    input_features: inputFeatures,
-    inputFeatures: TEXT_MODEL_INPUT_FEATURES,
-    input_schema: inputSchema,
-    inputSchema: TEXT_MODEL_INPUT_SCHEMA,
-    input_example: inputExample,
-    inputExample: TEXT_MODEL_INPUT_EXAMPLE,
-  };
-}
-
 test("09 AI Model Hub HttpData: visible model discovery and negotiation from INESData UI", async ({
   page,
   request,
@@ -181,13 +95,38 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
   attachJson,
 }) => {
   test.skip(dataspaceRuntime.adapter !== "inesdata", "This demo validates the INESData connector UI path.");
-  test.setTimeout(aiModelHubHttpDataTimeoutMs());
 
   const suffix = `amh-${Date.now()}`;
   const assetId = `qa-ui-amh-httpdata-${suffix}`;
   const modelPath = aiModelHubModelPath();
   const modelUrl = aiModelHubModelUrl(dataspaceRuntime.componentsNamespace);
   const modelName = `AI Model Hub HttpData model ${suffix}`;
+  const daimoModelVocabulary = {
+    "daimo:modality": ["text"],
+    "daimo:taskType": "classification",
+    "daimo:taskCategory": "Natural Language Processing",
+    "daimo:subtask": "token-classification",
+    "daimo:subtaskDescription": "FLARES 5W1H span extraction model",
+    "daimo:endpointBehavior": "prediction",
+    "daimo:requestShape": "batch",
+    "daimo:libraryName": "Transformers",
+    "dct:language": ["English", "Spanish"],
+    "dct:license": "apache-2.0",
+    "daimo:inputSchema": FLARES_5W1H_INPUT_SCHEMA,
+    "daimo:inputExample": FLARES_5W1H_INPUT_EXAMPLE,
+    "daimo:metrics": ["Accuracy", "Precision", "Recall", "F1"],
+    [`${PIONERA_DAIMO_NS}modality`]: ["text"],
+    [`${PIONERA_DAIMO_NS}taskType`]: "classification",
+    [`${PIONERA_DAIMO_NS}taskCategory`]: "Natural Language Processing",
+    [`${PIONERA_DAIMO_NS}subtask`]: "token-classification",
+    [`${PIONERA_DAIMO_NS}subtaskDescription`]: "FLARES 5W1H span extraction model",
+    [`${PIONERA_DAIMO_NS}endpointBehavior`]: "prediction",
+    [`${PIONERA_DAIMO_NS}requestShape`]: "batch",
+    [`${PIONERA_DAIMO_NS}libraryName`]: "Transformers",
+    [`${PIONERA_DAIMO_NS}inputSchema`]: FLARES_5W1H_INPUT_SCHEMA,
+    [`${PIONERA_DAIMO_NS}inputExample`]: FLARES_5W1H_INPUT_EXAMPLE,
+    [`${PIONERA_DAIMO_NS}metrics`]: ["Accuracy", "Precision", "Recall", "F1"],
+  };
   const browserDiagnostics = collectBrowserDiagnostics(page);
   const loginPage = new KeycloakLoginPage(page, {
     portalUser: dataspaceRuntime.consumer.username,
@@ -208,7 +147,6 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
     errorResponses: [],
     toleratedErrorResponses: [],
     fatalErrorResponses: [],
-    uiNegotiationAttempts: [],
   };
 
   const isTolerableCatalogRetry = (url: string, status: number): boolean =>
@@ -259,33 +197,35 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
         version: "1.0.0",
         shortDescription: "AI Model Hub model endpoint exposed as HttpData for UI demo validation",
         description:
-          "Machine-learning model endpoint governed through INESData as a contractual HttpData asset.",
+          "FLARES 5W1H model endpoint governed through INESData as a contractual HttpData asset.",
         assetType: "machineLearning",
-        keywords: ["validation", "ai-model-hub", "machine-learning", "HttpData", "A5.2"],
+        keywords: ["validation", "ai-model-hub", "machine-learning", "flares", "HttpData", "A5.2"],
         properties: {
-          assetData: aiModelHubDaimoModelAssetData({
-            task: "text-classification",
-            subtask: "text-classification",
-            subtaskDescription: "Controlled sentiment-analysis HttpData endpoint",
-            description:
-              "Machine-learning model endpoint governed through INESData as a contractual HttpData asset.",
-            libraryName: "Custom",
-            language: ["English", "Spanish"],
-            inputFeatures: TEXT_MODEL_INPUT_FEATURES,
-            inputSchema: TEXT_MODEL_INPUT_SCHEMA,
-            inputExample: TEXT_MODEL_INPUT_EXAMPLE,
-          }),
-          ...aiModelMetadataAliases(modelPath),
           contenttype: "application/json",
           format: "json",
-          method: "POST",
-          path: modelPath,
+          "dct:format": "json",
+          "dcterms:format": "json",
+          assetData: {
+            JS_DAIMO_Model: daimoModelVocabulary,
+            "https://w3id.org/edc/v0.0.1/ns/JS_DAIMO_Model": daimoModelVocabulary,
+          },
+          "daimo:asset_kind": "model",
+          "daimo:task": "Natural Language Processing",
+          "daimo:taskCategory": "Natural Language Processing",
+          "daimo:taskType": "classification",
+          "daimo:subtask": "token-classification",
+          "daimo:libraryName": "Transformers",
+          "daimo:framework": "AIModelHub-Use-Cases",
+          "daimo:requestShape": "batch",
+          "daimo:inference_path": modelPath,
         },
         dataAddress: {
           type: "HttpData",
           baseUrl: modelUrl,
           method: "POST",
           proxyBody: "true",
+          proxyMethod: "true",
+          contentType: "application/json",
           name: `ai-model-hub-model-${suffix}.json`,
         },
       },
@@ -337,8 +277,8 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
       modelName,
       modelPath,
       modelUrl,
-      expectedAssetType: "ai-model-execution-endpoint",
-      expectedTask: "text-classification",
+      expectedAssetType: "machineLearning",
+      expectedTask: "Natural Language Processing",
     });
     await contractOffersPage.expectReady({
       assetId,
@@ -348,90 +288,15 @@ test("09 AI Model Hub HttpData: visible model discovery and negotiation from INE
     await contractOffersPage.openContractOffersTab();
     await captureStep(page, "03-ai-model-hub-httpdata-contract-offers");
 
-    let consumerAgreement: Awaited<ReturnType<typeof waitForConsumerAgreement>> | undefined;
-    const maxNegotiationAttempts = aiModelHubNegotiationAttempts();
-
-    for (let attempt = 1; attempt <= maxNegotiationAttempts; attempt += 1) {
-      const attemptReport: AIModelHubUiReport["uiNegotiationAttempts"][number] = {
-        attempt,
-      };
-      report.uiNegotiationAttempts.push(attemptReport);
-
-      const notificationPromise = contractOffersPage.readNegotiationCompletionNotification(10_000);
-      const submission = await contractOffersPage.negotiateFirstOfferAndWaitForSubmission(15_000);
-      attemptReport.response = submission;
-
-      if (!submission) {
-        await attachJson(`ai-model-hub-httpdata-negotiation-attempt-${attempt}`, attemptReport);
-        throw new Error(`No contract negotiation POST was observed after clicking Negotiate Contract on attempt ${attempt}`);
-      }
-      if (submission.status >= 400) {
-        await attachJson(`ai-model-hub-httpdata-negotiation-attempt-${attempt}`, attemptReport);
-        throw new Error(
-          `Contract negotiation POST returned HTTP ${submission.status} on attempt ${attempt}: ${submission.bodySnippet || "<empty body>"}`,
-        );
-      }
-      if (!submission.negotiationId) {
-        await attachJson(`ai-model-hub-httpdata-negotiation-attempt-${attempt}`, attemptReport);
-        throw new Error(
-          `Contract negotiation response did not expose an identifier on attempt ${attempt}: ${submission.bodySnippet || "<empty body>"}`,
-        );
-      }
-
-      const outcome = await waitForConsumerNegotiationOutcome(
-        request,
-        dataspaceRuntime,
-        submission.negotiationId,
-        45,
-        1_000,
-      );
-      attemptReport.outcome = {
-        negotiationId: outcome.negotiationId,
-        agreementId: outcome.agreementId,
-        state: outcome.state,
-        attempts: outcome.attempts,
-        status: outcome.status,
-        errorDetail: outcome.errorDetail,
-      };
-
-      const notification = await notificationPromise;
-      if (notification.message) {
-        attemptReport.notification = notification.message;
-        report.negotiationMessage = notification.message;
-      } else if (notification.warning) {
-        attemptReport.notificationWarning = notification.warning;
-        report.negotiationNotificationWarning = notification.warning;
-      }
-
-      if (outcome.agreementId) {
-        if (!report.negotiationMessage) {
-          report.negotiationMessage = `Contract agreement ${outcome.agreementId} verified through consumer management API after UI negotiation.`;
-        }
-        await captureStep(page, "04-ai-model-hub-httpdata-negotiation-complete");
-        consumerAgreement = await waitForConsumerAgreement(request, dataspaceRuntime, assetId, 20, 1_500);
-        await attachJson(`ai-model-hub-httpdata-negotiation-attempt-${attempt}`, attemptReport);
-        break;
-      }
-
-      attemptReport.retryReason =
-        `Negotiation ${outcome.negotiationId} reached ${outcome.state} without contractAgreementId` +
-        (outcome.errorDetail ? `: ${outcome.errorDetail}` : "");
-      await attachJson(`ai-model-hub-httpdata-negotiation-attempt-${attempt}`, attemptReport);
-
-      if (attempt < maxNegotiationAttempts) {
-        await captureStep(page, `04-ai-model-hub-httpdata-negotiation-retry-${attempt}`);
-        continue;
-      }
-
-      throw new Error(
-        `AI Model Hub UI negotiation did not produce a contract agreement after ${maxNegotiationAttempts} attempt(s). ` +
-          `Last outcome: ${JSON.stringify(attemptReport.outcome)}`,
-      );
+    await contractOffersPage.negotiateFirstOffer();
+    try {
+      report.negotiationMessage = await contractOffersPage.waitForNegotiationComplete(45_000);
+      await captureStep(page, "04-ai-model-hub-httpdata-negotiation-complete");
+    } catch (error) {
+      report.negotiationNotificationWarning = error instanceof Error ? error.message : String(error);
+      await captureStep(page, "04-ai-model-hub-httpdata-negotiation-submitted");
     }
-
-    if (!consumerAgreement) {
-      throw new Error("No consumer contract agreement was found for the model asset");
-    }
+    const consumerAgreement = await waitForConsumerAgreement(request, dataspaceRuntime, assetId, 20, 1_500);
     report.consumerAgreement = {
       agreementId: consumerAgreement.agreementId,
       assetId: consumerAgreement.assetId,

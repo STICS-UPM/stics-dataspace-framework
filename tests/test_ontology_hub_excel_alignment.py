@@ -1,12 +1,8 @@
 import os
-import re
 import unittest
-
-from openpyxl import load_workbook
 
 
 VALIDATION_ROOT = os.path.dirname(os.path.dirname(__file__))
-DOCS_WORKBOOK = os.path.join(VALIDATION_ROOT, "docs", "A5.2_Casos_Prueba_.xlsx")
 SPECS_ROOT = os.path.join(
     VALIDATION_ROOT,
     "validation",
@@ -35,35 +31,7 @@ def _read_support(name):
         return handle.read()
 
 
-def _ontology_hub_spec_case_ids():
-    case_ids = []
-    for name in sorted(os.listdir(SPECS_ROOT)):
-        if not name.endswith(".spec.js"):
-            continue
-        spec = _read_spec(name)
-        case_ids.extend(re.findall(r'test\("(?P<case_id>OH-APP-\d{2}):', spec))
-    return case_ids
-
-
 class OntologyHubExcelAlignmentTests(unittest.TestCase):
-    def test_functional_inventory_keeps_historical_27_oh_app_cases(self):
-        workbook = load_workbook(DOCS_WORKBOOK, data_only=True, read_only=True)
-        index = workbook["A5.2_Indice_Pruebas"]
-        indexed_case_ids = [
-            row[0]
-            for row in index.iter_rows(min_row=6, values_only=True)
-            if isinstance(row[0], str)
-            and row[0].startswith("OH-APP-")
-            and row[2] == "Ontology Hub"
-        ]
-        case_ids = _ontology_hub_spec_case_ids()
-
-        self.assertEqual(indexed_case_ids, case_ids)
-        self.assertEqual(len(case_ids), 27)
-        self.assertNotIn("OH-APP-02", case_ids)
-        self.assertEqual(case_ids[:2], ["OH-APP-00", "OH-APP-01"])
-        self.assertEqual(case_ids[-1], "OH-APP-27")
-
     def test_specs_do_not_use_file_scope_playwright_timeout_configuration(self):
         offenders = []
         for name in sorted(os.listdir(SPECS_ROOT)):

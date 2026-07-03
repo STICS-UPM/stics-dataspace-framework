@@ -23,35 +23,7 @@ from deployers.shared.lib.components import (
 )
 from deployers.shared.lib import ai_model_hub_model_server as model_server
 from deployers.shared.lib import image_runtime
-from deployers.shared.lib.topology import LOCAL_TOPOLOGY, VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY, normalize_topology
-
-
-AI_MODEL_HUB_PUBLIC_CONFIG_PATHS = (
-    "inesdata-connector-interface/assets/config/app.config.json",
-    "assets/config/app.config.json",
-    "config/app-config.json",
-    "edc-dashboard/config/app-config.json",
-)
-
-AI_MODEL_HUB_INESDATA_UI_ENV_KEYS = frozenset(
-    {
-        "CATALOG_URL",
-        "MANAGEMENT_API_URL",
-        "MODEL_OBSERVER_PROXY_TARGET",
-        "OAUTH2_ALLOWED_URLS",
-        "OAUTH2_CLIENT_ID",
-        "OAUTH2_ISSUER",
-        "OAUTH2_REDIRECT_PATH",
-        "OAUTH2_RESPONSE_TYPE",
-        "OAUTH2_SCOPE",
-        "OAUTH2_SHOW_DEBUG_INFO",
-        "PARTICIPANT_ID",
-        "SHARED_URL",
-        "STORAGE_ACCOUNT",
-        "STORAGE_LINK_TEMPLATE",
-        "STRAPI_URL",
-    }
-)
+from deployers.shared.lib.topology import VM_DISTRIBUTED_TOPOLOGY, VM_SINGLE_TOPOLOGY, normalize_topology
 
 
 class SharedComponentsAdapter(INESDataComponentsAdapter):
@@ -540,104 +512,11 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             payload = self._merge_existing_shared_component_values(existing_values, payload)
         if normalized == "ai-model-hub":
             if self.active_adapter == "edc":
-                payload = self._strip_edc_ai_model_hub_inesdata_env(payload)
-                payload = self._apply_edc_ai_model_hub_runtime_overrides(payload, deployer_config)
                 edc_connector_config = self._edc_ai_model_hub_connector_config(deployer_config)
                 if edc_connector_config:
                     payload.setdefault("config", {})["edcConnectorConfig"] = edc_connector_config
             payload = self._merge_ai_model_hub_connector_config(existing_values, payload)
         return payload
-
-    def _apply_edc_ai_model_hub_runtime_overrides(self, payload, deployer_config):
-        if not isinstance(payload, dict):
-            return payload
-
-        payload["containerPort"] = 80
-        return payload
-
-    def _strip_edc_ai_model_hub_inesdata_env(self, payload):
-        if not isinstance(payload, dict):
-            return payload
-
-        env = payload.get("env")
-        if not isinstance(env, dict):
-            return payload
-
-        cleaned_env = dict(env)
-        for key in AI_MODEL_HUB_INESDATA_UI_ENV_KEYS:
-            cleaned_env.pop(key, None)
-        if cleaned_env:
-            payload["env"] = cleaned_env
-        else:
-            payload.pop("env", None)
-        return payload
-
-    def _build_ai_model_hub_image_on_host(self, image_ref: str, deployer_config: dict):
-        if self.active_adapter == "edc":
-            self._build_edc_ai_model_hub_dashboard_image_on_host(image_ref, deployer_config)
-            return
-        super()._build_ai_model_hub_image_on_host(image_ref, deployer_config)
-
-    def _build_edc_ai_model_hub_dashboard_image_on_host(self, image_ref: str, deployer_config: dict):
-        image = self._split_image_ref(image_ref)
-        if not image:
-            self._fail(
-                "Invalid AI Model Hub image reference for EDC dashboard build",
-                root_cause=image_ref,
-            )
-
-        script_path = os.path.join(
-            self._project_root_dir(),
-            "adapters",
-            "edc",
-            "scripts",
-            "build_dashboard_image.sh",
-        )
-        if not os.path.isfile(script_path):
-            self._fail(
-                "EDC dashboard image build script is missing",
-                root_cause=os.path.relpath(script_path, self._project_root_dir()),
-            )
-
-        runtime = self._cluster_runtime(deployer_config)
-        cluster_type = str(runtime.get("cluster_type") or "minikube").strip().lower() or "minikube"
-        profile = (
-            (deployer_config or {}).get("MINIKUBE_PROFILE")
-            or getattr(self.config, "MINIKUBE_PROFILE", "minikube")
-            or "minikube"
-        ).strip() or "minikube"
-
-        env_values = {
-            "PIONERA_EDC_DASHBOARD_IMAGE_NAME": image["repository"],
-            "PIONERA_EDC_DASHBOARD_IMAGE_TAG": image["tag"],
-        }
-        if cluster_type == "k3s":
-            remote_target = self._remote_k3s_image_import_target(deployer_config)
-            if remote_target:
-                env_values.update(remote_target.shell_env())
-        for target_key, source_keys in (
-            ("PIONERA_EDC_DASHBOARD_REPO_URL", ("PIONERA_EDC_DASHBOARD_REPO_URL", "EDC_DASHBOARD_REPO_URL")),
-            ("PIONERA_EDC_DASHBOARD_REPO_REF", ("PIONERA_EDC_DASHBOARD_REPO_REF", "EDC_DASHBOARD_REPO_REF")),
-        ):
-            for source_key in source_keys:
-                value = str((deployer_config or {}).get(source_key) or "").strip()
-                if value:
-                    env_values[target_key] = value
-                    break
-
-        env_prefix = " ".join(
-            f"{shlex.quote(key)}={shlex.quote(value)}"
-            for key, value in env_values.items()
-            if str(value or "").strip()
-        )
-        cmd = (
-            f"env {env_prefix} bash {shlex.quote(script_path)} --apply "
-            f"--minikube-profile {shlex.quote(profile)} "
-            f"--cluster-runtime {shlex.quote(cluster_type)}"
-        )
-        print(f"\nBuilding EDC AI Model Hub dashboard image on host: {image_ref}")
-        if self.run(cmd, check=False) is None:
-            self._fail("Failed to build EDC AI Model Hub dashboard image on host", root_cause=image_ref)
 
     def _infer_component_hostname_for_dataspace(
         self,
@@ -868,24 +747,19 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             resolved_release_name,
             resolved_config,
         )
-        prepared_local_image_refs = []
 
         if normalized == "ai-model-hub" and not built_local_image:
-            prepared_image_ref = self._ensure_vm_single_ai_model_hub_image_before_rollout(
+            built_local_image = self._ensure_vm_single_ai_model_hub_image_before_rollout(
                 resolved_release_name,
                 resolved_namespace,
                 resolved_config,
             )
-            if prepared_image_ref:
-                prepared_local_image_refs.append(prepared_image_ref)
-            built_local_image = bool(prepared_image_ref)
 
         if normalized in {"ontology-hub", "ai-model-hub", "semantic-virtualization"}:
             rendered_images_imported = self._ensure_vm_single_local_images_before_rollout(
                 rollout_targets,
                 resolved_namespace,
                 resolved_config,
-                prepared_image_refs=prepared_local_image_refs,
             )
             built_local_image = bool(built_local_image or rendered_images_imported)
 
@@ -939,7 +813,6 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             "waited_for_rollout": waited_for_rollout,
         }
         public_root_aliases = []
-        versions_persistence = None
         if normalized == "ontology-hub":
             if deployer_config is not None:
                 resolved_config = dict(deployer_config or {})
@@ -953,85 +826,13 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
                 resolved_namespace,
                 resolved_config,
             )
-            versions_persistence = self._verify_ontology_hub_versions_persistence(
-                resolved_release_name,
-                resolved_namespace,
-                resolved_config,
-            )
         if public_root_aliases:
             result["public_root_aliases"] = public_root_aliases
-        if versions_persistence:
-            result["versions_persistence"] = versions_persistence
         if model_server:
             result["model_server"] = model_server
         return result
 
-    def _verify_ontology_hub_versions_persistence(self, release_name, namespace, deployer_config):
-        if not self._ontology_hub_versions_persistence_expected(deployer_config):
-            return {
-                "expected": False,
-                "verified": False,
-                "reason": "disabled-by-configuration",
-            }
-
-        resolved_release_name = str(release_name or "").strip()
-        resolved_namespace = str(namespace or "").strip()
-        if not resolved_release_name or not resolved_namespace:
-            self._fail(
-                "Ontology Hub versions persistence verification failed",
-                root_cause="release name or namespace is empty",
-            )
-
-        release_q = shlex.quote(resolved_release_name)
-        namespace_q = shlex.quote(resolved_namespace)
-        claim_name = (
-            self.run_silent(
-                f"kubectl get deployment {release_q} -n {namespace_q} "
-                "-o jsonpath='{.spec.template.spec.volumes[?(@.name==\"versions\")].persistentVolumeClaim.claimName}'"
-            )
-            or ""
-        ).strip()
-        if not claim_name:
-            self._fail(
-                "Ontology Hub versions persistence is required but the deployment does not mount a PVC",
-                root_cause=(
-                    f"deployment/{resolved_release_name} in namespace {resolved_namespace} "
-                    "has no persistentVolumeClaim for volume 'versions'"
-                ),
-            )
-
-        claim_q = shlex.quote(claim_name)
-        phase = (
-            self.run_silent(
-                f"kubectl get pvc {claim_q} -n {namespace_q} -o jsonpath='{{.status.phase}}'"
-            )
-            or ""
-        ).strip()
-        if phase != "Bound":
-            self._fail(
-                "Ontology Hub versions PVC is not ready",
-                root_cause=(
-                    f"pvc/{claim_name} in namespace {resolved_namespace} has phase "
-                    f"'{phase or 'not-found'}'"
-                ),
-            )
-
-        print(f"Verified Ontology Hub versions persistence: pvc/{claim_name} is Bound.")
-        return {
-            "expected": True,
-            "verified": True,
-            "claim_name": claim_name,
-            "phase": phase,
-        }
-
-    def _ensure_vm_single_local_images_before_rollout(
-        self,
-        rollout_targets,
-        namespace,
-        deployer_config,
-        *,
-        prepared_image_refs=None,
-    ):
+    def _ensure_vm_single_local_images_before_rollout(self, rollout_targets, namespace, deployer_config):
         if not self._is_vm_single_topology():
             return False
 
@@ -1068,11 +869,6 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             return False
 
         auto_build_enabled = self._level5_auto_build_local_images(resolved_config)
-        prepared_images = {
-            str(image_ref or "").strip()
-            for image_ref in list(prepared_image_refs or [])
-            if str(image_ref or "").strip()
-        }
         print(
             "Ensuring vm-single local component image(s) are available in k3s before rollout: "
             f"{', '.join(images_to_import)}"
@@ -1084,12 +880,11 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
             )
             for image_ref in images_to_import:
                 self._ensure_k3s_local_image_import_supported(image_ref, resolved_config)
-                if image_ref not in prepared_images:
-                    self._build_component_local_image_for_rollout(
-                        image_labels.get(image_ref, ""),
-                        image_ref,
-                        resolved_config,
-                    )
+                self._build_component_local_image_for_rollout(
+                    image_labels.get(image_ref, ""),
+                    image_ref,
+                    resolved_config,
+                )
             profile = (
                 resolved_config.get("MINIKUBE_PROFILE")
                 or getattr(self.config, "MINIKUBE_PROFILE", "minikube")
@@ -1195,7 +990,7 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         self._ensure_k3s_local_image_import_supported(image_ref, resolved_config)
         self._build_ai_model_hub_image_on_host(image_ref, resolved_config)
         self._load_image_into_cluster_runtime(cluster_type, profile, image_ref, resolved_config)
-        return image_ref
+        return True
 
     def _component_runtime_rollout_targets(self, normalized_component, release_name, deployer_config=None):
         normalized = self._normalize_component_key(normalized_component)
@@ -1544,6 +1339,20 @@ class SharedComponentsAdapter(INESDataComponentsAdapter):
         return model_server.uvicorn_app(deployer_config, mode)
 
     @staticmethod
+    def _ai_model_hub_model_server_combined_mock_count(deployer_config):
+        config = dict(deployer_config or {})
+        raw = (
+            config.get("AI_MODEL_HUB_MODEL_SERVER_COMBINED_MOCK_HTTP_COUNT")
+            or config.get("COMBINED_MOCK_HTTP_COUNT")
+            or ""
+        )
+        try:
+            count = int(str(raw).strip())
+        except (TypeError, ValueError):
+            count = 15
+        return max(0, min(count, 15))
+
+    @staticmethod
     def _ai_model_hub_model_server_image_pull_policy(image_ref, deployer_config):
         return model_server.image_pull_policy(image_ref, deployer_config)
 
@@ -1603,6 +1412,26 @@ MOCK_MODELS: List[Dict[str, str]] = [
     {"slug": "ideal-weight", "endpoint": "/api/v1/health/ideal-weight", "group": "health"},
     {"slug": "health-risk", "endpoint": "/api/v1/health/risk-assessment", "group": "health"},
 ]
+
+# Display names match the original 25-model mock so the INESData execution UI
+# (specs 12/15) finds the expected model label in the rendered result.
+_MODEL_TITLES = {
+    "chest-xray": "Chest X-Ray Classifier",
+    "pneumonia": "Pneumonia Detector",
+    "covid19": "COVID-19 Screener",
+    "lung-nodule": "Lung Nodule Detector",
+    "tuberculosis": "Tuberculosis Classifier",
+    "ecommerce-sentiment": "E-commerce Sentiment Analyzer",
+    "twitter-sentiment": "Twitter Sentiment Analyzer",
+    "product-review": "Product Review Classifier",
+    "customer-feedback": "Customer Feedback Analyzer",
+    "social-media-sentiment": "Social Media Sentiment Analyzer",
+    "bmi": "BMI Calculator",
+    "body-fat": "Body Fat Estimator",
+    "bmr": "BMR Calculator",
+    "ideal-weight": "Ideal Weight Predictor",
+    "health-risk": "Health Risk Assessor",
+}
 
 
 def _use_case_server_dir() -> str:
@@ -1757,7 +1586,8 @@ def _register_mock_endpoint(model: Dict[str, str]) -> None:
             payload = {}
         records = _records_from_payload(payload)
         return {
-            "model": model["slug"],
+            "model": _MODEL_TITLES.get(model["slug"], model["slug"]),
+            "served_by": "local-rule-engine",
             "serverMode": "combined",
             "predictions": [_predict(model, record) for record in records],
         }
@@ -1843,6 +1673,11 @@ def combined_models() -> Dict[str, Any]:
         ]
         if mode == "combined":
             dockerfile_lines.append("COPY combined_model_server /app/combined_model_server")
+            # Register the deterministic mock HttpData endpoints (/api/v1/...).
+            # Default is 0, which leaves /combined-models empty and makes the
+            # connector model-execution proxy 404 (PT5-MH-10, INESData-12/15).
+            mock_count = self._ai_model_hub_model_server_combined_mock_count(deployer_config)
+            dockerfile_lines.append(f"ENV COMBINED_MOCK_HTTP_COUNT={mock_count}")
         dockerfile_lines.extend(
             [
                 f"EXPOSE {container_port}",
@@ -1992,6 +1827,13 @@ def combined_models() -> Dict[str, Any]:
             "metadata": {
                 "name": f"{release_name}-public-root-aliases",
                 "namespace": namespace,
+                "annotations": {
+                    "nginx.ingress.kubernetes.io/proxy-body-size": "800m",
+                    "nginx.ingress.kubernetes.io/proxy-read-timeout": "300",
+                    "nginx.ingress.kubernetes.io/proxy-send-timeout": "300",
+                    "nginx.ingress.kubernetes.io/proxy-connect-timeout": "30",
+                    "nginx.org/client-max-body-size": "800m",
+                },
                 "labels": {
                     "app.kubernetes.io/managed-by": "validation-environment",
                     "app.kubernetes.io/part-of": topology,
@@ -2360,6 +2202,7 @@ def combined_models() -> Dict[str, Any]:
                 timeout=timeout_seconds,
                 allow_redirects=bool(follow_redirects),
                 headers={"Cache-Control": "no-store"},
+                verify=False,
             )
         except Exception as exc:
             return False, f"HTTP probe failed: {exc}"
@@ -2374,167 +2217,6 @@ def combined_models() -> Dict[str, Any]:
         if location:
             detail = f"{detail} -> {location}"
         return status_code in set(expected_statuses), detail
-
-    def _join_public_url(self, public_base_url, relative_path):
-        normalized_base_url = self._to_public_url(public_base_url).rstrip("/")
-        normalized_relative_path = str(relative_path or "").strip().lstrip("/")
-        if not normalized_relative_path:
-            return normalized_base_url
-        return f"{normalized_base_url}/{normalized_relative_path}"
-
-    def _ai_model_hub_public_base_uses_edc_dashboard(self, public_base_url):
-        parsed = urlsplit(self._to_public_url(public_base_url))
-        return parsed.path.rstrip("/").endswith("/edc-dashboard")
-
-    def _ai_model_hub_public_root_paths(self, public_base_url):
-        if self.active_adapter != "edc":
-            return ("",)
-        if self._ai_model_hub_public_base_uses_edc_dashboard(public_base_url):
-            return ("",)
-        return ("edc-dashboard/",)
-
-    def _ai_model_hub_public_config_paths(self, public_base_url):
-        if self.active_adapter != "edc":
-            return AI_MODEL_HUB_PUBLIC_CONFIG_PATHS
-
-        preferred_path = (
-            "config/app-config.json"
-            if self._ai_model_hub_public_base_uses_edc_dashboard(public_base_url)
-            else "edc-dashboard/config/app-config.json"
-        )
-        ordered_paths = [preferred_path]
-        ordered_paths.extend(AI_MODEL_HUB_PUBLIC_CONFIG_PATHS)
-        return tuple(dict.fromkeys(ordered_paths))
-
-    def _probe_ai_model_hub_public_root(self, public_base_url):
-        attempts = []
-        for root_path in self._ai_model_hub_public_root_paths(public_base_url):
-            root_url = self._join_public_url(public_base_url, root_path)
-            ready, detail = self._probe_component_public_url(
-                root_url,
-                expected_statuses={200},
-                follow_redirects=True,
-            )
-            display_path = f"/{str(root_path or '').strip('/')}" if root_path else "/"
-            attempts.append(
-                {
-                    "path": display_path,
-                    "url": root_url,
-                    "detail": detail,
-                }
-            )
-            if ready:
-                return True, detail, root_url, attempts
-
-        attempt_details = "; ".join(
-            f"{attempt['path']}={attempt['detail']}" for attempt in attempts
-        )
-        return False, attempt_details or "not probed", "", attempts
-
-    def _probe_ai_model_hub_public_config(self, public_base_url):
-        attempts = []
-        for config_path in self._ai_model_hub_public_config_paths(public_base_url):
-            config_url = self._join_public_url(public_base_url, config_path)
-            ready, detail = self._probe_component_public_url(
-                config_url,
-                expected_statuses={200},
-                follow_redirects=True,
-            )
-            attempts.append(
-                {
-                    "path": f"/{config_path}",
-                    "url": config_url,
-                    "detail": detail,
-                }
-            )
-            if ready:
-                return True, detail, config_url, attempts
-
-        attempt_details = "; ".join(
-            f"{attempt['path']}={attempt['detail']}" for attempt in attempts
-        )
-        return False, attempt_details or "not probed", "", attempts
-
-    def _probe_component_local_pod_url(
-        self,
-        *,
-        namespace,
-        release_name,
-        port,
-        path,
-        expected_statuses,
-    ):
-        resolved_namespace = str(namespace or "").strip()
-        resolved_release_name = str(release_name or "").strip()
-        if not resolved_namespace or not resolved_release_name:
-            return False, "in-cluster probe missing namespace or release"
-
-        normalized_path = "/" + str(path or "").strip().lstrip("/")
-        local_url = f"http://127.0.0.1:{int(port)}{normalized_path}"
-        script = (
-            f"url={shlex.quote(local_url)}; "
-            'out=$(wget -S -O /dev/null "$url" 2>&1 || true); '
-            'printf "%s\\n" "$out" | '
-            "sed -n 's/^[[:space:]]*HTTP\\/[^[:space:]]*[[:space:]][[:space:]]*\\([0-9][0-9][0-9]\\).*/\\1/p' | "
-            "tail -n 1"
-        )
-        command = (
-            f"kubectl exec -n {shlex.quote(resolved_namespace)} "
-            f"deployment/{shlex.quote(resolved_release_name)} -- sh -c {shlex.quote(script)}"
-        )
-        output = self.run_silent(command)
-        raw_output = str(output or "").strip()
-
-        status_code = None
-        for line in reversed(raw_output.splitlines()):
-            candidate = line.strip()
-            if candidate.isdigit():
-                status_code = int(candidate)
-                break
-            parts = candidate.split()
-            if len(parts) >= 2 and parts[0].upper().startswith("HTTP/") and parts[1].isdigit():
-                status_code = int(parts[1])
-                break
-
-        if status_code is None:
-            detail = "in-cluster probe returned no HTTP status"
-            if raw_output:
-                detail = f"{detail}: {' '.join(raw_output.split())[:160]}"
-            return False, detail
-
-        detail = f"in-cluster HTTP {status_code}"
-        return status_code in set(expected_statuses), detail
-
-    def _verify_ontology_hub_local_publication_fallback(
-        self,
-        *,
-        namespace,
-        release_name,
-        expected_statuses,
-    ):
-        if self._normalized_topology() != LOCAL_TOPOLOGY:
-            return {"enabled": False}
-
-        dataset_ready, dataset_detail = self._probe_component_local_pod_url(
-            namespace=namespace,
-            release_name=release_name,
-            port=3333,
-            path="/dataset",
-            expected_statuses=expected_statuses,
-        )
-        edition_ready, edition_detail = self._probe_component_local_pod_url(
-            namespace=namespace,
-            release_name=release_name,
-            port=3333,
-            path="/edition",
-            expected_statuses=expected_statuses,
-        )
-        return {
-            "enabled": True,
-            "verified": bool(dataset_ready and edition_ready),
-            "dataset_detail": dataset_detail,
-            "edition_detail": edition_detail,
-        }
 
     def verify_component_publication(
         self,
@@ -2573,7 +2255,6 @@ def combined_models() -> Dict[str, Any]:
             )
 
         public_base_url = self._to_public_url(expected_public_url or expected_host or ingress_host)
-        ontology_expected_statuses = {200, 301, 302, 303, 307, 308}
         deadline = time.monotonic() + max(int(timeout_seconds or 0), 1)
         if normalized == "ontology-hub":
             dataset_url = f"{public_base_url}/dataset"
@@ -2582,20 +2263,18 @@ def combined_models() -> Dict[str, Any]:
             edition_detail = "not probed"
         else:
             root_url = public_base_url
-            config_url = ""
+            config_url = f"{public_base_url}/config/app-config.json"
             root_detail = "not probed"
             config_detail = "not probed"
-            root_attempts = []
-            config_attempts = []
         while True:
             if normalized == "ontology-hub":
                 dataset_ready, dataset_detail = self._probe_component_public_url(
                     dataset_url,
-                    expected_statuses=ontology_expected_statuses,
+                    expected_statuses={200, 301, 302, 303, 307, 308},
                 )
                 edition_ready, edition_detail = self._probe_component_public_url(
                     edition_url,
-                    expected_statuses=ontology_expected_statuses,
+                    expected_statuses={200, 301, 302, 303, 307, 308},
                 )
                 if dataset_ready and edition_ready:
                     return {
@@ -2608,15 +2287,16 @@ def combined_models() -> Dict[str, Any]:
                         "edition_detail": edition_detail,
                     }
             else:
-                root_ready, root_detail, root_url, root_attempts = self._probe_ai_model_hub_public_root(
-                    public_base_url
+                root_ready, root_detail = self._probe_component_public_url(
+                    root_url,
+                    expected_statuses={200},
+                    follow_redirects=True,
                 )
-                (
-                    config_ready,
-                    config_detail,
+                config_ready, config_detail = self._probe_component_public_url(
                     config_url,
-                    config_attempts,
-                ) = self._probe_ai_model_hub_public_config(public_base_url)
+                    expected_statuses={200},
+                    follow_redirects=True,
+                )
                 if root_ready and config_ready:
                     return {
                         "component": normalized,
@@ -2626,49 +2306,20 @@ def combined_models() -> Dict[str, Any]:
                         "config_url": config_url,
                         "root_detail": root_detail,
                         "config_detail": config_detail,
-                        "root_attempts": root_attempts,
-                        "config_attempts": config_attempts,
                     }
             if time.monotonic() >= deadline:
                 break
             time.sleep(max(int(poll_interval_seconds or 0), 1))
 
         if normalized == "ontology-hub":
-            local_fallback = self._verify_ontology_hub_local_publication_fallback(
-                namespace=resolved_namespace,
-                release_name=release_name,
-                expected_statuses=ontology_expected_statuses,
-            )
-            if local_fallback.get("verified"):
-                return {
-                    "component": normalized,
-                    "verified": True,
-                    "ingress_host": ingress_host,
-                    "dataset_url": dataset_url,
-                    "edition_url": edition_url,
-                    "dataset_detail": dataset_detail,
-                    "edition_detail": edition_detail,
-                    "verification_mode": "local-in-cluster-fallback",
-                    "public_probe_degraded": True,
-                    "local_dataset_detail": local_fallback["dataset_detail"],
-                    "local_edition_detail": local_fallback["edition_detail"],
-                }
-
-            root_cause = f"/dataset={dataset_detail}; /edition={edition_detail}"
-            if local_fallback.get("enabled"):
-                root_cause = (
-                    f"{root_cause}; local fallback "
-                    f"/dataset={local_fallback.get('dataset_detail', 'not probed')}; "
-                    f"/edition={local_fallback.get('edition_detail', 'not probed')}"
-                )
             self._fail(
                 "Ontology Hub publication gate failed: public routes are not ready after deployment",
-                root_cause=root_cause,
+                root_cause=f"/dataset={dataset_detail}; /edition={edition_detail}",
             )
 
         self._fail(
             "AI Model Hub publication gate failed: public routes are not ready after deployment",
-            root_cause=f"root={root_detail}; config={config_detail}",
+            root_cause=f"/={root_detail}; /config/app-config.json={config_detail}",
         )
 
     def deploy_shared_component_runtime(

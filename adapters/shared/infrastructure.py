@@ -1101,6 +1101,27 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
 
         for kubeconfig in kubeconfigs:
             try:
+                preflight = subprocess.run(
+                    [
+                        "kubectl",
+                        "--kubeconfig",
+                        kubeconfig,
+                        "get",
+                        "--raw=/version",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                )
+                if preflight.returncode != 0:
+                    detail = (preflight.stderr or preflight.stdout or "").strip()
+                    print(
+                        "Warning: ingress-nginx forwarded header patch skipped for "
+                        f"{kubeconfig}: Kubernetes API is not reachable"
+                        + (f" ({detail})" if detail else "")
+                    )
+                    continue
+
                 proc = subprocess.run(
                     [
                         "kubectl",
@@ -1117,11 +1138,17 @@ class SharedFoundationInfrastructureAdapter(INESDataInfrastructureAdapter):
                     ],
                     capture_output=True,
                     text=True,
+                    timeout=15,
                 )
                 if proc.returncode == 0:
                     print(f"ingress-nginx forwarded headers enabled for kubeconfig: {kubeconfig}")
                 else:
                     print(f"Warning: ingress-nginx forwarded header patch failed: {proc.stderr.strip()}")
+            except subprocess.TimeoutExpired:
+                print(
+                    "Warning: ingress-nginx forwarded header patch skipped for "
+                    f"{kubeconfig}: Kubernetes API preflight timed out"
+                )
             except Exception as exc:
                 print(f"Warning: ingress-nginx forwarded header patch skipped: {exc}")
 

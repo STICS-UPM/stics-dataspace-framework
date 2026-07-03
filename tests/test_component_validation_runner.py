@@ -51,7 +51,11 @@ class ComponentValidationRunnerTests(unittest.TestCase):
         self.assertEqual(ontology_registration.supported_adapters, ("inesdata", "edc"))
         self.assertEqual(ontology_registration.deployable_adapters, ("inesdata", "edc"))
         self.assertEqual(ai_model_registration.supported_adapters, ("inesdata", "edc"))
-        self.assertEqual(ai_model_registration.deployable_adapters, ("inesdata", "edc"))
+        self.assertEqual(ai_model_registration.deployable_adapters, ("edc",))
+        self.assertEqual(
+            ai_model_registration.deployment_strategy,
+            "integrated-in-inesdata-connector-interface",
+        )
         self.assertEqual(COMPONENT_REGISTRY["ai-model-hub"].validation_groups, ("ai-model-hub",))
 
     def test_component_execution_mode_defaults_to_mixed_for_edc(self):
@@ -68,6 +72,15 @@ class ComponentValidationRunnerTests(unittest.TestCase):
                 }
             )
         )
+
+    def test_component_execution_mode_honors_component_scoped_override(self):
+        env = {
+            "PIONERA_ADAPTER": "inesdata",
+            "PIONERA_AI_MODEL_HUB_COMPONENT_VALIDATION_MODE": "api-only",
+        }
+
+        self.assertTrue(component_api_only_enabled(env, component="ai-model-hub"))
+        self.assertFalse(component_api_only_enabled(env, component="ontology-hub"))
         self.assertFalse(
             component_api_only_enabled(
                 {

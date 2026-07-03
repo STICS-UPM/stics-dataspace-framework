@@ -43,8 +43,6 @@ import static jakarta.ws.rs.core.HttpHeaders.CONTENT_TYPE;
 @Consumes(MediaType.APPLICATION_JSON)
 @Produces(MediaType.APPLICATION_JSON)
 public class InferenceController {
-    private static final int AGREEMENT_QUERY_LIMIT = 5000;
-    private static final int NEGOTIATION_QUERY_LIMIT = 5000;
 
     private final ObjectMapper mapper;
     private final String managementBaseUrl;
@@ -466,7 +464,7 @@ public class InferenceController {
         contextNode.put("@vocab", "https://w3id.org/edc/v0.0.1/ns/");
         requestBody.set("@context", contextNode);
         var querySpec = mapper.createObjectNode();
-        querySpec.put("limit", AGREEMENT_QUERY_LIMIT);
+        querySpec.put("limit", 50);
         querySpec.set("filterExpression", mapper.createArrayNode());
         requestBody.set("querySpec", querySpec);
 
@@ -496,7 +494,7 @@ public class InferenceController {
         contextNode.put("@vocab", "https://w3id.org/edc/v0.0.1/ns/");
         requestBody.set("@context", contextNode);
         var querySpec = mapper.createObjectNode();
-        querySpec.put("limit", NEGOTIATION_QUERY_LIMIT);
+        querySpec.put("limit", 100);
         querySpec.set("filterExpression", mapper.createArrayNode());
         requestBody.set("querySpec", querySpec);
 

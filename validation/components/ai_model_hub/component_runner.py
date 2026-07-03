@@ -15,7 +15,6 @@ from validation.components.ai_model_hub.functional_runner import run_ai_model_hu
 from validation.components.ai_model_hub.model_server_use_cases_api import (
     run_ai_model_hub_model_server_use_cases_validation,
 )
-from validation.components.ai_model_hub.model_server_policy import model_server_validation_state
 from validation.components.ai_model_hub.ui_runner import run_ai_model_hub_ui_validation
 from validation.components.execution_mode import component_api_only_enabled
 from validation.components.fail_fast import component_fail_fast_enabled
@@ -31,6 +30,9 @@ MODEL_OBSERVER_ENV = "AI_MODEL_HUB_ENABLE_MODEL_OBSERVER"
 MODEL_OBSERVER_BASE_URL_ENVS = (
     "AI_MODEL_HUB_OBSERVER_API_BASE_URL",
     "AI_MODEL_OBSERVER_API_BASE_URL",
+    "AI_MODEL_HUB_OBSERVER_JOURNAL_BASE_URL",
+    "AI_MODEL_OBSERVER_JOURNAL_BASE_URL",
+    "MODEL_OBSERVER_JOURNAL_BASE_URL",
     "AI_MODEL_HUB_PUBLIC_PORTAL_BACKEND_URL",
     "INESDATA_PUBLIC_PORTAL_BACKEND_URL",
 )
@@ -116,71 +118,6 @@ def _suite_failed(suite_result: Dict[str, Any]) -> bool:
         str(suite_result.get("status") or "").strip().lower() == "failed"
         or int(summary.get("failed") or 0) > 0
     )
-
-
-def _bootstrap_config_shape(bootstrap_result: Dict[str, Any]) -> str:
-    for case in list(bootstrap_result.get("executed_cases") or []):
-        response = case.get("response") or {}
-        config_shape = str(response.get("config_shape") or "").strip().lower()
-        if config_shape:
-            return config_shape
-    return ""
-
-
-def _uses_inesdata_connector_interface(bootstrap_result: Dict[str, Any]) -> bool:
-    return _bootstrap_config_shape(bootstrap_result) == "inesdata-connector-interface"
-
-
-def _uses_edc_dashboard_adapter() -> bool:
-    return _component_adapter_name() == "edc"
-
-
-def _skipped_playwright_suite_result(
-    *,
-    suite: str,
-    base_url: str,
-    reason: str,
-    experiment_dir: str | None,
-    artifact_subdir: str,
-    report_filename: str,
-) -> Dict[str, Any]:
-    artifacts: Dict[str, Any] = {}
-    evidence_index: List[Dict[str, Any]] = []
-    if experiment_dir:
-        base_dir = os.path.join(experiment_dir, "components", COMPONENT_KEY, artifact_subdir)
-        os.makedirs(base_dir, exist_ok=True)
-        report_path = os.path.join(base_dir, report_filename)
-        artifacts = {
-            "report_json": report_path,
-            "test_results_dir": os.path.join(base_dir, "test-results"),
-            "html_report_dir": os.path.join(base_dir, "playwright-report"),
-            "blob_report_dir": os.path.join(base_dir, "blob-report"),
-            "json_report_file": os.path.join(base_dir, "results.json"),
-        }
-        evidence_index = [
-            {
-                "scope": "suite",
-                "suite": suite,
-                "artifact_name": "report_json",
-                "path": report_path,
-            }
-        ]
-
-    suite_result = {
-        "component": COMPONENT_KEY,
-        "suite": suite,
-        "status": "skipped",
-        "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
-        "executed_cases": [],
-        "evidence_index": evidence_index,
-        "artifacts": artifacts,
-        "skip_reason": reason,
-        "base_url": base_url,
-        "execution_channel": "playwright",
-    }
-    if artifacts.get("report_json"):
-        _write_json(artifacts["report_json"], suite_result)
-    return suite_result
 
 
 def _attach_catalog_metadata(
@@ -352,80 +289,6 @@ def _suite_enabled(env_name: str, *, default: bool = True) -> bool:
     if raw_value is None:
         return default
     return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _skipped_model_execution_result(
-    *,
-    provider: str,
-    model_path: str,
-    reason: str,
-    model_server_state: Dict[str, Any],
-    experiment_dir: str | None = None,
-) -> Dict[str, Any]:
-    artifacts: Dict[str, str] = {}
-    evidence_index: List[Dict[str, Any]] = []
-    executed_cases = [
-        {
-            "test_case_id": "PT5-MH-10",
-            "description": "Execute inference through the connector-side model execution API with a controlled baseline",
-            "type": "api",
-            "case_group": "pt5",
-            "validation_type": "integration",
-            "dataspace_dimension": "execution",
-            "mapping_status": "mapped",
-            "automation_mode": "api",
-            "execution_mode": "skipped_model_server_not_deployed",
-            "coverage_status": "skipped_model_server_not_deployed",
-            "model_server_mode": model_server_state.get("mode") or "disabled",
-            "request": {"provider": provider, "model_path": model_path},
-            "response": {},
-            "evaluation": {
-                "status": "skipped",
-                "assertions": [reason],
-            },
-            "expected_result": (
-                "The model execution API resolves the controlled HttpData asset and returns "
-                "a deterministic model response"
-            ),
-            "traceability": ["MH-34", "MH-35"],
-        }
-    ]
-    if experiment_dir:
-        component_dir = os.path.join(experiment_dir, "components", COMPONENT_KEY, "integration")
-        os.makedirs(component_dir, exist_ok=True)
-        report_path = os.path.join(component_dir, "ai_model_hub_model_execution_api.json")
-        artifacts["report_json"] = report_path
-        evidence_index.append(
-            {
-                "scope": "suite",
-                "suite": "model-execution-api",
-                "artifact_name": "report_json",
-                "path": report_path,
-            }
-        )
-
-    result = {
-        "component": COMPONENT_KEY,
-        "suite": "model-execution-api",
-        "status": "skipped",
-        "summary": {
-            "total": 1,
-            "passed": 0,
-            "failed": 0,
-            "skipped": 1,
-            "steps": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
-        },
-        "provider": provider,
-        "model_path": model_path,
-        "model_server": dict(model_server_state),
-        "skip_reason": reason,
-        "executed_cases": executed_cases,
-        "evidence_index": evidence_index,
-        "artifacts": artifacts,
-    }
-    if artifacts.get("report_json"):
-        _write_json(artifacts["report_json"], result)
-    return result
 
 
 def _connector_governance_enabled() -> bool:
@@ -636,6 +499,9 @@ def _derive_model_observer_base_url_from_adapter() -> str:
         explicit_candidates = (
             config.get("AI_MODEL_HUB_OBSERVER_API_BASE_URL"),
             config.get("AI_MODEL_OBSERVER_API_BASE_URL"),
+            config.get("AI_MODEL_HUB_OBSERVER_JOURNAL_BASE_URL"),
+            config.get("AI_MODEL_OBSERVER_JOURNAL_BASE_URL"),
+            config.get("MODEL_OBSERVER_JOURNAL_BASE_URL"),
             config.get("AI_MODEL_HUB_PUBLIC_PORTAL_BACKEND_URL"),
             config.get("INESDATA_PUBLIC_PORTAL_BACKEND_URL"),
             config.get("PUBLIC_PORTAL_BACKEND_URL"),
@@ -677,6 +543,7 @@ def _resolve_model_observer_base_url(fallback_base_url: str | None = None) -> st
 
 def run_ai_model_hub_connector_governance_validation(experiment_dir: str | None = None) -> Dict[str, Any]:
     from validation.components.ai_model_hub.connector_governance_api import (
+        DEFAULT_MODEL_PATH,
         build_ai_model_hub_connector_governance_suite,
         default_model_url,
     )
@@ -722,7 +589,7 @@ def run_ai_model_hub_connector_governance_validation(experiment_dir: str | None 
         provider=provider,
         consumer=consumer,
         model_url=model_url,
-        model_path=model_path or "/api/v1/nlp/ecommerce-sentiment",
+        model_path=model_path or DEFAULT_MODEL_PATH,
         run_access_transfer=run_access_transfer,
         experiment_dir=experiment_dir,
     )
@@ -765,25 +632,7 @@ def run_ai_model_hub_model_execution_validation(experiment_dir: str | None = Non
         os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_MODEL_PATH")
         or (validation_endpoints[0] if validation_endpoints else None)
     )
-    config_loader = getattr(adapter, "load_deployer_config", None)
-    deployer_config = config_loader() if callable(config_loader) else {}
-    if not isinstance(deployer_config, dict):
-        deployer_config = {}
-    explicit_model_url = str(os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_MODEL_URL") or "").strip()
-    policy_config = dict(deployer_config)
-    if explicit_model_url:
-        policy_config["AI_MODEL_HUB_MODEL_EXECUTION_MODEL_URL"] = explicit_model_url
-    model_server_state = model_server_validation_state(policy_config, topology=topology)
-    if not model_server_state.get("enabled"):
-        return _skipped_model_execution_result(
-            provider=provider,
-            model_path=model_path or "/api/v1/nlp/ecommerce-sentiment",
-            reason=str(model_server_state.get("skip_reason") or "AI Model Hub model-server is not deployed"),
-            model_server_state=model_server_state,
-            experiment_dir=experiment_dir,
-        )
-
-    model_url = explicit_model_url or (
+    model_url = os.environ.get("AI_MODEL_HUB_MODEL_EXECUTION_MODEL_URL") or (
         default_model_url(adapter, model_path) if model_path else default_model_url(adapter)
     )
     payload = _parse_json_env(
@@ -806,7 +655,6 @@ def run_ai_model_hub_model_execution_validation(experiment_dir: str | None = Non
         expected_model=expected_model or None,
         functional_context=functional_context,
         experiment_dir=experiment_dir,
-        model_server_mode=str(model_server_state.get("mode") or ""),
     )
 
 
@@ -816,11 +664,9 @@ def run_ai_model_hub_model_benchmarking_validation(experiment_dir: str | None = 
     )
 
     source_dir = os.environ.get("AI_MODEL_HUB_BENCHMARKING_SOURCE_DIR") or None
-    model_server_state = model_server_validation_state()
     return run_benchmarking_suite(
         source_dir=source_dir,
         experiment_dir=experiment_dir,
-        model_server_mode=str(model_server_state.get("mode") or ""),
     )
 
 
@@ -855,7 +701,7 @@ def run_ai_model_hub_model_observer_validation(
 def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | None = None) -> Dict[str, Any]:
     started_at = datetime.now().isoformat()
     normalized_base_url = (base_url or "").rstrip("/")
-    api_only = component_api_only_enabled()
+    api_only = component_api_only_enabled(component=COMPONENT_KEY)
 
     current_suite_header: tuple[str, str] | None = None
 
@@ -900,56 +746,10 @@ def run_ai_model_hub_component_validation(base_url: str, experiment_dir: str | N
     functional_suite_results: List[tuple[str, Dict[str, Any]]] = []
     if not api_only:
         print_suite_header("AI Model Hub functional", "playwright")
-        if _uses_edc_dashboard_adapter():
-            skip_reason = (
-                "Legacy AI Model Hub dashboard Playwright specs are not applicable to the "
-                "EDC dashboard layout exposed by this deployment. AI Model Hub UI evidence "
-                "for EDC is collected by the EDC integration Playwright suite."
-            )
-            print(f"AI Model Hub Playwright suites skipped: {skip_reason}")
-            ui_result = _skipped_playwright_suite_result(
-                suite="ui",
-                base_url=normalized_base_url,
-                reason=skip_reason,
-                experiment_dir=experiment_dir,
-                artifact_subdir="ui",
-                report_filename="ai_model_hub_ui_validation.json",
-            )
-            functional_result = _skipped_playwright_suite_result(
-                suite="linguistic-functional",
-                base_url=normalized_base_url,
-                reason=skip_reason,
-                experiment_dir=experiment_dir,
-                artifact_subdir="functional",
-                report_filename="ai_model_hub_functional_validation.json",
-            )
-        elif _uses_inesdata_connector_interface(bootstrap_result):
-            skip_reason = (
-                "Legacy AI Model Hub dashboard Playwright specs are not applicable to the "
-                "INESData connector interface layout exposed by this deployment."
-            )
-            print(f"AI Model Hub Playwright suites skipped: {skip_reason}")
-            ui_result = _skipped_playwright_suite_result(
-                suite="ui",
-                base_url=normalized_base_url,
-                reason=skip_reason,
-                experiment_dir=experiment_dir,
-                artifact_subdir="ui",
-                report_filename="ai_model_hub_ui_validation.json",
-            )
-            functional_result = _skipped_playwright_suite_result(
-                suite="linguistic-functional",
-                base_url=normalized_base_url,
-                reason=skip_reason,
-                experiment_dir=experiment_dir,
-                artifact_subdir="functional",
-                report_filename="ai_model_hub_functional_validation.json",
-            )
-        else:
-            ui_result = run_ai_model_hub_ui_validation(normalized_base_url, experiment_dir=experiment_dir)
-            ui_result.setdefault("execution_channel", "playwright")
-            functional_result = run_ai_model_hub_functional_validation(normalized_base_url, experiment_dir=experiment_dir)
-            functional_result.setdefault("execution_channel", "playwright")
+        ui_result = run_ai_model_hub_ui_validation(normalized_base_url, experiment_dir=experiment_dir)
+        ui_result.setdefault("execution_channel", "playwright")
+        functional_result = run_ai_model_hub_functional_validation(normalized_base_url, experiment_dir=experiment_dir)
+        functional_result.setdefault("execution_channel", "playwright")
         functional_suite_results.extend(
             [
                 ("ui", ui_result),

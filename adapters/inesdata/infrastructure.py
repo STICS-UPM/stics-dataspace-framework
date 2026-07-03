@@ -3455,11 +3455,47 @@ class INESDataInfrastructureAdapter:
             })
         return snapshot
 
-    def wait_for_namespace_stability(self, namespace, duration=15, poll_interval=3, timeout=None):
+    @staticmethod
+    def _common_services_core_pod_name(pod_name):
+        return str(pod_name or "").startswith(
+            (
+                "common-srvs-keycloak-",
+                "common-srvs-minio-",
+                "common-srvs-postgresql-",
+                "common-srvs-vault-",
+            )
+        )
+
+    @staticmethod
+    def _pod_stability_issue(pod):
+        status = str((pod or {}).get("status") or "")
+        name = str((pod or {}).get("name") or "")
+        ready = str((pod or {}).get("ready") or "")
+
+        if status not in ("Running", "Completed"):
+            return f"{name} ({status})"
+
+        if status == "Running" and "/" in ready:
+            ready_current, ready_total = ready.split("/", 1)
+            if ready_current != ready_total:
+                return f"{name} readiness {ready}"
+
+        return None
+
+    def wait_for_namespace_stability(
+        self,
+        namespace,
+        duration=15,
+        poll_interval=3,
+        timeout=None,
+        relevant_pod_filter=None,
+        ignored_pod_label="non-relevant pods",
+    ):
         """Observe namespace health during a stability window."""
         print(f"\nObserving namespace '{namespace}' stability for {duration}s...")
         last_issue = None
         stable_since = None
+        ignored_warning_printed = False
         timeout = max(timeout or getattr(self.config, "TIMEOUT_NAMESPACE", 90), duration * 3)
         deadline = time.time() + timeout
 
@@ -3473,13 +3509,29 @@ class INESDataInfrastructureAdapter:
 
             unhealthy = []
             relevant_pods = []
+            ignored_unhealthy = []
             for pod in snapshot:
                 # Ignore known transient hook jobs so the stability window
                 # tracks the long-lived service pods instead.
                 if self._is_ignored_transient_hook_pod(namespace, pod["name"]):
                     continue
 
+                if relevant_pod_filter is not None and not relevant_pod_filter(pod):
+                    issue = self._pod_stability_issue(pod)
+                    if issue:
+                        ignored_unhealthy.append(issue)
+                    continue
+
                 relevant_pods.append(pod)
+
+            if ignored_unhealthy and not ignored_warning_printed:
+                shown = ", ".join(ignored_unhealthy[:5])
+                suffix = "" if len(ignored_unhealthy) <= 5 else f", +{len(ignored_unhealthy) - 5} more"
+                print(
+                    f"Warning: ignoring {ignored_pod_label} in namespace '{namespace}' "
+                    f"during this stability gate: {shown}{suffix}"
+                )
+                ignored_warning_printed = True
 
             if not relevant_pods:
                 last_issue = f"no relevant pods found in namespace '{namespace}'"
@@ -3488,14 +3540,9 @@ class INESDataInfrastructureAdapter:
                 continue
 
             for pod in relevant_pods:
-                if pod["status"] not in ("Running", "Completed"):
-                    unhealthy.append(f"{pod['name']} ({pod['status']})")
-                    continue
-
-                if pod["status"] == "Running" and "/" in pod["ready"]:
-                    ready_current, ready_total = pod["ready"].split("/", 1)
-                    if ready_current != ready_total:
-                        unhealthy.append(f"{pod['name']} readiness {pod['ready']}")
+                issue = self._pod_stability_issue(pod)
+                if issue:
+                    unhealthy.append(issue)
 
             if unhealthy:
                 last_issue = ", ".join(unhealthy)
@@ -3521,6 +3568,16 @@ class INESDataInfrastructureAdapter:
         print(f"Namespace '{namespace}' did not achieve a continuous {duration}s stability window in time")
         self.run(f"kubectl get pods -n {namespace}", check=False)
         return False
+
+    def wait_for_common_services_stability(self, namespace, duration=15, poll_interval=3, timeout=None):
+        return self.wait_for_namespace_stability(
+            namespace,
+            duration=duration,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            relevant_pod_filter=lambda pod: self._common_services_core_pod_name(pod.get("name")),
+            ignored_pod_label="pods outside the Level 2 common services core set",
+        )
 
     def verify_cluster_ready_for_level2(self, cluster_runtime=None):
         """Ensure Level 1 leaves a cluster stable enough for Level 2."""
@@ -3591,7 +3648,7 @@ class INESDataInfrastructureAdapter:
         ):
             return False, "common services pods did not become ready"
 
-        if not self.wait_for_namespace_stability(
+        if not self.wait_for_common_services_stability(
             self.config.NS_COMMON,
             duration=12,
             poll_interval=3,

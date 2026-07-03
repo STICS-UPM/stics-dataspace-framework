@@ -1,0 +1,70 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "daimo": "https://w3id.org/pionera/daimo#",
+    "input": "daimo:input",
+    "label": "daimo:label",
+    "datasetVersion": "daimo:datasetVersion",
+    "protocol": "daimo:protocol",
+    "randomSeed": "daimo:randomSeed"
+  },
+  "@id": "company-flares-5w1h-test",
+  "properties": {
+    "name": "FLARES 5W1H Test Dataset",
+    "version": "1.0.0",
+    "contenttype": "application/x-ndjson",
+    "assetType": "dataset",
+    "shortDescription": "JSONL validation dataset for FLARES 5W1H span extraction metrics.",
+    "dct:description": "JSONL validation dataset for FLARES 5W1H span extraction metrics.",
+    "dcterms:description": "JSONL validation dataset for FLARES 5W1H span extraction metrics.",
+    "dcterms:format": "jsonl",
+    "fileName": "5w1h_subtarea_1_test.jsonl",
+    "dcat:keyword": [
+      "dataset",
+      "benchmark",
+      "validation",
+      "flares",
+      "5w1h",
+      "jsonl"
+    ],
+    "assetData": {
+      "JS_DAIMO_Dataset": {
+        "daimo:modality": [
+          "text"
+        ],
+        "daimo:taskType": "classification",
+        "daimo:taskCategory": "Natural Language Processing",
+        "daimo:subtask": "token-classification",
+        "daimo:subtaskDescription": "FLARES 5W1H span extraction benchmark dataset",
+        "daimo:input": [
+          "Id",
+          "Text"
+        ],
+        "daimo:label": "Tags",
+        "daimo:labelType": "span",
+        "dct:language": [
+          "Spanish"
+        ],
+        "dct:license": "apache-2.0",
+        "dct:format": "jsonl",
+        "dcat:keyword": [
+          "dataset",
+          "benchmark",
+          "validation",
+          "flares",
+          "5w1h",
+          "jsonl"
+        ],
+        "daimo:datasetVersion": "1.0.0",
+        "daimo:datasetRole": "test",
+        "daimo:protocol": "holdout-test-set"
+      }
+    }
+  },
+  "dataAddress": {
+    "type": "InesDataStore"
+  }
+}

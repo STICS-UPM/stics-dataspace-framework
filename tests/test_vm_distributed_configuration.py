@@ -806,7 +806,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         ), mock.patch.dict(os.environ, {}, clear=True):
             path = main._vm_distributed_profile_path()
 
-        self.assertEqual(path, os.path.join(tmpdir, ".profiles", "pionera.env"))
+        self.assertEqual(path, os.path.join(tmpdir, ".secrets", "profiles", "pionera.env"))
         self.assertNotIn(f"{os.sep}context{os.sep}", path)
 
     def test_wizard_profile_path_ignores_removed_local_vm_distributed_profile(self):
@@ -823,7 +823,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             ), mock.patch.dict(os.environ, {}, clear=True):
                 path = main._vm_distributed_profile_path()
 
-        self.assertEqual(path, os.path.join(tmpdir, ".profiles", "pionera.env"))
+        self.assertEqual(path, os.path.join(tmpdir, ".secrets", "profiles", "pionera.env"))
 
     def test_explicit_environment_profile_selects_named_profile(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -838,11 +838,29 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             ):
                 path = main._vm_distributed_profile_path()
 
-        self.assertEqual(path, os.path.join(tmpdir, ".profiles", "partner-lab.env"))
+        self.assertEqual(path, os.path.join(tmpdir, ".secrets", "profiles", "partner-lab.env"))
+
+    def test_config_profile_alias_takes_precedence_over_legacy_environment_profile(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(
+                main,
+                "_framework_root_dir",
+                return_value=tmpdir,
+            ), mock.patch.dict(
+                os.environ,
+                {
+                    "PIONERA_CONFIG_PROFILE": "stics-demo",
+                    "PIONERA_ENVIRONMENT_PROFILE": "pionera40",
+                },
+                clear=True,
+            ):
+                path = main._vm_distributed_profile_path()
+
+        self.assertEqual(path, os.path.join(tmpdir, ".secrets", "profiles", "stics-demo.env"))
 
     def test_available_environment_profiles_lists_local_env_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            profiles_dir = os.path.join(tmpdir, ".profiles")
+            profiles_dir = os.path.join(tmpdir, ".secrets", "profiles")
             os.makedirs(profiles_dir, exist_ok=True)
             for filename in ("beta.env", "alpha.env", "ignore.txt"):
                 with open(os.path.join(profiles_dir, filename), "w", encoding="utf-8") as handle:
@@ -856,10 +874,39 @@ class VmDistributedConfigurationTests(unittest.TestCase):
                 profiles = main._available_environment_profiles()
 
         self.assertEqual([item["name"] for item in profiles], ["alpha", "beta"])
+        self.assertEqual([item["storage"] for item in profiles], ["private", "private"])
+
+    def test_available_environment_profiles_keeps_legacy_fallback_without_overriding_private(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            private_dir = os.path.join(tmpdir, ".secrets", "profiles")
+            legacy_dir = os.path.join(tmpdir, ".profiles")
+            os.makedirs(private_dir, exist_ok=True)
+            os.makedirs(legacy_dir, exist_ok=True)
+            with open(os.path.join(private_dir, "shared.env"), "w", encoding="utf-8") as handle:
+                handle.write("# private profile\n")
+            with open(os.path.join(legacy_dir, "shared.env"), "w", encoding="utf-8") as handle:
+                handle.write("# legacy duplicate\n")
+            with open(os.path.join(legacy_dir, "legacy-only.env"), "w", encoding="utf-8") as handle:
+                handle.write("# legacy profile\n")
+
+            with mock.patch.object(
+                main,
+                "_framework_root_dir",
+                return_value=tmpdir,
+            ):
+                profiles = main._available_environment_profiles()
+                legacy_path = main._environment_profile_path("legacy-only")
+
+        self.assertEqual([item["name"] for item in profiles], ["legacy-only", "shared"])
+        self.assertEqual(
+            {item["name"]: item["storage"] for item in profiles},
+            {"legacy-only": "legacy", "shared": "private"},
+        )
+        self.assertEqual(legacy_path, os.path.join(tmpdir, ".profiles", "legacy-only.env"))
 
     def test_select_environment_profile_by_number_sets_process_profile(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            profiles_dir = os.path.join(tmpdir, ".profiles")
+            profiles_dir = os.path.join(tmpdir, ".secrets", "profiles")
             os.makedirs(profiles_dir, exist_ok=True)
             for filename in ("alpha.env", "beta.env"):
                 with open(os.path.join(profiles_dir, filename), "w", encoding="utf-8") as handle:
@@ -880,10 +927,12 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             ), redirect_stdout(output):
                 result = main._select_environment_profile_interactively()
                 selected_env = os.environ.get("PIONERA_ENVIRONMENT_PROFILE")
+                selected_config = os.environ.get("PIONERA_CONFIG_PROFILE")
 
         self.assertEqual(result["status"], "selected")
         self.assertEqual(result["profile"], "beta")
         self.assertEqual(selected_env, "beta")
+        self.assertEqual(selected_config, "beta")
         self.assertIn("Selected profile: beta", output.getvalue())
 
     def test_vm_distributed_assistant_menu_shows_active_profile_and_selection_option(self):
@@ -902,7 +951,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
 
         rendered = output.getvalue()
         self.assertIn("Profile: alpha", rendered)
-        self.assertIn("P - Select local configuration profile", rendered)
+        self.assertIn("P - Select private configuration profile", rendered)
 
     def test_wizard_profile_loader_creates_standard_template_when_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
@@ -911,18 +960,41 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             return_value=tmpdir,
         ), mock.patch.dict(os.environ, {}, clear=True):
             result = main._load_vm_distributed_wizard_profile_suggestions("inesdata")
-            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
+            profile_path = os.path.join(tmpdir, ".secrets", "profiles", "pionera.env")
             self.assertEqual(result["status"], "created")
             self.assertEqual(result["path"], profile_path)
             self.assertTrue(os.path.isfile(profile_path))
-            self.assertIn("# Local validation-environment profile", result["content"])
-            self.assertIn("PROFILE_TOPOLOGY=", result["content"])
-            self.assertIn("PROFILE_ADAPTER=", result["content"])
+            self.assertIn("# Private validation-environment profile", result["content"])
+            self.assertIn("PROFILE_TOPOLOGY=vm-distributed", result["content"])
+            self.assertIn("PROFILE_ADAPTER=inesdata", result["content"])
+            self.assertIn("SSH_BASTION_HOST=", result["content"])
+            self.assertNotIn("AI_MODEL_HUB_MODEL_SERVER_VALIDATION_ENDPOINTS", result["content"])
             self.assertEqual(result["values"], {})
+
+    def test_wizard_profile_loader_creates_only_selected_private_profile(self):
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            main,
+            "_framework_root_dir",
+            return_value=tmpdir,
+        ), mock.patch.dict(
+            os.environ,
+            {"PIONERA_CONFIG_PROFILE": "stics-demo"},
+            clear=True,
+        ):
+            result = main._load_vm_distributed_wizard_profile_suggestions("inesdata")
+            selected_path = os.path.join(tmpdir, ".secrets", "profiles", "stics-demo.env")
+            default_path = os.path.join(tmpdir, ".secrets", "profiles", "pionera.env")
+            selected_exists = os.path.isfile(selected_path)
+            default_exists = os.path.exists(default_path)
+
+        self.assertEqual(result["status"], "created")
+        self.assertEqual(result["path"], selected_path)
+        self.assertTrue(selected_exists)
+        self.assertFalse(default_exists)
 
     def test_wizard_profile_loader_keeps_comment_only_template_non_applicable(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
+            profile_path = os.path.join(tmpdir, ".secrets", "profiles", "pionera.env")
             os.makedirs(os.path.dirname(profile_path), exist_ok=True)
             with open(profile_path, "w", encoding="utf-8") as handle:
                 handle.write("# DOMAIN_BASE=profile.example.test\n")
@@ -939,9 +1011,9 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertIn("# DOMAIN_BASE=profile.example.test", result["content"])
         self.assertEqual(result["values"], {})
 
-    def test_wizard_profile_loader_reads_standard_local_profile(self):
+    def test_wizard_profile_loader_reads_incomplete_standard_profile_as_prompt_defaults(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
+            profile_path = os.path.join(tmpdir, ".secrets", "profiles", "pionera.env")
             os.makedirs(os.path.dirname(profile_path), exist_ok=True)
             with open(profile_path, "w", encoding="utf-8") as handle:
                 handle.write("DOMAIN_BASE=profile.example.test\nDS_1_NAME=dataspace\n")
@@ -953,16 +1025,42 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             ), mock.patch.dict(os.environ, {}, clear=True):
                 result = main._load_vm_distributed_wizard_profile_suggestions("inesdata")
 
-        self.assertEqual(result["status"], "loaded")
+        self.assertEqual(result["status"], "partial")
         self.assertEqual(result["path"], profile_path)
         self.assertIn("DOMAIN_BASE=profile.example.test", result["content"])
         self.assertEqual(result["values"]["DOMAIN_BASE"], "profile.example.test")
         self.assertEqual(result["values"]["DS_1_NAME"], "dataspace")
+        self.assertIn("VM_COMMON_IP", result["missing_apply_keys"])
+
+    def test_wizard_profile_loader_treats_quick_defaults_as_partial_until_required_fields_are_filled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_path = os.path.join(tmpdir, ".secrets", "profiles", "pionera.env")
+            os.makedirs(os.path.dirname(profile_path), exist_ok=True)
+            with open(profile_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    main._vm_distributed_profile_template_content(
+                        topology="vm-distributed",
+                        adapter_name="inesdata",
+                    )
+                )
+
+            with mock.patch.object(
+                main,
+                "_framework_root_dir",
+                return_value=tmpdir,
+            ), mock.patch.dict(os.environ, {}, clear=True):
+                result = main._load_vm_distributed_wizard_profile_suggestions("inesdata")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["path"], profile_path)
+        self.assertEqual(result["values"]["PROFILE_TOPOLOGY"], "vm-distributed")
+        self.assertEqual(result["values"]["TOPOLOGY_ROUTING_MODE"], "host")
+        self.assertIn("DOMAIN_BASE", result["missing_apply_keys"])
 
     def test_wizard_profile_message_shows_default_local_locations_when_missing(self):
         profile = {
             "status": "not-found",
-            "path": os.path.join(".profiles", "default.env"),
+            "path": os.path.join(".secrets", "profiles", "pionera.env"),
             "values": {},
         }
         output = io.StringIO()
@@ -972,14 +1070,14 @@ class VmDistributedConfigurationTests(unittest.TestCase):
 
         rendered = output.getvalue()
         self.assertIn("Configuration profile: not found.", rendered)
-        self.assertIn(".profiles/default.env", rendered.replace("\\", "/"))
+        self.assertIn(".secrets/profiles/pionera.env", rendered.replace("\\", "/"))
         self.assertNotIn("context", rendered)
 
     def test_wizard_profile_message_explains_created_template(self):
         profile = {
             "status": "created",
-            "path": os.path.join(".profiles", "default.env"),
-            "content": "# Local validation-environment profile\n",
+            "path": os.path.join(".secrets", "profiles", "pionera.env"),
+            "content": "# Private validation-environment profile\n",
             "values": {},
         }
         output = io.StringIO()
@@ -989,8 +1087,8 @@ class VmDistributedConfigurationTests(unittest.TestCase):
 
         rendered = output.getvalue()
         self.assertIn("Configuration profile created.", rendered)
-        self.assertIn(".profiles/default.env", rendered.replace("\\", "/"))
-        self.assertIn("Fill this file, then run W -> 1 again", rendered)
+        self.assertIn(".secrets/profiles/pionera.env", rendered.replace("\\", "/"))
+        self.assertIn("Fill the quick-start fields, then run W -> 1 again", rendered)
 
     def test_assistant_option_6_prints_needs_review_when_ssh_commands_are_missing(self):
         plan = {
@@ -1043,7 +1141,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
     def test_wizard_profile_message_shows_valid_content(self):
         profile = {
             "status": "loaded",
-            "path": os.path.join(".profiles", "default.env"),
+            "path": os.path.join(".secrets", "profiles", "pionera.env"),
             "content": "DOMAIN_BASE=profile.example.test\nDS_1_NAME=dataspace\n",
             "values": {
                 "DOMAIN_BASE": "profile.example.test",
@@ -1060,6 +1158,23 @@ class VmDistributedConfigurationTests(unittest.TestCase):
         self.assertIn("DOMAIN_BASE=profile.example.test", rendered)
         self.assertIn("DS_1_NAME=dataspace", rendered)
         self.assertIn("supported non-sensitive keys", rendered)
+
+    def test_wizard_profile_message_shows_partial_profile_missing_fields(self):
+        profile = {
+            "status": "partial",
+            "path": os.path.join(".secrets", "profiles", "pionera.env"),
+            "content": "DOMAIN_BASE=profile.example.test\n",
+            "values": {"DOMAIN_BASE": "profile.example.test"},
+            "missing_apply_keys": ["VM_COMMON_IP", "DS_1_CONNECTORS"],
+        }
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            main._print_vm_distributed_wizard_profile_suggestions(profile)
+
+        rendered = output.getvalue()
+        self.assertIn("Profile is incomplete for direct apply", rendered)
+        self.assertIn("Missing minimum fields: VM_COMMON_IP, DS_1_CONNECTORS", rendered)
 
     def test_prompt_vm_distributed_value_prefers_profile_suggestion_in_brackets(self):
         read_prompt = mock.Mock(return_value="")
@@ -1090,7 +1205,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             adapter_path = os.path.join(tmpdir, "inesdata", "deployer.config")
             adapter_example_path = os.path.join(tmpdir, "inesdata", "deployer.config.example")
             kubeconfig_path = os.path.join(tmpdir, "common.yaml")
-            profile_path = os.path.join(tmpdir, ".profiles", "default.env")
+            profile_path = os.path.join(tmpdir, ".secrets", "profiles", "pionera.env")
 
             for path in (
                 infra_path,
@@ -1130,8 +1245,8 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             output = io.StringIO()
             with mock.patch("builtins.input", side_effect=["y"]), mock.patch.dict(
                 os.environ,
-                {"PIONERA_ENVIRONMENT_PROFILE": "default"},
-                clear=False,
+                {"PIONERA_CONFIG_PROFILE": "pionera"},
+                clear=True,
             ), mock.patch.object(
                 main,
                 "_framework_root_dir",
@@ -1533,7 +1648,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             )
             adapter_path = os.path.join(tmpdir, "inesdata", "deployer.config")
             adapter_example_path = os.path.join(tmpdir, "inesdata", "deployer.config.example")
-            profile_path = os.path.join(tmpdir, ".profiles", "default.env")
+            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
             for path in (
                 infra_example_path,
                 topology_example_path,
@@ -1612,7 +1727,7 @@ class VmDistributedConfigurationTests(unittest.TestCase):
             infra_path = os.path.join(tmpdir, "infrastructure", "deployer.config")
             topology_path = os.path.join(tmpdir, "infrastructure", "topologies", "vm-distributed.config")
             adapter_path = os.path.join(tmpdir, "inesdata", "deployer.config")
-            profile_path = os.path.join(tmpdir, ".profiles", "default.env")
+            profile_path = os.path.join(tmpdir, ".profiles", "pionera.env")
             for path in (infra_path, topology_path, adapter_path, profile_path):
                 os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(infra_path, "w", encoding="utf-8") as handle:

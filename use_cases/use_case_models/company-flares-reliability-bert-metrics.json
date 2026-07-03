@@ -1,0 +1,111 @@
+{
+  "@context": {
+    "@vocab": "https://w3id.org/edc/v0.0.1/ns/",
+    "dct": "http://purl.org/dc/terms/",
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "daimo": "https://w3id.org/pionera/daimo#",
+    "mls": "http://www.w3.org/ns/mls#"
+  },
+  "@id": "company-flares-reliability-bert-metrics",
+  "properties": {
+    "name": "FLARES Reliability BERT Metrics - PIONERA Use Case",
+    "version": "2.1.4",
+    "contenttype": "application/json",
+    "assetType": "machineLearning",
+    "shortDescription": "Computes FLARES reliability classification metrics from native validation rows",
+    "dct:description": "Computes FLARES reliability classification metrics from native validation rows. Served by the FLARES FastAPI metric endpoint.",
+    "dcterms:description": "Computes FLARES reliability classification metrics from native validation rows. Served by the FLARES FastAPI metric endpoint.",
+    "dcat:keyword": [
+      "machine-learning",
+      "metric-model",
+      "http-model",
+      "pionera-use-case",
+      "flares",
+      "flares-reliability-bert-metrics",
+      "company"
+    ],
+    "assetData": {
+      "JS_DAIMO_Model": {
+        "daimo:modality": [
+          "text"
+        ],
+        "daimo:taskType": "classification",
+        "daimo:taskCategory": "Natural Language Processing",
+        "daimo:subtask": "text-classification",
+        "daimo:subtaskDescription": "FLARES reliability classification metrics",
+        "daimo:endpointBehavior": "metric",
+        "daimo:requestShape": "batch",
+        "dct:description": "Computes FLARES reliability classification metrics from native validation rows. Served by the FLARES FastAPI metric endpoint.",
+        "daimo:libraryName": "Transformers",
+        "dct:language": [
+          "Spanish"
+        ],
+        "dct:license": "apache-2.0",
+        "daimo:inputSchema": {
+          "fields": [
+            {
+              "name": "Id",
+              "type": "integer",
+              "nullable": false,
+              "description": "Input text identifier"
+            },
+            {
+              "name": "Text",
+              "type": "string",
+              "nullable": false,
+              "description": "Original Spanish text"
+            },
+            {
+              "name": "5W1H_Label",
+              "type": "string",
+              "nullable": false,
+              "description": "5W1H span label"
+            },
+            {
+              "name": "Tag_Text",
+              "type": "string",
+              "nullable": false,
+              "description": "Extracted span text"
+            },
+            {
+              "name": "Tag_Start",
+              "type": "integer",
+              "nullable": false,
+              "description": "Span start character offset"
+            },
+            {
+              "name": "Tag_End",
+              "type": "integer",
+              "nullable": false,
+              "description": "Span end character offset"
+            },
+            {
+              "name": "Reliability_Label",
+              "type": "string",
+              "nullable": false,
+              "description": "Gold reliability label"
+            }
+          ],
+          "jsonSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"Id\": {\n      \"type\": \"integer\",\n      \"description\": \"Input text identifier\"\n    },\n    \"Text\": {\n      \"type\": \"string\",\n      \"description\": \"Original Spanish text\"\n    },\n    \"5W1H_Label\": {\n      \"type\": \"string\",\n      \"description\": \"5W1H span label\"\n    },\n    \"Tag_Text\": {\n      \"type\": \"string\",\n      \"description\": \"Extracted span text\"\n    },\n    \"Tag_Start\": {\n      \"type\": \"integer\",\n      \"description\": \"Span start character offset\"\n    },\n    \"Tag_End\": {\n      \"type\": \"integer\",\n      \"description\": \"Span end character offset\"\n    },\n    \"Reliability_Label\": {\n      \"type\": \"string\",\n      \"description\": \"Gold reliability label\"\n    }\n  },\n  \"required\": [\n    \"Id\",\n    \"Text\",\n    \"5W1H_Label\",\n    \"Tag_Text\",\n    \"Tag_Start\",\n    \"Tag_End\",\n    \"Reliability_Label\"\n  ]\n}"
+        },
+        "daimo:inputExample": "{\"Id\":6831,\"Text\":\"Lo Pais no deja de sorprendernos.\",\"5W1H_Label\":\"WHAT\",\"Tag_Text\":\"su explicacion\",\"Tag_Start\":42,\"Tag_End\":56,\"Reliability_Label\":\"no confiable\"}",
+        "daimo:metrics": [
+          "Accuracy",
+          "Precision",
+          "Recall",
+          "F1"
+        ]
+      }
+    }
+  },
+  "dataAddress": {
+    "type": "HttpData",
+    "name": "company-flares-reliability-bert-metrics",
+    "baseUrl": "http://host.docker.internal:8000/flares/dccuchile-bert-base-spanish-wwm-uncased-reliability/metrics",
+    "proxyMethod": "true",
+    "proxyBody": "true",
+    "method": "POST",
+    "contentType": "application/json"
+  }
+}
