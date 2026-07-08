@@ -572,7 +572,7 @@ export class AiModelBrowserComponent implements OnInit {
 
   private publishBrowserEvent(event: ModelObserverJournalEvent): void {
     void lastValueFrom(this.modelObserverJournalService.publish({
-      sourceComponent: 'inesdata-connector-interface:ai-model-browser',
+      sourceComponent: 'connector-interface:ai-model-browser',
       ...event
     }));
   }

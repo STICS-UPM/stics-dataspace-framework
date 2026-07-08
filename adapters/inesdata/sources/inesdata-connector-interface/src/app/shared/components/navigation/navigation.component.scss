@@ -7,7 +7,7 @@
 }
 
 .sidenav {
-  width: 172px;
+  width: 208px;
   border-right: 1px solid var(--grey-500);
   box-shadow: 2px 0 7px rgba(2, 91, 119, 0.08);
   background: #ffffff;
@@ -17,8 +17,8 @@
 .sidenav .mat-toolbar,
 .sidenav-toolbar {
   background: inherit;
-  min-height: 54px;
-  height: 54px;
+  min-height: 60px;
+  height: 60px;
   font-size: 18px;
   font-weight: 400;
   line-height: 1;
@@ -46,8 +46,8 @@
   display: block;
   flex: 0 0 auto;
   width: auto;
-  max-width: 118px;
-  max-height: 40px;
+  max-width: 150px;
+  max-height: 44px;
   object-fit: contain;
 }
 
@@ -65,9 +65,9 @@
 .sidenav a[mat-list-item] {
   align-items: center;
   display: flex;
-  min-height: 34px;
-  height: 34px;
-  --mdc-list-list-item-one-line-container-height: 34px;
+  min-height: 44px;
+  height: 44px;
+  --mdc-list-list-item-one-line-container-height: 44px;
   margin: 0;
   border-left: 3px solid transparent;
   transition: background-color 0.16s ease, border-color 0.16s ease;
@@ -88,13 +88,12 @@
 .sidenav mat-icon {
   align-items: center;
   display: inline-flex;
-  flex: 0 0 18px;
-  height: 18px;
+  flex: 0 0 22px;
+  height: 22px;
   justify-content: center;
-  line-height: 18px;
-  margin-right: 8px;
-  transform: scale(0.72);
-  width: 18px;
+  line-height: 22px;
+  margin-right: 10px;
+  width: 22px;
 }
 
 .nav-label {
@@ -110,8 +109,10 @@
   position: sticky;
   top: 0;
   z-index: 2;
-  min-height: 34px;
-  height: 34px;
+  min-height: 48px;
+  height: 48px;
+  font-size: 16px;
+  font-weight: 600;
   background: var(--brand-500) !important;
   box-shadow: 0 1px 4px rgba(2, 91, 119, 0.18);
   color: #ffffff !important;
@@ -122,23 +123,23 @@
   text-align: right;
   display: flex;
   justify-content: flex-end;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .logout span {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   cursor: pointer;
   transition: color 0.3s;
 }
 
 
 .logout mat-icon {
-  font-size: 15px;
-  height: 15px;
+  font-size: 19px;
+  height: 19px;
   margin-right: 0;
-  width: 15px;
+  width: 19px;
   align-content: center;
 }
 
@@ -172,9 +173,9 @@ mat-sidenav-content {
 }
 
 mat-toolbar {
-  min-height: 34px;
-  height: 34px;
-  font-size: 13px;
+  min-height: 48px;
+  height: 48px;
+  font-size: 16px;
   font-weight: 600;
 }
 
@@ -192,7 +193,7 @@ mat-toolbar {
 }
 
 :host ::ng-deep mat-nav-list .mdc-list-item__primary-text {
-  font-size: 11px;
+  font-size: 14px;
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
@@ -201,7 +202,7 @@ mat-toolbar {
 
 :host ::ng-deep mat-nav-list .mat-mdc-list-item,
 :host ::ng-deep mat-nav-list .mat-mdc-list-item .mdc-list-item__content {
-  height: 34px !important;
+  height: 44px !important;
 }
 
 :host ::ng-deep mat-nav-list .mat-mdc-list-item .mdc-list-item__content {
@@ -213,12 +214,12 @@ mat-toolbar {
   align-items: center;
   align-self: center;
   display: inline-flex;
-  height: 18px;
+  height: 22px;
   justify-content: center;
   margin-bottom: 0;
-  margin-right: 8px;
+  margin-right: 10px;
   margin-top: 0;
-  width: 18px;
+  width: 22px;
 }
 
 :host ::ng-deep .mdc-list-item:focus::before {

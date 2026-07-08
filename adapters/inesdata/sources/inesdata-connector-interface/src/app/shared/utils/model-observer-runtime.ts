@@ -13,7 +13,7 @@ export interface BrowserLocationLike {
   origin: string;
 }
 
-const MODEL_OBSERVER_PROXY_PATH = '/inesdata-connector-interface/model-observer';
+const MODEL_OBSERVER_PROXY_PATH = '/connector-interface/model-observer';
 
 function getBrowserLocation(): BrowserLocationLike | null {
   if (typeof window === 'undefined' || !window.location) {

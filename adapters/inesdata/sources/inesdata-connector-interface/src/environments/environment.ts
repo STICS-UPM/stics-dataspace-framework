@@ -85,7 +85,7 @@ export const environment = {
     },
     oauth2: {
       issuer: 'http://keycloak:8080/realms/dataspace',
-      redirectPath: '/inesdata-connector-interface',
+      redirectPath: '/connector-interface',
       clientId: 'dataspace-users',
       scope: 'openid profile email',
       responseType: 'code',

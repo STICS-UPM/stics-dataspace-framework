@@ -39,7 +39,7 @@ export class ModelObserverJournalService {
     return this.http.post(`${baseUrl}/events`, {
       eventId: event.eventId || this.createId('evt'),
       occurredAt: event.occurredAt || new Date().toISOString(),
-      sourceComponent: event.sourceComponent || 'inesdata-connector-interface:benchmarking',
+      sourceComponent: event.sourceComponent || 'connector-interface:benchmarking',
       participantId: event.participantId || environment.runtime.participantId || null,
       ...event
     }).pipe(

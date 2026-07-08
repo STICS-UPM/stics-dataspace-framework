@@ -1026,7 +1026,8 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
     def _edc_dataspace_transfer_policy_name(self, connector_name, ds_name):
         return f"policy-{ds_name}-{connector_name}-dataspace-transfer"
 
-    def _edc_dataspace_transfer_policy_payload(self, ds_name):
+    def _edc_dataspace_transfer_policy_payload(self, connector_name, ds_name):
+        bucket_name = f"{ds_name}-{connector_name}"
         return {
             "Version": "2012-10-17",
             "Statement": [
@@ -1034,8 +1035,8 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
                     "Effect": "Allow",
                     "Action": ["s3:*"],
                     "Resource": [
-                        f"arn:aws:s3:::{ds_name}-*",
-                        f"arn:aws:s3:::{ds_name}-*/*",
+                        f"arn:aws:s3:::{bucket_name}",
+                        f"arn:aws:s3:::{bucket_name}/*",
                     ],
                 }
             ],
@@ -1073,7 +1074,7 @@ path "secret/data/{ds_name}/{connector_name}/*" {{
 
         policy_path_pod = f"/tmp/{policy_name}.json"
         policy_b64 = base64.b64encode(
-            json.dumps(self._edc_dataspace_transfer_policy_payload(ds_name)).encode("utf-8")
+            json.dumps(self._edc_dataspace_transfer_policy_payload(connector_name, ds_name)).encode("utf-8")
         ).decode("ascii")
         write_policy_result = self.run(
             f"{mc} sh -c \"echo '{policy_b64}' | base64 -d > {policy_path_pod}\"",

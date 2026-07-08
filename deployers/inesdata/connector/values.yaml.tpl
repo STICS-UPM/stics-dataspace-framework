@@ -56,7 +56,7 @@ connectorInterface:
     primaryColor: {{ (keys.inesdata_brand_primary_color | default('', true)) | tojson }}
     secondaryColor: {{ (keys.inesdata_brand_secondary_color | default('', true)) | tojson }}
     showMenuText: {{ (keys.inesdata_brand_show_menu_text | default('true', true)) | tojson }}
-    assetBaseUrl: {{ (keys.inesdata_brand_asset_base_url | default('/inesdata-connector-interface/assets/branding', true)) | tojson }}
+    assetBaseUrl: {{ (keys.inesdata_brand_asset_base_url | default('/connector-interface/assets/branding', true)) | tojson }}
     logoFiles: {{ (keys.inesdata_brand_logo_files | default('', true)) | tojson }}
     logoUrls: {{ (keys.inesdata_brand_logo_urls | default('', true)) | tojson }}
     footerLogoFiles: {{ (keys.inesdata_brand_footer_logo_files | default('', true)) | tojson }}

@@ -7,12 +7,12 @@
 {{- $keycloak := .Values.services.keycloak | default dict }}
 {{- $keycloakPublicProtocol := (index $keycloak "publicProtocol" | default $connectorPublicProtocol | default (index $keycloak "protocol") | default "http") }}
 {{- $connectorInterface := .Values.connectorInterface | default dict }}
-{{- $connectorInterfacePublicBasePath := (trimSuffix "/" ((index $connectorInterface "publicBasePath") | default "/inesdata-connector-interface")) }}
+{{- $connectorInterfacePublicBasePath := (trimSuffix "/" ((index $connectorInterface "publicBasePath") | default "/connector-interface")) }}
 {{- $connectorInterfacePublicBaseHref := printf "%s/" $connectorInterfacePublicBasePath }}
 {{- $modelObserver := .Values.connectorInterface.modelObserver | default dict }}
 {{- $branding := .Values.connectorInterface.branding | default dict }}
 {{- $brandingAssetBaseUrl := ((index $branding "assetBaseUrl") | default "") }}
-{{- if or (not $brandingAssetBaseUrl) (and (ne $connectorInterfacePublicBasePath "/inesdata-connector-interface") (eq (trimSuffix "/" $brandingAssetBaseUrl) "/inesdata-connector-interface/assets/branding")) }}
+{{- if or (not $brandingAssetBaseUrl) (and (ne $connectorInterfacePublicBasePath "/connector-interface") (eq (trimSuffix "/" $brandingAssetBaseUrl) "/connector-interface/assets/branding")) }}
 {{- $brandingAssetBaseUrl = printf "%s/assets/branding" $connectorInterfacePublicBasePath }}
 {{- end }}
 {{- $brandingAssets := (index $branding "assets") | default list }}
@@ -167,7 +167,7 @@ spec:
           {{ if or $brandingAssets $brandingAssetsConfigMapName }}
           volumeMounts:
             - name: branding-assets
-              mountPath: /usr/share/nginx/html/inesdata-connector-interface/assets/branding
+              mountPath: /usr/share/nginx/html/connector-interface/assets/branding
               readOnly: true
           {{ end }}
       {{ if or $brandingAssets $brandingAssetsConfigMapName }}

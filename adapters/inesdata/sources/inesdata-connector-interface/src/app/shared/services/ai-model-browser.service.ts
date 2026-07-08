@@ -473,7 +473,7 @@ export class AiModelBrowserService {
     }
 
     if (lower.includes('inesdatastore')) {
-      return 'PIONERA Store';
+      return 'STICS Store';
     }
 
     return normalized;

@@ -27,9 +27,9 @@ RUN NODE_OPTIONS=--max_old_space_size=1536 npm run build -- --configuration prod
 FROM nginx:alpine
 
 ENV NGINX_HOME=/usr/share/nginx
-RUN mkdir ${NGINX_HOME}/html/inesdata-connector-interface
-RUN chmod 755 ${NGINX_HOME}/html/inesdata-connector-interface
-ENV DOCUMENT_ROOT=${NGINX_HOME}/html/inesdata-connector-interface
+RUN mkdir ${NGINX_HOME}/html/connector-interface
+RUN chmod 755 ${NGINX_HOME}/html/connector-interface
+ENV DOCUMENT_ROOT=${NGINX_HOME}/html/connector-interface
 
 # copy static contents of project to nginx html
 COPY --from=builder /app/dist/inesdata-connector-interface ${DOCUMENT_ROOT}

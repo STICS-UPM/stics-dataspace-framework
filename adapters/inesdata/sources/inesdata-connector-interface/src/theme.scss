@@ -14,23 +14,23 @@ $theming-material-components-typography: mat.define-typography-config(
 );
 
 $custom-primary: mat.define-palette((
-  50: #e9f5f7,
-  100: #c7e5ea,
-  200: #9fd2da,
-  300: #73bec9,
-  400: #45a8b8,
-  500: #006f7f,
-  600: #005f6f,
-  700: #025b77,
-  800: #024b5f,
-  900: #14313f,
+  50: #F6FAF0,
+  100: #E8F4D9,
+  200: #D1E8B2,
+  300: #BBDD8C,
+  400: #A4D165,
+  500: #8DC63F,
+  600: #7CAE37,
+  700: #668F2D,
+  800: #527325,
+  900: #3B531A,
   contrast: (
     50: black,
     100: black,
     200: black,
     300: black,
     400: black,
-    500: white,
+    500: black,
     600: white,
     700: white,
     800: white,
@@ -49,7 +49,7 @@ $custom-theme: mat-light-theme((
   density: 0,
 ));
 
-$primary: #2fa0b5;
+$primary: #8DC63F;
 
 $border-radius: 8px;
 $grey-100: #101010;

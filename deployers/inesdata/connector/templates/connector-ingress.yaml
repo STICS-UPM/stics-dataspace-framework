@@ -51,7 +51,7 @@
       port:
         number: 19291
 - pathType: Prefix
-  path: /inesdata-connector-interface
+  path: /connector-interface
   backend:
     service:
       name: {{ $connectorName }}-interface

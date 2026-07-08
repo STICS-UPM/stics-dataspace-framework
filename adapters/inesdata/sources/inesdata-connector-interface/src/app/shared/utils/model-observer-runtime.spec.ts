@@ -18,7 +18,7 @@ describe('model observer runtime utilities', () => {
     };
 
     expect(resolveModelObserverApiBaseUrl(runtime, connectorLocation))
-      .toBe('http://conn-citycouncil-demo.dev.ds.dataspaceunit.upm/inesdata-connector-interface/model-observer');
+      .toBe('http://conn-citycouncil-demo.dev.ds.dataspaceunit.upm/connector-interface/model-observer');
 
     expect(resolveModelObserverApiBaseUrl(runtime, null))
       .toBe('http://backend-demo.dev.ds.dataspaceunit.upm/api/model-observer');
@@ -49,7 +49,7 @@ describe('model observer runtime utilities', () => {
     };
 
     expect(resolveModelObserverApiBaseUrl(runtime, connectorLocation))
-      .toBe('http://conn-citycouncil-demo.dev.ds.dataspaceunit.upm/inesdata-connector-interface/model-observer');
+      .toBe('http://conn-citycouncil-demo.dev.ds.dataspaceunit.upm/connector-interface/model-observer');
   });
 
   it('derives the backend host from the connector host when runtime config is incomplete', () => {
@@ -62,7 +62,7 @@ describe('model observer runtime utilities', () => {
     };
 
     expect(resolveModelObserverApiBaseUrl(runtime, connectorLocation))
-      .toBe('http://conn-citycouncil-demo.dev.ds.dataspaceunit.upm/inesdata-connector-interface/model-observer');
+      .toBe('http://conn-citycouncil-demo.dev.ds.dataspaceunit.upm/connector-interface/model-observer');
   });
 
   it('sanitizes oauth allowed urls and appends the derived backend origin once', () => {
