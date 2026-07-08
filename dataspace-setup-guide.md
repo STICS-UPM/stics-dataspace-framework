@@ -190,6 +190,7 @@ connector in a brand new dataspace or the fifth one in an existing one.
 | Level 2 succeeds but a public hostname (Keycloak, MinIO) does not respond | DNS for that hostname does not point at this VM, or the Ingress TLS secret does not yet cover it | `nslookup` the hostname; confirm the shared certificate's SAN list includes it (see `deployment-guide.md`, Step 11) |
 | `python3 main.py menu` asks for a topology every time | `--topology vm-distributed` was not passed and no topology was pre-selected | Pass `--topology vm-distributed` explicitly, or select it when prompted |
 | Level 4 (Kubernetes-managed connectors) fails or produces a broken/`CrashLoopBackOff` pod | This is the exact reason this project uses the manual Docker Compose process instead | Do not debug Level 4 for this project — go directly to `deployment-guide.md` |
+| A VM inherited from elsewhere already has k3s installed with its default Traefik ingress, instead of `ingress-nginx` | `K3S_INSTALL_EXEC=--disable=traefik` above only takes effect on a fresh k3s install | Traefik was found to handle dynamic TLS certificate updates unreliably; migrate it to `ingress-nginx` before relying on TLS on that VM — see `deployment-guide.md`, Step 10.1, for the exact (no-root-required) migration steps |
 
 ---
 

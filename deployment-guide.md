@@ -497,6 +497,40 @@ sudo iptables -t nat -L -n | grep "dpt:80 \|dpt:443 "
 A line reading `DNAT ... to:<pod-ip>` confirms it: **do not attempt to fix
 routing by editing a system-level nginx — the fix belongs in Kubernetes.**
 
+**If the cluster is running k3s's default Traefik ingress controller instead
+of `ingress-nginx`, migrate it before relying on TLS here.** Traefik (as
+shipped with k3s) was found to intermittently keep serving a stale TLS
+certificate for a host even after its Kubernetes `Secret` and `Ingress` were
+both updated correctly — confirmed reproducible across multiple clean
+deletions and recreations of the affected `Ingress` object. `ingress-nginx`,
+used everywhere else in this dataspace, does not have this problem. To
+migrate a cluster still running Traefik:
+
+```bash
+# No root/systemd access is required: k3s's Traefik is managed by a HelmChart
+# custom resource, and removing it cleanly uninstalls the underlying release.
+kubectl delete helmchart traefik -n kube-system
+
+# Install ingress-nginx with the same settings the framework itself uses:
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+  -n ingress-nginx --create-namespace \
+  --set controller.service.type=LoadBalancer \
+  --set controller.watchIngressWithoutClass=true \
+  --set controller.allowSnippetAnnotations=true \
+  --set controller.config.allow-snippet-annotations=true \
+  --set controller.config.annotations-risk-level=Critical \
+  --wait --timeout 180s
+
+# Update every existing Ingress on that cluster to match:
+kubectl patch ingress <name> -n <namespace> --type=json \
+  -p '[{"op":"replace","path":"/spec/ingressClassName","value":"nginx"}]'
+```
+
+If `helm`/`kubectl` are not on the target VM, both can be installed into the
+user's home directory without root (`~/bin/helm`, and `kubectl` is usually
+already present as part of the k3s install).
+
 ### 10.2 Create a Manual Service + Endpoints Pointing to the Connector
 
 This is a standard Kubernetes pattern for routing traffic to something that
@@ -554,7 +588,7 @@ metadata:
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-body-size: "800m"
 spec:
-  ingressClassName: nginx   # or "traefik", depending on the cluster's ingress controller — check with: kubectl get ingressclass
+  ingressClassName: nginx   # check the cluster's actual controller with: kubectl get ingressclass — see the note below if it says "traefik"
   tls:
     - hosts: ["<MY_PUBLIC_HOSTNAME>"]
       secretName: pionera-internal-ingress-tls
@@ -626,6 +660,81 @@ means **the `cacerts.jks` file on every existing connector, not just the new
 one, is now outdated**. It must be re-copied (Step 7) to all of them, and
 each connector restarted — otherwise previously working connectors will
 start failing with `PKIX path building failed`.
+
+### Step 11 (Alternative): A Publicly-Trusted Certificate Instead
+
+The shared self-signed certificate above is fine for internal-only traffic,
+but any real browser or external client connecting to a hostname that is
+**not** already sitting behind a reverse proxy with its own valid
+certificate (this project's UPM-hosted VMs are — check with
+`curl -v https://<hostname>/` and look at `issuer:`; it should say
+`Let's Encrypt`, not `Proyecto PIONERA`) will see a certificate warning.
+
+If the target VM has its own direct public IP (no reverse proxy in front of
+it), get it a real certificate with Certbot instead — no root access is
+needed if Certbot is installed into a user-owned virtualenv and the HTTP-01
+challenge is served through the same Kubernetes Ingress used for everything
+else:
+
+```bash
+python3 -m venv ~/certbot-venv && ~/certbot-venv/bin/pip install certbot
+
+mkdir -p ~/acme-challenge-webroot/.well-known/acme-challenge
+nohup python3 -m http.server 8899 --directory ~/acme-challenge-webroot &
+
+cat > ~/acme-auth-hook.sh << 'EOF'
+#!/bin/bash
+mkdir -p ~/acme-challenge-webroot/.well-known/acme-challenge
+echo -n "$CERTBOT_VALIDATION" > ~/acme-challenge-webroot/.well-known/acme-challenge/$CERTBOT_TOKEN
+sleep 2
+EOF
+chmod +x ~/acme-auth-hook.sh
+```
+
+Bridge `/.well-known/acme-challenge` on the relevant hostname's Ingress to a
+headless Service/Endpoints pointing at that webroot server on port `8899`
+(same pattern as Step 10.2), then request the certificate:
+
+```bash
+~/certbot-venv/bin/certbot certonly --manual --preferred-challenges http \
+  --manual-auth-hook ~/acme-auth-hook.sh \
+  --config-dir ~/letsencrypt/config --work-dir ~/letsencrypt/work --logs-dir ~/letsencrypt/logs \
+  --non-interactive --agree-tos --register-unsafely-without-email \
+  -d <MY_PUBLIC_HOSTNAME>
+```
+
+Deploy the result as a **separate** `Secret`, referenced by a **dedicated**
+`Ingress` object scoped to just that one hostname — do not add it as a
+second `tls[]` entry inside an Ingress object that already declares TLS for
+other hosts, and do not split one hostname's rules and its TLS declaration
+across two different Ingress objects. Both were tried during this project
+and produced exactly the same intermittent stale-certificate behavior
+described above, even under `ingress-nginx`:
+
+```bash
+kubectl create secret tls my-connector-letsencrypt-tls -n <SHORT_NAMESPACE> \
+  --cert=~/letsencrypt/config/live/<MY_PUBLIC_HOSTNAME>/fullchain.pem \
+  --key=~/letsencrypt/config/live/<MY_PUBLIC_HOSTNAME>/privkey.pem
+```
+
+Then point that one Ingress object's `tls[].secretName` at
+`my-connector-letsencrypt-tls` instead of `pionera-internal-ingress-tls`.
+
+Finally, set up renewal (the certificate expires after 90 days) with a cron
+job that also re-syncs the Kubernetes `Secret` on renewal:
+
+```bash
+cat > ~/acme-renew-deploy-hook.sh << 'EOF'
+#!/bin/bash
+kubectl create secret tls my-connector-letsencrypt-tls -n <SHORT_NAMESPACE> \
+  --cert=~/letsencrypt/config/live/<MY_PUBLIC_HOSTNAME>/fullchain.pem \
+  --key=~/letsencrypt/config/live/<MY_PUBLIC_HOSTNAME>/privkey.pem \
+  --dry-run=client -o yaml | kubectl apply -f -
+EOF
+chmod +x ~/acme-renew-deploy-hook.sh
+
+(crontab -l 2>/dev/null; echo "0 3 * * * ~/certbot-venv/bin/certbot renew --config-dir ~/letsencrypt/config --work-dir ~/letsencrypt/work --logs-dir ~/letsencrypt/logs --deploy-hook ~/acme-renew-deploy-hook.sh --non-interactive") | crontab -
+```
 
 ---
 
@@ -762,6 +871,8 @@ connector's assets.
 | The request does not appear in the `ingress-nginx-controller` logs at all | It is not reaching that cluster at all | The DNS record likely points to a different machine or gateway than expected |
 | `connector-interface` container exits immediately / nginx fails to start | An env var used in `docker/default.conf`'s `proxy_pass` (`STRAPI_URL`) was left empty | Set `STRAPI_URL` to any syntactically valid URL, even if the model-observer feature is unused |
 | The interface loads but every action returns 401/403, or an ever-present "Loading..." spinner on the MinIO console's object list | Unrelated to the connector itself — see the WebSocket note below | Confirm the public entry point (e.g. an external Apache/reverse proxy) forwards `Connection: Upgrade` / `Upgrade: websocket` headers for the affected path; a proxy negotiating HTTP/2 with the browser will otherwise strip them |
+| A browser or external client warns that the certificate is not trusted, even though `curl -k` works fine | The hostname is served directly by the cluster's self-signed certificate, with no publicly-trusted reverse proxy in front of it | See "Step 11 (Alternative)" above to issue it a real Let's Encrypt certificate |
+| A newly-added or newly-fixed TLS certificate keeps reverting to an old/self-signed one on the same hostname, despite a correct `Secret` and `Ingress` | The cluster is running k3s's default Traefik ingress controller, which was found to handle dynamic TLS updates unreliably | Migrate that cluster to `ingress-nginx` — see the note under Step 10.1 |
 
 ---
 
