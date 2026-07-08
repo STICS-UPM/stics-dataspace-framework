@@ -13,6 +13,22 @@ The main entry point is `main.py`. The framework is organized to work with
 different adapters and topologies without duplicating common validation
 logic.
 
+## STICS Dataspace Guides
+
+This fork hosts the STICS dataspace. If your goal is to operate or extend
+STICS specifically, rather than the framework in general, start here instead
+of the rest of this README:
+
+- [Setting up a new STICS dataspace from scratch](./dataspace-setup-guide.md) —
+  VM requirements and how to bring up the shared common services (Keycloak,
+  Vault, MinIO, PostgreSQL, registration service).
+- [Adding a new connector to a STICS dataspace](./deployment-guide.md) —
+  end-to-end steps to deploy a connector and, optionally, its web interface,
+  outside of Kubernetes.
+
+The rest of this document describes the underlying framework in general
+terms; it is not STICS-specific.
+
 ## Recommended Operating Environment
 
 The recommended way to run the framework from a workstation is Windows with

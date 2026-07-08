@@ -1,5 +1,11 @@
 # Documentación del Validation Environment
 
+> Para operar o extender el dataspace **STICS** específicamente, empieza por
+> [`dataspace-setup-guide.md`](../dataspace-setup-guide.md) y
+> [`deployment-guide.md`](../deployment-guide.md) en la raíz del repositorio.
+> Lo que sigue aquí es documentación general del framework, no específica de
+> STICS.
+
 Esta carpeta contiene la documentación pública y estable del framework. Está
 organizada para que una persona pueda empezar, operar, validar, extender o
 auditar el repositorio sin tener que leer todos los documentos numerados.
