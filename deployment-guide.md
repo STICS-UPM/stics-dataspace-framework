@@ -176,7 +176,11 @@ print("Credentials file:", credentials_path)
 - Creates an OAuth2 client in Keycloak so the connector can authenticate.
 - Generates a private/public key pair and stores it in Vault, used to sign
   transfer tokens.
-- Creates a bucket in MinIO with the appropriate access policy.
+- Creates a bucket in MinIO with an access policy scoped to that bucket only
+  (`stics-<CONNECTOR_NAME>`). If a connector provisioned before July 2026
+  still has a wildcard policy (`stics-*`, granting access to every other
+  connector's bucket), tighten it manually — see
+  `_edc_dataspace_transfer_policy_payload` in `adapters/edc/connectors.py`.
 - Registers the connector as a participant with the registration service
   (with a placeholder URL that must be corrected afterwards — see Step 9).
 - Writes the above (excluding the Vault keys themselves, which remain in
@@ -645,6 +649,104 @@ commands for that flow.
 
 ---
 
+## Step 13: Adding a Web Interface for the Connector
+
+Everything so far is API-only. To let someone browse assets, policies, and
+contracts without `curl`, deploy one of two UIs:
+
+- **`connector-interface`** (recommended). INESData's own Angular app,
+  source at `adapters/inesdata/sources/inesdata-connector-interface`. It
+  handles OAuth2 login itself (redirects to Keycloak, then calls the
+  Management API directly with the resulting token) and needs no extra
+  backend component.
+- **EDC dashboard**. The generic Eclipse EDC dashboard
+  (`adapters/edc/sources/dashboard` submodule), fronted by a custom Python
+  proxy (`adapters/edc/build/dashboard-proxy`) that this project adds so it
+  can support real login (`oidc-bff` mode) — the upstream dashboard has no
+  login flow of its own. Only worth the extra moving part if you specifically
+  need this dashboard's UI instead of `connector-interface`'s.
+
+This step covers `connector-interface`, since it is simpler to operate.
+
+### 13.1 Build the Image (once, reusable for every connector)
+
+The image is generic — only runtime environment variables differ per
+connector, so build it once and reuse it everywhere:
+
+```bash
+cd adapters/inesdata/sources/inesdata-connector-interface
+docker build -f docker/Dockerfile -t validation-environment/inesdata-connector-interface:latest .
+```
+
+Ship it to the target VM if it is not the one you built it on:
+
+```bash
+docker save validation-environment/inesdata-connector-interface:latest | ssh user@TARGET_VM docker load
+```
+
+### 13.2 `docker-compose.yml` and `env.list`
+
+```yaml
+services:
+  my-connector-interface:
+    image: validation-environment/inesdata-connector-interface:latest
+    container_name: my-connector-interface
+    env_file:
+      - env.list
+    ports:
+      - "8093:8080"
+    restart: unless-stopped
+```
+
+```text
+MANAGEMENT_API_URL=https://<MY_PUBLIC_HOSTNAME>/management
+CATALOG_URL=https://<MY_PUBLIC_HOSTNAME>/management
+SHARED_URL=https://<MY_PUBLIC_HOSTNAME>/shared
+PARTICIPANT_ID=<CONNECTOR_NAME>
+STRAPI_URL=http://localhost:1337
+APP_THEME=theme-1
+OAUTH2_ISSUER=https://auth.dev.linkeddata.es/realms/stics
+OAUTH2_REDIRECT_PATH=/connector-interface/
+OAUTH2_CLIENT_ID=dataspace-users
+OAUTH2_SCOPE=openid profile email
+OAUTH2_RESPONSE_TYPE=code
+OAUTH2_SHOW_DEBUG_INFO=false
+OAUTH2_ALLOWED_URLS=https://<MY_PUBLIC_HOSTNAME>
+```
+
+`STORAGE_ACCOUNT`, `ONTOLOGY_URL`, `ONTOLOGY_ADMIN_USER`, and
+`ONTOLOGY_ADMIN_PASSWORD` can stay empty unless the connector has those
+features configured. `STRAPI_URL` must still be a syntactically valid URL
+even if unused — an empty value produces invalid nginx configuration and the
+container fails to start.
+
+### 13.3 Extend the Bridge Created in Step 10
+
+Add one more port and Ingress path to the same Service/Endpoints/Ingress
+already used by the connector itself:
+
+- Service/Endpoints: add a port (e.g. `8093`) pointing at the interface
+  container's published port on the VM.
+- Ingress: add `{ path: /connector-interface, pathType: Prefix, backend: { service: { name: my-connector-external, port: { number: 8093 } } } }`.
+
+The path is `/connector-interface` (not `/inesdata-connector-interface` —
+renamed in July 2026); it is baked into the built image, so nothing else
+needs to reference it.
+
+### 13.4 Verify
+
+```bash
+curl -k https://<MY_PUBLIC_HOSTNAME>/connector-interface/
+# Expected: HTTP 200
+```
+
+Then open it in a browser: it should redirect to the Keycloak login page,
+and after logging in with the connector's own credentials
+(`user-<CONNECTOR_NAME>`, from `credentials.json`), it should list the
+connector's assets.
+
+---
+
 ## Troubleshooting Reference
 
 | Symptom | Meaning | Resolution |
@@ -658,6 +760,8 @@ commands for that flow.
 | `curl` returns `404 page not found` with no `Server:` header | The request reached Kubernetes, but no Ingress rule matches (or it reached the wrong cluster) | Revisit Step 10: confirm where the DNS record points, and that the Ingress was created in the correct cluster |
 | `curl` returns `503` with a `Server: nginx/...` header | Routing is correct, but the Service has no healthy backend | Check the Endpoints object (correct IP/ports, and that the process is actually listening there) |
 | The request does not appear in the `ingress-nginx-controller` logs at all | It is not reaching that cluster at all | The DNS record likely points to a different machine or gateway than expected |
+| `connector-interface` container exits immediately / nginx fails to start | An env var used in `docker/default.conf`'s `proxy_pass` (`STRAPI_URL`) was left empty | Set `STRAPI_URL` to any syntactically valid URL, even if the model-observer feature is unused |
+| The interface loads but every action returns 401/403, or an ever-present "Loading..." spinner on the MinIO console's object list | Unrelated to the connector itself — see the WebSocket note below | Confirm the public entry point (e.g. an external Apache/reverse proxy) forwards `Connection: Upgrade` / `Upgrade: websocket` headers for the affected path; a proxy negotiating HTTP/2 with the browser will otherwise strip them |
 
 ---
 

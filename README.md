@@ -1,450 +1,148 @@
 # Validation-Environment
 
-Validation-Environment es un framework para crear entornos reproducibles de
-validación de espacios de datos PIONERA. Se utiliza para desplegar dataspaces,
-validar conectores, ejecutar pruebas funcionales, recoger métricas y generar
-evidencias experimentales de forma trazable.
+Validation-Environment is a framework for building reproducible validation
+environments for PIONERA dataspaces. It deploys dataspaces, validates
+connectors, runs functional tests, collects metrics, and produces traceable
+experimental evidence.
 
 ![PIONERA local validation environment](./docs/pionera_local_validation_environment.png)
 
-_Referencia inicial de la topología `local` del framework._
+_Reference of the framework's `local` topology._
 
-El punto de entrada principal es `main.py`. El framework está organizado para
-trabajar con distintos adapters y topologías sin duplicar la lógica común de
-validación.
+The main entry point is `main.py`. The framework is organized to work with
+different adapters and topologies without duplicating common validation
+logic.
 
-## Entorno Recomendado de Operación
+## Recommended Operating Environment
 
-La vía recomendada para usar el framework desde una estación de trabajo es
-Windows con WSL. En ese modo, WSL ejecuta el CLI, Docker Desktop aporta el motor
-de contenedores para la topología `local`, y el framework gestiona los accesos
-SSH, kubeconfigs y túneles necesarios para operar topologías VM desde la misma
-terminal.
+The recommended way to run the framework from a workstation is Windows with
+WSL: WSL runs the CLI, Docker Desktop provides the container engine for the
+`local` topology, and the framework manages the SSH access, kubeconfigs, and
+tunnels needed to operate VM topologies from the same terminal.
 
-El framework también soporta ejecución directa dentro de una VM cuando el
-operador decide instalarlo allí, pero la ruta principal de operación y
-depuración documentada para estaciones de trabajo es WSL sobre Windows.
+The framework also supports running directly inside a VM, but WSL on Windows
+remains the primary documented path for operation and debugging.
 
-## Estado Consolidado del Proyecto
+## Project Status
 
-El repositorio consolida el framework como herramienta de despliegue, validación
-y generación de evidencias. Incluye:
+The repository consolidates the framework as a deployment, validation, and
+evidence-generation tool. It includes:
 
-- ejecución por niveles `1-6`;
-- adapters `inesdata` y `edc`;
-- topologías `local`, `vm-single` y `vm-distributed`;
-- validación con Newman, Playwright, Kafka opcional y componentes;
-- generación de evidencias bajo `experiments/`;
-- documentación pública en `docs/`.
+- level-based execution (`1-6`)
+- `inesdata` and `edc` adapters
+- `local`, `vm-single`, and `vm-distributed` topologies
+- validation via Newman, Playwright, optional Kafka, and components
+- evidence generation under `experiments/`
+- public documentation in `docs/`
 
-El estado detallado se mantiene en
-[docs/30_framework_current_state.md](./docs/30_framework_current_state.md).
+Detailed status: [docs/30_framework_current_state.md](./docs/30_framework_current_state.md).
 
-### Alcance de Cierre
-
-El framework conserva soporte de código para los adapters y topologías
-documentados, pero la evidencia de cierre distingue entre capacidad
-implementada y validación oficial reproducida:
+### Closure Scope
 
 | Adapter | `local` | `vm-single` | `vm-distributed` |
 | --- | --- | --- | --- |
-| `inesdata` | Implementado y usado como ruta local de desarrollo/validación | Implementado y validado como entorno VM de referencia | Implementado y validado como entorno distribuido de referencia |
-| `edc` | Implementado; pasó validaciones antes de la conciliación reciente de topologías y debe revalidarse antes de usarlo como evidencia actual | Implementado; no se ha validado oficialmente después de la conciliación reciente | Implementado y probado oficialmente como ruta de cierre para EDC |
+| `inesdata` | Implemented, used as the local dev/validation path | Implemented and validated as the reference VM environment | Implemented and validated as the reference distributed environment |
+| `edc` | Implemented; passed validation before the recent topology reconciliation and should be revalidated before use as current evidence | Implemented; not officially validated after the recent reconciliation | Implemented and officially tested as the closure path for EDC |
 
-Por tanto, para evidencias de cierre del adapter `edc`, usa
-`vm-distributed`. Las rutas `local` y `vm-single` de EDC permanecen disponibles
-para desarrollo y futuras revalidaciones, pero no se presentan como resultado
-oficial actualizado en esta versión de cierre.
+For `edc` closure evidence, use `vm-distributed`. The `local` and `vm-single`
+EDC paths remain available for development and future revalidation, but are
+not presented as up-to-date official results in this closure version.
 
-## Índice
+## Main Features
 
-| Sección | Qué contiene |
-| --- | --- |
-| [Entorno recomendado de operación](#entorno-recomendado-de-operación) | Uso recomendado desde Windows con WSL |
-| [Funcionalidades principales](#funcionalidades-principales) | Capacidades del framework |
-| [Adapters](#adapters) | Implementaciones soportadas |
-| [Topologías](#topologías) | `local`, `vm-single` y `vm-distributed` |
-| [Instalación y compilación](#instalación-y-compilación) | Clonado, bootstrap y entorno Python |
-| [Configuración](#configuración) | Ficheros `.config`, overlays y variables `PIONERA_*` |
-| [Guía de uso con ejemplos](#guía-de-uso-con-ejemplos) | Menú, CLI, niveles y ejemplos de comandos |
-| [Requisitos técnicos y dependencias](#requisitos-técnicos-y-dependencias) | Herramientas necesarias |
-| [Validación](#validación) | `Level 6`, Newman, Playwright, Kafka y componentes |
-| [Pruebas y cómo ejecutarlas](#pruebas-y-cómo-ejecutarlas) | Tests unitarios del framework |
-| [Estructura del repositorio](#estructura-del-repositorio) | Carpetas principales |
-| [Documentación](#documentación) | Rutas de lectura en `docs/` |
-| [Cómo contribuir](#cómo-contribuir) | Issues, forks y pull requests |
-| [Agradecimientos y financiación](#agradecimientos-y-fuentes-de-financiación) | Financiación del proyecto |
-| [Autores y contacto](#autores-y-contacto) | Contacto público del proyecto |
-| [Licencia](#licencia) | Licencia Apache 2.0 |
-
-## Funcionalidades Principales
-
-- desplegar un dataspace por niveles;
-- seleccionar el adapter de conectores: `inesdata` o `edc`;
-- preparar servicios comunes como Keycloak, MinIO, PostgreSQL y Vault;
-- desplegar conectores provider/consumer;
-- desplegar componentes opcionales como `ontology-hub` y `ai-model-hub` cuando el adapter lo soporte;
-- sincronizar entradas de `hosts` de forma planificada e idempotente;
-- ejecutar validaciones API con Newman;
-- ejecutar validaciones UI con Playwright;
-- comprobar transferencias y almacenamiento en MinIO;
-- recoger métricas de control plane y benchmarks Kafka opcionales;
-- persistir resultados en `experiments/`;
-- producir reportes y artefactos de validación.
+- deploy a dataspace level by level
+- select the connector adapter: `inesdata` or `edc`
+- provision common services (Keycloak, MinIO, PostgreSQL, Vault)
+- deploy provider/consumer connectors
+- deploy optional components (`ontology-hub`, `ai-model-hub`) when supported
+  by the adapter
+- plan/apply `hosts` entries idempotently
+- run API validation with Newman and UI validation with Playwright
+- check MinIO transfers and storage
+- collect control-plane metrics and optional Kafka benchmarks
+- persist results under `experiments/`
 
 ## Adapters
 
-| Adapter | Uso |
+| Adapter | Use |
 | --- | --- |
-| `inesdata` | Despliegue y validación con conectores INESData y su portal. |
-| `edc` | Despliegue y validación con conectores EDC genéricos; la evidencia oficial de cierre se limita a `vm-distributed`. |
+| `inesdata` | Deployment and validation with INESData connectors and its portal. |
+| `edc` | Deployment and validation with generic EDC connectors; official closure evidence is limited to `vm-distributed`. |
 
-Cada adapter tiene su propio deployer:
+Each adapter has its own deployer: `deployers/inesdata/`, `deployers/edc/`.
+Shared artifacts live in `deployers/shared/` and `deployers/infrastructure/`.
 
-```text
-deployers/inesdata/
-deployers/edc/
-```
+## Topologies
 
-Los artefactos compartidos viven en:
+`local`, `vm-single`, `vm-distributed`.
 
-```text
-deployers/shared/
-deployers/infrastructure/
-```
+- `local`: development/validation on the operator machine.
+- `vm-single`: single VM with a framework-managed Kubernetes cluster.
+- `vm-distributed`: common services, connectors, and components split by
+  infrastructure role, configured via local profiles and SSH/HTTP/Kubernetes
+  preflight checks.
 
-## Topologías
+All three share the same level, adapter, and namespace model. Real domain,
+IP, SSH, kubeconfig, and credential values stay in local, git-ignored files
+or environment variables — never in versioned documentation.
 
-El framework reconoce tres topologías canónicas:
+An implemented topology does not imply official closure evidence for every
+adapter; check the closure table above before running an audit.
 
-```text
-local
-vm-single
-vm-distributed
-```
-
-`local` es la ruta de desarrollo y validación en la máquina operadora.
-`vm-single` despliega el entorno en una VM con Kubernetes gestionado por el
-framework. `vm-distributed` separa servicios comunes, conectores y componentes
-por roles de infraestructura y se configura mediante perfiles locales,
-preflight SSH/HTTP/Kubernetes y URLs públicas parametrizables.
-
-Las tres topologías comparten el mismo modelo de niveles, adapters y namespaces
-funcionales. Los valores reales de dominio, IP, SSH, kubeconfig y credenciales
-permanecen en ficheros locales ignorados por Git o en variables de entorno, no
-en la documentación versionada.
-
-El hecho de que una topología esté implementada no implica que todos los
-adapters tengan evidencia oficial de cierre en esa topología. Consulta la matriz
-de alcance antes de preparar una ejecución para auditoría.
-
-## Instalación y Compilación
-
-1. Clona el repositorio:
+## Installation
 
 ```bash
 git clone https://github.com/ProyectoPIONERA/Validation-Environment.git
 cd Validation-Environment
 git submodule update --init --recursive
-```
-
-También puedes clonar todo en un solo paso con
-`git clone --recurse-submodules`. El submódulo del dashboard EDC apunta al
-repositorio oficial `ProyectoPIONERA/EDC-asset-filter-dashboard` para conservar
-su autoría y fijar una versión reproducible.
-
-2. Prepara dependencias del framework:
-
-```bash
-node --version
-npm --version
-java -version
 bash scripts/bootstrap_framework.sh
-```
-
-En Linux/WSL, este comando instala también las dependencias del sistema que
-Playwright necesita para arrancar los navegadores. Si el entorno no permite
-instalar paquetes del sistema, usa `--without-system-deps`.
-
-`npm` es obligatorio porque las validaciones usan Newman y Playwright, también
-en topología `vm-single`. Java 17+ es obligatorio para construir las imágenes
-locales de conectores EDC/INESData que después se cargan en Minikube. En una VM
-Ubuntu nueva, el bootstrap instala Node.js con `npm` y OpenJDK 17
-automáticamente mediante `apt-get` cuando faltan. Si usas `--without-system-deps`
-o tu entorno no permite instalar paquetes del sistema, instálalos antes del
-bootstrap:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y nodejs npm openjdk-17-jdk
-```
-
-El bootstrap también crea automáticamente los ficheros locales `deployer.config`
-y los overlays `deployers/infrastructure/topologies/*.config` a partir de sus
-`.example` cuando aún no existen. No los sobrescribe si ya estaban creados.
-
-3. Activa el entorno Python raíz:
-
-```bash
 source .venv/bin/activate
+python3 main.py menu
 ```
 
-4. Para una ejecución local básica no tienes que crear configuración
-manualmente. Revisa los ficheros generados solo si necesitas ajustar
-credenciales, dominios, dataspaces o componentes:
+`bootstrap_framework.sh` installs Python/Node/Playwright dependencies and, on
+Linux/WSL, the system packages Playwright needs. Node.js/npm are required for
+Newman and Playwright; Java 17+ is required to build local EDC/INESData
+connector images. Use `--without-system-deps` if your environment can't
+install system packages.
 
-```text
-deployers/infrastructure/deployer.config
-deployers/infrastructure/topologies/local.config
-deployers/infrastructure/topologies/vm-single.config
-deployers/infrastructure/topologies/vm-distributed.config
-deployers/inesdata/deployer.config
-deployers/edc/deployer.config
+The bootstrap also creates `deployer.config` and topology overlay files from
+their `.example` templates the first time, without overwriting existing
+ones.
+
+Full walkthrough, including the `vm-single`-on-a-VM quickstart:
+[docs/32_getting_started.md](./docs/32_getting_started.md).
+
+## Configuration
+
+- Common infrastructure: `deployers/infrastructure/deployer.config`
+- Per-adapter: `deployers/inesdata/deployer.config`, `deployers/edc/deployer.config`
+- Use the `.example` files as templates.
+
+`PUBLIC_HOSTNAME` in `deployers/infrastructure/deployer.config` sets the
+environment's public hostname; `bootstrap.py` uses it to configure
+Keycloak's `frontendUrl` so JWT tokens carry the correct issuer for external
+HTTPS access.
+
+Values can also be overridden with `PIONERA_*` environment variables, e.g.:
+
+```bash
+PIONERA_DS_1_NAME=demo PIONERA_DS_1_NAMESPACE=demo python3 main.py inesdata hosts --topology local --dry-run
 ```
 
-5. Abre el menú guiado:
+Local `hosts` file management, adapter coexistence rules, and VM-specific
+configuration: [docs/32_getting_started.md](./docs/32_getting_started.md) and
+[docs/35_deployers_and_topologies.md](./docs/35_deployers_and_topologies.md).
+
+## Usage
+
+Open the guided menu:
 
 ```bash
 python3 main.py menu
 ```
 
-También puedes ejecutar `python3 main.py` en una terminal interactiva; antes de
-mostrar el menú, el framework preguntará la topología activa. Si ya sabes la
-topología, pásala explícitamente con `--topology` para entrar directo.
-
-El menú guiado es la entrada recomendada para usuarios que quieran ejecutar los
-niveles de despliegue sin memorizar comandos.
-
-## Configuración
-
-La configuración común de infraestructura vive en:
-
-```text
-deployers/infrastructure/deployer.config
-```
-
-La configuración específica de cada adapter vive en:
-
-```text
-deployers/inesdata/deployer.config
-deployers/edc/deployer.config
-```
-
-Usa los ficheros `.example` como plantilla cuando existan:
-
-```text
-deployers/infrastructure/deployer.config.example
-deployers/inesdata/deployer.config.example
-```
-
-La variable `PUBLIC_HOSTNAME` en `deployers/infrastructure/deployer.config` controla
-el hostname público del entorno. Cuando está configurada, `bootstrap.py` la usa
-automáticamente para establecer el `frontendUrl` de Keycloak, lo que asegura que
-los tokens JWT contengan el issuer correcto para acceso externo vía HTTPS:
-
-```text
-PUBLIC_HOSTNAME=<your-public-hostname>
-```
-
-También puedes sobreescribir valores con variables `PIONERA_*`, por ejemplo:
-
-```bash
-PIONERA_DS_1_NAME=demo \
-PIONERA_DS_1_NAMESPACE=demo \
-PIONERA_DS_1_CONNECTORS=citycouncil,company \
-python3 main.py inesdata hosts --topology local --dry-run
-```
-
-### Inicio Rápido Para `vm-single` En Una VM
-
-Si vas a ejecutar el framework dentro de una VM Ubuntu y tu objetivo es
-`vm-single`, empieza ajustando la base común y el overlay de topología con una
-separación explícita:
-
-```bash
-cd ~/Validation-Environment
-bash scripts/bootstrap_framework.sh --skip-root-node --skip-ui-node --skip-playwright
-nano deployers/infrastructure/deployer.config
-nano deployers/infrastructure/topologies/vm-single.config
-```
-
-Si el fichero local ya existe, el bootstrap lo reutiliza y no lo sobrescribe.
-Para el overlay `vm-single`, el bloque mínimo esperado es:
-
-```ini
-VM_EXTERNAL_IP=192.0.2.10
-INGRESS_EXTERNAL_IP=192.0.2.10
-```
-
-Notas prácticas:
-
-- usa una IP real de tu VM o del ingress publicado por tu cluster; aquí se usa
-  `192.0.2.10` solo como ejemplo documental;
-- si entras por el menú con `--topology vm-single` y faltan las claves
-  `VM_EXTERNAL_IP`/`INGRESS_EXTERNAL_IP` en
-  `deployers/infrastructure/topologies/vm-single.config`,
-  el framework detecta una dirección candidata de la VM y ofrece escribirla
-  automáticamente;
-- si mantienes claves de topología dentro de
-  `deployers/infrastructure/deployer.config`, el CLI ya avisa con un warning de
-  migración y te indica el overlay correcto;
-- después de guardar el fichero, puedes comprobar los valores activos con:
-
-```bash
-grep -E '^(VM_EXTERNAL_IP|INGRESS_EXTERNAL_IP)=' \
-  deployers/infrastructure/topologies/vm-single.config
-```
-
-- antes de arrancar `Level 1`, obtén la IP principal de la VM con:
-
-```bash
-hostname -I
-```
-
-- usa esa IP de la VM solo como valor provisional inicial en
-  `VM_EXTERNAL_IP` e `INGRESS_EXTERNAL_IP`;
-- en `vm-single`, `Level 1` prepara el clúster k3s gestionado en la VM para
-  asegurar una configuración reproducible;
-- después de `Level 1`, comprueba que el clúster k3s y el Ingress están
-  disponibles con:
-
-```bash
-kubectl get nodes
-kubectl get ingress -A
-```
-
-- regla práctica: usa como valor final la IP/DNS público que termina en la VM o
-  en el proxy externo que publica el Ingress;
-- si la IP/DNS publicada cambia, actualiza esas claves en
-  `deployers/infrastructure/topologies/vm-single.config` o exporta los overrides
-  `PIONERA_VM_EXTERNAL_IP` y `PIONERA_INGRESS_EXTERNAL_IP` antes de `Levels 3-6`;
-- para `vm-single`, entra directamente por:
-
-```bash
-python3 main.py menu --topology vm-single
-```
-
-## Hosts Locales
-
-El framework planifica o aplica entradas en el fichero `hosts` del sistema. Por
-defecto, la operación solo planifica.
-
-En topología `local`, el camino canónico sigue siendo resolver los hostnames
-públicos hacia `127.0.0.1` y mantener `minikube tunnel` activo. Si un entorno
-necesita una dirección distinta de loopback, declárala explícitamente en
-`LOCAL_HOSTS_ADDRESS` y `LOCAL_INGRESS_EXTERNAL_IP` dentro de
-`deployers/infrastructure/topologies/local.config`.
-
-Para despliegues locales completos con WSL + Docker, una configuración
-prudente de Minikube en ese mismo overlay es:
-
-```ini
-PG_HOST=localhost
-VT_URL=http://localhost:8200
-LOCAL_HOSTS_ADDRESS=
-LOCAL_INGRESS_EXTERNAL_IP=
-LOCAL_RESOURCE_PROFILE=single-adapter
-MINIKUBE_DRIVER=docker
-MINIKUBE_CPUS=10
-MINIKUBE_MEMORY=14336
-MINIKUBE_PROFILE=minikube
-```
-
-Regla práctica:
-
-- `10 CPU / 14336 MB` es el punto de partida recomendado para validar un
-  adapter local cada vez;
-- no configures `MINIKUBE_MEMORY` por encima de la memoria disponible en Docker
-  Desktop;
-- para mantener `inesdata` y `edc` coexistiendo en local, usa el baseline
-  documentado de `10 CPU / 18432 MB` y
-  `LOCAL_RESOURCE_PROFILE=coexistence` si Docker Desktop tiene margen
-  suficiente;
-- si Docker Desktop no alcanza ese baseline, `Level 1` avisa que el entorno
-  queda en modo de un adapter local y `Level 3/4/5` bloquean la instalación del
-  segundo adapter mientras el primero siga activo; si la ejecución es
-  interactiva, el framework muestra un plan de cambio y elimina, tras
-  confirmación exacta, solo los recursos locales del adapter anterior;
-- en ejecución no interactiva, el cambio de adapter debe autorizarse de forma
-  explícita con `PIONERA_LOCAL_ADAPTER_SWITCH_CONFIRM="SWITCH TO EDC"` o
-  `PIONERA_LOCAL_ADAPTER_SWITCH_CONFIRM="SWITCH TO INESDATA"`, según el adapter
-  destino;
-- si `Level 6` detecta ambos adapters en local con memoria efectiva inferior a
-  ese baseline, bloquea la validación antes de contaminar resultados con
-  `NodeNotReady`;
-- errores como `401`, `500` o crashes internos de una aplicación siguen
-  apuntando primero a bugs funcionales o de integración, no a falta de CPU.
-
-Planificación:
-
-```bash
-python3 main.py inesdata hosts --topology local --dry-run
-python3 main.py edc hosts --topology local --dry-run
-python3 main.py inesdata local-repair --topology local
-python3 main.py inesdata local-repair --topology local --recover-connectors
-```
-
-Aplicación explícita:
-
-```bash
-PIONERA_SYNC_HOSTS=true \
-PIONERA_HOSTS_FILE=/etc/hosts \
-python3 main.py edc hosts --topology local
-```
-
-En WSL, el fichero `hosts` de Windows suele estar en:
-
-```text
-/mnt/c/Windows/System32/drivers/etc/hosts
-```
-
-La sincronización es idempotente: si una entrada ya existe, el framework la
-omite en lugar de duplicarla.
-
-En el menú interactivo, cuando el adapter activo expone hostnames públicos, los
-niveles `3-6` hacen una comprobación previa en topología `local`. Si faltan
-entradas, el framework muestra cuáles son y pregunta si quieres aplicar solo las
-entradas ausentes antes de continuar.
-
-Para `Level 6` en topología `local`, la validación completa sigue dependiendo de
-hostnames públicos accesibles por Ingress. Mantén `minikube tunnel` activo y
-asegúrate de que `hosts` resuelve correctamente Keycloak, MinIO,
-`registration-service` y los conectores. Los mecanismos internos de
-`port-forward` que el framework reserva para validaciones Kafka concretas no
-sustituyen ese requisito del flujo completo.
-
-## Coexistencia de Adapters
-
-Los adapters comparten los servicios comunes desplegados en `common-srvs`
-(`Keycloak`, `MinIO`, `PostgreSQL`, `Vault`) cuando se ejecutan sobre el mismo
-cluster, pero cada dataspace debe tener un nombre y namespace propios.
-
-Por ejemplo, es válido desplegar:
-
-```text
-inesdata -> DS_1_NAME=demo, DS_1_NAMESPACE=demo
-edc      -> DS_1_NAME=demoedc, DS_1_NAMESPACE=demoedc
-```
-
-No se debe reutilizar el mismo `DS_1_NAME` o `DS_1_NAMESPACE` para dos adapters
-distintos en el mismo cluster local, porque eso provoca colisiones de namespace,
-registration-service, bases de datos, usuarios y artefactos generados. Usa
-nombres similares para conectores solo cuando el dataspace resultante produce
-hostnames distintos.
-
-## Guía de Uso con Ejemplos
-
-### Menú y Niveles
-
-El menú se abre con:
-
-```bash
-python3 main.py menu
-```
-
-Niveles disponibles:
-
-| Nivel | Acción |
+| Level | Action |
 | --- | --- |
 | `1` | Setup Cluster |
 | `2` | Deploy Common Services |
@@ -453,518 +151,106 @@ Niveles disponibles:
 | `5` | Deploy Components |
 | `6` | Run Validation Tests |
 
-La opción `0` ejecuta los niveles `1` a `6` de forma secuencial.
+Option `0` runs levels `1`-`6` sequentially.
 
-Opciones operativas del menú:
-
-| Opción | Uso |
+| Option | Use |
 | --- | --- |
-| `S` | Preseleccionar adapter para la sesión actual del menú. |
-| `P` | Previsualizar el plan de despliegue. |
-| `H` | Planificar o aplicar entradas de `hosts`, mostrando hostnames concretos y el motivo si el sync queda omitido. |
-| `U` | Mostrar URLs de acceso derivadas de la configuración activa. |
-| `M` | Ejecutar métricas o benchmarks independientes. |
-| `X` | Recrear el dataspace seleccionado. |
-| `B/D/R/C/L` | Accesos de desarrollo: bootstrap, doctor, recovery, cleanup e imágenes locales. |
-| `I/O/A` | Validaciones UI de INESData, Ontology Hub y AI Model Hub. |
-| `?` | Mostrar ayuda. |
-| `Q` | Salir. |
+| `S` | Preselect the adapter for the current menu session |
+| `P` | Preview the deployment plan |
+| `H` | Plan/apply `hosts` entries |
+| `U` | Show access URLs for the active configuration |
+| `M` | Run standalone metrics/benchmarks |
+| `X` | Recreate the selected dataspace |
+| `B/D/R/C/L` | Dev shortcuts: bootstrap, doctor, recovery, cleanup, local images |
+| `I/O/A` | UI validation for INESData, Ontology Hub, AI Model Hub |
+| `?` / `Q` | Help / quit |
 
-Al seleccionar `edc`, el menú recuerda revisar `H` antes de ejecutar niveles que
-dependen de hostnames públicos.
-
-La opción `U` muestra las URLs de acceso en formato legible e incluye endpoints
-compartidos como `Keycloak`, `MinIO API`, `MinIO Console`,
-`registration-service`, URLs de conectores/componentes y el `bucket` MinIO de
-cada conector cuando aplican en la configuración activa.
-
-Si no preseleccionas adapter con `S`, el menú lo pedirá automáticamente cuando
-una operación de `Level 3` a `Level 6` lo necesite.
-
-La referencia completa está en
-[docs/33_menu_reference.md](./docs/33_menu_reference.md).
-
-## Validación Local y Acceso Público
-
-En topología `local`, el framework sigue un comportamiento coherente con un
-entorno más parecido a producción:
-
-- navegador, Playwright y validación completa de `Level 6` usan hostnames
-  públicos vía Ingress;
-- la comunicación interna entre conectores usa nombres internos de Kubernetes;
-- `port-forward` queda reservado como mecanismo local de soporte o diagnóstico.
-
-Esto significa que `Level 6` completo no debe considerarse correcto si solo
-funciona mediante `port-forward`. Primero deben estar operativos `hosts`,
-Ingress y `minikube tunnel`.
-
-## Requisitos Técnicos y Dependencias
-
-Para ejecución local, el framework espera:
-
-| Bloque | Herramientas principales |
-| --- | --- |
-| Base local | Python 3.10+, Git, Docker |
-| Kubernetes local | Minikube, Helm, `kubectl` |
-| Validación | Node.js, `npm`, Newman, Playwright |
-| Builds de conectores | Java 17+ / OpenJDK 17 |
-| Operación | cliente PostgreSQL `psql`, permisos para `hosts` cuando aplique |
-
-Verificación rápida:
-
-```bash
-python3 --version
-git --version
-docker --version
-minikube version
-helm version
-kubectl version --client=true
-psql --version
-node --version
-npm --version
-npx newman -v
-```
-
-El bootstrap del framework prepara `.venv`, dependencias Python, dependencias
-Node.js, navegadores Playwright y, en Linux/WSL, las dependencias del sistema
-necesarias para ejecutar esos navegadores:
-
-```bash
-bash scripts/bootstrap_framework.sh
-```
-
-El bootstrap requiere Python `3.10+`. Si `python3` apunta a una versión más
-antigua pero la máquina ya tiene otra versión compatible instalada, el script usa
-automáticamente la primera opción disponible entre `python3.10`, `python3.11`,
-`python3.12` y `python3.13`. También se fuerza explícitamente con:
-
-```bash
-PIONERA_PYTHON_BIN=python3.11 bash scripts/bootstrap_framework.sh
-```
-
-Si un entorno no permite instalar paquetes del sistema desde el bootstrap, usa
-`bash scripts/bootstrap_framework.sh --without-system-deps`.
-
-## Minikube Tunnel
-
-En despliegues locales completos, mantén `minikube tunnel` abierto en otra
-terminal mientras ejecutas los niveles y la validación:
-
-```bash
-minikube tunnel
-```
-
-Cuando `minikube tunnel` solicite contraseña, la consola no siempre muestra un
-indicador visible. Introduce la contraseña y pulsa `Enter`.
-
-Los accesos funcionales locales deben ejercitar los hostnames publicados por
-Ingress. El framework reserva `port-forward` para apoyo interno, diagnósticos o
-clientes host-side, pero no lo usa como sustituto de los endpoints de navegador
-o API. El fallback de `port-forward` para conectores está desactivado por
-defecto y solo debe habilitarse temporalmente con
-`PIONERA_ALLOW_CONNECTOR_PORT_FORWARD_FALLBACK=true`.
-
-PostgreSQL es una excepción operativa interna: el servicio PostgreSQL del
-cluster sigue usando el puerto `5432`. En topología `local`, el framework usa
-`PG_PORT=5432` como puerto local preferente para `psql` y Python.
-Si ese puerto local está ocupado por un `kubectl port-forward` antiguo del
-framework, lo libera y lo recrea como
-`127.0.0.1:5432 -> common-srvs-postgresql:5432`. Si el puerto pertenece a
-Windows, WSL u otro proyecto, el framework no mata ese proceso: falla con un
-diagnóstico para que el usuario libere el puerto manualmente.
-
-`Level 6` comprueba esos hostnames antes de ejecutar la limpieza y las suites de
-validación. Si vas a validar conectores ya desplegados, ejecuta `Level 6` desde
-el mismo checkout que ejecutó `Level 4`, porque las credenciales locales
-generadas para Keycloak, MinIO y conectores viven bajo
-`deployers/<adapter>/deployments/`.
-
-## Acceso Externo (entorno VM/PIONERA)
-
-En entornos desplegados en VM, el acceso desde navegador se publica mediante el
-dominio o proxy externo configurado para la VM. El framework soporta
-`PUBLIC_HOSTNAME` para ajustar el `frontendUrl` de Keycloak y mantiene scripts
-operativos para preparar el acceso público vía nginx en la VM:
-
-```bash
-cd deployers/inesdata/scripts
-bash setup-nginx-proxy.sh [cluster_ip] [vm_ip] [public_hostname] [internal_domain]
-```
-
-Ejemplo:
-
-```bash
-bash setup-nginx-proxy.sh 192.168.49.2 <vm_ip> <public_hostname> <internal_domain>
-```
-
-El script:
-
-1. instala nginx e iptables persistentes en la VM;
-2. configura reglas de redirección hacia el clúster;
-3. ajusta el acceso a UIs de conectores, `/auth/` y `/s3-console/`;
-4. ayuda a publicar un hostname externo coherente para browser, Keycloak y MinIO.
-
-La arquitectura y las URLs de referencia están documentadas en
-[docs/41_pionera_connector_external_access.md](./docs/41_pionera_connector_external_access.md).
-
-### CLI Principal
-
-Listar adapters:
+CLI equivalents:
 
 ```bash
 python3 main.py list
-```
-
-Desplegar:
-
-```bash
 python3 main.py inesdata deploy --topology local
-python3 main.py edc deploy --topology vm-distributed
-```
-
-Validar:
-
-```bash
-python3 main.py inesdata validate --topology local
-python3 main.py edc validate --topology vm-distributed
-```
-
-Ejecutar despliegue y validación:
-
-```bash
-python3 main.py inesdata run --topology local
-python3 main.py edc run --topology vm-distributed
-```
-
-Previsualizar sin modificar el entorno:
-
-```bash
-python3 main.py inesdata deploy --topology local --dry-run
 python3 main.py edc run --topology vm-distributed --dry-run
-```
-
-Recrear un dataspace de forma controlada:
-
-```bash
 python3 main.py edc recreate-dataspace --topology local --confirm-dataspace demoedc
-python3 main.py edc recreate-dataspace --topology local --confirm-dataspace demoedc --with-connectors
 ```
 
-## Validación
+Full menu reference: [docs/33_menu_reference.md](./docs/33_menu_reference.md).
 
-`Level 6` ejecuta la validación integral del adapter activo. Según el adapter y
-el perfil activo, incluye:
+## Requirements
 
-- Newman;
-- validación funcional EDC+Kafka después de Newman cuando el adapter la soporta;
-- Playwright;
-- comprobaciones de storage/MinIO;
-- validaciones de componentes;
-- métricas;
-- reportes en `experiments/`.
-
-En esta versión de cierre, la validación oficial actualizada de `edc` se
-considera limitada a `vm-distributed`. La ruta `local` de EDC conserva soporte
-de desarrollo y llegó a pasar validaciones antes de la conciliación reciente de
-topologías; la ruta `vm-single` de EDC no se ha validado oficialmente después de
-esa conciliación.
-
-En topología `local`, `Level 6` usa por defecto el modo de orquestación
-`stable`: Newman, Kafka, Playwright y componentes se coordinan con menos
-solapamiento para reducir ruido de Minikube local. En `vm-single` y
-`vm-distributed` el modo efectivo por defecto sigue siendo `fast`.
-
-En ese modo estable local, el framework también comprueba la salud de Kubernetes
-antes y después de la validación. Si el nodo o los pods relevantes no están
-listos, espera una ventana corta y falla temprano si el entorno sigue
-bloqueado. Si durante la ejecución aparecen reinicios o eventos `NodeNotReady`,
-quedan registrados en `local_stability_preflight.json` y
-`local_stability_postflight.json` dentro del experimento.
-
-Para forzar el modo rápido en local:
-
-```bash
-python3 main.py inesdata validate --topology local --validation-mode fast
-```
-
-También se declara con `PIONERA_VALIDATION_MODE=fast`.
-
-En el layout `role-aligned`, `Level 5` publica componentes configurados en
-`components_namespace`. `Level 6` valida esos componentes después de las suites
-del dataspace y ejecuta por defecto las suites automatizadas A5.2 registradas
-para `ontology-hub`, `ai-model-hub` y `semantic-virtualization`. La única suite
-de validación A5.2 desactivada por defecto es Kafka/streaming transfer, por su
-coste temporal.
-
-Colecciones Newman principales:
-
-| Colección | Uso |
+| Group | Main tools |
 | --- | --- |
-| `01_environment_health.json` | Salud básica, reachability y autenticación. |
-| `02_connector_management_api.json` | CRUD aislado del Management API. |
-| `03_provider_setup.json` | Preparación del escenario E2E del provider. |
-| `04_consumer_catalog.json` | Descubrimiento de catálogo. |
-| `05_consumer_negotiation.json` | Negociación contractual. |
-| `06_consumer_transfer.json` | Transferencia y recuperación de datos. |
+| Local base | Python 3.10+, Git, Docker |
+| Local Kubernetes | Minikube, Helm, `kubectl` |
+| Validation | Node.js, npm, Newman, Playwright |
+| Connector builds | Java 17+ / OpenJDK 17 |
+| Operations | `psql`, permissions to edit `hosts` when applicable |
 
-Playwright se resuelve por adapter:
+`bash scripts/bootstrap_framework.sh` prepares `.venv`, Python/Node
+dependencies, and Playwright browsers.
 
-```text
-validation/ui/playwright.inesdata.config.ts
-validation/ui/playwright.edc.config.ts
-```
+## Validation
 
-La documentación de validación está en
+`Level 6` runs the active adapter's full validation: Newman, EDC+Kafka
+functional validation (when supported), Playwright, MinIO/storage checks,
+component validation, metrics, and reports under `experiments/`.
+
+Official closure evidence for `edc` is currently limited to
+`vm-distributed` (see the closure table above).
+
+Details, Newman collections, and Kafka benchmarking:
 [docs/37_validation.md](./docs/37_validation.md).
 
-## Métricas y Kafka
+## Repository Structure
 
-Ejecutar métricas:
-
-```bash
-python3 main.py inesdata metrics --topology local
-python3 main.py edc metrics --topology local
-```
-
-Ejecutar métricas con benchmark standalone de broker Kafka:
-
-```bash
-python3 main.py inesdata metrics --topology local --kafka
-```
-
-Helper reproducible de Kafka:
-
-```bash
-bash scripts/run_kafka_benchmark.sh --messages 10
-bash scripts/run_kafka_benchmark.sh --messages 10 --max-retries 3 --retry-backoff 15
-bash scripts/run_kafka_benchmark.sh --prepare-only
-bash scripts/run_kafka_benchmark.sh --teardown-only
-```
-
-El benchmark standalone genera `kafka_metrics.json` cuando se ejecuta y mide el
-broker Kafka, no el flujo E2E del dataspace. Además, `Level 6` ejecuta la
-validación funcional EDC+Kafka después de Newman para adapters compatibles y
-genera `kafka_transfer_results.json`. Esa suite está desactivada por defecto para
-ahorrar tiempo. En ejecuciones interactivas, `Level 6` pregunta
-`Run Kafka validation suites too?`; en ejecuciones no interactivas, usa
-`PIONERA_LEVEL6_RUN_KAFKA=true`.
-
-En local, esa validación usa por defecto un broker Kafka temporal dentro de
-Kubernetes. Los conectores acceden al broker por DNS de cluster y el proceso
-Python del framework usa un `port-forward` temporal solo para crear topics y
-verificar mensajes desde el host.
-
-En `vm-distributed`, los conectores viven en VMs o clusters distintos. Por eso
-`KAFKA_CLUSTER_BOOTSTRAP_SERVERS` debe apuntar a un endpoint Kafka alcanzable
-desde todas las VMs de conectores, normalmente un `NodePort` o una ruta
-equivalente expuesta por la VM de servicios comunes. No debe usarse
-`localhost`, `host.minikube.internal` ni nombres `*.svc` de Kubernetes como
-endpoint del conector. Para INESData, usa una imagen de conector que incluya
-soporte `data-plane-kafka`, o activa de forma explícita el flujo de build e
-importación remota de imágenes cuando el despliegue sea de desarrollo.
-
-## Imágenes Locales
-
-Durante desarrollo, usa la opción `L - Build and Deploy Local Images` del menú
-para construir, cargar y redesplegar imágenes locales del adapter activo.
-
-En topología `local`, `Level 4` de INESData prepara automáticamente
-`inesdata-connector` e `inesdata-connector-interface` desde las fuentes locales
-antes de crear los conectores. Esto evita validar con imágenes remotas antiguas
-cuando `Level 6` ejecuta flujos como Kafka o Playwright.
-
-La opción `L` está pensada para iteración de desarrollo y preserva datos en
-redeploys INESData: reutiliza los valores existentes de Helm y no recrea
-credenciales, dataspace ni servicios comunes. Si un release todavía no existe,
-ejecuta primero el nivel correspondiente.
-
-Cuando el adapter activo es `edc`, las acciones rápidas de `L` construyen y
-cargan imágenes locales del conector EDC, del dashboard EDC o de ambos. Si ya
-hay deployments EDC en ejecución, el framework los reinicia para que tomen la
-imagen nueva sin recrear datos.
-
-Además, `Level 4` de EDC prepara automáticamente esas imágenes locales en modo
-`auto` cuando se despliega en topología `local` y no hay una imagen explícita
-publicada que usar. En `vm-single` y `vm-distributed`, el framework usa por
-defecto imágenes de registry o las imágenes declaradas en los ficheros de
-configuración; para compilar e importar desde fuentes en VM hay que activar
-explícitamente el modo local de imágenes.
-
-Si la receta corresponde a un componente de `Level 5` ya desplegado, como
-`Ontology Hub` o `AI Model Hub`, el framework reinicia su deployment para que
-Kubernetes use la imagen recién cargada. Si el componente aún no existe, carga
-la imagen y deja el despliegue para `Level 5`.
-
-Scripts relevantes:
-
-```text
-adapters/inesdata/scripts/sync_sources.sh
-adapters/inesdata/scripts/build_images.sh
-adapters/inesdata/scripts/local_build_load_deploy.sh
-adapters/edc/scripts/sync_sources.sh
-adapters/edc/scripts/build_image.sh
-adapters/edc/scripts/sync_dashboard_sources.sh
-adapters/edc/scripts/build_dashboard_image.sh
-adapters/edc/scripts/build_dashboard_proxy_image.sh
-```
-
-Para EDC, las fuentes locales se gestionan bajo:
-
-```text
-adapters/edc/sources/
-```
-
-El runtime del conector EDC se sincroniza desde:
-
-```text
-adapters/edc/sources/connector
-```
-
-El dashboard EDC se sincroniza desde:
-
-```text
-https://github.com/ProyectoPIONERA/EDC-asset-filter-dashboard
-```
-
-Ese dashboard está versionado como submódulo en:
-
-```text
-adapters/edc/sources/dashboard
-```
-
-El framework fija por defecto el commit declarado en `EDC_DASHBOARD_REPO_REF`.
-Los overlays propios del framework se mantienen separados bajo
-`adapters/edc/overlays/dashboard`.
-
-## Limpieza y Doctor
-
-El menú incluye accesos directos de desarrollo:
-
-| Herramienta | Uso |
+| Path | Description |
 | --- | --- |
-| `Bootstrap Framework Dependencies` | Prepara o repara dependencias. |
-| `Run Framework Doctor` | Ejecuta checks del entorno local. |
-| `Repair Local Access / Connectors` | Reconcila `hosts` y, si hace falta, reinicia conectores tras un reinicio local o de WSL. |
-| `Cleanup Workspace` | Limpia caches y artefactos temporales. |
-| `Build and Deploy Local Images` | Construye imágenes locales y reinicia componentes desplegados cuando aplica; recomendado para desarrollo en topología `local`. |
+| `main.py` | Main CLI and guided menu |
+| `framework/` | Reusable validation, metrics, and reporting core |
+| `adapters/` | Adapter-specific integrations |
+| `deployers/` | Deployers, configuration, and deployment artifacts |
+| `deployers/infrastructure/` | Contracts, topologies, hosts, cross-cutting utilities |
+| `deployers/shared/` | Reusable charts and artifacts |
+| `validation/` | Newman, Playwright, and component validation suites |
+| `tests/` | Framework unit tests |
+| `docs/` | Stable framework documentation |
 
-El script de limpieza también se ejecuta manualmente con:
-
-```bash
-bash scripts/clean_workspace.sh
-bash scripts/clean_workspace.sh --apply
-bash scripts/clean_workspace.sh --apply --include-results
-```
-
-## Experimentos y Reportes
-
-Un experimento es una ejecución reproducible del flujo de validación y medición.
-Incluye despliegue, validación API, validación UI, métricas, Kafka y artefactos
-de componentes según el alcance ejecutado.
-
-Estructura habitual:
-
-```text
-experiments/
-  experiment_<timestamp>/
-    metadata.json
-    experiment_results.json
-    aggregated_metrics.json
-    kafka_metrics.json
-    kafka_transfer_results.json
-    summary.json
-    summary.md
-    graphs/
-```
-
-Los reportes Playwright quedan dentro del experimento correspondiente cuando se
-ejecutan desde `Level 6`.
-
-## Estructura del Repositorio
-
-| Ruta | Descripción |
-| --- | --- |
-| `main.py` | CLI principal y menú guiado. |
-| `framework/` | Núcleo reutilizable de validación, métricas y reportes. |
-| `adapters/` | Integraciones específicas por adapter. |
-| `deployers/` | Deployers, configuración y artefactos de despliegue. |
-| `deployers/infrastructure/` | Contratos, topologías, hosts y utilidades transversales. |
-| `deployers/shared/` | Charts y artefactos reutilizables. |
-| `validation/` | Suites Newman, Playwright y validaciones de componentes. |
-| `tests/` | Pruebas unitarias del framework. |
-| `docs/` | Documentación estable del framework. |
-
-## Pruebas y Cómo Ejecutarlas
-
-Pruebas focalizadas de topologías, contratos, hosts y CLI:
-
-```bash
-python3 -m unittest \
-  tests.test_deployer_shared_contracts \
-  tests.test_deployer_shared_topology \
-  tests.test_deployer_shared_hosts_manager \
-  tests.test_main_cli
-```
-
-Descubrimiento general:
+## Tests
 
 ```bash
 python3 -m unittest discover tests
 ```
 
-El descubrimiento general incluye las suites disponibles de Vault, Kafka,
-Ontology, métricas o componentes que dependan del entorno local disponible.
+## Documentation
 
-## Documentación
+Full documentation: [docs/](./docs/README.md).
 
-La documentación está en [docs/](./docs/README.md).
+Recommended reading order:
 
-Orden recomendado:
-
-- [Inicio rápido](./docs/32_getting_started.md)
-- [Referencia del menú](./docs/33_menu_reference.md)
-- [Arquitectura](./docs/34_architecture.md)
-- [Deployers y topologías](./docs/35_deployers_and_topologies.md)
+- [Getting started](./docs/32_getting_started.md)
+- [Menu reference](./docs/33_menu_reference.md)
+- [Architecture](./docs/34_architecture.md)
+- [Deployers and topologies](./docs/35_deployers_and_topologies.md)
 - [Adapters](./docs/36_adapters.md)
-- [Validación](./docs/37_validation.md)
-- [Desarrollo y testing](./docs/38_development_and_testing.md)
+- [Validation](./docs/37_validation.md)
+- [Development and testing](./docs/38_development_and_testing.md)
 - [Troubleshooting](./docs/39_troubleshooting.md)
-- [Acceso externo a conectores](./docs/41_pionera_connector_external_access.md)
-- [Guía de navegación para auditoría](./docs/44_audit_navigation_guide.md)
-- [Guía operativa de vm-distributed](./docs/46_vm_distributed_runbook.md)
-- [Resultados tabulares E5.2](./docs/E5.2_Resultados_Validacion_Componentes.xlsx)
+- [Connector external access](./docs/41_pionera_connector_external_access.md)
+- [Audit navigation guide](./docs/44_audit_navigation_guide.md)
+- [vm-distributed runbook](./docs/46_vm_distributed_runbook.md)
 
-## Imágenes, Diagramas y Vídeos Explicativos
+## Contributing
 
-Diagramas disponibles:
+1. Open an issue describing the change, bug, or improvement.
+2. Create a fork or working branch.
+3. Run the relevant tests before opening a pull request.
+4. Open a pull request explaining the goal, scope, tests run, and known
+   risks.
 
-- [Entorno local de validación](./docs/pionera_local_validation_environment.png)
-- [Entorno distribuido de validación](./docs/pionera_distributed_validation_environment.png)
-- [Arquitectura del entorno de pruebas](./docs/test_environment_architecture.png)
-- [Resultados de validación de componentes](./docs/E5.2_Resultados_Validacion_Componentes.xlsx)
+Never include credentials, tokens, private keys, real kubeconfigs, secrets
+in logs, or personal data in commits, issues, or pull requests.
 
-Los vídeos explicativos se enlazan desde `docs/README.md` cuando estén
-publicados. La estructura recomendada es:
-
-1. resumen del framework y metodología de validación;
-2. despliegue básico y topologías;
-3. validación de componentes y evidencias.
-
-## Cómo Contribuir
-
-El flujo recomendado para contribuciones es:
-
-1. abre un issue describiendo el cambio, bug o mejora;
-2. crea un fork o una rama de trabajo;
-3. ejecuta las pruebas relevantes antes de abrir el pull request;
-4. abre un pull request explicando el objetivo, alcance, pruebas ejecutadas y
-   riesgos conocidos.
-
-No incluyas credenciales, tokens, claves privadas, kubeconfigs reales, logs con
-secretos ni datos personales en commits, issues o pull requests. Usa
-placeholders y ficheros locales ignorados por Git para configuración de entorno.
-
-## Referencias Técnicas
+## Technical References
 
 - [INESData local environment](https://github.com/INESData/inesdata-local-env)
 - [INESData connector management API collection](https://github.com/INESData/inesdata-local-env/blob/master/resources/operations/InesData_Connector_Management_API.postman_collection.json)
@@ -972,31 +258,30 @@ placeholders y ficheros locales ignorados por Git para configuración de entorno
 - [Eclipse EDC Kafka sample](https://github.com/eclipse-edc/Samples/tree/main/transfer/transfer-06-kafka-broker)
 - [DataSpaceUnit local deployment](https://github.com/DataSpaceUnit/ds-local-deployment)
 
-## Agradecimientos y Fuentes de Financiación
+## Acknowledgments and Funding
 
-Este trabajo ha recibido financiación del **proyecto PIONERA** (Enhancing
-interoperability in data spaces through artificial intelligence), financiado en
-el contexto de la convocatoria de Productos y Servicios Tecnológicos para
-Espacios de Datos del Ministerio para la Transformación Digital y de la Función
-Pública, dentro del marco del PRTR financiado por la Unión Europea
-(NextGenerationEU).
+This work has received funding from the **PIONERA project** (Enhancing
+interoperability in data spaces through artificial intelligence), funded
+under the call for Technological Products and Services for Data Spaces of
+the Spanish Ministry for Digital Transformation and the Civil Service,
+within the PRTR framework funded by the European Union (NextGenerationEU).
 
 <div align="center">
-  <img src="funding_label.png" alt="Logos financiación" width="900" />
+  <img src="funding_label.png" alt="Funding logos" width="900" />
 </div>
 
 ---
 
-## Autores y Contacto
+## Authors and Contact
 
-Este repositorio forma parte del trabajo software del proyecto PIONERA. Para
-consultas, incidencias o propuestas de cambio, usa los issues y pull requests
-del repositorio en GitHub.
+This repository is part of the PIONERA project's software work. For
+questions, issues, or change proposals, use the GitHub issues and pull
+requests of this repository.
 
-- **Mantenedores del framework:** 
+- **Framework maintainers:**
   - Adrián Vargas (<adrian.vargas@upm.es>)
   - Raffaele Cuzzaniti (<r.cuzzaniti@upm.es>)
 
-## Licencia
+## License
 
-Validation-Environment está disponible bajo la **[Apache License 2.0](./LICENSE)**.
+Validation-Environment is available under the **[Apache License 2.0](./LICENSE)**.
