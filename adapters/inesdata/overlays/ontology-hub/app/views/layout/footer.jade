@@ -1,0 +1,41 @@
+footer#footer
+  div
+    .wrpl
+      a(href='/dataset')
+        dl
+          dt
+            img.footer_logo(src='/img/logo_white_small.png')
+          dd
+            strong #{app_name}
+    .wrpl
+      br
+      .bookmarks
+        b Documentation
+        ul
+          li
+            a(href='/dataset/about', title='About #{app_name_shorcut}') About
+          li
+            a(href='/dataset/api', title='API documentation') API documentation
+          //li
+            a(href='', title='Source in GitHub', target='_blank') Source code
+          li
+            a(href='mailto:py.vandenbussche@gmail.com;ghislain.atemezing@gmail.com;mpoveda@fi.upm.es', title='Contact #{app_name_shorcut} team') Contact
+      //.bookmarks
+        b Publication
+        ul
+          li
+            a(href='http://www.semantic-web-journal.net/content/linked-open-vocabularies-lov-gateway-reusable-semantic-vocabularies-web-1', title='#{app_name}', target='_blank') Semantic Web Journal '16
+          li
+            a(href='http://ercim-news.ercim.eu/en96/special/linked-open-vocabularies', title='#{app_name}', target='_blank') ERCIM News '14
+          li
+            a(href='http://bit.ly/1sGxzXZ', title='Requirements for vocabulary preservation and governance', target='_blank') Library Hi Tech '13
+    .wrpl
+      div.logoText
+        | Funded by the EU NextGenerationEU through the Recovery and Resilience Plan for Slovakia under the project within the Smart Transformational and Innovation Consortium Slovakia (STICS), No. 09I02-03-V01-00011.
+
+      // Contenedor flex alineado a la derecha
+      div(style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;")
+        img(alt="STICS funding acknowledgement" style="border-width:0; margin:1.2em; max-height:60px;" src="https://stics.umb.sk/images/mandatory%20visibility_EN.png")
+
+      div(style="font-size:0.85em; margin-top:0.5em;")
+        | Powered by PIONERA
