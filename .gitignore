@@ -127,6 +127,7 @@ Thumbs.db
 *.webm
 *.png
 !docs/*.png
+!adapters/inesdata/overlays/**/*.png
 !docs/legacy_inesdata_manual/deployment_diagrams/*.png
 
 # =========================
