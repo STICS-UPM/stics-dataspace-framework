@@ -1284,3 +1284,20 @@ Docker Compose y no siguen esa convención.
 
 Documentación narrativa con los mismos pasos en `curl` (sin necesidad de
 Postman): [docs/47_stics_edc_interop_evidence.md](../../../../docs/47_stics_edc_interop_evidence.md).
+
+## Evidencia: transferencia PULL con `connector-bavenir`
+
+- `05_connector_bavenir_pull_transfer.json` — flujo `HttpData-PULL` completo
+  con `connector-bavenir` (el conector montado en la sesión hands-on con
+  bavenir, ver
+  [docs/49_bavenir_hands_on_session_guide.md](../../../../docs/49_bavenir_hands_on_session_guide.md))
+  como **provider** y `connector-stics` como **consumer**: login de ambos,
+  creación de asset/policy/contract-definition en `connector-bavenir`,
+  catálogo DSP, negociación, transferencia y pull real de datos a través del
+  data-plane público de `connector-bavenir`.
+- `00_environment_connector_bavenir.json` — mismas claves de variable que
+  `00_environment_stics.json`, apuntando a
+  `connector-bavenir.stics.bavenir.eu` (provider) y `stics.bavenir.eu`
+  (consumer, `connector-stics`). Rellenar `provider_password` (de
+  `credentials.json` de `connector-bavenir`) y `consumer_password` (de
+  `credentials.json` de `connector-stics`) localmente antes de ejecutar.

@@ -7,10 +7,22 @@ STICS dataspace. It is written for anyone joining the project without prior
 exposure to this specific setup — it explains the reasoning behind each step,
 not just the commands to run.
 
-It reflects the exact process used to deploy the four connectors currently
-running in the dataspace (`connector-stics`, `conlab-stics`, `contest-stics`,
-`contest-bavenir`), including the practical issues encountered along the way
-and how each was resolved.
+It reflects the exact process used to deploy the connectors currently running
+in the dataspace (`connector-stics`, `conlab-stics`, `contest-stics`,
+`contest-bavenir`, `connector-bavenir`), including the practical issues
+encountered along the way and how each was resolved.
+
+**Live pairing session with an external party?** Each step below is tagged
+with who can actually run it — 🟢 **EXTERNAL VM** (whoever controls the
+target machine) or 🔵 **UPM ONLY** (must run from `stics2test`, using the
+framework's own access to Keycloak/Vault/Postgres/Kubernetes). Steps tagged
+🔔 are handoff points: stop and get UPM to run the next step before
+continuing. If you're running this live with an external party (as opposed
+to solo, with access to everything), use
+[docs/49_bavenir_hands_on_session_guide.md](docs/49_bavenir_hands_on_session_guide.md)
+instead — it's a condensed, copy-paste-ready version of this same guide
+built for exactly that format, written the first time this guide was used
+this way, in a live session with bavenir onboarding `connector-bavenir`.
 
 ## Architecture in Brief
 
@@ -38,7 +50,7 @@ The sections below walk through each of these in order.
 
 ---
 
-## Step 0: Decide Three Things Before Starting
+## Step 0: Decide Three Things Before Starting — 🟡 JOINT
 
 - **Connector name** (its participant ID in the dataspace). Important
   constraint: **maximum 20 characters**. Exceeding this causes the
@@ -76,9 +88,16 @@ matters because **two connectors on the same VM cannot use the same ports**
 — a distinct port range and Docker bridge networking (rather than
 `network_mode: host`) are required in that case, as described in Step 6.
 
+**It also often means UPM and the external operator are two different Linux
+users on the same machine**, each unable to read the other's home directory
+by default. Any file UPM stages there (the `.jar` in Step 4, `cacerts.jks`
+in Step 7) needs `sudo cp`/`sudo chown` on the receiving end if the
+destination user can't otherwise reach UPM's home directory — see the
+troubleshooting table if `cp`/`mv` fails with `Permission denied`.
+
 ---
 
-## Step 1: Confirm the VM Has the Required Tooling
+## Step 1: Confirm the VM Has the Required Tooling — 🟢 EXTERNAL VM
 
 ```bash
 ssh user@TARGET_VM_IP 'docker --version; docker compose version; java -version'
@@ -89,7 +108,7 @@ If Docker or Docker Compose are missing, install them before continuing
 
 ---
 
-## Step 2: Provision the Connector's PostgreSQL Database
+## Step 2: Provision the Connector's PostgreSQL Database — 🟢 EXTERNAL VM
 
 The connector requires its own PostgreSQL database to store its assets,
 contract negotiations, and transfer processes (tables such as `edc_asset`,
@@ -110,6 +129,28 @@ Use the same name for the role and database, matching the connector name
 (with underscores instead of hyphens where needed, e.g.
 `contest_bavenir_stics`).
 
+**If PostgreSQL runs as a Docker container on that VM rather than natively**
+(check with `docker ps | grep postgres` before assuming — this was the case
+for `connector-bavenir`'s VM), the commands above don't apply as-is:
+`sudo -u postgres psql` and `/etc/postgresql/*/main/pg_hba.conf` assume a
+native install with no such container. Use `docker exec` against the
+container instead:
+
+```bash
+docker exec -i postgres psql -U postgres << 'EOF'
+DROP DATABASE IF EXISTS <DB_NAME>;
+DROP ROLE IF EXISTS <DB_NAME>;
+CREATE ROLE <DB_NAME> LOGIN PASSWORD '<SECURE_PASSWORD>';
+CREATE DATABASE <DB_NAME> OWNER <DB_NAME>;
+EOF
+```
+
+If another connector already lives on that same VM, its `pg_hba.conf` may
+already have been widened to accept bridge-network connections (see Step 6's
+bridge-mode note) — check `docker exec postgres cat
+/var/lib/postgresql/data/pg_hba.conf` before redoing that step; a catch-all
+`host all all all scram-sha-256` line means it's already done.
+
 ### Case B: The Connector Runs on the Same VM as the Common Services (`stics2test`)
 
 In this specific case, the shared PostgreSQL instance used by Keycloak and
@@ -121,7 +162,11 @@ password can be read from the resulting `credentials.json` file (see Step 3).
 
 ---
 
-## Step 3: Provision the Identity (Keycloak, Vault, MinIO)
+🔔 **Handoff point**: the next step can only be run by UPM, from `stics2test`.
+Hand over the connector name, namespace label, and target VM IP before
+continuing.
+
+## Step 3: Provision the Identity (Keycloak, Vault, MinIO) — 🔵 UPM ONLY
 
 This is the least visible part of the process, but it is already solved: the
 framework exposes a function that performs this provisioning without
@@ -197,7 +242,7 @@ print("Credentials file:", credentials_path)
 
 ---
 
-## Step 4: Obtain the Connector `.jar`
+## Step 4: Obtain the Connector `.jar` — 🔵 UPM hands over → 🟢 EXTERNAL VM places
 
 No build step is required. The same `connector.jar` works for any connector
 — identity is supplied externally via the `.properties` file. Copy it from an
@@ -212,7 +257,7 @@ content is identical regardless of name).
 
 ---
 
-## Step 5: Write the `.properties` File
+## Step 5: Write the `.properties` File — 🟢 EXTERNAL VM
 
 The template below is the one already used for all four existing connectors.
 Copy it, substitute the placeholders, and save it as
@@ -298,7 +343,7 @@ mode (see Step 6):
 
 ---
 
-## Step 6: The `docker-compose.yml` File — an Important Decision
+## Step 6: The `docker-compose.yml` File — an Important Decision — 🟢 EXTERNAL VM
 
 ### If the Target VM Does Not Already Run Another Connector
 
@@ -382,9 +427,16 @@ sudo systemctl restart postgresql
 Compose project can create a different one, e.g. `172.17.0.0/16`,
 `172.18.0.0/16`, and so on.)
 
+**If this is the third (or later) connector on the same VM**, the `+10000`
+offset above will already be taken by the second one — pick the next free
+block instead (`+20000`, i.e. `39191`–`39196`, `39291`, `37171`, and so on).
+Check what's actually free before assuming: `ss -tlnp | grep -E
+':39191|:37171'` on the VM, or `docker ps --format '{{.Ports}}'` to see every
+offset already in use.
+
 ---
 
-## Step 7: The Shared TLS Truststore (`cacerts.jks`)
+## Step 7: The Shared TLS Truststore (`cacerts.jks`) — 🔵 UPM extracts → 🟢 EXTERNAL VM places
 
 Every service in this dataspace uses TLS certificates signed by an internal,
 self-signed CA rather than a public one. Without this truststore file, the
@@ -402,7 +454,7 @@ argument).
 
 ---
 
-## Step 8: Start the Connector
+## Step 8: Start the Connector — 🟢 EXTERNAL VM
 
 ```bash
 ssh user@TARGET_VM 'cd ~/edc-my-connector && docker compose up -d'
@@ -417,11 +469,21 @@ ssh user@TARGET_VM 'docker logs my-connector --tail 30'
 Look for `Runtime stics-<CONNECTOR_NAME> ready`. If it does not appear, refer
 to the troubleshooting table at the end of this guide.
 
+**If the jar or `cacerts.jks` reports as "corrupt" here**, check whether it
+was actually copied at all before this container's first `docker compose up
+-d`: if a bind-mounted file doesn't exist yet at the moment the container is
+created, Docker silently creates an **empty directory** at that path instead
+of waiting for the file. Any later `cp` of the real file to that same path
+then either fails or lands inside the bogus directory. Fix: `docker compose
+down`, `file <path>` to confirm it says "directory" instead of the expected
+file type, `sudo rm -rf` it, re-copy the real file, then `docker compose up
+-d` again.
+
 ---
 
-## Step 9: Two Fixes Required After the First Start
+## Step 9: Two Fixes Required After the First Start — split 🟢 / 🔵
 
-### 9a. INESData-Specific Tables Not Covered by Autocreate
+### 9a. INESData-Specific Tables Not Covered by Autocreate — 🟢 EXTERNAL VM
 
 The connector jar includes INESData-specific extensions (federated catalog,
 vocabulary validation) that require additional database tables not created
@@ -439,7 +501,11 @@ Without this step, the logs will show errors such as
 `relation "edc_catalog" does not exist` or
 `relation "edc_vocabulary" does not exist`.
 
-### 9b. Correcting the Registered Participant URL
+🔔 **Handoff point**: 9b can only be run by UPM (it writes to the shared
+registration-service database, only reachable from `stics2test`). Confirm
+9a is done and 8's readiness log appeared before asking UPM to continue.
+
+### 9b. Correcting the Registered Participant URL — 🔵 UPM ONLY
 
 Step 3 registers the connector with an internal placeholder URL (e.g.
 `http://<CONNECTOR_NAME>:19194/protocol`), which is not reachable externally.
@@ -464,7 +530,13 @@ ssh user@TARGET_VM 'cd ~/edc-my-connector && docker compose restart'
 
 ---
 
-## Step 10: The Network Bridge
+## Step 10: The Network Bridge — 🟢 EXTERNAL VM (or 🔵 UPM, if already holding a kubeconfig for that cluster)
+
+If the target VM turns out to be one UPM already has cluster credentials
+for (e.g. it's hosting a VM that already runs another connector — see the
+note under Step 0), UPM can often just apply this directly with `kubectl
+--kubeconfig <path>`, without needing the external operator to touch
+Kubernetes at all. Don't assume this by default — confirm access first.
 
 This step requires the most care, so it is worth reading carefully. In
 short: a request to `https://my-connector.stics...` needs to reliably reach
@@ -627,7 +699,14 @@ kubectl --kubeconfig <CORRECT_CLUSTER_KUBECONFIG> apply -f my-connector-bridge.y
 
 ---
 
-## Step 11: Adding the New Hostname to the Shared TLS Certificate
+🔔 **Handoff point**: Step 11 can only be run by UPM, and it is the single
+highest-impact step in this whole guide — it touches every existing
+connector, not just the new one. Confirm Step 10's health check already
+returns `HTTP 200` (even with the browser cert warning) before asking UPM to
+continue, and expect UPM to re-verify every other connector immediately
+after.
+
+## Step 11: Adding the New Hostname to the Shared TLS Certificate — 🔵 UPM ONLY, high blast radius
 
 The self-signed certificate shared across the dataspace
 (`pionera-internal-ingress-tls`) only covers hostnames it already knows
@@ -660,6 +739,18 @@ means **the `cacerts.jks` file on every existing connector, not just the new
 one, is now outdated**. It must be re-copied (Step 7) to all of them, and
 each connector restarted — otherwise previously working connectors will
 start failing with `PKIX path building failed`.
+
+**Expect transient `PKIX path validation failed (certificate_unknown)` and
+`DataSource default could not be resolved` errors in every connector's logs
+for a minute or two right after this reconcile forces a restart.** This is
+normal — every connector across the dataspace is restarting at roughly the
+same time, and the first few outbound calls each makes (crawler,
+self-registration ping, DB pool warm-up) can race against the others still
+coming up. Don't treat it as a new failure by itself: give it a full
+federated-catalog cycle (~65–75s) and check again — if the errors stop and
+the health endpoint is green, it already resolved on its own. Only escalate
+if errors are still appearing after that window, or a container's restart
+count keeps climbing.
 
 ### Step 11 (Alternative): A Publicly-Trusted Certificate Instead
 
@@ -738,7 +829,7 @@ chmod +x ~/acme-renew-deploy-hook.sh
 
 ---
 
-## Step 12: Final Verification
+## Step 12: Final Verification — 🟡 JOINT
 
 ```bash
 curl -k https://<MY_PUBLIC_HOSTNAME>/api/check/health
@@ -758,7 +849,7 @@ commands for that flow.
 
 ---
 
-## Step 13: Adding a Web Interface for the Connector
+## Step 13: Adding a Web Interface for the Connector — 🟢 EXTERNAL VM
 
 Everything so far is API-only. To let someone browse assets, policies, and
 contracts without `curl`, deploy one of two UIs:
@@ -792,6 +883,13 @@ Ship it to the target VM if it is not the one you built it on:
 ```bash
 docker save validation-environment/inesdata-connector-interface:latest | ssh user@TARGET_VM docker load
 ```
+
+**Check `docker images` on the target VM before building anything** — if
+another connector already runs its interface on that same VM, the image is
+already there (possibly under a different tag, e.g.
+`validation-environment/inesdata-connector-interface:contest-stics`) and can
+be reused directly in Step 13.2's `docker-compose.yml`, skipping the build
+and transfer entirely.
 
 ### 13.2 `docker-compose.yml` and `env.list`
 
@@ -829,6 +927,13 @@ features configured. `STRAPI_URL` must still be a syntactically valid URL
 even if unused — an empty value produces invalid nginx configuration and the
 container fails to start.
 
+**Pick a free host port** — `8093`/`8094` are typically already taken by
+other connector interfaces on shared VMs; check with `docker ps --format
+'{{.Ports}}' | grep 809` first and use the next free one (`8095`, and so on).
+Unlike the connector's own ports (Step 6), interface ports don't need a
+scheme — any free port works, since each interface is its own standalone
+container with no fixed internal port to collide on.
+
 ### 13.3 Extend the Bridge Created in Step 10
 
 Add one more port and Ingress path to the same Service/Endpoints/Ingress
@@ -848,6 +953,23 @@ needs to reference it.
 curl -k https://<MY_PUBLIC_HOSTNAME>/connector-interface/
 # Expected: HTTP 200
 ```
+
+**If the browser bounces back to the login page in a tight loop (every
+couple of seconds) right after logging in**, this is very likely unrelated
+to the connector itself: the interface calls `auth.dev.linkeddata.es`
+(Keycloak) in the background to refresh the token, and that hostname uses
+the same self-signed certificate as everything else in this dataspace. If
+this particular browser has accepted the certificate warning for
+`<MY_PUBLIC_HOSTNAME>` but never visited `https://auth.dev.linkeddata.es`
+directly, those background calls fail silently and the app treats every
+failure as "session expired." Fix: open `https://auth.dev.linkeddata.es` in
+a new tab once, click through the certificate warning, then retry — no
+connector-side change needed. (A real Let's Encrypt certificate on
+`auth.dev.linkeddata.es` — see "Step 11 (Alternative)" — would remove the
+need for this entirely, but that hostname is shared dataspace-wide and, on
+`stics2test`, sits behind an external gateway with no direct public IP of
+its own, so it isn't as simple as the single-VM Certbot flow described
+there; treat it as a separate, larger change, not a same-session fix.)
 
 Then open it in a browser: it should redirect to the Keycloak login page,
 and after logging in with the connector's own credentials
@@ -873,6 +995,10 @@ connector's assets.
 | The interface loads but every action returns 401/403, or an ever-present "Loading..." spinner on the MinIO console's object list | Unrelated to the connector itself — see the WebSocket note below | Confirm the public entry point (e.g. an external Apache/reverse proxy) forwards `Connection: Upgrade` / `Upgrade: websocket` headers for the affected path; a proxy negotiating HTTP/2 with the browser will otherwise strip them |
 | A browser or external client warns that the certificate is not trusted, even though `curl -k` works fine | The hostname is served directly by the cluster's self-signed certificate, with no publicly-trusted reverse proxy in front of it | See "Step 11 (Alternative)" above to issue it a real Let's Encrypt certificate |
 | A newly-added or newly-fixed TLS certificate keeps reverting to an old/self-signed one on the same hostname, despite a correct `Secret` and `Ingress` | The cluster is running k3s's default Traefik ingress controller, which was found to handle dynamic TLS updates unreliably | Migrate that cluster to `ingress-nginx` — see the note under Step 10.1 |
+| A bind-mounted file (`.jar`, `cacerts.jks`) reports as "corrupt", 0 bytes, or `file` says "directory" | `docker compose up -d` ran before the real file existed at that host path — Docker silently created a placeholder directory there instead | `docker compose down`, `sudo rm -rf <path>`, re-copy the real file, `docker compose up -d` again |
+| `cp`/`mv` fails with `Permission denied` copying files into the connector's directory | The files were staged under a different Linux user's home directory (e.g. UPM's), which isn't traversable by the operator's own user | Use `sudo cp <source> <dest>` then `sudo chown <your_user>:<your_user> <dest>` |
+| `PKIX path validation failed (certificate_unknown)` and `DataSource default could not be resolved` appear in several connectors' logs at once, right after a TLS cert reconcile | Transient — every connector restarted around the same time and their first outbound calls raced each other | Wait for one federated-catalog cycle (~65–75s) and recheck; only escalate if it hasn't cleared by then |
+| The `connector-interface` login loops every couple of seconds, bouncing back to the Keycloak login screen | The browser has never visited `https://auth.dev.linkeddata.es` directly, so its background token-refresh calls fail on the untrusted self-signed cert for that origin (separate from the connector's own hostname) | Visit `https://auth.dev.linkeddata.es` once in the same browser and accept the certificate warning, then retry |
 
 ---
 

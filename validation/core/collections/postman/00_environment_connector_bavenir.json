@@ -1,0 +1,35 @@
+{
+  "id": "postman-environment-connector-bavenir-pull",
+  "name": "00 Environment - connector-bavenir PULL Transfer",
+  "values": [
+    { "key": "keycloakUrl", "value": "https://auth.dev.linkeddata.es", "type": "text", "enabled": true },
+    { "key": "keycloakClientId", "value": "dataspace-users", "type": "text", "enabled": true },
+    { "key": "dataspace", "value": "stics", "type": "text", "enabled": true },
+
+    { "key": "providerMgmt", "value": "https://connector-bavenir.stics.bavenir.eu/management", "type": "text", "enabled": true },
+    { "key": "providerDsp", "value": "https://connector-bavenir.stics.bavenir.eu/protocol", "type": "text", "enabled": true },
+    { "key": "providerParticipantId", "value": "connector-bavenir", "type": "text", "enabled": true },
+    { "key": "provider_user", "value": "user-connector-bavenir", "type": "text", "enabled": true },
+    { "key": "provider_password", "value": "<fill in locally from credentials.json>", "type": "secret", "enabled": true },
+
+    { "key": "consumerMgmt", "value": "https://stics.bavenir.eu/management", "type": "text", "enabled": true },
+    { "key": "consumerParticipantId", "value": "connector-stics", "type": "text", "enabled": true },
+    { "key": "consumer_user", "value": "user-connector-stics", "type": "text", "enabled": true },
+    { "key": "consumer_password", "value": "<fill in locally from credentials.json>", "type": "secret", "enabled": true },
+
+    { "key": "provider_jwt", "value": "", "type": "secret", "enabled": true },
+    { "key": "consumer_jwt", "value": "", "type": "secret", "enabled": true },
+    { "key": "e2e_asset_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_policy_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_cd_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_offer_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_negotiation_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_negotiation_retries", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_agreement_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_transfer_id", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_transfer_retries", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_edr_endpoint", "value": "", "type": "text", "enabled": true },
+    { "key": "e2e_edr_authorization", "value": "", "type": "secret", "enabled": true }
+  ],
+  "_postman_variable_scope": "environment"
+}
