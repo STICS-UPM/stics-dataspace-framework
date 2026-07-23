@@ -609,6 +609,23 @@ This is a standard Kubernetes pattern for routing traffic to something that
 is not a pod — in this case, a standalone Docker container. Save the
 following as `my-connector-bridge.yaml` (adjusting namespace, IP, and ports):
 
+**If this connector uses bridge networking with a port offset** (Step 6b),
+the Service's `targetPort` must be set **explicitly** to the same offset
+port used in Endpoints below — do not omit it and let it default to `port`.
+Kubernetes lets you do this (a manually-managed, selector-less Endpoints
+object doesn't strictly need `targetPort` to be "correct" for kube-proxy's
+own ClusterIP routing), but `ingress-nginx` was found in practice to
+intermittently use the Service's `targetPort` as a second, incorrect
+candidate backend alongside the real Endpoints port — causing roughly half
+of all requests to silently land on whatever else happens to be listening
+on that raw, un-offset port number on the same VM (in the worst case, a
+*different* connector's real port, since `19191`–`19196`/`19291` are also
+the default `network_mode: host` ports another connector on the same VM may
+be using directly). This produces a hard-to-diagnose ~50% authentication
+failure rate under load, with no equivalent misconfiguration report to
+point to — confirmed and fixed on `connector-bavenir`'s and
+`contest-bavenir`'s bridges in July 2026; see the troubleshooting table.
+
 ```yaml
 apiVersion: v1
 kind: Namespace
@@ -622,13 +639,16 @@ metadata:
   namespace: <SHORT_NAMESPACE>
 spec:
   ports:
-    - { name: "19191", port: 19191, protocol: TCP }
-    - { name: "19192", port: 19192, protocol: TCP }
-    - { name: "19193", port: 19193, protocol: TCP }
-    - { name: "19194", port: 19194, protocol: TCP }
-    - { name: "19195", port: 19195, protocol: TCP }
-    - { name: "19196", port: 19196, protocol: TCP }
-    - { name: "19291", port: 19291, protocol: TCP }
+    # targetPort: same value as network_mode: host (19191, unchanged) if no
+    # offset is used, or the offset port (29191, 39191, ...) if it is —
+    # see the warning above. Never omit targetPort for a bridge-mode connector.
+    - { name: "19191", port: 19191, protocol: TCP, targetPort: 19191 }
+    - { name: "19192", port: 19192, protocol: TCP, targetPort: 19192 }
+    - { name: "19193", port: 19193, protocol: TCP, targetPort: 19193 }
+    - { name: "19194", port: 19194, protocol: TCP, targetPort: 19194 }
+    - { name: "19195", port: 19195, protocol: TCP, targetPort: 19195 }
+    - { name: "19196", port: 19196, protocol: TCP, targetPort: 19196 }
+    - { name: "19291", port: 19291, protocol: TCP, targetPort: 19291 }
 ---
 apiVersion: v1
 kind: Endpoints
@@ -641,7 +661,8 @@ subsets:
     ports:
       # If network_mode: host was used, left and right ports match (19191).
       # If bridge networking with a +10000 offset was used, use the actual
-      # published port here (29191, etc.).
+      # published port here (29191, etc.) — and make sure the Service's
+      # targetPort above uses the exact same value.
       - { name: "19191", port: 19191, protocol: TCP }
       - { name: "19192", port: 19192, protocol: TCP }
       - { name: "19193", port: 19193, protocol: TCP }
@@ -999,6 +1020,7 @@ connector's assets.
 | `cp`/`mv` fails with `Permission denied` copying files into the connector's directory | The files were staged under a different Linux user's home directory (e.g. UPM's), which isn't traversable by the operator's own user | Use `sudo cp <source> <dest>` then `sudo chown <your_user>:<your_user> <dest>` |
 | `PKIX path validation failed (certificate_unknown)` and `DataSource default could not be resolved` appear in several connectors' logs at once, right after a TLS cert reconcile | Transient — every connector restarted around the same time and their first outbound calls raced each other | Wait for one federated-catalog cycle (~65–75s) and recheck; only escalate if it hasn't cleared by then |
 | The `connector-interface` login loops every couple of seconds, bouncing back to the Keycloak login screen | The browser has never visited `https://auth.dev.linkeddata.es` directly, so its background token-refresh calls fail on the untrusted self-signed cert for that origin (separate from the connector's own hostname) | Visit `https://auth.dev.linkeddata.es` once in the same browser and accept the certificate warning, then retry |
+| Roughly half of authenticated Management API requests fail with `AuthenticationFailed` (401) through the public hostname, while the exact same request always succeeds when sent directly to the container (bypassing nginx) — only affects connectors on bridge networking | The Service's `targetPort` was left unset and defaulted to the un-offset port number; `ingress-nginx` intermittently uses that instead of the Endpoints' real (offset) port, landing on whatever else is listening on that raw port on the same VM | Set `targetPort` explicitly on every Service port to match the Endpoints' actual offset port (Step 10.2) — see the warning there |
 
 ---
 

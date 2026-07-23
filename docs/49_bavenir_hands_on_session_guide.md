@@ -399,6 +399,18 @@ helm install ingress-nginx ingress-nginx/ingress-nginx \
 **10.1 — Apply the bridge** (Service with no pod selector + manual
 Endpoints + Ingress), on bavenir's own cluster:
 
+⚠️ **If this connector uses bridge networking with a port offset (+10000,
++20000, ...), the Service's `targetPort` below must be set to the same
+offset port as the matching Endpoints line, not left to default.**
+Confirmed on `connector-bavenir` and `contest-bavenir` (2026-07-23):
+leaving `targetPort` unset makes `ingress-nginx` intermittently route to
+the raw, un-offset port instead of the real one — landing on whatever else
+happens to be listening there on the same VM — for roughly half of all
+requests, failing with a 401 `AuthenticationFailed` every other call. The
+template below already has it filled in correctly; just make sure both
+columns (`port`/`targetPort` and the Endpoints `port`) end up using the
+**same real published port** for each line.
+
 ```bash
 cat > /tmp/<CONNECTOR_NAME>-bridge.yaml << 'EOF'
 apiVersion: v1
@@ -413,13 +425,15 @@ metadata:
   namespace: <NAMESPACE>
 spec:
   ports:
-    - { name: "19191", port: 19191, protocol: TCP }
-    - { name: "19192", port: 19192, protocol: TCP }
-    - { name: "19193", port: 19193, protocol: TCP }
-    - { name: "19194", port: 19194, protocol: TCP }
-    - { name: "19195", port: 19195, protocol: TCP }
-    - { name: "19196", port: 19196, protocol: TCP }
-    - { name: "19291", port: 19291, protocol: TCP }
+    # targetPort = the REAL published port (same as the Endpoints line below):
+    # host-network mode -> unchanged (19191, ...); bridge mode -> the offset port (29191/39191, ...)
+    - { name: "19191", port: 19191, protocol: TCP, targetPort: <REAL_PORT_19191> }
+    - { name: "19192", port: 19192, protocol: TCP, targetPort: <REAL_PORT_19192> }
+    - { name: "19193", port: 19193, protocol: TCP, targetPort: <REAL_PORT_19193> }
+    - { name: "19194", port: 19194, protocol: TCP, targetPort: <REAL_PORT_19194> }
+    - { name: "19195", port: 19195, protocol: TCP, targetPort: <REAL_PORT_19195> }
+    - { name: "19196", port: 19196, protocol: TCP, targetPort: <REAL_PORT_19196> }
+    - { name: "19291", port: 19291, protocol: TCP, targetPort: <REAL_PORT_19291> }
 ---
 apiVersion: v1
 kind: Endpoints
@@ -432,6 +446,7 @@ subsets:
     ports:
       # host-network mode: left port == right port (19191, ...)
       # bridge mode with +10000 offset: right side is the published port (29191, ...)
+      # Must match the Service's targetPort above, line for line.
       - { name: "19191", port: 19191, protocol: TCP }
       - { name: "19192", port: 19192, protocol: TCP }
       - { name: "19193", port: 19193, protocol: TCP }
@@ -559,6 +574,7 @@ against an existing connector following
 | `curl` → `503`, `Server: nginx/...` | Endpoints has no healthy backend — check IP/ports |
 | Request missing from `ingress-nginx-controller` logs entirely | DNS points somewhere else — recheck Step 0 |
 | TLS cert keeps reverting to stale/self-signed on one host | Cluster still runs Traefik — migrate it (Step 10.0) |
+| ~Half of authenticated Management API calls fail with 401 `AuthenticationFailed` through the public hostname, but always succeed hitting the container directly (bridge-mode connectors only) | Service `targetPort` left unset, defaulting to the raw un-offset port — nginx intermittently routes there instead of the real Endpoints port | Set `targetPort` explicitly to the real offset port on every Service port line (Step 10.1) |
 
 ---
 
