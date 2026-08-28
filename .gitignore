@@ -85,6 +85,7 @@ edc-deployment/
 # Shared deployer artifacts: keep chart sources tracked, not generated/runtime material.
 deployers/shared/common/charts/
 deployers/shared/common/init-keys-vault.json
+deployers/shared/common/vault-ops/vault-auto-unseal.yaml
 deployers/shared/dataspace/registration-service/cacerts.jks
 deployers/shared/dataspace/registration-service/cert.yaml
 deployers/shared/dataspace/registration-service/values-*.yaml

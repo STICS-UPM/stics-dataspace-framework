@@ -1,0 +1,77 @@
+# =============================================================================
+# Nightly backup of common-srvs-vault file storage -> in-cluster MinIO.
+#
+# Vault uses `storage "file"` (no raft snapshot API), so we sync the PVC tree.
+# Restore: scale vault to 0, wipe the PVC, `aws s3 sync` a snapshot back into it,
+# scale to 1, then unseal with the key in Secret/vault-keys (vault-auto-unseal
+# does this automatically).
+#
+# Runs 03:00 daily. Co-mounts the SAME PVC as vault-0, read-only (single-node
+# cluster, so RWO co-mount on that node is allowed). Syncs to bucket
+# "vault-backups" on common-srvs-minio under prefix vault-<UTC-timestamp>/,
+# keeps the newest 30 snapshots.
+#
+# APPLY:   kubectl --kubeconfig ~/.kube/k3s-stics2test.yaml apply -f vault-backup-cronjob.yaml
+# RUN NOW: kubectl --kubeconfig ~/.kube/k3s-stics2test.yaml -n common-srvs create job --from=cronjob/vault-backup vault-backup-manual-1
+# LOGS:    kubectl --kubeconfig ~/.kube/k3s-stics2test.yaml -n common-srvs logs job/vault-backup-manual-1
+# =============================================================================
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-backup
+  namespace: common-srvs
+  labels:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: vault
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: amazon/aws-cli:2.17.0      # ships bash + tar + aws s3
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/bash", "-ec"]     # overrides the image's `aws` entrypoint
+              args:
+                - |
+                  ts=$(date -u +%Y-%m-%d-%H%M)
+                  export AWS_ACCESS_KEY_ID="$MINIO_USER"
+                  export AWS_SECRET_ACCESS_KEY="$MINIO_PASS"
+                  EP="--endpoint-url http://common-srvs-minio:9000"
+                  echo "[vault-backup] $ts : sync /data -> s3://vault-backups/vault-${ts}/"
+                  aws $EP s3 mb s3://vault-backups 2>/dev/null || true
+                  aws $EP s3 sync /data "s3://vault-backups/vault-${ts}/" --delete --only-show-errors
+                  aws $EP s3 ls --recursive --summarize "s3://vault-backups/vault-${ts}/" | tail -2
+                  # keep newest 30 snapshot prefixes, delete older
+                  aws $EP s3 ls s3://vault-backups/ | awk '/ PRE /{print $2}' | sort | head -n -30 | while read -r old; do
+                    [ -n "$old" ] && aws $EP s3 rm --recursive "s3://vault-backups/$old" && echo "[vault-backup] pruned $old"
+                  done
+                  echo "[vault-backup] done"
+              env:
+                - name: MINIO_USER
+                  valueFrom:
+                    secretKeyRef: { name: common-srvs-minio, key: rootUser }
+                - name: MINIO_PASS
+                  valueFrom:
+                    secretKeyRef: { name: common-srvs-minio, key: rootPassword }
+              volumeMounts:
+                - { name: vault-data, mountPath: /data, readOnly: true }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits:   { cpu: 500m, memory: 256Mi }
+          volumes:
+            - name: vault-data
+              persistentVolumeClaim:
+                claimName: data-common-srvs-vault-0
