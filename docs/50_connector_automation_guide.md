@@ -290,7 +290,8 @@ A policy is an ODRL `Set`. Two are commonly used:
 | By property | `assetType = "dataset"`, `name = "..."`, `contenttype = "text/csv"` | `criteria=[c.criterion("assetType", "=", "dataset")]` |
 | By keyword | `http://www.w3.org/ns/dcat#keyword` with `=` or `contains` | `criteria=[c.criterion("http://www.w3.org/ns/dcat#keyword", "contains", "cadastre")]` |
 
-  (`in` does **not** work for keywords.)
+(`in` does **not** work for keywords.)
+
 * An empty selector would expose every asset, so the client refuses to send one.
 * To change a contract definition or a policy, delete and recreate it.
 
