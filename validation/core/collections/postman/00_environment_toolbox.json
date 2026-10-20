@@ -1,0 +1,217 @@
+{
+  "id": "8387fb4d-1425-4349-9f6f-9382dd51805c",
+  "name": "00 Environment - STICS connector toolbox",
+  "values": [
+    {
+      "key": "keycloakUrl",
+      "value": "https://auth.dev.linkeddata.es",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "keycloakClientId",
+      "value": "dataspace-users",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "dataspace",
+      "value": "stics",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "vaultUrl",
+      "value": "https://conn-citycouncil-demo.dev.linkeddata.es",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "minioUrl",
+      "value": "https://minio.dev.linkeddata.es",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "ontologyHubUrl",
+      "value": "https://ontology-hub-demo.dev.linkeddata.es",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "helioDataUrl",
+      "value": "https://helio-adapter.stics.linkeddata.es/api/citser_knowledge_graph/data",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "helioGuiUrl",
+      "value": "https://gui-helio-adapter.stics.linkeddata.es/",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "provider",
+      "value": "contest-stics",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "consumer",
+      "value": "conlab-stics",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "assetId",
+      "value": "toolbox-demo-asset",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "policyId",
+      "value": "toolbox-demo-policy",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "cdId",
+      "value": "toolbox-demo-cd",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "httpBaseUrl",
+      "value": "https://jsonplaceholder.typicode.com/todos/1",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "pushSinkUrl",
+      "value": "https://httpbin.org/post",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "s3Endpoint",
+      "value": "https://minio.dev.linkeddata.es",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "s3Region",
+      "value": "eu-central-1",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "s3Bucket",
+      "value": "stics-connector-bavenir",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "s3Key",
+      "value": "example.ttl",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "s3ContentType",
+      "value": "text/turtle",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "s3AccessKey",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "s3SecretKey",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "pw_contest-stics",
+      "value": "<credentials.json: connectors/contest-stics -> connector_user.passwd>",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "pw_conlab-stics",
+      "value": "<credentials.json: connectors/conlab-stics -> connector_user.passwd>",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "pw_connector-stics",
+      "value": "<credentials.json: connectors/connector-stics -> connector_user.passwd>",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "pw_connector-bavenir",
+      "value": "<credentials.json: connectors/connector-bavenir -> connector_user.passwd>",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "pw_contest-bavenir",
+      "value": "<credentials.json: connectors/contest-bavenir -> connector_user.passwd>",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "provider_jwt",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "consumer_jwt",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "offerId",
+      "value": "",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "negotiationId",
+      "value": "",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "agreementId",
+      "value": "",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "transferId",
+      "value": "",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "edrEndpoint",
+      "value": "",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "edrAuthorization",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment"
+}

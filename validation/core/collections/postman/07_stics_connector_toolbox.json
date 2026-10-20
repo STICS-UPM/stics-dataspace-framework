@@ -1,0 +1,2128 @@
+{
+  "info": {
+    "name": "07 · STICS connector toolbox",
+    "_postman_id": "31b12002-6eb9-4f02-8b55-7b6f05474e63",
+    "description": "STICS connector toolbox. One collection to exercise any pair of STICS connectors.\n\nSETUP\n1. Import this collection and 00_environment_toolbox.json, select the environment.\n2. Fill the five pw_<connector> variables (credentials.json -> connector_user.passwd). Tokens are fetched and refreshed automatically.\n3. Set `provider` and `consumer` to any two of: contest-stics, conlab-stics, connector-stics, connector-bavenir, contest-bavenir. All URLs are derived from the names.\n\nEND-TO-END ORDER (Collection Runner, run folders in this order)\n00 ecosystem -> 01 health -> 03 assets (create HttpData) -> 04 policies (create) -> 05 contract definitions (create) -> 06 catalogue (find my asset) -> 07 negotiation -> 08 transfer (PULL) -> 99 cleanup.\n\nNOTES\n- Poll requests loop by themselves in the Runner; sent manually, re-send until the state is final.\n- Cleanup cannot delete an asset that already has a contract agreement (409): that is EDC behaviour.\n- The AmazonS3 asset stores the keys in the asset data address. Fill s3* variables only if you want to test that.\n",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Resolves provider/consumer names -> URLs and keeps fresh Keycloak tokens (auto-login).",
+          "const REG = {",
+          "  'contest-stics':     {mgmt: 'https://con-test.stics.linkeddata.es/management',       dsp: 'https://con-test.stics.linkeddata.es/protocol',       user: 'user-contest-stics'},",
+          "  'conlab-stics':      {mgmt: 'https://con-lab.stics.linkeddata.es/management',        dsp: 'https://con-lab.stics.linkeddata.es/protocol',        user: 'user-conlab-stics'},",
+          "  'connector-stics':   {mgmt: 'https://stics.bavenir.eu/management',                   dsp: 'https://stics.bavenir.eu/protocol',                   user: 'user-connector-stics'},",
+          "  'connector-bavenir': {mgmt: 'https://connector-bavenir.stics.bavenir.eu/management', dsp: 'https://connector-bavenir.stics.bavenir.eu/protocol', user: 'user-connector-bavenir'},",
+          "  'contest-bavenir':   {mgmt: 'https://con-test.stics.bavenir.eu/management',          dsp: 'https://con-test.stics.bavenir.eu/protocol',          user: 'user-contest-bavenir'}",
+          "};",
+          "const env = pm.environment;",
+          "function resolveRole(role) {",
+          "  const name = env.get(role);",
+          "  const c = REG[name];",
+          "  if (!c) { console.warn('Unknown ' + role + ' = \"' + name + '\". Use one of: ' + Object.keys(REG).join(', ')); return null; }",
+          "  env.set(role + 'Mgmt', c.mgmt);",
+          "  env.set(role + 'Dsp', c.dsp);",
+          "  env.set(role + 'Base', c.mgmt.replace(/\\/management$/, ''));",
+          "  env.set(role + 'ParticipantId', name);",
+          "  env.set(role + '_user', c.user);",
+          "  env.set(role + '_password', env.get('pw_' + name) || '');",
+          "  return {name: name, c: c};",
+          "}",
+          "function jwtExp(t) {",
+          "  try { return JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).exp; } catch (e) { return 0; }",
+          "}",
+          "function ensureToken(role) {",
+          "  const info = resolveRole(role);",
+          "  if (!info) return;",
+          "  const jwt = env.get(role + '_jwt');",
+          "  if (jwt && env.get(role + '_jwt_for') === info.name && jwtExp(jwt) - 30 > Date.now() / 1000) return;",
+          "  const pw = env.get('pw_' + info.name);",
+          "  if (!pw || String(pw).startsWith('<')) { console.warn('Set the environment variable pw_' + info.name + ' (password of ' + info.c.user + ')'); return; }",
+          "  pm.sendRequest({",
+          "    url: env.get('keycloakUrl') + '/realms/' + env.get('dataspace') + '/protocol/openid-connect/token',",
+          "    method: 'POST',",
+          "    header: {'Content-Type': 'application/x-www-form-urlencoded'},",
+          "    body: {mode: 'urlencoded', urlencoded: [",
+          "      {key: 'grant_type', value: 'password'}, {key: 'client_id', value: env.get('keycloakClientId')},",
+          "      {key: 'username', value: info.c.user}, {key: 'password', value: pw}]}",
+          "  }, function (err, res) {",
+          "    if (err || res.code !== 200) { console.warn('Token request failed for ' + info.name + ': ' + (err || res.text())); return; }",
+          "    env.set(role + '_jwt', res.json().access_token);",
+          "    env.set(role + '_jwt_for', info.name);",
+          "  });",
+          "}",
+          "ensureToken('provider');",
+          "ensureToken('consumer');"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('response time under 20 s', () => pm.expect(pm.response.responseTime).to.be.below(20000));"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "00 · Ecosystem & infra checks",
+      "item": [
+        {
+          "name": "Keycloak · OIDC discovery (realm stics)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{keycloakUrl}}/realms/{{dataspace}}/.well-known/openid-configuration"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "pm.test('issuer is the stics realm', () => pm.expect(pm.response.json().issuer).to.include('/realms/stics'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Keycloak · JWKS (needed by every connector at boot)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/certs"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "pm.test('has signing keys', () => pm.expect(pm.response.json().keys.length).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Vault · seal status (sealed=true takes every connector down)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{vaultUrl}}/v1/sys/seal-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "pm.test('Vault is UNSEALED', () => pm.expect(pm.response.json().sealed).to.eql(false));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "MinIO · liveness (S3 for connector storage)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{minioUrl}}/minio/health/live",
+            "description": "Can be slow (several seconds) from outside the UPM network."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ontology Hub · catalogue page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{ontologyHubUrl}}/dataset"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 302]', () => pm.expect([200, 302]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Helio adapter · CitSer knowledge graph (Turtle)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{helioDataUrl}}",
+            "description": "Helio replies Content-Type text/html but the body is Turtle."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "pm.test('body is Turtle with citser prefix', () => pm.expect(pm.response.text()).to.include('citser:'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Helio adapter · GUI",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{helioGuiUrl}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Checks the shared services the connectors depend on. Run these first when something fails."
+    },
+    {
+      "name": "01 · Health (provider & consumer)",
+      "item": [
+        {
+          "name": "Provider · /api/check/health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{providerBase}}/api/check/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "const d = pm.response.json();",
+                  "pm.test('system healthy', () => pm.expect(d.isSystemHealthy).to.eql(true));",
+                  "(d.componentResults||[]).filter(c=>!c.isHealthy).forEach(c => console.warn('UNHEALTHY:', c.component, JSON.stringify(c.failure)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Provider · /api/check/liveness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{providerBase}}/api/check/liveness"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "const d = pm.response.json();",
+                  "pm.test('system healthy', () => pm.expect(d.isSystemHealthy).to.eql(true));",
+                  "(d.componentResults||[]).filter(c=>!c.isHealthy).forEach(c => console.warn('UNHEALTHY:', c.component, JSON.stringify(c.failure)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Provider · /api/check/readiness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{providerBase}}/api/check/readiness"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "const d = pm.response.json();",
+                  "pm.test('system healthy', () => pm.expect(d.isSystemHealthy).to.eql(true));",
+                  "(d.componentResults||[]).filter(c=>!c.isHealthy).forEach(c => console.warn('UNHEALTHY:', c.component, JSON.stringify(c.failure)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Provider · /api/check/startup",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{providerBase}}/api/check/startup"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "const d = pm.response.json();",
+                  "pm.test('system healthy', () => pm.expect(d.isSystemHealthy).to.eql(true));",
+                  "(d.componentResults||[]).filter(c=>!c.isHealthy).forEach(c => console.warn('UNHEALTHY:', c.component, JSON.stringify(c.failure)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Provider · connector-interface (UI) is served",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{providerBase}}/connector-interface/"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Provider · DSP endpoint answers (no auth → 4xx, not 5xx)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{providerDsp}}/catalog/request"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('protocol endpoint is up (not 5xx)', () => pm.expect(pm.response.code).to.be.below(500));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consumer · /api/check/health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{consumerBase}}/api/check/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "const d = pm.response.json();",
+                  "pm.test('system healthy', () => pm.expect(d.isSystemHealthy).to.eql(true));",
+                  "(d.componentResults||[]).filter(c=>!c.isHealthy).forEach(c => console.warn('UNHEALTHY:', c.component, JSON.stringify(c.failure)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consumer · /api/check/liveness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{consumerBase}}/api/check/liveness"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "const d = pm.response.json();",
+                  "pm.test('system healthy', () => pm.expect(d.isSystemHealthy).to.eql(true));",
+                  "(d.componentResults||[]).filter(c=>!c.isHealthy).forEach(c => console.warn('UNHEALTHY:', c.component, JSON.stringify(c.failure)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consumer · /api/check/readiness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{consumerBase}}/api/check/readiness"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "const d = pm.response.json();",
+                  "pm.test('system healthy', () => pm.expect(d.isSystemHealthy).to.eql(true));",
+                  "(d.componentResults||[]).filter(c=>!c.isHealthy).forEach(c => console.warn('UNHEALTHY:', c.component, JSON.stringify(c.failure)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consumer · /api/check/startup",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{consumerBase}}/api/check/startup"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "const d = pm.response.json();",
+                  "pm.test('system healthy', () => pm.expect(d.isSystemHealthy).to.eql(true));",
+                  "(d.componentResults||[]).filter(c=>!c.isHealthy).forEach(c => console.warn('UNHEALTHY:', c.component, JSON.stringify(c.failure)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consumer · connector-interface (UI) is served",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{consumerBase}}/connector-interface/"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consumer · DSP endpoint answers (no auth → 4xx, not 5xx)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{consumerDsp}}/catalog/request"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('protocol endpoint is up (not 5xx)', () => pm.expect(pm.response.code).to.be.below(500));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Public health probes. A 503 with 'Vault is sealed' means Vault must be unsealed."
+    },
+    {
+      "name": "02 · Auth (optional — the collection logs in automatically)",
+      "item": [
+        {
+          "name": "Login · provider",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": "{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "password"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{keycloakClientId}}"
+                },
+                {
+                  "key": "username",
+                  "value": "{{provider_user}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{provider_password}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('token obtained', () => { const j = pm.response.json(); pm.expect(j.access_token).to.be.a('string'); pm.environment.set('provider_jwt', j.access_token); pm.environment.set('provider_jwt_for', pm.environment.get('provider')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login · consumer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": "{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "password"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{keycloakClientId}}"
+                },
+                {
+                  "key": "username",
+                  "value": "{{consumer_user}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{consumer_password}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('token obtained', () => { const j = pm.response.json(); pm.expect(j.access_token).to.be.a('string'); pm.environment.set('consumer_jwt', j.access_token); pm.environment.set('consumer_jwt_for', pm.environment.get('consumer')); });"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "The collection pre-request script already fetches and refreshes both tokens. These two requests force a manual login (form body set below)."
+    },
+    {
+      "name": "03 · Assets (provider)",
+      "item": [
+        {
+          "name": "Create HttpData asset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/assets",
+            "description": "Points at {{httpBaseUrl}}. 409 = already exists (re-run).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"dcterms\": \"http://purl.org/dc/terms/\",\n    \"dcat\": \"http://www.w3.org/ns/dcat#\",\n    \"vcard\": \"http://www.w3.org/2006/vcard/ns#\",\n    \"citser\": \"https://stics.linkeddata.es/def/citser#\"\n  },\n  \"@id\": \"{{assetId}}\",\n  \"@type\": \"Asset\",\n  \"properties\": {\n    \"name\": \"Toolbox HttpData asset\",\n    \"version\": \"1.0.0\",\n    \"contenttype\": \"application/json\",\n    \"assetType\": \"dataset\",\n    \"shortDescription\": \"Asset created from the STICS Postman toolbox\",\n    \"dcterms:description\": \"Asset created from the STICS Postman toolbox\",\n    \"dcat:keyword\": [\n      \"toolbox\",\n      \"test\"\n    ]\n  },\n  \"dataAddress\": {\n    \"type\": \"HttpData\",\n    \"name\": \"{{assetId}}\",\n    \"baseUrl\": \"{{httpBaseUrl}}\",\n    \"proxyPath\": \"true\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 409]', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create AmazonS3 asset (direct, needs keys)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/assets",
+            "description": "The connector validator requires region, bucketName, accessKeyId, secretAccessKey and endpointOverride for AmazonS3. The keys are STORED in the asset's dataAddress. Fill s3* variables first.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"dcterms\": \"http://purl.org/dc/terms/\",\n    \"dcat\": \"http://www.w3.org/ns/dcat#\",\n    \"vcard\": \"http://www.w3.org/2006/vcard/ns#\",\n    \"citser\": \"https://stics.linkeddata.es/def/citser#\"\n  },\n  \"@id\": \"{{assetId}}-s3\",\n  \"@type\": \"Asset\",\n  \"properties\": {\n    \"name\": \"Toolbox S3 asset\",\n    \"version\": \"1.0.0\",\n    \"contenttype\": \"{{s3ContentType}}\",\n    \"assetType\": \"dataset\",\n    \"shortDescription\": \"S3-backed asset created from the Postman toolbox\",\n    \"dcat:keyword\": [\n      \"toolbox\",\n      \"s3\"\n    ]\n  },\n  \"dataAddress\": {\n    \"type\": \"AmazonS3\",\n    \"region\": \"{{s3Region}}\",\n    \"bucketName\": \"{{s3Bucket}}\",\n    \"keyName\": \"{{s3Key}}\",\n    \"accessKeyId\": \"{{s3AccessKey}}\",\n    \"secretAccessKey\": \"{{s3SecretKey}}\",\n    \"endpointOverride\": \"{{s3Endpoint}}\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('s3AccessKey')) {",
+                  "  pm.test('no s3 keys set -> validator rejects (400, accessKeyId required)', () => { pm.expect(pm.response.code).to.eql(400); pm.expect(pm.response.text()).to.include('accessKeyId'); });",
+                  "} else {",
+                  "  pm.test('S3 asset accepted (200 / 409)', () => pm.expect([200, 409]).to.include(pm.response.code));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create DCAT-enriched asset (citser metadata)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/assets",
+            "description": "Enriched DCAT + nested objects + custom citser: terms. See the catalogue request in folder 06 to check they survive.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"dcterms\": \"http://purl.org/dc/terms/\",\n    \"dcat\": \"http://www.w3.org/ns/dcat#\",\n    \"vcard\": \"http://www.w3.org/2006/vcard/ns#\",\n    \"citser\": \"https://stics.linkeddata.es/def/citser#\"\n  },\n  \"@id\": \"{{assetId}}-dcat\",\n  \"@type\": \"Asset\",\n  \"properties\": {\n    \"name\": \"Toolbox DCAT-enriched asset\",\n    \"version\": \"1.0.0\",\n    \"contenttype\": \"text/turtle\",\n    \"assetType\": \"dataset\",\n    \"shortDescription\": \"Asset with enriched DCAT + citser metadata\",\n    \"dcterms:title\": \"CitSer Synthetic Knowledge Graph\",\n    \"dcterms:description\": \"Synthetic citizen-services knowledge graph served by the Helio adapter.\",\n    \"dcterms:publisher\": \"https://stics.linkeddata.es/org/upm-oeg\",\n    \"dcterms:license\": \"https://creativecommons.org/licenses/by/4.0/\",\n    \"dcterms:issued\": \"2026-07-03\",\n    \"dcat:keyword\": [\n      \"citser\",\n      \"knowledge-graph\",\n      \"synthetic\"\n    ],\n    \"dcat:landingPage\": \"https://github.com/STICS-UPM/citser_synthetic_dataset\",\n    \"dcat:contactPoint\": {\n      \"@type\": \"vcard:Organization\",\n      \"vcard:fn\": \"STICS — UPM OEG\",\n      \"vcard:hasEmail\": \"mailto:stics-oeg@upm.es\"\n    },\n    \"dcat:distribution\": {\n      \"@type\": \"dcat:Distribution\",\n      \"dcat:accessURL\": \"{{helioDataUrl}}\",\n      \"dcat:mediaType\": \"text/turtle\"\n    },\n    \"citser:vocabulary\": \"https://stics.linkeddata.es/def/citser#\",\n    \"citser:isSynthetic\": true\n  },\n  \"dataAddress\": {\n    \"type\": \"HttpData\",\n    \"name\": \"{{assetId}}-dcat\",\n    \"baseUrl\": \"{{helioDataUrl}}\",\n    \"method\": \"GET\",\n    \"contentType\": \"text/turtle\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 409]', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List assets",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/assets/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "const a = pm.response.json(); const arr = Array.isArray(a) ? a : [a];",
+                  "console.log('assets (' + arr.length + '):', arr.map(x => x['@id']).join(', '));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Count assets",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/pagination/count?type=asset",
+            "description": "Endpoint used by the connector-interface UI.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "console.log('asset count:', pm.response.text());"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get asset by id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/assets/{{assetId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "pm.test('id matches', () => pm.expect(pm.response.json()['@id']).to.eql(pm.environment.get('assetId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update asset (PUT)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/assets",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"dcterms\": \"http://purl.org/dc/terms/\",\n    \"dcat\": \"http://www.w3.org/ns/dcat#\",\n    \"vcard\": \"http://www.w3.org/2006/vcard/ns#\",\n    \"citser\": \"https://stics.linkeddata.es/def/citser#\"\n  },\n  \"@id\": \"{{assetId}}\",\n  \"@type\": \"Asset\",\n  \"properties\": {\n    \"name\": \"Toolbox HttpData asset\",\n    \"version\": \"1.0.0\",\n    \"contenttype\": \"application/json\",\n    \"assetType\": \"dataset\",\n    \"shortDescription\": \"UPDATED from Postman at {{$isoTimestamp}}\",\n    \"dcterms:description\": \"Asset created from the STICS Postman toolbox\",\n    \"dcat:keyword\": [\n      \"toolbox\",\n      \"test\"\n    ]\n  },\n  \"dataAddress\": {\n    \"type\": \"HttpData\",\n    \"name\": \"{{assetId}}\",\n    \"baseUrl\": \"{{httpBaseUrl}}\",\n    \"proxyPath\": \"true\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 204]', () => pm.expect([200, 204]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Assets exposed by the provider connector. Deletes are in folder 99 so a full Runner pass keeps what it creates."
+    },
+    {
+      "name": "04 · Policies (provider)",
+      "item": [
+        {
+          "name": "Create policy · allow-all (empty ODRL Set)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/policydefinitions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"odrl\": \"http://www.w3.org/ns/odrl/2/\"\n  },\n  \"@id\": \"{{policyId}}\",\n  \"policy\": {\n    \"@context\": \"http://www.w3.org/ns/odrl.jsonld\",\n    \"@type\": \"Set\",\n    \"permission\": [],\n    \"prohibition\": [],\n    \"obligation\": []\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 409]', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create policy · always-true (ALWAYS_TRUE constraint)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/policydefinitions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"odrl\": \"http://www.w3.org/ns/odrl/2/\"\n  },\n  \"@id\": \"{{policyId}}-always-true\",\n  \"policy\": {\n    \"@context\": \"http://www.w3.org/ns/odrl.jsonld\",\n    \"@type\": \"Set\",\n    \"permission\": [\n      {\n        \"action\": \"USE\",\n        \"constraint\": {\n          \"leftOperand\": \"ALWAYS_TRUE\",\n          \"operator\": \"eq\",\n          \"rightOperand\": \"true\"\n        }\n      }\n    ],\n    \"prohibition\": [],\n    \"obligation\": []\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 409]', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List policies",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/policydefinitions/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "console.log('policies:', pm.response.json().map(x => x['@id']).join(', '));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get policy",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/policydefinitions/{{policyId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 · Contract definitions (provider)",
+      "item": [
+        {
+          "name": "Create contract definition (asset ← policy)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/contractdefinitions",
+            "description": "Exposes {{assetId}} in the catalogue under {{policyId}}. Nothing is visible to consumers until this exists.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@id\": \"{{cdId}}\",\n  \"accessPolicyId\": \"{{policyId}}\",\n  \"contractPolicyId\": \"{{policyId}}\",\n  \"assetsSelector\": [\n    {\n      \"@type\": \"CriterionDto\",\n      \"operandLeft\": \"https://w3id.org/edc/v0.0.1/ns/id\",\n      \"operator\": \"=\",\n      \"operandRight\": \"{{assetId}}\"\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 409]', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create contract definition for the DCAT-enriched asset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/contractdefinitions",
+            "description": "Needed so the DCAT-enriched asset appears in the catalogue (folder 06).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@id\": \"{{cdId}}-dcat\",\n  \"accessPolicyId\": \"{{policyId}}\",\n  \"contractPolicyId\": \"{{policyId}}\",\n  \"assetsSelector\": [\n    {\n      \"@type\": \"CriterionDto\",\n      \"operandLeft\": \"https://w3id.org/edc/v0.0.1/ns/id\",\n      \"operator\": \"=\",\n      \"operandRight\": \"{{assetId}}-dcat\"\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 409]', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List contract definitions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/contractdefinitions/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "console.log('contract definitions:', pm.response.json().map(x => x['@id']).join(', '));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get contract definition",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/contractdefinitions/{{cdId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 · Catalogue (consumer asks the provider via DSP)",
+      "item": [
+        {
+          "name": "Fetch full provider catalogue",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/catalog/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"CatalogRequest\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"counterPartyId\": \"{{providerParticipantId}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"querySpec\": {\n    \"offset\": 0,\n    \"limit\": 200,\n    \"filterExpression\": []\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "const cat = pm.response.json(); let ds = cat['dcat:dataset'] || []; ds = Array.isArray(ds) ? ds : [ds];",
+                  "pm.test('catalogue has participantId of the provider', () => pm.expect(JSON.stringify(cat)).to.include(pm.environment.get('providerParticipantId')));",
+                  "console.log('datasets (' + ds.length + '):', ds.map(x => x['@id']).join(', '));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Find my asset & capture offerId",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/catalog/request",
+            "description": "Stores the contract offer id in {{offerId}} for the negotiation.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"CatalogRequest\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"counterPartyId\": \"{{providerParticipantId}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"querySpec\": {\n    \"offset\": 0,\n    \"limit\": 200,\n    \"filterExpression\": []\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const cat = pm.response.json();",
+                  "let ds = cat['dcat:dataset'] || cat['http://www.w3.org/ns/dcat#dataset'] || [];",
+                  "ds = Array.isArray(ds) ? ds : [ds];",
+                  "const aid = pm.environment.get('assetId');",
+                  "const d = ds.find(x => x['@id'] === aid);",
+                  "pm.test('asset ' + aid + ' is in the provider catalogue', () => pm.expect(d, 'not found - create asset+policy+contract definition first').to.be.an('object'));",
+                  "if (d) { let o = d['odrl:hasPolicy'] || d['hasPolicy']; if (Array.isArray(o)) o = o[0];",
+                  "  pm.environment.set('offerId', o['@id']); console.log('offerId =', o['@id']); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Catalogue filtered by asset id",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/catalog/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"CatalogRequest\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"counterPartyId\": \"{{providerParticipantId}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"querySpec\": {\n    \"offset\": 0,\n    \"limit\": 200,\n    \"filterExpression\": [\n      {\n        \"operandLeft\": \"https://w3id.org/edc/v0.0.1/ns/id\",\n        \"operator\": \"=\",\n        \"operandRight\": \"{{assetId}}\"\n      }\n    ]\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "console.log(JSON.stringify(pm.response.json()['dcat:dataset'], null, 2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Show DCAT metadata of my asset (enriched fields)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/catalog/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"CatalogRequest\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"counterPartyId\": \"{{providerParticipantId}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"querySpec\": {\n    \"offset\": 0,\n    \"limit\": 200,\n    \"filterExpression\": []\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const cat = pm.response.json(); let ds = cat['dcat:dataset'] || []; ds = Array.isArray(ds) ? ds : [ds];",
+                  "const d = ds.find(x => x['@id'] === pm.environment.get('assetId') + '-dcat');",
+                  "pm.test('enriched asset visible (create it in folder 03 first)', () => pm.expect(d).to.be.an('object'));",
+                  "if (d) { console.log(JSON.stringify(d, null, 2)); pm.test('nested dcat:distribution survives', () => pm.expect(d['dcat:distribution']).to.be.an('object')); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Federated catalogue count (as the UI does)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/pagination/count?type=federatedCatalog",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "console.log('federated catalogue entries:', pm.response.text());"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "The consumer asks the provider's DSP endpoint for its catalogue (DCAT)."
+    },
+    {
+      "name": "07 · Contract negotiation (consumer)",
+      "item": [
+        {
+          "name": "Start negotiation (uses offerId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/contractnegotiations",
+            "description": "Run 'Find my asset & capture offerId' (folder 06) first.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"ContractRequest\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"policy\": {\n    \"@context\": \"http://www.w3.org/ns/odrl.jsonld\",\n    \"@id\": \"{{offerId}}\",\n    \"@type\": \"Offer\",\n    \"assigner\": \"{{providerParticipantId}}\",\n    \"target\": \"{{assetId}}\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json(); pm.test('negotiation started', () => pm.expect(j['@id']).to.be.a('string'));",
+                  "pm.environment.set('negotiationId', j['@id']); pm.environment.set('negRetries', '0');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Poll negotiation state (re-send until FINALIZED)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/contractnegotiations/{{negotiationId}}",
+            "description": "In the Collection Runner this request loops itself (max 30 polls). Manually: re-send until state = FINALIZED."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json(); const st = j.state; console.log('negotiation state:', st);",
+                  "if (!st) { pm.test('negotiation exists (run Start negotiation first)', () => { throw new Error(pm.response.text().substring(0, 300)); }); }",
+                  "else if (st === 'FINALIZED') { pm.environment.set('agreementId', j.contractAgreementId); pm.environment.unset('negRetries');",
+                  "  pm.test('negotiation FINALIZED with agreement', () => pm.expect(j.contractAgreementId).to.be.a('string')); }",
+                  "else if (st === 'TERMINATED' || st === 'TERMINATING') { pm.test('negotiation not terminated', () => { throw new Error(JSON.stringify(j)); }); }",
+                  "else { const n = parseInt(pm.environment.get('negRetries') || '0', 10) + 1; pm.environment.set('negRetries', n);",
+                  "  if (n <= 30) { setTimeout(() => {}, 2000); postman.setNextRequest(pm.info.requestName); }",
+                  "  else { pm.test('negotiation finalized in time', () => { throw new Error('timeout after 30 polls'); }); } }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get contract agreement",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/contractagreements/{{agreementId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "pm.test('agreement targets my asset', () => pm.expect(pm.response.json().assetId).to.eql(pm.environment.get('assetId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List negotiations (consumer view)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/contractnegotiations/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "console.log(pm.response.json().map(n => n['@id'] + ' ' + n.state).join('\\n'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List agreements (consumer view)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/contractagreements/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "console.log('agreements:', pm.response.json().length);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Terminate negotiation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/contractnegotiations/{{negotiationId}}/terminate",
+            "description": "Meant for a negotiation that is not yet finalized; on a FINALIZED one EDC answers with an error (409/500).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@id\": \"{{negotiationId}}\",\n  \"reason\": \"terminated from Postman toolbox\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 204, 409, 500]', () => pm.expect([200, 204, 409, 500]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08 · Transfer (consumer)",
+      "item": [
+        {
+          "name": "Start transfer · HttpData-PULL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/transferprocesses",
+            "description": "Needs {{agreementId}} from the negotiation.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"TransferRequestDto\",\n  \"connectorId\": \"{{providerParticipantId}}\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"contractId\": \"{{agreementId}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"transferType\": \"HttpData-PULL\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json(); pm.test('transfer started', () => pm.expect(j['@id']).to.be.a('string'));",
+                  "pm.environment.set('transferId', j['@id']); pm.environment.set('xferRetries', '0');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Poll transfer state (until STARTED/COMPLETED)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/transferprocesses/{{transferId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json(); const st = j.state; console.log('transfer state:', st);",
+                  "if (!st) { pm.test('transfer exists (run Start transfer first)', () => { throw new Error(pm.response.text().substring(0, 300)); }); }",
+                  "else if ([\"STARTED\", \"COMPLETED\"].includes(st)) { pm.test('transfer reached ' + st, () => pm.expect([\"STARTED\", \"COMPLETED\"]).to.include(st)); pm.environment.unset('xferRetries'); }",
+                  "else if (st === 'TERMINATED') { pm.test('transfer not terminated', () => { throw new Error(JSON.stringify(j)); }); }",
+                  "else { const n = parseInt(pm.environment.get('xferRetries') || '0', 10) + 1; pm.environment.set('xferRetries', n);",
+                  "  if (n <= 40) { setTimeout(() => {}, 2000); postman.setNextRequest(pm.info.requestName); }",
+                  "  else { pm.test('transfer progressed in time', () => { throw new Error('timeout'); }); } }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get EDR (endpoint + access token)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/edrs/{{transferId}}/dataaddress"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json(); pm.test('EDR has endpoint', () => pm.expect(j.endpoint).to.be.a('string'));",
+                  "pm.environment.set('edrEndpoint', j.endpoint); pm.environment.set('edrAuthorization', j.authorization);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pull the data through the provider data plane (EDR)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "{{edrAuthorization}}"
+              }
+            ],
+            "url": "{{edrEndpoint}}",
+            "description": "This is the actual download: provider data plane public API, authorised with the EDR token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "console.log('PULLED DATA:', pm.response.text().substring(0, 800));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Start transfer · HttpData-PUSH (to pushSinkUrl)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/transferprocesses",
+            "description": "The provider POSTs the data to {{pushSinkUrl}} (default: httpbin.org echo). The in-house sink behind con-lab /push-sink needs a process on stics2lab:9999, which is not always running.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"TransferRequestDto\",\n  \"connectorId\": \"{{providerParticipantId}}\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"contractId\": \"{{agreementId}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"transferType\": \"HttpData-PUSH\",\n  \"dataDestination\": {\n    \"type\": \"HttpData\",\n    \"baseUrl\": \"{{pushSinkUrl}}\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json(); pm.test('push transfer started', () => pm.expect(j['@id']).to.be.a('string'));",
+                  "pm.environment.set('transferId', j['@id']); pm.environment.set('xferRetries', '0');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Poll PUSH transfer (until COMPLETED)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/transferprocesses/{{transferId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json(); const st = j.state; console.log('transfer state:', st);",
+                  "if (!st) { pm.test('transfer exists (run Start transfer first)', () => { throw new Error(pm.response.text().substring(0, 300)); }); }",
+                  "else if ([\"COMPLETED\"].includes(st)) { pm.test('transfer reached ' + st, () => pm.expect([\"COMPLETED\"]).to.include(st)); pm.environment.unset('xferRetries'); }",
+                  "else if (st === 'TERMINATED') { pm.test('transfer not terminated', () => { throw new Error(JSON.stringify(j)); }); }",
+                  "else { const n = parseInt(pm.environment.get('xferRetries') || '0', 10) + 1; pm.environment.set('xferRetries', n);",
+                  "  if (n <= 40) { setTimeout(() => {}, 2000); postman.setNextRequest(pm.info.requestName); }",
+                  "  else { pm.test('transfer progressed in time', () => { throw new Error('timeout'); }); } }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List transfer processes (consumer view)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/transferprocesses/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "console.log(pm.response.json().map(t => t['@id'] + ' ' + t.state).join('\\n'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List EDRs",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/edrs/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Terminate transfer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{consumer_jwt}}"
+              }
+            ],
+            "url": "{{consumerMgmt}}/v3/transferprocesses/{{transferId}}/terminate",
+            "description": "For a running transfer. Already COMPLETED/TERMINATED ones answer with an error.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@id\": \"{{transferId}}\",\n  \"reason\": \"terminated from Postman toolbox\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 204, 404, 409, 500]', () => pm.expect([200, 204, 404, 409, 500]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "09 · Provider-side view of what consumers did",
+      "item": [
+        {
+          "name": "Provider · list negotiations",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/contractnegotiations/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "console.log(pm.response.json().map(n => n['@id'] + ' ' + n.state + ' ' + (n.counterPartyId||'')).join('\\n'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Provider · list agreements",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/contractagreements/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Provider · list transfer processes",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/transferprocesses/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200]', () => pm.expect([200]).to.include(pm.response.code));",
+                  "console.log(pm.response.json().map(t => t['@id'] + ' ' + t.state).join('\\n'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "10 · Security sanity checks",
+      "item": [
+        {
+          "name": "Management API without token → 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/assets/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [401]', () => pm.expect([401]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Management API with garbage token → 401/403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer not-a-real-token"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/assets/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"offset\": 0,\n  \"limit\": 50,\n  \"filterExpression\": []\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [401, 403]', () => pm.expect([401, 403]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload API exists (/s3assets/upload-chunk, no token → 401)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{providerMgmt}}/s3assets/upload-chunk",
+            "description": "The connector-side file upload API used by the connector-interface. 404 would mean the extension is missing."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [401, 403]', () => pm.expect([401, 403]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Keycloak rejects a wrong password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": "{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "password"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{keycloakClientId}}"
+                },
+                {
+                  "key": "username",
+                  "value": "nobody"
+                },
+                {
+                  "key": "password",
+                  "value": "wrong"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [401]', () => pm.expect([401]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "99 · Cleanup (provider)",
+      "item": [
+        {
+          "name": "Delete contract definition",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/contractdefinitions/{{cdId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 204, 404]', () => pm.expect([200, 204, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete contract definition · DCAT demo",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/contractdefinitions/{{cdId}}-dcat"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 204, 404]', () => pm.expect([200, 204, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete policy · allow-all",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/policydefinitions/{{policyId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 204, 404, 409]', () => pm.expect([200, 204, 404, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete policy · always-true",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/policydefinitions/{{policyId}}-always-true"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 204, 404, 409]', () => pm.expect([200, 204, 404, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete asset · HttpData",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/assets/{{assetId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 204, 404, 409]', () => pm.expect([200, 204, 404, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete asset · S3",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/assets/{{assetId}}-s3"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 204, 404, 409]', () => pm.expect([200, 204, 404, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete asset · DCAT demo",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_jwt}}"
+              }
+            ],
+            "url": "{{providerMgmt}}/v3/assets/{{assetId}}-dcat"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is one of [200, 204, 404, 409]', () => pm.expect([200, 204, 404, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Removes what this collection created. Assets referenced by a contract agreement answer 409 (EDC keeps them)."
+    }
+  ]
+}
