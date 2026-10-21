@@ -1,0 +1,14 @@
+# Copy to env/<name>.properties (gitignored) and adjust.
+# The password is NOT stored here: export BENCH_PASSWORD before running.
+
+# Label of the system under test, recorded in metadata.json (e.g. inesdata-postgres, triplestore-fuseki)
+target_label=inesdata-postgres
+
+# Provider connector management API
+mgmt_url=https://stics.bavenir.eu/management
+
+# Keycloak (password grant, same as the Postman collections)
+kc_url=https://auth.dev.linkeddata.es
+kc_realm=stics
+kc_client_id=dataspace-users
+user=user-connector-stics

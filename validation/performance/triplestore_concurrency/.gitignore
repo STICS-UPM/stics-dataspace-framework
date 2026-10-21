@@ -1,0 +1,8 @@
+# Regenerable with dataset/generate_assets.py (hash recorded in README / manifest)
+dataset/generated/
+# Pinned JMeter download (scripts/install_jmeter.sh)
+.tools/
+# Local credentials (root .gitignore ignores every env/ dir; re-include the template only)
+!env/
+env/*.properties
+!env/*.properties.example
