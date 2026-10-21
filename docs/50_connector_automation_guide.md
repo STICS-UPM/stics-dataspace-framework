@@ -260,10 +260,11 @@ A policy is an ODRL `Set`. Two are commonly used:
 `POST /v3/policydefinitions` (200). Also `GET /v3/policydefinitions/{id}`, `POST /v3/policydefinitions/request`,
 `DELETE /v3/policydefinitions/{id}`.
 
-> **Important.** A policy that carries the `ALWAYS_TRUE` constraint
-> (`create_always_true_policy`) works as a contract definition's *access* policy, but **if it is used as the
-> *contract* policy, consumers' negotiations end in `TERMINATED`**. Use the empty `allow-all` Set as the contract
-> policy.
+> **Important.** When a consumer negotiates, the request must carry the **complete offer exactly as it
+> received it in the catalogue**, not just its id (section 9.2). If only the id is sent, the provider compares the
+> request with its policy and **terminates the negotiation** as soon as the policy has any rule (a permission, a
+> constraint such as `ALWAYS_TRUE`...). With the complete offer, empty policies and policies with constraints
+> (`ALWAYS_TRUE` as access policy and/or contract policy) all negotiate correctly.
 
 ### 6.2 Contract definitions
 
@@ -292,7 +293,11 @@ A policy is an ODRL `Set`. Two are commonly used:
 
 (`in` does **not** work for keywords.)
 
-* An empty selector would expose every asset, so the client refuses to send one.
+* An **empty selector exposes every asset** of the connector under that contract definition's policies; the client
+  refuses to send one. Check `list_contract_definitions()` for definitions with `assetsSelector: []`.
+* If **several contract definitions select the same asset**, the catalogue shows **one offer per contract
+  definition** (the first part of an offer id, before the first `:`, is the base64 of the contract definition id).
+  The consumer decides which one to accept.
 * To change a contract definition or a policy, delete and recreate it.
 
 ## 7. Verifying that the asset is published
@@ -330,8 +335,8 @@ print(response.text)
 
 | Step | API | Python |
 |---|---|---|
-| 9.1 Catalogue | `POST /v3/catalog/request` `{counterPartyAddress, counterPartyId, protocol: "dataspace-protocol-http"}` | `request_catalog(dsp, provider_id)`, `find_offer(catalog, asset_id)` |
-| 9.2 Negotiate | `POST /v3/contractnegotiations` with the offer id; poll `GET /v3/contractnegotiations/{id}` until `FINALIZED` | `negotiate(...)`, `wait_for_agreement(...)` |
+| 9.1 Catalogue | `POST /v3/catalog/request` `{counterPartyAddress, counterPartyId, protocol: "dataspace-protocol-http"}` | `request_catalog(dsp, provider_id)`, `find_offers(...)` |
+| 9.2 Negotiate | `POST /v3/contractnegotiations` with the **complete offer** (9.5); poll `GET /v3/contractnegotiations/{id}` until `FINALIZED` | `find_offer(...)`, `negotiate(...)`, `wait_for_agreement(...)` |
 | 9.3 Transfer | `POST /v3/transferprocesses` with `transferType: "HttpData-PULL"` (or `HttpData-PUSH` + `dataDestination`); poll until `STARTED`/`COMPLETED` | `start_transfer(...)`, `wait_for_transfer(...)` |
 | 9.4 Download | `GET /v3/edrs/{transferId}/dataaddress` gives `endpoint` + `authorization`; then `GET <endpoint>` with header `Authorization: <authorization>` | `get_edr(...)`, `download(edr)` |
 
@@ -341,6 +346,35 @@ connectors permanently.
 
 PUSH sends the data to a URL you provide (`push_destination_url`); that URL must be reachable from the provider.
 
+### 9.5 The negotiation request must carry the complete offer
+
+Take the offer object from the catalogue (`dcat:dataset` → `odrl:hasPolicy`), add `odrl:assigner` (the provider's
+participant id) and `odrl:target` (the asset id), and send it as `policy`. The `@context` of the request must declare
+the prefixes the offer uses, `edc` and `odrl`:
+
+```json
+{
+  "@context": {"@vocab": "https://w3id.org/edc/v0.0.1/ns/", "edc": "https://w3id.org/edc/v0.0.1/ns/",
+               "odrl": "http://www.w3.org/ns/odrl/2/"},
+  "@type": "ContractRequest",
+  "counterPartyAddress": "https://connector-bavenir.stics.bavenir.eu/protocol",
+  "protocol": "dataspace-protocol-http",
+  "policy": {
+    "@id": "<offer @id copied from the catalogue>",
+    "@type": "odrl:Offer",
+    "odrl:permission": {"odrl:action": {"@id": "USE"}},
+    "odrl:prohibition": [], "odrl:obligation": [],
+    "odrl:assigner": {"@id": "connector-bavenir"},
+    "odrl:target": {"@id": "my-asset"}
+  }
+}
+```
+
+This is what the connector interface does when you press *Negotiate*. The Python client does it in `negotiate()`. Two
+failure modes seen in practice: sending only `@id`/`assigner`/`target` makes the negotiation end `TERMINATED` for
+any policy with rules; and omitting the `edc` prefix from the context makes the connector answer HTTP 400 for offers
+that contain `edc:` identifiers (such as `edc:ALWAYS_TRUE`).
+
 ## 10. Errors
 
 | HTTP | Meaning | What to do |
@@ -349,8 +383,9 @@ PUSH sends the data to a URL you provide (`push_destination_url`); that URL must
 | 401 | Missing/expired token, or wrong credentials | Request a new token; check the user and its roles |
 | 403 | Authenticated but not allowed (or blocked by a firewall) | Check the user's roles |
 | 404 | Object not found | Check the id |
-| 409 | Already exists, or still referenced | Use `exists_ok`, or remove dependants first (5.5) |
+| 409 | Already exists, or still referenced | Use `exists_ok`, or remove dependants first (5.5). The interface only shows a generic error when deleting a policy that a contract definition still uses |
 | 500 | Server error. Seen when a non-final upload chunk is under 50 MiB | Check the request against section 5.4 |
+| Negotiation `TERMINATED` | The request did not carry the complete offer | See 9.5 |
 | 503 on `/api/check/health` | A component is unhealthy | Read `componentResults`; "Vault is sealed" means the secret store must be unsealed |
 
 `ConnectorError` in the client carries `status`, `body` and `messages`.
@@ -364,6 +399,7 @@ PUSH sends the data to a URL you provide (`push_destination_url`); that URL must
 * Poll `/api/check/health` before a batch and alert on failures. A connector whose Vault token expired boots
   with errors until it is renewed.
 * Do not run uploads of the same file name in parallel.
+* When negotiating, always send the complete offer (9.5) and, if an asset shows several offers, choose one explicitly.
 * Reuse one `Connector` instance (it caches and refreshes the token).
 * Keep the keys of 5.3 out of assets when you can; prefer 5.4.
 

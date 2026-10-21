@@ -1,5 +1,5 @@
 {
-  "id": "8387fb4d-1425-4349-9f6f-9382dd51805c",
+  "id": "6c87398d-cc41-42a8-b8b8-065a44a4fd29",
   "name": "00 Environment - STICS connector toolbox",
   "values": [
     {
@@ -178,6 +178,12 @@
     },
     {
       "key": "offerId",
+      "value": "",
+      "type": "text",
+      "enabled": true
+    },
+    {
+      "key": "offerJson",
       "value": "",
       "type": "text",
       "enabled": true

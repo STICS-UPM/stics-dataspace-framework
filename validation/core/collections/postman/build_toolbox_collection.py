@@ -267,8 +267,9 @@ offer_test = [
     "const aid = pm.environment.get('assetId');",
     "const d = ds.find(x => x['@id'] === aid);",
     "pm.test('asset ' + aid + ' is in the provider catalogue', () => pm.expect(d, 'not found - create asset+policy+contract definition first').to.be.an('object'));",
-    "if (d) { let o = d['odrl:hasPolicy'] || d['hasPolicy']; if (Array.isArray(o)) o = o[0];",
-    "  pm.environment.set('offerId', o['@id']); console.log('offerId =', o['@id']); }",
+    "if (d) { let o = d['odrl:hasPolicy'] || d['hasPolicy']; if (Array.isArray(o)) { console.log('offers for this asset:', o.length, '- using the first'); o = o[0]; }",
+    "  const pol = Object.assign({}, o, {'odrl:assigner': {'@id': pm.environment.get('providerParticipantId')}, 'odrl:target': {'@id': aid}});",
+    "  pm.environment.set('offerId', o['@id']); pm.environment.set('offerJson', JSON.stringify(pol)); console.log('offerId =', o['@id']); }",
 ]
 
 catalog = folder("06 · Catalogue (consumer asks the provider via DSP)", [
@@ -278,7 +279,7 @@ catalog = folder("06 · Catalogue (consumer asks the provider via DSP)", [
             "pm.test('catalogue has participantId of the provider', () => pm.expect(JSON.stringify(cat)).to.include(pm.environment.get('providerParticipantId')));",
             "console.log('datasets (' + ds.length + '):', ds.map(x => x['@id']).join(', '));"]),
     req("Find my asset & capture offerId", "POST", "{{consumerMgmt}}/v3/catalog/request", cat_body, "consumer", offer_test,
-        "Stores the contract offer id in {{offerId}} for the negotiation."),
+        "Stores the complete contract offer in {{offerJson}} (and its id in {{offerId}}) for the negotiation."),
     req("Catalogue filtered by asset id", "POST", "{{consumerMgmt}}/v3/catalog/request", cat_filtered, "consumer",
         status_test([200]) + ["console.log(JSON.stringify(pm.response.json()['dcat:dataset'], null, 2));"]),
     req("Show DCAT metadata of my asset (enriched fields)", "POST", "{{consumerMgmt}}/v3/catalog/request", cat_body, "consumer",
@@ -291,9 +292,8 @@ catalog = folder("06 · Catalogue (consumer asks the provider via DSP)", [
 ], "The consumer asks the provider's DSP endpoint for its catalogue (DCAT).")
 
 # --------------------------------------------------------------------------- 07 Negotiation
-neg_body = {"@context": CTX, "@type": "ContractRequest", "counterPartyAddress": "{{providerDsp}}", "protocol": "dataspace-protocol-http",
-            "policy": {"@context": "http://www.w3.org/ns/odrl.jsonld", "@id": "{{offerId}}", "@type": "Offer",
-                       "assigner": "{{providerParticipantId}}", "target": "{{assetId}}"}}
+neg_body = {"@context": {"@vocab": V, "edc": V, "odrl": "http://www.w3.org/ns/odrl/2/"}, "@type": "ContractRequest",
+            "counterPartyAddress": "{{providerDsp}}", "protocol": "dataspace-protocol-http", "policy": "__OFFER_JSON__"}
 neg_poll = [
     "const j = pm.response.json(); const st = j.state; console.log('negotiation state:', st);",
     "if (!st) { pm.test('negotiation exists (run Start negotiation first)', () => { throw new Error(pm.response.text().substring(0, 300)); }); }",
@@ -306,10 +306,11 @@ neg_poll = [
 ]
 term_body = lambda idv: {"@context": CTX, "@id": idv, "reason": "terminated from Postman toolbox"}
 negotiation = folder("07 · Contract negotiation (consumer)", [
-    req("Start negotiation (uses offerId)", "POST", "{{consumerMgmt}}/v3/contractnegotiations", neg_body, "consumer",
+    req("Start negotiation (sends the complete offer)", "POST", "{{consumerMgmt}}/v3/contractnegotiations", j(neg_body).replace('"__OFFER_JSON__"', "{{offerJson}}"), "consumer",
         ["const j = pm.response.json(); pm.test('negotiation started', () => pm.expect(j['@id']).to.be.a('string'));",
          "pm.environment.set('negotiationId', j['@id']); pm.environment.set('negRetries', '0');"],
-        "Run 'Find my asset & capture offerId' (folder 06) first."),
+        "Run 'Find my asset & capture offerId' (folder 06) first: it stores the COMPLETE offer in {{offerJson}}. "
+        "Sending only the offer id makes the negotiation TERMINATE for any policy that has rules.", raw_body=True),
     req("Poll negotiation state (re-send until FINALIZED)", "GET", "{{consumerMgmt}}/v3/contractnegotiations/{{negotiationId}}", None, "consumer", neg_poll,
         "In the Collection Runner this request loops itself (max 30 polls). Manually: re-send until state = FINALIZED."),
     req("Get contract agreement", "GET", "{{consumerMgmt}}/v3/contractagreements/{{agreementId}}", None, "consumer",
@@ -441,7 +442,7 @@ values = [
 ]
 for n in ("contest-stics", "conlab-stics", "connector-stics", "connector-bavenir", "contest-bavenir"):
     values.append(ev("pw_" + n, "<credentials.json: connectors/%s -> connector_user.passwd>" % n, "secret"))
-for k in ("provider_jwt", "consumer_jwt", "offerId", "negotiationId", "agreementId", "transferId", "edrEndpoint", "edrAuthorization"):
+for k in ("provider_jwt", "consumer_jwt", "offerId", "offerJson", "negotiationId", "agreementId", "transferId", "edrEndpoint", "edrAuthorization"):
     values.append(ev(k, "", "secret" if "jwt" in k or "edrAuth" in k else "text"))
 
 environment = {"id": str(uuid.uuid4()), "name": "00 Environment - STICS connector toolbox", "values": values, "_postman_variable_scope": "environment"}

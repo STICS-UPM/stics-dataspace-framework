@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "07 · STICS connector toolbox",
-    "_postman_id": "31b12002-6eb9-4f02-8b55-7b6f05474e63",
+    "_postman_id": "cddb816c-e41a-4957-bc4d-66eb0084f292",
     "description": "STICS connector toolbox. One collection to exercise any pair of STICS connectors.\n\nSETUP\n1. Import this collection and 00_environment_toolbox.json, select the environment.\n2. Fill the five pw_<connector> variables (credentials.json -> connector_user.passwd). Tokens are fetched and refreshed automatically.\n3. Set `provider` and `consumer` to any two of: contest-stics, conlab-stics, connector-stics, connector-bavenir, contest-bavenir. All URLs are derived from the names.\n\nEND-TO-END ORDER (Collection Runner, run folders in this order)\n00 ecosystem -> 01 health -> 03 assets (create HttpData) -> 04 policies (create) -> 05 contract definitions (create) -> 06 catalogue (find my asset) -> 07 negotiation -> 08 transfer (PULL) -> 99 cleanup.\n\nNOTES\n- Poll requests loop by themselves in the Runner; sent manually, re-send until the state is final.\n- Cleanup cannot delete an asset that already has a contract agreement (409): that is EDC behaviour.\n- The AmazonS3 asset stores the keys in the asset data address. Fill s3* variables only if you want to test that.\n",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -1111,7 +1111,7 @@
               }
             ],
             "url": "{{consumerMgmt}}/v3/catalog/request",
-            "description": "Stores the contract offer id in {{offerId}} for the negotiation.",
+            "description": "Stores the complete contract offer in {{offerJson}} (and its id in {{offerId}}) for the negotiation.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"CatalogRequest\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"counterPartyId\": \"{{providerParticipantId}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"querySpec\": {\n    \"offset\": 0,\n    \"limit\": 200,\n    \"filterExpression\": []\n  }\n}"
@@ -1129,8 +1129,9 @@
                   "const aid = pm.environment.get('assetId');",
                   "const d = ds.find(x => x['@id'] === aid);",
                   "pm.test('asset ' + aid + ' is in the provider catalogue', () => pm.expect(d, 'not found - create asset+policy+contract definition first').to.be.an('object'));",
-                  "if (d) { let o = d['odrl:hasPolicy'] || d['hasPolicy']; if (Array.isArray(o)) o = o[0];",
-                  "  pm.environment.set('offerId', o['@id']); console.log('offerId =', o['@id']); }"
+                  "if (d) { let o = d['odrl:hasPolicy'] || d['hasPolicy']; if (Array.isArray(o)) { console.log('offers for this asset:', o.length, '- using the first'); o = o[0]; }",
+                  "  const pol = Object.assign({}, o, {'odrl:assigner': {'@id': pm.environment.get('providerParticipantId')}, 'odrl:target': {'@id': aid}});",
+                  "  pm.environment.set('offerId', o['@id']); pm.environment.set('offerJson', JSON.stringify(pol)); console.log('offerId =', o['@id']); }"
                 ]
               }
             }
@@ -1244,7 +1245,7 @@
       "name": "07 · Contract negotiation (consumer)",
       "item": [
         {
-          "name": "Start negotiation (uses offerId)",
+          "name": "Start negotiation (sends the complete offer)",
           "request": {
             "method": "POST",
             "header": [
@@ -1258,10 +1259,10 @@
               }
             ],
             "url": "{{consumerMgmt}}/v3/contractnegotiations",
-            "description": "Run 'Find my asset & capture offerId' (folder 06) first.",
+            "description": "Run 'Find my asset & capture offerId' (folder 06) first: it stores the COMPLETE offer in {{offerJson}}. Sending only the offer id makes the negotiation TERMINATE for any policy that has rules.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\"\n  },\n  \"@type\": \"ContractRequest\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"policy\": {\n    \"@context\": \"http://www.w3.org/ns/odrl.jsonld\",\n    \"@id\": \"{{offerId}}\",\n    \"@type\": \"Offer\",\n    \"assigner\": \"{{providerParticipantId}}\",\n    \"target\": \"{{assetId}}\"\n  }\n}"
+              "raw": "{\n  \"@context\": {\n    \"@vocab\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"edc\": \"https://w3id.org/edc/v0.0.1/ns/\",\n    \"odrl\": \"http://www.w3.org/ns/odrl/2/\"\n  },\n  \"@type\": \"ContractRequest\",\n  \"counterPartyAddress\": \"{{providerDsp}}\",\n  \"protocol\": \"dataspace-protocol-http\",\n  \"policy\": {{offerJson}}\n}"
             }
           },
           "event": [

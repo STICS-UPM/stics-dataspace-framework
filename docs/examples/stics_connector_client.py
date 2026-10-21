@@ -43,6 +43,8 @@ JSONLD_CONTEXT = {
 }
 SIMPLE_CONTEXT = {"@vocab": EDC_NS}
 ODRL_CONTEXT = {"@vocab": EDC_NS, "odrl": "http://www.w3.org/ns/odrl/2/"}
+# Offers from the catalogue use the "edc:" and "odrl:" prefixes; the negotiation request must declare both.
+OFFER_CONTEXT = {"@vocab": EDC_NS, "edc": EDC_NS, "odrl": "http://www.w3.org/ns/odrl/2/"}
 
 UPLOAD_CHUNK_SIZE = 50 * 1024 * 1024  # same chunk size as the connector interface
 DSP = "dataspace-protocol-http"
@@ -301,10 +303,10 @@ class Connector:
         return self.create_policy(policy_id, exists_ok=exists_ok)
 
     def create_always_true_policy(self, policy_id: str, *, exists_ok: bool = False) -> Optional[dict]:
-        """Permission ``use`` guarded by the ``ALWAYS_TRUE`` constraint.
+        """Permission ``use`` guarded by the ``ALWAYS_TRUE`` constraint (always satisfied).
 
-        WARNING (verified): usable as a contract definition's *access* policy, but NOT as its *contract*
-        policy: consumers' negotiations are TERMINATED. Use :meth:`create_allow_all_policy` for that.
+        Works as access policy and as contract policy, provided the consumer sends the COMPLETE offer when
+        negotiating (see :meth:`negotiate`; :meth:`pull_asset` does this).
         """
         perm = [{"action": "USE", "constraint": {"leftOperand": "ALWAYS_TRUE", "operator": "eq", "rightOperand": "true"}}]
         return self.create_policy(policy_id, permissions=perm, exists_ok=exists_ok)
@@ -389,21 +391,49 @@ class Connector:
             body["counterPartyId"] = counter_party_id
         return self._call("POST", "/v3/catalog/request", json_body=body)
 
-    def find_offer(self, catalog: dict, asset_id: str) -> str:
-        """Return the contract offer id of ``asset_id`` in a catalogue returned by :meth:`request_catalog`."""
+    def find_offers(self, catalog: dict, asset_id: str) -> List[dict]:
+        """All contract offers of ``asset_id`` in a catalogue returned by :meth:`request_catalog`.
+
+        An asset has one offer per contract definition that selects it. The first part of an offer ``@id``
+        (before the first ``:``) is the base64 of the contract definition id.
+        """
         for ds in self._datasets(catalog):
             if ds.get("@id") == asset_id:
-                offer = ds.get("odrl:hasPolicy") or ds.get("hasPolicy")
-                offer = offer[0] if isinstance(offer, list) else offer
-                return offer["@id"]
+                offers = ds.get("odrl:hasPolicy") or ds.get("hasPolicy") or []
+                return offers if isinstance(offers, list) else [offers]
         raise LookupError(f"asset {asset_id} is not in the catalogue (is there a contract definition for it?)")
 
+    def find_offer(self, catalog: dict, asset_id: str, contract_definition_id: Optional[str] = None) -> dict:
+        """The COMPLETE offer (not just its id) to pass to :meth:`negotiate`.
+
+        If the asset has several offers, pass ``contract_definition_id`` to pick one; otherwise the first is used.
+        """
+        import base64
+        offers = self.find_offers(catalog, asset_id)
+        if contract_definition_id:
+            for o in offers:
+                cd = base64.b64decode(o["@id"].split(":")[0] + "==").decode(errors="replace")
+                if cd == contract_definition_id:
+                    return o
+            raise LookupError(f"no offer from contract definition {contract_definition_id}")
+        return offers[0]
+
     # ------------------------------------------------------------------ negotiation & transfer (consumer)
-    def negotiate(self, counter_party_dsp: str, provider_id: str, asset_id: str, offer_id: str) -> str:
-        body = {"@context": SIMPLE_CONTEXT, "@type": "ContractRequest", "counterPartyAddress": counter_party_dsp,
-                "protocol": DSP,
-                "policy": {"@context": "http://www.w3.org/ns/odrl.jsonld", "@id": offer_id, "@type": "Offer",
-                           "assigner": provider_id, "target": asset_id}}
+    def negotiate(self, counter_party_dsp: str, provider_id: str, asset_id: str, offer: Union[dict, str]) -> str:
+        """Start a contract negotiation and return its id.
+
+        ``offer`` must be the COMPLETE offer object returned by :meth:`find_offer`, exactly as received in the
+        catalogue. Sending only the offer id works only for offers whose policy has no rules (the provider
+        compares the request with its policy and TERMINATES the negotiation on a mismatch).
+        """
+        if isinstance(offer, str):  # id only: legacy form, valid for rule-less policies
+            policy: Dict[str, Any] = {"@id": offer, "@type": "odrl:Offer"}
+        else:
+            policy = dict(offer)
+        policy["odrl:assigner"] = {"@id": provider_id}
+        policy["odrl:target"] = {"@id": asset_id}
+        body = {"@context": OFFER_CONTEXT, "@type": "ContractRequest", "counterPartyAddress": counter_party_dsp,
+                "protocol": DSP, "policy": policy}
         return self._call("POST", "/v3/contractnegotiations", json_body=body)["@id"]
 
     def wait_for_agreement(self, negotiation_id: str, timeout: int = 120, poll: float = 2) -> str:
@@ -449,9 +479,13 @@ class Connector:
         r.raise_for_status()
         return r
 
-    def pull_asset(self, provider_dsp: str, provider_id: str, asset_id: str) -> requests.Response:
-        """Whole consumer flow in one call: catalogue -> negotiation -> PULL transfer -> download."""
-        offer = self.find_offer(self.request_catalog(provider_dsp, provider_id), asset_id)
+    def pull_asset(self, provider_dsp: str, provider_id: str, asset_id: str,
+                   contract_definition_id: Optional[str] = None) -> requests.Response:
+        """Whole consumer flow in one call: catalogue -> negotiation -> PULL transfer -> download.
+
+        If the asset has several offers, ``contract_definition_id`` selects which one to accept.
+        """
+        offer = self.find_offer(self.request_catalog(provider_dsp, provider_id), asset_id, contract_definition_id)
         agreement = self.wait_for_agreement(self.negotiate(provider_dsp, provider_id, asset_id, offer))
         transfer = self.start_transfer(provider_dsp, provider_id, agreement)
         self.wait_for_transfer(transfer)
