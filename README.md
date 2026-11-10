@@ -1,115 +1,67 @@
-# Validation-Environment
+# STICS Dataspace Framework
 
-Validation-Environment is a framework for building reproducible validation
-environments for PIONERA dataspaces. It deploys dataspaces, validates
-connectors, runs functional tests, collects metrics, and produces traceable
-experimental evidence.
+This repository deploys, operates, and validates the **STICS dataspace**, the
+data space of the Smart Transformational and Innovation Consortium Slovakia
+(STICS). It is a fork of PIONERA's
+[Validation-Environment](https://github.com/ProyectoPIONERA/Validation-Environment)
+and builds on that framework, adding what STICS needs on top of it: connector
+onboarding for partners, interoperability evidence, operational tooling, and
+STICS branding.
 
-![PIONERA local validation environment](./docs/pionera_local_validation_environment.png)
+## STICS Architecture
 
-_Reference of the framework's `local` topology._
+The STICS dataspace runs on a **hybrid architecture**:
 
-The main entry point is `main.py`. The framework is organized to work with
-different adapters and topologies without duplicating common validation
-logic.
+- **Common services** (Keycloak, Vault, MinIO, PostgreSQL, and the INESData
+  registration service) run in a k3s cluster on one VM. This is the only part
+  of the stack the framework manages inside Kubernetes. It uses the
+  framework's `vm-distributed` topology with the `edc` adapter.
+- **Connectors** (EDC) run outside Kubernetes, as Docker Compose
+  deployments on the VM of each participant. Each connector can optionally
+  have its own web interface.
+- Every VM is reached through a public hostname behind ingress-nginx. The
+  dataspace shares one self-signed TLS certificate; the deployment guide also
+  covers per-VM Let's Encrypt certificates for external clients.
 
-## STICS Dataspace Guides
+## Getting Started with STICS
 
-This fork hosts the STICS dataspace. If your goal is to operate or extend
-STICS specifically, rather than the framework in general, start here instead
-of the rest of this README:
+Start here if your goal is to operate or extend STICS:
 
-- [Setting up a new STICS dataspace from scratch](./dataspace-setup-guide.md) —
-  VM requirements and how to bring up the shared common services (Keycloak,
-  Vault, MinIO, PostgreSQL, registration service).
-- [Adding a new connector to a STICS dataspace](./deployment-guide.md) —
-  end-to-end steps to deploy a connector and, optionally, its web interface,
-  outside of Kubernetes.
-
-The rest of this document describes the underlying framework in general
-terms; it is not STICS-specific.
-
-## Recommended Operating Environment
-
-The recommended way to run the framework from a workstation is Windows with
-WSL: WSL runs the CLI, Docker Desktop provides the container engine for the
-`local` topology, and the framework manages the SSH access, kubeconfigs, and
-tunnels needed to operate VM topologies from the same terminal.
-
-The framework also supports running directly inside a VM, but WSL on Windows
-remains the primary documented path for operation and debugging.
-
-## Project Status
-
-The repository consolidates the framework as a deployment, validation, and
-evidence-generation tool. It includes:
-
-- level-based execution (`1-6`)
-- `inesdata` and `edc` adapters
-- `local`, `vm-single`, and `vm-distributed` topologies
-- validation via Newman, Playwright, optional Kafka, and components
-- evidence generation under `experiments/`
-- public documentation in `docs/`
-
-Detailed status: [docs/30_framework_current_state.md](./docs/30_framework_current_state.md).
-
-### Closure Scope
-
-| Adapter | `local` | `vm-single` | `vm-distributed` |
-| --- | --- | --- | --- |
-| `inesdata` | Implemented, used as the local dev/validation path | Implemented and validated as the reference VM environment | Implemented and validated as the reference distributed environment |
-| `edc` | Implemented; passed validation before the recent topology reconciliation and should be revalidated before use as current evidence | Implemented; not officially validated after the recent reconciliation | Implemented and officially tested as the closure path for EDC |
-
-For `edc` closure evidence, use `vm-distributed`. The `local` and `vm-single`
-EDC paths remain available for development and future revalidation, but are
-not presented as up-to-date official results in this closure version.
-
-## Main Features
-
-- deploy a dataspace level by level
-- select the connector adapter: `inesdata` or `edc`
-- provision common services (Keycloak, MinIO, PostgreSQL, Vault)
-- deploy provider/consumer connectors
-- deploy optional components (`ontology-hub`, `ai-model-hub`) when supported
-  by the adapter
-- plan/apply `hosts` entries idempotently
-- run API validation with Newman and UI validation with Playwright
-- check MinIO transfers and storage
-- collect control-plane metrics and optional Kafka benchmarks
-- persist results under `experiments/`
-
-## Adapters
-
-| Adapter | Use |
+| Guide | Use it to |
 | --- | --- |
-| `inesdata` | Deployment and validation with INESData connectors and its portal. |
-| `edc` | Deployment and validation with generic EDC connectors; official closure evidence is limited to `vm-distributed`. |
+| [Dataspace setup guide](./dataspace-setup-guide.md) | Stand up a new STICS-style dataspace from scratch: VM requirements and the shared common services. |
+| [Connector deployment guide](./deployment-guide.md) | Add a new connector (and, optionally, its web interface) to the dataspace, outside Kubernetes. Includes the ingress-nginx and Let's Encrypt setup. |
+| [New connector guide for beginners](./docs/48_new_connector_setup_guide_for_dummies.md) | Same process, step by step, explaining the *why* of each step. |
+| [Partner onboarding runbook](./docs/49_bavenir_hands_on_session_guide.md) | Run a live onboarding session to bring up a connector on a partner's own infrastructure. |
+| [Connector automation guide](./docs/50_connector_automation_guide.md) | Publish and consume data from an external system through the connector Management API. |
+| [EDC interoperability evidence](./docs/47_stics_edc_interop_evidence.md) | Reproduce the provider ↔ consumer evidence: OAuth2, DSP catalog, contract negotiation, and transfers. |
 
-Each adapter has its own deployer: `deployers/inesdata/`, `deployers/edc/`.
-Shared artifacts live in `deployers/shared/` and `deployers/infrastructure/`.
+## What This Fork Adds
 
-## Topologies
+| Area | Location | Description |
+| --- | --- | --- |
+| Connector provisioning API | [`provisioning-api/`](./provisioning-api/README.md) | Self-service registration and connector provisioning for STICS partners. Increment 1 of 4 (registration and approval). |
+| Connector client and Postman toolbox | [`docs/examples/stics_connector_client.py`](./docs/examples/stics_connector_client.py), `validation/core/collections/postman/07_stics_connector_toolbox.json` | Reference Python client and Postman collection for automating asset publication and consumption. |
+| Interoperability collections | `validation/core/collections/postman/04_stics_edc_interop.json`, `05_connector_bavenir_pull_transfer.json` | Executable evidence of end-to-end interoperation between STICS connectors. |
+| Ontology Hub STICS overlay | [`adapters/inesdata/overlays/ontology-hub/`](./adapters/inesdata/overlays/ontology-hub/README.md) | STICS branding and funding acknowledgement, applied at build time on top of the upstream Ontology Hub. |
+| Vault operations | `deployers/shared/common/vault-ops/` | Nightly backup of the common-services Vault. The auto-unseal manifest holds the unseal key, so it stays local and git-ignored. |
+| Use case data | `use_cases/` | Datasets and models used in the dataspace use cases (mobility, FLARES). |
 
-`local`, `vm-single`, `vm-distributed`.
+### Ongoing Research Work
 
-- `local`: development/validation on the operator machine.
-- `vm-single`: single VM with a framework-managed Kubernetes cluster.
-- `vm-distributed`: common services, connectors, and components split by
-  infrastructure role, configured via local profiles and SSH/HTTP/Kubernetes
-  preflight checks.
-
-All three share the same level, adapter, and namespace model. Real domain,
-IP, SSH, kubeconfig, and credential values stay in local, git-ignored files
-or environment variables — never in versioned documentation.
-
-An implemented topology does not imply official closure evidence for every
-adapter; check the closure table above before running an audit.
+- **Connector store concurrency benchmark**: a reproducible JMeter benchmark
+  that compares the connector's PostgreSQL store with a SPARQL triplestore
+  extension under sequential and concurrent asset operations. Its assets are
+  built from real metadata of the Slovak National Open Data Catalogue. It is
+  under development in the
+  [`feature/store-concurrency-benchmark`](https://github.com/STICS-UPM/stics-dataspace-framework/tree/feature/store-concurrency-benchmark/validation/performance/triplestore_concurrency)
+  branch.
 
 ## Installation
 
 ```bash
-git clone https://github.com/ProyectoPIONERA/Validation-Environment.git
-cd Validation-Environment
+git clone https://github.com/STICS-UPM/stics-dataspace-framework.git
+cd stics-dataspace-framework
 git submodule update --init --recursive
 bash scripts/bootstrap_framework.sh
 source .venv/bin/activate
@@ -118,41 +70,19 @@ python3 main.py menu
 
 `bootstrap_framework.sh` installs Python/Node/Playwright dependencies and, on
 Linux/WSL, the system packages Playwright needs. Node.js/npm are required for
-Newman and Playwright; Java 17+ is required to build local EDC/INESData
-connector images. Use `--without-system-deps` if your environment can't
-install system packages.
-
+Newman and Playwright; Java 17+ is required to build connector images. Use
+`--without-system-deps` if your environment can't install system packages.
 The bootstrap also creates `deployer.config` and topology overlay files from
-their `.example` templates the first time, without overwriting existing
-ones.
+their `.example` templates the first time, without overwriting existing ones.
 
-Full walkthrough, including the `vm-single`-on-a-VM quickstart:
-[docs/32_getting_started.md](./docs/32_getting_started.md).
+Real domain, IP, SSH, kubeconfig, and credential values stay in local,
+git-ignored files or environment variables — never in versioned files.
 
-## Configuration
+## The Underlying Framework
 
-- Common infrastructure: `deployers/infrastructure/deployer.config`
-- Per-adapter: `deployers/inesdata/deployer.config`, `deployers/edc/deployer.config`
-- Use the `.example` files as templates.
-
-`PUBLIC_HOSTNAME` in `deployers/infrastructure/deployer.config` sets the
-environment's public hostname; `bootstrap.py` uses it to configure
-Keycloak's `frontendUrl` so JWT tokens carry the correct issuer for external
-HTTPS access.
-
-Values can also be overridden with `PIONERA_*` environment variables, e.g.:
-
-```bash
-PIONERA_DS_1_NAME=demo PIONERA_DS_1_NAMESPACE=demo python3 main.py inesdata hosts --topology local --dry-run
-```
-
-Local `hosts` file management, adapter coexistence rules, and VM-specific
-configuration: [docs/32_getting_started.md](./docs/32_getting_started.md) and
-[docs/35_deployers_and_topologies.md](./docs/35_deployers_and_topologies.md).
-
-## Usage
-
-Open the guided menu:
+The framework deploys dataspaces level by level, validates connectors, runs
+functional tests, collects metrics, and stores traceable evidence under
+`experiments/`. The main entry point is `main.py`:
 
 ```bash
 python3 main.py menu
@@ -167,81 +97,29 @@ python3 main.py menu
 | `5` | Deploy Components |
 | `6` | Run Validation Tests |
 
-Option `0` runs levels `1`-`6` sequentially.
+- **Adapters**: `inesdata` (INESData connectors and portal) and `edc`
+  (generic EDC connectors). STICS uses `edc`.
+- **Topologies**: `local`, `vm-single`, and `vm-distributed`. STICS uses
+  `vm-distributed` for its common services.
+- **Validation**: Newman (API), Playwright (UI), MinIO/storage checks,
+  component validation, metrics, and optional Kafka benchmarks.
 
-| Option | Use |
-| --- | --- |
-| `S` | Preselect the adapter for the current menu session |
-| `P` | Preview the deployment plan |
-| `H` | Plan/apply `hosts` entries |
-| `U` | Show access URLs for the active configuration |
-| `M` | Run standalone metrics/benchmarks |
-| `X` | Recreate the selected dataspace |
-| `B/D/R/C/L` | Dev shortcuts: bootstrap, doctor, recovery, cleanup, local images |
-| `I/O/A` | UI validation for INESData, Ontology Hub, AI Model Hub |
-| `?` / `Q` | Help / quit |
+Detailed status of the framework:
+[docs/30_framework_current_state.md](./docs/30_framework_current_state.md).
 
-CLI equivalents:
-
-```bash
-python3 main.py list
-python3 main.py inesdata deploy --topology local
-python3 main.py edc run --topology vm-distributed --dry-run
-python3 main.py edc recreate-dataspace --topology local --confirm-dataspace demoedc
-```
-
-Full menu reference: [docs/33_menu_reference.md](./docs/33_menu_reference.md).
-
-## Requirements
+### Requirements
 
 | Group | Main tools |
 | --- | --- |
 | Local base | Python 3.10+, Git, Docker |
-| Local Kubernetes | Minikube, Helm, `kubectl` |
+| Kubernetes | k3s or Minikube, Helm, `kubectl` |
 | Validation | Node.js, npm, Newman, Playwright |
 | Connector builds | Java 17+ / OpenJDK 17 |
 | Operations | `psql`, permissions to edit `hosts` when applicable |
 
-`bash scripts/bootstrap_framework.sh` prepares `.venv`, Python/Node
-dependencies, and Playwright browsers.
+### Framework Documentation
 
-## Validation
-
-`Level 6` runs the active adapter's full validation: Newman, EDC+Kafka
-functional validation (when supported), Playwright, MinIO/storage checks,
-component validation, metrics, and reports under `experiments/`.
-
-Official closure evidence for `edc` is currently limited to
-`vm-distributed` (see the closure table above).
-
-Details, Newman collections, and Kafka benchmarking:
-[docs/37_validation.md](./docs/37_validation.md).
-
-## Repository Structure
-
-| Path | Description |
-| --- | --- |
-| `main.py` | Main CLI and guided menu |
-| `framework/` | Reusable validation, metrics, and reporting core |
-| `adapters/` | Adapter-specific integrations |
-| `deployers/` | Deployers, configuration, and deployment artifacts |
-| `deployers/infrastructure/` | Contracts, topologies, hosts, cross-cutting utilities |
-| `deployers/shared/` | Reusable charts and artifacts |
-| `validation/` | Newman, Playwright, and component validation suites |
-| `tests/` | Framework unit tests |
-| `docs/` | Stable framework documentation |
-
-## Tests
-
-```bash
-python3 -m unittest discover tests
-```
-
-## Documentation
-
-Full documentation: [docs/](./docs/README.md).
-
-Recommended reading order:
+Full documentation: [docs/](./docs/README.md). Recommended reading order:
 
 - [Getting started](./docs/32_getting_started.md)
 - [Menu reference](./docs/33_menu_reference.md)
@@ -251,53 +129,89 @@ Recommended reading order:
 - [Validation](./docs/37_validation.md)
 - [Development and testing](./docs/38_development_and_testing.md)
 - [Troubleshooting](./docs/39_troubleshooting.md)
-- [Connector external access](./docs/41_pionera_connector_external_access.md)
-- [Audit navigation guide](./docs/44_audit_navigation_guide.md)
 - [vm-distributed runbook](./docs/46_vm_distributed_runbook.md)
+
+## Repository Structure
+
+| Path | Description |
+| --- | --- |
+| `dataspace-setup-guide.md`, `deployment-guide.md` | STICS dataspace and connector guides |
+| `provisioning-api/` | STICS connector provisioning API |
+| `main.py` | Main CLI and guided menu |
+| `framework/` | Reusable validation, metrics, and reporting core |
+| `adapters/` | Adapter-specific integrations, including the STICS Ontology Hub overlay |
+| `deployers/` | Deployers, configuration, and deployment artifacts |
+| `validation/` | Newman, Playwright, and component validation suites |
+| `use_cases/` | Use case datasets and models |
+| `tests/` | Framework unit tests |
+| `docs/` | Framework and STICS documentation |
+
+## Tests
+
+```bash
+python3 -m unittest discover tests
+```
 
 ## Contributing
 
-1. Open an issue describing the change, bug, or improvement.
-2. Create a fork or working branch.
-3. Run the relevant tests before opening a pull request.
-4. Open a pull request explaining the goal, scope, tests run, and known
-   risks.
+Work happens in this repository (`STICS-UPM/stics-dataspace-framework`):
 
-Never include credentials, tokens, private keys, real kubeconfigs, secrets
-in logs, or personal data in commits, issues, or pull requests.
+1. Create a working branch from `main`.
+2. Run the relevant tests before opening a pull request.
+3. Open the pull request against `main` of **this repository**. GitHub
+   proposes the upstream PIONERA repository as the default base for forks,
+   so check the base repository before creating it.
+
+Never include credentials, tokens, private keys, real kubeconfigs, secrets in
+logs, or personal data in commits, issues, or pull requests.
 
 ## Technical References
 
+- [PIONERA Validation-Environment (upstream)](https://github.com/ProyectoPIONERA/Validation-Environment)
 - [INESData local environment](https://github.com/INESData/inesdata-local-env)
-- [INESData connector management API collection](https://github.com/INESData/inesdata-local-env/blob/master/resources/operations/InesData_Connector_Management_API.postman_collection.json)
 - [Eclipse EDC Management API](https://eclipse-edc.github.io/Connector/openapi/management-api/#/)
+- [Eclipse Dataspace Protocol](https://eclipse-dataspace-protocol-base.github.io/DataspaceProtocol/)
 - [Eclipse EDC Kafka sample](https://github.com/eclipse-edc/Samples/tree/main/transfer/transfer-06-kafka-broker)
-- [DataSpaceUnit local deployment](https://github.com/DataSpaceUnit/ds-local-deployment)
 
 ## Acknowledgments and Funding
 
-This work has received funding from the **PIONERA project** (Enhancing
-interoperability in data spaces through artificial intelligence), funded
-under the call for Technological Products and Services for Data Spaces of
-the Spanish Ministry for Digital Transformation and the Civil Service,
+This work has received funding from the EU NextGenerationEU through the
+Recovery and Resilience Plan for Slovakia under the project within the
+**Smart Transformational and Innovation Consortium Slovakia (STICS)**,
+No. 09I02-03-V01-00011.
+
+<div align="center">
+  <img src="adapters/inesdata/overlays/ontology-hub/public/img/stics-funding-acknowledgement.png" alt="STICS funding acknowledgement" width="900" />
+</div>
+
+The underlying framework was developed within the **PIONERA project**
+(Enhancing interoperability in data spaces through artificial intelligence),
+funded under the call for Technological Products and Services for Data Spaces
+of the Spanish Ministry for Digital Transformation and the Civil Service,
 within the PRTR framework funded by the European Union (NextGenerationEU).
 
 <div align="center">
-  <img src="funding_label.png" alt="Funding logos" width="900" />
+  <img src="funding_label.png" alt="PIONERA funding logos" width="900" />
 </div>
 
 ---
 
 ## Authors and Contact
 
-This repository is part of the PIONERA project's software work. For
-questions, issues, or change proposals, use the GitHub issues and pull
+For questions, issues, or change proposals, use the GitHub issues and pull
 requests of this repository.
 
-- **Framework maintainers:**
+- **STICS dataspace authors:**
+  - Lucía Martín-Núñez (<lucia.martin.nunez@upm.es>)
+  - Raúl García-Castro (<r.garcia@upm.es>)
+  - Andrea Cimmino Arriaga (<andreajesus.cimmino@upm.es>)
+  - María Poveda Villalón (<m.poveda@upm.es>)
+- **Original framework authors (PIONERA project, upstream
+  [Validation-Environment](https://github.com/ProyectoPIONERA/Validation-Environment)):**
   - Adrián Vargas (<adrian.vargas@upm.es>)
   - Raffaele Cuzzaniti (<r.cuzzaniti@upm.es>)
 
 ## License
 
-Validation-Environment is available under the **[Apache License 2.0](./LICENSE)**.
+This repository is available under the **[Apache License 2.0](./LICENSE)**,
+the same license as the upstream PIONERA Validation-Environment it derives from.
