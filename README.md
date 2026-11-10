@@ -52,10 +52,9 @@ Start here if your goal is to operate or extend STICS:
 - **Connector store concurrency benchmark**: a reproducible JMeter benchmark
   that compares the connector's PostgreSQL store with a SPARQL triplestore
   extension under sequential and concurrent asset operations. Its assets are
-  built from real metadata of the Slovak National Open Data Catalogue. It is
-  under development in the
-  [`feature/store-concurrency-benchmark`](https://github.com/STICS-UPM/stics-dataspace-framework/tree/feature/store-concurrency-benchmark/validation/performance/triplestore_concurrency)
-  branch.
+  built from synthetic metadata. It is
+  under development in
+  [`edc-persistence-experiments`](https://github.com/STICS-UPM/edc-persistence-experiments).
 
 ## Installation
 
