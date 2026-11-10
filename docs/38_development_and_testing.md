@@ -1,10 +1,10 @@
-# Desarrollo y Testing
+# Development and Testing
 
-## Flujo Seguro de Desarrollo
+## Safe Development Flow
 
-Trabaja con cambios pequeños y valídalos con pruebas focalizadas antes de ejecutar suites amplias.
+Work with small changes and validate them with focused tests before running broad suites.
 
-Loop recomendado:
+Recommended loop:
 
 ```bash
 python3 -m unittest tests.test_main_cli
@@ -12,134 +12,133 @@ python3 -m unittest tests.test_deployer_shared_contracts
 python3 -m unittest tests.test_deployer_shared_hosts_manager
 ```
 
-Para cambios UI, ejecuta la suite Playwright relevante desde `validation/ui/`.
+For UI changes, run the relevant Playwright suite from `validation/ui/`.
 
-## Probar Imágenes Locales
+## Testing Local Images
 
-Usa `L - Build and Deploy Local Images` cuando modifiques fuentes bajo
-`adapters/<adapter>/sources/` y quieras probarlas en el cluster local.
+Use `L - Build and Deploy Local Images` when you modify sources under
+`adapters/<adapter>/sources/` and want to test them on the local cluster.
 
-Comportamiento esperado:
+Expected behavior:
 
-- en `Level 4 local`, INESData prepara automáticamente `inesdata-connector` e
-  `inesdata-connector-interface` antes de crear conectores;
-- las recetas registradas construyen la imagen desde una fuente concreta;
-- las imágenes se cargan en Minikube cuando la receta lo requiere;
-- `Ontology Hub` y `AI Model Hub` reinician su deployment si ya están
-  desplegados;
-- si el deployment no existe, la imagen queda preparada y el componente debe
-  desplegarse con `Level 5`;
-- para cambios en conectores INESData, el script de build recompila el runtime
-  Java cuando falta el artefacto o detecta cambios locales.
-- las opciones rápidas de INESData en `L` hacen redeploy preservando datos:
-  reutilizan los valores existentes de Helm y no recrean credenciales ni
-  servicios comunes.
-- las opciones rápidas de EDC en `L` construyen/cargan imágenes locales del
-  conector y/o dashboard, y reinician deployments EDC existentes sin recrear
-  datos.
-- el `Level 4` de EDC también prepara las imágenes locales necesarias en modo
-  `auto` en topología `local`, antes del despliegue Helm, salvo que se hayan
-  definido overrides explícitos. En topologías VM, la vía recomendada es usar
-  imágenes precompiladas y configurar los overrides de imagen.
+- in `Level 4 local`, INESData automatically prepares `inesdata-connector` and
+  `inesdata-connector-interface` before creating connectors;
+- the registered recipes build the image from a specific source;
+- images are loaded into Minikube when the recipe requires it;
+- `Ontology Hub` and `AI Model Hub` restart their deployment if they are
+  already deployed;
+- if the deployment doesn't exist, the image is left prepared and the
+  component must be deployed with `Level 5`;
+- for changes to INESData connectors, the build script recompiles the Java
+  runtime when the artifact is missing or it detects local changes;
+- the INESData quick options in `L` redeploy while preserving data: they
+  reuse the existing Helm values and don't recreate credentials or common
+  services;
+- the EDC quick options in `L` build/load the local connector and/or
+  dashboard images and restart existing EDC deployments without recreating
+  data;
+- EDC's `Level 4` also prepares the needed local images in `auto` mode on the
+  `local` topology, before the Helm deployment, unless explicit overrides
+  have been defined. On VM topologies, the recommended path is to use
+  prebuilt images and configure the image overrides.
 
-Modos disponibles para `Level 4 local`:
+Available modes for `Level 4 local`:
 
-- `INESDATA_LOCAL_IMAGES_MODE=auto`: valor por defecto en topología `local`;
-  usa fuentes locales si existen y omite el paso si faltan.
-- `INESDATA_LOCAL_IMAGES_MODE=required`: falla si no puede preparar las imágenes
-  locales.
-- `INESDATA_LOCAL_IMAGES_MODE=disabled`: valor por defecto en topologías
-  `vm-single` y `vm-distributed`; usa las imágenes configuradas en los valores
-  Helm o en los overrides explícitos.
+- `INESDATA_LOCAL_IMAGES_MODE=auto`: default value on the `local` topology;
+  uses local sources if they exist and skips the step if they're missing.
+- `INESDATA_LOCAL_IMAGES_MODE=required`: fails if it can't prepare the local
+  images.
+- `INESDATA_LOCAL_IMAGES_MODE=disabled`: default value on the `vm-single` and
+  `vm-distributed` topologies; uses the images configured in the Helm values
+  or in the explicit overrides.
 
-Para componentes de `Level 5`, `LEVEL5_AUTO_BUILD_LOCAL_IMAGES=true` es el
-comportamiento por defecto de las topologías soportadas para evitar reutilizar
-tags locales antiguos. En topologías VM, el framework reconstruye e importa la
-imagen en el k3s remoto cuando la configuración lo permite. Para
-`ontology-hub`, `ai-model-hub`, `semantic-virtualization`, `mapping-editor`,
-`automap` y el `model-server` real, los ejemplos de configuración apuntan a
-`main` y activan `*_SOURCE_REFRESH=true`; por tanto, el checkout local se
-refresca antes del build. Los campos `*_SOURCE_REF` aceptan rama, etiqueta o
-commit. Si se requiere reproducibilidad congelada para un informe o auditoría,
-fija `*_SOURCE_REF` a un commit o tag concreto. Si el checkout tiene cambios
-locales rastreados, el framework se detiene antes de refrescar para no mezclar
-trabajo local con fuentes remotas. Si se prefiere una imagen de registry,
-configura `*_IMAGE_REF` con una referencia completa y desactiva el build local
-de forma explícita.
+For `Level 5` components, `LEVEL5_AUTO_BUILD_LOCAL_IMAGES=true` is the
+default behavior of the supported topologies, to avoid reusing old local
+tags. On VM topologies, the framework rebuilds the image and imports it into
+the remote k3s when the configuration allows it. For `ontology-hub`,
+`ai-model-hub`, `semantic-virtualization`, `mapping-editor`, `automap`, and
+the real `model-server`, the configuration examples point to `main` and
+enable `*_SOURCE_REFRESH=true`; therefore, the local checkout is refreshed
+before the build. The `*_SOURCE_REF` fields accept a branch, tag, or commit.
+If frozen reproducibility is required for a report or audit, set
+`*_SOURCE_REF` to a specific commit or tag. If the checkout has tracked local
+changes, the framework stops before refreshing so as not to mix local work
+with remote sources. If you prefer a registry image, set `*_IMAGE_REF` to a
+full reference and explicitly disable the local build.
 
-Después de cargar una imagen local, valida con una prueba focalizada antes de
-ejecutar toda la suite. Para el conector INESData, el flujo E2E recomendado es:
+After loading a local image, validate with a focused test before running the
+whole suite. For the INESData connector, the recommended E2E flow is:
 
 ```bash
 cd validation/ui
 UI_ADAPTER=inesdata npx playwright test adapters/inesdata/specs/05-e2e-transfer-flow.spec.ts --config=playwright.inesdata.config.ts --workers=1
 ```
 
-## Extender Deployers
+## Extending Deployers
 
-La lógica compartida de deployers pertenece a:
+Shared deployer logic belongs to:
 
 ```text
 deployers/infrastructure/lib/
 ```
 
-El comportamiento específico de un adapter pertenece a:
+Adapter-specific behavior belongs to:
 
 ```text
 deployers/<adapter>/
 adapters/<adapter>/
 ```
 
-Evita añadir comportamiento específico de un adapter en helpers compartidos si no está parametrizado explícitamente.
+Avoid adding adapter-specific behavior to shared helpers unless it is explicitly parameterized.
 
-## Extender Topologías
+## Extending Topologies
 
-La resolución de topología está centralizada en:
+Topology resolution is centralized in:
 
 ```text
 deployers/infrastructure/lib/topology.py
 deployers/shared/lib/topology.py
 ```
 
-El contexto del deployer debe describir:
+The deployer context must describe:
 
-- nombre de topología;
-- dirección por defecto;
-- direcciones por rol;
-- IP externa de ingress;
-- modo de routing.
+- topology name;
+- default address;
+- per-role addresses;
+- ingress external IP;
+- routing mode.
 
-La ejecución real de una topología solo debe habilitarse después de implementar y probar sus preflights.
+The real execution of a topology must only be enabled after its preflights have been implemented and tested.
 
-## Extender Validaciones
+## Extending Validations
 
-Las nuevas validaciones deben seguir este orden:
+New validations must follow this order:
 
-1. Añadir checks API cuando sea posible.
-2. Añadir checks UI solo para comportamiento visible.
-3. Añadir limpieza de datos generados.
-4. Guardar artefactos en `experiments/`.
-5. Añadir pruebas focalizadas de orquestación y configuración.
+1. Add API checks when possible.
+2. Add UI checks only for visible behavior.
+3. Add cleanup of generated data.
+4. Store artifacts in `experiments/`.
+5. Add focused orchestration and configuration tests.
 
-Para pruebas específicas de un INESData externo o productivo, no modifiques las
-suites base. Crea suites de proyecto bajo `validation/projects/inesdata/`,
-decláralas en `project_suites.yaml` y actívalas desde el target correspondiente,
-como se describe en
-[Validación de INESData externo](./29_inesdata_external_validation_targets.md).
+For tests specific to an external or production INESData, don't modify the
+base suites. Create project suites under `validation/projects/inesdata/`,
+declare them in `project_suites.yaml`, and enable them from the corresponding
+target, as described in
+[External INESData validation](./29_inesdata_external_validation_targets.md) (ES).
 
-## Ficheros Generados y Sensibles
+## Generated and Sensitive Files
 
-No subas:
+Don't push:
 
-- `deployer.config` locales;
-- despliegues generados;
-- salidas de experimentos;
-- reportes Playwright;
-- repositorios fuente locales bajo carpetas ignoradas;
-- contexto interno de desarrollo.
+- local `deployer.config` files;
+- generated deployments;
+- experiment outputs;
+- Playwright reports;
+- local source repositories under ignored folders;
+- internal development context.
 
-Usa `.gitignore` como fuente de verdad antes de preparar commits.
+Use `.gitignore` as the source of truth before preparing commits.
 
-## Suites Amplias
+## Broad Suites
 
-Algunas suites legacy amplias pueden requerir servicios externos o suposiciones antiguas. Para desarrollo diario, prioriza pruebas focalizadas del área modificada y amplía cobertura cuando el entorno esté preparado.
+Some broad legacy suites may require external services or old assumptions. For day-to-day development, prioritize focused tests of the modified area and expand coverage when the environment is ready.

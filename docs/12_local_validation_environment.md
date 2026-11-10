@@ -25,7 +25,7 @@ Kafka y runners Newman/Playwright, por lo que los picos de memoria son más
 relevantes que el uso estable mostrado por Docker Desktop.
 
 La estimación canónica para Minikube local está documentada en
-[Deployers y Topologías](./35_deployers_and_topologies.md#dimensionamiento-local).
+[Deployers y Topologías](./35_deployers_and_topologies.md#local-sizing).
 Como baseline reproducible para validar `inesdata` y `edc` en la misma
 topología local, usa `10 CPU / 18432 MB` solo si Docker Desktop dispone de
 margen suficiente. Si Docker Desktop permanece alrededor de `14.9 GB`, el

@@ -1,55 +1,55 @@
-# Inicio Rápido
+# Getting Started
 
-## Requisitos
+## Requirements
 
-La vía recomendada para operar el framework desde una estación de trabajo es
-Windows con WSL. En ese modo, WSL ejecuta `main.py`, Docker Desktop aporta el
-motor de contenedores para `local`, y el framework gestiona los accesos SSH,
-kubeconfigs y túneles requeridos por `vm-single` y `vm-distributed`.
+The recommended way to operate the framework from a workstation is Windows
+with WSL. In that mode, WSL runs `main.py`, Docker Desktop provides the
+container engine for `local`, and the framework manages the SSH access,
+kubeconfigs, and tunnels required by `vm-single` and `vm-distributed`.
 
-El framework también soporta ejecución directa dentro de una VM cuando el
-operador instala allí el repositorio, pero la ruta principal de operación y
-depuración documentada para estaciones de trabajo es WSL sobre Windows.
+The framework also supports running directly inside a VM when the operator
+installs the repository there, but the main documented operation and
+debugging path for workstations is WSL on Windows.
 
-Para ejecución local, el framework espera:
+For local execution, the framework expects:
 
-- Python 3.10 o superior;
+- Python 3.10 or later;
 - Git;
 - Docker;
 - Minikube;
 - Helm;
 - `kubectl`;
-- Node.js y `npm`;
-- cliente PostgreSQL;
-- permisos para actualizar el fichero `hosts` del sistema cuando la sincronización de hosts esté habilitada.
+- Node.js and `npm`;
+- a PostgreSQL client;
+- permissions to update the system `hosts` file when hosts synchronization is enabled.
 
-La topología local usa Minikube en la máquina de desarrollo. La topología
-`vm-single` usa k3s gestionado dentro de la VM y `Level 1` lo prepara para
-mantener una configuración reproducible. `vm-distributed` usa configuración
-parametrizable de VMs, SSH, kubeconfig, DNS/Ingress y URLs públicas.
+The local topology uses Minikube on the development machine. The `vm-single`
+topology uses k3s managed inside the VM, and `Level 1` prepares it to keep a
+reproducible configuration. `vm-distributed` uses parameterizable
+configuration for VMs, SSH, kubeconfig, DNS/Ingress, and public URLs.
 
-## Alcance de Cierre
+## Closure Scope
 
-Si el objetivo es generar evidencia de cierre, usa esta lectura:
+If the goal is to generate closure evidence, use this reading:
 
-| Adapter | Ruta recomendada |
+| Adapter | Recommended path |
 | --- | --- |
-| `inesdata` | `local`, `vm-single` o `vm-distributed`, según el entorno que se quiera evidenciar |
+| `inesdata` | `local`, `vm-single`, or `vm-distributed`, depending on the environment you want to evidence |
 | `edc` | `vm-distributed` |
 
-EDC conserva rutas implementadas en `local` y `vm-single`, pero `local` debe
-revalidarse tras la conciliación reciente de topologías y `vm-single` no se ha
-validado oficialmente tras esa conciliación.
+EDC keeps implemented paths on `local` and `vm-single`, but `local` must be
+revalidated after the recent topology reconciliation, and `vm-single` has not
+been officially validated since that reconciliation.
 
-## Vista Local
+## Local View
 
-El siguiente diagrama resume el entorno local de validación:
+The following diagram summarizes the local validation environment:
 
 ![PIONERA local validation environment](<./pionera_local_validation_environment.png>)
 
 ## Bootstrap
 
-Desde la raíz del repositorio:
+From the repository root:
 
 ```bash
 node --version
@@ -57,12 +57,12 @@ npm --version
 bash scripts/bootstrap_framework.sh
 ```
 
-`npm` es obligatorio porque el framework instala Newman y Playwright para las
-validaciones funcionales. Java 17+ es obligatorio para construir las imágenes
-locales de conectores EDC/INESData que después se cargan en Minikube. En una VM
-Ubuntu nueva, el bootstrap instala Node.js con `npm` y OpenJDK 17
-automáticamente mediante `apt-get` cuando faltan. Si usas `--without-system-deps`
-o tu entorno no permite instalar paquetes del sistema, instálalos antes del
+`npm` is mandatory because the framework installs Newman and Playwright for
+the functional validations. Java 17+ is mandatory to build the local EDC/INESData
+connector images that are then loaded into Minikube. On a fresh Ubuntu VM,
+the bootstrap installs Node.js with `npm` and OpenJDK 17 automatically through
+`apt-get` when they are missing. If you use `--without-system-deps` or your
+environment doesn't allow installing system packages, install them before the
 bootstrap:
 
 ```bash
@@ -70,34 +70,35 @@ sudo apt-get update
 sudo apt-get install -y nodejs npm openjdk-17-jdk
 ```
 
-El bootstrap requiere Python `3.10+`. Si `python3` apunta a una versión más
-antigua pero la máquina ya tiene otra versión compatible instalada, el script usa
-automáticamente la primera opción disponible entre `python3.10`, `python3.11`,
-`python3.12` y `python3.13`. También se fuerza explícitamente con:
+The bootstrap requires Python `3.10+`. If `python3` points to an older
+version but the machine already has another compatible version installed, the
+script automatically uses the first available option among `python3.10`,
+`python3.11`, `python3.12`, and `python3.13`. You can also force it
+explicitly with:
 
 ```bash
 PIONERA_PYTHON_BIN=python3.11 bash scripts/bootstrap_framework.sh
 ```
 
-En Linux/WSL, el bootstrap instala Playwright con sus dependencias del sistema
-para evitar que las validaciones UI fallen al arrancar el navegador. En
-entornos donde no se puedan instalar paquetes del sistema, usa
+On Linux/WSL, the bootstrap installs Playwright with its system dependencies
+so that UI validations don't fail when starting the browser. In environments
+where system packages can't be installed, use
 `bash scripts/bootstrap_framework.sh --without-system-deps`.
 
-El bootstrap también crea automáticamente los `deployer.config` locales y los
-overlays `deployers/infrastructure/topologies/*.config` desde sus ficheros
-`.example` cuando aún no existen. Si ya existen, los reutiliza y no los
-sobrescribe.
+The bootstrap also automatically creates the local `deployer.config` files and
+the `deployers/infrastructure/topologies/*.config` overlays from their
+`.example` files when they don't exist yet. If they already exist, it reuses
+them and doesn't overwrite them.
 
-Después activa el entorno Python raíz:
+Then activate the root Python environment:
 
 ```bash
 source .venv/bin/activate
 ```
 
-Para una ejecución local básica no tienes que crear configuración manualmente.
-Revisa la configuración generada solo si necesitas ajustar credenciales,
-dominios, dataspaces o componentes:
+For a basic local run you don't have to create configuration by hand. Review
+the generated configuration only if you need to adjust credentials, domains,
+dataspaces, or components:
 
 ```text
 deployers/infrastructure/deployer.config
@@ -108,44 +109,46 @@ deployers/inesdata/deployer.config
 deployers/edc/deployer.config
 ```
 
-Finalmente abre el menú guiado:
+Finally, open the guided menu:
 
 ```bash
 python3 main.py menu
 ```
 
-## Configuración
+## Configuration
 
-La configuración común de infraestructura vive en:
+The common infrastructure configuration lives in:
 
 ```text
 deployers/infrastructure/deployer.config
 ```
 
-La configuración específica de cada adapter vive en:
+The adapter-specific configuration lives in:
 
 ```text
 deployers/inesdata/deployer.config
 deployers/edc/deployer.config
 ```
 
-Usa los ficheros `.example` como plantilla cuando existan. Los ficheros locales
-`deployer.config` y `deployers/infrastructure/topologies/*.config` contienen la
-configuración específica del entorno, incluidas credenciales, rutas o direcciones
-cuando el despliegue las requiere. No deben subirse al repositorio.
+Use the `.example` files as templates when they exist. The local
+`deployer.config` and `deployers/infrastructure/topologies/*.config` files
+contain environment-specific configuration, including credentials, paths, or
+addresses when the deployment requires them. They must not be pushed to the
+repository.
 
-La topología local tiene un overlay propio en:
+The local topology has its own overlay in:
 
 ```text
 deployers/infrastructure/topologies/local.config
 ```
 
-Este fichero es local y se crea desde `local.config.example` durante el
-bootstrap si aún no existe. No debe versionarse. La configuración local de
-referencia no incluye credenciales, tokens, rutas de usuario ni IP privadas: usa
-`localhost`, hostnames de desarrollo, driver Docker y recursos de Minikube.
+This file is local and is created from `local.config.example` during the
+bootstrap if it doesn't exist yet. It must not be versioned. The reference
+local configuration doesn't include credentials, tokens, user paths, or
+private IPs: it uses `localhost`, development hostnames, the Docker driver,
+and Minikube resources.
 
-Valores locales recomendados para un adapter cada vez:
+Recommended local values for one adapter at a time:
 
 ```ini
 PG_HOST=localhost
@@ -159,30 +162,31 @@ MINIKUBE_MEMORY=14336
 MINIKUBE_PROFILE=minikube
 ```
 
-Antes de ejecutar `Level 1`, asegúrate de que Docker Desktop puede asignar al
-menos esa memoria. Si tu Docker Desktop tiene menos margen, reduce
-`MINIKUBE_MEMORY` o usa un override temporal, por ejemplo
-`PIONERA_MINIKUBE_MEMORY=12288`. Para validar `inesdata` y `edc` coexistiendo en
-la misma topología local, cambia a `LOCAL_RESOURCE_PROFILE=coexistence` y el
-baseline recomendado sigue siendo `10 CPU / 18432 MB`; si Docker no puede
-asignarlo, valida un adapter cada vez o usa una topología VM adecuada. Para
-evidencia de cierre de `edc`, usa `vm-distributed`. En modo estable,
-`Level 1` avisa si Docker solo soporta un adapter local, y `Level 3/4/5`
-bloquean la instalación del segundo adapter si ya hay otro activo con memoria
-efectiva inferior a ese baseline. En terminal interactiva, ese bloqueo abre un
-cambio controlado de adapter: el framework muestra los namespaces y artefactos
-runtime gestionados que va a eliminar, preserva
-`common-srvs`, y solo continúa si confirmas el texto exacto que muestra. En
-ejecución no interactiva, usa la variable `PIONERA_LOCAL_ADAPTER_SWITCH_CONFIRM`
-con el valor `SWITCH TO EDC` o `SWITCH TO INESDATA`, según el adapter destino.
-`Level 6` mantiene la misma guarda para no contaminar resultados.
+Before running `Level 1`, make sure Docker Desktop can allocate at least that
+much memory. If your Docker Desktop has less headroom, reduce
+`MINIKUBE_MEMORY` or use a temporary override, for example
+`PIONERA_MINIKUBE_MEMORY=12288`. To validate `inesdata` and `edc` coexisting
+on the same local topology, switch to `LOCAL_RESOURCE_PROFILE=coexistence`;
+the recommended baseline is still `10 CPU / 18432 MB`. If Docker can't
+allocate it, validate one adapter at a time or use a suitable VM topology.
+For `edc` closure evidence, use `vm-distributed`. In stable mode, `Level 1`
+warns if Docker only supports one local adapter, and `Level 3/4/5` block the
+installation of the second adapter if another one is already active with
+effective memory below that baseline. In an interactive terminal, that block
+opens a controlled adapter switch: the framework shows the managed namespaces
+and runtime artifacts it is going to delete, preserves `common-srvs`, and only
+continues if you confirm the exact text it shows. In non-interactive runs, use
+the `PIONERA_LOCAL_ADAPTER_SWITCH_CONFIRM` variable with the value
+`SWITCH TO EDC` or `SWITCH TO INESDATA`, depending on the target adapter.
+`Level 6` keeps the same guard so results are not contaminated.
 
-## Coexistencia de Adapters
+## Adapter Coexistence
 
-`inesdata` y `edc` reutilizan los servicios comunes de `common-srvs` cuando se
-prueban ambos adapters sobre el mismo cluster local.
+`inesdata` and `edc` reuse the common services in `common-srvs` when both
+adapters are tested on the same local cluster.
 
-La restricción importante es que cada adapter debe usar un dataspace aislado:
+The important restriction is that each adapter must use an isolated
+dataspace:
 
 ```text
 inesdata -> DS_1_NAME=pionera, DS_1_NAMESPACE=core-control
@@ -195,22 +199,22 @@ edc      -> DS_1_NAME=pionera-edc, DS_1_NAMESPACE=edc-control
             DS_1_CONSUMER_NAMESPACE=edc-consumer
 ```
 
-No reutilices el mismo `DS_1_NAME` o `DS_1_NAMESPACE` para dos adapters
-distintos en el mismo cluster. El problema no sería compartir PostgreSQL,
-Keycloak, MinIO o Vault, sino colisionar en namespaces, registration-service,
-bases de datos, usuarios y artefactos generados por `Level 3`.
+Don't reuse the same `DS_1_NAME` or `DS_1_NAMESPACE` for two different
+adapters on the same cluster. The problem would not be sharing PostgreSQL,
+Keycloak, MinIO, or Vault, but colliding on namespaces, registration-service,
+databases, users, and artifacts generated by `Level 3`.
 
 ## Hosts
 
-El framework planifica o aplica entradas de `hosts` para el adapter y la
-topología seleccionados:
+The framework plans or applies `hosts` entries for the selected adapter and
+topology:
 
 ```bash
 python3 main.py inesdata hosts --topology local --dry-run
 python3 main.py edc hosts --topology local --dry-run
 ```
 
-Para aplicar entradas, indica explícitamente el fichero destino:
+To apply entries, state the target file explicitly:
 
 ```bash
 PIONERA_SYNC_HOSTS=true \
@@ -218,53 +222,53 @@ PIONERA_HOSTS_FILE=/etc/hosts \
 python3 main.py edc hosts --topology local
 ```
 
-Desde WSL, el fichero `hosts` de Windows suele estar en:
+From WSL, the Windows `hosts` file is usually at:
 
 ```text
 /mnt/c/Windows/System32/drivers/etc/hosts
 ```
 
-Usa el `hosts` de Windows solo para topologías locales. En topologías distribuidas con dominios reales, como `vm-distributed`, la resolución debe venir de DNS/VPN y de las URLs públicas configuradas.
+Use the Windows `hosts` file only for local topologies. In distributed topologies with real domains, such as `vm-distributed`, resolution must come from DNS/VPN and the configured public URLs.
 
-La sincronización es idempotente: si una entrada ya existe fuera de los bloques gestionados, se omite en lugar de duplicarse.
+Synchronization is idempotent: if an entry already exists outside the managed blocks, it is skipped instead of duplicated.
 
-## Niveles del Menú
+## Menu Levels
 
-El menú expone seis niveles:
+The menu exposes six levels:
 
-- `Level 1`: prepara el cluster.
-- `Level 2`: despliega servicios comunes.
-- `Level 3`: despliega el dataspace.
-- `Level 4`: despliega conectores.
-- `Level 5`: despliega componentes opcionales.
-- `Level 6`: ejecuta validaciones.
+- `Level 1`: prepares the cluster.
+- `Level 2`: deploys common services.
+- `Level 3`: deploys the dataspace.
+- `Level 4`: deploys connectors.
+- `Level 5`: deploys optional components.
+- `Level 6`: runs validations.
 
-Para un despliegue local desde cero, ejecuta los niveles secuencialmente del `1` al `6`, o usa la opción `0` del menú.
+For a local deployment from scratch, run the levels sequentially from `1` to `6`, or use menu option `0`.
 
-En una terminal interactiva, `python3 main.py` pregunta primero la topología
-activa y después muestra el menú. Usa `python3 main.py menu --topology local` o
-`python3 main.py menu --topology vm-single` si quieres entrar directamente.
+In an interactive terminal, `python3 main.py` first asks for the active
+topology and then shows the menu. Use `python3 main.py menu --topology local`
+or `python3 main.py menu --topology vm-single` if you want to go straight in.
 
-La referencia completa del menú está en [Referencia del menú](./33_menu_reference.md).
+The full menu reference is in [Menu reference](./33_menu_reference.md).
 
 ## Minikube Tunnel
 
-En despliegues locales completos, mantén `minikube tunnel` abierto para que los
-servicios sean accesibles por ingress:
+In full local deployments, keep `minikube tunnel` open so services are
+reachable through the ingress:
 
 ```bash
 minikube tunnel
 ```
 
-Déjalo ejecutándose en otra terminal durante despliegue y validación.
+Leave it running in another terminal during deployment and validation.
 
-Las validaciones funcionales deben usar los hostnames locales publicados por
-Ingress. El framework reserva los `port-forward` para comprobaciones internas o
-diagnóstico de desarrollo; no los usa como sustituto de la ruta normal de
-navegador o API.
+Functional validations must use the local hostnames published by the
+Ingress. The framework reserves `port-forward` for internal checks or
+development diagnostics; it doesn't use it as a replacement for the normal
+browser or API path.
 
-Para PostgreSQL, el servicio del cluster sigue usando el puerto `5432`. El
-framework usa `PG_PORT=5432` como puerto local preferente. Si ese puerto está
-ocupado por un `kubectl port-forward` antiguo del framework, lo libera y lo
-recrea. Si pertenece a Windows, WSL u otro entorno local, el framework falla con
-un diagnóstico y no termina procesos externos automáticamente.
+For PostgreSQL, the cluster service still uses port `5432`. The framework
+uses `PG_PORT=5432` as the preferred local port. If that port is taken by an
+old framework `kubectl port-forward`, it frees and recreates it. If it
+belongs to Windows, WSL, or another local environment, the framework fails
+with a diagnostic and doesn't terminate external processes automatically.

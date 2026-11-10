@@ -1,165 +1,168 @@
-# Referencia del Menú
+# Menu Reference
 
-El menú guiado se abre con:
+The guided menu opens with:
 
 ```bash
 python3 main.py menu
 ```
 
-El menú está en inglés para alinearse con nombres de comandos, código y artefactos técnicos. Esta guía explica cuándo usar cada opción.
+The menu is in English to stay aligned with command names, code, and technical artifacts. This guide explains when to use each option.
 
-## Encabezado
+## Header
 
-El menú ya no muestra por defecto un bloque con el adapter activo o la lista de
-adapters disponibles. La idea es reducir carga cognitiva en la ruta normal de
-uso.
+By default, the menu no longer shows a block with the active adapter or the
+list of available adapters. The idea is to reduce cognitive load on the
+normal usage path.
 
-Si una acción depende del adapter, el framework:
+If an action depends on the adapter, the framework:
 
-- usa el adapter que hayas preseleccionado con `S`;
-- o lo pide en ese momento si todavía no se ha elegido uno.
+- uses the adapter you preselected with `S`;
+- or asks for it at that moment if none has been chosen yet.
 
-Cuando abres el framework con `python3 main.py`, el selector inicial muestra una
-sección `Other actions` con la misma opción `G - Validate target` que aparece
-después en `[Operations]`. Esa entrada sirve para validar targets externos sin
-elegir una topología PIONERA. La topología por defecto aparece marcada como
-`current`; `Back` solo aparece en submenús a los que ya has entrado.
+When you open the framework with `python3 main.py`, the initial selector shows
+an `Other actions` section with the same `G - Validate target` option that
+later appears in `[Operations]`. That entry is used to validate external
+targets without choosing a PIONERA topology. The default topology is marked
+as `current`; `Back` only appears in submenus you have already entered.
 
 ## Full Deployment
 
 `0 - Run All Levels (1-6) sequentially`
 
-Usa esta opción para un despliegue completo desde cero o para reconstruir todo el entorno en orden. Ejecuta preparación de cluster, servicios comunes, dataspace, conectores, componentes y validación.
+Use this option for a full deployment from scratch or to rebuild the whole environment in order. It runs cluster preparation, common services, dataspace, connectors, components, and validation.
 
 ## Individual Levels
 
 `1 - Level 1: Setup Cluster`
 
-Prepara el cluster base. En `local`, esta ruta usa Minikube.
+Prepares the base cluster. On `local`, this path uses Minikube.
 
 `2 - Level 2: Deploy Common Services`
 
-Despliega o actualiza servicios comunes como Keycloak, MinIO, PostgreSQL y Vault.
+Deploys or updates common services such as Keycloak, MinIO, PostgreSQL, and Vault.
 
 `3 - Level 3: Deploy Dataspace`
 
-Despliega el runtime base del dataspace y el registration service. Al terminar
-correctamente, el siguiente paso normal es ejecutar `Level 4` para desplegar o
-actualizar los conectores del adapter activo.
+Deploys the base dataspace runtime and the registration service. When it
+finishes successfully, the normal next step is to run `Level 4` to deploy or
+update the connectors of the active adapter.
 
 `4 - Level 4: Deploy Connectors`
 
-Despliega los conectores del adapter activo. En `inesdata`, despliega conectores INESData. En `edc`, despliega conectores EDC.
+Deploys the connectors of the active adapter. With `inesdata`, it deploys INESData connectors. With `edc`, it deploys EDC connectors.
 
-En topología `local`, `inesdata` prepara automáticamente las imágenes locales de
-`inesdata-connector` e `inesdata-connector-interface` antes de crear los
-conectores, siempre que las fuentes existan bajo `adapters/inesdata/sources/`.
-Este comportamiento puede desactivarse con `INESDATA_LOCAL_IMAGES_MODE=disabled`
-o hacerse estricto con `INESDATA_LOCAL_IMAGES_MODE=required`.
+On the `local` topology, `inesdata` automatically prepares the local images of
+`inesdata-connector` and `inesdata-connector-interface` before creating the
+connectors, as long as the sources exist under `adapters/inesdata/sources/`.
+This behavior can be disabled with `INESDATA_LOCAL_IMAGES_MODE=disabled` or
+made strict with `INESDATA_LOCAL_IMAGES_MODE=required`.
 
-En topologías `vm-single` y `vm-distributed`, el framework usa por defecto las
-imágenes configuradas en los charts u overrides explícitos. Para compilar e
-importar imágenes desde fuentes en una VM, activa el modo de desarrollo con
-`INESDATA_LOCAL_IMAGES_MODE=auto` o `LEVEL4_LOCAL_IMAGES_MODE=auto`.
+On the `vm-single` and `vm-distributed` topologies, the framework uses by
+default the images configured in the charts or explicit overrides. To build
+and import images from sources on a VM, enable development mode with
+`INESDATA_LOCAL_IMAGES_MODE=auto` or `LEVEL4_LOCAL_IMAGES_MODE=auto`.
 
 `5 - Level 5: Deploy Components`
 
-Despliega componentes opcionales configurados, como Ontology Hub o AI Model Hub cuando correspondan al adapter y configuración activos.
+Deploys the configured optional components, such as Ontology Hub or AI Model Hub, when they apply to the active adapter and configuration.
 
-Cuando se quiere desplegar solo un subconjunto sin modificar ficheros
-`deployer.config`, se recomienda usar la sección `Components` del menú. Esa
-sección ejecuta internamente `Level 5` con overrides temporales y permite
-seleccionar explícitamente Ontology Hub, AI Model Hub, Semantic Virtualization y
-el servidor de modelos de AI Model Hub.
+When you want to deploy only a subset without modifying `deployer.config`
+files, the recommended option is the `Components` section of the menu. That
+section internally runs `Level 5` with temporary overrides and lets you
+explicitly select Ontology Hub, AI Model Hub, Semantic Virtualization, and the
+AI Model Hub model server.
 
 `6 - Level 6: Run Validation Tests`
 
-Ejecuta la validación integral del adapter activo. Según el perfil de validación,
-incluye limpieza previa, Newman, checks de almacenamiento, Playwright,
-componentes y métricas.
+Runs the full validation of the active adapter. Depending on the validation
+profile, it includes prior cleanup, Newman, storage checks, Playwright,
+components, and metrics.
 
-Para evidencias de cierre, usa `vm-distributed` con el adapter `edc`. Las rutas
-`local` y `vm-single` de EDC están implementadas, pero deben revalidarse antes
-de presentarse como evidencia oficial actualizada.
+For closure evidence, use `vm-distributed` with the `edc` adapter. The EDC
+`local` and `vm-single` paths are implemented, but they must be revalidated
+before being presented as updated official evidence.
 
-En topología `local`, esta opción espera que los hostnames publicados por
-Ingress estén accesibles. Mantén `minikube tunnel` abierto y responde la
-contraseña en esa terminal si aparece el prompt de sudo. Para conectores ya
-desplegados, ejecuta `Level 6` desde el mismo checkout que ejecutó `Level 4`,
-porque ahí se generan las credenciales locales usadas por la validación.
+On the `local` topology, this option expects the hostnames published by the
+Ingress to be reachable. Keep `minikube tunnel` open and enter the password in
+that terminal if the sudo prompt appears. For connectors that are already
+deployed, run `Level 6` from the same checkout that ran `Level 4`, because
+that is where the local credentials used by the validation are generated.
 
-Antes de lanzar Playwright, `Level 6` también hace un preflight HTTP real del
-portal del adapter:
+Before launching Playwright, `Level 6` also runs a real HTTP preflight of the
+adapter's portal:
 
-- `inesdata`: comprueba Keycloak, los servicios `*-interface` y la ruta pública
-  `http://<connector>.../inesdata-connector-interface/`;
-- `edc`: comprueba Keycloak, dashboard, proxy y rutas públicas de management.
+- `inesdata`: checks Keycloak, the `*-interface` services, and the public
+  path `http://<connector>.../inesdata-connector-interface/`;
+- `edc`: checks Keycloak, the dashboard, the proxy, and the public management
+  paths.
 
-Si ese preflight falla, el nivel termina con una causa clara y persiste el
-diagnóstico del adapter en `experiments/`.
+If that preflight fails, the level ends with a clear cause and persists the
+adapter's diagnostics in `experiments/`.
 
 ## Operations
 
 `S - Select adapter`
 
-Permite dejar preseleccionado el adapter para la sesión actual del menú. Es un
-atajo opcional: si no lo usas, el framework te preguntará el adapter cuando una
-operación de `Level 3` a `Level 6` realmente lo necesite.
+Lets you preselect the adapter for the current menu session. It's an optional
+shortcut: if you don't use it, the framework will ask for the adapter when an
+operation from `Level 3` to `Level 6` actually needs it.
 
 `T - Select topology`
 
-Permite cambiar la topología activa para la sesión actual del menú. No escribe
-ningún valor en `deployer.config`: solo cambia el contexto interactivo entre
-`local`, `vm-single` y `vm-distributed` hasta que salgas del menú.
+Lets you change the active topology for the current menu session. It doesn't
+write any value to `deployer.config`: it only changes the interactive context
+between `local`, `vm-single`, and `vm-distributed` until you leave the menu.
 
 `W - vm-distributed assistant`
 
-Si la topología activa todavía no es `vm-distributed`, conserva el atajo
-histórico: cambia de topología, con confirmación, y abre directamente el wizard
-de configuración. Cuando `vm-distributed` ya está activa, abre el asistente
-operativo para preparar configuración local, mostrar el plan de VMs, ejecutar el
-preflight estático, previsualizar despliegue/hosts y lanzar comprobaciones
-SSH/HTTP no destructivas con confirmación explícita. El asistente pregunta por
-dominios, IP/DNS de las VMs, usuario SSH opcional para sincronización remota de
-NGINX, metadatos SSH de preflight, kubeconfigs k3s, inventario de conectores,
-ubicación de conectores y pares de validación. Si no sabes cómo obtener un dato,
-escribe `?` en el campo correspondiente. La configuración generada se escribe
-solo en ficheros `.config` locales ignorados por Git. Para `vm-distributed`, el
-wizard también actualiza hostnames comunes derivados de `DOMAIN_BASE` cuando
-detecta valores vacíos o defaults generados, sin pisar valores personalizados.
+If the active topology is not `vm-distributed` yet, it keeps the historical
+shortcut: it switches topology, with confirmation, and opens the
+configuration wizard directly. When `vm-distributed` is already active, it
+opens the operational assistant to prepare local configuration, show the VM
+plan, run the static preflight, preview deployment/hosts, and launch
+non-destructive SSH/HTTP checks with explicit confirmation. The assistant
+asks for domains, VM IPs/DNS, an optional SSH user for remote NGINX
+synchronization, preflight SSH metadata, k3s kubeconfigs, the connector
+inventory, connector placement, and validation pairs. If you don't know how
+to get a value, type `?` in the corresponding field. The generated
+configuration is written only to local `.config` files ignored by Git. For
+`vm-distributed`, the wizard also updates the common hostnames derived from
+`DOMAIN_BASE` when it detects empty values or generated defaults, without
+overwriting custom values.
 
-Dentro de este asistente existe la opción
-`10 - AI Model Hub use-case demo preparation`. Esta opción prepara el perfil de
-casos de uso con `model-server` en modo `use-cases`, muestra los comandos de
-`Level 5` y sembrado, registra los vocabularios DAIMO Model/Dataset (`Step 8`),
-ejecuta el registro de datasets de benchmark (`Step 9`) y registra modelos
-FLARES/Mobility descubiertos desde `/models` (`Step 10`). El flujo es adapter-aware: en `inesdata`
-usa las APIs propias del adapter, y en `edc` crea assets `HttpData`, políticas,
-contratos y negociaciones DSP entre los pares configurados.
+Inside this assistant there is the option
+`10 - AI Model Hub use-case demo preparation`. This option prepares the use
+case profile with `model-server` in `use-cases` mode, shows the `Level 5` and
+seeding commands, registers the DAIMO Model/Dataset vocabularies (`Step 8`),
+runs the benchmark dataset registration (`Step 9`), and registers the
+FLARES/Mobility models discovered from `/models` (`Step 10`). The flow is
+adapter-aware: on `inesdata` it uses the adapter's own APIs, and on `edc` it
+creates `HttpData` assets, policies, contracts, and DSP negotiations between
+the configured pairs.
 
 `P - Preview deployment plan`
 
-Muestra un plan de despliegue sin modificar el entorno. Úsalo antes de ejecutar cambios destructivos o cuando quieras revisar dataspace, conectores, componentes, namespaces y hosts esperados. Si la operación necesita adapter y aún no se ha elegido uno, el menú lo pide en ese momento.
+Shows a deployment plan without modifying the environment. Use it before running destructive changes or when you want to review the expected dataspace, connectors, components, namespaces, and hosts. If the operation needs an adapter and none has been chosen yet, the menu asks for it at that moment.
 
 `H - Plan/apply hosts entries`
 
-Planifica o aplica entradas del fichero `hosts`. Por defecto solo planifica. La
-salida muestra los hostnames concretos por nivel y el motivo si el sync queda
-en `Skipped`.
+Plans or applies entries in the `hosts` file. By default it only plans. The
+output shows the concrete hostnames per level and the reason if the sync ends
+up as `Skipped`.
 
-Si el sync automático no está habilitado, el menú interactivo ofrece aplicar el
-plan cuando detecta un fichero `hosts` resoluble. Para aplicar cambios de forma
-explícita fuera del prompt interactivo, usa `PIONERA_SYNC_HOSTS=true` y
+If automatic sync is not enabled, the interactive menu offers to apply the
+plan when it detects a resolvable `hosts` file. To apply changes explicitly
+outside the interactive prompt, use `PIONERA_SYNC_HOSTS=true` and
 `PIONERA_HOSTS_FILE`.
 
-En el menú interactivo, si el adapter elegido para la operación expone
-hostnames públicos y vas a ejecutar niveles `3-6`, el framework verifica
-primero si faltan hostnames en el fichero `hosts` local. Si faltan, muestra la
-lista y pregunta si quieres reconciliar el bloque gestionado del framework
-antes de continuar. Si cancelas o el sistema no permite escribir el fichero, el
-nivel no se ejecuta.
+In the interactive menu, if the adapter chosen for the operation exposes
+public hostnames and you are going to run levels `3-6`, the framework first
+checks whether hostnames are missing from the local `hosts` file. If they
+are, it shows the list and asks whether you want to reconcile the framework's
+managed block before continuing. If you cancel or the system doesn't allow
+writing the file, the level is not run.
 
-Fuera del menú, la ruta equivalente y más directa para está reparación es:
+Outside the menu, the equivalent and more direct path for this repair is:
 
 ```bash
 python3 main.py <adapter> local-repair --topology local
@@ -167,131 +170,128 @@ python3 main.py <adapter> local-repair --topology local
 
 `U - Show available access URLs`
 
-Muestra las URLs de acceso derivadas de la configuración activa del adapter en
-un formato legible. Es útil después de `Level 2`, `Level 4` o `Level 5` cuando
-quieres ver rápidamente portales, dashboards, APIs, componentes o accesos
-compartidos sin buscar en artefactos o ficheros de configuración.
+Shows the access URLs derived from the active adapter configuration in a
+readable format. It's useful after `Level 2`, `Level 4`, or `Level 5` when you
+want to quickly see portals, dashboards, APIs, components, or shared access
+points without searching through artifacts or configuration files.
 
-La salida incluye, según la configuración activa:
+Depending on the active configuration, the output includes:
 
 - `Keycloak`
 - `MinIO API`
 - `MinIO Console`
 - `registration-service`
-- URLs de portales, conectores y componentes
-- `MinIO Bucket` por conector cuando aplique
+- portal, connector, and component URLs
+- `MinIO Bucket` per connector when applicable
 
-En topología `vm-single`, la salida añade una sección `Local Browser Access`
-con los valores detectados automáticamente desde la VM: IP candidata de la VM,
-IP de Minikube, usuario SSH, comando de túnel SSH, entradas para el fichero
-`hosts` de la máquina local y URLs que puedes abrir en tu navegador local.
+On the `vm-single` topology, the output adds a `Local Browser Access` section
+with values detected automatically from the VM: the VM's candidate IP, the
+Minikube IP, the SSH user, the SSH tunnel command, entries for the local
+machine's `hosts` file, and URLs you can open in your local browser.
 
 `G - Validate target`
 
-Abre el flujo guiado para targets externos de validación, pensado inicialmente
-para INESData productivo o entornos que el framework no despliega.
-Este flujo no selecciona ni cambia el adapter activo usado por los niveles de
-despliegue; se muestra como proyecto de validación externo en modo
-`validation-only`.
+Opens the guided flow for external validation targets, initially intended for
+production INESData or environments the framework doesn't deploy. This flow
+doesn't select or change the active adapter used by the deployment levels; it
+is shown as an external validation project in `validation-only` mode.
 
-El flujo actual incluye un runner mínimo seguro:
+The current flow includes a minimal, safe runner:
 
-- permite seleccionar un target bajo `validation/targets/`;
-- valida el YAML del target;
-- muestra dataspaces, suites, componentes y secretos requeridos;
-- no ejecuta limpieza ni borra datos;
-- no ejecuta escrituras;
-- no ejecuta `Levels 1-5`;
-- ejecuta únicamente specs Playwright `read-only` explícitamente habilitados en
+- lets you select a target under `validation/targets/`;
+- validates the target YAML;
+- shows the required dataspaces, suites, components, and secrets;
+- doesn't run cleanup or delete data;
+- doesn't run writes;
+- doesn't run `Levels 1-5`;
+- runs only `read-only` Playwright specs explicitly enabled in
   `project_suites`;
-- si solo existen plantillas `*.example.*`, termina como `skipped` sin ejecutar
+- if only `*.example.*` templates exist, it ends as `skipped` without running
   Playwright.
 
-Úsalo para revisar que la configuración base de INESData externo está completa
-o para generar evidencias Playwright read-only cuando existan specs reales.
-Newman y Kafka productivos quedan fuera de esta primera fase.
+Use it to check that the base configuration of an external INESData is
+complete, or to generate read-only Playwright evidence when real specs
+exist. Production Newman and Kafka are out of scope for this first phase.
 
 `E - View experiment reports`
 
-Abre un visor local de experimentos de validación. No requiere seleccionar
-adapter porque no despliega ni ejecuta validaciones: solo lee artefactos ya
-generados bajo `experiments/`.
+Opens a local viewer of validation experiments. It doesn't require selecting
+an adapter because it doesn't deploy or run validations: it only reads
+artifacts already generated under `experiments/`.
 
-El flujo permite:
+The flow lets you:
 
-- listar experimentos disponibles;
-- abrir el último experimento o seleccionar uno anterior;
-- generar un dashboard HTML propio del framework;
-- abrir reportes Playwright con `npx playwright show-report`;
-- ver rutas de artefactos sin imprimir JSON largos por consola.
+- list the available experiments;
+- open the latest experiment or select an earlier one;
+- generate the framework's own HTML dashboard;
+- open Playwright reports with `npx playwright show-report`;
+- see artifact paths without printing long JSON to the console.
 
-El dashboard se sirve únicamente en `127.0.0.1` y funciona como índice del
-experimento para Playwright, Newman, Kafka, componentes y postflight local
-cuando esos reportes existan.
+The dashboard is served only on `127.0.0.1` and works as the experiment's
+index for Playwright, Newman, Kafka, components, and local postflight when
+those reports exist.
 
-El campo `Dashboard status` resume hallazgos del visor; no sustituye el estado
-de ejecución de `Level 6`.
+The `Dashboard status` field summarizes the viewer's findings; it doesn't
+replace the `Level 6` execution status.
 
-Más detalle en [Visor de reportes de experimentos](./40_report_viewer.md).
+More detail in [Experiment report viewer](./40_report_viewer.md) (ES).
 
 `M - Run metrics / benchmarks`
 
-Ejecuta métricas o benchmarks independientes sobre el adapter elegido para esa operación. El benchmark Kafka mide el broker de forma standalone y guarda resultados en `experiments/`, pero no reemplaza la validación funcional de `Level 6`. La validación Kafka E2E del dataspace es opt-in dentro de `Level 6`; actívala con `PIONERA_LEVEL6_RUN_KAFKA=true` cuando quieras incluirla.
+Runs standalone metrics or benchmarks on the adapter chosen for that operation. The Kafka benchmark measures the broker standalone and stores results in `experiments/`, but it doesn't replace the functional validation of `Level 6`. The dataspace's E2E Kafka validation is opt-in within `Level 6`; enable it with `PIONERA_LEVEL6_RUN_KAFKA=true` when you want to include it.
 
 `X - Recreate dataspace`
 
-Destruye y recrea el dataspace seleccionado preservando servicios comunes. Requiere escribir el nombre exacto del dataspace. Invalida conectores de nivel 4 y permite recrearlos inmediatamente si se confirma.
+Destroys and recreates the selected dataspace while preserving common services. It requires typing the exact dataspace name. It invalidates the level 4 connectors and lets you recreate them immediately if confirmed.
 
 ## Components
 
 `CM - Deploy selected components`
 
-Ejecuta `Level 5` para una selección concreta de componentes del adapter y
-topología activos. La selección no persiste cambios en `deployer.config`; el
-framework usa `PIONERA_COMPONENTS` durante esa ejecución para limitar el alcance
-del despliegue.
+Runs `Level 5` for a specific selection of components of the active adapter
+and topology. The selection doesn't persist changes to `deployer.config`; the
+framework uses `PIONERA_COMPONENTS` during that run to limit the deployment
+scope.
 
-El submenú permite elegir Ontology Hub, AI Model Hub, Semantic Virtualization,
-la lista configurada en el adapter o todos los componentes compartidos
-desplegables. El servidor de modelos se muestra como opción explícita y se
-habilita solo para esa ejecución mediante
-`PIONERA_AI_MODEL_HUB_MODEL_SERVER_ENABLED=true`. Técnicamente se despliega bajo
-AI Model Hub, por lo que seleccionar el servidor añade también `ai-model-hub` a
-la ejecución de `Level 5`.
+The submenu lets you choose Ontology Hub, AI Model Hub, Semantic
+Virtualization, the list configured in the adapter, or all deployable shared
+components. The model server is shown as an explicit option and is enabled
+only for that run through `PIONERA_AI_MODEL_HUB_MODEL_SERVER_ENABLED=true`.
+Technically it is deployed under AI Model Hub, so selecting the server also
+adds `ai-model-hub` to the `Level 5` run.
 
-Cuando los componentes se construyen desde fuentes gestionadas por el
-framework, `Level 5` refresca los checkouts configurados antes de construir la
-imagen. Los ejemplos de configuración usan `main` para desplegar la versión más
-reciente disponible; para ejecuciones reproducibles se debe fijar
-`*_SOURCE_REF` a una etiqueta o commit.
+When components are built from framework-managed sources, `Level 5` refreshes
+the configured checkouts before building the image. The configuration
+examples use `main` to deploy the latest available version; for reproducible
+runs, set `*_SOURCE_REF` to a tag or commit.
 
 `AMH - AI Model Hub use-case Steps 7-10`
 
-Abre directamente el asistente de preparación de casos de uso de AI Model Hub.
-Si la sesión no está en `vm-distributed`, el menú ofrece cambiar a esa topología.
-Desde ese asistente, la opción de flujo completo aplica el perfil de casos de
-uso, ejecuta `Level 5` como `Step 7` del repositorio oficial y después ejecuta
-los pasos de siembra `Step 8`, `Step 9` y `Step 10`.
+Opens the AI Model Hub use case preparation assistant directly. If the
+session is not on `vm-distributed`, the menu offers to switch to that
+topology. From that assistant, the full-flow option applies the use case
+profile, runs `Level 5` as `Step 7` of the official repository, and then runs
+the seeding steps `Step 8`, `Step 9`, and `Step 10`.
 
 ## Developer
 
 `B - Bootstrap Framework Dependencies`
 
-Instala o repara dependencias del framework. Úsalo en una máquina limpia o tras problemas de dependencias; en Linux/WSL también prepara las dependencias de sistema necesarias para Playwright.
+Installs or repairs the framework dependencies. Use it on a clean machine or after dependency problems; on Linux/WSL it also prepares the system dependencies needed by Playwright.
 
 `D - Run Framework Doctor`
 
-Ejecuta checks de preparación local. Úsalo antes de desplegar o para diagnosticar fallos de entorno.
+Runs local readiness checks. Use it before deploying or to diagnose environment failures.
 
 `R - Repair Local Access / Connectors`
 
-Ejecuta una recuperación guiada del acceso local. Primero reconcilia el bloque
-gestionado de `hosts` del framework y, después, permite reiniciar los conectores
-si el cluster seguía desplegado tras reiniciar WSL o el entorno local. Cuando el
-bloque de `hosts` queda listo, también verifica los endpoints públicos mínimos
-que el framework espera antes de `Level 6`.
+Runs a guided recovery of local access. It first reconciles the framework's
+managed `hosts` block and then lets you restart the connectors if the cluster
+was still deployed after restarting WSL or the local environment. When the
+`hosts` block is ready, it also checks the minimum public endpoints the
+framework expects before `Level 6`.
 
-La ruta CLI equivalente es:
+The equivalent CLI path is:
 
 ```bash
 python3 main.py <adapter> local-repair --topology local
@@ -300,114 +300,114 @@ python3 main.py <adapter> local-repair --topology local --recover-connectors
 
 `C - Cleanup Workspace`
 
-Limpia artefactos generados, caches o salidas previas que dificultan razonar sobre el estado actual.
+Cleans generated artifacts, caches, or previous outputs that make it harder to reason about the current state.
 
 `L - Build and Deploy Local Images`
 
-Construye y carga imágenes locales. Úsalo durante desarrollo cuando hayas modificado código fuente de conectores, dashboards o componentes que deban probarse en el cluster.
+Builds and loads local images. Use it during development when you have modified the source code of connectors, dashboards, or components that must be tested in the cluster.
 
-El submenú separa la ruta habitual de desarrollo de las recetas avanzadas:
+The submenu separates the usual development path from the advanced recipes:
 
-- `Quick actions`: acciones rápidas específicas del adapter activo.
-  En INESData hacen `build/load/redeploy` preservando datos: el redeploy usa
-  `helm upgrade --reuse-values` sobre releases existentes y no reinstala
-  releases ausentes con values base. En EDC construyen/cargan las imágenes
-  locales del conector y/o dashboard, y reinician deployments EDC existentes
-  para que tomen la imagen nueva sin recrear datos.
-- `Advanced recipes`: recetas registradas para construir, cargar y, cuando se
-  seleccione, redesplegar una fuente concreta del adapter activo.
+- `Quick actions`: quick actions specific to the active adapter. On
+  INESData they do `build/load/redeploy` while preserving data: the redeploy
+  uses `helm upgrade --reuse-values` on existing releases and doesn't
+  reinstall missing releases with base values. On EDC they build/load the
+  local connector and/or dashboard images and restart existing EDC
+  deployments so they pick up the new image without recreating data.
+- `Advanced recipes`: registered recipes to build, load, and, when selected,
+  redeploy a specific source of the active adapter.
 
-Si el release no existe, ejecuta primero el nivel correspondiente (`Level 4`
-para conectores o `Level 5` para componentes).
+If the release doesn't exist, first run the corresponding level (`Level 4`
+for connectors or `Level 5` for components).
 
-Para recetas registradas de componentes, como `Ontology Hub` o `AI Model Hub`,
-si el deployment ya existe en el namespace del dataspace activo, el framework lo
-reinicia para que tome la imagen local cargada en Minikube. Si no existe, la
-opción solo prepara la imagen; después ejecuta `Level 5` para desplegar el
-componente.
+For registered component recipes, such as `Ontology Hub` or `AI Model Hub`, if
+the deployment already exists in the active dataspace's namespace, the
+framework restarts it so it picks up the local image loaded into Minikube. If
+it doesn't exist, the option only prepares the image; then run `Level 5` to
+deploy the component.
 
 ## Validation
 
 `I - INESData UI Tests (Normal/Live/Debug)`
 
-Ejecuta validaciones UI del portal INESData de forma independiente del nivel 6
-completo. El submenú separa `Core` de las integraciones de componentes vistas
-desde INESData:
+Runs UI validations of the INESData portal independently of the full level 6.
+The submenu separates `Core` from the component integrations seen from
+INESData:
 
-- `Ontology Hub Integration with INESData`: ejecuta `DS-UI-OH-01`.
-- `AI Model Hub Integration with INESData`: ejecuta `DS-UI-AMH-01`,
-  `DS-UI-AMH-BROWSER-01`, `DS-UI-AMH-EXEC-01` y `DS-UI-AMH-BENCH-01`.
-- `Semantic Virtualization Integration with INESData`: ejecuta `DS-UI-SV-01`.
+- `Ontology Hub Integration with INESData`: runs `DS-UI-OH-01`.
+- `AI Model Hub Integration with INESData`: runs `DS-UI-AMH-01`,
+  `DS-UI-AMH-BROWSER-01`, `DS-UI-AMH-EXEC-01`, and `DS-UI-AMH-BENCH-01`.
+- `Semantic Virtualization Integration with INESData`: runs `DS-UI-SV-01`.
 
 `O - Ontology Hub UI Tests (Normal/Live/Debug)`
 
-Ejecuta validaciones UI propias de Ontology Hub, es decir, sobre la aplicación
-del componente y sus suites técnicas/funcionales, no sobre INESData.
+Runs Ontology Hub's own UI validations, that is, on the component's
+application and its technical/functional suites, not on INESData.
 
 `A - AI Model Hub UI Tests (Normal/Live/Debug)`
 
-Ejecuta validaciones UI propias de AI Model Hub, no la validación de integración
-desde INESData.
+Runs AI Model Hub's own UI validations, not the integration validation from
+INESData.
 
 `V - Semantic Virtualization UI Tests (Normal/Live/Debug)`
 
-Ejecuta validaciones UI/read-only del virtualizador semántico. La suite abre el
-endpoint público desde Playwright, valida el documento OpenAPI y comprueba que
-el endpoint de consulta responde desde el contexto del navegador. También cubre
-la UI/editor del virtualizador cuando está habilitada; la validación desde
-INESData se ejecuta desde `I`.
+Runs UI/read-only validations of the semantic virtualizer. The suite opens
+the public endpoint from Playwright, validates the OpenAPI document, and
+checks that the query endpoint responds from the browser context. It also
+covers the virtualizer's UI/editor when it is enabled; the validation from
+INESData is run from `I`.
 
-En el nivel 6, Semantic Virtualization también valida por consola la preparación
-de sus fuentes de soporte: `morph-kgv`, `mapping-editor`, datasets oficiales y
-Automap. Para `morph-kgv`, se comprueba el contrato de ejecución documentado:
-CLI `run_query.py`, comando `morph-kgv serve config.ini`, ejemplos `config.ini`
-y endpoint `/sparql`. Automap se trata como herramienta de generación de
-mappings y trazabilidad de alcance, no como servicio desplegado en Kubernetes. Además,
-`Level 6` ejecuta una línea base determinista de Automap sin LLM: valida un
-fixture pequeño de movilidad, extrae esquema y ontología, reutiliza una
-ontología gobernable por Ontology Hub, materializa RDF controlado y calcula
-métricas contra KGs de referencia.
+In level 6, Semantic Virtualization also validates on the console the
+readiness of its supporting sources: `morph-kgv`, `mapping-editor`, the
+official datasets, and Automap. For `morph-kgv`, it checks the documented
+execution contract: the `run_query.py` CLI, the `morph-kgv serve config.ini`
+command, the `config.ini` examples, and the `/sparql` endpoint. Automap is
+treated as a mapping generation and scope traceability tool, not as a service
+deployed in Kubernetes. In addition, `Level 6` runs a deterministic Automap
+baseline without an LLM: it validates a small mobility fixture, extracts the
+schema and ontology, reuses an ontology governed by Ontology Hub, materializes
+controlled RDF, and computes metrics against reference KGs.
 
 `F - Dataspace Interoperability Tests (Newman/Kafka)`
 
-Abre un submenú para ejecutar pruebas de interoperabilidad sin lanzar todo el
-nivel 6:
+Opens a submenu to run interoperability tests without launching the whole
+level 6:
 
-- `1 - Newman connector interoperability tests`: ejecuta las colecciones Newman
-  de interoperabilidad entre conectores y guarda sus artefactos en un nuevo
-  experimento.
-- `2 - Kafka transfer interoperability tests`: ejecuta únicamente la validación
-  de transferencias Kafka entre conectores. Requiere confirmación explícita
-  porque suele tardar más que las validaciones Newman.
+- `1 - Newman connector interoperability tests`: runs the Newman
+  interoperability collections between connectors and stores their artifacts
+  in a new experiment.
+- `2 - Kafka transfer interoperability tests`: runs only the validation of
+  Kafka transfers between connectors. It requires explicit confirmation
+  because it usually takes longer than the Newman validations.
 
-Estas opciones reutilizan la misma lógica de validación que usa el nivel 6, pero
-permiten repetir solo la parte de interoperabilidad que interese revisar.
+These options reuse the same validation logic as level 6, but let you repeat
+only the interoperability part you want to review.
 
 ## Control
 
 `? - Help`
 
-Muestra ayuda resumida dentro del propio menú.
+Shows a short help inside the menu itself.
 
 `Q - Exit`
 
-Sale del menú.
+Leaves the menu.
 
-## Topología
+## Topology
 
-La topología se selecciona de dos maneras:
+The topology is selected in two ways:
 
-- por CLI con `--topology`
-- desde el propio menú con `T - Select topology`
+- from the CLI with `--topology`
+- from the menu itself with `T - Select topology`
 
-Ejemplos por CLI:
+CLI examples:
 
 ```bash
 python3 main.py inesdata deploy --topology local
 python3 main.py inesdata hosts --topology vm-single --dry-run
 ```
 
-Topologías canónicas:
+Canonical topologies:
 
 ```text
 local
@@ -415,6 +415,6 @@ vm-single
 vm-distributed
 ```
 
-Dentro del menú, la topología activa se muestra en el encabezado y se aplica a
-todas las acciones de la sesión actual hasta que la cambies con `T` o salgas
-del menú.
+Inside the menu, the active topology is shown in the header and applies to
+all actions of the current session until you change it with `T` or leave the
+menu.

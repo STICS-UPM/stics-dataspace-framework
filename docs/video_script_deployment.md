@@ -1,71 +1,70 @@
-# Script: Despliegue del Ambiente de Validación
-# Objetivo: Enseñar cómo se crea un ambiente desde cero
+# Script: Deploying the Validation Environment
+# Goal: Show how an environment is created from scratch
 
 ---
 
-## BLOQUE 0 — Introducción (1 min)
+## BLOCK 0 — Introduction (1 min)
 
-**Decir:**
-> "En este vídeo vamos a desplegar un ambiente de validación desde cero
-> usando el framework. Veremos el asistente de configuración y los
-> niveles del 1 al 5: infraestructura, servicios comunes, dataspace,
-> conectores y componentes."
+**Say:**
+> "In this video we are going to deploy a validation environment from
+> scratch using the framework. We'll look at the configuration assistant
+> and levels 1 to 5: infrastructure, common services, dataspace,
+> connectors, and components."
 
 ---
 
-## BLOQUE 1 — El asistente: configurar el ambiente (3 min)
+## BLOCK 1 — The assistant: configuring the environment (3 min)
 
-**Decir:**
-> "El primer paso es configurar el ambiente usando el asistente
-> interactivo del framework."
+**Say:**
+> "The first step is to configure the environment using the framework's
+> interactive assistant."
 
-**Ejecutar:**
+**Run:**
 ```bash
 python3 main.py
 ```
 
-**En el menú principal:**
-- Seleccionar adaptador `inesdata`
-- Pulsar `W` → abre el VM-DISTRIBUTED ASSISTANT
+**In the main menu:**
+- Select the `inesdata` adapter
+- Press `W` → opens the VM-DISTRIBUTED ASSISTANT
 
-**Decir:**
-> "El asistente nos guía para definir las IPs de las VMs, los dominios,
-> el acceso SSH y el inventario del dataspace. Vamos a la opción 1."
+**Say:**
+> "The assistant guides us through defining the VM IPs, the domains, SSH
+> access, and the dataspace inventory. Let's go to option 1."
 
-**Pulsar `1`**
+**Press `1`**
 
-**Decir mientras se rellena:**
-> "Definimos la IP de la VM de servicios comunes, la del proveedor
-> y la del consumidor. El dominio base del que derivarán todas las URLs.
-> El acceso SSH a través del bastión. Y los conectores y componentes
-> que queremos desplegar."
+**Say while filling it in:**
+> "We define the IP of the common services VM, the provider's and the
+> consumer's. The base domain all URLs will derive from. SSH access through
+> the bastion. And the connectors and components we want to deploy."
 
-**Confirmar al final con Enter**
+**Confirm at the end with Enter**
 
-**Decir:**
-> "El asistente ha generado tres ficheros de configuración locales.
-> Vamos a verlos."
+**Say:**
+> "The assistant has generated three local configuration files. Let's take
+> a look at them."
 
-**Mostrar:**
+**Show:**
 ```bash
 cat deployers/infrastructure/deployer.config
 ```
 
-**Señalar:**
+**Point out:**
 ```
-VM_COMMON_IP=192.168.122.64       # VM servicios comunes — org1
-VM_PROVIDER_IP=192.168.122.134    # VM proveedor — org2
-VM_CONSUMER_IP=192.168.122.9      # VM consumidor — org3
-DOMAIN_BASE=pionera.oeg.fi.upm.es # dominio base de todas las URLs
+VM_COMMON_IP=192.168.122.64       # common services VM — org1
+VM_PROVIDER_IP=192.168.122.134    # provider VM — org2
+VM_CONSUMER_IP=192.168.122.9      # consumer VM — org3
+DOMAIN_BASE=pionera.oeg.fi.upm.es # base domain for all URLs
 ```
 
 ```bash
 cat deployers/infrastructure/topologies/vm-distributed.config
 ```
 
-**Señalar:**
+**Point out:**
 ```
-SSH_BASTION_HOST=orion.dia.fi.upm.es    # bastión SSH
+SSH_BASTION_HOST=orion.dia.fi.upm.es    # SSH bastion
 K3S_KUBECONFIG_PROVIDER=~/.kube/pionera20.yaml
 K3S_KUBECONFIG_CONSUMER=~/.kube/pionera3.yaml
 VM_PROVIDER_PUBLIC_URL=https://org2.pionera.oeg.fi.upm.es
@@ -76,7 +75,7 @@ VM_CONSUMER_PUBLIC_URL=https://org3.pionera.oeg.fi.upm.es
 cat deployers/inesdata/deployer.config
 ```
 
-**Señalar:**
+**Point out:**
 ```
 DS_1_NAME=pionera
 DS_1_CONNECTORS=org2,org3
@@ -86,31 +85,31 @@ MINIO_CONSOLE_PUBLIC_URL=https://org1.pionera.oeg.fi.upm.es/s3-console
 COMPONENTS_PUBLIC_BASE_URL=https://org1.pionera.oeg.fi.upm.es
 ```
 
-**Decir:**
-> "Estos tres ficheros son locales e ignorados por git. Definen
-> completamente el ambiente: dónde están las VMs, cómo acceder,
-> qué conectores desplegar y qué componentes activar."
+**Say:**
+> "These three files are local and ignored by git. They fully define the
+> environment: where the VMs are, how to access them, which connectors to
+> deploy, and which components to enable."
 
 ---
 
-## BLOQUE 2 — Nivel 1: Preflight de infraestructura (2 min)
+## BLOCK 2 — Level 1: Infrastructure preflight (2 min)
 
-**Decir:**
-> "Con la configuración lista, arrancamos el despliegue. El Nivel 1
-> en topología vm-distributed no instala nada. Hace comprobaciones
-> de solo lectura sobre el cluster: kubectl, helm, nodos, ingress
-> y almacenamiento."
+**Say:**
+> "With the configuration ready, we start the deployment. Level 1 in the
+> vm-distributed topology doesn't install anything. It runs read-only
+> checks on the cluster: kubectl, helm, nodes, ingress, and storage."
 
-**Ejecutar:**
+**Run:**
 ```bash
 python3 main.py inesdata deploy --topology vm-distributed --level 1
 ```
 
-**Decir mientras se ejecuta:**
-> "Comprueba que kubectl y helm están disponibles, que el cluster
-> responde, que hay nodos listos y que existe una IngressClass nginx."
+**Say while it runs:**
+> "It checks that kubectl and helm are available, that the cluster
+> responds, that there are ready nodes, and that an nginx IngressClass
+> exists."
 
-**Cuando termine, mostrar:**
+**When it finishes, show:**
 ```bash
 kubectl --kubeconfig ~/.kube/pionera40.yaml get nodes
 kubectl --kubeconfig ~/.kube/pionera40.yaml get ingressclass
@@ -119,82 +118,82 @@ kubectl --kubeconfig ~/.kube/pionera40.yaml get storageclass
 
 ---
 
-## BLOQUE 3 — Nivel 2: Servicios comunes (3 min)
+## BLOCK 3 — Level 2: Common services (3 min)
 
-**Decir:**
-> "El Nivel 2 despliega los servicios comunes: Keycloak para identidad,
-> MinIO para almacenamiento de objetos, PostgreSQL para bases de datos
-> y Vault para gestión de secretos."
+**Say:**
+> "Level 2 deploys the common services: Keycloak for identity, MinIO for
+> object storage, PostgreSQL for databases, and Vault for secret
+> management."
 
-**Ejecutar:**
+**Run:**
 ```bash
 python3 main.py inesdata deploy --topology vm-distributed --level 2
 ```
 
-**Decir mientras se ejecuta:**
-> "Sincroniza la configuración, construye las dependencias Helm,
-> despliega el chart y espera a que todos los servicios estén
-> operativos. Al final configura Vault automáticamente."
+**Say while it runs:**
+> "It syncs the configuration, builds the Helm dependencies, deploys the
+> chart, and waits until all services are up. At the end it configures
+> Vault automatically."
 
-**Cuando termine:**
+**When it finishes:**
 ```bash
 kubectl --kubeconfig ~/.kube/pionera40.yaml get pods -n common-srvs
 ```
 
-**Abrir navegador:**
+**Open the browser:**
 - `https://org1.pionera.oeg.fi.upm.es/auth` → Keycloak
 - `https://org1.pionera.oeg.fi.upm.es/s3-console` → MinIO Console
 
 ---
 
-## BLOQUE 4 — Nivel 3: Dataspace (2 min)
+## BLOCK 4 — Level 3: Dataspace (2 min)
 
-**Decir:**
-> "El Nivel 3 crea el dataspace. Despliega el registration-service
-> y registra el dataspace en Keycloak y PostgreSQL."
+**Say:**
+> "Level 3 creates the dataspace. It deploys the registration-service and
+> registers the dataspace in Keycloak and PostgreSQL."
 
-**Ejecutar:**
+**Run:**
 ```bash
 python3 main.py inesdata deploy --topology vm-distributed --level 3
 ```
 
-**Cuando termine:**
+**When it finishes:**
 ```bash
 kubectl --kubeconfig ~/.kube/pionera40.yaml get pods -n core-control
 ```
 
-**Decir:**
-> "El registration-service gestiona los participantes del dataspace
-> y las políticas de acceso."
+**Say:**
+> "The registration-service manages the dataspace participants and the
+> access policies."
 
 ---
 
-## BLOQUE 5 — Nivel 4: Conectores (4 min)
+## BLOCK 5 — Level 4: Connectors (4 min)
 
-**Decir:**
-> "El Nivel 4 despliega los conectores INESData. Tenemos dos:
-> org2 en la VM proveedora y org3 en la VM consumidora.
-> El framework genera credenciales únicas para cada uno en
-> Keycloak, Vault y PostgreSQL, construye la imagen Docker,
-> la transfiere a la VM correspondiente y la despliega con Helm."
+**Say:**
+> "Level 4 deploys the INESData connectors. We have two: org2 on the
+> provider VM and org3 on the consumer VM. The framework generates unique
+> credentials for each one in Keycloak, Vault, and PostgreSQL, builds the
+> Docker image, transfers it to the corresponding VM, and deploys it with
+> Helm."
 
-**Ejecutar:**
+**Run:**
 ```bash
 python3 main.py inesdata deploy --topology vm-distributed --level 4
 ```
 
-**Cuando termine:**
+**When it finishes:**
 ```bash
 kubectl --kubeconfig ~/.kube/pionera20.yaml get pods -n provider
 kubectl --kubeconfig ~/.kube/pionera3.yaml get pods -n consumer
 ```
 
-**Mostrar fichero de credenciales:**
+**Show the credentials file:**
 ```bash
 cat deployers/inesdata/deployments/DEV/pionera/credentials-connector-conn-org2-pionera.json
 ```
 
-**Señalar:**
+**Point out:**
 ```json
 "connector_user": { "user": "...", "passwd": "..." },
 "vault":          { "token": "...", "path": "..." },
@@ -204,65 +203,64 @@ cat deployers/inesdata/deployments/DEV/pionera/credentials-connector-conn-org2-p
 }
 ```
 
-**Decir:**
-> "El framework guarda las credenciales generadas en este fichero JSON.
-> Es el punto de referencia para acceder a las APIs del conector."
+**Say:**
+> "The framework stores the generated credentials in this JSON file. It is
+> the reference point for accessing the connector APIs."
 
-**Abrir navegador:**
+**Open the browser:**
 - `https://org2.pionera.oeg.fi.upm.es/inesdata-connector-interface/`
 - `https://org3.pionera.oeg.fi.upm.es/inesdata-connector-interface/`
 
 ---
 
-## BLOQUE 6 — Nivel 5: Componentes (3 min)
+## BLOCK 6 — Level 5: Components (3 min)
 
-**Decir:**
-> "El Nivel 5 despliega los componentes opcionales del dataspace:
-> Ontology Hub, AI Model Hub y Semantic Virtualization.
-> Todos se exponen en org1 bajo rutas de path."
+**Say:**
+> "Level 5 deploys the optional dataspace components: Ontology Hub, AI
+> Model Hub, and Semantic Virtualization. They are all exposed on org1
+> under path-based routes."
 
-**Ejecutar:**
+**Run:**
 ```bash
 python3 main.py inesdata deploy --topology vm-distributed --level 5
 ```
 
-**Cuando termine:**
+**When it finishes:**
 ```bash
 kubectl --kubeconfig ~/.kube/pionera40.yaml get pods -n components
 ```
 
-**Abrir navegador:**
+**Open the browser:**
 - `https://org1.pionera.oeg.fi.upm.es/ontology-hub`
 - `https://org1.pionera.oeg.fi.upm.es/ai-model-hub`
 - `https://org1.pionera.oeg.fi.upm.es/semantic-virtualization`
 
 ---
 
-## BLOQUE 7 — Cierre: parametrización de dominios (1 min)
+## BLOCK 7 — Wrap-up: domain parameterization (1 min)
 
-**Volver a mostrar:**
+**Show again:**
 ```bash
 grep -E "DOMAIN_BASE|VM_.*PUBLIC_URL|COMPONENTS_PUBLIC_BASE" deployers/infrastructure/deployer.config
 grep -E "DOMAIN_BASE|VM_.*PUBLIC_URL|COMPONENTS_PUBLIC_BASE" deployers/infrastructure/topologies/vm-distributed.config
 ```
 
-**Decir:**
-> "Todo lo que hemos visto — URLs de Keycloak, MinIO, conectores
-> y componentes — deriva del dominio base y las IPs configuradas
-> al principio. Para desplegar el mismo ambiente en otra
-> infraestructura basta con cambiar estos valores en el asistente
-> y repetir los niveles."
+**Say:**
+> "Everything we've seen (the Keycloak, MinIO, connector, and component
+> URLs) derives from the base domain and the IPs configured at the
+> beginning. To deploy the same environment on other infrastructure, just
+> change these values in the assistant and repeat the levels."
 
 ---
 
-## DURACIÓN ESTIMADA: 20-25 minutos
+## ESTIMATED LENGTH: 20-25 minutes
 
-## NOTAS PREVIAS AL RODAJE
+## NOTES BEFORE RECORDING
 
-- Vaciar los 3 deployer.config antes de grabar para que el asistente
-  tenga algo visible que configurar
-- El Nivel 2 puede tardar 5-8 min en arrancar Keycloak — prever corte
-  o grabar en tiempo real
-- Las credenciales del JSON cambiarán con cada deploy — es normal,
-  mencionarlo en el vídeo
-- Tener el navegador preconfigurado con las URLs antes de grabar
+- Empty the 3 deployer.config files before recording so the assistant has
+  something visible to configure
+- Level 2 can take 5-8 min to start Keycloak; plan a cut or record in real
+  time
+- The credentials in the JSON change with every deploy; this is normal,
+  mention it in the video
+- Have the browser preconfigured with the URLs before recording

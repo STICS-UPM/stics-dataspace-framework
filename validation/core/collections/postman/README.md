@@ -1,10 +1,10 @@
-# Replicación Manual Compacta en Postman
+# Compact Manual Replication in Postman
 
-## Objetivo
+## Goal
 
-Este documento es una versión operativa y provisional del paso manual en Postman. Su objetivo no es explicar el flujo conceptualmente, sino dejar una referencia exacta y ejecutable para reproducir el recorrido E2E principal del framework **sin depender** de la inyección dinámica de `test_script` que hace `NewmanExecutor`.
+This document is an operational, provisional version of the manual Postman step. Its goal is not to explain the flow conceptually, but to leave an exact, runnable reference to reproduce the framework's main E2E path **without depending** on the dynamic `test_script` injection performed by `NewmanExecutor`.
 
-Los artefactos asociados son:
+The associated artifacts are:
 
 - `Validation-Environment/validation/core/collections/postman/01_environment_health.json`
 - `Validation-Environment/validation/core/collections/postman/02_connector_management_api.json`
@@ -12,45 +12,46 @@ Los artefactos asociados son:
 - `Validation-Environment/validation/core/collections/postman/00_environment.json`
 - `Validation-Environment/validation/core/collections/postman/00_environment_edc.json`
 
-Antes de lanzar estas colecciones desde `Level 6`, el framework ejecuta un
-preflight ligero sobre Management API para el par `provider/consumer`. Esa
-comprobación valida login de ambos conectores y prueba, con sus propios tokens,
-estos endpoints:
+Before launching these collections from `Level 6`, the framework runs a
+lightweight Management API preflight for the `provider/consumer` pair. That
+check validates the login of both connectors and tests, with their own tokens,
+these endpoints:
 
-- `POST /management/v3/assets/request` en el proveedor
-- `POST /management/v3/contractnegotiations/request` en el consumidor
-- `POST /management/v3/catalog/request` en el consumidor contra el protocolo del proveedor
+- `POST /management/v3/assets/request` on the provider
+- `POST /management/v3/contractnegotiations/request` on the consumer
+- `POST /management/v3/catalog/request` on the consumer against the provider's protocol
 
-Si alguno falla, el framework aborta antes de Newman y persiste el diagnóstico
-en `00_management_api_preflight.json` dentro del directorio de reportes del par.
+If any of them fails, the framework aborts before Newman and persists the
+diagnostics in `00_management_api_preflight.json` inside the pair's report
+directory.
 
-## Colecciones disponibles
+## Available collections
 
-Esta carpeta contiene tres variantes importables en Postman:
+This folder contains three variants that can be imported into Postman:
 
 1. `01_environment_health.json`
-   - réplica autocontenida de `01_environment_health.json`
-   - útil para smoke básico de autenticación, Management API y DSP
+   - self-contained replica of `01_environment_health.json`
+   - useful for a basic smoke test of authentication, Management API, and DSP
 2. `02_connector_management_api.json`
-   - réplica autocontenida de `02_connector_management_api.json`
-   - útil para validar el CRUD técnico del proveedor
+   - self-contained replica of `02_connector_management_api.json`
+   - useful to validate the provider's technical CRUD
 3. `03_e2e_compact.json`
-   - flujo compacto orientado a `03` + `04` + `05` + `06`
-   - útil cuando se quiere validar el recorrido E2E principal con menos tiempo de ejecución
+   - compact flow covering `03` + `04` + `05` + `06`
+   - useful when you want to validate the main E2E path with less execution time
 
-Las tres colecciones reutilizan un environment del adapter que quieras probar:
+The three collections reuse an environment for the adapter you want to test:
 
-- `Validation-Environment/validation/core/collections/postman/00_environment.json` para INESData
-- `Validation-Environment/validation/core/collections/postman/00_environment_edc.json` para EDC
+- `Validation-Environment/validation/core/collections/postman/00_environment.json` for INESData
+- `Validation-Environment/validation/core/collections/postman/00_environment_edc.json` for EDC
 
-Los environments versionados están parametrizados con las variables base del
-despliegue. INESData usa por defecto `pionera` con los namespaces
-`core-control`/`provider`/`consumer`, y EDC usa `pionera-edc` con
-`edc-control`/`edc-provider`/`edc-consumer`. Si tu `deployer.config` local usa
-otros valores, duplica el environment en Postman y ajusta esas variables sin
-modificar las colecciones.
+The versioned environments are parameterized with the deployment's base
+variables. INESData uses `pionera` by default with the
+`core-control`/`provider`/`consumer` namespaces, and EDC uses `pionera-edc`
+with `edc-control`/`edc-provider`/`edc-consumer`. If your local
+`deployer.config` uses other values, duplicate the environment in Postman and
+adjust those variables without modifying the collections.
 
-La lógica original que el framework inyecta dinámicamente sigue estando en:
+The original logic that the framework injects dynamically still lives in:
 
 - `Validation-Environment/framework/newman_executor.py`
 - `Validation-Environment/validation/shared/api/common_tests.js`
@@ -59,25 +60,25 @@ La lógica original que el framework inyecta dinámicamente sigue estando en:
 - `Validation-Environment/validation/core/tests/negotiation_tests.js`
 - `Validation-Environment/validation/core/tests/transfer_tests.js`
 
-## Por qué existe esta colección compacta
+## Why this compact collection exists
 
-La colección `03_e2e_compact.json` reduce tiempo de ejecución porque elimina comprobaciones que en Postman manual suelen aportar poco valor cuando el objetivo es validar el flujo principal de interoperabilidad:
+The `03_e2e_compact.json` collection reduces execution time because it removes checks that usually add little value in manual Postman runs when the goal is to validate the main interoperability flow:
 
-- omite `01_environment_health.json` y `02_connector_management_api.json`
-- omite los requests de listado CRUD intermedios de `03_provider_setup.json`
-- omite `Direct DSP Catalog Request` de `04_consumer_catalog.json`
-- omite `Check Transfer Status` de `06_consumer_transfer.json` y se apoya en la resolución directa del destino
-- hace login del proveedor una sola vez y login del consumidor una sola vez
-- embebe en cada request el script exacto necesario para producir las variables de la siguiente request
+- it skips `01_environment_health.json` and `02_connector_management_api.json`
+- it skips the intermediate CRUD listing requests of `03_provider_setup.json`
+- it skips `Direct DSP Catalog Request` from `04_consumer_catalog.json`
+- it skips `Check Transfer Status` from `06_consumer_transfer.json` and relies on resolving the destination directly
+- it logs in the provider only once and the consumer only once
+- it embeds in each request the exact script needed to produce the variables of the next request
 
-## Configuración inicial exacta del environment
+## Exact initial environment configuration
 
-Antes de importar o reconstruir manualmente la colección, crea un environment con estas variables base. Si quieres ahorrar tiempo, puedes importar directamente:
+Before importing or manually rebuilding the collection, create an environment with these base variables. To save time, you can import directly:
 
-- `Validation-Environment/validation/core/collections/postman/00_environment.json` para INESData
-- `Validation-Environment/validation/core/collections/postman/00_environment_edc.json` para EDC
+- `Validation-Environment/validation/core/collections/postman/00_environment.json` for INESData
+- `Validation-Environment/validation/core/collections/postman/00_environment_edc.json` for EDC
 
-Esos ficheros son **environments importables de Postman** y contienen solo las variables base necesarias, sin variables derivadas del flujo.
+Those files are **importable Postman environments** and contain only the necessary base variables, without variables derived from the flow.
 
 ### Environment INESData
 
@@ -142,16 +143,16 @@ Esos ficheros son **environments importables de Postman** y contienen solo las v
 }
 ```
 
-Notas importantes:
+Important notes:
 
-- `providerProtocolAddress` y `consumerProtocolAddress` se resuelven automáticamente al iniciar la colección compacta a partir de `provider`, `consumer`, `providerNamespace`, `consumerNamespace`, `protocolPort` y `protocolPath`. Solo usa `providerProtocolAddressOverride` o `consumerProtocolAddressOverride` si necesitas forzar una ruta interna distinta.
-- Las contraseñas locales del entorno INESData actual se generan bajo `deployers/inesdata/deployments/DEV/pionera/credentials-connector-<connector>.json`, campo `connector_user.passwd`.
-- Para EDC, las contraseñas equivalentes se generan bajo `deployers/edc/deployments/DEV/pionera-edc/credentials-connector-<connector>.json`, campo `connector_user.passwd`.
-- La colección compacta genera dinámicamente todos los identificadores `e2e_*`, así que no hace falta precargarlos en el environment.
+- `providerProtocolAddress` and `consumerProtocolAddress` are resolved automatically when the compact collection starts, from `provider`, `consumer`, `providerNamespace`, `consumerNamespace`, `protocolPort`, and `protocolPath`. Only use `providerProtocolAddressOverride` or `consumerProtocolAddressOverride` if you need to force a different internal path.
+- The local passwords of the current INESData environment are generated under `deployers/inesdata/deployments/DEV/pionera/credentials-connector-<connector>.json`, field `connector_user.passwd`.
+- For EDC, the equivalent passwords are generated under `deployers/edc/deployments/DEV/pionera-edc/credentials-connector-<connector>.json`, field `connector_user.passwd`.
+- The compact collection dynamically generates all the `e2e_*` identifiers, so there is no need to preload them in the environment.
 
-## Variables de colección usadas para reintentos
+## Collection variables used for retries
 
-La colección define estas collection variables para acotar los reintentos y mantener una ejecución más rápida que el conjunto completo del framework:
+The collection defines these collection variables to bound the retries and keep the run faster than the framework's full set:
 
 - `catalog_max_attempts = 6`
 - `negotiation_start_max_attempts = 30`
@@ -159,9 +160,9 @@ La colección define estas collection variables para acotar los reintentos y man
 - `transfer_start_max_attempts = 8`
 - `transfer_destination_max_attempts = 10`
 
-## Orden de ejecución
+## Execution order
 
-La colección compacta debe ejecutarse exactamente en este orden:
+The compact collection must be run exactly in this order:
 
 1. `Provider Login`
 2. `Create E2E Asset`
@@ -174,20 +175,20 @@ La colección compacta debe ejecutarse exactamente en este orden:
 9. `Start Transfer Process`
 10. `Resolve Current Transfer Destination`
 
-## Configuración exacta request por request
+## Exact configuration, request by request
 
-En cada bloque siguiente se documenta la configuración exacta que hay que implementar si decides reconstruir la colección manualmente en Postman. Si prefieres ahorrar tiempo, importa directamente `03_e2e_compact.json`, donde todo esto ya está embebido.
+Each of the following blocks documents the exact configuration to implement if you decide to rebuild the collection manually in Postman. To save time, import `03_e2e_compact.json` directly, where all of this is already embedded.
 
 ### 1. Provider Login
 
-- **Objetivo**: Autenticar al proveedor y sembrar todos los identificadores `e2e_*` que usará el resto del flujo.
-- **Referencia funcional en el framework**: `03_provider_setup.json` - request `Provider Login` con script embebido adicional para limpiar y encadenar estado.
-- **Método**: `POST`
+- **Goal**: Authenticate the provider and seed all the `e2e_*` identifiers the rest of the flow will use.
+- **Functional reference in the framework**: `03_provider_setup.json` - request `Provider Login` with an additional embedded script to clean and chain state.
+- **Method**: `POST`
 - **URL**: `{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token`
 - **Headers**:
   - `Content-Type: application/x-www-form-urlencoded`
-- **Variables requeridas antes de lanzar la request**: `keycloakUrl`, `dataspace`, `keycloakClientId`, `provider_user`, `provider_password`, `provider`, `consumer`
-- **Variables que deja preparadas para la siguiente request**: `provider_jwt`, `e2e_suffix`, `e2e_asset_id`, `e2e_policy_id`, `e2e_contract_definition_id`, `e2e_expected_provider_bucket`, `e2e_expected_consumer_bucket`
+- **Variables required before sending the request**: `keycloakUrl`, `dataspace`, `keycloakClientId`, `provider_user`, `provider_password`, `provider`, `consumer`
+- **Variables it leaves ready for the next request**: `provider_jwt`, `e2e_suffix`, `e2e_asset_id`, `e2e_policy_id`, `e2e_contract_definition_id`, `e2e_expected_provider_bucket`, `e2e_expected_consumer_bucket`
 
 **Body (`urlencoded`)**
 
@@ -199,7 +200,7 @@ password={{provider_password}}
 scope=openid profile email
 ```
 
-**Tests Script exacto**
+**Exact Tests Script**
 
 ```javascript
 function setVar(key, value) {
@@ -254,15 +255,15 @@ setVar("e2e_expected_consumer_bucket", `${pm.environment.get("dataspace")}-${pm.
 
 ### 2. Create E2E Asset
 
-- **Objetivo**: Crear el asset negociable mínimo para el flujo E2E.
-- **Referencia funcional en el framework**: `03_provider_setup.json` - request `Create E2E Asset`.
-- **Método**: `POST`
+- **Goal**: Create the minimal negotiable asset for the E2E flow.
+- **Functional reference in the framework**: `03_provider_setup.json` - request `Create E2E Asset`.
+- **Method**: `POST`
 - **URL**: `http://{{provider}}.{{dsDomain}}/management/v3/assets`
 - **Headers**:
   - `Authorization: Bearer {{provider_jwt}}`
   - `Content-Type: application/json`
-- **Variables requeridas antes de lanzar la request**: `provider_jwt`, `provider`, `dsDomain`, `e2e_asset_id`, `e2e_suffix`
-- **Variables que deja preparadas para la siguiente request**: `e2e_asset_id` (se confirma/actualiza con el `@id` devuelto)
+- **Variables required before sending the request**: `provider_jwt`, `provider`, `dsDomain`, `e2e_asset_id`, `e2e_suffix`
+- **Variables it leaves ready for the next request**: `e2e_asset_id` (confirmed/updated with the returned `@id`)
 
 **Body (`raw`)**
 
@@ -291,7 +292,7 @@ setVar("e2e_expected_consumer_bucket", `${pm.environment.get("dataspace")}-${pm.
 }
 ```
 
-**Tests Script exacto**
+**Exact Tests Script**
 
 ```javascript
 function setVar(key, value) {
@@ -324,15 +325,15 @@ if (body["@id"]) {
 
 ### 3. Create E2E Policy
 
-- **Objetivo**: Crear la policy asociada al asset.
-- **Referencia funcional en el framework**: `03_provider_setup.json` - request `Create E2E Policy`.
-- **Método**: `POST`
+- **Goal**: Create the policy associated with the asset.
+- **Functional reference in the framework**: `03_provider_setup.json` - request `Create E2E Policy`.
+- **Method**: `POST`
 - **URL**: `http://{{provider}}.{{dsDomain}}/management/v3/policydefinitions`
 - **Headers**:
   - `Authorization: Bearer {{provider_jwt}}`
   - `Content-Type: application/json`
-- **Variables requeridas antes de lanzar la request**: `provider_jwt`, `provider`, `dsDomain`, `e2e_policy_id`
-- **Variables que deja preparadas para la siguiente request**: `e2e_policy_id` (se confirma/actualiza con el `@id` devuelto)
+- **Variables required before sending the request**: `provider_jwt`, `provider`, `dsDomain`, `e2e_policy_id`
+- **Variables it leaves ready for the next request**: `e2e_policy_id` (confirmed/updated with the returned `@id`)
 
 **Body (`raw`)**
 
@@ -353,7 +354,7 @@ if (body["@id"]) {
 }
 ```
 
-**Tests Script exacto**
+**Exact Tests Script**
 
 ```javascript
 function setVar(key, value) {
@@ -386,15 +387,15 @@ if (body["@id"]) {
 
 ### 4. Create E2E Contract Definition
 
-- **Objetivo**: Crear la contract definition que vincula asset y policy.
-- **Referencia funcional en el framework**: `03_provider_setup.json` - request `Create E2E Contract Definition`.
-- **Método**: `POST`
+- **Goal**: Create the contract definition that links the asset and the policy.
+- **Functional reference in the framework**: `03_provider_setup.json` - request `Create E2E Contract Definition`.
+- **Method**: `POST`
 - **URL**: `http://{{provider}}.{{dsDomain}}/management/v3/contractdefinitions`
 - **Headers**:
   - `Authorization: Bearer {{provider_jwt}}`
   - `Content-Type: application/json`
-- **Variables requeridas antes de lanzar la request**: `provider_jwt`, `provider`, `dsDomain`, `e2e_contract_definition_id`, `e2e_policy_id`, `e2e_asset_id`
-- **Variables que deja preparadas para la siguiente request**: `e2e_contract_definition_id` (se confirma/actualiza con el `@id` devuelto)
+- **Variables required before sending the request**: `provider_jwt`, `provider`, `dsDomain`, `e2e_contract_definition_id`, `e2e_policy_id`, `e2e_asset_id`
+- **Variables it leaves ready for the next request**: `e2e_contract_definition_id` (confirmed/updated with the returned `@id`)
 
 **Body (`raw`)**
 
@@ -416,7 +417,7 @@ if (body["@id"]) {
 }
 ```
 
-**Tests Script exacto**
+**Exact Tests Script**
 
 ```javascript
 function setVar(key, value) {
@@ -449,14 +450,14 @@ if (body["@id"]) {
 
 ### 5. Consumer Login
 
-- **Objetivo**: Autenticar al consumidor antes de catálogo, negociación y transferencia.
-- **Referencia funcional en el framework**: `04_consumer_catalog.json`, `05_consumer_negotiation.json` y `06_consumer_transfer.json` - request `Consumer Login`.
-- **Método**: `POST`
+- **Goal**: Authenticate the consumer before catalog, negotiation, and transfer.
+- **Functional reference in the framework**: `04_consumer_catalog.json`, `05_consumer_negotiation.json`, and `06_consumer_transfer.json` - request `Consumer Login`.
+- **Method**: `POST`
 - **URL**: `{{keycloakUrl}}/realms/{{dataspace}}/protocol/openid-connect/token`
 - **Headers**:
   - `Content-Type: application/x-www-form-urlencoded`
-- **Variables requeridas antes de lanzar la request**: `keycloakUrl`, `dataspace`, `keycloakClientId`, `consumer_user`, `consumer_password`
-- **Variables que deja preparadas para la siguiente request**: `consumer_jwt`
+- **Variables required before sending the request**: `keycloakUrl`, `dataspace`, `keycloakClientId`, `consumer_user`, `consumer_password`
+- **Variables it leaves ready for the next request**: `consumer_jwt`
 
 **Body (`urlencoded`)**
 
@@ -468,7 +469,7 @@ password={{consumer_password}}
 scope=openid profile email
 ```
 
-**Tests Script exacto**
+**Exact Tests Script**
 
 ```javascript
 function setVar(key, value) {
@@ -499,15 +500,15 @@ setVar("consumer_jwt", body.access_token);
 
 ### 6. Request Federated Catalog (Management API)
 
-- **Objetivo**: Pedir al Management API del consumidor el catálogo federado del proveedor y extraer la oferta negociable.
-- **Referencia funcional en el framework**: `04_consumer_catalog.json` - request `Request Federated Catalog (Management API)`.
-- **Método**: `POST`
+- **Goal**: Ask the consumer's Management API for the provider's federated catalog and extract the negotiable offer.
+- **Functional reference in the framework**: `04_consumer_catalog.json` - request `Request Federated Catalog (Management API)`.
+- **Method**: `POST`
 - **URL**: `http://{{consumer}}.{{dsDomain}}/management/v3/catalog/request`
 - **Headers**:
   - `Authorization: Bearer {{consumer_jwt}}`
   - `Content-Type: application/json`
-- **Variables requeridas antes de lanzar la request**: `consumer_jwt`, `consumer`, `dsDomain`, `providerProtocolAddress`, `provider`, `e2e_asset_id`
-- **Variables que deja preparadas para la siguiente request**: `providerParticipantId`, `e2e_offer_policy_id`, `e2e_catalog_asset_id`, `catalog_lookup_attempt` (solo mientras reintenta)
+- **Variables required before sending the request**: `consumer_jwt`, `consumer`, `dsDomain`, `providerProtocolAddress`, `provider`, `e2e_asset_id`
+- **Variables it leaves ready for the next request**: `providerParticipantId`, `e2e_offer_policy_id`, `e2e_catalog_asset_id`, `catalog_lookup_attempt` (only while retrying)
 
 **Body (`raw`)**
 
@@ -528,7 +529,7 @@ setVar("consumer_jwt", body.access_token);
 }
 ```
 
-**Tests Script exacto**
+**Exact Tests Script**
 
 ```javascript
 function setVar(key, value) {
@@ -634,15 +635,15 @@ setVar("e2e_catalog_asset_id", dataset["@id"] || expectedAssetId);
 
 ### 7. Start Contract Negotiation
 
-- **Objetivo**: Lanzar la negociación contractual con la oferta localizada en catálogo.
-- **Referencia funcional en el framework**: `05_consumer_negotiation.json` - request `Start Contract Negotiation`.
-- **Método**: `POST`
+- **Goal**: Start the contract negotiation with the offer found in the catalog.
+- **Functional reference in the framework**: `05_consumer_negotiation.json` - request `Start Contract Negotiation`.
+- **Method**: `POST`
 - **URL**: `http://{{consumer}}.{{dsDomain}}/management/v3/contractnegotiations`
 - **Headers**:
   - `Authorization: Bearer {{consumer_jwt}}`
   - `Content-Type: application/json`
-- **Variables requeridas antes de lanzar la request**: `consumer_jwt`, `consumer`, `dsDomain`, `providerProtocolAddress`, `providerParticipantId`, `e2e_offer_policy_id`, `e2e_catalog_asset_id`
-- **Variables que deja preparadas para la siguiente request**: `e2e_negotiation_id`, `negotiation_start_attempt` (solo mientras reintenta)
+- **Variables required before sending the request**: `consumer_jwt`, `consumer`, `dsDomain`, `providerProtocolAddress`, `providerParticipantId`, `e2e_offer_policy_id`, `e2e_catalog_asset_id`
+- **Variables it leaves ready for the next request**: `e2e_negotiation_id`, `negotiation_start_attempt` (only while retrying)
 
 **Body (`raw`)**
 
@@ -667,7 +668,7 @@ setVar("e2e_catalog_asset_id", dataset["@id"] || expectedAssetId);
 }
 ```
 
-**Tests Script exacto**
+**Exact Tests Script**
 
 ```javascript
 function setVar(key, value) {
@@ -745,15 +746,15 @@ pm.collectionVariables.unset("e2e_agreement_id");
 
 ### 8. Check Negotiation Status
 
-- **Objetivo**: Consultar la negociación hasta obtener `contractAgreementId`.
-- **Referencia funcional en el framework**: `05_consumer_negotiation.json` - request `Check Negotiation Status`.
-- **Método**: `POST`
+- **Goal**: Poll the negotiation until `contractAgreementId` is obtained.
+- **Functional reference in the framework**: `05_consumer_negotiation.json` - request `Check Negotiation Status`.
+- **Method**: `POST`
 - **URL**: `http://{{consumer}}.{{dsDomain}}/management/v3/contractnegotiations/request`
 - **Headers**:
   - `Authorization: Bearer {{consumer_jwt}}`
   - `Content-Type: application/json`
-- **Variables requeridas antes de lanzar la request**: `consumer_jwt`, `consumer`, `dsDomain`, `e2e_negotiation_id`
-- **Variables que deja preparadas para la siguiente request**: `e2e_agreement_id`, `negotiation_status_attempt` (solo mientras reintenta)
+- **Variables required before sending the request**: `consumer_jwt`, `consumer`, `dsDomain`, `e2e_negotiation_id`
+- **Variables it leaves ready for the next request**: `e2e_agreement_id`, `negotiation_status_attempt` (only while retrying)
 
 **Body (`raw`)**
 
@@ -767,7 +768,7 @@ pm.collectionVariables.unset("e2e_agreement_id");
 }
 ```
 
-**Tests Script exacto**
+**Exact Tests Script**
 
 ```javascript
 function setVar(key, value) {
@@ -887,16 +888,16 @@ pm.test("Contract agreement is available", function () {
 
 ### 9. Start Transfer Process
 
-- **Objetivo**: Iniciar la transferencia real usando `AmazonS3-PUSH` y el endpoint del adapter configurado.
-- **Referencia funcional en el framework**: `06_consumer_transfer.json` - request `Start Transfer Process`.
-- **Método**: `POST`
+- **Goal**: Start the real transfer using `AmazonS3-PUSH` and the configured adapter's endpoint.
+- **Functional reference in the framework**: `06_consumer_transfer.json` - request `Start Transfer Process`.
+- **Method**: `POST`
 - **URL**: `http://{{consumer}}.{{dsDomain}}/management/v3/{{transferStartPath}}`
 - **Headers**:
   - `Authorization: Bearer {{consumer_jwt}}`
   - `Content-Type: application/json`
-- **Variables requeridas antes de lanzar la request**: `consumer_jwt`, `consumer`, `dsDomain`, `transferStartPath`, `adapter`, `transferDestinationType`, `e2e_asset_id`, `e2e_agreement_id`, `providerProtocolAddress`
-- **Variables EDC/MinIO cuando aplica**: `transferRequestType`, `transferType`, `transferDestinationBucket`, `transferDestinationRegion`, `transferDestinationEndpointOverride`
-- **Variables que deja preparadas para la siguiente request**: `e2e_transfer_id`, `e2e_transfer_request_destination`, `transfer_start_attempt` (solo mientras reintenta)
+- **Variables required before sending the request**: `consumer_jwt`, `consumer`, `dsDomain`, `transferStartPath`, `adapter`, `transferDestinationType`, `e2e_asset_id`, `e2e_agreement_id`, `providerProtocolAddress`
+- **EDC/MinIO variables when applicable**: `transferRequestType`, `transferType`, `transferDestinationBucket`, `transferDestinationRegion`, `transferDestinationEndpointOverride`
+- **Variables it leaves ready for the next request**: `e2e_transfer_id`, `e2e_transfer_request_destination`, `transfer_start_attempt` (only while retrying)
 
 **Body (`raw`)**
 
@@ -904,7 +905,7 @@ pm.test("Contract agreement is available", function () {
 {{transferRequestBody}}
 ```
 
-**Pre-request Script exacto**
+**Exact Pre-request Script**
 
 ```javascript
 const agreementId = pm.collectionVariables.get("e2e_agreement_id") || pm.environment.get("e2e_agreement_id");
@@ -977,7 +978,7 @@ if (payload.dataDestination) {
 pm.variables.set("transferRequestBody", JSON.stringify(payload, null, 2));
 ```
 
-**Tests Script exacto**
+**Exact Tests Script**
 
 ```javascript
 function setVar(key, value) {
@@ -1053,16 +1054,16 @@ setVar("e2e_transfer_id", body["@id"]);
 
 ### 10. Resolve Current Transfer Destination
 
-- **Objetivo**: Resolver el `dataDestination` actual del transfer process y comprobar que apunta al bucket del consumidor.
-- **Referencia funcional en el framework**: `06_consumer_transfer.json` - request `Resolve Current Transfer Destination`.
-- **Método**: `GET`
+- **Goal**: Resolve the current `dataDestination` of the transfer process and check that it points to the consumer's bucket.
+- **Functional reference in the framework**: `06_consumer_transfer.json` - request `Resolve Current Transfer Destination`.
+- **Method**: `GET`
 - **URL**: `http://{{consumer}}.{{dsDomain}}/management/v3/transferprocesses/{{e2e_transfer_id}}`
 - **Headers**:
   - `Authorization: Bearer {{consumer_jwt}}`
-- **Variables requeridas antes de lanzar la request**: `consumer_jwt`, `consumer`, `dsDomain`, `e2e_transfer_id`, `e2e_expected_consumer_bucket`
-- **Variables que deja preparadas para la siguiente request**: `e2e_transfer_destination_bucket`, `transfer_destination_attempt` (solo mientras reintenta)
+- **Variables required before sending the request**: `consumer_jwt`, `consumer`, `dsDomain`, `e2e_transfer_id`, `e2e_expected_consumer_bucket`
+- **Variables it leaves ready for the next request**: `e2e_transfer_destination_bucket`, `transfer_destination_attempt` (only while retrying)
 
-**Pre-request Script exacto**
+**Exact Pre-request Script**
 
 ```javascript
 if (!(pm.collectionVariables.get("e2e_transfer_id") || pm.environment.get("e2e_transfer_id"))) {
@@ -1072,7 +1073,7 @@ if (!(pm.collectionVariables.get("e2e_transfer_id") || pm.environment.get("e2e_t
 }
 ```
 
-**Tests Script exacto**
+**Exact Tests Script**
 
 ```javascript
 function setVar(key, value) {
@@ -1242,62 +1243,61 @@ pm.test("Resolved destination exposes endpointOverride", function () {
 setVar("e2e_transfer_destination_bucket", bucketName);
 ```
 
-## Qué valida esta colección y qué deja fuera
+## What this collection validates and what it leaves out
 
-Esta colección compacta sí valida de forma encadenada:
+This compact collection does validate, in a chained way:
 
-- creación del asset, policy y contract definition del proveedor
-- descubrimiento del asset desde el consumidor vía catálogo federado
-- negociación contractual hasta obtener `contractAgreementId`
-- inicio de la transferencia real `AmazonS3-PUSH`
-- resolución del `dataDestination` final y validación del bucket del consumidor
+- creation of the provider's asset, policy, and contract definition
+- discovery of the asset from the consumer through the federated catalog
+- contract negotiation until `contractAgreementId` is obtained
+- start of the real `AmazonS3-PUSH` transfer
+- resolution of the final `dataDestination` and validation of the consumer's bucket
 
-Esta colección compacta **no sustituye** al conjunto completo `01`-`06`, porque deja fuera checks adicionales de health, CRUD exhaustivo y diagnósticos intermedios pensados para la ejecución automática del framework.
+This compact collection **does not replace** the full `01`-`06` set, because it leaves out additional health checks, exhaustive CRUD, and intermediate diagnostics meant for the framework's automatic run.
 
-## Relación con la documentación principal
+## Relationship with the main documentation
 
-- `Validation-Environment/docs/06_information_exchange_flow.md` sigue siendo el documento conceptual del flujo.
-- Este documento es la referencia operativa exacta para Postman manual.
-- La colección `Validation-Environment/validation/core/collections/postman/03_e2e_compact.json` es el artefacto importable que implementa exactamente esta guía.
+- `Validation-Environment/docs/06_information_exchange_flow.md` (ES) is still the conceptual document of the flow.
+- This document is the exact operational reference for manual Postman runs.
+- The `Validation-Environment/validation/core/collections/postman/03_e2e_compact.json` collection is the importable artifact that implements exactly this guide.
 
-## Evidencia STICS: interoperabilidad real provider/consumer (PULL + PUSH)
+## STICS evidence: real provider/consumer interoperability (PULL + PUSH)
 
-Además de las colecciones genéricas del framework, esta carpeta contiene una
-colección **específica del proyecto STICS**, autocontenida y ya verificada
-contra el entorno real `vm-distributed`:
+Besides the framework's generic collections, this folder contains a
+collection **specific to the STICS project**, self-contained and already
+verified against the real `vm-distributed` environment:
 
-- `04_stics_edc_interop.json` — flujo completo: login de ambos conectores,
-  creación de asset/policy/contract-definition en el provider, catálogo DSP,
-  negociación de contrato, y **ambos** tipos de transferencia
-  (`HttpData-PULL` con pull real de datos vía EDR, y `HttpData-PUSH` con
-  entrega real al sink del consumer).
-- `00_environment_stics.json` — environment con las URLs públicas reales
-  (`stics.bavenir.eu` para el provider, `con-lab.stics.linkeddata.es` para el
-  consumer). Rellenar `provider_password`/`consumer_password` localmente
-  (vienen de `credentials.json`, no están versionados).
+- `04_stics_edc_interop.json` — complete flow: login of both connectors,
+  creation of asset/policy/contract-definition on the provider, DSP catalog,
+  contract negotiation, and **both** transfer types (`HttpData-PULL` with a
+  real data pull through the EDR, and `HttpData-PUSH` with real delivery to
+  the consumer's sink).
+- `00_environment_stics.json` — environment with the real public URLs
+  (`stics.bavenir.eu` for the provider, `con-lab.stics.linkeddata.es` for the
+  consumer). Fill in `provider_password`/`consumer_password` locally (they
+  come from `credentials.json` and are not versioned).
 
-A diferencia de `03_e2e_compact.json` (genérico, deriva hostnames desde la
-convención `{{connector}}.{{dsDomain}}` del framework), esta colección usa
-directamente los hostnames públicos reales del proyecto STICS, porque los
-conectores `connector-stics`/`conlab-stics` corren fuera de Kubernetes vía
-Docker Compose y no siguen esa convención.
+Unlike `03_e2e_compact.json` (generic, derives hostnames from the framework's
+`{{connector}}.{{dsDomain}}` convention), this collection directly uses the
+real public hostnames of the STICS project, because the
+`connector-stics`/`conlab-stics` connectors run outside Kubernetes with
+Docker Compose and don't follow that convention.
 
-Documentación narrativa con los mismos pasos en `curl` (sin necesidad de
-Postman): [docs/47_stics_edc_interop_evidence.md](../../../../docs/47_stics_edc_interop_evidence.md).
+Narrative documentation with the same steps in `curl` (no Postman needed): [docs/47_stics_edc_interop_evidence.md](../../../../docs/47_stics_edc_interop_evidence.md).
 
-## Evidencia: transferencia PULL con `connector-bavenir`
+## Evidence: PULL transfer with `connector-bavenir`
 
-- `05_connector_bavenir_pull_transfer.json` — flujo `HttpData-PULL` completo
-  con `connector-bavenir` (el conector montado en la sesión hands-on con
-  bavenir, ver
+- `05_connector_bavenir_pull_transfer.json` — complete `HttpData-PULL` flow
+  with `connector-bavenir` (the connector set up in the hands-on session with
+  bavenir, see
   [docs/49_bavenir_hands_on_session_guide.md](../../../../docs/49_bavenir_hands_on_session_guide.md))
-  como **provider** y `connector-stics` como **consumer**: login de ambos,
-  creación de asset/policy/contract-definition en `connector-bavenir`,
-  catálogo DSP, negociación, transferencia y pull real de datos a través del
-  data-plane público de `connector-bavenir`.
-- `00_environment_connector_bavenir.json` — mismas claves de variable que
-  `00_environment_stics.json`, apuntando a
-  `connector-bavenir.stics.bavenir.eu` (provider) y `stics.bavenir.eu`
-  (consumer, `connector-stics`). Rellenar `provider_password` (de
-  `credentials.json` de `connector-bavenir`) y `consumer_password` (de
-  `credentials.json` de `connector-stics`) localmente antes de ejecutar.
+  as **provider** and `connector-stics` as **consumer**: login of both,
+  creation of asset/policy/contract-definition on `connector-bavenir`, DSP
+  catalog, negotiation, transfer, and a real data pull through
+  `connector-bavenir`'s public data plane.
+- `00_environment_connector_bavenir.json` — same variable keys as
+  `00_environment_stics.json`, pointing to
+  `connector-bavenir.stics.bavenir.eu` (provider) and `stics.bavenir.eu`
+  (consumer, `connector-stics`). Fill in `provider_password` (from
+  `connector-bavenir`'s `credentials.json`) and `consumer_password` (from
+  `connector-stics`'s `credentials.json`) locally before running.

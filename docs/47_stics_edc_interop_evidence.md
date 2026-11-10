@@ -1,41 +1,41 @@
-# 47. Evidencia de Interoperabilidad EDC — STICS (Provider ↔ Consumer)
+# 47. EDC Interoperability Evidence — STICS (Provider ↔ Consumer)
 
-## Qué demuestra este documento
+## What this document proves
 
-Este documento deja constancia, con comandos ejecutables, de que los dos
-conectores EDC del proyecto STICS —desplegados manualmente vía Docker Compose
-(ver [12_local_validation_environment.md](./12_local_validation_environment.md)
-y el histórico del proyecto)— interoperan correctamente dentro del dataspace
-real: autenticación OAuth2 contra Keycloak, publicación de catálogo DSP,
-negociación de contrato y **ambos** tipos de transferencia soportados por el
-conector (`HttpData-PULL` y `HttpData-PUSH`).
+This document records, with runnable commands, that the two EDC connectors of
+the STICS project (deployed manually with Docker Compose; see
+[12_local_validation_environment.md](./12_local_validation_environment.md)
+and the project history) interoperate correctly inside the real dataspace:
+OAuth2 authentication against Keycloak, DSP catalog publication, contract
+negotiation, and **both** transfer types supported by the connector
+(`HttpData-PULL` and `HttpData-PUSH`).
 
-Ejecutado y verificado el 2026-07-02 contra el entorno real `vm-distributed`
-del dataspace `stics`:
+Run and verified on 2026-07-02 against the real `vm-distributed` environment
+of the `stics` dataspace:
 
-| Rol | Identidad (participant id) | VM | URL pública |
+| Role | Identity (participant id) | VM | Public URL |
 | --- | --- | --- | --- |
 | Provider | `connector-stics` | `178.105.249.140` | `https://stics.bavenir.eu` |
 | Consumer | `conlab-stics` | `192.168.122.239` | `https://con-lab.stics.linkeddata.es` |
 
-Los assets/políticas/definiciones de contrato creados durante estas pruebas
-se han dejado intencionadamente en el provider como evidencia — no son datos
-de producción, son artefactos de prueba (`stics-interop-*`, `stics-push-*`).
+The assets, policies, and contract definitions created during these tests
+were intentionally left on the provider as evidence. They are not production
+data; they are test artifacts (`stics-interop-*`, `stics-push-*`).
 
-## Requisitos previos
+## Prerequisites
 
-- `curl` y `jq` instalados.
-- Credenciales de gestión (`connector_user`) de cada conector. Estas **no**
-  están en este documento porque son secretas; se obtienen de:
+- `curl` and `jq` installed.
+- Management credentials (`connector_user`) for each connector. They are
+  **not** in this document because they are secret; get them from:
 
   ```text
   deployers/edc/deployments/DEV/vm-distributed/stics/connectors/<connector-name>/credentials.json
   ```
 
-  Campo `connector_user.user` / `connector_user.passwd`, para
-  `connector-stics` (provider) y `conlab-stics` (consumer).
+  Fields `connector_user.user` / `connector_user.passwd`, for
+  `connector-stics` (provider) and `conlab-stics` (consumer).
 
-## 1. Variables de entorno
+## 1. Environment variables
 
 ```bash
 export KEYCLOAK_TOKEN_URL="https://auth.dev.linkeddata.es/realms/stics/protocol/openid-connect/token"
@@ -43,23 +43,23 @@ export KEYCLOAK_TOKEN_URL="https://auth.dev.linkeddata.es/realms/stics/protocol/
 export PROVIDER_MGMT="https://stics.bavenir.eu/management"
 export PROVIDER_DSP="https://stics.bavenir.eu/protocol"
 export PROVIDER_PARTICIPANT_ID="connector-stics"
-export PROVIDER_USER="user-connector-stics"          # ver credentials.json
-export PROVIDER_PASSWORD="<copiar de credentials.json>"
+export PROVIDER_USER="user-connector-stics"          # see credentials.json
+export PROVIDER_PASSWORD="<copy from credentials.json>"
 
 export CONSUMER_MGMT="https://con-lab.stics.linkeddata.es/management"
 export CONSUMER_PARTICIPANT_ID="conlab-stics"
-export CONSUMER_USER="user-conlab-stics"              # ver credentials.json
-export CONSUMER_PASSWORD="<copiar de credentials.json>"
+export CONSUMER_USER="user-conlab-stics"              # see credentials.json
+export CONSUMER_PASSWORD="<copy from credentials.json>"
 
-# sufijo único para no chocar con ejecuciones anteriores
+# unique suffix to avoid clashing with previous runs
 export RUN_ID=$(date +%s)
 ```
 
-Nota: todos los ejemplos usan `curl -k` porque el dataspace usa un CA interno
-autofirmado (`pionera-internal-ingress-tls`), no porque el TLS esté mal
-configurado.
+Note: every example uses `curl -k` because the dataspace uses an internal
+self-signed CA (`pionera-internal-ingress-tls`), not because TLS is
+misconfigured.
 
-## 2. Obtener tokens de gestión (Keycloak, grant `password`, client `dataspace-users`)
+## 2. Get management tokens (Keycloak, `password` grant, `dataspace-users` client)
 
 ```bash
 PROVIDER_TOKEN=$(curl -sk -X POST "$KEYCLOAK_TOKEN_URL" \
@@ -82,11 +82,11 @@ echo "provider token length: ${#PROVIDER_TOKEN}"
 echo "consumer token length: ${#CONSUMER_TOKEN}"
 ```
 
-## 3. Provider: crear Asset + Policy + ContractDefinition
+## 3. Provider: create Asset + Policy + ContractDefinition
 
-El validador de asset de INESData exige más campos que el ejemplo estándar de
-Eclipse EDC: `version`, `shortDescription`, `description`, `assetType`, y
-además `dcterms:description` / `dcat:keyword` con sus prefijos declarados en
+The INESData asset validator requires more fields than the standard Eclipse
+EDC example: `version`, `shortDescription`, `description`, `assetType`, plus
+`dcterms:description` / `dcat:keyword` with their prefixes declared in
 `@context`.
 
 ```bash
@@ -152,9 +152,9 @@ curl -sk -X POST "$PROVIDER_MGMT/v3/contractdefinitions" \
 EOF
 ```
 
-Cada llamada debe devolver `200` con un `IdResponse`.
+Each call must return `200` with an `IdResponse`.
 
-## 4. Consumer: consultar el catálogo del provider y extraer la oferta
+## 4. Consumer: query the provider catalog and extract the offer
 
 ```bash
 CATALOG=$(curl -sk -X POST "$CONSUMER_MGMT/v3/catalog/request" \
@@ -172,12 +172,12 @@ OFFER_ID=$(echo "$CATALOG" | jq -r --arg aid "$ASSET_ID" \
 echo "Offer id: $OFFER_ID"
 ```
 
-Si `OFFER_ID` sale vacío, esperar unos segundos: el catálogo se rellena por
-el crawler periódico del registration-service (cada
-`edc.catalog.cache.execution.period.seconds`, 60s en este entorno) y puede no
-haber corrido aún tras crear el asset.
+If `OFFER_ID` is empty, wait a few seconds: the catalog is filled by the
+registration-service's periodic crawler (every
+`edc.catalog.cache.execution.period.seconds`, 60 s in this environment), which
+may not have run yet after the asset was created.
 
-## 5. Consumer: negociar el contrato
+## 5. Consumer: negotiate the contract
 
 ```bash
 NEGOTIATION=$(curl -sk -X POST "$CONSUMER_MGMT/v3/contractnegotiations" \
@@ -201,7 +201,7 @@ EOF
 NEGOTIATION_ID=$(echo "$NEGOTIATION" | jq -r '."@id"')
 echo "Negotiation id: $NEGOTIATION_ID"
 
-# Poll hasta FINALIZED (normalmente 2-6s)
+# Poll until FINALIZED (usually 2-6 s)
 until [ "$(curl -sk -H "Authorization: Bearer $CONSUMER_TOKEN" \
   "$CONSUMER_MGMT/v3/contractnegotiations/$NEGOTIATION_ID" | jq -r '.state')" = "FINALIZED" ]; do
   sleep 2
@@ -212,7 +212,7 @@ CONTRACT_AGREEMENT_ID=$(curl -sk -H "Authorization: Bearer $CONSUMER_TOKEN" \
 echo "Contract agreement id: $CONTRACT_AGREEMENT_ID"
 ```
 
-## 6a. Transferencia `HttpData-PULL`
+## 6a. `HttpData-PULL` transfer
 
 ```bash
 TRANSFER=$(curl -sk -X POST "$CONSUMER_MGMT/v3/transferprocesses" \
@@ -232,13 +232,13 @@ EOF
 TRANSFER_ID=$(echo "$TRANSFER" | jq -r '."@id"')
 echo "Transfer id: $TRANSFER_ID"
 
-# Poll hasta STARTED/COMPLETED
+# Poll until STARTED/COMPLETED
 until curl -sk -H "Authorization: Bearer $CONSUMER_TOKEN" \
   "$CONSUMER_MGMT/v3/transferprocesses/$TRANSFER_ID" | jq -e '.state == "STARTED" or .state == "COMPLETED"' >/dev/null; do
   sleep 2
 done
 
-# Obtener el EDR (Endpoint Data Reference) y tirar del dato real
+# Get the EDR (Endpoint Data Reference) and pull the real data
 EDR=$(curl -sk -H "Authorization: Bearer $CONSUMER_TOKEN" \
   "$CONSUMER_MGMT/v3/edrs/$TRANSFER_ID/dataaddress")
 ENDPOINT=$(echo "$EDR" | jq -r '.endpoint')
@@ -247,16 +247,15 @@ AUTH=$(echo "$EDR" | jq -r '.authorization')
 curl -sk "$ENDPOINT" -H "Authorization: $AUTH"
 ```
 
-**Resultado esperado** (dato real tirado a través del data-plane del
-provider): un JSON del tipo `{"userId":1,"id":1,"title":"...","completed":false}`.
+**Expected result** (real data pulled through the provider's data plane): a
+JSON such as `{"userId":1,"id":1,"title":"...","completed":false}`.
 
-## 6b. Transferencia `HttpData-PUSH`
+## 6b. `HttpData-PUSH` transfer
 
-Requiere un asset/policy/contract-definition nuevos (repetir pasos 3-5 con un
-`RUN_ID` distinto), y un destino HTTP público donde el provider pueda hacer
-`POST` directamente. En esta prueba se usó un receptor simple
-(`http.server` de Python) expuesto como una ruta adicional del propio
-Ingress del consumer.
+Requires a new asset, policy, and contract definition (repeat steps 3-5 with a
+different `RUN_ID`), and a public HTTP destination the provider can `POST` to
+directly. This test used a simple receiver (Python `http.server`) exposed as
+an additional path on the consumer's own Ingress.
 
 ```bash
 export PUSH_SINK_URL="https://con-lab.stics.linkeddata.es/push-sink"
@@ -288,35 +287,35 @@ done
 echo "PUSH transfer COMPLETED"
 ```
 
-**Verificación real (2026-07-02)**: el receptor de prueba registró un
-`POST /push-sink` con `X-Real-IP: 178.105.249.140` (la IP real del provider)
-y `User-Agent: okhttp/4.12.0` (el cliente HTTP del propio conector),
-entregando el cuerpo JSON real — confirma que el *data-plane* del provider
-empuja directamente al destino indicado por el consumer, sin pasar por un
-EDR firmado.
+**Real verification (2026-07-02)**: the test receiver logged a
+`POST /push-sink` with `X-Real-IP: 178.105.249.140` (the provider's real IP)
+and `User-Agent: okhttp/4.12.0` (the connector's own HTTP client), delivering
+the real JSON body. This confirms that the provider's *data plane* pushes
+directly to the destination given by the consumer, without going through a
+signed EDR.
 
-## Resultados obtenidos en la ejecución de referencia
+## Results of the reference run
 
-| Paso | Resultado |
+| Step | Result |
 | --- | --- |
-| Token provider/consumer | `200`, JWT válido |
-| Create asset/policy/contract-definition | `200` en los tres |
-| Fetch catalog | `200`, asset presente |
+| Provider/consumer token | `200`, valid JWT |
+| Create asset/policy/contract-definition | `200` for all three |
+| Fetch catalog | `200`, asset present |
 | Negotiate contract | `200` → `AGREED` → `FINALIZED` |
-| Transfer `HttpData-PULL` | `STARTED`, EDR `200`, dato real `200` |
-| Transfer `HttpData-PUSH` | `COMPLETED`, POST real recibido con IP del provider |
+| Transfer `HttpData-PULL` | `STARTED`, EDR `200`, real data `200` |
+| Transfer `HttpData-PUSH` | `COMPLETED`, real POST received from the provider's IP |
 
-## Ficheros Postman equivalentes
+## Equivalent Postman files
 
-Para quien prefiera Postman a `curl`, hay una colección autocontenida y su
-entorno en:
+If you prefer Postman to `curl`, there is a self-contained collection and its
+environment in:
 
 ```text
 validation/core/collections/postman/04_stics_edc_interop.json
 validation/core/collections/postman/00_environment_stics.json
 ```
 
-Importar ambos en Postman, seleccionar el entorno `00 Environment - STICS EDC
-Interop`, rellenar `provider_password` / `consumer_password` (marcados como
-`<copiar localmente>`, provienen de los `credentials.json` mencionados
-arriba) y ejecutar la colección en orden con "Run collection".
+Import both into Postman, select the `00 Environment - STICS EDC Interop`
+environment, fill in `provider_password` / `consumer_password` (placeholder
+values; they come from the `credentials.json` files mentioned above), and run
+the collection in order with "Run collection".

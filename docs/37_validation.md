@@ -1,142 +1,140 @@
-# Validación
+# Validation
 
-## Nivel 5 y Datasets
+## Level 5 and Datasets
 
-`Level 5` prepara los componentes configurados y también sincroniza las fuentes
-de datasets que esos componentes necesitan para sus validaciones. Los
-clones se ubican en una ruta neutral del framework:
+`Level 5` prepares the configured components and also syncs the dataset
+sources those components need for their validations. The clones are placed
+in a neutral framework path:
 
 ```text
 validation/datasets/sources/
 ```
 
-Actualmente se registran estas fuentes:
+These sources are currently registered:
 
-| Dataset | Componentes que lo usan | Repositorio |
+| Dataset | Components that use it | Repository |
 | --- | --- | --- |
 | `FLARES` | `ai-model-hub` | `https://github.com/rsepulveda911112/Flares-dataset` |
 | `GTFS-Madrid-Bench` | `ai-model-hub`, `semantic-virtualization` | `https://github.com/oeg-upm/gtfs-bench` |
 
-Para los casos de uso de AI Model Hub, el framework puede preparar además un
-`model-server` asociado al repositorio `ProyectoPIONERA/AIModelHub-Use-Cases`.
-Ese servidor se configura desde `Level 5` cuando el perfil lo habilita y expone
-endpoints de descubrimiento de modelos y datasets usados por el sembrado de
-assets.
+For the AI Model Hub use cases, the framework can also prepare a
+`model-server` associated with the `ProyectoPIONERA/AIModelHub-Use-Cases`
+repository. That server is configured from `Level 5` when the profile enables
+it and exposes model and dataset discovery endpoints used by asset seeding.
 
-Si el entorno no tiene acceso a GitHub, `Level 5` deja warning por defecto y no
-rompe despliegues existentes. Para exigir que la sincronización falle de forma
-estricta, usa:
+If the environment has no access to GitHub, `Level 5` leaves a warning by
+default and doesn't break existing deployments. To require the
+synchronization to fail strictly, use:
 
 ```bash
 PIONERA_LEVEL5_DATASET_SYNC_STRICT=true python3 main.py inesdata run --topology local
 ```
 
-`Level 6` no clona repositorios: valida y consume las fuentes ya preparadas por
-`Level 5`. Cuando una suite necesita una muestra controlada, la deriva durante
-la ejecución y la guarda como evidencia del experimento, no como dataset
-reducido versionado.
+`Level 6` doesn't clone repositories: it validates and consumes the sources
+already prepared by `Level 5`. When a suite needs a controlled sample, it
+derives it during the run and stores it as experiment evidence, not as a
+versioned reduced dataset.
 
-## Nivel 6
+## Level 6
 
-El nivel 6 es el nivel de validación. Debe validar el dataspace desplegado y los componentes habilitados sin requerir un nivel adicional de validación de servicios.
+Level 6 is the validation level. It must validate the deployed dataspace and the enabled components without requiring an additional service validation level.
 
-## Alcance de Validación de Cierre
+## Closure Validation Scope
 
-Para esta versión de cierre, la evidencia de validación se interpreta por
-adapter y topología:
+For this closure version, validation evidence is interpreted per adapter and
+topology:
 
 | Adapter | `local` | `vm-single` | `vm-distributed` |
 | --- | --- | --- | --- |
-| `inesdata` | Ruta de desarrollo/validación local implementada | Ruta VM implementada y validada como referencia | Ruta distribuida implementada y validada como referencia |
-| `edc` | Implementado; requiere revalidación tras la conciliación reciente de topologías | Implementado; no validado oficialmente tras la conciliación reciente | Ruta oficial de cierre para EDC |
+| `inesdata` | Local development/validation path implemented | VM path implemented and validated as reference | Distributed path implemented and validated as reference |
+| `edc` | Implemented; requires revalidation after the recent topology reconciliation | Implemented; not officially validated after the recent reconciliation | Official closure path for EDC |
 
-El repositorio contiene suites de `Level 6` para más combinaciones que las usadas
-como evidencia oficial. Antes de usar un resultado como evidencia de cierre,
-comprueba que el experimento corresponde a una combinación validada en esta
-matriz.
+The repository contains `Level 6` suites for more combinations than those
+used as official evidence. Before using a result as closure evidence, check
+that the experiment corresponds to a combination validated in this matrix.
 
-Para entornos externos que el framework no despliega, como un INESData
-productivo existente, la ruta objetivo es usar un `validation target` en modo
-`validation-only`. Esa ruta se documenta en
-[Validación de INESData externo](./29_inesdata_external_validation_targets.md).
-La base actual expone esta ruta desde el menú con `G - Validate target` en modo
-read-only seguro: valida el YAML, muestra el plan y ejecuta specs Playwright
-`read-only` cuando están explícitamente habilitados en `project_suites`. No
-ejecuta limpieza, escrituras, Newman productivo ni Kafka productivo.
+For external environments the framework doesn't deploy, such as an existing
+production INESData, the target path is to use a `validation target` in
+`validation-only` mode. That path is documented in
+[External INESData validation](./29_inesdata_external_validation_targets.md) (ES).
+The current base exposes this path from the menu with `G - Validate target`
+in a safe read-only mode: it validates the YAML, shows the plan, and runs
+`read-only` Playwright specs when they are explicitly enabled in
+`project_suites`. It doesn't run cleanup, writes, production Newman, or
+production Kafka.
 
-Según el adapter y el perfil del deployer, el nivel 6 ejecuta:
+Depending on the adapter and the deployer profile, level 6 runs:
 
-- limpieza de datos de prueba;
-- colecciones Newman/Postman;
-- validación funcional EDC+Kafka después de Newman cuando el adapter la soporta;
-- suites UI con Playwright;
-- validaciones de componentes;
-- recolección de métricas;
-- generación de reportes de experimento.
+- test data cleanup;
+- Newman/Postman collections;
+- EDC+Kafka functional validation after Newman when the adapter supports it;
+- Playwright UI suites;
+- component validations;
+- metrics collection;
+- experiment report generation.
 
-Cuando hay componentes configurados con runner registrado, `Level 6` ejecuta su
-validación después de las suites del dataspace. En el estado actual:
+When there are configured components with a registered runner, `Level 6` runs
+their validation after the dataspace suites. In the current state:
 
-- `ontology-hub` ejecuta sus suites funcionales y de integración;
-- `ai-model-hub` ejecuta bootstrap, UI funcional, suite lingüística,
-  benchmarking, movilidad, ejecución de modelo, gobernanza de conectores y
+- `ontology-hub` runs its functional and integration suites;
+- `ai-model-hub` runs bootstrap, functional UI, the linguistic suite,
+  benchmarking, mobility, model execution, connector governance, and the
   Observer API;
-- `semantic-virtualization` ejecuta API, mappings, trazabilidad GTFS-Bench,
-  materialización, UI funcional y trazabilidad cruzada con AI Model Hub y
-  Ontology Hub antes de sus comprobaciones de integración.
+- `semantic-virtualization` runs API, mappings, GTFS-Bench traceability,
+  materialization, functional UI, and cross-traceability with AI Model Hub
+  and Ontology Hub before its integration checks.
 
-En `ai-model-hub`, la ejecución de modelos se valida mediante un contrato
-controlado de entrada y salida. El framework conserva un modo `mock` para
-validaciones deterministas y dispone de modos `use-cases` y `combined` para
-exponer modelos y datasets de los casos de uso reales. El modo `combined` es el
-modo operativo usado para preparar demos reproducibles: mantiene fixtures
-controlados cuando son necesarios y, al mismo tiempo, publica los endpoints
-`/models` y `/datasets` consumidos por el sembrado de assets.
+In `ai-model-hub`, model execution is validated through a controlled input
+and output contract. The framework keeps a `mock` mode for deterministic
+validations and has `use-cases` and `combined` modes to expose the models and
+datasets of the real use cases. The `combined` mode is the operational mode
+used to prepare reproducible demos: it keeps controlled fixtures when needed
+and, at the same time, publishes the `/models` and `/datasets` endpoints
+consumed by asset seeding.
 
-Para los casos de uso `FLARES` y movilidad, el criterio de cierre del framework
-es validar el flujo completo dentro del espacio de datos con fuentes
-sincronizadas, assets registrados, contratos disponibles y negociaciones DSP
-cuando el adapter es EDC. La validación no pretende demostrar que los mejores
-modelos posibles han sido seleccionados ni medir calidad predictiva con datasets
-completos.
+For the `FLARES` and mobility use cases, the framework's closure criterion is
+to validate the complete flow inside the data space with synced sources,
+registered assets, available contracts, and DSP negotiations when the adapter
+is EDC. The validation does not aim to prove that the best possible models
+have been selected or to measure predictive quality with full datasets.
 
-El script `scripts/seed_ml_assets_for_connectors.sh` es adapter-aware. En
-`inesdata` usa las APIs específicas del adapter para datasets y modelos. En
-`edc` crea assets estándar `HttpData`, políticas y contratos, y puede ejecutar
-negociaciones entre los pares configurados en `DS_1_VALIDATION_PAIRS`.
+The `scripts/seed_ml_assets_for_connectors.sh` script is adapter-aware. On
+`inesdata` it uses the adapter-specific APIs for datasets and models. On
+`edc` it creates standard `HttpData` assets, policies, and contracts, and can
+run negotiations between the pairs configured in `DS_1_VALIDATION_PAIRS`.
 
-La validación API de estos casos de uso se ejecuta dentro de `Level 6` como
-suite `AI Model Hub use cases`. En modo `mock` queda registrada como `skipped`.
-En modos `use-cases` o `combined`, valida que el `model-server` expone modelos
-y datasets descubiertos mediante `/models` y `/datasets`. Los endpoints de
-inferencia solo se invocan cuando el perfil define rutas explícitas para esa
-validación.
+The API validation of these use cases runs inside `Level 6` as the
+`AI Model Hub use cases` suite. In `mock` mode it is recorded as `skipped`.
+In `use-cases` or `combined` modes, it validates that the `model-server`
+exposes models and datasets discovered through `/models` and `/datasets`. The
+inference endpoints are only invoked when the profile defines explicit paths
+for that validation.
 
-Kafka/streaming transfer es la única suite A5.2 que permanece desactivada por
-defecto por coste temporal. Se activa de forma explícita con
+Kafka/streaming transfer is the only A5.2 suite that remains disabled by
+default because of its time cost. It is enabled explicitly with
 `PIONERA_LEVEL6_RUN_KAFKA=true`.
 
-En topología `local`, antes de limpiar datos o ejecutar suites, `Level 6`
-comprueba que los hostnames públicos del entorno sean accesibles desde la
-máquina que lanza el framework. Si esta comprobación falla, revisa que
-`minikube tunnel` siga abierto en otra terminal. Si esa terminal muestra
-`[sudo] password for <user>:`, introduce la contraseña Linux/WSL en esa misma
-terminal y vuelve a lanzar el nivel.
+On the `local` topology, before cleaning data or running suites, `Level 6`
+checks that the environment's public hostnames are reachable from the
+machine launching the framework. If this check fails, make sure
+`minikube tunnel` is still open in another terminal. If that terminal shows
+`[sudo] password for <user>:`, enter the Linux/WSL password in that same
+terminal and launch the level again.
 
-Ese preflight público forma parte del comportamiento esperado del framework en
-`local`. `Level 6` completo debe ejecutarse contra la ruta pública del entorno,
-no contra `port-forward` como camino principal.
+That public preflight is part of the framework's expected behavior on
+`local`. A full `Level 6` must run against the environment's public path, not
+against `port-forward` as the main path.
 
-En modo estable local, el framework ejecuta además guardas de capacidad y
-estabilidad. `Level 1` avisa si Docker Desktop solo soporta un adapter local.
-`Level 3/4/5` bloquean la instalación del segundo adapter cuando ya hay otro
-activo y la capacidad efectiva está por debajo de `18432 MB`. En terminal
-interactiva, ofrecen un cambio controlado de adapter: con confirmación exacta
-eliminan solo los recursos locales gestionados del adapter anterior y preservan
-`common-srvs`. `Level 6` repite la comprobación antes de las suites para evitar
-falsos resultados por presión de Minikube. Después espera a que el nodo y los
-pods relevantes estén listos, registra reinicios y eventos `NodeNotReady`, y
-deja evidencia en:
+In local stable mode, the framework also runs capacity and stability guards.
+`Level 1` warns if Docker Desktop only supports one local adapter.
+`Level 3/4/5` block the installation of the second adapter when another one
+is already active and the effective capacity is below `18432 MB`. In an
+interactive terminal, they offer a controlled adapter switch: with exact
+confirmation, they delete only the managed local resources of the previous
+adapter and preserve `common-srvs`. `Level 6` repeats the check before the
+suites to avoid false results caused by Minikube pressure. It then waits for
+the node and the relevant pods to be ready, records restarts and
+`NodeNotReady` events, and leaves evidence in:
 
 ```text
 local_capacity_preflight.json
@@ -144,201 +142,201 @@ local_stability_preflight.json
 local_stability_postflight.json
 ```
 
-Si el runtime local no queda listo tras la ventana de espera, el framework falla
-pronto con un mensaje accionable en lugar de ejecutar suites sobre un clúster
-claramente inestable. Para diagnóstico excepcional, desactívalo con
-`PIONERA_LOCAL_STABILITY_CHECKS=false`. La guarda de capacidad de coexistencia se
-degrada a warning con `PIONERA_LOCAL_COEXISTENCE_GUARD=warn` o se desactiva con
-`PIONERA_LOCAL_COEXISTENCE_GUARD=off`. Ajusta la ventana con
-`PIONERA_LOCAL_STABILITY_TIMEOUT_SECONDS` y
+If the local runtime is not ready after the waiting window, the framework
+fails early with an actionable message instead of running suites on a
+clearly unstable cluster. For exceptional diagnosis, disable it with
+`PIONERA_LOCAL_STABILITY_CHECKS=false`. The coexistence capacity guard is
+downgraded to a warning with `PIONERA_LOCAL_COEXISTENCE_GUARD=warn` or
+disabled with `PIONERA_LOCAL_COEXISTENCE_GUARD=off`. Adjust the window with
+`PIONERA_LOCAL_STABILITY_TIMEOUT_SECONDS` and
 `PIONERA_LOCAL_STABILITY_POLL_SECONDS`.
 
-Para automatizar un cambio de adapter en ejecución no interactiva, establece
-`PIONERA_LOCAL_ADAPTER_SWITCH_CONFIRM` con el valor exacto mostrado por el
-framework, por ejemplo `SWITCH TO EDC` o `SWITCH TO INESDATA`.
+To automate an adapter switch in a non-interactive run, set
+`PIONERA_LOCAL_ADAPTER_SWITCH_CONFIRM` to the exact value shown by the
+framework, for example `SWITCH TO EDC` or `SWITCH TO INESDATA`.
 
-Después de ese check general, `Level 6` hace preflights específicos del adapter
-antes de abrir Playwright:
+After that general check, `Level 6` runs adapter-specific preflights before
+opening Playwright:
 
-- `inesdata`: valida Keycloak, los servicios `*-interface` y la ruta pública
-  `http://<connector>.../inesdata-connector-interface/`. Si falla, deja
-  `ui/inesdata/portal_readiness.json` dentro del experimento.
-- `edc`: valida Keycloak, dashboard, proxy y rutas públicas del dashboard y
-  management API. Si falla, deja `ui/edc/dashboard_readiness.json`.
+- `inesdata`: validates Keycloak, the `*-interface` services, and the public
+  path `http://<connector>.../inesdata-connector-interface/`. If it fails, it
+  leaves `ui/inesdata/portal_readiness.json` inside the experiment.
+- `edc`: validates Keycloak, the dashboard, the proxy, and the public paths
+  of the dashboard and the management API. If it fails, it leaves
+  `ui/edc/dashboard_readiness.json`.
 
-Para validaciones sobre conectores ya desplegados, ejecuta `Level 6` desde el
-mismo checkout que ejecutó `Level 4`. Los artefactos locales bajo
-`deployers/<adapter>/deployments/<environment>/<dataspace>/` contienen
-credenciales generadas para Keycloak, MinIO y conectores. Si se valida desde
-otro checkout con artefactos distintos, aparecen errores como
-`invalid_grant`, `Invalid user credentials` o `InvalidAccessKeyId`.
+For validations on connectors that are already deployed, run `Level 6` from
+the same checkout that ran `Level 4`. The local artifacts under
+`deployers/<adapter>/deployments/<environment>/<dataspace>/` contain the
+credentials generated for Keycloak, MinIO, and the connectors. If you validate
+from another checkout with different artifacts, errors such as
+`invalid_grant`, `Invalid user credentials`, or `InvalidAccessKeyId` appear.
 
 ## Newman
 
-Newman valida comportamiento API y flujos end-to-end del dataspace.
+Newman validates API behavior and end-to-end dataspace flows.
 
-La cobertura típica incluye:
+Typical coverage includes:
 
-- autenticación en conectores;
-- publicación de assets;
-- descubrimiento de catálogo;
-- negociación de contrato;
-- inicio de transferencia;
-- verificación de almacenamiento de transferencia cuando aplica.
+- authentication on connectors;
+- asset publication;
+- catalog discovery;
+- contract negotiation;
+- transfer start;
+- transfer storage verification when applicable.
 
-La secuencia real ejecutada por el framework y las colecciones importables en
-Postman están documentadas en
-[Colecciones Newman y Postman](./31_postman_newman_collections.md).
+The real sequence run by the framework and the collections importable into
+Postman are documented in
+[Newman and Postman collections](./31_postman_newman_collections.md) (ES).
 
 ## Playwright
 
-Playwright valida flujos visibles en navegador.
+Playwright validates flows visible in the browser.
 
-Las suites UI son adapter-aware. Deben validar dashboards y portales de usuario sin sustituir las validaciones API.
+The UI suites are adapter-aware. They must validate user dashboards and portals without replacing the API validations.
 
-El framework no arranca Playwright solo porque Kubernetes reporte pods o
-endpoints listos. Primero espera a que las rutas HTTP públicas necesarias del
-adapter respondan realmente. Esto reduce flakes por `503`, proxys aún no
-sincronizados o portales todavía no accesibles a través de Ingress.
+The framework doesn't start Playwright just because Kubernetes reports pods or
+endpoints as ready. It first waits for the adapter's required public HTTP
+paths to actually respond. This reduces flakes caused by `503`, proxies not
+yet synced, or portals not yet reachable through the Ingress.
 
-Comandos típicos:
+Typical commands:
 
 ```bash
 python3 main.py inesdata validate --topology local
 python3 main.py edc validate --topology vm-distributed
 ```
 
-## Limpieza de Datos de Prueba
+## Test Data Cleanup
 
-La validación empieza con limpieza cuando el perfil activo lo requiere, para
-facilitar trazabilidad y evitar saturación por datos de ejecuciones previas.
+Validation starts with cleanup when the active profile requires it, to make
+traceability easier and avoid saturation from data of previous runs.
 
-La limpieza debe ser segura por defecto y reportar qué eliminó o qué omitió.
+Cleanup must be safe by default and report what it deleted or skipped.
 
-## Kafka en Nivel 6
+## Kafka in Level 6
 
-La validación funcional EDC+Kafka no es el mismo flujo que el benchmark opcional
-de broker. En `Level 6`, está desactivada por defecto para ahorrar tiempo en
-validaciones rutinarias. En ejecuciones interactivas, `Level 6` pregunta
-`Run Kafka validation suites too?` como primera acción visible antes de lanzar
-Newman, para poder preparar Kafka en paralelo cuando el modo lo permite.
-En ejecuciones no interactivas, se activa con `PIONERA_LEVEL6_RUN_KAFKA=true`.
-Cuando está activa, se ejecuta después de Newman para los adapters compatibles
-y valida el recorrido `asset -> catálogo -> negociación -> transferencia Kafka
--> consumo del topic destino`.
+The EDC+Kafka functional validation is not the same flow as the optional
+broker benchmark. In `Level 6`, it is disabled by default to save time in
+routine validations. In interactive runs, `Level 6` asks
+`Run Kafka validation suites too?` as the first visible action before
+launching Newman, so Kafka can be prepared in parallel when the mode allows
+it. In non-interactive runs, it is enabled with
+`PIONERA_LEVEL6_RUN_KAFKA=true`. When enabled, it runs after Newman for the
+compatible adapters and validates the path `asset -> catalog -> negotiation
+-> Kafka transfer -> consumption of the destination topic`.
 
-En modo `fast`, la preparación del broker Kafka empieza al inicio de `Level 6`
-mientras Newman sigue ejecutándose en primer plano. En modo `stable` local, que
-es el predeterminado para `local`, esa preparación se difiere hasta la fase Kafka
-para reducir solapamiento operativo y mejorar reproducibilidad.
+In `fast` mode, the Kafka broker preparation starts at the beginning of
+`Level 6` while Newman keeps running in the foreground. In local `stable`
+mode, which is the default for `local`, that preparation is deferred until
+the Kafka phase to reduce operational overlap and improve reproducibility.
 
-Después de finalizar la negociación de contrato, la suite espera a que el
-acuerdo sea visible en proveedor y consumidor antes de iniciar `Kafka-PUSH`.
-Esta guarda evita carreras transitorias donde el transfer se lanza justo después
-de `FINALIZED`, pero el runtime EDC todavía no puede resolver el acuerdo por
-protocolo y responde `404 Not found`. El timeout por defecto es de 30 segundos;
-ajústalo con `KAFKA_EDC_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS`.
+After the contract negotiation finishes, the suite waits for the agreement to
+be visible on provider and consumer before starting `Kafka-PUSH`. This guard
+avoids transient races where the transfer is launched right after
+`FINALIZED`, but the EDC runtime still can't resolve the agreement through
+the protocol and responds `404 Not found`. The default timeout is 30 seconds;
+adjust it with `KAFKA_EDC_AGREEMENT_VISIBILITY_TIMEOUT_SECONDS`.
 
-El flujo completo de `Level 6` sigue requiriendo que Keycloak, MinIO,
-`registration-service` y los conectores sean accesibles por hostname público. La
-parte Kafka usa mecanismos locales de soporte para el propio proceso del
-framework, pero eso no convierte `Level 6` completo en una validación correcta si
-la capa pública local no está disponible.
+The full `Level 6` flow still requires Keycloak, MinIO,
+`registration-service`, and the connectors to be reachable by public
+hostname. The Kafka part uses local support mechanisms for the framework's
+own process, but that doesn't make a full `Level 6` a correct validation if
+the local public layer is not available.
 
-En topología `local`, el broker gestionado por defecto se despliega dentro de
-Kubernetes. Los conectores usan el endpoint interno de cluster:
+On the `local` topology, the default managed broker is deployed inside
+Kubernetes. The connectors use the internal cluster endpoint:
 
 ```text
 framework-kafka.<namespace>.svc.cluster.local:9092
 ```
 
-El framework usa un `port-forward` temporal para que el proceso Python del host
-cree topics, produzca mensajes de prueba y verifique el topic destino.
-Ese `port-forward` es un mecanismo de soporte interno de la validación, no un
-endpoint público del dataspace.
+The framework uses a temporary `port-forward` so the host's Python process
+can create topics, produce test messages, and verify the destination topic.
+That `port-forward` is an internal support mechanism of the validation, not a
+public dataspace endpoint.
 
-Cuando necesitas una variante más estable del broker Kafka local sin salir de
-Kubernetes, actívala de forma explícita:
+When you need a more stable variant of the local Kafka broker without leaving
+Kubernetes, enable it explicitly:
 
 ```bash
 PIONERA_KAFKA_PROVISIONER=kubernetes-split-kraft python3 main.py inesdata validate --topology local
 ```
 
-Esa variante sigue siendo opt-in. El modo por defecto no cambia automáticamente.
+That variant remains opt-in. The default mode doesn't change automatically.
 
-Para diagnósticos Kafka muy concretos en `local`, también existe un fallback
-HTTP opt-in del framework:
+For very specific Kafka diagnostics on `local`, there is also an opt-in HTTP
+fallback in the framework:
 
 ```bash
 PIONERA_LEVEL6_LOCAL_HTTP_PORT_FORWARD_FALLBACK=true
 ```
 
-Ese fallback solo actúa como ayuda técnica de la suite Kafka cuando el flujo ya
-ha llegado a esa fase. No sustituye el preflight público de `Level 6`, ni debe
-usarse para declarar válida una ejecución completa sin acceso a los hostnames
-públicos del entorno.
+That fallback only acts as technical help for the Kafka suite once the flow
+has reached that phase. It doesn't replace the `Level 6` public preflight,
+and it must not be used to declare a full run valid without access to the
+environment's public hostnames.
 
-La consola usa mensajes neutrales bajo el nombre `Kafka transfer validation`.
-Por defecto imprime resultado por par de conectores a medida que cada prueba
-termina, con iconos y resumen final. Los artefactos JSON del experimento
-mantienen el detalle completo. Para mostrar muestras de IDs de mensajes en
-consola durante diagnóstico:
+The console uses neutral messages under the name `Kafka transfer validation`.
+By default it prints the result per connector pair as each test finishes,
+with icons and a final summary. The experiment's JSON artifacts keep the full
+detail. To show samples of message IDs on the console during diagnosis:
 
 ```bash
 PIONERA_KAFKA_TRANSFER_LOG_MESSAGES=true python3 main.py inesdata validate --topology local
 ```
 
-Las preparaciones de componentes evitan imprimir scripts largos en consola por
-defecto. Si durante diagnóstico se necesita ver el comando completo de una
-preparación interna, actívalo con:
+Component preparations avoid printing long scripts to the console by
+default. If during diagnosis you need to see the full command of an internal
+preparation, enable it with:
 
 ```bash
 PIONERA_VERBOSE_COMMANDS=true python3 main.py inesdata validate --topology local
 ```
 
-## Métricas
+## Metrics
 
-Las métricas se ejecutan desde menú o CLI:
+Metrics are run from the menu or the CLI:
 
 ```bash
 python3 main.py inesdata metrics --topology local
 python3 main.py inesdata metrics --topology local --kafka
 ```
 
-Los artefactos de métricas y validación se almacenan en:
+Metrics and validation artifacts are stored in:
 
 ```text
 experiments/
 ```
 
-Esta carpeta es salida generada y no debe subirse al repositorio.
+This folder is generated output and must not be pushed to the repository.
 
-## Reportes
+## Reports
 
-La forma recomendada de revisar reportes generados es desde el menú:
+The recommended way to review generated reports is from the menu:
 
 ```bash
 python3 main.py
 ```
 
-Selecciona:
+Select:
 
 ```text
 E - View experiment reports
 ```
 
-Ese visor lista experimentos bajo `experiments/`, genera un dashboard HTML local
-por experimento y resume artefactos largos de Newman, Kafka, componentes y
-postflight sin imprimir JSON completos por consola. Los reportes se sirven solo
-en `127.0.0.1`.
+That viewer lists the experiments under `experiments/`, generates a local
+HTML dashboard per experiment, and summarizes long Newman, Kafka, component,
+and postflight artifacts without printing full JSON to the console. Reports
+are served only on `127.0.0.1`.
 
-Después de una validación o experimento:
+After a validation or experiment:
 
 ```bash
 python3 main.py report <experiment_id>
 python3 main.py compare <experiment_a> <experiment_b>
 ```
 
-Más detalle en [Visor de reportes de experimentos](./40_report_viewer.md).
+More detail in [Experiment report viewer](./40_report_viewer.md) (ES).
 
-Los reportes deben indicar adapter, topología, conectores y suites ejecutadas.
+Reports must state the adapter, topology, connectors, and suites run.

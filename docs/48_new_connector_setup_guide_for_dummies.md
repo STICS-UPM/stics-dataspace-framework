@@ -1,137 +1,134 @@
-# 48. Guía Para Dummies: Cómo Montar un Conector EDC Nuevo Desde Cero
+# 48. Beginner's Guide: How to Set Up a New EDC Connector from Scratch
 
-## Para quién es esta guía
+## Who this guide is for
 
-Para cualquiera que necesite añadir **un conector EDC más** al dataspace `stics`,
-sin haber estado en la sesión donde se hizo la primera vez. No asume
-conocimiento previo del framework — explica el *por qué* de cada paso, no solo
-el comando.
+For anyone who needs to add **one more EDC connector** to the `stics`
+dataspace without having attended the session where it was done the first
+time. It assumes no prior knowledge of the framework: it explains the *why*
+of each step, not just the command.
 
-Está basada exactamente en cómo se montaron los 4 conectores que ya existen
-hoy (`connector-stics`, `conlab-stics`, `contest-stics`, `contest-bavenir`),
-incluyendo los tropiezos reales que tuvimos y cómo se resolvieron.
+It is based exactly on how the 4 connectors that exist today were set up
+(`connector-stics`, `conlab-stics`, `contest-stics`, `contest-bavenir`),
+including the real stumbling blocks we hit and how they were solved.
 
-## Idea general antes de empezar
+## The big picture before you start
 
-Un conector EDC en este proyecto **no vive dentro de Kubernetes** (a
-diferencia de cómo lo hace el framework "de fábrica"). Vive como un programa
-Java normal (`connector.jar`), corriendo dentro de un contenedor Docker, en
-la VM que tú elijas. Lo único que sigue viviendo en Kubernetes son los
-**servicios comunes** (Keycloak, Vault, MinIO, registration-service),
-desplegados en la VM `stics2test` (`192.168.122.2`).
+An EDC connector in this project **does not live inside Kubernetes** (unlike
+how the framework does it "out of the box"). It lives as a plain Java program
+(`connector.jar`), running inside a Docker container, on the VM of your
+choice. The only things that still live in Kubernetes are the **common
+services** (Keycloak, Vault, MinIO, registration-service), deployed on the
+`stics2test` VM (`192.168.122.2`).
 
-Para que el conector nuevo funcione, necesita 4 cosas:
+For the new connector to work, it needs 4 things:
 
-1. **Una identidad** en el dataspace: un cliente en Keycloak, un par de claves
-   en Vault, un bucket en MinIO. Esto lo genera un script que ya tenemos, no
-   hay que crearlo a mano.
-2. **Una base de datos Postgres** donde guardar sus propios datos (assets,
-   contratos, transferencias).
-3. **Un fichero de configuración** (`.properties`) que le dice al conector
-   cómo llegar a Keycloak/Vault/MinIO/Postgres y qué identidad usar.
-4. **Un "puente" de red** para que el mundo exterior (otros conectores,
-   navegadores) pueda llegar hasta él vía HTTPS con un nombre público.
+1. **An identity** in the dataspace: a client in Keycloak, a key pair in
+   Vault, a bucket in MinIO. An existing script generates all of this; you
+   don't create it by hand.
+2. **A Postgres database** to store its own data (assets, contracts,
+   transfers).
+3. **A configuration file** (`.properties`) that tells the connector how to
+   reach Keycloak/Vault/MinIO/Postgres and which identity to use.
+4. **A network "bridge"** so the outside world (other connectors, browsers)
+   can reach it over HTTPS with a public name.
 
-Vamos paso a paso.
+Let's go step by step.
 
 ---
 
-## Paso 0: Decide 3 cosas antes de tocar nada
+## Step 0: Decide 3 things before touching anything
 
-- **Nombre del conector** (su "participant id" en el dataspace). Regla
-  importante: **máximo 20 caracteres**. Si te pasas, el script de
-  aprovisionamiento falla con `ValueError: Invalid connector name`. Ejemplo:
-  `contest-bavenir` (15 caracteres) en vez de `contest-bavenir-stics` (22,
-  demasiado largo).
-- **En qué VM va a vivir** (¿una VM nueva, o una que ya tiene otro conector?
-  Esto importa mucho, ver el aviso más abajo).
-- **Qué hostname público va a tener** (p. ej. `mi-conector.stics.linkeddata.es`).
-  Tiene que ser un dominio que **ya resuelva** por DNS hacia la IP pública de
-  la VM elegida. Compruébalo así antes de continuar:
+- **Connector name** (its "participant id" in the dataspace). Important rule:
+  **20 characters maximum**. If you go over, the provisioning script fails
+  with `ValueError: Invalid connector name`. Example: `contest-bavenir`
+  (15 characters) instead of `contest-bavenir-stics` (22, too long).
+- **Which VM it will live on** (a new VM, or one that already has another
+  connector? This matters a lot; see the warning below).
+- **Which public hostname it will have** (e.g. `my-connector.stics.linkeddata.es`).
+  It must be a domain that **already resolves** through DNS to the public IP
+  of the chosen VM. Check it like this before continuing:
 
   ```bash
-  nslookup mi-conector.stics.linkeddata.es 8.8.8.8
+  nslookup my-connector.stics.linkeddata.es 8.8.8.8
   ```
 
-  Si no resuelve, alguien tiene que darlo de alta en el DNS antes de seguir
-  (normalmente OEG-UPM para `*.linkeddata.es`, o el proveedor de la VM para
-  otros dominios). Puedes preparar todo lo demás mientras tanto, pero no
-  podrás verificar el acceso público hasta que el DNS esté activo.
+  If it doesn't resolve, someone has to register it in DNS before you
+  continue (usually OEG-UPM for `*.linkeddata.es`, or the VM provider for
+  other domains). You can prepare everything else in the meantime, but you
+  won't be able to verify public access until the DNS is active.
 
-### ⚠️ Aviso importante: comprueba si la VM ya tiene otro conector
+### ⚠️ Important warning: check whether the VM already has another connector
 
-Antes de asumir que es una "VM nueva", compruébalo de verdad. Nos pasó que
-alguien nos dio una IP como si fuera una máquina distinta, y resultó ser
-**la misma VM** donde ya teníamos un conector corriendo (solo que con un
-usuario de sistema distinto). Compruébalo así:
+Before assuming it's a "new VM", really check. It happened to us: someone gave
+us an IP as if it were a different machine, and it turned out to be **the
+same VM** where we already had a connector running (just with a different
+system user). Check it like this:
 
 ```bash
-ssh usuario_que_ya_conoces@IP_DE_LA_VM 'hostname; hostname -I; getent passwd usuario_que_te_han_dado_nuevo'
+ssh user_you_already_know@VM_IP 'hostname; hostname -I; getent passwd new_user_you_were_given'
 ```
 
-Si el `hostname` coincide con una VM que ya conoces, es la misma máquina.
-Esto importa porque **dos conectores en la misma VM no pueden usar los mismos
-puertos** — hay que usar puertos distintos y red tipo *bridge* de Docker en
-vez de `network_mode: host` (lo explico en el Paso 6).
+If the `hostname` matches a VM you already know, it's the same machine. This
+matters because **two connectors on the same VM can't use the same ports**:
+you have to use different ports and Docker *bridge* networking instead of
+`network_mode: host` (explained in Step 6).
 
 ---
 
-## Paso 1: Comprobar que la VM tiene lo necesario
+## Step 1: Check that the VM has what it needs
 
-Conéctate a la VM y comprueba:
+Connect to the VM and check:
 
 ```bash
-ssh usuario@IP_DE_LA_VM 'docker --version; docker compose version; java -version'
+ssh user@VM_IP 'docker --version; docker compose version; java -version'
 ```
 
-Si falta Docker o Docker Compose, hay que instalarlos antes de seguir (no
-cubierto en esta guía, es instalación estándar de Docker Engine en Ubuntu).
+If Docker or Docker Compose is missing, install them before continuing (not
+covered in this guide; it's a standard Docker Engine installation on Ubuntu).
 
 ---
 
-## Paso 2: Preparar la base de datos Postgres del conector
+## Step 2: Prepare the connector's Postgres database
 
-El conector necesita su propio Postgres para guardar sus assets, contratos y
-transferencias (tablas `edc_asset`, `edc_contract_negotiation`, etc.).
+The connector needs its own Postgres to store its assets, contracts, and
+transfers (tables `edc_asset`, `edc_contract_negotiation`, etc.).
 
-### Caso A: la VM ya tiene su propio Postgres local (lo normal)
+### Case A: the VM already has its own local Postgres (the usual case)
 
 ```bash
-ssh usuario@IP_DE_LA_VM 'sudo -u postgres psql' << 'EOF'
-DROP DATABASE IF EXISTS <NOMBRE_DB>;
-DROP ROLE IF EXISTS <NOMBRE_DB>;
-CREATE ROLE <NOMBRE_DB> LOGIN PASSWORD '<CONTRASEÑA_SEGURA>';
-CREATE DATABASE <NOMBRE_DB> OWNER <NOMBRE_DB>;
+ssh user@VM_IP 'sudo -u postgres psql' << 'EOF'
+DROP DATABASE IF EXISTS <DB_NAME>;
+DROP ROLE IF EXISTS <DB_NAME>;
+CREATE ROLE <DB_NAME> LOGIN PASSWORD '<STRONG_PASSWORD>';
+CREATE DATABASE <DB_NAME> OWNER <DB_NAME>;
 EOF
 ```
 
-Usa el mismo nombre para el rol y la base de datos, y que coincida con el
-nombre del conector (con guiones bajos en vez de guiones si hace falta, p.ej.
-`contest_bavenir_stics`).
+Use the same name for the role and the database, matching the connector name
+(with underscores instead of hyphens if needed, e.g. `contest_bavenir_stics`).
 
-### Caso B: el conector va a vivir en la MISMA VM que los servicios comunes (`stics2test`)
+### Case B: the connector will live on the SAME VM as the common services (`stics2test`)
 
-Sorpresa agradable: en esa VM concreta, el Postgres compartido de Keycloak/
-registration-service **ya es accesible directamente en `127.0.0.1:5432`**, sin
-necesitar túneles. Y mejor todavía: **el script de aprovisionamiento del Paso 3
-ya crea automáticamente una base de datos ahí para el conector** — no hace
-falta que crees nada a mano en este caso. Solo tienes que leer el nombre/
-usuario/contraseña que el script generó, del fichero `credentials.json`
-(ver Paso 3).
+Pleasant surprise: on that particular VM, the shared Postgres of
+Keycloak/registration-service **is already reachable directly at
+`127.0.0.1:5432`**, without tunnels. Even better: **the Step 3 provisioning
+script already creates a database there for the connector automatically**,
+so you don't need to create anything by hand in this case. You only need to
+read the name/user/password the script generated from the `credentials.json`
+file (see Step 3).
 
 ---
 
-## Paso 3: Aprovisionar la identidad (Keycloak + Vault + MinIO)
+## Step 3: Provision the identity (Keycloak + Vault + MinIO)
 
-Esto es lo más "mágico" del proceso, pero ya está resuelto: hay una función
-del framework que hace exactamente esto por ti, sin necesidad de desplegar
-nada en Kubernetes. Guarda este script (ajustando `CONNECTOR_NAME` y
-`NAMESPACE`) y ejecútalo **desde la VM `stics2test`** (donde vive el
-framework):
+This is the most "magical" part of the process, but it's already solved: a
+framework function does exactly this for you, without deploying anything to
+Kubernetes. Save this script (adjusting `CONNECTOR_NAME` and `NAMESPACE`) and
+run it **from the `stics2test` VM** (where the framework lives):
 
 ```python
-# guardar como provision_<nombre>.py y ejecutar con el venv del framework:
-# /home/stics2/Validation-Environment/.venv/bin/python3 provision_<nombre>.py
+# save as provision_<name>.py and run it with the framework venv:
+# /home/stics2/Validation-Environment/.venv/bin/python3 provision_<name>.py
 import os
 import sys
 
@@ -139,9 +136,9 @@ REPO_ROOT = "/home/stics2/Validation-Environment"
 os.chdir(REPO_ROOT)
 sys.path.insert(0, REPO_ROOT)
 
-CONNECTOR_NAME = "MI-CONECTOR"        # <-- máximo 20 caracteres
+CONNECTOR_NAME = "MY-CONNECTOR"       # <-- 20 characters maximum
 DS_NAME = "stics"
-NAMESPACE = "MI-NAMESPACE"            # <-- puede ser cualquier palabra corta, p.ej. "contest"
+NAMESPACE = "MY-NAMESPACE"            # <-- any short word, e.g. "contest"
 
 os.environ["PIONERA_DS_1_NAME"] = DS_NAME
 os.environ["PIONERA_DS_1_NAMESPACE"] = "core-control"
@@ -155,70 +152,70 @@ os.environ["PIONERA_DS_DOMAIN_BASE"] = "dev.linkeddata.es"
 
 import main as framework_main  # noqa: E402
 
-print("Construyendo el adapter 'edc' ...")
+print("Building the 'edc' adapter ...")
 adapter = framework_main.build_adapter("edc", topology="vm-distributed")
 
-print("Comprobando requisitos (Vault, Postgres, Keycloak) ...")
+print("Checking prerequisites (Vault, Postgres, Keycloak) ...")
 repo_dir, python_exec = adapter.connectors._prepare_runtime_prerequisites()
 
-print(f"Aprovisionando identidad para '{CONNECTOR_NAME}' ...")
+print(f"Provisioning identity for '{CONNECTOR_NAME}' ...")
 ok = adapter.connectors._prepare_connector_prerequisites(
     CONNECTOR_NAME, DS_NAME, NAMESPACE, repo_dir, python_exec
 )
-print("RESULTADO:", "OK" if ok else "FALLÓ")
+print("RESULT:", "OK" if ok else "FAILED")
 
 credentials_path = adapter.connectors._connector_credentials_file_path(CONNECTOR_NAME, DS_NAME)
-print("Fichero de credenciales:", credentials_path)
+print("Credentials file:", credentials_path)
 ```
 
-**Qué hace realmente esto, en plata:**
+**What this actually does, in plain words:**
 
-- Crea un cliente OAuth2 en Keycloak (para que el conector se pueda autenticar).
-- Genera un par de claves (privada/pública) y las guarda en Vault (para firmar
-  tokens de transferencia).
-- Crea un bucket en MinIO y le da permisos.
-- Registra el conector como "participante" en el registration-service (aunque
-  con una URL provisional que **hay que corregir luego**, ver Paso 9).
-- Escribe todo lo anterior (menos las claves de Vault en sí, que se quedan en
-  Vault) en un fichero JSON:
+- Creates an OAuth2 client in Keycloak (so the connector can authenticate).
+- Generates a key pair (private/public) and stores it in Vault (to sign
+  transfer tokens).
+- Creates a bucket in MinIO and grants permissions on it.
+- Registers the connector as a "participant" in the registration-service
+  (although with a provisional URL that **must be fixed later**, see Step 9).
+- Writes all of the above (except the Vault keys themselves, which stay in
+  Vault) to a JSON file:
 
   ```text
   deployers/edc/deployments/DEV/vm-distributed/stics/connectors/<CONNECTOR_NAME>/credentials.json
   ```
 
-  Ese fichero contiene, entre otras cosas, el **token de Vault** y (si aplica,
-  ver Paso 2 Caso B) el nombre/usuario/contraseña de una base de datos ya
-  creada. Trátalo como secreto — no lo subas a git (ya está en
+  That file contains, among other things, the **Vault token** and (if
+  applicable, see Step 2 Case B) the name/user/password of an already created
+  database. Treat it as a secret; don't commit it to git (it's already in
   `.gitignore`).
 
 ---
 
-## Paso 4: Conseguir el `.jar` del conector
+## Step 4: Get the connector `.jar`
 
-No hace falta compilar nada. El mismo `connector.jar` sirve para cualquier
-conector (la identidad se configura por fuera, en el `.properties`). Cópialo
-de un conector que ya funcione:
+No need to compile anything. The same `connector.jar` works for any connector
+(the identity is configured outside it, in the `.properties`). Copy it from a
+connector that already works:
 
 ```bash
-scp usuario@VM_CON_CONECTOR_EXISTENTE:~/edc-<algo>/connector.jar ~/edc-<mi-conector>/mi-conector.jar
+scp user@VM_WITH_EXISTING_CONNECTOR:~/edc-<something>/connector.jar ~/edc-<my-connector>/my-connector.jar
 ```
 
-(o el nombre de fichero que tenga en ese conector; en nuestro caso se llama
-`provider-connector.jar`, `consumer-connector.jar`, etc. — el contenido es
-idéntico).
+(or whatever the file is called on that connector; in our case it's
+`provider-connector.jar`, `consumer-connector.jar`, etc. The contents are
+identical.)
 
 ---
 
-## Paso 5: Escribir el fichero `.properties`
+## Step 5: Write the `.properties` file
 
-Esta es la plantilla completa que ya hemos usado 4 veces. Copia esto,
-sustituye los `<CAMPOS>` y guárdalo como `<mi-conector>-configuration-docker.properties`:
+This is the complete template we have already used 4 times. Copy it, replace
+the `<FIELDS>`, and save it as `<my-connector>-configuration-docker.properties`:
 
 ```properties
 edc.participant.id=<CONNECTOR_NAME>
 edc.runtime.id=stics-<CONNECTOR_NAME>
 
-edc.dsp.callback.address=https://<MI_HOSTNAME_PUBLICO>/protocol
+edc.dsp.callback.address=https://<MY_PUBLIC_HOSTNAME>/protocol
 
 web.http.port=19191
 web.http.path=/api
@@ -228,8 +225,8 @@ web.http.protocol.port=19194
 web.http.protocol.path=/protocol
 web.http.public.port=19291
 web.http.public.path=/public
-edc.dataplane.api.public.baseurl=https://<MI_HOSTNAME_PUBLICO>/public
-edc.dataplane.proxy.public.endpoint=https://<MI_HOSTNAME_PUBLICO>/public
+edc.dataplane.api.public.baseurl=https://<MY_PUBLIC_HOSTNAME>/public
+edc.dataplane.proxy.public.endpoint=https://<MY_PUBLIC_HOSTNAME>/public
 web.http.control.port=19192
 web.http.control.path=/control
 web.http.version.port=19195
@@ -246,20 +243,20 @@ edc.web.rest.cors.methods=GET,POST,PUT,DELETE,OPTIONS
 edc.web.rest.cors.headers=origin, content-type, accept, authorization, x-api-key
 
 edc.vault.hashicorp.url=https://conn-citycouncil-demo.dev.linkeddata.es
-edc.vault.hashicorp.token=<VAULT_TOKEN_DE_credentials.json>
+edc.vault.hashicorp.token=<VAULT_TOKEN_FROM_credentials.json>
 edc.edr.vault.path=stics/<CONNECTOR_NAME>/
 
-edc.datasource.default.url=jdbc:postgresql://<HOST_POSTGRES>:5432/<NOMBRE_DB>
-edc.datasource.default.user=<USUARIO_DB>
-edc.datasource.default.password=<CONTRASEÑA_DB>
+edc.datasource.default.url=jdbc:postgresql://<POSTGRES_HOST>:5432/<DB_NAME>
+edc.datasource.default.user=<DB_USER>
+edc.datasource.default.password=<DB_PASSWORD>
 edc.datasource.default.pool.maxIdleConnections=10
 edc.datasource.default.pool.maxTotalConnections=10
 edc.datasource.default.pool.minIdleConnections=5
 edc.sql.schema.autocreate=true
 
-# Estos dos NO son claves reales, son "alias" que apuntan a Vault — el conector
-# los resuelve él solo en tiempo de ejecución. No hace falta rellenarlos con
-# valores reales.
+# These two are NOT real keys; they are "aliases" pointing to Vault. The
+# connector resolves them by itself at runtime. There is no need to fill them
+# in with real values.
 edc.aws.access.key=stics/<CONNECTOR_NAME>/aws-access-key
 edc.aws.secret.access.key=stics/<CONNECTOR_NAME>/aws-secret-key
 edc.aws.endpoint.override=https://minio.dev.linkeddata.es
@@ -286,69 +283,69 @@ edc.catalog.cache.execution.delay.seconds=5
 edc.participants.cache.execution.period.seconds=1800
 ```
 
-**`<HOST_POSTGRES>` depende de dónde está la base de datos respecto al
-contenedor** (importante, ver Paso 6):
-- Si el contenedor usa `network_mode: host` → `127.0.0.1`.
-- Si el contenedor usa red *bridge* con Postgres en el mismo host → la IP de
-  la puerta de enlace de Docker (normalmente `172.17.0.1`, compruébalo con
+**`<POSTGRES_HOST>` depends on where the database is relative to the
+container** (important, see Step 6):
+- If the container uses `network_mode: host` → `127.0.0.1`.
+- If the container uses *bridge* networking with Postgres on the same host →
+  the Docker gateway IP (usually `172.17.0.1`; check it with
   `docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'`).
 
 ---
 
-## Paso 6: El `docker-compose.yml` — la decisión importante
+## Step 6: The `docker-compose.yml`, which is the important decision
 
-### Si tu VM NO tiene ya otro conector corriendo (caso simple)
+### If your VM does NOT already have another connector running (simple case)
 
 ```yaml
 services:
-  mi-conector:
+  my-connector:
     image: eclipse-temurin:17-jre
-    container_name: mi-conector
+    container_name: my-connector
     working_dir: /workspace
     command:
       - java
       - -Djavax.net.ssl.trustStore=/workspace/cacerts.jks
       - -Djavax.net.ssl.trustStorePassword=dataspaceunit
-      - -Dedc.fs.config=/workspace/mi-conector-configuration-docker.properties
+      - -Dedc.fs.config=/workspace/my-connector-configuration-docker.properties
       - -jar
-      - /workspace/mi-conector.jar
+      - /workspace/my-connector.jar
     volumes:
-      - /home/usuario/edc-mi-conector/mi-conector.jar:/workspace/mi-conector.jar:ro
-      - /home/usuario/edc-mi-conector/mi-conector-configuration-docker.properties:/workspace/mi-conector-configuration-docker.properties:ro
-      - /home/usuario/edc-mi-conector/cacerts.jks:/workspace/cacerts.jks:ro
+      - /home/user/edc-my-connector/my-connector.jar:/workspace/my-connector.jar:ro
+      - /home/user/edc-my-connector/my-connector-configuration-docker.properties:/workspace/my-connector-configuration-docker.properties:ro
+      - /home/user/edc-my-connector/cacerts.jks:/workspace/cacerts.jks:ro
     network_mode: host
     restart: unless-stopped
 ```
 
-`network_mode: host` es lo más simple: el contenedor comparte la red de la
-VM directamente, así que `127.0.0.1` dentro del contenedor es la propia VM
-(imprescindible para llegar a un Postgres que solo escucha en localhost).
+`network_mode: host` is the simplest option: the container shares the VM's
+network directly, so `127.0.0.1` inside the container is the VM itself
+(essential to reach a Postgres that only listens on localhost).
 
-### Si tu VM YA tiene otro conector corriendo (caso con dos conectores)
+### If your VM ALREADY has another connector running (two-connector case)
 
-**No uses `network_mode: host`** — chocaría en todos los puertos con el
-conector que ya está ahí (incluido un puerto interno fijo, `17171`, que usa
-la extensión de catálogo federado y que no parece configurable). En vez de
-eso, usa red *bridge* normal con mapeo de puertos explícito, desplazando cada
-puerto en +10000 (o el offset que prefieras):
+**Don't use `network_mode: host`**: it would clash on every port with the
+connector already there (including a fixed internal port, `17171`, used by
+the federated catalog extension, which doesn't seem to be configurable).
+Instead, use normal *bridge* networking with explicit port mapping, shifting
+each port by +10000 (or whatever offset you prefer):
 
 ```yaml
 services:
-  mi-conector:
+  my-connector:
     image: eclipse-temurin:17-jre
-    container_name: mi-conector
+    container_name: my-connector
     working_dir: /workspace
     command:
       - java
       - -Djavax.net.ssl.trustStore=/workspace/cacerts.jks
       - -Djavax.net.ssl.trustStorePassword=dataspaceunit
-      - -Dedc.fs.config=/workspace/mi-conector-configuration-docker.properties
+      - -Dedc.fs.config=/workspace/my-connector-configuration-docker.properties
       - -jar
-      - /workspace/mi-conector.jar
+      - /workspace/my-connector.jar
     volumes:
-      - /home/usuario/edc-mi-conector/mi-conector.jar:/workspace/mi-conector.jar:ro
-      - /home/usuario/edc-mi-conector/mi-conector-configuration-docker.properties:/workspace/mi-conector-configuration-docker.properties:ro
-      - /home/usuario/edc-mi-conector/cacerts.jks:/workspace/cacerts.jks:ro
+      - /home/user/edc-my-connector/my-connector.jar:/workspace/my-connector.jar:ro
+      - /home/user/edc-my-connector/my-connector-configuration-docker.properties:/workspace/my-connector-configuration-docker.properties:ro
+      - /home/user/edc-my-connector/cacerts.jks:/workspace/cacerts.jks:ro
     ports:
       - "29191:19191"
       - "29192:19192"
@@ -361,152 +358,152 @@ services:
     restart: unless-stopped
 ```
 
-Fíjate: **dentro** del `.properties` los puertos siguen siendo los normales
-(19191 etc.) — solo cambia por fuera, en el mapeo `ports:`. El bridge de
-Postgres deja de ser `127.0.0.1` en este caso — tienes que:
+Note: **inside** the `.properties` the ports stay the normal ones (19191,
+etc.); only the outside changes, in the `ports:` mapping. Postgres is no
+longer reachable at `127.0.0.1` in this case, so you have to:
 
 ```bash
-# en la VM, dar permiso a Postgres para aceptar conexiones desde Docker
+# on the VM, allow Postgres to accept connections from Docker
 sudo -u postgres psql -c "ALTER SYSTEM SET listen_addresses = '*';"
 echo "host    all    all    172.16.0.0/12    md5" | sudo tee -a /etc/postgresql/*/main/pg_hba.conf
 sudo systemctl restart postgresql
 ```
 
-(`172.16.0.0/12` cubre cualquier subred que Docker Compose decida crear —
-cada `docker compose up` en un proyecto nuevo puede usar una subred
-distinta, tipo `172.17.0.0/16`, `172.18.0.0/16`, etc.)
+(`172.16.0.0/12` covers any subnet Docker Compose decides to create: each
+`docker compose up` in a new project may use a different subnet, such as
+`172.17.0.0/16`, `172.18.0.0/16`, etc.)
 
 ---
 
-## Paso 7: El truststore compartido (`cacerts.jks`)
+## Step 7: The shared truststore (`cacerts.jks`)
 
-Todos los servicios de este dataspace usan certificados TLS firmados por un
-CA propio (autofirmado), no uno público. Sin este fichero, el conector falla
-al arrancar con `PKIX path building failed`. Cópialo desde cualquier
-namespace de Kubernetes que ya lo tenga:
+All services in this dataspace use TLS certificates signed by our own
+(self-signed) CA, not a public one. Without this file, the connector fails at
+startup with `PKIX path building failed`. Copy it from any Kubernetes
+namespace that already has it:
 
 ```bash
 kubectl -n core-control get secret common-tls-cacerts -o jsonpath='{.data.cacerts\.jks}' | base64 -d > cacerts.jks
-scp cacerts.jks usuario@TU_VM:~/edc-mi-conector/cacerts.jks
+scp cacerts.jks user@YOUR_VM:~/edc-my-connector/cacerts.jks
 ```
 
-La contraseña de este truststore es siempre `dataspaceunit` (ya está en el
-`.properties` de arriba, en el comando `java -Djavax.net.ssl.trustStorePassword=...`).
+The password of this truststore is always `dataspaceunit` (it's already in
+the `docker-compose.yml` above, in the `java -Djavax.net.ssl.trustStorePassword=...`
+command).
 
 ---
 
-## Paso 8: Levantarlo
+## Step 8: Start it
 
 ```bash
-ssh usuario@TU_VM 'cd ~/edc-mi-conector && docker compose up -d'
+ssh user@YOUR_VM 'cd ~/edc-my-connector && docker compose up -d'
 ```
 
-Espera unos 10 segundos y mira los logs:
+Wait about 10 seconds and look at the logs:
 
 ```bash
-ssh usuario@TU_VM 'docker logs mi-conector --tail 30'
+ssh user@YOUR_VM 'docker logs my-connector --tail 30'
 ```
 
-Busca la línea `Runtime stics-<CONNECTOR_NAME> ready` — si aparece, el
-conector arrancó. Si no, mira la sección de "Errores típicos" al final.
+Look for the line `Runtime stics-<CONNECTOR_NAME> ready`. If it appears, the
+connector started. If not, see the "Common errors" section at the end.
 
 ---
 
-## Paso 9: Dos arreglos que SIEMPRE hacen falta después del primer arranque
+## Step 9: Two fixes that are ALWAYS needed after the first start
 
-### 9a. Las tablas de INESData que el autocreate no crea
+### 9a. The INESData tables that autocreate doesn't create
 
-El jar incluye extensiones propias de INESData (catálogo federado, validador
-de vocabulario) que necesitan tablas que el `edc.sql.schema.autocreate=true`
-estándar **no crea solo**. Aplícalas a mano, una vez, contra la base de datos
-del conector:
+The jar includes INESData's own extensions (federated catalog, vocabulary
+validator) that need tables the standard `edc.sql.schema.autocreate=true`
+**does not create by itself**. Apply them by hand, once, against the
+connector's database:
 
 ```bash
-psql -h <HOST_POSTGRES> -U <USUARIO_DB> -d <NOMBRE_DB> \
+psql -h <POSTGRES_HOST> -U <DB_USER> -d <DB_NAME> \
   -f adapters/inesdata/sources/inesdata-connector/resources/sql/060_federated-catalog-schema.sql
-psql -h <HOST_POSTGRES> -U <USUARIO_DB> -d <NOMBRE_DB> \
+psql -h <POSTGRES_HOST> -U <DB_USER> -d <DB_NAME> \
   -f adapters/inesdata/sources/inesdata-connector/resources/sql/060_vocabulary-schema.sql
 ```
 
-Si no lo haces, verás errores en el log tipo
-`relation "edc_catalog" does not exist` o `relation "edc_vocabulary" does not exist`.
+If you don't, you'll see log errors such as
+`relation "edc_catalog" does not exist` or `relation "edc_vocabulary" does not exist`.
 
-### 9b. La URL del participante registrada está mal
+### 9b. The registered participant URL is wrong
 
-El Paso 3 registra el conector con una URL "interna" que no sirve desde fuera
-(tipo `http://<CONNECTOR_NAME>:19194/protocol`). Hay que corregirla a mano en
-la base de datos del **registration-service** (no la del conector — esta vive
-en el Postgres compartido, VM `stics2test`, `127.0.0.1:5432`, base de datos
-`stics_rs`):
+Step 3 registers the connector with an "internal" URL that doesn't work from
+outside (such as `http://<CONNECTOR_NAME>:19194/protocol`). You have to fix
+it by hand in the **registration-service** database (not the connector's:
+this one lives in the shared Postgres, VM `stics2test`, `127.0.0.1:5432`,
+database `stics_rs`):
 
 ```bash
 psql -h 127.0.0.1 -p 5432 -U postgres -d stics_rs -c "
 UPDATE public.edc_participant
-SET url = 'https://<MI_HOSTNAME_PUBLICO>/protocol',
-    shared_url = 'https://<MI_HOSTNAME_PUBLICO>/shared'
+SET url = 'https://<MY_PUBLIC_HOSTNAME>/protocol',
+    shared_url = 'https://<MY_PUBLIC_HOSTNAME>/shared'
 WHERE participant_id = '<CONNECTOR_NAME>';
 "
 ```
 
-Después de estos dos arreglos, reinicia el conector:
+After these two fixes, restart the connector:
 
 ```bash
-ssh usuario@TU_VM 'cd ~/edc-mi-conector && docker compose restart'
+ssh user@YOUR_VM 'cd ~/edc-my-connector && docker compose restart'
 ```
 
 ---
 
-## Paso 10: El "puente" de red — la parte más delicada
+## Step 10: The network "bridge", which is the most delicate part
 
-Aquí es donde más nos hemos equivocado en la práctica, así que léelo con
-calma. La idea: alguien en internet escribe `https://mi-conector.stics...` en
-el navegador; ese tráfico tiene que acabar llegando exactamente al puerto de
-tu conector, en tu VM.
+This is where we have made the most mistakes in practice, so read it
+carefully. The idea: someone on the internet types `https://my-connector.stics...`
+in a browser; that traffic must end up reaching exactly your connector's port,
+on your VM.
 
-### 10.0 Averigua a qué máquina apunta REALMENTE tu DNS
+### 10.0 Find out which machine your DNS REALLY points to
 
 ```bash
-nslookup <MI_HOSTNAME_PUBLICO> 8.8.8.8
+nslookup <MY_PUBLIC_HOSTNAME> 8.8.8.8
 ```
 
-Puede que resuelva **directamente a la IP pública de tu VM** (caso simple,
-como pasa con la VM de bavenir), o que resuelva a la **IP pública de otra VM
-distinta** que hace de "puerta de entrada" para varias máquinas privadas a la
-vez (caso de la VM `stics2test`, IP pública `138.100.15.165`, que en
-realidad reenvía tráfico hacia otras VMs privadas). Si no lo sabes, pregunta
-— no lo asumas.
+It may resolve **directly to your VM's public IP** (simple case, as with the
+bavenir VM), or to the **public IP of a different VM** that acts as the
+"entry point" for several private machines at once (the case of the
+`stics2test` VM, public IP `138.100.15.165`, which actually forwards traffic
+to other private VMs). If you don't know, ask; don't assume.
 
-### 10.1 Sea cual sea el caso, casi seguro que Kubernetes intercepta el puerto 80/443 antes que cualquier nginx del sistema
+### 10.1 Whatever the case, Kubernetes almost certainly intercepts ports 80/443 before any system nginx
 
-Todas las VMs de este proyecto corren k3s, y k3s **secuestra los puertos
-80/443 del host entero** mediante reglas de `iptables` (su "ServiceLB"),
-antes de que cualquier nginx normal del sistema operativo llegue a verlos.
-Compruébalo así en la VM donde tu DNS apunta de verdad:
+All the VMs in this project run k3s, and k3s **hijacks ports 80/443 of the
+whole host** through `iptables` rules (its "ServiceLB"), before any regular
+operating system nginx gets to see them. Check it like this on the VM your
+DNS really points to:
 
 ```bash
 sudo iptables -t nat -L -n | grep "dpt:80 \|dpt:443 "
 ```
 
-Si ves una línea `DNAT ... to:<ip-de-un-pod>`, confirma la sospecha: **no
-edites nginx del sistema operativo, edita Kubernetes**.
+If you see a line `DNAT ... to:<pod-ip>`, the suspicion is confirmed: **don't
+edit the operating system nginx; edit Kubernetes**.
 
-### 10.2 Crea un Service + Endpoints "manual" apuntando a tu conector
+### 10.2 Create a "manual" Service + Endpoints pointing to your connector
 
-Esto es un patrón de Kubernetes para meter algo que NO es un pod (tu
-contenedor Docker suelto) dentro del sistema de rutas de un Ingress. Guarda
-esto como `mi-puente.yaml` (ajusta namespace, IP, puertos):
+This is a Kubernetes pattern to bring something that is NOT a pod (your
+standalone Docker container) into an Ingress's routing. Save this as
+`my-bridge.yaml` (adjust namespace, IP, ports):
 
 ```yaml
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: <UN_NAMESPACE_CORTO>
+  name: <A_SHORT_NAMESPACE>
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: mi-conector-external
-  namespace: <UN_NAMESPACE_CORTO>
+  name: my-connector-external
+  namespace: <A_SHORT_NAMESPACE>
 spec:
   ports:
     - { name: "19191", port: 19191, protocol: TCP }
@@ -520,14 +517,14 @@ spec:
 apiVersion: v1
 kind: Endpoints
 metadata:
-  name: mi-conector-external
-  namespace: <UN_NAMESPACE_CORTO>
+  name: my-connector-external
+  namespace: <A_SHORT_NAMESPACE>
 subsets:
   - addresses:
-      - ip: <IP_DE_TU_VM>
+      - ip: <YOUR_VM_IP>
     ports:
-      # Si usaste network_mode: host, los puertos de la izquierda y derecha coinciden (19191).
-      # Si usaste bridge con offset +10000, pon aquí el puerto REAL publicado (29191, etc.)
+      # If you used network_mode: host, the left and right ports match (19191).
+      # If you used bridge with a +10000 offset, put the REAL published port here (29191, etc.)
       - { name: "19191", port: 19191, protocol: TCP }
       - { name: "19192", port: 19192, protocol: TCP }
       - { name: "19193", port: 19193, protocol: TCP }
@@ -539,68 +536,68 @@ subsets:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: mi-conector-ingress
-  namespace: <UN_NAMESPACE_CORTO>
+  name: my-connector-ingress
+  namespace: <A_SHORT_NAMESPACE>
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-body-size: "800m"
 spec:
-  ingressClassName: nginx   # o "traefik", según qué controlador use ese cluster (comprueba con: kubectl get ingressclass)
+  ingressClassName: nginx   # or "traefik", depending on that cluster's controller (check with: kubectl get ingressclass)
   tls:
-    - hosts: ["<MI_HOSTNAME_PUBLICO>"]
+    - hosts: ["<MY_PUBLIC_HOSTNAME>"]
       secretName: pionera-internal-ingress-tls
   rules:
-    - host: <MI_HOSTNAME_PUBLICO>
+    - host: <MY_PUBLIC_HOSTNAME>
       http:
         paths:
-          - { path: /api,        pathType: Prefix, backend: { service: { name: mi-conector-external, port: { number: 19191 } } } }
-          - { path: /control,    pathType: Prefix, backend: { service: { name: mi-conector-external, port: { number: 19192 } } } }
-          - { path: /management, pathType: Prefix, backend: { service: { name: mi-conector-external, port: { number: 19193 } } } }
-          - { path: /protocol,   pathType: Prefix, backend: { service: { name: mi-conector-external, port: { number: 19194 } } } }
-          - { path: /version,   pathType: Prefix, backend: { service: { name: mi-conector-external, port: { number: 19195 } } } }
-          - { path: /shared,    pathType: Prefix, backend: { service: { name: mi-conector-external, port: { number: 19196 } } } }
-          - { path: /public,    pathType: Prefix, backend: { service: { name: mi-conector-external, port: { number: 19291 } } } }
+          - { path: /api,        pathType: Prefix, backend: { service: { name: my-connector-external, port: { number: 19191 } } } }
+          - { path: /control,    pathType: Prefix, backend: { service: { name: my-connector-external, port: { number: 19192 } } } }
+          - { path: /management, pathType: Prefix, backend: { service: { name: my-connector-external, port: { number: 19193 } } } }
+          - { path: /protocol,   pathType: Prefix, backend: { service: { name: my-connector-external, port: { number: 19194 } } } }
+          - { path: /version,   pathType: Prefix, backend: { service: { name: my-connector-external, port: { number: 19195 } } } }
+          - { path: /shared,    pathType: Prefix, backend: { service: { name: my-connector-external, port: { number: 19196 } } } }
+          - { path: /public,    pathType: Prefix, backend: { service: { name: my-connector-external, port: { number: 19291 } } } }
 ```
 
-Aplícalo **en el cluster de la VM donde tu DNS apunta de verdad** (puede que
-no sea la misma VM donde corre el conector — ver el ejemplo de
-`con-lab.stics.linkeddata.es`, que apunta a la VM del consumer, no a la VM
-común):
+Apply it **on the cluster of the VM your DNS really points to** (it may not be
+the same VM where the connector runs; see the example of
+`con-lab.stics.linkeddata.es`, which points to the consumer's VM, not the
+common VM):
 
 ```bash
-kubectl --kubeconfig <KUBECONFIG_DEL_CLUSTER_CORRECTO> apply -f mi-puente.yaml
+kubectl --kubeconfig <KUBECONFIG_OF_THE_RIGHT_CLUSTER> apply -f my-bridge.yaml
 ```
 
-**Truco de diagnóstico** si algo no cuadra:
-- `curl -k https://tu-host/lo-que-sea` → `404 page not found` sin cabecera
-  `Server:` → llegaste a Kubernetes pero no hay ninguna regla para ese host
-  (o llegaste al cluster equivocado).
-- Mismo `curl` → `503`, con cabecera `Server: nginx/...` → llegaste bien,
-  pero el Service no tiene un backend sano todavía (revisa el Endpoints).
-- La petición **ni siquiera aparece** en
-  `kubectl -n ingress-nginx logs deploy/ingress-nginx-controller` → no está
-  llegando a ese cluster en absoluto — reconsidera el paso 10.0.
+**Diagnostic tip** if something doesn't add up:
+- `curl -k https://your-host/anything` → `404 page not found` without a
+  `Server:` header → you reached Kubernetes but there is no rule for that
+  host (or you reached the wrong cluster).
+- Same `curl` → `503`, with a `Server: nginx/...` header → you got there, but
+  the Service has no healthy backend yet (check the Endpoints).
+- The request **doesn't even show up** in
+  `kubectl -n ingress-nginx logs deploy/ingress-nginx-controller` → it's not
+  reaching that cluster at all; reconsider step 10.0.
 
 ---
 
-## Paso 11: Añadir tu hostname al certificado TLS compartido
+## Step 11: Add your hostname to the shared TLS certificate
 
-El certificado autofirmado que usa todo el dataspace (`pionera-internal-ingress-tls`)
-solo cubre los hostnames que ya conoce. Hay que decirle explícitamente que
-incluya el tuyo, y luego forzar que se regenere (por defecto reutiliza el
-certificado ya guardado en disco, ni se entera de que hay un host nuevo):
+The self-signed certificate used by the whole dataspace (`pionera-internal-ingress-tls`)
+only covers the hostnames it already knows. You have to tell it explicitly to
+include yours, and then force it to be regenerated (by default it reuses the
+certificate already stored on disk and doesn't notice there is a new host):
 
 ```bash
-# desde la VM stics2test, con el venv del framework:
-export PIONERA_VM_INGRESS_TLS_HOSTS="<MI_HOSTNAME_PUBLICO>"
+# from the stics2test VM, with the framework venv:
+export PIONERA_VM_INGRESS_TLS_HOSTS="<MY_PUBLIC_HOSTNAME>"
 
 rm -f /home/stics2/Validation-Environment/.local/artifacts/ingress-tls/vm-distributed/stics/tls.crt
 rm -f /home/stics2/Validation-Environment/.local/artifacts/ingress-tls/vm-distributed/stics/tls.key
 ```
 
-Y luego, en Python (usando el adapter `inesdata`, que es el que gestiona el
-dataspace):
+Then, in Python (using the `inesdata` adapter, which is the one that manages
+the dataspace):
 
 ```python
 import os, sys
@@ -611,45 +608,45 @@ adapter = framework_main.build_adapter("inesdata", topology="vm-distributed")
 adapter.infrastructure._sync_vm_ingress_tls("vm-distributed")
 ```
 
-**Muy importante**: en cuanto esto termine con `secret/... configured` (no
-`unchanged`), el certificado **cambió de verdad** (nueva clave), lo que
-significa que **el `cacerts.jks` de TODOS los conectores existentes (no solo
-el nuevo) queda obsoleto**. Hay que volver a copiarlo a todos (Paso 7) y
-reiniciar todos los `docker compose restart`, o te encontrarás errores
-`PKIX path building failed` en conectores que llevaban semanas funcionando
-bien.
+**Very important**: as soon as this finishes with `secret/... configured` (not
+`unchanged`), the certificate **has really changed** (new key), which means
+**the `cacerts.jks` of ALL existing connectors (not only the new one) is now
+outdated**. You have to copy it again to all of them (Step 7) and run
+`docker compose restart` on all of them, or you'll get
+`PKIX path building failed` errors on connectors that had been working fine
+for weeks.
 
 ---
 
-## Paso 12: Verificación final
+## Step 12: Final check
 
 ```bash
-curl -k https://<MI_HOSTNAME_PUBLICO>/api/check/health
-# Debería dar HTTP 200
+curl -k https://<MY_PUBLIC_HOSTNAME>/api/check/health
+# Should return HTTP 200
 
-# Espera ~65 segundos (el ciclo del catálogo federado) y mira si hay errores:
+# Wait ~65 seconds (the federated catalog cycle) and look for errors:
 sleep 75
-ssh usuario@TU_VM 'docker logs mi-conector --since 90s 2>&1 | grep -iE "error|exception"'
-# Si no sale nada, perfecto.
+ssh user@YOUR_VM 'docker logs my-connector --since 90s 2>&1 | grep -iE "error|exception"'
+# If nothing comes out, perfect.
 ```
 
-Si quieres comprobar interoperabilidad real (negociar un contrato y
-transferir datos con otro conector ya existente), sigue
-[docs/47_stics_edc_interop_evidence.md](./47_stics_edc_interop_evidence.md) —
-tiene los `curl` exactos para eso, ya verificados.
+If you want to check real interoperability (negotiate a contract and transfer
+data with another existing connector), follow
+[docs/47_stics_edc_interop_evidence.md](./47_stics_edc_interop_evidence.md):
+it has the exact, already verified `curl` commands for that.
 
 ---
 
-## Chuleta de errores típicos
+## Common errors cheat sheet
 
-| Síntoma en el log | Qué significa | Cómo se arregla |
+| Symptom in the log | What it means | How to fix it |
 | --- | --- | --- |
-| `ValueError: Invalid connector name '...'. Maximum length is 20 characters` | El nombre del conector es demasiado largo | Acórtalo, máx. 20 caracteres |
-| `Connection to 127.0.0.1:5432 refused` | El contenedor no puede ver el Postgres | Si usas `network_mode: host`, revisa que Postgres escuche ahí. Si usas *bridge*, apunta a la IP de la puerta de enlace de Docker (`172.17.0.1` o similar), no a `127.0.0.1` |
-| `no pg_hba.conf entry for host "172.x.x.x"` | Postgres rechaza la IP del contenedor | Añade una línea `host all all 172.16.0.0/12 md5` a `pg_hba.conf` y `listen_addresses='*'`, reinicia Postgres |
-| `relation "edc_catalog" does not exist` / `"edc_vocabulary" does not exist` | Faltan las tablas propias de INESData | Aplica los dos `.sql` del Paso 9a |
-| `<nombre>: Temporary failure in name resolution` / `No address associated with hostname` (en el crawler) | El participante está registrado con una URL que no resuelve (interna, o el DNS aún no está activo) | Si es la URL interna → arregla el Paso 9b. Si es que el DNS aún no está activo → espera, se soluciona solo |
-| `PKIX path building failed` / `Failed to get keys from .../certs` | El truststore (`cacerts.jks`) está desactualizado respecto al certificado actual | Vuelve a copiar `cacerts.jks` fresco (Paso 7) a ese conector — y a todos los demás si el certificado se acaba de regenerar |
-| `curl` da `404 page not found` sin cabecera `Server:` | Llegaste a Kubernetes pero ningún Ingress reconoce ese host (o cluster equivocado) | Revisa Paso 10: ¿el DNS apunta donde crees? ¿Creaste el Ingress en el cluster correcto? |
-| `curl` da `503` con `Server: nginx/...` | Llegaste bien, pero el Service no tiene backend sano | Revisa el `Endpoints` (IP y puertos correctos, el proceso realmente escuchando ahí) |
-| La petición no aparece ni en los logs de `ingress-nginx-controller` | No está llegando a ese cluster en absoluto | El DNS probablemente apunta a otra máquina/gateway distinto del que crees |
+| `ValueError: Invalid connector name '...'. Maximum length is 20 characters` | The connector name is too long | Shorten it, 20 characters maximum |
+| `Connection to 127.0.0.1:5432 refused` | The container can't see Postgres | If you use `network_mode: host`, check that Postgres listens there. If you use *bridge*, point to the Docker gateway IP (`172.17.0.1` or similar), not `127.0.0.1` |
+| `no pg_hba.conf entry for host "172.x.x.x"` | Postgres rejects the container's IP | Add a `host all all 172.16.0.0/12 md5` line to `pg_hba.conf` and set `listen_addresses='*'`, then restart Postgres |
+| `relation "edc_catalog" does not exist` / `"edc_vocabulary" does not exist` | INESData's own tables are missing | Apply the two `.sql` files from Step 9a |
+| `<name>: Temporary failure in name resolution` / `No address associated with hostname` (in the crawler) | The participant is registered with a URL that doesn't resolve (internal, or DNS not active yet) | If it's the internal URL → apply Step 9b. If DNS isn't active yet → wait, it fixes itself |
+| `PKIX path building failed` / `Failed to get keys from .../certs` | The truststore (`cacerts.jks`) is out of date with respect to the current certificate | Copy a fresh `cacerts.jks` (Step 7) to that connector, and to all others if the certificate was just regenerated |
+| `curl` returns `404 page not found` without a `Server:` header | You reached Kubernetes but no Ingress recognizes that host (or wrong cluster) | Check Step 10: does the DNS point where you think? Did you create the Ingress on the right cluster? |
+| `curl` returns `503` with `Server: nginx/...` | You got there, but the Service has no healthy backend | Check the `Endpoints` (correct IP and ports, the process really listening there) |
+| The request doesn't even appear in the `ingress-nginx-controller` logs | It's not reaching that cluster at all | The DNS probably points to a different machine/gateway than you think |

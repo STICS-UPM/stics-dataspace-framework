@@ -1,20 +1,20 @@
-# Estado Actual del Framework
+# Current State of the Framework
 
-Este documento resume el estado operativo actual del Validation Environment
-según el código versionado en esta copia del repositorio. Está orientado a
-revisión pública, auditoría técnica y onboarding de personas que necesitan
-entender qué está implementado, qué se valida y qué queda fuera del alcance de
-cierre.
+This document summarizes the current operational state of the Validation
+Environment according to the code versioned in this copy of the repository.
+It is aimed at public review, technical auditing, and onboarding people who
+need to understand what is implemented, what is validated, and what is out of
+the closure scope.
 
-## Entrada Principal
+## Main Entry Point
 
-La entrada canónica es:
+The canonical entry point is:
 
 ```bash
 python3 main.py menu
 ```
 
-También existen comandos directos para automatización:
+There are also direct commands for automation:
 
 ```bash
 python3 main.py inesdata deploy --topology local
@@ -23,54 +23,54 @@ python3 main.py edc deploy --topology vm-distributed
 python3 main.py edc validate --topology vm-distributed
 ```
 
-El menú y los comandos comparten el mismo modelo de ejecución por niveles.
+The menu and the commands share the same level-based execution model.
 
-## Niveles
+## Levels
 
-| Nivel | Función | Estado |
+| Level | Function | Status |
 | --- | --- | --- |
-| `1` | Preparar cluster Kubernetes | Operativo en `local` y `vm-single` |
-| `2` | Desplegar servicios comunes | Operativo |
-| `3` | Desplegar dataspace/control plane | Operativo |
-| `4` | Desplegar conectores | Operativo para `inesdata` y `edc` |
-| `5` | Desplegar componentes opcionales | Operativo para componentes compartidos configurados en `inesdata` y `edc` |
-| `6` | Ejecutar validación | Operativo con Newman, Kafka, Playwright y validación de componentes según adapter |
+| `1` | Prepare the Kubernetes cluster | Operational on `local` and `vm-single` |
+| `2` | Deploy common services | Operational |
+| `3` | Deploy dataspace/control plane | Operational |
+| `4` | Deploy connectors | Operational for `inesdata` and `edc` |
+| `5` | Deploy optional components | Operational for the shared components configured in `inesdata` and `edc` |
+| `6` | Run validation | Operational with Newman, Kafka, Playwright, and component validation depending on the adapter |
 
-## Topologías
+## Topologies
 
-| Topología | Estado actual | Uso recomendado |
+| Topology | Current status | Recommended use |
 | --- | --- | --- |
-| `local` | Ruta estable de desarrollo y validación local | Validación diaria, depuración y reproducción controlada |
-| `vm-single` | Ruta operativa sobre una VM con Kubernetes gestionado | Validación final en entorno tipo VM y smoke de integración |
-| `vm-distributed` | Ruta distribuida parametrizable con roles físicos separados | Validación de entornos con servicios comunes, conectores y componentes en VMs distintas |
+| `local` | Stable local development and validation path | Daily validation, debugging, and controlled reproduction |
+| `vm-single` | Operational path on one VM with managed Kubernetes | Final validation in a VM-like environment and integration smoke tests |
+| `vm-distributed` | Parameterizable distributed path with separate physical roles | Validation of environments with common services, connectors, and components on different VMs |
 
-## Alcance de Cierre por Adapter y Topología
+## Closure Scope by Adapter and Topology
 
-El soporte de código y la evidencia oficial de cierre no son lo mismo. Para
-auditoría, la lectura vigente es:
+Code support and official closure evidence are not the same thing. For
+auditing, the current reading is:
 
 | Adapter | `local` | `vm-single` | `vm-distributed` |
 | --- | --- | --- | --- |
-| `inesdata` | Implementado y usado como ruta local de desarrollo/validación | Implementado y validado como entorno VM de referencia | Implementado y validado como entorno distribuido de referencia |
-| `edc` | Implementado; pasó validaciones antes de la conciliación reciente de topologías y debe revalidarse antes de usarse como evidencia vigente | Implementado; no validado oficialmente después de la conciliación reciente | Implementado y probado oficialmente como ruta de cierre para EDC |
+| `inesdata` | Implemented and used as the local development/validation path | Implemented and validated as the reference VM environment | Implemented and validated as the reference distributed environment |
+| `edc` | Implemented; passed validation before the recent topology reconciliation and must be revalidated before being used as current evidence | Implemented; not officially validated after the recent reconciliation | Implemented and officially tested as the closure path for EDC |
 
-La documentación de operación mantiene comandos y configuración para las rutas
-implementadas, pero las evidencias oficiales de `edc` deben generarse en
-`vm-distributed` hasta que se ejecute una revalidación explícita de `local` o
-`vm-single`.
+The operational documentation keeps commands and configuration for the
+implemented paths, but official `edc` evidence must be generated on
+`vm-distributed` until an explicit revalidation of `local` or `vm-single` is
+run.
 
 ## Adapters
 
-| Adapter | Estado |
+| Adapter | Status |
 | --- | --- |
-| `inesdata` | Despliegue y validación `Level 1-6` operativos |
-| `edc` | Despliegue y validación core implementados; evidencia oficial de cierre limitada a `vm-distributed` |
+| `inesdata` | `Level 1-6` deployment and validation operational |
+| `edc` | Core deployment and validation implemented; official closure evidence limited to `vm-distributed` |
 
-## Namespaces Actuales
+## Current Namespaces
 
-El framework usa un perfil `role-aligned` para INESData. Las topologías deben
-respetar estos nombres para evitar divergencias entre diagramas, despliegue y
-validación:
+The framework uses a `role-aligned` profile for INESData. Topologies must
+respect these names to avoid divergence between diagrams, deployment, and
+validation:
 
 ```ini
 COMMON_SERVICES_NAMESPACE=common-srvs
@@ -83,104 +83,105 @@ DS_1_CONSUMER_NAMESPACE=consumer
 COMPONENTS_NAMESPACE=components
 ```
 
-Interpretación:
+Interpretation:
 
-- `common-srvs`: Keycloak, MinIO, PostgreSQL y Vault.
-- `core-control`: registration-service y control plane del dataspace.
-- `provider`: conector proveedor.
-- `consumer`: conector consumidor.
-- `components`: Ontology Hub, AI Model Hub y Semantic Virtualization.
-- `ingress-nginx` y `kube-system`: infraestructura Kubernetes.
+- `common-srvs`: Keycloak, MinIO, PostgreSQL, and Vault.
+- `core-control`: registration-service and dataspace control plane.
+- `provider`: provider connector.
+- `consumer`: consumer connector.
+- `components`: Ontology Hub, AI Model Hub, and Semantic Virtualization.
+- `ingress-nginx` and `kube-system`: Kubernetes infrastructure.
 
-La resolución centralizada está en:
+The centralized resolution lives in:
 
 ```text
 deployers/shared/lib/namespaces.py
 deployers/inesdata/deployer.config.example
 ```
 
-## Validación
+## Validation
 
-`Level 6` puede ejecutar:
+`Level 6` can run:
 
-- limpieza segura de datos de prueba;
-- colecciones Newman/Postman;
-- validación funcional EDC+Kafka;
-- Playwright para flujos UI;
-- validaciones de componentes;
-- métricas y reportes de experimento.
+- safe cleanup of test data;
+- Newman/Postman collections;
+- EDC+Kafka functional validation;
+- Playwright for UI flows;
+- component validations;
+- experiment metrics and reports.
 
-En Semantic Virtualization, el alcance automatizado actual considera
-`morph-kgv` como API de virtualización, `mapping-editor` como UI/editor de
-mappings y `Automap` como herramienta de generación de mappings. `morph-kgv` se
-valida como runtime principal del virtualizador: `Level 6` comprueba su
-contrato versionable de ejecución, incluyendo `run_query.py`, el comando
-`morph-kgv serve config.ini`, ejemplos `config.ini` y el endpoint `/sparql`.
-Automap se sincroniza como fuente del componente y se valida en dos pasos: primero como
-readiness/trazabilidad de código fuente y después con una línea base
-determinista que ejercita extracción de esquema, extracción de ontología,
-reutilización de una ontología gobernable por Ontology Hub, materialización RDF
-controlada y métricas de comparación contra KGs de referencia. La ruta LLM
-completa de Automap no se ejecuta por defecto en `Level 6` porque requiere
-configuración de modelo y secretos externos a la baseline versionable; Automap
-no se despliega como servicio runtime en la baseline actual.
+For Semantic Virtualization, the current automated scope covers `morph-kgv` as
+the virtualization API, `mapping-editor` as the mappings UI/editor, and
+`Automap` as the mapping generation tool. `morph-kgv` is validated as the
+virtualizer's main runtime: `Level 6` checks its versionable execution
+contract, including `run_query.py`, the `morph-kgv serve config.ini` command,
+the `config.ini` examples, and the `/sparql` endpoint.
+Automap is synced as the component's source and validated in two steps: first
+as source code readiness/traceability, and then with a deterministic baseline
+that exercises schema extraction, ontology extraction, reuse of an ontology
+governed by Ontology Hub, controlled RDF materialization, and comparison
+metrics against reference KGs. The full Automap LLM path is not run by
+default in `Level 6` because it requires model configuration and secrets
+outside the versionable baseline; Automap is not deployed as a runtime
+service in the current baseline.
 
-Los artefactos se escriben bajo `experiments/`, que es salida generada y no debe
-versionarse.
+Artifacts are written under `experiments/`, which is generated output and must
+not be versioned.
 
-## AI Model Hub y Casos de Uso
+## AI Model Hub and Use Cases
 
-El estado actual del framework incluye automatización específica para preparar
-los casos de uso de AI Model Hub en `vm-distributed`. Esta automatización no
-sustituye al despliegue normal por niveles, sino que lo complementa con un
-asistente operativo dentro del asistente de `vm-distributed`.
+The current state of the framework includes specific automation to prepare
+the AI Model Hub use cases on `vm-distributed`. This automation does not
+replace the normal level-based deployment; it complements it with an
+operational assistant inside the `vm-distributed` assistant.
 
-El flujo implementado prepara un perfil de demostración con `model-server`
-combinado, ejecuta `Level 5` y permite sembrar en los conectores los datasets y
-modelos asociados a los casos de uso:
+The implemented flow prepares a demo profile with a combined `model-server`,
+runs `Level 5`, and lets you seed the connectors with the datasets and models
+associated with the use cases:
 
-- `Step 9`: registro de datasets de benchmark como assets del dataspace;
-- `Step 10`: registro de modelos FLARES y Mobility descubiertos desde el
-  endpoint `/models` del `model-server`;
-- para EDC, creación de assets `HttpData`, políticas, contratos y pruebas de
-  negociación DSP entre conectores configurados;
-- para INESData, conservación del flujo específico basado en las APIs del
-  adapter.
+- `Step 9`: registration of benchmark datasets as dataspace assets;
+- `Step 10`: registration of the FLARES and Mobility models discovered from
+  the `model-server` `/models` endpoint;
+- for EDC, creation of `HttpData` assets, policies, contracts, and DSP
+  negotiation tests between the configured connectors;
+- for INESData, the specific flow based on the adapter's APIs is kept.
 
-El `model-server` soporta modos `mock`, `use-cases`, `combined` y `external`.
-El modo `combined` integra los endpoints de modelos y datasets de los casos de
-uso sin eliminar la compatibilidad con fixtures controlados del framework.
-Los artefactos operativos y logs de este flujo se guardan fuera de `docs/`.
+The `model-server` supports `mock`, `use-cases`, `combined`, and `external`
+modes. The `combined` mode integrates the use case model and dataset
+endpoints without dropping compatibility with the framework's controlled
+fixtures. The operational artifacts and logs of this flow are stored outside
+`docs/`.
 
-## Colecciones Newman/Postman
+## Newman/Postman Collections
 
-Las colecciones ejecutadas por `Level 6` viven en:
+The collections run by `Level 6` live in:
 
 ```text
 validation/core/collections/
 ```
 
-Las colecciones y entornos pensados para importación manual en Postman viven en:
+The collections and environments meant for manual import into Postman live
+in:
 
 ```text
 validation/core/collections/postman/
 ```
 
-La guía específica está en
+The specific guide is
 [31_postman_newman_collections.md](./31_postman_newman_collections.md).
 
-## Documentación Vigente
+## Current Documentation
 
-Para entender el framework actual, la ruta recomendada es:
+To understand the current framework, the recommended path is:
 
-1. [README de documentación](./README.md)
-2. [Inicio rápido](./32_getting_started.md)
-3. [Arquitectura](./34_architecture.md)
-4. [Deployers y topologías](./35_deployers_and_topologies.md)
-5. [Validación](./37_validation.md)
-6. [Colecciones Newman/Postman](./31_postman_newman_collections.md)
-7. [Guía operativa de vm-distributed](./46_vm_distributed_runbook.md)
+1. [Documentation README](./README.md)
+2. [Getting started](./32_getting_started.md)
+3. [Architecture](./34_architecture.md)
+4. [Deployers and topologies](./35_deployers_and_topologies.md)
+5. [Validation](./37_validation.md)
+6. [Newman/Postman collections](./31_postman_newman_collections.md)
+7. [vm-distributed operations runbook](./46_vm_distributed_runbook.md)
 
-Los documentos numerados históricos siguen disponibles como trazabilidad de
-diseño, pero este documento y el índice público deben considerarse la referencia
-operativa inicial.
+The historical numbered documents remain available as design traceability,
+but this document and the public index should be considered the initial
+operational reference.
