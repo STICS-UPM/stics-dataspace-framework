@@ -53,19 +53,24 @@ module.exports = {
   },
   production: {
     db: process.env.MONGO_DB_CONNECTION_STRING || 'mongodb://localhost/lov',
+    // STICS overlay: the production block reads the same environment variables as
+    // the development block. Upstream hardcodes localhost / /home/user paths here,
+    // which makes search and the N3 download links fail when NODE_ENV=production.
     es: {
-      host: 'localhost',
+      host: process.env.ELASTIC_SEARCH_HOST,
       port: 9200,
+      user: process.env.ELASTIC_SEARCH_USER,
+      pass: process.env.ELASTIC_SEARCH_PASSWORD,
     },
-    lov: 'http://localhost:3333',
+    lov: process.env.SELF_HOST_URL || 'http://localhost:3333',
     //Path to where the output of "lov_scripts" repository have been generated
-    scripts: '/home/user/scripts',
+    scripts: process.env.SCRIPTS_PATH || '/share/scripts',
     //Path to "Patrones" repository
-    patterns: '/home/user/Patterns/Patrones',
+    patterns: process.env.PATTERN_PATHS || '/home/user/Patterns/Patrones',
     //Path to python environment
-    python_patterns: '/home/user/Patterns/env/bin/python',
-    app_name: 'Example Application Name',
-    app_name_shorcut: 'EAN',
+    python_patterns: process.env.PYTHON_PATTERNS_PATH || '/app/Patterns/env/bin/python',
+    app_name: 'Ontology Hub',
+    app_name_shorcut: 'STICS',
     root: rootPath,
     notifier: notifier,
     email: {
