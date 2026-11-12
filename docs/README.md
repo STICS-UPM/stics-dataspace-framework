@@ -26,6 +26,7 @@ in `docs/`.
 | [48 Beginner's guide: new connector](./48_new_connector_setup_guide_for_dummies.md) | Complete step-by-step guide, with an error cheat sheet, to set up a new EDC connector from scratch (identity, Postgres, properties, docker-compose, network bridge, TLS) |
 | [49 Partner onboarding runbook](./49_bavenir_hands_on_session_guide.md) | Live runbook to bring up a connector on a partner's own infrastructure |
 | [50 Connector automation guide](./50_connector_automation_guide.md) | Publishing and consuming data from an external system through the Management API |
+| [51 STICS Ontology Hub](./51_stics_ontology_hub.md) | Which hub is official and why the old URL redirects, what was fixed, backups, how to add a vocabulary, commands to avoid, and known limits |
 | [Deployment video script](./video_script_deployment.md) | Script for a video showing how to deploy an environment from scratch, levels 1 to 5 |
 
 ## Where to Start

@@ -34,6 +34,7 @@ Start here if your goal is to operate or extend STICS:
 | [New connector guide for beginners](./docs/48_new_connector_setup_guide_for_dummies.md) | Same process, step by step, explaining the *why* of each step. |
 | [Partner onboarding runbook](./docs/49_bavenir_hands_on_session_guide.md) | Run a live onboarding session to bring up a connector on a partner's own infrastructure. |
 | [Connector automation guide](./docs/50_connector_automation_guide.md) | Publish and consume data from an external system through the connector Management API. |
+| [STICS Ontology Hub](./docs/51_stics_ontology_hub.md) | Operate the Ontology Hub partners use: deployment, redirect from the old URL, adding vocabularies, backups and known limits. |
 | [EDC interoperability evidence](./docs/47_stics_edc_interop_evidence.md) | Reproduce the provider ↔ consumer evidence: OAuth2, DSP catalog, contract negotiation, and transfers. |
 
 ## What This Fork Adds
